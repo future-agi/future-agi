@@ -1,4 +1,5 @@
-import { screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -6,9 +7,10 @@ import { render } from "src/utils/test-utils";
 
 import ScenarioSuite from "./ScenarioSuite";
 
-const amend = vi.fn();
+const mocks = vi.hoisted(() => ({ amend: vi.fn(), list: vi.fn() }));
 vi.mock("src/api/harness/harness", () => ({
-  amendHarnessScenarios: (...args) => amend(...args),
+  amendHarnessScenarios: (...args) => mocks.amend(...args),
+  listHarnessScenarios: (...args) => mocks.list(...args),
 }));
 
 const EDITING = {
@@ -18,6 +20,7 @@ const EDITING = {
 
 const scenario = (name, over = {}) => ({
   name,
+  number: 1,
   use_case: "add an item to the cart",
   branch: `branch for ${name}`,
   tests: `what ${name} checks`,
@@ -39,75 +42,67 @@ const scenario = (name, over = {}) => ({
   ...over,
 });
 
+// The suite comes from the endpoint, never from a prop, so a test says what the server answered.
+const served = (rows, over = {}) => ({
+  count: rows.length,
+  total_pages: 1,
+  results: rows,
+  fields: [],
+  scenario_editing: null,
+  // The control's options are the server's, never the client's.
+  groupings: [
+    { value: "goal", label: "Use case" },
+    { value: "accent", label: "Accent" },
+    { value: "", label: "No grouping" },
+  ],
+  ...over,
+});
+
+const show = (ui) =>
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({
+          defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+        })
+      }
+    >
+      {ui}
+    </QueryClientProvider>,
+  );
+
 describe("ScenarioSuite", () => {
   beforeEach(() => {
-    amend.mockReset();
-    amend.mockResolvedValue({ receipts: [{ outcome: "applied", why: "", scenario: "one" }] });
-  });
-
-  it("filters the suite by keyword", async () => {
-    const user = userEvent.setup();
-    render(
-      <ScenarioSuite
-        scenarios={[
-          scenario("one", { persona: { ...scenario("one").persona, keywords: ["big mac"] } }),
-          scenario("two", { persona: { ...scenario("two").persona, keywords: ["fries"] } }),
-        ]}
-        jobId="job-1"
-        editable
-      />,
-    );
-    expect(screen.getByText("two")).toBeInTheDocument();
-    await user.click(screen.getByText("big mac 1"));
-    expect(screen.queryByText("two")).not.toBeInTheDocument();
-    expect(screen.getByText("one")).toBeInTheDocument();
+    mocks.amend.mockReset();
+    mocks.list.mockReset();
+    mocks.amend.mockResolvedValue({
+      receipts: [{ outcome: "applied", why: "", scenario: "one" }],
+    });
+    mocks.list.mockResolvedValue(served([scenario("one")]));
   });
 
   it("removes a single scenario from its own row", async () => {
     const user = userEvent.setup();
-    render(<ScenarioSuite scenarios={[scenario("one")]} jobId="job-1" editable />);
+    show(<ScenarioSuite scenarios={[]} jobId="job-1" editable />);
+    await screen.findByText("one");
     await user.click(screen.getByRole("button", { name: /remove from this suite/i }));
-    expect(amend).toHaveBeenCalledTimes(1);
-    const [, changes, options] = amend.mock.calls[0];
+    await waitFor(() => expect(mocks.amend).toHaveBeenCalledTimes(1));
+    const [, changes, options] = mocks.amend.mock.calls[0];
     expect(changes).toEqual([{ op: "drop", scenario: "one" }]);
     // Nothing is left to prove once a scenario is gone, so this never costs a rework.
     expect(options).toEqual({ rework: false });
   });
 
-  it("searches the situation, not just the name", async () => {
-    const user = userEvent.setup();
-    render(
-      <ScenarioSuite
-        scenarios={[
-          scenario("one", { instruction: "ask for a refund on a late delivery" }),
-          scenario("two", { instruction: "book a table for four" }),
-        ]}
-        jobId="job-1"
-        editable
-      />,
-    );
-    await user.type(screen.getByPlaceholderText(/search scenarios/i), "refund");
-    expect(screen.getByText("one")).toBeInTheDocument();
-    expect(screen.queryByText("two")).not.toBeInTheDocument();
-  });
-
   it("shows every field the design shows, and lets a person change only some", async () => {
     const user = userEvent.setup();
-    render(
-      <ScenarioSuite
-        scenarios={[scenario("one")]}
-        jobId="job-1"
-        editable
-        scenarioEditing={EDITING}
-      />,
-    );
+    show(<ScenarioSuite scenarios={[]} jobId="job-1" editable scenarioEditing={EDITING} />);
+    await screen.findByText("one");
     await user.click(screen.getByRole("button", { name: /edit scenario/i }));
 
     expect(screen.getByRole("textbox", { name: /passes when/i })).toBeEnabled();
     expect(screen.getByRole("combobox", { name: /personality/i })).toBeInTheDocument();
 
     expect(screen.getByRole("textbox", { name: /branch/i })).toBeDisabled();
-
     // Shown, and not changeable: the world is seeded around these, so an edit here alone would
     // leave the persona and the world disagreeing.
     expect(screen.getByDisplayValue("Devon Reed")).toBeDisabled();
@@ -117,10 +112,22 @@ describe("ScenarioSuite", () => {
     expect(screen.getByDisplayValue("add an item to the cart")).toBeDisabled();
   });
 
+  it("opens the drawer rather than expanding the row", async () => {
+    const user = userEvent.setup();
+    show(<ScenarioSuite scenarios={[]} jobId="job-1" editable scenarioEditing={EDITING} />);
+    await screen.findByText("one");
+    expect(screen.queryByRole("presentation")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /edit scenario/i }));
+    // A drawer is a dialog over the table; the row it came from is still a single row.
+    expect(await screen.findByRole("presentation")).toBeInTheDocument();
+  });
+
   it("offers an edit even when the suite has no persona to edit", async () => {
     const user = userEvent.setup();
     const { persona, ...noCaller } = scenario("one");
-    render(<ScenarioSuite scenarios={[noCaller]} jobId="job-1" editable />);
+    mocks.list.mockResolvedValue(served([noCaller]));
+    show(<ScenarioSuite scenarios={[]} jobId="job-1" editable />);
+    await screen.findByText("one");
 
     await user.click(screen.getByRole("button", { name: /edit scenario/i }));
 
@@ -131,7 +138,8 @@ describe("ScenarioSuite", () => {
 
   it("will not spend a re-check on a form nobody changed", async () => {
     const user = userEvent.setup();
-    render(<ScenarioSuite scenarios={[scenario("one")]} jobId="job-1" editable />);
+    show(<ScenarioSuite scenarios={[]} jobId="job-1" editable />);
+    await screen.findByText("one");
     await user.click(screen.getByRole("button", { name: /edit scenario/i }));
 
     expect(screen.getByRole("button", { name: /save scenario/i })).toBeDisabled();
@@ -139,20 +147,14 @@ describe("ScenarioSuite", () => {
 
   it("never sends the fields the world is seeded around", async () => {
     const user = userEvent.setup();
-    render(
-      <ScenarioSuite
-        scenarios={[scenario("one")]}
-        jobId="job-1"
-        editable
-        scenarioEditing={EDITING}
-      />,
-    );
+    show(<ScenarioSuite scenarios={[]} jobId="job-1" editable scenarioEditing={EDITING} />);
+    await screen.findByText("one");
     await user.click(screen.getByRole("button", { name: /edit scenario/i }));
     await user.type(screen.getByLabelText(/passes when/i), " and stays polite");
     await user.click(screen.getByRole("button", { name: /save scenario/i }));
 
-    expect(amend).toHaveBeenCalledTimes(1);
-    const [, changes] = amend.mock.calls[0];
+    await waitFor(() => expect(mocks.amend).toHaveBeenCalledTimes(1));
+    const [, changes] = mocks.amend.mock.calls[0];
     const persona = changes.find((one) => one.op === "set_persona")?.persona || {};
     // The caller's identity is seeded into the world, so editing it here would leave the two
     // disagreeing. The form must not offer it and the payload must not carry it.
@@ -165,105 +167,96 @@ describe("ScenarioSuite", () => {
   });
 });
 
-describe("filtering by the coordinate", () => {
-  const placed = (name, coverage) => ({ ...scenario(name), coverage });
+// The suite can be far larger than a page, so narrowing it is the server's job. These say the
+// browser only ever asks: nothing here filters, searches or groups a downloaded page.
+describe("the narrowing is the server's", () => {
+  beforeEach(() => {
+    mocks.list.mockReset();
+    mocks.list.mockResolvedValue(served([scenario("one")]));
+  });
 
-  it("offers a picker per axis, counted, and narrows the suite with it", async () => {
+  it("asks for a page rather than the suite", async () => {
+    show(<ScenarioSuite scenarios={[]} jobId="job-1" editable />);
+    await screen.findByText("one");
+    const [id, params] = mocks.list.mock.calls[0];
+    expect(id).toBe("job-1");
+    expect(params).toMatchObject({ page: 1, limit: 25 });
+    // No grouping is named: omitting the key is how the client says the server decides.
+    expect(params).not.toHaveProperty("group_by");
+  });
+
+  it("sends the search as a query param instead of matching in the browser", async () => {
     const user = userEvent.setup();
-    render(
-      <ScenarioSuite
-        scenarios={[
-          placed("one", { task: "book", overlay: "none" }),
-          placed("two", { task: "book", overlay: "prompt_injection" }),
-          placed("three", { task: "cancel", overlay: "none" }),
-        ]}
-        jobId="job-1"
-        editable
-      />,
+    show(<ScenarioSuite scenarios={[]} jobId="job-1" editable />);
+    await screen.findByText("one");
+    await user.type(screen.getByPlaceholderText(/search scenarios/i), "refund");
+    await waitFor(() =>
+      expect(
+        mocks.list.mock.calls.some(([, params]) => params.search === "refund"),
+      ).toBe(true),
     );
-    // The count on the option is the number the coverage report puts in that cell.
-    await user.click(screen.getByLabelText("overlay"));
-    await user.click(await screen.findByRole("option", { name: "none (2)" }));
-    expect(screen.getByText("one")).toBeInTheDocument();
-    expect(screen.getByText("three")).toBeInTheDocument();
-    expect(screen.queryByText("two")).not.toBeInTheDocument();
   });
 
-  it("leaves out an axis every scenario shares, because that filters nothing", () => {
-    render(
-      <ScenarioSuite
-        scenarios={[
-          placed("one", { task: "book", modality: "voice" }),
-          placed("two", { task: "cancel", modality: "voice" }),
-        ]}
-        jobId="job-1"
-        editable
-      />,
-    );
-    expect(screen.getByLabelText("task")).toBeInTheDocument();
-    expect(screen.queryByLabelText("modality")).not.toBeInTheDocument();
-  });
-
-  it("keeps a scenario that predates an axis rather than hiding it", async () => {
+  it("offers only the groupings the server named, and sends the choice as a query param", async () => {
     const user = userEvent.setup();
-    render(
-      <ScenarioSuite
-        scenarios={[
-          placed("one", { task: "book" }),
-          placed("two", { task: "cancel" }),
-          scenario("three"),
-        ]}
-        jobId="job-1"
-        editable
-      />,
+    show(<ScenarioSuite scenarios={[]} jobId="job-1" editable />);
+    await screen.findByText("one");
+    await user.click(screen.getByRole("combobox", { name: /group by/i }));
+    // Grouping by persona NAME is not offered: unique first names make groups of one.
+    expect(screen.queryByRole("option", { name: "Persona" })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("option", { name: "Accent" }));
+    await waitFor(() =>
+      expect(
+        mocks.list.mock.calls.some(([, params]) => params.group_by === "accent"),
+      ).toBe(true),
     );
-    await user.click(screen.getByLabelText("task"));
-    await user.click(await screen.findByRole("option", { name: "book (1)" }));
-    expect(screen.getByText("one")).toBeInTheDocument();
-    expect(screen.getByText("three")).toBeInTheDocument();
-    expect(screen.queryByText("two")).not.toBeInTheDocument();
-  });
-});
-
-describe("the keyword row", () => {
-  const tagged = (name, keywords) => ({
-    ...scenario(name),
-    persona: { ...scenario(name).persona, keywords },
   });
 
-  it("shows the keywords that filter and hides the one-row tail", async () => {
-    const user = userEvent.setup();
-    const many = Array.from({ length: 30 }, (_, index) =>
-      tagged(`row${index}`, [`only${index}`, index < 4 ? "shared" : `spare${index}`]),
+  it("draws the sections the server sent, and counts none of them itself", async () => {
+    mocks.list.mockResolvedValue(
+      served(
+        [
+          { ...scenario("one"), group: "Booking" },
+          { ...scenario("two"), group: "Cancelling" },
+        ],
+        {
+          // The server orders the page by group and counts each section. The table walks them.
+          groups: [
+            { name: "Booking", count: 1 },
+            { name: "Cancelling", count: 1 },
+          ],
+        },
+      ),
     );
-    render(<ScenarioSuite scenarios={many} jobId="job-1" editable />);
-    expect(screen.getByText("shared 4")).toBeInTheDocument();
-    expect(screen.queryByText("only29 1")).not.toBeInTheDocument();
-    await user.click(screen.getByText(/\d+ more/));
-    expect(screen.getByText("only29 1")).toBeInTheDocument();
+    show(<ScenarioSuite scenarios={[]} jobId="job-1" editable />);
+    expect(await screen.findByText("Booking")).toBeInTheDocument();
+    expect(screen.getByText("Cancelling")).toBeInTheDocument();
   });
 });
 
 describe("who decides what may be edited", () => {
+  beforeEach(() => {
+    mocks.list.mockReset();
+    mocks.list.mockResolvedValue(served([scenario("one")]));
+  });
+
   it("offers nothing when the job names no editable fields", async () => {
     const user = userEvent.setup();
-    render(<ScenarioSuite scenarios={[scenario("one")]} jobId="job-1" editable />);
+    show(<ScenarioSuite scenarios={[]} jobId="job-1" editable />);
+    await screen.findByText("one");
     await user.click(screen.getByRole("button", { name: /edit scenario/i }));
 
     expect(screen.getByRole("textbox", { name: /passes when/i })).toBeDisabled();
     expect(screen.getByRole("textbox", { name: /branch/i })).toBeDisabled();
   });
 
-  it("offers exactly what the job names", async () => {
+  it("takes the editable set from the endpoint, not from a prop", async () => {
     const user = userEvent.setup();
-    render(
-      <ScenarioSuite
-        scenarios={[scenario("one")]}
-        jobId="job-1"
-        editable
-        scenarioEditing={{ editable_fields: ["tests"] }}
-      />,
+    mocks.list.mockResolvedValue(
+      served([scenario("one")], { scenario_editing: { editable_fields: ["tests"] } }),
     );
+    show(<ScenarioSuite scenarios={[]} jobId="job-1" editable />);
+    await screen.findByText("one");
     await user.click(screen.getByRole("button", { name: /edit scenario/i }));
 
     expect(screen.getByRole("textbox", { name: /passes when/i })).toBeEnabled();

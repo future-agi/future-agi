@@ -410,16 +410,11 @@ export default function HarnessDetail() {
   // ALK reports one artifact per stage group. "Runs" is the catch-all so a new kind never
   // disappears: anything that is not a named tab lands there alongside the activity feed.
   const stageOutputs = current?.stage_outputs || [];
-  // The coverage grid cross-tabulates the suite, which arrives as its own stage output.
-  const suiteScenarios =
-    stageOutputs.find((output) => output.kind === "scenarios")?.data || [];
-  // Coverage describes the suite, so it belongs beside it rather than in the catch-all.
+  // Coverage used to be routed here so it sat beside the suite. The suite now serves its own
+  // grid from its own route, cross-tabulated over every scenario rather than over the JSON that
+  // happened to reach the browser, so the stage output would only repeat it as raw JSON.
   const tabOf = (kind) =>
-    kind === "coverage"
-      ? "scenarios"
-      : ["contract", "environment", "scenarios"].includes(kind)
-        ? kind
-        : "runs";
+    ["contract", "environment", "scenarios"].includes(kind) ? kind : "runs";
   const selectedOutputs = stageOutputs.filter(
     (output) => tabOf(output.kind) === detailTab,
   );
@@ -1186,7 +1181,12 @@ export default function HarnessDetail() {
                       <StageOutput
                         key={output.id}
                         output={output}
-                        scenarios={suiteScenarios}
+                        jobId={jobId}
+                        onChanged={() =>
+                          queryClient.invalidateQueries({
+                            queryKey: ["harness-jobs"],
+                          })
+                        }
                       />
                     ))
                   ) : (
@@ -1203,7 +1203,12 @@ export default function HarnessDetail() {
                     <StageOutput
                       key={output.id}
                       output={output}
-                      scenarios={suiteScenarios}
+                      jobId={jobId}
+                      onChanged={() =>
+                        queryClient.invalidateQueries({
+                          queryKey: ["harness-jobs"],
+                        })
+                      }
                     />
                   ))}
                   {current.credentials && (

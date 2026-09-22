@@ -22,17 +22,16 @@ import PropTypes from "prop-types";
 import React, { useEffect, useMemo, useState } from "react";
 import { useSnackbar } from "notistack";
 
+import { DataTablePagination } from "src/components/data-table";
+import FilterPanel from "src/components/filter-panel/FilterPanel";
 import Iconify from "src/components/iconify";
+import {
+  useAmendScenarios,
+  useHarnessScenarioCoverage,
+  useHarnessScenarios,
+} from "src/api/harness/scenarios";
 import ScenarioEditForm from "./ScenarioEditForm";
-import { amendHarnessScenarios } from "src/api/harness/harness";
 
-// A use case is how the suite is read, so it is how the suite is shown. The axes a scenario was
-// planned against stay internal: they decide what gets written, not how it is grouped here.
-const UNGROUPED = "Other scenarios";
-
-// One scenario per line, the derived parts as columns, so a suite is comparable without opening
-// anything. The number is the row's own handle: it is what a person names when they say which rows
-// to act on.
 const selectableCheckboxSx = {
   p: 0,
   color: "text.disabled",
@@ -42,7 +41,7 @@ const selectableCheckboxSx = {
 
 // The design greys these controls out and says "Fork this environment to edit." We have no fork,
 // so the reason has to be the one that is actually true here: a suite read outside a run has no
-// job to amend against. Saying it in the tooltip beats a control that silently disappears.
+// job to amend against.
 const lockedReason = "Open this suite from its run to edit it";
 
 const COLUMNS = [
@@ -57,107 +56,28 @@ const COLUMNS = [
   "",
 ];
 
-// Grouped on the use case each scenario claims, which is how a suite is read. Nothing else is
-// listed: a contract carries use cases the generator never wrote a scenario for, often because they
-// describe how the agent talks rather than a task worth testing, and showing those as empty rows
-// buried the scenarios under things that were never missing.
-const byUseCase = (scenarios) => {
-  const groups = new Map();
-  scenarios.forEach((scenario) => {
-    const key = scenario.use_case?.trim() || UNGROUPED;
-    groups.set(key, [...(groups.get(key) || []), scenario]);
-  });
-  return [...groups.entries()]
-    .map(([useCase, rows]) => ({ useCase, rows }))
-    .sort((a, b) => a.useCase.localeCompare(b.useCase));
-};
-
-const matches = (scenario, chosen) =>
-  !chosen.size || (scenario.persona?.keywords || []).some((word) => chosen.has(word));
-
-// The axes a suite can be filtered by, taken from the scenarios' own coordinates. A level count of
-// one is dropped, since a filter every row matches is not one.
-// What a person filters a suite by. The eight axes are the harness's own taxonomy: `counterparty`,
-// `overlay_vector` and `overlay_intensity` mean something to the generator and nothing to someone
-// reading the suite. These are the facets the design uses instead, each one a question somebody
-// actually asks: who is calling, in what accent, in what language, over what noise, is it an
-// attack, what does it have to settle, what is it for.
-const FACETS = [
-  { key: "persona", label: "Persona", of: (one) => (one?.persona || {}).name },
-  { key: "accent", label: "Accent", of: (one) => (one?.persona || {}).accent },
-  {
-    key: "language",
-    label: "Language",
-    of: (one) => ((one?.persona || {}).languages || [])[0],
-  },
-  {
-    key: "noise",
-    label: "Background",
-    of: (one) =>
-      typeof one?.background_noise === "string"
-        ? one.background_noise
-        : one?.background_noise
-          ? "present"
-          : "quiet line",
-  },
-  {
-    key: "attack",
-    label: "Attack",
-    of: (one) => {
-      const overlay = String((one?.coverage || {}).overlay || "").trim();
-      return !overlay || overlay === "none" ? "none" : overlay;
-    },
-  },
-  { key: "task", label: "Task", of: (one) => (one?.coverage || {}).task },
-  { key: "subgoal", label: "Sub-goal", of: (one) => (one?.sub_goals || [])[0] },
-];
-
-const axesOf = (scenarios) =>
-  FACETS.map(({ key, label, of }) => {
-    const counts = new Map();
-    scenarios.forEach((one) => {
-      const value = String(of(one) ?? "").trim();
-      if (!value) return;
-      counts.set(value, (counts.get(value) || 0) + 1);
-    });
-    return {
-      axis: key,
-      label,
-      levels: [...counts.entries()].sort(
-        (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
-      ),
-    };
-    // A facet the suite does not vary on is not worth a dropdown.
-  }).filter(({ levels }) => levels.length > 1);
-
-const onAxes = (scenario, picked) =>
-  Object.entries(picked).every(([key, level]) => {
-    if (!level) return true;
-    const facet = FACETS.find((one) => one.key === key);
-    if (!facet) return true;
-    // A blank value used to pass every filter, so filtering by an attack kept the rows that carry
-    // no attack at all. A row that does not hold the level is simply not in it.
-    return String(facet.of(scenario) ?? "").trim() === level;
-  });
-
-// Searched over what is on screen plus the situation, because a person looking for "refund" is as
-// likely to remember the wording of the task as the name it was filed under.
-const found = (scenario, query) => {
-  const needle = query.trim().toLowerCase();
-  if (!needle) return true;
-  return [
-    scenario.name,
-    scenario.use_case,
-    scenario.branch,
-    scenario.tests,
-    scenario.instruction,
-    scenario.persona?.name,
-  ]
-    .filter(Boolean)
-    .some((value) => String(value).toLowerCase().includes(needle));
-};
-
+// How the sections are cut. The server tags each row with the group it fell into, so this only
+// names the choices; it never decides which rows belong to which.
 const readable = (name) => String(name || "").replace(/[_-]+/g, " ").trim();
+
+// The panel answers in two shapes: the Basic tab returns `{field: [values]}` already carrying the
+// `_not` suffix for a negation, the Query tab returns tokens. Both collapse to the same query
+// params, which is all this component does with a filter: pass it on.
+const toQueryParams = (result) => {
+  if (!result) return {};
+  if (!Array.isArray(result)) return result;
+  const flat = {};
+  result.forEach((token) => {
+    const held = Array.isArray(token.value)
+      ? token.value
+      : [token.value].filter(Boolean);
+    if (!held.length) return;
+    const negated = token.operator === "is_not" || token.operator === "not_equals";
+    const key = negated ? `${token.field}_not` : token.field;
+    flat[key] = [...(flat[key] || []), ...held];
+  });
+  return flat;
+};
 
 // The harness answers each change separately, so the summary counts outcomes rather than claiming
 // a single verdict for the batch. A rework that touched files is worth saying out loud.
@@ -174,86 +94,114 @@ const summarise = (receipts) => {
   return parts.join(", ") || "nothing changed";
 };
 
+/**
+ * The Scenarios tab. It displays a page and nothing else: the search, the filters, the grouping,
+ * the ordering and the paging are all query params, and the server answers with the rows, the
+ * filter panel's own field catalogue and the coverage grid.
+ *
+ * `scenarios` is only the suite read outside a run, where there is no job to page against.
+ */
 export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEditing, onChanged }) {
   const { enqueueSnackbar } = useSnackbar();
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(25);
+  const [typed, setTyped] = useState("");
+  const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState({});
+  // Unset until the server says what it offers; the first grouping it names is the default.
+  const [groupBy, setGroupBy] = useState(null);
+  // Empty until the reader picks one. The server answers with the pair it used, and those are
+  // what the two dropdowns show, so no axis name is written into this file.
+  const [rowAxis, setRowAxis] = useState("");
+  const [colAxis, setColAxis] = useState("");
+  const [filterAnchor, setFilterAnchor] = useState(null);
   const [selected, setSelected] = useState(() => new Set());
   const [editing, setEditing] = useState(null);
-  // Which row is open. One at a time: the panel is tall, and a second open row pushes the first
-  // off screen anyway.
-  const [opened, setOpened] = useState("");
-  const [busy, setBusy] = useState(false);
   const [waiting, setWaiting] = useState(false);
 
-  const [chosen, setChosen] = useState(() => new Set());
-  const [query, setQuery] = useState("");
-  const [picked, setPicked] = useState({});
+  // One request per settled keystroke rather than one per keystroke.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearch(typed);
+      setPage(0);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [typed]);
 
-  const axes = useMemo(() => axesOf(scenarios), [scenarios]);
+  // One call carries the page, the field catalogue, the coverage grid and the group tags, so the
+  // table, the panel and the sections all describe the same narrowed suite rather than three
+  // different ones. It polls, so a suite still being written fills in while it is watched.
+  const { data: served, isFetching } = useHarnessScenarios(jobId, {
+    page,
+    pageSize,
+    search,
+    groupBy: groupBy ?? undefined,
+    filters,
+    refetchInterval: waiting ? 6000 : 15000,
+  });
+  // Its own call, on its own route: the grid answers a different question from the list and does
+  // not change when the reader pages or regroups.
+  const { data: coverage } = useHarnessScenarioCoverage(jobId, {
+    search,
+    filters,
+    rowAxis,
+    colAxis,
+  });
+  const amend = useAmendScenarios(jobId);
 
-  // Every keyword in the suite, most used first, so the row reads as the suite's own vocabulary.
-  // Keywords are written onto each scenario at generation, so this list is the suite's, not a fixed
-  // vocabulary somebody has to maintain. The count is on the chip because it is the only honest
-  // measure of whether a filter is worth clicking.
-  const keywords = useMemo(() => {
-    const seen = new Map();
-    scenarios.forEach((one) =>
-      (one.persona?.keywords || []).forEach((word) => seen.set(word, (seen.get(word) || 0) + 1)),
-    );
-    return [...seen.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-  }, [scenarios]);
-
-  // Leads with the keywords that narrow the suite; a one-row chip is a note, not a filter.
-  const WORTH_CLICKING = 16;
-  const [allKeywords, setAllKeywords] = useState(false);
-  const visibleKeywords = useMemo(() => {
-    if (allKeywords || keywords.length <= WORTH_CLICKING) return keywords;
-    const filtering = keywords.filter(([, count]) => count > 1);
-    const head = (filtering.length >= WORTH_CLICKING ? filtering : keywords).slice(
-      0,
-      WORTH_CLICKING,
-    );
-    // A chosen keyword never hides, or clearing it becomes impossible.
-    return [...head, ...keywords.filter(([word]) => chosen.has(word) && !head.some(([one]) => one === word))];
-  }, [keywords, allKeywords, chosen]);
-
-  const shown = useMemo(
-    () =>
-      scenarios.filter(
-        (one) => matches(one, chosen) && found(one, query) && onAxes(one, picked),
-      ),
-    [scenarios, chosen, query, picked],
+  // Without a job there is no endpoint, so the prop is the whole suite and there is nothing to
+  // filter it by. With one, the page the server sent is the answer.
+  const rows = useMemo(
+    () => (jobId ? served?.rows || [] : scenarios),
+    [jobId, served, scenarios],
   );
-  const allSelected = shown.length > 0 && shown.every((one) => selected.has(one.name));
-  const someSelected = !allSelected && shown.some((one) => selected.has(one.name));
+  const total = jobId ? served?.total ?? 0 : scenarios.length;
+  const fields = served?.fields || [];
+  // The groupings the server offers. Nothing here is written into the client.
+  const groupings = served?.groupings || [];
+  const editableFields =
+    served?.editing?.editable_fields || scenarioEditing?.editable_fields;
+
+  const activeFilters = Object.keys(filters).length;
+  const applyFilters = (result) => {
+    setFilters(toQueryParams(result));
+    setPage(0);
+  };
+
+  const allSelected = rows.length > 0 && rows.every((one) => selected.has(one.name));
+  const someSelected = !allSelected && rows.some((one) => selected.has(one.name));
   const toggleAll = () =>
     setSelected((prev) => {
       const next = new Set(prev);
-      shown.forEach((one) => (allSelected ? next.delete(one.name) : next.add(one.name)));
+      rows.forEach((one) => (allSelected ? next.delete(one.name) : next.add(one.name)));
       return next;
     });
-  const groups = useMemo(() => byUseCase(shown), [shown]);
 
-  // While the harness is re-checking, ask the job again on a slow interval. A rework is a model
-  // session and a proof, so seconds are the right unit; stop as soon as the suite we were handed
-  // differs from the one we asked about.
-  const fingerprint = useMemo(
-    () => scenarios.map((one) => `${one.name}:${one.sub_goals?.length ?? 0}`).join("|"),
-    [scenarios],
+  // The server tags each row, orders the page by that tag and counts the sections. Drawing them
+  // is a walk down rows that are already in the right order, never a regrouping: a page is one
+  // page of a much larger suite, so anything gathered here would describe the page and not the
+  // suite. No sections means no grouping was asked for, and the page draws as one run.
+  const totals = useMemo(
+    () => new Map((served?.groups || []).map((one) => [one.name, one])),
+    [served],
   );
+
+  // A queued change is still running in the harness, so the poll tightens until the suite itself
+  // comes back different. The receipt is a promise; the suite is the answer.
+  const fingerprint = rows
+    .map((one) => `${one.name}:${one.sub_goals?.length ?? 0}`)
+    .join("|");
   const seenRef = React.useRef(fingerprint);
   useEffect(() => {
     if (!waiting) {
       seenRef.current = fingerprint;
-      return undefined;
+      return;
     }
     if (fingerprint !== seenRef.current) {
       setWaiting(false);
       enqueueSnackbar("The suite has been re-checked", { variant: "success" });
-      return undefined;
     }
-    const timer = setInterval(() => onChanged?.(), 6000);
-    return () => clearInterval(timer);
-  }, [waiting, fingerprint, onChanged, enqueueSnackbar]);
+  }, [waiting, fingerprint, enqueueSnackbar]);
 
   const toggle = (name) =>
     setSelected((prev) => {
@@ -263,25 +211,22 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
       return next;
     });
 
-  const toggleGroup = (rows, allOn) =>
+  const toggleGroup = (inIt, allOn) =>
     setSelected((prev) => {
       const next = new Set(prev);
-      rows.forEach((row) => (allOn ? next.delete(row.name) : next.add(row.name)));
+      inIt.forEach((row) => (allOn ? next.delete(row.name) : next.add(row.name)));
       return next;
     });
 
   const send = async (changes, { rework }) => {
-    setBusy(true);
     try {
-      const reply = await amendHarnessScenarios(jobId, changes, { rework });
+      const reply = await amend.mutateAsync({ changes, rework });
       const receipts = reply?.receipts || [];
       const refused = receipts.filter((one) => one.outcome === "refused");
       const queued = receipts.filter((one) => one.outcome === "queued");
       enqueueSnackbar(summarise(receipts), {
         variant: refused.length ? "warning" : "success",
       });
-      // A queued change is still running in the harness. Poll until the suite itself changes,
-      // because the receipt is a promise and the suite is the answer.
       if (queued.length) setWaiting(true);
       // A refusal carries the reason the harness gave. Showing it is the difference between "that
       // did not work" and knowing which change to send differently.
@@ -295,29 +240,28 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
       // The harness names the offending op or field; anything else is ours to keep off screen.
       const detail = error?.response?.data?.detail;
       enqueueSnackbar(detail || "The suite could not be edited", { variant: "error" });
-    } finally {
-      setBusy(false);
     }
   };
 
+  const busy = amend.isPending;
   const dropOne = (name) => send([{ op: "drop", scenario: name }], { rework: false });
-
+  // One change naming every scenario, not one change each: the harness expands it and answers
+  // with a receipt per scenario either way, and a single change is what the route is shaped for.
   const deleteSelected = () =>
-    send(
-      [...selected].map((name) => ({ op: "drop", scenario: name })),
-      { rework: false },
-    );
+    send([{ op: "drop", scenarios: [...selected] }], { rework: false });
 
   // One edit, two kinds of change. The descriptive fields are written straight to the scenario;
   // the persona may still turn out to matter for this agent, and the harness decides that, not us.
   const saveScenario = (form) => {
-    const target = editing.name;
+    // One scenario at a time. Each scenario's checks are its own, so there is nothing sensible
+    // to apply across a selection: a shared "passes when" would erase what makes each a test.
+    const naming = { scenario: editing.name };
     const changes = [
-      { op: "set_field", scenario: target, field: "tests", value: form.tests },
-      { op: "set_field", scenario: target, field: "max_turns", value: form.max_turns },
+      { op: "set_field", ...naming, field: "tests", value: form.tests },
+      { op: "set_field", ...naming, field: "max_turns", value: form.max_turns },
       {
         op: "set_field",
-        scenario: target,
+        ...naming,
         field: "background_noise",
         // The form names a place, and off is the absence of one. The harness stores either a place
         // or false, so it goes over the wire the way it is stored.
@@ -327,7 +271,7 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
     if (editing.persona) {
       changes.push({
         op: "set_persona",
-        scenario: target,
+        ...naming,
         persona: {
           keywords: form.keywords,
           personality: form.personality,
@@ -342,15 +286,7 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
     send(changes, { rework: true });
   };
 
-  // The number belongs to the scenario, not to the row it happens to be drawn on. Numbering the
-  // rendered rows renumbered the suite from 1 every time a filter narrowed it, so the same
-  // scenario answered to a different number depending on what else was on screen.
-  const numbers = useMemo(
-    () => new Map(scenarios.map((one, index) => [one.name, index + 1])),
-    [scenarios],
-  );
-
-  if (!scenarios.length) {
+  if (!jobId && !scenarios.length) {
     return (
       <Typography variant="body2" color="text.secondary">
         No scenarios yet.
@@ -367,11 +303,23 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
         </Typography>
       )}
 
-      <Stack direction="row" alignItems="center" spacing={1}>
+      {/* The grid reads the whole suite, so it sits above the page it describes rather than
+          under it. Its two axes are its own filter and do not narrow the table. */}
+      {coverage && (
+        <CoverageGrid
+          coverage={coverage}
+          rowAxis={rowAxis || coverage.row_axis}
+          colAxis={colAxis || coverage.col_axis}
+          onRowAxis={setRowAxis}
+          onColAxis={setColAxis}
+        />
+      )}
+
+      <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" useFlexGap>
         <TextField
           size="small"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
+          value={typed}
+          onChange={(event) => setTyped(event.target.value)}
           placeholder="Search scenarios by name, task or use case"
           InputProps={{
             sx: { typography: "s2" },
@@ -383,6 +331,36 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
           }}
           sx={{ maxWidth: 380, flex: 1 }}
         />
+        {jobId && (
+          <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
+            onClick={(event) => setFilterAnchor(event.currentTarget)}
+            startIcon={<Iconify icon="solar:filter-linear" width={16} />}
+          >
+            Filter{activeFilters ? ` (${activeFilters})` : ""}
+          </Button>
+        )}
+        {jobId && (
+          <TextField
+            select
+            size="small"
+            label="Group by"
+            value={groupBy ?? served?.groupBy ?? ""}
+            onChange={(event) => {
+              setGroupBy(event.target.value);
+              setPage(0);
+            }}
+            sx={{ minWidth: 150 }}
+          >
+            {groupings.map((one) => (
+              <MenuItem key={one.value || "none"} value={one.value}>
+                {one.label}
+              </MenuItem>
+            ))}
+          </TextField>
+        )}
         <Typography
           sx={{
             typography: "s3",
@@ -391,101 +369,10 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
             whiteSpace: "nowrap",
           }}
         >
-          {shown.length} of {scenarios.length}
+          {total} {total === 1 ? "scenario" : "scenarios"}
+          {isFetching ? " · refreshing" : ""}
         </Typography>
       </Stack>
-
-      {axes.length > 0 && (
-        <Stack direction="row" gap={1} flexWrap="wrap" alignItems="center">
-          {axes.map(({ axis, label, levels }) => (
-            <TextField
-              key={axis}
-              select
-              size="small"
-              label={label}
-              value={picked[axis] || ""}
-              onChange={(event) =>
-                setPicked((prev) => ({ ...prev, [axis]: event.target.value }))
-              }
-              sx={{ minWidth: 190 }}
-            >
-              <MenuItem value="">
-                Any {String(axis).replace(/[_-]+/g, " ")}
-              </MenuItem>
-              {levels.map(([level, count]) => (
-                <MenuItem key={level} value={level}>
-                  {level} ({count})
-                </MenuItem>
-              ))}
-            </TextField>
-          ))}
-          {Object.values(picked).some(Boolean) && (
-            <Chip
-              label="Any cell"
-              size="small"
-              variant="outlined"
-              onClick={() => setPicked({})}
-              onDelete={() => setPicked({})}
-              sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
-            />
-          )}
-        </Stack>
-      )}
-
-      {keywords.length > 0 && (
-        <Stack direction="row" gap={0.5} flexWrap="wrap" alignItems="center">
-          {visibleKeywords.map(([word, count]) => {
-            const on = chosen.has(word);
-            return (
-              <Chip
-                key={word}
-                icon={<Iconify icon="solar:tag-linear" width={14} />}
-                label={`${word} ${count}`}
-                size="small"
-                variant={on ? "filled" : "outlined"}
-                color={on ? "primary" : "default"}
-                onClick={() =>
-                  setChosen((prev) => {
-                    const next = new Set(prev);
-                    if (next.has(word)) next.delete(word);
-                    else next.add(word);
-                    return next;
-                  })
-                }
-                sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
-              />
-            );
-          })}
-          {keywords.length > visibleKeywords.length && (
-            <Chip
-              label={`${keywords.length - visibleKeywords.length} more`}
-              size="small"
-              variant="outlined"
-              onClick={() => setAllKeywords(true)}
-              sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
-            />
-          )}
-          {allKeywords && keywords.length > WORTH_CLICKING && (
-            <Chip
-              label="Show fewer"
-              size="small"
-              variant="outlined"
-              onClick={() => setAllKeywords(false)}
-              sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
-            />
-          )}
-          {chosen.size > 0 && (
-            <Chip
-              label="Clear"
-              size="small"
-              variant="outlined"
-              onClick={() => setChosen(new Set())}
-              onDelete={() => setChosen(new Set())}
-              sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
-            />
-          )}
-        </Stack>
-      )}
 
       {selected.size > 0 && (
         <Stack direction="row" spacing={1} alignItems="center">
@@ -565,7 +452,7 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
           </TableHead>
 
           <TableBody>
-            {!shown.length && (
+            {!rows.length && (
               <TableRow>
                 <TableCell colSpan={COLUMNS.length} sx={{ py: 4, textAlign: "center" }}>
                   <Typography sx={{ typography: "s2", color: "text.secondary" }}>
@@ -574,8 +461,9 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
                   <Button
                     size="small"
                     onClick={() => {
-                      setQuery("");
-                      setChosen(new Set());
+                      setTyped("");
+                      setFilters({});
+                      setPage(0);
                     }}
                   >
                     Clear the filters
@@ -583,12 +471,22 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
                 </TableCell>
               </TableRow>
             )}
-            {groups.map(({ useCase, rows }) => {
-              const allOn = rows.length > 0 && rows.every((row) => selected.has(row.name));
-              const someOn = !allOn && rows.some((row) => selected.has(row.name));
-              return (
-                <React.Fragment key={useCase}>
-                  <TableRow>
+            {rows.flatMap((scenario, index) => {
+              // A header is emitted where a row's own group differs from the row above it. The
+              // server orders the page by group, so that is exactly where a section starts, and
+              // it stays correct even if the counts and the ordering ever disagree. Rebuilding
+              // sections by slicing at offsets could not say that.
+              const opens = scenario.group && scenario.group !== rows[index - 1]?.group;
+              const inIt = opens
+                ? rows.filter((one) => one.group === scenario.group)
+                : [];
+              const allOn = inIt.length > 0 && inIt.every((one) => selected.has(one.name));
+              const someOn = !allOn && inIt.some((one) => selected.has(one.name));
+              const section = totals.get(scenario.group);
+              const drawn = [];
+              if (opens) {
+                drawn.push(
+                  <TableRow key={`head-${scenario.group}`}>
                     <TableCell
                       colSpan={COLUMNS.length}
                       sx={{
@@ -602,14 +500,14 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
                           size="small"
                           checked={allOn}
                           indeterminate={someOn}
-                          disabled={!rows.length}
-                          onChange={() => toggleGroup(rows, allOn)}
+                          disabled={!inIt.length}
+                          onChange={() => toggleGroup(inIt, allOn)}
                           sx={selectableCheckboxSx}
                         />
                         <Typography
                           sx={{ typography: "s2", fontWeight: 700, flex: 1, minWidth: 0 }}
                         >
-                          {useCase}
+                          {scenario.group}
                         </Typography>
                         <Typography
                           sx={{
@@ -619,24 +517,28 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
                             fontVariantNumeric: "tabular-nums",
                           }}
                         >
-                          {rows.length} {rows.length === 1 ? "scenario" : "scenarios"}
+                          {/* The group's real size, not the slice on this page. */}
+                          {section?.total ?? inIt.length}{" "}
+                          {(section?.total ?? inIt.length) === 1 ? "scenario" : "scenarios"}
+                          {section?.total > inIt.length ? ` \u00b7 ${inIt.length} here` : ""}
                         </Typography>
                       </Stack>
                     </TableCell>
-                  </TableRow>
+                  </TableRow>,
+                );
+              }
+              drawn.push(
+                (() => {
 
-                  {rows.map((scenario) => {
                     const persona = scenario.persona || {};
                     const who = [persona.gender, persona.age_group, persona.location]
                       .filter(Boolean)
-                      .join(" \u00b7 ");
+                      .join(" · ");
                     return (
-                      <React.Fragment key={scenario.name}>
                       <TableRow
                         hover
-                        onClick={() =>
-                          setOpened((open) => (open === scenario.name ? "" : scenario.name))
-                        }
+                        key={scenario.name}
+                        onClick={() => setEditing(scenario)}
                         sx={{ cursor: "pointer" }}
                       >
                         <TableCell
@@ -659,7 +561,9 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
                             verticalAlign: "top",
                           }}
                         >
-                          {numbers.get(scenario.name)}
+                          {/* The number is the scenario's place in the whole suite, minted by the
+                              server, so it does not renumber under a filter or a page. */}
+                          {scenario.number ?? index + 1}
                         </TableCell>
                         <TableCell sx={{ maxWidth: 280, verticalAlign: "top" }}>
                           <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>
@@ -693,6 +597,7 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
                         </TableCell>
                         <TableCell
                           align="right"
+                          onClick={(event) => event.stopPropagation()}
                           sx={{
                             whiteSpace: "nowrap",
                             verticalAlign: "top",
@@ -717,13 +622,11 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
                             },
                           }}
                         >
-                          <Tooltip
-                            arrow
-                            title={editable ? "Edit scenario" : lockedReason}
-                          >
+                          <Tooltip arrow title={editable ? "Edit scenario" : lockedReason}>
                             <span>
                               <IconButton
                                 size="small"
+                                aria-label="Edit scenario"
                                 disabled={!editable}
                                 onClick={() => setEditing(scenario)}
                               >
@@ -735,13 +638,11 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
                               </IconButton>
                             </span>
                           </Tooltip>
-                          <Tooltip
-                            arrow
-                            title={editable ? "Remove from this suite" : lockedReason}
-                          >
+                          <Tooltip arrow title={editable ? "Remove from this suite" : lockedReason}>
                             <span>
                               <IconButton
                                 size="small"
+                                aria-label="Remove from this suite"
                                 disabled={!editable || busy}
                                 onClick={() => dropOne(scenario.name)}
                               >
@@ -755,32 +656,46 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
                           </Tooltip>
                         </TableCell>
                       </TableRow>
-                      {opened === scenario.name && (
-                        <TableRow>
-                          <TableCell
-                            colSpan={COLUMNS.length}
-                            sx={{ p: 0, borderBottom: "1px solid", borderColor: "divider" }}
-                          >
-                            <ScenarioDetail scenario={scenario} persona={persona} />
-                          </TableCell>
-                        </TableRow>
-                      )}
-                      </React.Fragment>
                     );
-                  })}
-                </React.Fragment>
+              })(),
               );
+              return drawn;
             })}
           </TableBody>
         </Table>
       </TableContainer>
+
+      {jobId && (
+        <DataTablePagination
+          page={page}
+          pageSize={pageSize}
+          total={total}
+          onPageChange={setPage}
+          onPageSizeChange={(size) => {
+            setPageSize(size);
+            setPage(0);
+          }}
+        />
+      )}
+
+      {/* The suite's own properties, counted by the server over the whole filtered suite. Persona
+          and coverage are reachable one level in, as `persona.age_group` and `coverage.overlay`. */}
+      <FilterPanel
+        anchorEl={filterAnchor}
+        open={Boolean(filterAnchor)}
+        onClose={() => setFilterAnchor(null)}
+        filterFields={fields}
+        currentFilters={activeFilters ? filters : null}
+        onApply={applyFilters}
+        aiPlaceholder="e.g. 'Indian accent callers carrying an attack'"
+      />
 
       <Drawer anchor="right" open={Boolean(editing)} onClose={() => setEditing(null)}>
         <Box sx={{ width: "100vw", maxWidth: 620, height: "100%" }}>
           {editing && (
             <ScenarioEditForm
               scenario={editing}
-              editableFields={scenarioEditing?.editable_fields}
+              editableFields={editableFields}
               busy={busy}
               onCancel={() => setEditing(null)}
               onSave={saveScenario}
@@ -792,182 +707,138 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
   );
 }
 
-// Numbered rather than chipped, because sub-goals are an ordered set of things the agent has to
-// reach and a row of chips throws that order away. Three, then a count, so one scenario with nine
-// of them cannot make every other row tall.
-// The four things a voice suite is graded on: who is calling, in what accent and language, over
-// what noise, and whether the call is an attack. Each is already on the scenario; none of it was
-// on screen, so a suite looked like a list of tasks rather than a spread of conditions.
-// A row opens into what the scenario actually is: who calls, what they are told, the moves that
-// settle it, and the reference solution that proves a competent agent could pass. Every field here
-// already travels with the suite; none of it was on screen, so a row was a name and a sentence.
-function Detail({ title, children }) {
-  return (
-    <Stack spacing={0.75} sx={{ minWidth: 0 }}>
-      <Typography
-        sx={{
-          typography: "s3",
-          fontWeight: 700,
-          textTransform: "uppercase",
-          letterSpacing: 0.4,
-          color: "text.subtitle",
-        }}
-      >
-        {title}
-      </Typography>
-      {children}
-    </Stack>
+// Coverage is its own filter: two axes rather than the list's properties, which is why it has its
+// own controls and its own counts. The axis list and every cell come from the server.
+function CoverageGrid({ coverage, rowAxis, colAxis, onRowAxis, onColAxis }) {
+  const axes = coverage.axes || [];
+  const columns = coverage.columns || [];
+  const perAxis = coverage.per_axis || [];
+  const cells = new Map(
+    (coverage.cells || []).map((one) => [`${one.row}␟${one.column}`, one.count]),
   );
-}
-
-Detail.propTypes = { title: PropTypes.string, children: PropTypes.node };
-
-function Facts({ pairs }) {
-  const rows = pairs.filter(([, value]) => value !== "" && value !== null && value !== undefined);
-  if (!rows.length) {
-    return <Typography sx={{ typography: "s3", color: "text.subtitle" }}>&mdash;</Typography>;
-  }
   return (
-    <Stack spacing={0.375}>
-      {rows.map(([label, value]) => (
-        <Stack key={label} direction="row" spacing={1} sx={{ minWidth: 0 }}>
-          <Typography sx={{ typography: "s3", color: "text.subtitle", minWidth: 116, flexShrink: 0 }}>
-            {label}
-          </Typography>
-          <Typography sx={{ typography: "s3", color: "text.secondary", minWidth: 0 }}>
-            {String(value)}
-          </Typography>
-        </Stack>
-      ))}
-    </Stack>
-  );
-}
-
-Facts.propTypes = { pairs: PropTypes.array };
-
-function ScenarioDetail({ scenario, persona }) {
-  const coverage = scenario.coverage || {};
-  const solution = Array.isArray(scenario.solution) ? scenario.solution : [];
-  const noise =
-    typeof scenario.background_noise === "string"
-      ? scenario.background_noise
-      : scenario.background_noise
-        ? "present"
-        : "none";
-  return (
-    <Box sx={{ px: 2.5, py: 2, bgcolor: "background.neutral" }}>
-      <Stack
-        direction={{ xs: "column", lg: "row" }}
-        spacing={3}
-        sx={{ alignItems: "flex-start" }}
-      >
-        <Stack spacing={2} sx={{ flex: 1.2, minWidth: 0 }}>
-          <Detail title="What the caller is told">
-            <Typography sx={{ typography: "s3", color: "text.secondary", whiteSpace: "pre-wrap" }}>
-              {scenario.instruction || "\u2014"}
-            </Typography>
-          </Detail>
-          {persona.initial_message ? (
-            <Detail title="How the call opens">
-              <Typography
-                sx={{ typography: "s3", color: "text.secondary", fontStyle: "italic" }}
-              >
-                &ldquo;{persona.initial_message}&rdquo;
-              </Typography>
-            </Detail>
-          ) : null}
-          <Detail title="Passes when">
-            <Typography sx={{ typography: "s3", color: "text.secondary", whiteSpace: "pre-wrap" }}>
-              {scenario.tests || "\u2014"}
-            </Typography>
-          </Detail>
-          {solution.length ? (
-            <Detail
-              title={`Reference solution \u2014 proves it can be passed, never run against the agent (${solution.length})`}
+    <Stack spacing={1}>
+      {/* Which axis was barely varied at all. The grid says which pairing is thin; this says
+          whether an axis was used, which is the question asked first. */}
+      {perAxis.length > 0 && (
+        <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+          {perAxis.map((one) => (
+            <Tooltip
+              key={one.axis}
+              title={Object.entries(one.counts || {})
+                .map(([level, count]) => `${readable(level)} ${count}`)
+                .join("  \u00b7  ")}
             >
-              <Stack spacing={0.375}>
-                {solution.map((step, index) => (
-                  <Stack
-                    key={`${step.tool || step.name || index}-${index}`}
-                    direction="row"
-                    spacing={0.75}
-                  >
-                    <Typography
-                      sx={{
-                        typography: "s3",
-                        color: "text.subtitle",
-                        fontVariantNumeric: "tabular-nums",
-                        flexShrink: 0,
-                      }}
-                    >
-                      {index + 1}.
-                    </Typography>
-                    <Typography sx={{ typography: "s3", color: "text.secondary", minWidth: 0 }}>
-                      {step.tool || step.name || readable(String(step))}
-                    </Typography>
-                  </Stack>
-                ))}
-              </Stack>
-            </Detail>
-          ) : null}
+              <Chip
+                size="small"
+                label={`${readable(one.axis)} ${one.levels}`}
+                sx={{
+                  height: 22,
+                  typography: "s3",
+                  // One level is not variation, so it reads as a gap rather than as coverage.
+                  bgcolor: one.levels > 1 ? "action.hover" : "warning.lighter",
+                  color: one.levels > 1 ? "text.secondary" : "warning.darker",
+                }}
+              />
+            </Tooltip>
+          ))}
         </Stack>
-
-        <Stack spacing={2} sx={{ flex: 1, minWidth: 0 }}>
-          <Detail title="The simulated caller">
-            <Facts
-              pairs={[
-                ["Name", persona.name],
-                ["Age", persona.age_group],
-                ["Gender", persona.gender],
-                ["Accent", persona.accent],
-                ["Languages", (persona.languages || []).join(", ")],
-                ["Location", persona.location],
-                ["Personality", persona.personality],
-                ["Style", persona.communication_style],
-                ["Occupation", persona.occupation],
-              ]}
-            />
-          </Detail>
-          <Detail title="Conditions on the line">
-            <Facts
-              pairs={[
-                ["Background", readable(noise)],
-                ["Direction", readable(scenario.call_direction || "")],
-                ["Caller knows", readable(scenario.caller_awareness || "")],
-                ["Answered by", readable(scenario.answered_by || "")],
-                ["Voicemail", readable(scenario.voicemail_style || "")],
-                ["Turn budget", scenario.max_turns],
-              ]}
-            />
-          </Detail>
-          <Detail title="Where it sits on the grid">
-            <Facts
-              pairs={Object.entries(coverage).map(([axis, level]) => [
-                readable(axis),
-                readable(String(level)),
-              ])}
-            />
-          </Detail>
-          {scenario.folder ? (
-            <Detail title="Its folder">
-              <Typography
-                sx={{ typography: "s3", color: "text.subtitle", wordBreak: "break-all" }}
-              >
-                {scenario.folder}
-              </Typography>
-            </Detail>
-          ) : null}
-        </Stack>
+      )}
+      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+        <TextField
+          select
+          size="small"
+          label="Rows"
+          value={rowAxis}
+          onChange={(event) => onRowAxis(event.target.value)}
+          sx={{ minWidth: 170 }}
+        >
+          {axes.map((axis) => (
+            <MenuItem key={axis} value={axis}>
+              {readable(axis)}
+            </MenuItem>
+          ))}
+        </TextField>
+        <TextField
+          select
+          size="small"
+          label="Columns"
+          value={colAxis}
+          onChange={(event) => onColAxis(event.target.value)}
+          sx={{ minWidth: 170 }}
+        >
+          {axes.map((axis) => (
+            <MenuItem key={axis} value={axis}>
+              {readable(axis)}
+            </MenuItem>
+          ))}
+        </TextField>
       </Stack>
-    </Box>
+      {(coverage.rows || []).length > 0 && columns.length > 0 && (
+        <TableContainer sx={{ maxWidth: "100%", overflowX: "auto" }}>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell sx={{ typography: "s3", color: "text.subtitle" }} />
+                {columns.map((column) => (
+                  <TableCell
+                    key={column}
+                    align="center"
+                    sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "nowrap" }}
+                  >
+                    {readable(column)}
+                  </TableCell>
+                ))}
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {coverage.rows.map((row) => (
+                <TableRow key={row}>
+                  <TableCell sx={{ typography: "s3", whiteSpace: "nowrap" }}>
+                    {readable(row)}
+                  </TableCell>
+                  {columns.map((column) => {
+                    const count = cells.get(`${row}␟${column}`) || 0;
+                    return (
+                      <TableCell
+                        key={column}
+                        align="center"
+                        sx={{
+                          typography: "s3",
+                          fontVariantNumeric: "tabular-nums",
+                          // An empty cell is the point of the grid, so it is drawn as a gap rather
+                          // than as a zero competing with the counts around it.
+                          color: count ? "text.primary" : "text.disabled",
+                          bgcolor: (theme) =>
+                            count
+                              ? alpha(theme.palette.primary.main, Math.min(0.08 + count * 0.04, 0.32))
+                              : "transparent",
+                        }}
+                      >
+                        {count || "·"}
+                      </TableCell>
+                    );
+                  })}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      )}
+    </Stack>
   );
 }
 
-ScenarioDetail.propTypes = {
-  scenario: PropTypes.object,
-  persona: PropTypes.object,
+CoverageGrid.propTypes = {
+  coverage: PropTypes.object,
+  rowAxis: PropTypes.string,
+  colAxis: PropTypes.string,
+  onRowAxis: PropTypes.func,
+  onColAxis: PropTypes.func,
 };
 
+// The four things a voice suite is graded on: who is calling, in what accent and language, over
+// what noise, and whether the call is an attack.
 function Levers({ scenario, persona }) {
   const coverage = scenario.coverage || {};
   const overlay = String(coverage.overlay || "").trim();

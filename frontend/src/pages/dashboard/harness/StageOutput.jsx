@@ -12,7 +12,6 @@ import PropTypes from "prop-types";
 
 import Iconify from "src/components/iconify";
 import ScenarioSuite from "./ScenarioSuite";
-import CoverageMatrix from "./CoverageMatrix";
 
 import { displayText, readable } from "./harnessShared";
 
@@ -67,7 +66,7 @@ RawDetails.propTypes = {
 // One artifact the runner produced during a stage. `kind` is a closed set from ALK —
 // contract, environment, scenarios, simulation — and anything else falls back to raw JSON
 // rather than rendering nothing, so a new kind is visible rather than silently dropped.
-export default function StageOutput({ output, jobId, scenarios, scenarioEditing, onChanged }) {
+export default function StageOutput({ output, jobId, scenarioEditing, onChanged }) {
   const data = output.data || {};
   if (output.kind === "activity") {
     const events = Array.isArray(output.events) ? output.events : [];
@@ -238,12 +237,11 @@ export default function StageOutput({ output, jobId, scenarios, scenarioEditing,
           />
         )}
 
-        {output.kind === "coverage" && (
-          <Stack spacing={1}>
-            <CoverageMatrix scenarios={scenarios} coverage={data} />
-            <RawDetails data={data} />
-          </Stack>
-        )}
+        {/* The coverage stage output no longer draws its own grid. The suite's grid is served
+            with the suite, cross-tabulated in SQL over every scenario rather than over whatever
+            JSON reached the browser, and drawing a second one here showed the same thing twice
+            from two different sources. */}
+        {output.kind === "coverage" && <RawDetails data={data} />}
 
         {!["contract", "environment", "scenarios", "simulation", "coverage"].includes(
           output.kind,
@@ -254,7 +252,6 @@ export default function StageOutput({ output, jobId, scenarios, scenarioEditing,
 }
 
 StageOutput.propTypes = {
-  scenarios: PropTypes.arrayOf(PropTypes.object),
   // Editing a suite happens against a job, so the id is what turns a read-only list editable.
   jobId: PropTypes.string,
   scenarioEditing: PropTypes.shape({
