@@ -8,11 +8,14 @@ import { render } from "src/utils/test-utils";
 
 const getHarnessJob = vi.fn();
 const listHarnessJobs = vi.fn();
+const sendHarnessConversationMessage = vi.fn();
 
 vi.mock("src/api/harness/harness", () => ({
   getHarnessJob: (...args) => getHarnessJob(...args),
   listHarnessJobs: (...args) => listHarnessJobs(...args),
   cancelHarnessJob: vi.fn(),
+  sendHarnessConversationMessage: (...args) =>
+    sendHarnessConversationMessage(...args),
 }));
 
 vi.mock("react-router-dom", async () => {
@@ -46,6 +49,7 @@ const job = ({
   events = [],
   failure = null,
   cancelRequestedAt = null,
+  conversation = null,
 }) => ({
   job: {
     job_id: "job-1",
@@ -65,6 +69,7 @@ const job = ({
   },
   events,
   credentials: { detected_connectors: ["http", "livekit"] },
+  conversation,
 });
 
 const renderDetail = () => {
@@ -85,6 +90,7 @@ describe("HarnessDetail run checklist", () => {
     getHarnessJob.mockReset();
     listHarnessJobs.mockReset();
     listHarnessJobs.mockResolvedValue([]);
+    sendHarnessConversationMessage.mockReset();
   });
 
   it("folds finished stages away while a run is in flight", async () => {
@@ -191,4 +197,141 @@ describe("HarnessDetail run checklist", () => {
       ),
     ).toBeInTheDocument();
   });
+
+  it("renders the durable ALK conversation and sends a user message", async () => {
+    const conversation = {
+      conversation_id: "conversation-1",
+      job_id: "job-1",
+      state: "warm_idle",
+      stage: "run",
+      active_invocation_id: null,
+      blocking_input: null,
+      event_watermark: 2,
+      runtime: {
+        state: "active",
+        warm_until: null,
+        degraded: false,
+        available: true,
+      },
+      events: [
+        {
+          event_id: "tool-started-1",
+          sequence: 1,
+          kind: "tool_started",
+          stage: "understand",
+          function_call_id: "call-1",
+          payload: { tool: "request_adjustment" },
+          emitted_at: "2026-09-16T00:00:30Z",
+        },
+        {
+          event_id: "tool-result-1",
+          sequence: 2,
+          kind: "tool_result",
+          stage: "understand",
+          function_call_id: "call-1",
+          payload: { tool: "request_adjustment", text: "pending" },
+          emitted_at: "2026-09-16T00:00:31Z",
+        },
+      ],
+      messages: [
+        {
+          message_id: "assistant-1",
+          sequence: 1,
+          role: "assistant",
+          kind: "message",
+          state: "completed",
+          stage: "run",
+          content: "The last run failed on scenario 12.",
+          payload: {},
+          invocation_id: "turn-1",
+          function_call_id: null,
+          reply_to: null,
+          created_at: "2026-09-16T00:00:00Z",
+        },
+      ],
+    };
+    getHarnessJob.mockResolvedValue(
+      job({ stage: "completed", state: "completed", conversation }),
+    );
+    sendHarnessConversationMessage.mockResolvedValue({
+      ...conversation,
+      state: "responding",
+      messages: [
+        ...conversation.messages,
+        {
+          message_id: "user-1",
+          sequence: 2,
+          role: "user",
+          kind: "message",
+          state: "queued",
+          stage: "run",
+          content: "Add five payment-failure scenarios",
+          payload: {},
+          invocation_id: null,
+          function_call_id: null,
+          reply_to: null,
+          created_at: "2026-09-16T00:01:00Z",
+        },
+      ],
+    });
+    renderDetail();
+
+    expect(
+      await screen.findByText("The last run failed on scenario 12."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("ALK used Request adjustment")).toBeInTheDocument();
+    expect(screen.getByText("pending")).toBeInTheDocument();
+    const input = screen.getByPlaceholderText(
+      "Ask ALK about this environment or tell it what to change…",
+    );
+    await userEvent.type(input, "Add five payment-failure scenarios");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(sendHarnessConversationMessage).toHaveBeenCalledWith(
+      "job-1",
+      expect.objectContaining({
+        content: "Add five payment-failure scenarios",
+        kind: "user_message",
+      }),
+    );
+  });
+
+  it("routes active-run questions through the conversation API", async () => {
+    getHarnessJob.mockResolvedValue(
+      job({ stage: "generating_scenarios", conversation: null }),
+    );
+    sendHarnessConversationMessage.mockResolvedValue({
+      conversation_id: "conversation-active",
+      job_id: "job-1",
+      state: "starting",
+      stage: "understand",
+      active_invocation_id: null,
+      blocking_input: null,
+      event_watermark: 0,
+      runtime: {
+        state: "starting",
+        warm_until: null,
+        degraded: false,
+        available: true,
+      },
+      events: [],
+      messages: [],
+    });
+    renderDetail();
+
+    const input = await screen.findByPlaceholderText(
+      "Ask ALK about this environment or tell it what to change…",
+    );
+    await userEvent.type(input, "What is this agent about?");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(sendHarnessConversationMessage).toHaveBeenCalledWith(
+      "job-1",
+      expect.objectContaining({
+        content: "What is this agent about?",
+        kind: "user_message",
+      }),
+    );
+  });
+
 });

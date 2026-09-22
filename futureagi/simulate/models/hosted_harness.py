@@ -375,3 +375,222 @@ class HostedHarnessStageOutput(BaseModel):
         indexes = [
             models.Index(fields=["job", "kind"], name="idx_hstageout_job_kind"),
         ]
+
+
+class HostedHarnessConversation(BaseModel):
+    class State(models.TextChoices):
+        COLD = "cold", "Cold"
+        STARTING = "starting", "Starting"
+        HYDRATING = "hydrating", "Hydrating"
+        WARM_IDLE = "warm_idle", "Warm idle"
+        RESPONDING = "responding", "Responding"
+        WAITING_FOR_USER = "waiting_for_user", "Waiting for user"
+        DEGRADED = "degraded", "Degraded"
+        RETIRED = "retired", "Retired"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job = models.OneToOneField(
+        HostedHarnessJob,
+        on_delete=models.CASCADE,
+        related_name="conversation",
+    )
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name="hosted_harness_conversations",
+    )
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="hosted_harness_conversations",
+        null=True,
+        blank=True,
+    )
+    state = models.CharField(max_length=32, choices=State.choices, default=State.COLD)
+    current_stage = models.CharField(max_length=32, default="reception")
+    next_message_sequence = models.PositiveBigIntegerField(default=1)
+    next_event_sequence = models.PositiveBigIntegerField(default=1)
+    command_acked_through = models.PositiveBigIntegerField(default=0)
+    event_acked_through = models.PositiveBigIntegerField(default=0)
+    active_invocation_id = models.CharField(max_length=255, null=True, blank=True)
+    blocking_input = models.JSONField(null=True, blank=True)
+    policy_hash = models.CharField(max_length=64, default="")
+    latest_workspace_digest = models.CharField(max_length=71, null=True, blank=True)
+    latest_scenario_count = models.PositiveIntegerField(null=True, blank=True)
+    latest_workspace_object_key = models.CharField(
+        max_length=1024, null=True, blank=True
+    )
+    last_activity_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "simulate_hosted_harness_conversation"
+        indexes = [
+            models.Index(fields=["organization", "state"], name="idx_hconv_org_state"),
+            models.Index(
+                fields=["state", "last_activity_at"], name="idx_hconv_state_seen"
+            ),
+        ]
+
+
+class HostedHarnessConversationMessage(BaseModel):
+    class Role(models.TextChoices):
+        USER = "user", "User"
+        ASSISTANT = "assistant", "Assistant"
+        SYSTEM = "system", "System"
+
+    class Kind(models.TextChoices):
+        MESSAGE = "message", "Message"
+        QUESTION = "question", "Question"
+        CONFIRMATION = "confirmation", "Confirmation"
+        STATUS = "status", "Status"
+
+    class State(models.TextChoices):
+        QUEUED = "queued", "Queued"
+        DELIVERED = "delivered", "Delivered"
+        STREAMING = "streaming", "Streaming"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    conversation = models.ForeignKey(
+        HostedHarnessConversation,
+        on_delete=models.CASCADE,
+        related_name="messages",
+    )
+    client_request_id = models.CharField(max_length=128, null=True, blank=True)
+    sequence = models.PositiveBigIntegerField()
+    role = models.CharField(max_length=16, choices=Role.choices)
+    kind = models.CharField(max_length=24, choices=Kind.choices, default=Kind.MESSAGE)
+    state = models.CharField(max_length=16, choices=State.choices, default=State.QUEUED)
+    stage = models.CharField(max_length=32, default="")
+    content = models.TextField(default="")
+    payload = models.JSONField(default=dict)
+    invocation_id = models.CharField(max_length=255, null=True, blank=True)
+    function_call_id = models.CharField(max_length=255, null=True, blank=True)
+    reply_to = models.UUIDField(null=True, blank=True)
+
+    class Meta:
+        db_table = "simulate_hosted_harness_conversation_message"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["conversation", "sequence"],
+                name="uniq_hconv_message_sequence",
+            ),
+            models.UniqueConstraint(
+                fields=["conversation", "client_request_id"],
+                condition=models.Q(client_request_id__isnull=False),
+                name="uniq_hconv_client_request",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["conversation", "sequence"], name="idx_hconv_msg_sequence"
+            ),
+            models.Index(fields=["conversation", "state"], name="idx_hconv_msg_state"),
+        ]
+
+
+class HostedHarnessConversationEvent(BaseModel):
+    event_id = models.CharField(primary_key=True, max_length=128)
+    conversation = models.ForeignKey(
+        HostedHarnessConversation,
+        on_delete=models.CASCADE,
+        related_name="events",
+    )
+    sequence = models.PositiveBigIntegerField()
+    kind = models.CharField(max_length=64)
+    message_id = models.UUIDField(null=True, blank=True)
+    stage = models.CharField(max_length=32, default="")
+    invocation_id = models.CharField(max_length=255, null=True, blank=True)
+    function_call_id = models.CharField(max_length=255, null=True, blank=True)
+    payload = models.JSONField(default=dict)
+    digest = models.CharField(max_length=71)
+    emitted_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "simulate_hosted_harness_conversation_event"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["conversation", "sequence"],
+                name="uniq_hconv_event_sequence",
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=["conversation", "sequence"], name="idx_hconv_evt_sequence"
+            )
+        ]
+
+
+class HostedHarnessConversationTranscript(BaseModel):
+    conversation = models.ForeignKey(
+        HostedHarnessConversation,
+        on_delete=models.CASCADE,
+        related_name="provider_transcripts",
+    )
+    project_key = models.CharField(max_length=255)
+    provider_session_id = models.CharField(max_length=255)
+    subpath = models.CharField(max_length=512, default="")
+    entries = models.JSONField(default=list)
+
+    class Meta:
+        db_table = "simulate_hosted_harness_conversation_transcript"
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    "conversation",
+                    "project_key",
+                    "provider_session_id",
+                    "subpath",
+                ],
+                name="uniq_hconv_transcript_key",
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=["conversation", "provider_session_id"],
+                name="idx_hconv_transcript_session",
+            )
+        ]
+
+
+class HostedHarnessConversationLease(BaseModel):
+    class State(models.TextChoices):
+        STARTING = "starting", "Starting"
+        ACTIVE = "active", "Active"
+        DRAINING = "draining", "Draining"
+        EXPIRED = "expired", "Expired"
+        RELEASED = "released", "Released"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    conversation = models.OneToOneField(
+        HostedHarnessConversation,
+        on_delete=models.CASCADE,
+        related_name="lease",
+    )
+    attempt = models.ForeignKey(
+        HostedHarnessAttempt,
+        on_delete=models.SET_NULL,
+        related_name="conversation_leases",
+        null=True,
+        blank=True,
+    )
+    control_only = models.BooleanField(default=False)
+    provider_ref = models.CharField(max_length=255)
+    state = models.CharField(
+        max_length=16, choices=State.choices, default=State.STARTING
+    )
+    token_hash = models.CharField(max_length=64)
+    fence_hash = models.CharField(max_length=64)
+    expires_at = models.DateTimeField()
+    heartbeat_at = models.DateTimeField(null=True, blank=True)
+    command_watermark = models.PositiveBigIntegerField(default=0)
+    event_watermark = models.PositiveBigIntegerField(default=0)
+    snapshot_name = models.CharField(max_length=255, default="")
+    snapshot_digest = models.CharField(max_length=71, default="")
+
+    class Meta:
+        db_table = "simulate_hosted_harness_conversation_lease"
+        indexes = [
+            models.Index(fields=["state", "expires_at"], name="idx_hconv_lease_exp")
+        ]

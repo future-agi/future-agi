@@ -14,6 +14,7 @@ import Iconify from "src/components/iconify";
 import ScenarioSuite from "./ScenarioSuite";
 import CoverageMatrix from "./CoverageMatrix";
 
+import { displayText, readable } from "./harnessShared";
 
 function RawDetails({ data }) {
   return (
@@ -68,6 +69,53 @@ RawDetails.propTypes = {
 // rather than rendering nothing, so a new kind is visible rather than silently dropped.
 export default function StageOutput({ output, jobId, scenarios, scenarioEditing, onChanged }) {
   const data = output.data || {};
+  if (output.kind === "activity") {
+    const events = Array.isArray(output.events) ? output.events : [];
+    return (
+      <Accordion
+        variant="outlined"
+        defaultExpanded
+        disableGutters
+        sx={{
+          bgcolor: "background.default",
+          "&.Mui-expanded": { bgcolor: "background.default" },
+        }}
+      >
+        <AccordionSummary
+          expandIcon={<Iconify icon="eva:arrow-ios-downward-fill" width={18} />}
+        >
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="subtitle2">Authoring activity</Typography>
+            <Typography variant="caption" color="text.secondary">
+              {events.length} observable events
+            </Typography>
+          </Box>
+        </AccordionSummary>
+        <AccordionDetails>
+          <Stack spacing={0.75}>
+            {events.slice(-80).map((event, index) => {
+              const payload = event.payload || {};
+              const text =
+                displayText(payload.text) ||
+                (payload.tool
+                  ? `${readable(displayText(payload.event_kind || "tool"))} · ${readable(displayText(payload.tool))}`
+                  : readable(displayText(event.event_type || "Authoring activity")));
+              return (
+                <Typography
+                  key={event.event_id || `${event.sequence || "event"}-${index}`}
+                  variant="body2"
+                  sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
+                >
+                  {text}
+                </Typography>
+              );
+            })}
+            <RawDetails data={events} />
+          </Stack>
+        </AccordionDetails>
+      </Accordion>
+    );
+  }
   return (
     <Accordion
       variant="outlined"
@@ -216,8 +264,9 @@ StageOutput.propTypes = {
   onChanged: PropTypes.func,
   output: PropTypes.shape({
     data: PropTypes.oneOfType([PropTypes.object, PropTypes.array]),
+    events: PropTypes.arrayOf(PropTypes.object),
     kind: PropTypes.string.isRequired,
     summary: PropTypes.string,
-    title: PropTypes.string.isRequired,
+    title: PropTypes.string,
   }).isRequired,
 };

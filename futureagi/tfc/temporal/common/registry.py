@@ -298,6 +298,7 @@ def _ensure_workflows_registered() -> None:
 
     # Register drop-in TaskRunnerWorkflow for all queues
     try:
+        from simulate.temporal.constants import QUEUE_RUNNER
         from tfc.temporal.drop_in import TaskRunnerWorkflow
         from tfc.temporal.property_catalog_queue import PROPERTY_CATALOG_TASK_QUEUE
 
@@ -311,6 +312,7 @@ def _ensure_workflows_registered() -> None:
                 PROPERTY_CATALOG_TASK_QUEUE,
                 "trace_ingestion",
                 "agent_compass",
+                QUEUE_RUNNER,
             ],
             workflows=[TaskRunnerWorkflow],
         )
@@ -600,6 +602,7 @@ def _ensure_activities_registered() -> None:
         # the production single-slot admission boundary. Keep only tasks_xl as
         # the explicit compatibility route for deployments not yet running the
         # dedicated worker.
+        from simulate.temporal.constants import QUEUE_RUNNER
         from tfc.temporal.drop_in.decorator import get_temporal_activities
         from tfc.temporal.property_catalog_queue import PROPERTY_CATALOG_TASK_QUEUE
 
@@ -610,9 +613,11 @@ def _ensure_activities_registered() -> None:
         property_catalog_activities = get_temporal_activities(
             queue=PROPERTY_CATALOG_TASK_QUEUE
         )
+        runner_activities = get_temporal_activities(queue=QUEUE_RUNNER)
         dedicated_activities = {
             *exact_aggregation_activities,
             *property_catalog_activities,
+            *runner_activities,
         }
         generic_drop_in_activities = [
             registered_activity
@@ -623,6 +628,7 @@ def _ensure_activities_registered() -> None:
             registered_activity
             for registered_activity in drop_in_activities
             if registered_activity not in property_catalog_activities
+            and registered_activity not in runner_activities
         ]
         log.info("registering_dropin_activities", count=len(drop_in_activities))
 
@@ -654,6 +660,10 @@ def _ensure_activities_registered() -> None:
         register_for_queues(
             queues=[PROPERTY_CATALOG_TASK_QUEUE],
             activities=property_catalog_activities,
+        )
+        register_for_queues(
+            queues=[QUEUE_RUNNER],
+            activities=runner_activities,
         )
     except Exception as e:
         log.exception("could_not_load_dropin_activities", error=str(e))

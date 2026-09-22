@@ -5,6 +5,9 @@ from typing import Any
 
 from django.conf import settings
 from rest_framework import serializers
+from simulate.serializers.hosted_harness_conversation import (
+    HarnessConversationReadSerializer,
+)
 
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 
@@ -570,8 +573,6 @@ class HarnessPreflightSerializer(HarnessJobCreateSerializer):
         write_only=True,
         help_text="Target-provider values to verify live; used for this check only.",
     )
-
-
 class HarnessJobAdjustmentSerializer(serializers.Serializer):
     instruction = serializers.CharField(
         min_length=1,
@@ -582,6 +583,7 @@ class HarnessJobAdjustmentSerializer(serializers.Serializer):
     client_request_id = serializers.CharField(
         max_length=128, required=False, allow_blank=False
     )
+
 
 
 class HarnessJobExtendSerializer(serializers.Serializer):
@@ -767,3 +769,4 @@ class HarnessJobReadSerializer(serializers.Serializer):
     platform = HarnessPlatformSerializer()
     runtime = HarnessRuntimeReadSerializer(required=False)
     parallelism = HarnessParallelismSerializer(required=False)
+    conversation = HarnessConversationReadSerializer(allow_null=True, required=False)

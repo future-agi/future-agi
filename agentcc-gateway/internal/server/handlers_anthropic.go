@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/futureagi/agentcc-gateway/internal/anthropicfmt"
 	"github.com/futureagi/agentcc-gateway/internal/models"
@@ -181,6 +182,13 @@ func (h *Handlers) AnthropicMessages(w http.ResponseWriter, r *http.Request) {
 
 	// Fast path: provider natively speaks Anthropic.
 	if ap, ok := provider.(providers.AnthropicNativeProvider); ok {
+		if rc.Metadata["model_alias"] != "" {
+			body, err = rewriteAnthropicRequestModel(body, rc.Model)
+			if err != nil {
+				anthropicfmt.WriteError(w, http.StatusBadRequest, "invalid_request_error", "Invalid JSON: "+err.Error())
+				return
+			}
+		}
 		// rc.Request is deliberately left nil, as it is on the genai path.
 		// A carrier with empty Messages would hash to the same cache key for
 		// every prompt (BuildCacheKey marshals Messages), and the response
@@ -312,6 +320,13 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 
 	// Fast path: native Anthropic provider supports count_tokens.
 	if ap, ok := provider.(providers.AnthropicNativeProvider); ok {
+		if rc.Metadata["model_alias"] != "" {
+			body, err = rewriteAnthropicRequestModel(body, rc.Model)
+			if err != nil {
+				anthropicfmt.WriteError(w, http.StatusBadRequest, "invalid_request_error", "Invalid JSON: "+err.Error())
+				return
+			}
+		}
 		anthropicHeaders := make(map[string]string)
 		for _, key := range []string{"anthropic-version", "anthropic-beta", "anthropic-dangerous-direct-browser-access"} {
 			if v := r.Header.Get(key); v != "" {
@@ -336,6 +351,21 @@ func (h *Handlers) AnthropicCountTokens(w http.ResponseWriter, r *http.Request) 
 	anthropicfmt.WriteError(w, http.StatusNotImplemented, "not_supported_error",
 		fmt.Sprintf("count_tokens is not supported for provider %q (api_format is not anthropic). "+
 			"Use /v1/messages — token counts are in the response usage block.", rc.Provider))
+}
+
+// rewriteAnthropicRequestModel changes only the routed model while preserving
+// all other native Anthropic request fields for upstream pass-through.
+func rewriteAnthropicRequestModel(body []byte, model string) ([]byte, error) {
+	var request map[string]json.RawMessage
+	if err := json.Unmarshal(body, &request); err != nil {
+		return nil, err
+	}
+	encodedModel, err := json.Marshal(model)
+	if err != nil {
+		return nil, err
+	}
+	request["model"] = encodedModel
+	return json.Marshal(request)
 }
 
 // ─── Native pass-through helpers (unchanged from original) ───────────────────
@@ -694,12 +724,35 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 
 	var rawChunkCh <-chan models.StreamChunk
 	var errCh <-chan error
+	var firstChunk *models.StreamChunk
 
 	// Pre-plugins run before the upstream stream opens; post-plugins wait for
 	// the final chunk, which is where usage arrives.
 	if err := h.engine.Process(ctx, rc, func(ctx context.Context, rc *models.RequestContext) error {
-		rawChunkCh, errCh = provider.StreamChatCompletion(streamCtx, canonicalReq)
-		return nil
+		// Do not commit a 200/SSE response until the upstream has actually
+		// produced a chunk. Vertex can terminate before its first chunk (for
+		// example, an unexpected EOF), which must remain a retryable HTTP error.
+		for attempt := 0; attempt < 2; attempt++ {
+			rawChunkCh, errCh = provider.StreamChatCompletion(streamCtx, canonicalReq)
+			if rawChunkCh == nil {
+				return models.ErrUpstreamProvider(http.StatusBadGateway, "upstream provider returned no stream")
+			}
+			chunk, err := waitForFirstStreamChunk(streamCtx, rawChunkCh, errCh)
+			if err == nil {
+				firstChunk = chunk
+				return nil
+			}
+			var apiErr *models.APIError
+			if attempt == 1 || !errors.As(err, &apiErr) || (apiErr.Status != http.StatusBadGateway && apiErr.Status != http.StatusGatewayTimeout) {
+				return err
+			}
+			select {
+			case <-streamCtx.Done():
+				return streamCtx.Err()
+			case <-time.After(250 * time.Millisecond):
+			}
+		}
+		return models.ErrInternal("upstream stream did not start")
 	}); err != nil {
 		writeAnthropicErrorFromError(w, err)
 		return
@@ -711,14 +764,40 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 		h.writeAnthropicShortCircuit(w, rc)
 		return
 	}
-	if rawChunkCh == nil {
+	if rawChunkCh == nil || firstChunk == nil {
 		writeAnthropicErrorFromError(w, models.ErrInternal("no stream from provider"))
 		return
 	}
+	// Reinsert the already-observed first chunk for the usage tee and
+	// Anthropic translator. Stop forwarding promptly if the client leaves.
+	startedChunks := make(chan models.StreamChunk)
+	go func() {
+		defer close(startedChunks)
+		select {
+		case startedChunks <- *firstChunk:
+		case <-streamCtx.Done():
+			return
+		}
+		for {
+			select {
+			case chunk, ok := <-rawChunkCh:
+				if !ok {
+					return
+				}
+				select {
+				case startedChunks <- chunk:
+				case <-streamCtx.Done():
+					return
+				}
+			case <-streamCtx.Done():
+				return
+			}
+		}
+	}()
 
 	// Tee for usage: the counts are already structured here, unlike in the
 	// translated SSE bytes.
-	chunkCh, usageCh := teeStreamUsage(streamCtx, rawChunkCh)
+	chunkCh, usageCh := teeStreamUsage(streamCtx, startedChunks)
 	if alias := rc.Metadata["model_alias"]; alias != "" {
 		chunkCh = rewriteStreamModel(streamCtx, chunkCh, alias)
 	}
@@ -777,7 +856,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 			if !ok {
 				// Event channel closed — translator is done.
 				eventCh = nil
-				continue
+				break
 			}
 			if _, writeErr := w.Write(event); writeErr != nil {
 				slog.Warn("error writing translated anthropic stream", "request_id", rc.RequestID, "error", writeErr)
@@ -802,7 +881,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 				// without this guard the handler would exit before draining
 				// them).
 				translatorErrCh = nil
-				continue
+				break
 			}
 			if err != nil {
 				slog.Warn("translator stream error", "request_id", rc.RequestID, "error", err)
@@ -814,7 +893,7 @@ func (h *Handlers) handleAnthropicStreamViaCanonical(
 		case err, ok := <-errCh:
 			if !ok {
 				errCh = nil
-				continue
+				break
 			}
 			if err != nil {
 				slog.Warn("provider stream error", "request_id", rc.RequestID, "error", err)
