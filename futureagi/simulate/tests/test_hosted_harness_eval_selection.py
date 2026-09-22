@@ -219,7 +219,6 @@ def test_selecting_another_tenants_template_is_refused(organization, workspace):
     """Multi-tenancy: an invisible name must not resolve to that tenant's template and must not
     be silently dropped either."""
     from accounts.models import Organization
-
     from simulate.services.alk_simulate_ingestion import provision_alk_sim_run_test
 
     other = Organization.objects.create(name="other-tenant-selection")
@@ -261,8 +260,13 @@ def test_selection_is_capped_and_idempotent(organization, workspace):
     with gate:
         first = create_selected_eval_configs(run_test, names, "voice")
         assert len(first) == MOST_SELECTED_EVALS
+        assert all(config.error_localizer for config in first)
+        # Defaults apply at creation; reprovisioning must preserve an opt-out.
+        first[0].error_localizer = False
+        first[0].save(update_fields=["error_localizer"])
         again = create_selected_eval_configs(run_test, names, "voice")
         assert {config.id for config in again} == {config.id for config in first}
+        assert next(config for config in again if config.id == first[0].id).error_localizer is False
     assert (
         SimulateEvalConfig.objects.filter(run_test=run_test).count()
         == MOST_SELECTED_EVALS
@@ -288,7 +292,8 @@ def test_only_mapped_configs_are_runnable(organization, workspace):
         modality="voice",
     )
     create_selected_eval_configs(run_test, [selected.name], "voice")
-    _get_or_create_harness_eval_config(run_test, column, "booking_created")
+    column_config = _get_or_create_harness_eval_config(run_test, column, "booking_created")
+    assert column_config.error_localizer is True
 
     runnable = runnable_eval_config_ids(run_test.id)
     assert len(runnable) == 1

@@ -1703,6 +1703,7 @@ def _get_or_create_harness_eval_config(
             "run_test": run_test,
             "filters": {},
             "model": template.model,
+            "error_localizer": True,
         },
     )
     return config
