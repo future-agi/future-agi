@@ -216,7 +216,15 @@ export default function ErrorFeedDetailView() {
                 typography="m3"
                 fontWeight="fontWeightSemiBold"
                 color="text.primary"
-                sx={{ lineHeight: 1.35 }}
+                title={currentError.error.name}
+                sx={{
+                  lineHeight: 1.35,
+                  overflow: "hidden",
+                  display: "-webkit-box",
+                  WebkitBoxOrient: "vertical",
+                  WebkitLineClamp: 2,
+                  overflowWrap: "anywhere",
+                }}
               >
                 {currentError.error.name}
               </Typography>
