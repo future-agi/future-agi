@@ -136,6 +136,35 @@ class HarnessAgentSerializer(serializers.Serializer):
         mode = attrs.get("mode")
         config = attrs.get("config") or {}
         provider_connector = "retell" if connector == "retell_chat" else connector
+        if "phone_number" in config and connector != "phone":
+            if connector not in {"vapi", "retell"} or mode != "connect_only":
+                raise serializers.ValidationError(
+                    {
+                        "config": "phone_number is supported only for connect-only Vapi or Retell voice agents"
+                    }
+                )
+            if not _E164_PHONE.fullmatch(str(config.get("phone_number") or "").strip()):
+                raise serializers.ValidationError(
+                    {"config": "phone_number must be in E.164 format"}
+                )
+            if any(
+                str(name).lower().startswith(("sip_", "livekit_")) for name in config
+            ):
+                raise serializers.ValidationError(
+                    {"config": "phone dialer and LiveKit settings are platform-owned"}
+                )
+            target_key = "assistant_id" if connector == "vapi" else "agent_id"
+            key_alias = "VAPI_API_KEY" if connector == "vapi" else "RETELL_API_KEY"
+            has_id = bool(str(config.get(target_key) or "").strip())
+            has_key = bool((attrs.get("secret_refs") or {}).get(key_alias))
+            if has_id != has_key:
+                raise serializers.ValidationError(
+                    {
+                        "config": "Supply both provider API key and agent ID, or neither and paste the system prompt"
+                    }
+                )
+            if not has_id:
+                attrs["connector"] = connector = provider_connector = "phone"
         if mode and provider_connector not in {"vapi", "retell", "phone"}:
             raise serializers.ValidationError(
                 {"mode": "provider mode is supported only for Vapi, Retell, and phone"}
@@ -156,12 +185,16 @@ class HarnessAgentSerializer(serializers.Serializer):
                 )
             if not _E164_PHONE.fullmatch(str(config.get("phone_number") or "").strip()):
                 raise serializers.ValidationError(
-                    {"config": "phone_number must be in E.164 format, e.g. +14155551234"}
+                    {
+                        "config": "phone_number must be in E.164 format, e.g. +14155551234"
+                    }
                 )
             prompt = str(config.get("target_system_prompt") or "").strip()
             if not prompt or len(prompt) > 65536:
                 raise serializers.ValidationError(
-                    {"config": "target_system_prompt is required (maximum 65536 characters)"}
+                    {
+                        "config": "target_system_prompt is required (maximum 65536 characters)"
+                    }
                 )
             return attrs
         if mode == "connect_only":
@@ -317,7 +350,7 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             ):
                 raise serializers.ValidationError(
                     {
-                    "source": "required unless a hosted agent ID or phone number is connected"
+                        "source": "required unless a hosted agent ID or phone number is connected"
                     }
                 )
             attrs["source"] = {"kind": "provider", "visibility": "public"}

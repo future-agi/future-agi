@@ -219,6 +219,12 @@ export default function HarnessCreate() {
   const [providerMode, setProviderMode] = useState("environment_backed");
   const [providerTargetId, setProviderTargetId] = useState("");
   const [phoneSystemPrompt, setPhoneSystemPrompt] = useState("");
+  const [providerCallTransport, setProviderCallTransport] = useState("web");
+  const [providerPhoneNumber, setProviderPhoneNumber] = useState("");
+  const providerUsesPhone =
+    ["vapi", "retell"].includes(connector) &&
+    providerMode === "connect_only" &&
+    providerCallTransport === "phone";
   const [providerDynamicVariables, setProviderDynamicVariables] = useState("");
   const [scenarioCount, setScenarioCount] = useState(10);
   // Per call, not per run. See callLimitConfig above.
@@ -357,6 +363,12 @@ export default function HarnessCreate() {
         ...partitionConfigurationValues(configurationValues)
           .configurationValues,
         ...callLimitConfig(callTimeoutSeconds),
+        ...(providerUsesPhone
+          ? { phone_number: providerPhoneNumber.trim() }
+          : {}),
+        ...(providerUsesPhone && !providerTargetId.trim()
+          ? { target_system_prompt: phoneSystemPrompt.trim() }
+          : {}),
         ...(connector === "vapi" && providerMode === "connect_only"
           ? { assistant_id: providerTargetId.trim() }
           : {}),
@@ -609,14 +621,22 @@ export default function HarnessCreate() {
   );
   const providerApiKeyName = providerCredentialName(connector);
   const providerApiKeyConfigured =
+    (providerUsesPhone && !providerTargetId.trim()) ||
     !providerApiKeyName ||
     Boolean(String(providerCredentialValues[providerApiKeyName] || "").trim());
   const providerTargetConfigured =
     !["connect_only", "provider_import"].includes(providerMode) ||
+    (providerUsesPhone &&
+      !providerTargetId.trim() &&
+      !String(providerCredentialValues[providerApiKeyName] || "").trim() &&
+      Boolean(phoneSystemPrompt.trim())) ||
     (Boolean(providerTargetId.trim()) &&
       (connector !== "phone" || Boolean(phoneSystemPrompt.trim())));
   const providerConnectionReady =
-    providerApiKeyConfigured && providerTargetConfigured;
+    providerApiKeyConfigured &&
+    providerTargetConfigured &&
+    (!providerUsesPhone ||
+      /^\+[1-9]\d{1,14}$/.test(providerPhoneNumber.trim()));
   const toggleSecret = (name) =>
     setRevealedSecrets((current) => {
       const next = new Set(current);
@@ -785,7 +805,8 @@ export default function HarnessCreate() {
   const hasConnectedProviderSource =
     ["vapi", "retell", "retell_chat", "phone"].includes(connector) &&
     ["connect_only", "provider_import"].includes(providerMode) &&
-    Boolean(providerTargetId.trim()) &&
+    (Boolean(providerTargetId.trim()) ||
+      (providerUsesPhone && Boolean(phoneSystemPrompt.trim()))) &&
     (connector !== "phone" || Boolean(phoneSystemPrompt.trim()));
   const hasSource = hasUploadedOrRepositorySource || hasConnectedProviderSource;
 
@@ -1369,6 +1390,8 @@ export default function HarnessCreate() {
                     onChange={(event) => {
                       setConnector(event.target.value);
                       setProviderTargetId("");
+                      setProviderCallTransport("web");
+                      setProviderPhoneNumber("");
                       if (
                         ["retell_chat", "phone"].includes(event.target.value)
                       ) {
@@ -1428,7 +1451,7 @@ export default function HarnessCreate() {
                           title={
                             connector === "phone"
                               ? "Call existing number"
-                              : "Use existing agent ID"
+                              : "Use existing agent"
                           }
                           description={
                             connector === "phone"
@@ -1446,6 +1469,42 @@ export default function HarnessCreate() {
                         providerMode,
                       ) ? (
                         <Stack spacing={1.5}>
+                          {["vapi", "retell"].includes(connector) &&
+                            providerMode === "connect_only" && (
+                              <>
+                                <TextField
+                                  select
+                                  size="small"
+                                  label="Call connection"
+                                  value={providerCallTransport}
+                                  onChange={(event) => {
+                                    setProviderCallTransport(
+                                      event.target.value,
+                                    );
+                                    setPreflightDirty(Boolean(preflight));
+                                  }}
+                                >
+                                  <MenuItem value="web">Web call</MenuItem>
+                                  <MenuItem value="phone">
+                                    Phone call (telephony)
+                                  </MenuItem>
+                                </TextField>
+                                {providerUsesPhone && (
+                                  <TextField
+                                    size="small"
+                                    label="Agent phone number (E.164)"
+                                    value={providerPhoneNumber}
+                                    onChange={(event) => {
+                                      setProviderPhoneNumber(
+                                        event.target.value,
+                                      );
+                                      setPreflightDirty(Boolean(preflight));
+                                    }}
+                                    helperText="Calls the existing agent number using platform telephony. No cloning or rewiring; existing tools keep their endpoints. Only test numbers you are authorized to call."
+                                  />
+                                )}
+                              </>
+                            )}
                           {providerApiKeyName && (
                             <TextField
                               fullWidth
@@ -1467,7 +1526,11 @@ export default function HarnessCreate() {
                                 }));
                                 setPreflightDirty(Boolean(preflight));
                               }}
-                              helperText="Used to inspect and connect to this provider agent. Stored as a run-scoped secret; never written to the job or artifacts."
+                              helperText={
+                                providerUsesPhone
+                                  ? "Optional: provide this key and the agent ID to fetch its definition. Otherwise leave both empty and paste the system prompt. Stored as a run-scoped secret."
+                                  : "Used to inspect and connect to this provider agent. Stored as a run-scoped secret; never written to the job or artifacts."
+                              }
                               InputProps={{
                                 endAdornment: (
                                   <InputAdornment position="end">
@@ -1514,12 +1577,16 @@ export default function HarnessCreate() {
                             helperText={
                               connector === "phone"
                                 ? "The platform dials this number using its configured outbound SIP trunk. Use a number you control or are authorized to test."
-                                : providerMode === "provider_import"
-                                  ? "ALK clones this target, rewires imported HTTP tools to the isolated environment, and cleans up the clone. Upload source code only when the provider definition lacks required environment or tool information."
-                                  : "ALK connects to this existing provider agent without cloning it. Source-code upload is optional."
+                                : providerUsesPhone
+                                  ? "Optional with the API key above. The phone number must reach this agent; its existing tools are not changed."
+                                  : providerMode === "provider_import"
+                                    ? "ALK clones this target, rewires imported HTTP tools to the isolated environment, and cleans up the clone. Upload source code only when the provider definition lacks required environment or tool information."
+                                    : "ALK connects to this existing provider agent without cloning it. Source-code upload is optional."
                             }
                           />
-                          {connector === "phone" && (
+                          {(connector === "phone" ||
+                            (providerUsesPhone &&
+                              !providerTargetId.trim())) && (
                             <>
                               <TextField
                                 size="small"

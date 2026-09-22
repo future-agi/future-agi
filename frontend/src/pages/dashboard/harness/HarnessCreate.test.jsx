@@ -158,52 +158,70 @@ describe("the call limit field on the page", () => {
 });
 
 describe("phone-only agent connection", () => {
-  it("submits a number and prompt without a source upload or provider key", async () => {
-    createHarnessJob.mockReset();
-    preflightHarnessJob.mockReset();
-    createHarnessJob.mockResolvedValue({ job: { job_id: "job-phone" } });
-    preflightHarnessJob.mockResolvedValue({ ready_to_submit: true });
-    render(
-      <HelmetProvider>
-        <QueryClientProvider
-          client={
-            new QueryClient({ defaultOptions: { queries: { retry: false } } })
-          }
-        >
-          <HarnessCreate />
-        </QueryClientProvider>
-      </HelmetProvider>,
-    );
+  it.each(["phone", "vapi", "retell"])(
+    "submits %s telephony with a prompt and no provider key",
+    async (connector) => {
+      createHarnessJob.mockReset();
+      preflightHarnessJob.mockReset();
+      createHarnessJob.mockResolvedValue({ job: { job_id: "job-phone" } });
+      preflightHarnessJob.mockResolvedValue({ ready_to_submit: true });
+      render(
+        <HelmetProvider>
+          <QueryClientProvider
+            client={
+              new QueryClient({ defaultOptions: { queries: { retry: false } } })
+            }
+          >
+            <HarnessCreate />
+          </QueryClientProvider>
+        </HelmetProvider>,
+      );
 
-    await userEvent.click(screen.getByLabelText(/Agent platform/i));
-    await userEvent.click(
-      screen.getByRole("option", { name: /Others \(phone number\)/i }),
-    );
-    await userEvent.type(
-      screen.getByLabelText(/Agent phone number/i),
-      "+14155551234",
-    );
-    await userEvent.type(
-      screen.getByLabelText(/Agent system prompt/i),
-      "You book appointments.",
-    );
-    expect(
-      screen.queryByLabelText(/RETELL_API_KEY|VAPI_API_KEY/),
-    ).not.toBeInTheDocument();
-    await userEvent.click(
-      screen.getByRole("button", { name: /Run end to end/i }),
-    );
+      await userEvent.click(screen.getByLabelText(/Agent platform/i));
+      await userEvent.click(
+        screen.getByRole("option", {
+          name:
+            connector === "phone"
+              ? /Others \(phone number\)/i
+              : connector === "vapi"
+                ? /^Vapi$/i
+                : /^Retell$/i,
+        }),
+      );
+      if (connector !== "phone") {
+        await userEvent.click(screen.getByText("Use existing agent"));
+        await userEvent.click(screen.getByLabelText(/Call connection/i));
+        await userEvent.click(
+          screen.getByRole("option", { name: /Phone call \(telephony\)/i }),
+        );
+      }
+      await userEvent.type(
+        screen.getByLabelText(/Agent phone number/i),
+        "+14155551234",
+      );
+      await userEvent.type(
+        screen.getByLabelText(/Agent system prompt/i),
+        "You book appointments.",
+      );
+      if (connector === "phone")
+        expect(
+          screen.queryByLabelText(/RETELL_API_KEY|VAPI_API_KEY/),
+        ).not.toBeInTheDocument();
+      await userEvent.click(
+        screen.getByRole("button", { name: /Run end to end/i }),
+      );
 
-    await vi.waitFor(() => expect(createHarnessJob).toHaveBeenCalled());
-    const payload = createHarnessJob.mock.calls[0][0];
-    expect(payload.source).toBeUndefined();
-    expect(payload.agent).toMatchObject({
-      connector: "phone",
-      mode: "connect_only",
-      config: {
-        phone_number: "+14155551234",
-        target_system_prompt: "You book appointments.",
-      },
-    });
-  });
+      await vi.waitFor(() => expect(createHarnessJob).toHaveBeenCalled());
+      const payload = createHarnessJob.mock.calls[0][0];
+      expect(payload.source).toBeUndefined();
+      expect(payload.agent).toMatchObject({
+        connector,
+        mode: "connect_only",
+        config: {
+          phone_number: "+14155551234",
+          target_system_prompt: "You book appointments.",
+        },
+      });
+    },
+  );
 });

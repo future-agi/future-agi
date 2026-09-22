@@ -32,7 +32,12 @@ _E164_PHONE = re.compile(r"^\+[1-9]\d{1,14}$")
 
 def _validate_phone_connectivity(payload) -> None:
     """A phone-only target uses platform telephony, never customer SIP credentials."""
-    if payload["agent"]["connector"] != "phone":
+    agent = payload["agent"]
+    if agent["connector"] != "phone" and not (
+        agent["connector"] in {"vapi", "retell"}
+        and agent.get("mode") == "connect_only"
+        and (agent.get("config") or {}).get("phone_number")
+    ):
         return
     from simulate.services.phone_telephony import platform_phone_telephony
 
