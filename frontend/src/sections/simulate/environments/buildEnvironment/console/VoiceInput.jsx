@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { keyframes } from "@mui/system";
 import { alpha } from "@mui/material/styles";
 import { Box, Stack, IconButton, Tooltip, Typography } from "@mui/material";
@@ -11,40 +11,85 @@ const pulse = keyframes`
   100% { transform: scaleY(0.35); }
 `;
 
-/**
- * Push to talk.
- *
- * Transcription is mocked: a fixed phrase types itself into the input while the
- * meter runs, which is enough to show the interaction without a speech service.
- * The bars are driven by index, not by audio — nothing here listens.
- *
- * TODO: wire a real transcription service and drive the meter from the
- * live audio level instead of a timer.
- */
-const PHRASE =
-  "add four scenarios where the caller is abusive and the agent has to stay inside policy";
+// Browser-native speech-to-text. No backend: the Web Speech API runs entirely in
+// the browser (Chrome/Edge/Safari; Brave disables the Google endpoint by default).
+// We feed the running transcript (finalised results + the live interim guess) to
+// `onTranscript`, which sets the composer draft.
+const SpeechRecognition =
+  typeof window !== "undefined" &&
+  (window.SpeechRecognition || window.webkitSpeechRecognition);
 
 export default function VoiceInput({ onTranscript, disabled }) {
   const [live, setLive] = useState(false);
-  const timer = useRef(null);
+  const [errorKind, setErrorKind] = useState(null);
+  const recognitionRef = useRef(null);
+  const finalRef = useRef("");
+  const supported = Boolean(SpeechRecognition);
 
-  useEffect(() => () => clearInterval(timer.current), []);
-
-  const stop = () => {
-    clearInterval(timer.current);
-    timer.current = null;
+  const stop = useCallback(() => {
+    const rec = recognitionRef.current;
+    if (rec) {
+      try {
+        rec.stop();
+      } catch {
+        /* already stopped */
+      }
+    }
     setLive(false);
-  };
+  }, []);
 
-  const start = () => {
-    setLive(true);
-    let i = 0;
-    timer.current = setInterval(() => {
-      i += 2;
-      onTranscript?.(PHRASE.slice(0, i));
-      if (i >= PHRASE.length) stop();
-    }, 26);
-  };
+  // Tear the recogniser down on unmount so it never fires after the composer leaves.
+  useEffect(() => () => stop(), [stop]);
+
+  const start = useCallback(() => {
+    if (!supported) return;
+    setErrorKind(null);
+    finalRef.current = "";
+    const rec = new SpeechRecognition();
+    rec.lang = "en-US";
+    rec.interimResults = true;
+    rec.continuous = true;
+
+    rec.onresult = (event) => {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const chunk = event.results[i][0].transcript;
+        if (event.results[i].isFinal) finalRef.current += chunk;
+        else interim += chunk;
+      }
+      onTranscript?.((finalRef.current + interim).trimStart());
+    };
+    rec.onerror = (event) => {
+      // no-speech / aborted are benign. Split the rest so the hint is truthful:
+      // a denied mic is fixable; a blocked service (e.g. Brave) is not, here.
+      const code = event.error;
+      if (code === "not-allowed" || code === "service-not-allowed") {
+        setErrorKind("permission");
+      } else if (code && !["no-speech", "aborted"].includes(code)) {
+        setErrorKind("unavailable");
+      }
+      setLive(false);
+    };
+    rec.onend = () => setLive(false);
+
+    recognitionRef.current = rec;
+    try {
+      rec.start();
+      setLive(true);
+    } catch {
+      setLive(false);
+    }
+  }, [supported, onTranscript]);
+
+  const title = !supported
+    ? "Voice input isn't supported in this browser"
+    : errorKind === "permission"
+      ? "Allow microphone access to dictate"
+      : errorKind === "unavailable"
+        ? "Speech recognition is unavailable in this browser (try Chrome)"
+        : live
+          ? "Stop"
+          : "Speak instead of typing";
 
   return (
     <Stack direction="row" alignItems="center" spacing={1}>
@@ -64,12 +109,12 @@ export default function VoiceInput({ onTranscript, disabled }) {
           </Typography>
         </Stack>
       )}
-      <Tooltip arrow title={live ? "Stop" : "Speak instead of typing"}>
+      <Tooltip arrow title={title}>
         <span>
           <IconButton
             size="small"
             aria-label={live ? "Stop" : "Speak instead of typing"}
-            disabled={disabled}
+            disabled={disabled || !supported}
             onClick={live ? stop : start}
             sx={{
               color: live ? "primary.main" : "text.subtitle",

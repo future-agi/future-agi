@@ -93,7 +93,7 @@ describe("BuilderConsole", () => {
     const field = screen.getByPlaceholderText(CONSOLE_COPY.placeholder);
     fireEvent.change(field, { target: { value: "hello" } });
     fireEvent.keyDown(field, { key: "Enter" });
-    expect(onSend).toHaveBeenCalledWith("hello", []);
+    expect(onSend).toHaveBeenCalledWith("hello");
     expect(field).toHaveValue("");
   });
 
@@ -146,7 +146,7 @@ describe("BuilderConsole", () => {
     const field = screen.getByPlaceholderText(CONSOLE_COPY.placeholder);
     fireEvent.change(field, { target: { value: "make it harder" } });
     fireEvent.keyDown(field, { key: "Enter" });
-    expect(onSend).toHaveBeenCalledWith("Rework the rushed-caller persona. make it harder", []);
+    expect(onSend).toHaveBeenCalledWith("Rework the rushed-caller persona. make it harder");
 
     // The pins clear after send.
     expect(screen.queryByText("Rework the rushed-caller persona")).toBeNull();
@@ -191,18 +191,5 @@ describe("BuilderConsole", () => {
     render(<BuilderConsole turns={[askTurn]} running={false} />);
     expect(screen.getByText("How strict should the refund rule be?")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Submit" })).toBeInTheDocument();
-  });
-
-  it("attaches a file via the hidden input and can remove it", () => {
-    const { container } = render(<BuilderConsole turns={[]} running={false} onSend={vi.fn()} />);
-    const input = container.querySelector('input[type="file"]');
-    const file = new File(["a".repeat(2048)], "data.csv", { type: "text/csv" });
-    fireEvent.change(input, { target: { files: [file] } });
-
-    expect(screen.getByText("data.csv")).toBeInTheDocument();
-    expect(screen.getByText("2 kB")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Remove data.csv" }));
-    expect(screen.queryByText("data.csv")).toBeNull();
   });
 });
