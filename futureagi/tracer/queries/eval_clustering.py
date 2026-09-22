@@ -9,6 +9,8 @@ within the same eval, never across different evals.
 """
 
 import hashlib
+import json
+import math
 import re
 from datetime import timedelta
 from typing import List, Optional, Tuple
@@ -52,12 +54,86 @@ _CLUSTER_WINDOW_DAYS = 60
 # no ``eval_task_id``; external evals never write EvalLogger at all.)
 _FAILING_EVAL_Q = (
     Q(custom_eval_config__isnull=False)
-    & (Q(output_bool=False) | Q(output_float__lt=1.0))
+    # ``output_str``/``output_str_list`` are included because choice-scored
+    # templates are stored there; the final score check is deliberately done
+    # in Python from the template config below.
+    & (
+        Q(output_bool=False)
+        | Q(output_float__lt=1.0)
+        | ~Q(output_str__isnull=True)
+        | ~Q(output_str_list=[])
+    )
     & ~Q(eval_explanation__isnull=True)
     & ~Q(eval_explanation="")
     & ~Q(eval_task_id__isnull=True)
     & ~Q(eval_task_id="")
 )
+
+
+def _numeric_score(value) -> Optional[float]:
+    """Return a finite numeric score, or ``None`` for an unscorable value."""
+    if isinstance(value, bool):
+        return None
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return None
+    return score if math.isfinite(score) else None
+
+
+def _mapped_choice_score(value, choice_scores: dict) -> Optional[float]:
+    if not choice_scores:
+        return None
+    if isinstance(value, str):
+        for label, score in choice_scores.items():
+            if str(label).strip().lower() == value.strip().lower():
+                return _numeric_score(score)
+        return None
+    if isinstance(value, list):
+        scores = [_mapped_choice_score(item, choice_scores) for item in value]
+        scores = [score for score in scores if score is not None]
+        return sum(scores) / len(scores) if scores else None
+    return None
+
+
+def _eval_result_score(entry: EvalLogger) -> Optional[float]:
+    """Resolve an eval's normalized score, including config-mapped choices."""
+    score = _numeric_score(entry.output_float)
+    if score is not None:
+        return score
+
+    template_config = getattr(entry.custom_eval_config.eval_template, "config", {}) or {}
+    choice_scores = template_config.get("choice_scores") or {}
+
+    raw = entry.output_str
+    if raw:
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            pass
+        if isinstance(raw, dict):
+            score = _numeric_score(raw.get("score"))
+            if score is not None:
+                return score
+            raw = raw.get("choice", raw.get("choices"))
+        score = _numeric_score(raw)
+        if score is not None:
+            return score
+        score = _mapped_choice_score(raw, choice_scores)
+        if score is not None:
+            return score
+
+    return _mapped_choice_score(entry.output_str_list, choice_scores)
+
+
+def is_clusterable_eval_failure(entry: EvalLogger) -> bool:
+    """Whether a completed eval result is a failing, explainable result."""
+    if not entry.eval_explanation:
+        return False
+    if entry.output_bool is False:
+        return True
+    score = _eval_result_score(entry)
+    return score is not None and score < 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +148,8 @@ def get_unclustered_eval_results(
     Fetch EvalLogger rows that failed, have an explanation, and haven't
     been assigned to a cluster yet.
 
-    "Failed" = output_bool is False OR output_float < 1.0.
+    "Failed" = output_bool is False OR a score resolved from the typed output,
+    JSON output, or the template's ``choice_scores`` mapping is below 1.0.
     Skips rows with null eval_explanation (deterministic evals without reasoning).
     Only the last _CLUSTER_WINDOW_DAYS of results are considered.
 
@@ -110,7 +187,7 @@ def get_unclustered_eval_results(
             custom_eval_config__project_id=project_id,
             created_at__gte=since,
         )
-        .select_related("custom_eval_config")
+        .select_related("custom_eval_config", "custom_eval_config__eval_template")
         .order_by("created_at")
     )
 
@@ -118,7 +195,7 @@ def get_unclustered_eval_results(
     # .iterator() so a huge backlog isn't all loaded into memory just to
     # stop early once `limit` unclustered rows have been collected.
     for ev in evals.iterator(chunk_size=2000):
-        if ev.id in clustered_ids:
+        if ev.id in clustered_ids or not is_clusterable_eval_failure(ev):
             continue
         results.append(
             ClusterableEvalResult(
@@ -132,7 +209,7 @@ def get_unclustered_eval_results(
                 session_id=(
                     str(ev.trace_session_id) if ev.trace_session_id else None
                 ),
-                score=ev.output_float,
+                score=_eval_result_score(ev),
             )
         )
         if limit is not None and len(results) >= limit:
