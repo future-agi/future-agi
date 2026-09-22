@@ -126,6 +126,9 @@ def _claimed_runtime(project, monkeypatch):
     ERROR_FEED_GROUPING_ENABLED=True,
     ERROR_FEED_GROUPING_ALL_PROJECTS=True,
     ERROR_FEED_GROUPING_DEBOUNCE_SECONDS=0,
+    ERROR_FEED_GROUPING_PROJECT_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_WORK_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_TENANT_BUDGET_USD="10",
 )
 def test_feature_claim_to_bounded_grouping_claim_and_defer(
     observe_project, monkeypatch
@@ -187,6 +190,9 @@ def test_feature_claim_to_bounded_grouping_claim_and_defer(
     ERROR_FEED_GROUPING_ENABLED=True,
     ERROR_FEED_GROUPING_ALL_PROJECTS=True,
     ERROR_FEED_GROUPING_DEBOUNCE_SECONDS=0,
+    ERROR_FEED_GROUPING_PROJECT_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_WORK_BUDGET_USD="10",
+    ERROR_FEED_GROUPING_TENANT_BUDGET_USD="10",
 )
 def test_raw_receipt_group_binds_create_and_junction(observe_project, monkeypatch):
     report, claim = _claimed_runtime(observe_project, monkeypatch)
