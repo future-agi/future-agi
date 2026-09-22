@@ -71,18 +71,12 @@ export const setupGaps = (env, envState) => {
       ask: { type: "link", label: "Review the contract", to: "summary" },
       answered: null,
     },
-    // A run cannot be scored without evaluations. Suggested ones sit in the
-    // Evaluations tab waiting to be added; until at least one is added, this is
-    // a blocking gap. Disappears the moment something lands in envState.evals.
-    !envState?.evals?.length && {
-      id: "no-evals",
-      status: "blocking",
-      area: "Grading",
-      title: "No evaluations added",
-      why: "A run needs at least one evaluation to score against. Suggested ones are ready to add on the Evaluations tab; pick any that describe what a good outcome looks like for this environment.",
-      ask: { type: "link", label: "Open the Evaluations tab", to: "evals" },
-      answered: null,
-    },
+    // Evals are NOT required to run: canRun only needs an agent + scenarios, the
+    // run endpoint has no eval requirement, and the Evaluations empty state says
+    // as much ("you can run without them — you'll get traces, but no scoring").
+    // So "no evaluations" is not a blocking gap — flagging it as one was a false
+    // "a run cannot start" alert. The Evaluations tab's own empty state carries
+    // the soft nudge to add one; nothing to badge here.
     rules.length > 0 && {
       id: "promptonly",
       status: "assumed",
