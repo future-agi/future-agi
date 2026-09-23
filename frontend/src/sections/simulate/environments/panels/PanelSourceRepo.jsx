@@ -7,6 +7,8 @@ import ChipCard from "../components/ChipCard";
 import ProviderRow from "../components/ProviderRow";
 import ContinueRow from "../components/ContinueRow";
 import EnvironmentValues from "./EnvironmentValues";
+import ScenarioCount from "./ScenarioCount";
+import { DEFAULT_SCENARIOS, isValidScenarioCount } from "./scenarioCountRules";
 import RuntimePreflight from "./RuntimePreflight";
 import usePanelBuild from "../hooks/usePanelBuild";
 import {
@@ -31,6 +33,7 @@ const initial = {
   envText: "",
   egress: "",
   secretFiles: [],
+  scenarioCount: DEFAULT_SCENARIOS,
 };
 
 function reducer(s, a) {
@@ -47,7 +50,7 @@ export default function PanelSourceRepo() {
     dispatch({ field, value });
     build.resetPreflight();
   };
-  const { provider, repo, branch, entry, visibility, installationId, envText, egress, secretFiles } = form;
+  const { provider, repo, branch, entry, visibility, installationId, envText, egress, secretFiles, scenarioCount } = form;
   const isPrivate = visibility === REPO_VISIBILITY.PRIVATE;
   // The repo must parse to owner/repo (or a GitHub URL) before we can preflight.
   // Only flag a non-empty, unparseable value so the field isn't red before typing.
@@ -68,6 +71,7 @@ export default function PanelSourceRepo() {
     envText: envText.trim() || null,
     egress: egress.trim() || null,
     secretFiles,
+    scenarioCount: Number(scenarioCount),
   });
 
   return (
@@ -130,6 +134,7 @@ export default function PanelSourceRepo() {
         egress={egress} onEgress={set("egress")}
         secretFiles={secretFiles} onSecretFiles={set("secretFiles")}
       />
+      <ScenarioCount value={scenarioCount} onChange={set("scenarioCount")} />
       <RuntimePreflight
         status={build.status}
         canRun={canGo}
@@ -139,7 +144,7 @@ export default function PanelSourceRepo() {
         error={build.error}
       />
       <ContinueRow
-        disabled={!build.readyToSubmit}
+        disabled={!build.readyToSubmit || !isValidScenarioCount(scenarioCount)}
         busy={build.committing}
         hint={build.status === "done" ? "Resolve the checks above" : "Run preflight to continue"}
         onClick={build.commitBuild}

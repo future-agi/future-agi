@@ -10,6 +10,8 @@ import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import Field from "../components/Field";
 import ContinueRow from "../components/ContinueRow";
 import EnvironmentValues from "./EnvironmentValues";
+import ScenarioCount from "./ScenarioCount";
+import { DEFAULT_SCENARIOS, isValidScenarioCount } from "./scenarioCountRules";
 import RuntimePreflight from "./RuntimePreflight";
 import usePanelBuild from "../hooks/usePanelBuild";
 import { CODE_UPLOAD_COPY } from "../codeUpload.constants";
@@ -21,6 +23,7 @@ const initial = {
   envText: "",
   egress: "",
   secretFiles: [],
+  scenarioCount: DEFAULT_SCENARIOS,
   summary: null, // { fileCount, totalBytes, excluded } from the upload response
   archiveArtifactId: null,
   uploading: false,
@@ -106,6 +109,7 @@ export default function PanelCodeUpload() {
     envText,
     egress,
     secretFiles,
+    scenarioCount,
     summary,
     archiveArtifactId,
     uploading,
@@ -134,6 +138,7 @@ export default function PanelCodeUpload() {
     envText: envText.trim() || null,
     egress: egress.trim() || null,
     secretFiles,
+    scenarioCount: Number(scenarioCount),
   });
 
   const onDrop = async (list) => {
@@ -282,6 +287,7 @@ export default function PanelCodeUpload() {
         egress={egress} onEgress={set("egress")}
         secretFiles={secretFiles} onSecretFiles={set("secretFiles")}
       />
+      <ScenarioCount value={scenarioCount} onChange={set("scenarioCount")} />
       <RuntimePreflight
         status={build.status}
         canRun={canGo}
@@ -291,7 +297,7 @@ export default function PanelCodeUpload() {
         error={build.error}
       />
       <ContinueRow
-        disabled={!build.readyToSubmit}
+        disabled={!build.readyToSubmit || !isValidScenarioCount(scenarioCount)}
         busy={build.committing}
         hint={build.status === "done" ? "Resolve the checks above" : "Run preflight to continue"}
         onClick={build.commitBuild}

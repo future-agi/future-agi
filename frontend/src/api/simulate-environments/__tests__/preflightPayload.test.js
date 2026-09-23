@@ -66,6 +66,11 @@ describe("draftToPreflightPayload — repo", () => {
     });
   });
 
+  it("uses the draft's scenarioCount when set, else defaults to 10", () => {
+    expect(draftToPreflightPayload(repoDraft({ scenarioCount: 25 })).payload.scenario_count).toBe(25);
+    expect(draftToPreflightPayload(repoDraft()).payload.scenario_count).toBe(10);
+  });
+
   it("lets a pasted tree URL ref win over the panel's default main", () => {
     const { payload } = draftToPreflightPayload(
       repoDraft({ value: "https://github.com/acme/support-bot/tree/release", ref: "main" }),

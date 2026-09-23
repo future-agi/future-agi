@@ -104,7 +104,9 @@ function resolveRef(parsedRef, draftRef) {
 function envelope(draft, name) {
   const payload = {
     schema_version: SCHEMA_VERSION,
-    scenario_count: SCENARIO_COUNT,
+    // The count the user chose in the build form (validated 1–500); falls back
+    // to the default when a draft predates the field.
+    scenario_count: draft.scenarioCount ?? SCENARIO_COUNT,
     artifacts: { ...ARTIFACTS },
     metadata: { name, authoring_key: name },
   };

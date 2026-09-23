@@ -9,6 +9,8 @@ import PlatformLogo from "../components/PlatformLogo";
 import { PLATFORM_LOGOS } from "../components/platformLogos";
 import { COUNTRY_BY_ISO } from "../components/countryCodes";
 import ContactInformation from "./ContactInformation";
+import ScenarioCount from "./ScenarioCount";
+import { DEFAULT_SCENARIOS, isValidScenarioCount } from "./scenarioCountRules";
 import RuntimePreflight from "./RuntimePreflight";
 import usePanelBuild from "../hooks/usePanelBuild";
 import { ENTRY_AGENT_TYPES } from "../agentTypes";
@@ -32,6 +34,7 @@ const initial = {
   inboundCalls: true,
   agentSpeaksFirst: false,
   otherPrompt: "",
+  scenarioCount: DEFAULT_SCENARIOS,
 };
 
 function reducer(s, a) {
@@ -51,6 +54,7 @@ export default function PanelHostedPlatform() {
   const {
     agentType, platform, id, key, repoUrl,
     simMode, countryIso, contactNumber, inboundCalls, agentSpeaksFirst, otherPrompt,
+    scenarioCount,
   } = form;
   const platforms = HOSTED_PLATFORMS_BY_TYPE[agentType] || [];
   // Coming-soon (not-yet-a-connector) platforms sort to the end, so the
@@ -84,6 +88,7 @@ export default function PanelHostedPlatform() {
     kind: "platform",
     agentType,
     provider: chosen?.id,
+    scenarioCount: Number(scenarioCount),
     ...(isOther
       ? { agentMode: "prompt", prompt: otherPrompt.trim() }
       : { agentId: id.trim(), apiKey: key.trim() }),
@@ -202,6 +207,7 @@ export default function PanelHostedPlatform() {
           />
         </>
       )}
+      <ScenarioCount value={scenarioCount} onChange={set("scenarioCount")} />
       <RuntimePreflight
         status={build.status}
         canRun={canGo}
@@ -211,7 +217,7 @@ export default function PanelHostedPlatform() {
         error={build.error}
       />
       <ContinueRow
-        disabled={!build.readyToSubmit}
+        disabled={!build.readyToSubmit || !isValidScenarioCount(scenarioCount)}
         busy={build.committing}
         hint={build.status === "done" ? "Resolve the checks above" : "Run preflight to continue"}
         onClick={build.commitBuild}
