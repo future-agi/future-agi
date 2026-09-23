@@ -1,7 +1,5 @@
-import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
-import { alpha } from "@mui/material/styles";
-import { Box, Button, Stack, Typography, IconButton } from "@mui/material";
+import { Box, Button, Stack } from "@mui/material";
 import {
   useNavigate,
   useParams,
@@ -9,8 +7,6 @@ import {
   Outlet,
 } from "react-router-dom";
 
-import Iconify from "src/components/iconify";
-import CustomTooltip from "src/components/tooltip";
 import { paths } from "src/routes/paths";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -30,10 +26,7 @@ import SectionCard from "../components/SectionCard";
 import EmptyState from "../components/EmptyState";
 import BuilderConsole from "../buildEnvironment/console/BuilderConsole";
 import { CONSOLE_COPY } from "../buildEnvironment/build.constants";
-import {
-  subscribeScenarioSelection,
-  clearScenarioSelection,
-} from "../buildEnvironment/console/scenarioSelectionBus";
+import { subscribeScenarioSelection } from "../buildEnvironment/console/scenarioSelectionBus";
 import BuildingStage from "../buildEnvironment/building/BuildingStage";
 import WorkspaceHeader from "./WorkspaceHeader";
 import SystemBanners from "./SystemBanners";
@@ -344,16 +337,6 @@ export default function EnvironmentWorkspace() {
             canStop={chat.inFlight}
             frozen={!envLive || chat.frozen}
             frozenReason={!envLive ? CONSOLE_COPY.frozen : chat.frozenReason}
-            preComposer={
-              (selection.count ?? selection.ids.length) > 0 ? (
-                <SelectionContextChip
-                  count={selection.count ?? selection.ids.length}
-                  rows={selection.rows}
-                  all={selection.all}
-                  onClear={clearScenarioSelection}
-                />
-              ) : null
-            }
           />
         </SectionCard>
 
@@ -393,48 +376,11 @@ export default function EnvironmentWorkspace() {
   );
 }
 
-// Mirror the module-level scenario selection into component state so the
-// console's pre-composer chip re-renders when rows are checked or cleared on
-// the Scenarios tab. The bus fires the current value on subscribe.
+// Mirror the module-level scenario selection into component state so the header
+// yields its primary Run to the Scenarios tab's selection bar while rows are
+// checked (selectionActive). The bus fires the current value on subscribe.
 function useScenarioSelection() {
   const [selection, setSelection] = useState({ ids: [], rows: [], count: 0, all: false });
   useEffect(() => subscribeScenarioSelection(setSelection), []);
   return selection;
 }
-
-// Shown above the console composer when the user has scenarios checked on the
-// Scenarios tab. Turns an implicit selection into an explicit "you are editing
-// N rows" status so the next send doesn't feel like it came from nowhere.
-function SelectionContextChip({ count, rows, all = false, onClear }) {
-  const preview = (rows || []).slice(0, 2).map((r) => r.name || r.title || "scenario").join(", ");
-  const rest = count > 2 ? ` +${count - 2}` : "";
-  return (
-    <Stack
-      direction="row" alignItems="center" spacing={1}
-      sx={{
-        px: 1.5, py: 1,
-        borderBottom: "1px solid", borderColor: "divider",
-        bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.03),
-      }}
-    >
-      <Iconify icon="solar:layers-minimalistic-linear" width={14} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-      <Typography sx={{ typography: "s3", color: "text.secondary", flex: 1, minWidth: 0 }} noWrap>
-        {/* all-mode (select-all-matching) can't name the rows — the match may run
-            to thousands and none may be on the current page — so it states the
-            count alone. */}
-        Editing <b>{count}</b> scenario{count === 1 ? "" : "s"}{all ? " matching" : ` — ${preview}${rest}`}
-      </Typography>
-      <CustomTooltip show title="Clear selection" size="small" arrow>
-        <IconButton size="small" aria-label="Clear selection" onClick={onClear} sx={{ p: 0.25 }}>
-          <Iconify icon="solar:close-circle-linear" width={14} sx={{ color: "text.subtitle" }} />
-        </IconButton>
-      </CustomTooltip>
-    </Stack>
-  );
-}
-SelectionContextChip.propTypes = {
-  count: PropTypes.number,
-  rows: PropTypes.array,
-  all: PropTypes.bool,
-  onClear: PropTypes.func,
-};

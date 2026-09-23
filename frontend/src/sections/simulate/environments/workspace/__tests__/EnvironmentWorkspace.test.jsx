@@ -1,10 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import {
-  publishScenarioSelection,
-  clearScenarioSelection,
-} from "../../buildEnvironment/console/scenarioSelectionBus";
+import { clearScenarioSelection } from "../../buildEnvironment/console/scenarioSelectionBus";
 import {
   MemoryRouter,
   Routes,
@@ -143,7 +140,7 @@ describe("EnvironmentWorkspace route shell", () => {
     Element.prototype.scrollIntoView = vi.fn();
     resetEnvironmentsStore();
     // The scenario selection is module-level; clear it so a leaked selection
-    // can't render the context chip into an unrelated test.
+    // can't bleed into an unrelated test's chat send.
     clearScenarioSelection();
     getHarnessJob.mockReset();
     axios.get.mockReset();
@@ -322,28 +319,6 @@ describe("EnvironmentWorkspace route shell", () => {
       "/dashboard/simulate/environments/job-build",
     );
   }, 12000);
-
-  it("surfaces the selection-context chip and clears it", async () => {
-    seedClientEnv(TEMPLATE, {
-      ...emptyEnvState(),
-      agent: { name: "Support agent" },
-      scenarios: [{ id: "s1" }],
-    });
-    const user = userEvent.setup();
-
-    renderWorkspace("/dashboard/simulate/environments/env-1");
-    await screen.findByText("Refund Copilot", { selector: "p" });
-
-    act(() =>
-      publishScenarioSelection({ ids: ["s1"], rows: [{ name: "Late refund" }] }),
-    );
-
-    expect(await screen.findByText(/Editing/)).toBeInTheDocument();
-    expect(screen.getByText(/Late refund/)).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Clear selection" }));
-    expect(screen.queryByText(/Editing/)).toBeNull();
-  });
 
   it("locks a template-seeded env: no overflow, Fork to edit on Overview", async () => {
     seedClientEnv(TEMPLATE, seedFromTemplate(TEMPLATE, NOW));
