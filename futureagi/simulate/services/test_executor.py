@@ -8,7 +8,7 @@ from decimal import Decimal
 from difflib import SequenceMatcher
 from itertools import chain
 from typing import Any, Dict, Optional
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import structlog
 
@@ -40,13 +40,71 @@ logger = structlog.get_logger(__name__)
 
 
 def build_eval_configs_map(call_execution) -> dict[str, "SimulateEvalConfig"]:
-    eval_config_ids = list((call_execution.eval_outputs or {}).keys())
+    """The configs behind this call's verdicts, removed ones included.
+
+    ``all_objects`` and not ``objects`` on purpose: a verdict produced by an
+    eval that was later removed from the environment stays stored and stays
+    visible in call details, marked ``"removed": true``. Contract v1.5
+    P14/P23; design §7; ``lld-5-verdict-lifecycle.puml`` state ``Removed``.
+    ``SimulateEvalConfig`` carries no ``workspace`` column, so ``all_objects``
+    differs from ``objects`` by exactly the soft-delete filter.
+
+    ``select_related("eval_template")`` because ``get_eval_metrics``'
+    ``template_type`` lookup does one FK fetch per config in this map --
+    live or removed -- when it is not preloaded (whole-change review round 2,
+    L7).
+
+    Callers: ``views/run_test.py::CallExecutionDetailView`` (``:3730``) and
+    ``RunTestCallExecutionsView`` (one call, ``:2279``, reused at ``:2313``)
+    -- contract v1.6 P23 names both as the only read surfaces that show a
+    removed eval's verdicts, marked ``"removed": true`` (whole-change review
+    round 2, M1; ``RunTestCallExecutionsView`` used to build the serializer
+    with no context at all, so removed verdicts came back unmarked there).
+    Every other caller of ``CallExecutionDetailSerializer`` builds its own
+    live-only map and keeps dropping removed evals: ``TestExecutionDetailView``
+    (``:2976``) and the CSV export (``:6036``, ``:6129``). (Line anchors
+    below ``RunTestCallExecutionsView._mark_removed_evals`` shifted by its
+    round-5 docstring growth, L6; cited by symbol where possible since this
+    file moves under its own edits.)
+
+    ``eval_config_ids`` is filtered to well-formed UUIDs before the query
+    (``_is_uuid``): a raw ``eval_outputs`` key that is not a UUID would
+    otherwise raise ``ValidationError`` straight out of ``id__in``, and
+    ``RunTestCallExecutionsView`` now builds exactly one map for the whole
+    page from every row's keys unioned together (whole-change review round
+    3, M2) -- so one bad key on one row would take the whole page's response
+    down with it, not just that one row's, which is a materially bigger
+    blast radius than the single-call detail response this map originally
+    served (whole-change review round 4, L8). A key that fails the check is
+    simply absent from the returned map, exactly like any other id this
+    query does not find a live-or-removed config for -- every reader already
+    handles a missing map entry (``eval_configs.get(eval_id)`` returns
+    ``None``).
+    """
+    eval_config_ids = [
+        eval_config_id
+        for eval_config_id in (call_execution.eval_outputs or {}).keys()
+        if _is_uuid(eval_config_id)
+    ]
     if not eval_config_ids:
         return {}
     return {
         str(c.id): c
-        for c in SimulateEvalConfig.objects.filter(id__in=eval_config_ids)
+        for c in SimulateEvalConfig.all_objects.filter(
+            id__in=eval_config_ids
+        ).select_related("eval_template")
     }
+
+
+def _is_uuid(value) -> bool:
+    """True when ``value`` parses as a UUID -- used to keep a malformed
+    ``eval_outputs`` key out of ``id__in`` filters instead of letting it
+    raise ``ValidationError`` (whole-change review round 4, L8)."""
+    try:
+        UUID(str(value))
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return True
 
 
 def _empty_call_log_summary(reason: str) -> dict:
@@ -126,6 +184,7 @@ from simulate.utils.processing_outcomes import (
     set_processing_skip_metadata,
 )
 from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
+from simulate.utils.verdicts import has_stored_verdict
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
 from tfc.temporal.drop_in import temporal_activity
 
@@ -4151,6 +4210,13 @@ class TestExecutor:
             skip_existing: If True, skip evaluations that already exist for this call execution
             skip_status_update: If True, do not transition status to COMPLETED. Used when
                 the caller (e.g. Temporal workflow) manages the status transition itself.
+
+        Known gap (M2, accepted for now): the ``skip_existing`` guard reads
+        ``eval_outputs`` from the in-memory snapshot taken by
+        ``call_execution.refresh_from_db()`` above, and every save writes the
+        whole ``eval_outputs`` column, so a verdict landed by another worker
+        between that read and this task's save is silently lost; a row lock
+        or merge-before-save is a follow-up, not fixed here.
         """
         try:
             close_old_connections()
@@ -4215,6 +4281,7 @@ class TestExecutor:
                     eval_configs=eval_configs,
                     reason=skip_decision.processing_skip_reason,
                     skip_status_update=skip_status_update,
+                    skip_existing=skip_existing,
                 )
                 return
 
@@ -4231,6 +4298,7 @@ class TestExecutor:
                     eval_configs=eval_configs,
                     reason="Call transcript is unavailable, so processing was skipped.",
                     skip_status_update=skip_status_update,
+                    skip_existing=skip_existing,
                 )
                 return
 
@@ -4244,12 +4312,20 @@ class TestExecutor:
             # Run each evaluation
             for eval_config in eval_configs:
                 try:
-                    # # Skip if evaluation already exists and skip_existing is True
-                    # if skip_existing and call_execution.eval_outputs and str(eval_config.id) in call_execution.eval_outputs:
-                    #     logger.info(
-                    #         f"Skipping evaluation {eval_config.id} for call {call_execution.id} - already exists"
-                    #     )
-                    #     continue
+                    # A stored verdict is sealed. With skip-existing on, this
+                    # eval is not re-graded and nothing is written for it --
+                    # keyed on the config id, so a sibling config on the same
+                    # call is still graded. Contract v1.4 P20/F2, design §7,
+                    # lld-4 "already holds a verdict -> skip", lld-5
+                    # GradingSkipped.
+                    if skip_existing and has_stored_verdict(
+                        call_execution, eval_config.id
+                    ):
+                        logger.info(
+                            f"Skipping evaluation {eval_config.id} for call "
+                            f"{call_execution.id} - already exists"
+                        )
+                        continue
 
                     # Log if we're overwriting an existing evaluation
                     if (
@@ -4318,8 +4394,29 @@ class TestExecutor:
         eval_configs,
         reason: str,
         skip_status_update: bool,
+        skip_existing: bool = False,
     ) -> None:
-        """Persist skipped processing outcomes for eval-only reruns."""
+        """Persist skipped processing outcomes for eval-only reruns.
+
+        With ``skip_existing`` on, a config that already holds a verdict on
+        this call keeps it: the "skipped" payload is written only for configs
+        whose row is empty. With it off, behaviour is exactly as before --
+        every config in the batch gets the payload.
+
+        The guard is required, not a belt-and-braces nicety. The inputs to the
+        skip decision are not immutable: a receipt re-ingest deletes and
+        recreates the transcript rows
+        (``hosted_harness_ingestion.py:1081-1084`` and ``:1141``), so a call
+        that once earned a real verdict can later be judged "too short", and
+        the "no transcript" branch swallows any read error into an empty
+        transcript. Contract v1.4 F2, design §7, ``lld-4-add-from-run.puml``
+        guard block.
+
+        The call-level bookkeeping (``processing_skipped``,
+        ``processing_skip_reason``, ``eval_started``, ``eval_completed``) is
+        written either way; only the per-config ``eval_outputs`` rows are
+        sealed.
+        """
         call_execution.call_metadata = call_execution.call_metadata or {}
 
         call_execution.call_metadata = set_processing_skip_metadata(
@@ -4334,6 +4431,12 @@ class TestExecutor:
             call_execution.eval_outputs = {}
 
         for eval_config in eval_configs:
+            if skip_existing and has_stored_verdict(call_execution, eval_config.id):
+                logger.info(
+                    f"Keeping the stored verdict for {eval_config.id} on call "
+                    f"{call_execution.id} - skipped payload not written"
+                )
+                continue
             call_execution.eval_outputs[str(eval_config.id)] = (
                 build_skipped_eval_output_payload(
                     eval_name=eval_config.name,
