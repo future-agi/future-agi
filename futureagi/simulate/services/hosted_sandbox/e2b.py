@@ -232,6 +232,10 @@ class E2BSandboxRuntimeProvider(SandboxRuntimeProvider):
     supports_adjustments = True
     supports_public_ingress = True
 
+    def renew_ttl(self, sandbox: E2BSandbox, ttl_seconds: int) -> None:
+        self.validate_requested_resources(*self.configured_resources(), ttl_seconds)
+        _call(sandbox._sandbox.set_timeout, ttl_seconds)
+
     def __init__(self) -> None:
         self.api_key = str(getattr(settings, "E2B_API_KEY", "") or "")
         self.runtime_name = str(
@@ -332,6 +336,10 @@ class E2BSandboxRuntimeProvider(SandboxRuntimeProvider):
                 "printf '#!/bin/sh\\nexec /opt/alk-venv/bin/python \"$@\"\\n' "
                 "> /usr/local/bin/python && chmod 0755 /usr/local/bin/python && "
                 "ln -sfn /opt/alk-venv/bin/pip /usr/local/bin/pip && "
+                "if [ -x /opt/alk-venv/bin/uv ]; then "
+                "ln -sfn /opt/alk-venv/bin/uv /usr/local/bin/uv; fi && "
+                "if [ -x /opt/alk-venv/bin/uvx ]; then "
+                "ln -sfn /opt/alk-venv/bin/uvx /usr/local/bin/uvx; fi && "
                 "test -x /usr/local/bin/uv && test -x /usr/local/bin/uvx",
                 timeout=min(timeout, 60),
                 user="root",

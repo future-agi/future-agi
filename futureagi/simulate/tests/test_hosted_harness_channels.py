@@ -15,10 +15,12 @@ from simulate.models import CallExecution, HostedHarnessJob, HostedHarnessReceip
 from simulate.models.chat_message import ChatMessageModel
 from simulate.services.hosted_harness import (
     HostedHarnessError,
+    activate_attempt_capability,
     canonical_digest,
     create_hosted_job,
     record_cleanup,
     register_attempt,
+    update_execution_counts,
 )
 from simulate.services.hosted_harness_ingestion import (
     _apply_receipt_to_call,
@@ -292,6 +294,33 @@ def test_errored_scenario_with_completed_call_keeps_completed_lifecycle():
         _call_lifecycle_status({"status": "errored", "call": None})
         == CallExecution.CallStatus.FAILED
     )
+
+
+def test_recovered_media_fills_only_missing_unambiguous_kinds():
+    from types import SimpleNamespace
+
+    from simulate.services.hosted_harness_ingestion import (
+        _merge_recovered_call_artifacts,
+    )
+
+    def artifact(kind, digest):
+        return SimpleNamespace(kind=kind, sha256=digest)
+
+    original = artifact("transcript", "original")
+    audio = artifact("recording_combined", "audio")
+    recovered = [
+        artifact("transcript", "other"),
+        audio,
+        artifact("recording_stereo", "a"),
+        artifact("recording_stereo", "b"),
+        artifact("result", "result"),
+    ]
+    assert _merge_recovered_call_artifacts([original], recovered) == [original, audio]
+    assert _merge_recovered_call_artifacts([], [original, audio]) == [audio, original]
+    assert _merge_recovered_call_artifacts([original, audio], recovered) == [
+        original,
+        audio,
+    ]
 
 
 def test_receipt_projects_actual_call_end_time_and_duration():
@@ -650,7 +679,8 @@ def test_failed_scenario_is_completed_call_in_the_submitting_workspace(
 
 
 @pytest.mark.django_db
-def test_registering_attempt_supersedes_old_capability(organization):
+def test_registering_attempt_supersedes_old_capability(organization, settings):
+    settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
     job, _ = create_hosted_job(organization, _payload(), idempotency_key="attempt-key")
     first = register_attempt(job.id, endpoint_base_url="https://platform.example")
     job.current_stage = "failed"
@@ -669,6 +699,51 @@ def test_registering_attempt_supersedes_old_capability(organization):
     assert job.current_stage == "queued"
     assert job.failure is None
     assert job.terminal_at is None
+
+
+@pytest.mark.django_db
+def test_capability_budget_starts_after_sandbox_provisioning(organization, settings):
+    settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="late-sandbox-provisioning"
+    )
+    registered_at = django_timezone.now()
+    with patch(
+        "simulate.services.hosted_harness.timezone.now", return_value=registered_at
+    ):
+        capability = register_attempt(
+            job.id, endpoint_base_url="https://platform.example"
+        )
+    attempt = capability.attempt
+    attempt.provider_ref = "sandbox-created-after-long-delay"
+    attempt.state = attempt.State.PROVISIONING
+    attempt.save(update_fields=["provider_ref", "state", "updated_at"])
+
+    activated_at = registered_at + timedelta(minutes=30)
+    with patch(
+        "simulate.services.hosted_harness.timezone.now", return_value=activated_at
+    ):
+        activated = activate_attempt_capability(capability)
+
+    job.refresh_from_db()
+    attempt.refresh_from_db()
+    assert activated.token == capability.token
+    assert activated.fence == capability.fence
+    expected_active_budget = (
+        3600 + job.payload["runtime"]["max_duration_seconds"]
+    )
+    assert job.deadline_at == activated_at + timedelta(seconds=expected_active_budget)
+    assert attempt.expires_at == job.deadline_at + timedelta(seconds=420)
+    assert activated.document["expires_at"] == attempt.expires_at.isoformat(
+        timespec="milliseconds"
+    ).replace("+00:00", "Z")
+    assert activated.document["expires_at"] != capability.document["expires_at"]
+
+    attempt.state = attempt.State.RUNNING
+    attempt.save(update_fields=["state", "updated_at"])
+    with pytest.raises(HostedHarnessError) as exc:
+        activate_attempt_capability(activated)
+    assert exc.value.code == "attempt_capability_activation_invalid"
 
 
 @pytest.mark.django_db
@@ -849,7 +924,7 @@ def test_new_attempt_atomically_replaces_prior_scenario_receipt(organization):
     )
     assert begin.status_code == 200
 
-    def receipt(capability, *, scenario_attempt):
+    def receipt(capability, *, scenario_attempt, status="skipped"):
         body = {
             "schema_version": "futureagi.harness-result.v1",
             "job_id": str(job.id),
@@ -859,7 +934,7 @@ def test_new_attempt_atomically_replaces_prior_scenario_receipt(organization):
             "scenario_id": scenario["scenario_id"],
             "scenario_attempt": scenario_attempt,
             "world_index": None,
-            "status": "skipped",
+            "status": status,
             "sub_goals": [],
             "evaluations": [],
             "call": None,
@@ -869,10 +944,16 @@ def test_new_attempt_atomically_replaces_prior_scenario_receipt(organization):
         return body
 
     original, created = ingest_result_receipt(
-        first.attempt, receipt(first, scenario_attempt=1)
+        first.attempt, receipt(first, scenario_attempt=1, status="passed")
     )
     assert created is True
+    job.refresh_from_db()
+    assert job.completed_count == 1
     second = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    update_execution_counts(job)
+    job.refresh_from_db()
+    assert job.completed_count == 0
+    assert job.failed_count == 0
 
     replacement, created = ingest_result_receipt(
         second.attempt, receipt(second, scenario_attempt=2)
