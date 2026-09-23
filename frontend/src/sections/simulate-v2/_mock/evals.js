@@ -406,6 +406,39 @@ const DEFAULT_MAPPINGS = {
 
 export const defaultMappingFor = (id) => DEFAULT_MAPPINGS[id] || {};
 
+/**
+ * The system eval in the real library that each preset stands for. Editing a
+ * preset opens the library's own config screen, which loads the template by
+ * id — so the preset is looked up there by this name. Clone-state evals are
+ * structured assertions with no library counterpart.
+ */
+const SYSTEM_EVALS = {
+  task_success: "customer_agent_task_completion",
+  policy_adherence: "customer_agent_prompt_conformance",
+  compliance: "is_compliant",
+  pii_leakage: "data_privacy_compliance",
+  hallucination: "conversation_hallucination",
+  tool_correctness: "evaluate_function_calling",
+  ui_grounding: "task_completion",
+  step_efficiency: "customer_agent_loop_detection",
+  escalation_accuracy: "customer_agent_human_escalation",
+  tone: "tone",
+  empathy: "is_polite",
+  latency: "latency_check",
+  interruption: "customer_agent_interruption_handling",
+  context_carryover: "customer_agent_context_retention",
+  test_pass_rate: "task_completion",
+  diff_quality: "ground_truth_match",
+  completeness: "completeness",
+  reward_score: "task_completion",
+  constraint_violation: "prompt_instruction_adherence",
+  rule_inference: "prompt_adherence",
+  reproducibility: "deterministic_evals",
+  safety: "content_safety_violation",
+};
+
+export const systemEvalFor = (id) => SYSTEM_EVALS[id] || null;
+
 export const resolveEval = (applied) => {
   if (!applied) return null;
   if (typeof applied === "string") {

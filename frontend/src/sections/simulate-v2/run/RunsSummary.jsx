@@ -331,14 +331,18 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
           </Typography>
         </Box>
         <Stack direction="row" spacing={1} flexShrink={0}>
-          <Button
-            variant="outlined" color="inherit" size="small"
-            onClick={(e) => setAddAnchor(e.currentTarget)}
-            startIcon={<Iconify icon="solar:test-tube-linear" width={15} />}
-            sx={{ typography: "s2", fontWeight: 700, borderColor: "divider" }}
-          >
-            Add more runs
-          </Button>
+          {/* Only where the page has no Run simulation button of its own
+              (Improvements) — the env workspace header already starts runs. */}
+          {onStart && (
+            <Button
+              variant="outlined" color="inherit" size="small"
+              onClick={(e) => setAddAnchor(e.currentTarget)}
+              startIcon={<Iconify icon="solar:test-tube-linear" width={15} />}
+              sx={{ typography: "s2", fontWeight: 700, borderColor: "divider" }}
+            >
+              Add more runs
+            </Button>
+          )}
           <Button
             variant="outlined" color="inherit" size="small"
             onClick={() => setAddEvalsOpen(true)}

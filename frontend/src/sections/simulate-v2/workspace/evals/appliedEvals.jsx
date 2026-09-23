@@ -33,6 +33,17 @@ export function useAppliedEvals(envState, patch) {
   const remove = (id) =>
     patch({ evals: applied.filter((e) => (typeof e === "string" ? e : e.id) !== id) });
 
+  /* Edit in place — keeps the eval's slot in the list. Bare-id records are
+     promoted to objects so the edited mapping / threshold survive. */
+  const update = (id, changes) =>
+    patch({
+      evals: applied.map((e) => {
+        const entryId = typeof e === "string" ? e : e.id;
+        if (entryId !== id) return e;
+        return { ...(typeof e === "string" ? { id: e } : e), ...changes };
+      }),
+    });
+
   /**
    * The picker returns a configured eval — template, judge model and the
    * variable→column mapping. Only what this prototype needs is kept, in the
@@ -53,7 +64,7 @@ export function useAppliedEvals(envState, patch) {
     }]);
   };
 
-  return { applied, appliedEvals, appliedIds, add, remove, onEvalAdded };
+  return { applied, appliedEvals, appliedIds, add, remove, update, onEvalAdded };
 }
 
 export function EvalRow({ item, action, dense }) {

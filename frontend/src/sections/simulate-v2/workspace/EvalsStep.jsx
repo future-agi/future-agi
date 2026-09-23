@@ -8,6 +8,7 @@ import { getEval, EVAL_CATALOG } from "../_mock/evals";
 import { useAppliedEvals, EvalRow } from "./evals/appliedEvals";
 import AddEvalsDrawer from "./evals/AddEvalsDrawer";
 import TwinEvalEditor from "./evals/TwinEvalEditor";
+import EditEvalDrawer, { canEditEval } from "./evals/EditEvalDrawer";
 
 /**
  * Evals.
@@ -24,12 +25,14 @@ import TwinEvalEditor from "./evals/TwinEvalEditor";
 export default function EvalsStep({ env, envState, patch, onGo, locked = false, onFork }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [twinEditorOpen, setTwinEditorOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const twinBacked = !!envState?.twinBacking;
   // The workspace routes away from this step when there are no scenarios;
   // this is the backstop if it is ever rendered directly.
   const needsScenarios = (envState?.scenarios?.length || 0) === 0;
 
-  const { appliedEvals, appliedIds, add, remove } = useAppliedEvals(envState, patch);
+  const { appliedEvals, appliedIds, add, remove, update } = useAppliedEvals(envState, patch);
+  const editing = appliedEvals.find((e) => e.id === editingId) || null;
 
   /*
     Suggested = the environment's preset MINUS anything already added.
@@ -221,16 +224,29 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
                 key={e.id}
                 item={e}
                 action={(
-                  /* No always-on evals. Every added row is removable —
-                     except on a locked template, where every edit is
-                     gated behind a fork. */
-                  <Tooltip arrow title={locked ? "Fork this environment to edit." : "Remove"}>
-                    <span>
-                      <IconButton size="small" disabled={locked} onClick={() => remove(e.id)}>
-                        <Iconify icon="solar:trash-bin-trash-linear" width={16} sx={{ color: "text.subtitle" }} />
-                      </IconButton>
-                    </span>
-                  </Tooltip>
+                  /* No always-on evals. Every added row is editable and
+                     removable — except on a locked template, where every
+                     edit is gated behind a fork. */
+                  <Stack direction="row" spacing={0.25}>
+                    <Tooltip
+                      arrow
+                      title={locked ? "Fork this environment to edit."
+                        : canEditEval(e) ? "Edit" : "Clone-state evals are authored assertions — remove and re-author to change one."}
+                    >
+                      <span>
+                        <IconButton size="small" disabled={locked || !canEditEval(e)} onClick={() => setEditingId(e.id)} aria-label={`Edit ${e.name}`}>
+                          <Iconify icon="solar:pen-linear" width={16} sx={{ color: "text.subtitle" }} />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                    <Tooltip arrow title={locked ? "Fork this environment to edit." : "Remove"}>
+                      <span>
+                        <IconButton size="small" disabled={locked} onClick={() => remove(e.id)} aria-label={`Remove ${e.name}`}>
+                          <Iconify icon="solar:trash-bin-trash-linear" width={16} sx={{ color: "text.subtitle" }} />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  </Stack>
                 )}
               />
             ))}
@@ -247,6 +263,16 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
         existingIds={appliedIds}
         onAdd={add}
       />
+
+      {editing && (
+        <EditEvalDrawer
+          item={editing}
+          env={env}
+          envState={envState}
+          onClose={() => setEditingId(null)}
+          onSave={(changes) => update(editing.id, changes)}
+        />
+      )}
 
       {twinBacked && (
         <TwinEvalEditor

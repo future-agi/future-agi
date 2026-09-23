@@ -9,6 +9,7 @@ import Iconify from "src/components/iconify";
 import SideDrawer from "../../components/SideDrawer";
 import { useAppliedEvals } from "./appliedEvals";
 import AddEvalsDrawer from "./AddEvalsDrawer";
+import EditEvalDrawer, { canEditEval } from "./EditEvalDrawer";
 
 /**
  * All Evaluations — mirrors the prod dataset drawer
@@ -37,8 +38,10 @@ const evalType = (e) => (
 const typeCfg = (e) => TYPE_CFG[evalType(e)] || TYPE_CFG.agent;
 
 export default function AppliedEvalsDrawer({ open, onClose, env, envState, patch }) {
-  const { appliedEvals, appliedIds, add, remove } = useAppliedEvals(envState, patch);
+  const { appliedEvals, appliedIds, add, remove, update } = useAppliedEvals(envState, patch);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const editing = appliedEvals.find((e) => e.id === editingId) || null;
   const [selected, setSelected] = useState(() => new Set());
   const [confirmBulk, setConfirmBulk] = useState(false);
 
@@ -168,6 +171,7 @@ export default function AppliedEvalsDrawer({ open, onClose, env, envState, patch
                     item={e}
                     selected={selected.has(e.id)}
                     onToggle={() => toggleOne(e.id)}
+                    onEdit={() => setEditingId(e.id)}
                     onDelete={() => remove(e.id)}
                   />
                 ))}
@@ -206,6 +210,16 @@ export default function AppliedEvalsDrawer({ open, onClose, env, envState, patch
         existingIds={appliedIds}
         onAdd={(items) => { add(items); setPickerOpen(false); }}
       />
+
+      {editing && (
+        <EditEvalDrawer
+          item={editing}
+          env={env}
+          envState={envState}
+          onClose={() => setEditingId(null)}
+          onSave={(changes) => update(editing.id, changes)}
+        />
+      )}
 
       {/* Bulk-delete confirm */}
       <Dialog
@@ -255,7 +269,7 @@ AppliedEvalsDrawer.propTypes = {
 
 /* ── Row — visual clone of SavedEvalsList's EvalRow (prod). ───────────── */
 
-function EvalRow({ item, selected, onToggle, onDelete }) {
+function EvalRow({ item, selected, onToggle, onEdit, onDelete }) {
   const [open, setOpen] = useState(false);
   const t = typeCfg(item);
   const mappingEntries = Object.entries(item.mapping || {}).slice(0, 3);
@@ -316,7 +330,7 @@ function EvalRow({ item, selected, onToggle, onDelete }) {
             </IconButton>
           </Tooltip>
           <Tooltip title="Edit mapping & config" arrow>
-            <IconButton size="small" sx={{ p: 0.4 }}>
+            <IconButton size="small" sx={{ p: 0.4 }} onClick={onEdit} disabled={!canEditEval(item)}>
               <Iconify icon="mdi:pencil-outline" width={17} sx={{ color: "text.secondary" }} />
             </IconButton>
           </Tooltip>
@@ -383,5 +397,6 @@ EvalRow.propTypes = {
   item: PropTypes.object.isRequired,
   selected: PropTypes.bool,
   onToggle: PropTypes.func,
+  onEdit: PropTypes.func,
   onDelete: PropTypes.func,
 };

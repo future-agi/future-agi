@@ -37,12 +37,10 @@ export default function RunsPanel({ env, envState, onGo }) {
 
   /*
     Once there is anything to compare, this step is the summary rather than a
-    launcher. Pre-flight still exists — it moved into "Add more runs", where it
-    is read at the moment it matters rather than sitting above a history nobody
-    came here to skip past.
+    launcher; new runs start from the header's Run simulation button.
   */
   if (envState.runs.length > 0) {
-    return <RunsSummary env={env} envState={envState} onGo={onGo} onStart={startRun} />;
+    return <RunsSummary env={env} envState={envState} onGo={onGo} />;
   }
 
   return (

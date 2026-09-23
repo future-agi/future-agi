@@ -63,6 +63,19 @@ export default function AddEvalsDrawer({ open, onClose, env, envState, existingI
     model: config.model,
     threshold: 0.8,
     custom: true,
+    /* Kept so the pencil reopens the config screen as it was saved. */
+    templateId: config.templateId || config.id,
+    instanceName: config.name,
+    config: config.config,
+    runConfig: {
+      agent_mode: config.agent_mode,
+      check_internet: config.check_internet,
+      summary: config.summary,
+      tools: config.tools,
+      knowledge_bases: config.knowledge_bases,
+      data_injection: config.data_injection,
+      error_localizer_enabled: config.error_localizer_enabled,
+    },
   });
 
   /**
@@ -95,7 +108,9 @@ export default function AddEvalsDrawer({ open, onClose, env, envState, existingI
       // why the theme rule has to be outranked to get it.
       paperSx={{ backgroundColor: "background.paper", backgroundImage: "none" }}
       source="create-simulate"
-      sourceId={env?.id || ""}
+      // No sourceId, same as the legacy run setup: with one the picker lists
+      // from develops/<dataset uuid>/get_evals_list/, and an environment id
+      // isn't a dataset uuid, so the library came back empty.
       sourcePreviewData={previewData}
       existingEvals={[...(existingIds || [])].map((id) => ({ id }))}
       onEvalAdded={mapping ? onEvalAdded : (config) => { onAdd([entry(config)]); close(); }}

@@ -1371,7 +1371,7 @@ const AgentResponseTimePanel = memo(function AgentResponseTimePanel({ tasks }) {
       title="Agent response time per call"
       action={<SourceTag>Platform, transcript timing</SourceTag>}
       exportRows={exportRows}
-      info={`Each call's average time for the agent to start replying after the caller stops. Red buckets are at or over the ${RESPONSE_TARGET_MS}ms target.`}
+      info={`Each call's average time for the agent to start replying after the caller stops talking — the same per-call figure as the Agent Latency tile. Red buckets are at or over the ${RESPONSE_TARGET_MS}ms target, where callers start to notice silence. A second hump on the right usually means one tool or prompt path is consistently slow.`}
       footer={`${overPct}% of calls were over the ${RESPONSE_TARGET_MS}ms target. p50 ${fmtMs(p50)}, p95 ${fmtMs(p95)}.`}
     >
       <Box sx={{ px: 1.5, pb: 1 }}>
@@ -1417,7 +1417,7 @@ const CsatDistributionPanel = memo(function CsatDistributionPanel({ tasks }) {
       title="CSAT distribution (0–10)"
       action={<SourceTag>Existing score</SourceTag>}
       exportRows={exportRows}
-      info={`How many calls landed on each CSAT score. Red scores are ${CSAT_BAD_AT} or below.`}
+      info={`How many calls landed on each CSAT score from 0 to 10 — the same per-call score as the Avg CSAT tile. Red scores (${CSAT_BAD_AT} and below) are unhappy callers; a lump on the left means the agent is solving problems in a way callers don't like. The footer checks the provider's own success judgement against your evals, so you know how far to trust it.`}
       footer={`The provider's own success judgement (its analysis) agrees with your evals on ${agreePct}% of calls.`}
     >
       <Box sx={{ px: 1.5, pb: 1 }}>
@@ -2680,7 +2680,7 @@ const SlowestTable = memo(function SlowestTable({ tasks }) {
       title="Slowest tasks"
       subtitle="Ranked by wall-clock duration — hover to see the task"
       exportRows={exportRows}
-      info="The eight worst offenders on latency. These are the ones driving your p90 and p99 up — fix one of these and the percentile tiles above visibly improve. If the top ones share a persona or use case, you've found a pattern, not a one-off."
+      info="The eight worst offenders on latency. These are the ones driving your p90 and p99 up — fix one of these and the Latency percentiles curve visibly improves. If the top ones share a persona or use case, you've found a pattern, not a one-off."
     >
       <RankedColumnChart
         rows={rows.map((t) => ({
@@ -2771,7 +2771,7 @@ const ToolCallVolumePanel = memo(function ToolCallVolumePanel({ tasks }) {
     <Panel
       title="Tool call volume"
       subtitle={`${total} invocations · ${rows.length} tools`}
-      info="Fixes here usually belong to the infra team, not the prompt team."
+      info="How many times the agent called each tool across the run. It shows which tools carry the conversation: a rarely-called tool may be one the agent doesn't know when to use, and a heavily-used one is where a single failure hurts most. Fixes here usually belong to the infra team, not the prompt team."
       exportRows={exportRows}
     >
       <Box sx={{ px: 1.5, pt: 0.5, pb: 1 }}>
@@ -2835,7 +2835,7 @@ const ToolFailureRatePanel = memo(function ToolFailureRatePanel({ tasks }) {
     <Panel
       title="Tool failure rate"
       subtitle="Fail % per tool — sorted, danger threshold at 40%"
-      info="High-failure tools break the agent's flow. Route to infra, not the prompt team."
+      info="The share of each tool's calls that failed, worst first, with failed / total calls on each bar. Anything past the 40% danger line is breaking the agent's flow — the agent can't reason its way around a broken tool, so route these to infra, not the prompt team."
       exportRows={exportRows}
     >
       <Box sx={{ px: 1.5, pt: 0.5, pb: 1 }}>
