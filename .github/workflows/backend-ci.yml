@@ -314,9 +314,67 @@ jobs:
           print(f"temporal activity registry OK: {activity_count} activities")
           EOF
 
+  quality:
+    name: Code Quality (ruff, black, baseline mypy)
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: futureagi
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.16"
+          enable-cache: true
+          cache-dependency-glob: futureagi/uv.lock
+
+      - name: Install dependencies
+        # Syncs locked dependencies plus the dev extra (which supplies mypy and stubs)
+        run: uv sync --frozen --extra dev
+
+      - name: Identify changed Python files
+        id: changed-files
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_REF="origin/${{ github.base_ref }}"
+            git fetch origin "${{ github.base_ref }}" --depth=1 || true
+            git diff --name-only --diff-filter=d "$BASE_REF"...HEAD -- '*.py' | grep '^futureagi/' | sed 's|^futureagi/||' > /tmp/changed_py.txt || true
+          else
+            BEFORE="${{ github.event.before }}"
+            if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              BEFORE="HEAD~1"
+            fi
+            git diff --name-only --diff-filter=d "$BEFORE"...HEAD -- '*.py' | grep '^futureagi/' | sed 's|^futureagi/||' > /tmp/changed_py.txt || true
+          fi
+          COUNT=$(grep -c . /tmp/changed_py.txt || echo 0)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "Found $COUNT changed Python files in futureagi:"
+          cat /tmp/changed_py.txt
+
+      - name: Ruff check (changed files)
+        if: steps.changed-files.outputs.count != '0'
+        run: |
+          xargs -r uvx ruff@0.14.2 check < /tmp/changed_py.txt
+
+      - name: Black check (changed files)
+        if: steps.changed-files.outputs.count != '0'
+        run: |
+          xargs -r uvx black@25.11.0 --check < /tmp/changed_py.txt
+
+      - name: Mypy baseline check
+        run: |
+          export PATH="$PWD/.venv/bin:$PATH"
+          bash ./bin/check_mypy.sh
+
   backend-tests:
     name: Backend Tests Pass # the ONLY required status check
-    needs: [changes, plan, test, slim-smoke]
+    needs: [changes, plan, test, slim-smoke, quality]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
