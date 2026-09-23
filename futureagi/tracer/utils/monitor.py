@@ -48,6 +48,9 @@ class MonitorConfigError(Exception):
 
 def build_monitor_ch_builder(monitor: UserAlertMonitor) -> "MonitorMetricsQueryBuilder":
     """Construct the routed MONITOR_METRICS builder from a monitor instance."""
+    if not monitor.project_id:
+        raise MonitorConfigError(f"Monitor {monitor.id} has no project configured")
+
     eval_config_id = None
     eval_output_type = None
     if (
