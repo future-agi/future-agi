@@ -23,6 +23,7 @@ import { Helmet } from "react-helmet-async";
 import { useNavigate } from "react-router-dom";
 
 import Iconify from "src/components/iconify";
+import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import EnvironmentSwitcher from "src/components/harness/EnvironmentSwitcher";
 import StatusChip from "src/components/custom-status-chip/CustomStatusChip";
 import { STATUS_TYPES } from "src/utils/statusUtils";
@@ -35,6 +36,7 @@ import {
   uploadHarnessSource,
 } from "src/api/harness/harness";
 import { paths } from "src/routes/paths";
+import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 
 import { parseDotEnv } from "./dotenv";
 import {
@@ -190,6 +192,12 @@ Section.propTypes = {
 export default function HarnessCreate() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const {
+    exhaustionError,
+    handleError: handleCreditError,
+    handleUpgradeClick,
+    handleDismiss: dismissCreditBanner,
+  } = useCreditExhaustion({ feature: "hosted_harness" });
 
   const { data: listData } = useQuery({
     queryKey: ["harness-jobs"],
@@ -470,7 +478,9 @@ export default function HarnessCreate() {
       queryClient.invalidateQueries({ queryKey: ["harness-jobs"] });
       navigate(paths.dashboard.simulate.harness.detail(value.job.job_id));
     } catch (requestError) {
-      setError(errorMessage(requestError));
+      if (!handleCreditError(requestError)) {
+        setError(errorMessage(requestError));
+      }
       setSubmitting(false);
     }
   };
@@ -614,8 +624,7 @@ export default function HarnessCreate() {
     // generic value. Secret-looking names are always handled as credentials,
     // matching the backend's fail-closed config validation.
     const isSecret =
-      item.kind === "secret" ||
-      isSecretCredentialName(item.environment_name);
+      item.kind === "secret" || isSecretCredentialName(item.environment_name);
     const isFile = item.kind === "file";
     const revealed = revealedSecrets.has(item.environment_name);
     return (
@@ -774,7 +783,7 @@ export default function HarnessCreate() {
   return (
     <>
       <Helmet>
-        <title>Create RL Environment | Future AGI</title>
+        <title>Create Environment | Future AGI</title>
       </Helmet>
 
       <Box sx={{ height: "100vh", overflow: "auto", p: 2 }}>
@@ -806,7 +815,7 @@ export default function HarnessCreate() {
               />
             </Stack>
             <Typography typography="m2" fontWeight={600}>
-              Create RL environment
+              Create environment
             </Typography>
             <Typography typography="s1" color="text.secondary">
               Point ALK at your agent, check what it needs, then run the whole
@@ -1560,6 +1569,11 @@ export default function HarnessCreate() {
                 </Stack>
               </Section>
 
+              <CreditExhaustionBanner
+                error={exhaustionError}
+                onUpgrade={handleUpgradeClick}
+                onDismiss={dismissCreditBanner}
+              />
               {error && (
                 <Alert severity="error" variant="outlined">
                   {error}

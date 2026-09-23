@@ -1,6 +1,12 @@
 import React from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
+import {
+  fireEvent,
+  render,
+  screen,
+  userEvent,
+  waitFor,
+} from "src/utils/test-utils";
 import { parseTimeoutSeconds } from "./utils";
 import AddProviderDialog from "./AddProviderDialog";
 
@@ -69,6 +75,45 @@ describe("AddProviderDialog validation", () => {
         opts?.onSuccess?.({ models: ["gpt-4o", "gpt-4o-mini"] }),
       ),
     );
+  });
+
+  it("offers Vertex with pasted service-account JSON, without an API key or model fetch", async () => {
+    renderCreateDialog();
+    await userEvent.click(screen.getByLabelText(/^Provider/));
+    await userEvent.click(
+      screen.getByRole("option", { name: "Google Vertex AI" }),
+    );
+
+    fireEvent.change(screen.getByLabelText(/^Google Cloud project ID/), {
+      target: { value: "demo-project" },
+    });
+    fireEvent.change(screen.getByLabelText(/^Service-account JSON/), {
+      target: {
+        value: JSON.stringify({
+          type: "service_account",
+          project_id: "demo-project",
+          client_email: "demo@example.iam.gserviceaccount.com",
+          private_key: "test-key",
+          token_uri: "https://oauth2.googleapis.com/token",
+        }),
+      },
+    });
+    const modelInput = screen.getByPlaceholderText(/model IDs/i);
+    await userEvent.type(modelInput, "vertex_ai/gemini-3.7-flash{enter}");
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    expect(fetchMutate).not.toHaveBeenCalled();
+    expect(updateMutate).toHaveBeenCalledTimes(1);
+    const payload = updateMutate.mock.calls[0][0];
+    expect(payload.name).toBe("vertex");
+    expect(payload.config.api_format).toBe("gemini");
+    expect(payload.config.gcp_project).toBe("demo-project");
+    expect(payload.config.gcp_location).toBe("us-central1");
+    expect(payload.config.models).toContain("vertex_ai/gemini-3.7-flash");
+    expect(payload.config.service_account_json).toContain(
+      '"type":"service_account"',
+    );
+    expect(payload.config).not.toHaveProperty("api_key");
   });
 
   it("saves an edited provider whose stored timeout came back as a number", async () => {

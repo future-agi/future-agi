@@ -395,6 +395,43 @@ func TestIntegration_StreamingRoundTrip(t *testing.T) {
 	}
 }
 
+func TestIntegration_StreamingStopsAtFinishReasonWithoutWaitingForEOF(t *testing.T) {
+	requestClosed := make(chan struct{})
+	finalChunk := `{"candidates":[{"content":{"role":"model","parts":[{"text":"done"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":1,"totalTokenCount":6}}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(requestClosed)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, "data: %s\n\n", finalChunk)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	provider := newTestProvider(t, server.URL)
+	request := basicRequest()
+	request.Stream = true
+	started := time.Now()
+
+	chunks, errs := provider.StreamChatCompletion(context.Background(), request)
+	for range chunks {
+	}
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("stream error: %v", err)
+		}
+	}
+
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("stream stayed open for %v after its final finish reason", elapsed)
+	}
+	select {
+	case <-requestClosed:
+	case <-time.After(time.Second):
+		t.Fatal("provider did not close the upstream response body")
+	}
+}
+
 func TestIntegration_StreamingWithFunctionCall(t *testing.T) {
 	chunk := `{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"search","args":{"q":"test"}}}]},"finishReason":"STOP"}]}`
 

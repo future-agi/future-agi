@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import re
 
-from django.conf import settings
 from rest_framework import serializers
+
+from simulate.serializers.hosted_harness_conversation import (
+    HarnessConversationReadSerializer,
+)
 
 RUNNER_RESERVED_ENVIRONMENT = {
     "DOCKER_HOST",
@@ -192,11 +195,7 @@ class HarnessAgentSerializer(serializers.Serializer):
             number = str(config.get("phone_number") or "").strip()
             if not _E164.fullmatch(number):
                 raise serializers.ValidationError(
-                    {
-                        "config": (
-                            "phone_number must be E.164, for example +14155551234"
-                        )
-                    }
+                    {"config": ("phone_number must be E.164, for example +14155551234")}
                 )
             prompt = str(config.get("target_system_prompt") or "").strip()
             if not prompt:
@@ -678,6 +677,13 @@ class HarnessRuntimeReadSerializer(serializers.Serializer):
     diagnostics = HarnessDiagnosticsSerializer(required=False)
 
 
+class HarnessConsumptionSerializer(serializers.Serializer):
+    text_sim_tokens = serializers.IntegerField(min_value=0)
+    voice_sim_minutes = serializers.FloatField(min_value=0)
+    ai_credits = serializers.FloatField(min_value=0, allow_null=True)
+    sandbox_seconds = serializers.FloatField(min_value=0)
+
+
 class HarnessJobReadSerializer(serializers.Serializer):
     """Consolidated public read DTO for list/create/retrieve/cancel/poll."""
 
@@ -689,3 +695,6 @@ class HarnessJobReadSerializer(serializers.Serializer):
     receipts = serializers.ListField(child=serializers.JSONField())
     platform = HarnessPlatformSerializer()
     runtime = HarnessRuntimeReadSerializer(required=False)
+    conversation = HarnessConversationReadSerializer(allow_null=True, required=False)
+    consumption = HarnessConsumptionSerializer(required=False, allow_null=True)
+    usage_limit = serializers.JSONField(required=False, allow_null=True)

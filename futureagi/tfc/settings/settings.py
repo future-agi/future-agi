@@ -901,11 +901,11 @@ VAPI_WEBHOOK_SECRET = os.getenv("VAPI_WEBHOOK_SECRET", "")
 # Internal API authentication (shared secret for service-to-service calls)
 INTERNAL_API_SECRET = os.getenv("INTERNAL_API_SECRET", "")
 
-# Hosted ALK sandbox gateway
+# Hosted ALK control plane. HARNESS_PROVIDER chooses the public backend; the managed backend
+# selects its infrastructure implementation independently through HOSTED_SANDBOX_PROVIDER.
 HARNESS_PUBLIC_BASE_URL = os.getenv("HARNESS_PUBLIC_BASE_URL", "")
-# Execution backend for hosted harness jobs: "daytona" (platform drives the
-# Daytona sandbox) or "sandbox" (proxy to an out-of-process ALK sandbox server).
-HARNESS_PROVIDER = os.getenv("HARNESS_PROVIDER", "daytona")
+HARNESS_PROVIDER = os.getenv("HARNESS_PROVIDER", "hosted")
+HOSTED_SANDBOX_PROVIDER = os.getenv("HOSTED_SANDBOX_PROVIDER", "daytona")
 ALK_HARNESS_SANDBOX_URL = os.getenv("ALK_HARNESS_SANDBOX_URL", "")
 ALK_HARNESS_SANDBOX_TOKEN = os.getenv("ALK_HARNESS_SANDBOX_TOKEN", "")
 GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", "")
@@ -964,9 +964,7 @@ ALK_HOSTED_EGRESS_UNRESTRICTED = os.getenv(
     "ALK_HOSTED_EGRESS_UNRESTRICTED", ""
 ).lower() in ("1", "true", "yes")
 # Fresh hosted jobs perform contract, environment and scenario authoring before the call-runtime
-# budget begins. Keep that bounded work separate from the customer's maximum call duration;
-# otherwise Daytona expires a healthy sandbox midway through scenario authoring.
-# Three hours: what a two-hundred-scenario suite needs to write, review and top up.
+# budget begins. Keep that bounded work separate from the customer's maximum call duration.
 ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = int(
     os.getenv("ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", "10800")
 )
@@ -975,10 +973,15 @@ ALK_HOSTED_AUTHORING_TIMEOUT = int(
     os.getenv("ALK_HOSTED_AUTHORING_TIMEOUT", "")
     or ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS + 300
 )
-# Daytona sandbox lifetime is a separate infrastructure envelope. A customer's call-runtime
-# limit must never shorten fresh authoring; two hours is the hosted default/minimum.
+# Sandbox lifetime is a separate infrastructure envelope. A customer's call-runtime limit must
+# never shorten fresh authoring; two hours is the hosted default/minimum.
 ALK_HOSTED_SANDBOX_TTL_SECONDS = int(
     os.getenv("ALK_HOSTED_SANDBOX_TTL_SECONDS", "7200")
+)
+# Conversational sandboxes are replaceable warm caches. Their persistent ADK session and
+# workspace checkpoint survive deletion; this only controls the cost/latency window.
+ALK_HOSTED_CHAT_TTL_SECONDS = int(
+    os.getenv("ALK_HOSTED_CHAT_TTL_SECONDS", "1800")
 )
 DAYTONA_API_KEY = os.getenv("DAYTONA_API_KEY", "")
 DAYTONA_API_URL = os.getenv("DAYTONA_API_URL") or None
@@ -990,6 +993,16 @@ ALK_DAYTONA_SNAPSHOT_DIGEST = os.getenv("ALK_DAYTONA_SNAPSHOT_DIGEST", "")
 # trusted hosted Dockerfile. Production leaves this empty and uses the immutable snapshot above.
 # This is intentionally a control-plane setting, never accepted from a customer job payload.
 ALK_DAYTONA_DOCKERFILE = os.getenv("ALK_DAYTONA_DOCKERFILE", "")
+E2B_API_KEY = os.getenv("E2B_API_KEY", "")
+ALK_E2B_TEMPLATE_REFERENCE = os.getenv("ALK_E2B_TEMPLATE_REFERENCE", "")
+ALK_E2B_TEMPLATE_BUILD_ID = os.getenv("ALK_E2B_TEMPLATE_BUILD_ID", "")
+# E2B allocates resources at template-build time. Admission fails closed when a request exceeds
+# the configured template profile. The continuous-runtime limit is plan-specific and therefore
+# has no implicit default; deployment must set it explicitly before selecting E2B.
+ALK_E2B_TEMPLATE_CPU_UNITS = int(os.getenv("ALK_E2B_TEMPLATE_CPU_UNITS", "4"))
+ALK_E2B_TEMPLATE_MEMORY_MB = int(os.getenv("ALK_E2B_TEMPLATE_MEMORY_MB", "8192"))
+ALK_E2B_TEMPLATE_DISK_GB = int(os.getenv("ALK_E2B_TEMPLATE_DISK_GB", "10"))
+ALK_E2B_MAX_TTL_SECONDS = int(os.getenv("ALK_E2B_MAX_TTL_SECONDS", "0"))
 
 # LiveKit credentials (used for webhook verification and API calls)
 LIVEKIT_URL = os.getenv("LIVEKIT_URL", "")
@@ -1086,7 +1099,11 @@ sentry_sdk_enabled = (
 )
 
 # ── CSRF trusted origins (built dynamically from BASE_URL / APP_URL) ──
-CSRF_TRUSTED_ORIGINS = ["http://localhost:5173", "http://localhost:3031"]
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:3031",
+]
 if APP_URL:
     CSRF_TRUSTED_ORIGINS += [f"https://{APP_URL}", f"http://{APP_URL}"]
 if BASE_URL:

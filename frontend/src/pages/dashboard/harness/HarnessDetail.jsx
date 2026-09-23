@@ -1,3 +1,6 @@
+import Markdown from "react-markdown";
+import rehypeSanitize from "rehype-sanitize";
+import remarkGfm from "remark-gfm";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -20,6 +23,7 @@ import { Helmet } from "react-helmet-async";
 import { useNavigate, useParams } from "react-router-dom";
 
 import Iconify from "src/components/iconify";
+import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import StatusChip from "src/components/custom-status-chip/CustomStatusChip";
 import ScenarioOutcome from "./ScenarioOutcome";
 import CustomTooltip from "src/components/tooltip";
@@ -31,11 +35,13 @@ import { compactActivityEvents } from "./activityEvents";
 import {
   adjustHarnessJob,
   cancelHarnessJob,
+  extendHarnessJob,
   getHarnessJob,
   listHarnessJobs,
-  extendHarnessJob,
+  sendHarnessConversationMessage,
 } from "src/api/harness/harness";
 import { paths } from "src/routes/paths";
+import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 
 import {
   adjustmentStatus,
@@ -51,6 +57,7 @@ import {
   TAB_STATE,
   stageState,
   eventMessage,
+  displayText,
   jobProgress,
   readable,
   scenarioOutcome,
@@ -85,20 +92,76 @@ const DETAIL_TABS = [
   { value: "runs", label: "Runs" },
 ];
 
+const parseActivityPayload = (text) => {
+  if (!text) return null;
+  try {
+    const value = JSON.parse(text);
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? value
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+const activitySummary = (entry) => {
+  const payload = parseActivityPayload(entry.text);
+  if (entry.kind === "tool") {
+    const label = payload?.label || readable(entry.tool || "tool");
+    const target = payload?.target || payload?.path;
+    return target ? `ALK used ${label} · ${target}` : `ALK used ${label}`;
+  }
+  if (payload?.stage) {
+    return `Stage · ${readable(payload.stage)}`;
+  }
+  return (
+    displayText(entry.text)
+      .split("\n")
+      .map((line) => line.trim())
+      .find(Boolean)
+      ?.slice(0, 180) || "Authoring update"
+  );
+};
+const activityResultSummary = (entry) => {
+  const payload = parseActivityPayload(entry.text);
+  const value = payload?.text || payload?.summary || entry.text;
+  return displayText(value)
+    .split("\n")
+    .map((line) => line.trim())
+    .find(Boolean)
+    ?.slice(0, 180);
+};
+const consumptionValue = (value) =>
+  typeof value === "number" && Number.isFinite(value)
+    ? value.toLocaleString(undefined, { maximumFractionDigits: 6 })
+    : "Unavailable";
 export default function HarnessDetail() {
   const { jobId } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const {
+    exhaustionError,
+    handleError: handleCreditError,
+    handleUpgradeClick,
+    handleDismiss: dismissCreditBanner,
+    clearError: clearCreditError,
+  } = useCreditExhaustion({ feature: "hosted_harness" });
   const [clock, setClock] = useState(Date.now());
   const [cancelError, setCancelError] = useState("");
   const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [conversationError, setConversationError] = useState("");
+  const [adjustError, setAdjustError] = useState("");
   const [extendError, setExtendError] = useState("");
   const [stagesOpen, setStagesOpen] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
   const [detailTab, setDetailTab] = useState("contract");
+  const [message, setMessage] = useState("");
   const [adjustment, setAdjustment] = useState("");
   const [addCount, setAddCount] = useState(3);
   const feedRef = useRef(null);
+  const conversationRef = useRef(null);
+  const conversationAtEnd = useRef(true);
+  const hadRemoteUsageLimit = useRef(false);
   // Whether the reader is sitting at the end of the feed. New activity follows the end
   // only while they are; someone who scrolled up to read history is left where they are.
   const pinnedToEnd = useRef(true);
@@ -107,7 +170,6 @@ export default function HarnessDetail() {
   const arriving = useRef(true);
   const lastScrollTop = useRef(0);
   const following = useRef(true);
-  const [adjustError, setAdjustError] = useState("");
 
   const {
     data: current,
@@ -117,12 +179,32 @@ export default function HarnessDetail() {
     queryKey: ["harness-job", jobId],
     queryFn: () => getHarnessJob(jobId),
     enabled: Boolean(jobId),
-    // Poll only while the run can still change; a terminal job would otherwise be refetched
-    // forever for a payload that never moves again.
-    refetchInterval: (query) =>
-      terminalStages.has(query.state.data?.status?.stage) ? false : 2000,
+    refetchInterval: (query) => {
+      const value = query.state.data;
+      const conversation = value?.conversation;
+      const pending = conversation?.messages?.some((item) =>
+        ["queued", "delivered", "streaming"].includes(item.state),
+      );
+      const active = ["starting", "hydrating", "responding"].includes(
+        conversation?.state,
+      );
+      if (pending || active) return 1000;
+      return terminalStages.has(value?.status?.stage) ? false : 2000;
+    },
     meta: { errorHandled: true },
   });
+  const usageLimit = current?.usage_limit;
+  useEffect(() => {
+    if (usageLimit) {
+      if (!hadRemoteUsageLimit.current) {
+        hadRemoteUsageLimit.current = true;
+        handleCreditError(usageLimit);
+      }
+    } else if (hadRemoteUsageLimit.current) {
+      hadRemoteUsageLimit.current = false;
+      clearCreditError();
+    }
+  }, [usageLimit, handleCreditError, clearCreditError]);
 
   // Shares the list page's key, so arriving from the list reuses what is already cached
   // rather than issuing a second request for the same array.
@@ -135,6 +217,7 @@ export default function HarnessDetail() {
     () => (Array.isArray(listData) ? listData : []),
     [listData],
   );
+  const chatAvailable = Boolean(current?.conversation?.runtime?.available);
 
   const { mutate: cancel, isPending: canceling } = useMutation({
     mutationFn: () => {
@@ -166,6 +249,37 @@ export default function HarnessDetail() {
     },
   });
 
+  const { mutate: sendMessage, isPending: sendingMessage } = useMutation({
+    mutationFn: async ({ content, replyTo = null, kind = "user_message" }) => {
+      const randomUUID = window.crypto?.randomUUID;
+      const requestId =
+        typeof randomUUID === "function"
+          ? randomUUID.call(window.crypto)
+          : `message-${Date.now().toString(36)}`;
+      const conversation = await sendHarnessConversationMessage(jobId, {
+        content,
+        client_request_id: requestId,
+        kind,
+        ...(replyTo ? { reply_to: replyTo } : {}),
+      });
+      return { conversation };
+    },
+    onMutate: () => setConversationError(""),
+    onSuccess: (value, variables) => {
+      queryClient.setQueryData(["harness-job", jobId], (existing) => ({
+        ...existing,
+        conversation: value.conversation,
+      }));
+      if (!variables.replyTo) setMessage("");
+      pinnedToEnd.current = true;
+      conversationAtEnd.current = true;
+      setDetailTab("runs");
+    },
+    onError: (requestError) => {
+      setConversationError(errorMessage(requestError));
+    },
+  });
+
   const { mutate: adjust, isPending: adjusting } = useMutation({
     mutationFn: () => {
       const instruction = adjustment.trim();
@@ -194,7 +308,9 @@ export default function HarnessDetail() {
         detail: requestError?.detail,
         message: requestError?.message,
       });
-      setAdjustError(errorMessage(requestError));
+      if (!handleCreditError(requestError)) {
+        setAdjustError(errorMessage(requestError));
+      }
     },
   });
 
@@ -228,7 +344,9 @@ export default function HarnessDetail() {
         detail: requestError?.detail,
         message: requestError?.message,
       });
-      setExtendError(errorMessage(requestError));
+      if (!handleCreditError(requestError)) {
+        setExtendError(errorMessage(requestError));
+      }
     },
   });
 
@@ -236,6 +354,10 @@ export default function HarnessDetail() {
   const cancellationRequested = Boolean(status?.cancel_requested_at);
   const progress = jobProgress(status);
   const isTerminal = terminalStages.has(status?.stage);
+  const conversationComposerAvailable = chatAvailable || !isTerminal;
+  const blockingReplyTo = chatAvailable
+    ? current?.conversation?.blocking_input?.message_id || null
+    : null;
 
   // Only the finished prefix folds away, so the stage a run failed or stopped on is never
   // hidden by collapsing — it is the first row still on screen.
@@ -326,16 +448,113 @@ export default function HarnessDetail() {
         at: event.emitted_at || event.wall_time,
         event,
       }));
+    const authoringActivity =
+      stageOutputs.find((output) => output.kind === "activity")?.events || [];
+    const authoringEvents = authoringActivity.map((event) => ({
+      kind: "event",
+      id: event.event_id,
+      at: event.emitted_at,
+      event: {
+        event_id: event.event_id,
+        emitted_at: event.emitted_at,
+        type: event.event_type,
+        event_type: event.event_type,
+        payload: event.payload || {},
+        stage: event.payload?.stage,
+      },
+    }));
     const changes = (current?.adjustments || []).map((item) => ({
       kind: "adjustment",
       id: item.adjustment_id,
       at: item.created_at,
       item,
     }));
-    return [...events, ...changes].sort(
+    return [...events, ...authoringEvents, ...changes].sort(
       (a, b) => new Date(a.at || 0) - new Date(b.at || 0),
     );
-  }, [current?.events, current?.adjustments]);
+  }, [current?.events, current?.adjustments, stageOutputs]);
+
+  const conversationFeed = useMemo(() => {
+    const entries = (current?.conversation?.messages || []).map((item) => ({
+      kind: "message",
+      id: item.message_id,
+      at: item.created_at,
+      item,
+    }));
+    const tools = new Map();
+    (current?.conversation?.events || []).forEach((event) => {
+      if (event.kind === "tool_started") {
+        const key = event.function_call_id || event.event_id;
+        const entry = {
+          kind: "tool",
+          id: key,
+          at: event.emitted_at,
+          stage: displayText(event.stage),
+          tool: displayText(event.payload?.tool),
+          label: displayText(event.payload?.label),
+          state: "running",
+          text: "",
+        };
+        tools.set(key, entry);
+        entries.push(entry);
+      } else if (event.kind === "tool_result") {
+        const key = event.function_call_id || event.event_id;
+        const existing = tools.get(key);
+        if (existing) {
+          existing.state = event.payload?.is_error ? "failed" : "completed";
+          existing.text = displayText(event.payload?.text);
+        } else {
+          entries.push({
+            kind: "tool",
+            id: key,
+            at: event.emitted_at,
+            stage: displayText(event.stage),
+            tool: displayText(event.payload?.tool),
+            state: event.payload?.is_error ? "failed" : "completed",
+            text: displayText(event.payload?.text),
+          });
+        }
+      } else if (event.kind === "authoring_activity") {
+        const activity = event.payload?.event || {};
+        const activityText = displayText(activity.text);
+        if (!activityText && !activity.tool) return;
+        const text = activityText || readable(displayText(activity.tool));
+        entries.push({
+          kind: "activity",
+          id: event.event_id,
+          at: event.emitted_at,
+          text,
+        });
+      } else if (event.kind === "stage_changed") {
+        entries.push({
+          kind: "activity",
+          id: event.event_id,
+          at: event.emitted_at,
+          text: `ALK moved to ${readable(displayText(event.payload?.to || event.stage))}`,
+        });
+      }
+    });
+    const sorted = entries.sort(
+      (a, b) => new Date(a.at || 0) - new Date(b.at || 0),
+    );
+    return sorted.reduce((grouped, entry) => {
+      const previous = grouped.at(-1);
+      if (entry.kind === "activity" && previous?.kind === "activity") {
+        previous.text = `${previous.text}\n${entry.text}`;
+        previous.count += 1;
+      } else {
+        grouped.push({
+          ...entry,
+          count: entry.kind === "activity" ? 1 : undefined,
+        });
+      }
+      return grouped;
+    }, []);
+  }, [current?.conversation?.events, current?.conversation?.messages]);
+  const activityEntries = useMemo(
+    () => conversationFeed.filter((entry) => entry.kind !== "message"),
+    [conversationFeed],
+  );
 
   // Arriving at the feed always lands at the newest entry, whatever the reader was doing
   // on a previous visit.
@@ -361,7 +580,17 @@ export default function HarnessDetail() {
       });
     else feed.scrollTop = feed.scrollHeight;
     arriving.current = false;
-  }, [detailTab, timeline.length, selectedOutputs.length]);
+  }, [
+    conversationFeed.length,
+    detailTab,
+    selectedOutputs.length,
+    timeline.length,
+  ]);
+  useLayoutEffect(() => {
+    const conversation = conversationRef.current;
+    if (!conversation || !conversationAtEnd.current) return;
+    conversation.scrollTop = conversation.scrollHeight;
+  }, [current?.conversation?.messages]);
 
   const copyRunId = async () => {
     const runId = current?.job?.run_id;
@@ -391,7 +620,7 @@ export default function HarnessDetail() {
     return (
       <>
         <Helmet>
-          <title>RL Environment | Future AGI</title>
+          <title>Environment | Future AGI</title>
         </Helmet>
         <Box sx={{ p: 2 }}>
           <Alert
@@ -433,7 +662,7 @@ export default function HarnessDetail() {
     <>
       <Helmet>
         <title>
-          {environmentName(current.job, "RL Environment")} | Future AGI
+          {environmentName(current.job, "Environment")} | Future AGI
         </title>
       </Helmet>
 
@@ -543,6 +772,12 @@ export default function HarnessDetail() {
               Cancellation requested. The sandbox is stopping and cleaning up.
             </Alert>
           )}
+          <CreditExhaustionBanner
+            error={exhaustionError}
+            onUpgrade={handleUpgradeClick}
+            onDismiss={dismissCreditBanner}
+            sx={{ mt: 1.5 }}
+          />
         </Box>
 
         <Box
@@ -566,9 +801,7 @@ export default function HarnessDetail() {
               borderColor: "divider",
             }}
           >
-            <Typography variant="h6">
-              {environmentName(current.job)}
-            </Typography>
+            <Typography variant="h6">{environmentName(current.job)}</Typography>
             <Stack direction="row" alignItems="center" spacing={0.5}>
               <Typography variant="caption" color="text.secondary" noWrap>
                 {shortRunId(current.job?.run_id)}
@@ -622,6 +855,43 @@ export default function HarnessDetail() {
               {isTerminal ? `${updatedLabel} · ` : ""}attempt{" "}
               {status?.attempt || 1}
             </Typography>
+            <Box sx={{ mt: 1.5 }}>
+              <Typography variant="caption" fontWeight={600}>
+                Consumption
+              </Typography>
+              {current.consumption == null ? (
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ display: "block", mt: 0.25 }}
+                >
+                  Usage unavailable
+                </Typography>
+              ) : (
+                <Stack spacing={0.25} sx={{ mt: 0.5 }}>
+                  {[
+                    ["Text simulation tokens", "text_sim_tokens"],
+                    ["Voice simulation minutes", "voice_sim_minutes"],
+                    ["AI credits", "ai_credits"],
+                    ["Sandbox seconds", "sandbox_seconds"],
+                  ].map(([label, key]) => (
+                    <Stack
+                      key={key}
+                      direction="row"
+                      justifyContent="space-between"
+                      spacing={1}
+                    >
+                      <Typography variant="caption" color="text.secondary">
+                        {label}
+                      </Typography>
+                      <Typography variant="caption">
+                        {consumptionValue(current.consumption[key])}
+                      </Typography>
+                    </Stack>
+                  ))}
+                </Stack>
+              )}
+            </Box>
             <Divider sx={{ my: 2 }} />
 
             {/* Finished stages fold away: on a completed run the full list is fifteen ticks
@@ -900,7 +1170,7 @@ export default function HarnessDetail() {
                       >
                         <Stack direction="row" justifyContent="space-between">
                           <Typography variant="caption" color="accent.info">
-                            You asked for a change
+                            ALK requested a change
                           </Typography>
                           <Typography
                             variant="caption"
@@ -961,7 +1231,16 @@ export default function HarnessDetail() {
                             {eventTime(entry.at)}
                           </Typography>
                         </Stack>
-                        <Typography variant="body2">
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            whiteSpace: "pre-wrap",
+                            overflowWrap: "anywhere",
+                            wordBreak: "break-word",
+                            maxHeight: 180,
+                            overflow: "auto",
+                          }}
+                        >
                           {eventMessage(entry.event)}
                         </Typography>
                         <ScenarioOutcome
@@ -1030,12 +1309,195 @@ export default function HarnessDetail() {
                   )}
                 </Stack>
               )}
+              {activityEntries.length > 0 && (
+                <Box
+                  component="details"
+                  sx={{
+                    mb: 2,
+                    px: 1.5,
+                    py: 1,
+                    border: 1,
+                    borderColor: "divider",
+                    borderRadius: 1,
+                  }}
+                >
+                  <Typography
+                    component="summary"
+                    variant="caption"
+                    sx={{ cursor: "pointer" }}
+                  >
+                    Run activity · {activityEntries.length} updates
+                  </Typography>
+                  <Stack
+                    spacing={0.5}
+                    sx={{ mt: 1, maxHeight: 260, overflow: "auto" }}
+                  >
+                    {activityEntries.map((entry) => (
+                      <Typography
+                        key={entry.id}
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{
+                          whiteSpace: "pre-wrap",
+                          overflowWrap: "anywhere",
+                        }}
+                      >
+                        <Box component="span">{activitySummary(entry)}</Box>
+                        {entry.kind === "tool" &&
+                          activityResultSummary(entry) && (
+                            <>
+                              <Box component="span" color="text.disabled">
+                                {" — "}
+                              </Box>
+                              <Box component="span">
+                                {activityResultSummary(entry)}
+                              </Box>
+                            </>
+                          )}
+                      </Typography>
+                    ))}
+                  </Stack>
+                </Box>
+              )}
+            </Box>
+            <Box
+              ref={conversationRef}
+              aria-label="Conversation"
+              onScroll={(event) => {
+                const panel = event.currentTarget;
+                conversationAtEnd.current =
+                  panel.scrollHeight - panel.scrollTop - panel.clientHeight <
+                  80;
+              }}
+              sx={{
+                flexShrink: 0,
+                maxHeight: "40vh",
+                minHeight: 0,
+                overflow: "auto",
+                overflowWrap: "anywhere",
+                px: 2,
+                pt: 1.5,
+                borderTop: 1,
+                borderColor: "divider",
+              }}
+            >
+              {conversationFeed.some((entry) => entry.kind === "message") && (
+                <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                  Conversation
+                </Typography>
+              )}
+              {Boolean(conversationFeed.length) && (
+                <Stack spacing={1.25} sx={{ mb: 2 }}>
+                  {conversationFeed
+                    .filter((entry) => entry.kind === "message")
+                    .map((entry) => {
+                      const item = entry.item;
+                      return (
+                        <Paper
+                          key={item.message_id}
+                          variant="outlined"
+                          sx={{
+                            p: 1.5,
+                            ml: item.role === "user" ? 6 : 0,
+                            mr: item.role === "assistant" ? 6 : 0,
+                            bgcolor: "background.default",
+                            borderColor:
+                              item.role === "user" ? "accent.info" : "divider",
+                          }}
+                        >
+                          <Stack direction="row" justifyContent="space-between">
+                            <Typography
+                              variant="caption"
+                              color={
+                                item.role === "user"
+                                  ? "accent.info"
+                                  : "accent.brand"
+                              }
+                            >
+                              {item.role === "user" ? "You" : "ALK"}
+                            </Typography>
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                            >
+                              {readable(displayText(item.stage))}
+                            </Typography>
+                          </Stack>
+                          <Box
+                            sx={{
+                              "& p": { m: 0, mb: 0.75 },
+                              "& p:last-child": { mb: 0 },
+                              "& ul, & ol": { mb: 0.75, mt: 0.5, pl: 2.5 },
+                              "& li": { mb: 0.25 },
+                              "& pre": {
+                                bgcolor: "action.hover",
+                                borderRadius: 0.75,
+                                m: 0.5,
+                                overflowX: "auto",
+                                p: 1,
+                              },
+                              "& code": {
+                                bgcolor: "action.hover",
+                                borderRadius: 0.5,
+                                px: 0.35,
+                              },
+                              "& pre code": { bgcolor: "transparent", p: 0 },
+                            }}
+                          >
+                            <Markdown
+                              remarkPlugins={[remarkGfm]}
+                              rehypePlugins={[rehypeSanitize]}
+                            >
+                              {displayText(item.content)}
+                            </Markdown>
+                          </Box>
+                          {["queued", "delivered", "streaming"].includes(
+                            item.state,
+                          ) && (
+                            <Stack
+                              direction="row"
+                              spacing={0.75}
+                              alignItems="center"
+                            >
+                              <CircularProgress size={10} />
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                              >
+                                {readable(item.state)}
+                              </Typography>
+                            </Stack>
+                          )}
+                          {item.kind === "question" &&
+                            Boolean(item.payload?.options?.length) && (
+                              <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                                {item.payload.options.map((option) => (
+                                  <Button
+                                    key={option}
+                                    size="small"
+                                    variant="outlined"
+                                    disabled={sendingMessage}
+                                    onClick={() =>
+                                      sendMessage({
+                                        content: option,
+                                        replyTo: item.message_id,
+                                        kind: "user_response",
+                                      })
+                                    }
+                                  >
+                                    {option}
+                                  </Button>
+                                ))}
+                              </Stack>
+                            )}
+                        </Paper>
+                      );
+                    })}
+                </Stack>
+              )}
             </Box>
 
-            {/* Docked at the foot of the pane on every tab. While the run is live the box
-                sends a correction to the active authoring; once it is terminal the same box
-                reruns the saved environment, so the conversation never dead-ends. */}
-            {(!isTerminal || Boolean(simulation?.test_execution_id)) && (
+            {current && (
               <Box
                 sx={{
                   flexShrink: 0,
@@ -1059,17 +1521,36 @@ export default function HarnessDetail() {
                     multiline
                     maxRows={8}
                     placeholder={
-                      isTerminal
-                        ? "Describe the scenarios to add — e.g. 'calm first-time riders booking an airport pickup' (optional)"
-                        : "Tell the run what to change…"
+                      conversationComposerAvailable
+                        ? blockingReplyTo
+                          ? "Answer ALK’s question…"
+                          : "Ask ALK about this environment or tell it what to change…"
+                        : isTerminal
+                          ? "Describe the scenarios to add — e.g. 'calm first-time riders booking an airport pickup' (optional)"
+                          : "Tell the run what to change…"
                     }
-                    value={adjustment}
-                    onChange={(event) => setAdjustment(event.target.value)}
+                    value={
+                      conversationComposerAvailable ? message : adjustment
+                    }
+                    onChange={(event) =>
+                      conversationComposerAvailable
+                        ? setMessage(event.target.value)
+                        : setAdjustment(event.target.value)
+                    }
                     onKeyDown={(event) => {
-                      // Enter sends; Shift+Enter breaks the line.
                       if (event.key !== "Enter" || event.shiftKey) return;
                       event.preventDefault();
-                      if (isTerminal) {
+                      if (conversationComposerAvailable) {
+                        const content = message.trim();
+                        if (!content || sendingMessage) return;
+                        sendMessage({
+                          content,
+                          replyTo: blockingReplyTo,
+                          kind: blockingReplyTo
+                            ? "user_response"
+                            : "user_message",
+                        });
+                      } else if (isTerminal) {
                         if (extending) return;
                         extend();
                       } else {
@@ -1086,24 +1567,67 @@ export default function HarnessDetail() {
                     sx={{ px: 1.5, pb: 1, pt: 0.5 }}
                   >
                     <Typography variant="caption" color="text.disabled">
-                      {isTerminal
-                        ? "Adds scenarios to the saved world"
-                        : "Applied at the next stage boundary"}
+                      {conversationComposerAvailable
+                        ? "ALK answers directly and requests safe adjustments when needed"
+                        : isTerminal
+                          ? "Adds scenarios to the saved world"
+                          : "Applied at the next stage boundary"}
                     </Typography>
-                    {isTerminal ? (
+                    {conversationComposerAvailable ? (
+                      <IconButton
+                        size="small"
+                        onClick={() => {
+                          const content = message.trim();
+                          if (content)
+                            sendMessage({
+                              content,
+                              replyTo: blockingReplyTo,
+                              kind: blockingReplyTo
+                                ? "user_response"
+                                : "user_message",
+                            });
+                        }}
+                        disabled={sendingMessage || !message.trim()}
+                        aria-label="Send"
+                        sx={{
+                          bgcolor: "accent.brand",
+                          color: "common.white",
+                          "&:hover": { bgcolor: "accent.brand", opacity: 0.88 },
+                          "&.Mui-disabled": {
+                            bgcolor: "action.disabledBackground",
+                            color: "text.disabled",
+                          },
+                        }}
+                      >
+                        {sendingMessage ? (
+                          <CircularProgress size={14} color="inherit" />
+                        ) : (
+                          <Iconify icon="solar:plain-linear" width={15} />
+                        )}
+                      </IconButton>
+                    ) : isTerminal ? (
                       <Stack direction="row" alignItems="center" spacing={1}>
                         <Stack
                           direction="row"
                           alignItems="center"
-                          sx={{ border: 1, borderColor: "divider", borderRadius: 1 }}
+                          sx={{
+                            border: 1,
+                            borderColor: "divider",
+                            borderRadius: 1,
+                          }}
                         >
                           <IconButton
                             size="small"
                             aria-label="Fewer scenarios"
                             disabled={extending || addCount <= 1}
-                            onClick={() => setAddCount((n) => Math.max(1, n - 1))}
+                            onClick={() =>
+                              setAddCount((n) => Math.max(1, n - 1))
+                            }
                           >
-                            <Iconify icon="solar:minus-square-linear" width={15} />
+                            <Iconify
+                              icon="solar:minus-square-linear"
+                              width={15}
+                            />
                           </IconButton>
                           <Typography
                             variant="body2"
@@ -1115,9 +1639,14 @@ export default function HarnessDetail() {
                             size="small"
                             aria-label="More scenarios"
                             disabled={extending || addCount >= 20}
-                            onClick={() => setAddCount((n) => Math.min(20, n + 1))}
+                            onClick={() =>
+                              setAddCount((n) => Math.min(20, n + 1))
+                            }
                           >
-                            <Iconify icon="solar:add-square-linear" width={15} />
+                            <Iconify
+                              icon="solar:add-square-linear"
+                              width={15}
+                            />
                           </IconButton>
                         </Stack>
                         <Button
@@ -1129,13 +1658,19 @@ export default function HarnessDetail() {
                             extending ? (
                               <CircularProgress size={14} color="inherit" />
                             ) : (
-                              <Iconify icon="solar:add-circle-linear" width={15} />
+                              <Iconify
+                                icon="solar:add-circle-linear"
+                                width={15}
+                              />
                             )
                           }
                           sx={{
                             bgcolor: "accent.brand",
                             color: "common.white",
-                            "&:hover": { bgcolor: "accent.brand", opacity: 0.88 },
+                            "&:hover": {
+                              bgcolor: "accent.brand",
+                              opacity: 0.88,
+                            },
                           }}
                         >
                           Add scenarios
@@ -1166,6 +1701,16 @@ export default function HarnessDetail() {
                     )}
                   </Stack>
                 </Box>
+                {conversationError && (
+                  <Alert
+                    severity="error"
+                    variant="outlined"
+                    onClose={() => setConversationError("")}
+                    sx={{ mt: 1 }}
+                  >
+                    {conversationError}
+                  </Alert>
+                )}
                 {(adjustError || extendError) && (
                   <Alert
                     severity="error"
