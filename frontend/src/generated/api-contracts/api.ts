@@ -254,6 +254,8 @@ import type {
   ChatSendMessageResponseApi,
   CheckoutSessionRequestApi,
   CheckoutSessionResponseApi,
+  ClaimInvestigationsRequestApi,
+  ClaimInvestigationsResponseApi,
   ClassifyColumnRequestApi,
   ClickHouseHealthErrorResponseApi,
   ClickHouseHealthResponseApi,
@@ -610,6 +612,7 @@ import type {
   IntegrationValidationResponseApi,
   IntegrationsConnectionsListParams,
   IntegrationsSyncLogsListParams,
+  InvestigationControlErrorApi,
   InviteCancelApi,
   InviteCreateApi,
   InviteCreateResponseApi,
@@ -915,6 +918,8 @@ import type {
   PromptTemplateApi,
   ProviderStatusResponseApi,
   PublicConfigResponseApi,
+  PublishInvestigationRequestApi,
+  PublishInvestigationResponseApi,
   QueueAddItemsResponseApi,
   QueueAddLabelResponseApi,
   QueueAgreementResponseApi,
@@ -953,6 +958,8 @@ import type {
   RateLimitDetailResponseApi,
   RateLimitListResponseApi,
   RateLimitMutationResponseApi,
+  RecordTraceNotificationsRequestApi,
+  RecordTraceNotificationsResponseApi,
   RecoveryCodesRegenerateApi,
   RecoveryCodesRegenerateResponseApi,
   RecoveryCodesRemainingResponseApi,
@@ -1322,6 +1329,8 @@ import type {
   UpdateBillingDetailsResponseApi,
   UpdateColumnConfigApi,
   UpdateEvalTemplateApi,
+  UpdateInvestigationAttemptRequestApi,
+  UpdateInvestigationAttemptResponseApi,
   UpdateNodeApi,
   UpdateOrganizationBillingRequestApi,
   UpdatePortApi,
@@ -70284,6 +70293,216 @@ export const tracerImagineAnalysisCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(triggerAnalysisApi),
+    },
+  );
+};
+
+export type tracerInternalErrorFeedV2AttemptsPartialUpdateResponse200 = {
+  data: UpdateInvestigationAttemptResponseApi;
+  status: 200;
+};
+
+export type tracerInternalErrorFeedV2AttemptsPartialUpdateResponse404 = {
+  data: InvestigationControlErrorApi;
+  status: 404;
+};
+
+export type tracerInternalErrorFeedV2AttemptsPartialUpdateResponse409 = {
+  data: InvestigationControlErrorApi;
+  status: 409;
+};
+
+export type tracerInternalErrorFeedV2AttemptsPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 409>;
+};
+
+export type tracerInternalErrorFeedV2AttemptsPartialUpdateResponseSuccess =
+  tracerInternalErrorFeedV2AttemptsPartialUpdateResponse200 & {
+    headers: Headers;
+  };
+export type tracerInternalErrorFeedV2AttemptsPartialUpdateResponseError = (
+  | tracerInternalErrorFeedV2AttemptsPartialUpdateResponse404
+  | tracerInternalErrorFeedV2AttemptsPartialUpdateResponse409
+  | tracerInternalErrorFeedV2AttemptsPartialUpdateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerInternalErrorFeedV2AttemptsPartialUpdateResponse =
+  | tracerInternalErrorFeedV2AttemptsPartialUpdateResponseSuccess
+  | tracerInternalErrorFeedV2AttemptsPartialUpdateResponseError;
+
+export const getTracerInternalErrorFeedV2AttemptsPartialUpdateUrl = (
+  attemptId: string,
+) => {
+  return `/tracer/internal/error-feed-v2/attempts/${attemptId}/`;
+};
+
+export const tracerInternalErrorFeedV2AttemptsPartialUpdate = async (
+  attemptId: string,
+  updateInvestigationAttemptRequestApi: UpdateInvestigationAttemptRequestApi,
+  options?: RequestInit,
+): Promise<tracerInternalErrorFeedV2AttemptsPartialUpdateResponse> => {
+  return apiMutator<tracerInternalErrorFeedV2AttemptsPartialUpdateResponse>(
+    getTracerInternalErrorFeedV2AttemptsPartialUpdateUrl(attemptId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(updateInvestigationAttemptRequestApi),
+    },
+  );
+};
+
+export type tracerInternalErrorFeedV2ClaimsCreateResponse200 = {
+  data: ClaimInvestigationsResponseApi;
+  status: 200;
+};
+
+export type tracerInternalErrorFeedV2ClaimsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerInternalErrorFeedV2ClaimsCreateResponseSuccess =
+  tracerInternalErrorFeedV2ClaimsCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerInternalErrorFeedV2ClaimsCreateResponseError =
+  tracerInternalErrorFeedV2ClaimsCreateResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerInternalErrorFeedV2ClaimsCreateResponse =
+  | tracerInternalErrorFeedV2ClaimsCreateResponseSuccess
+  | tracerInternalErrorFeedV2ClaimsCreateResponseError;
+
+export const getTracerInternalErrorFeedV2ClaimsCreateUrl = () => {
+  return `/tracer/internal/error-feed-v2/claims/`;
+};
+
+export const tracerInternalErrorFeedV2ClaimsCreate = async (
+  claimInvestigationsRequestApi: ClaimInvestigationsRequestApi,
+  options?: RequestInit,
+): Promise<tracerInternalErrorFeedV2ClaimsCreateResponse> => {
+  return apiMutator<tracerInternalErrorFeedV2ClaimsCreateResponse>(
+    getTracerInternalErrorFeedV2ClaimsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(claimInvestigationsRequestApi),
+    },
+  );
+};
+
+export type tracerInternalErrorFeedV2NotificationsCreateResponse200 = {
+  data: RecordTraceNotificationsResponseApi;
+  status: 200;
+};
+
+export type tracerInternalErrorFeedV2NotificationsCreateResponse404 = {
+  data: InvestigationControlErrorApi;
+  status: 404;
+};
+
+export type tracerInternalErrorFeedV2NotificationsCreateResponse409 = {
+  data: InvestigationControlErrorApi;
+  status: 409;
+};
+
+export type tracerInternalErrorFeedV2NotificationsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 409>;
+};
+
+export type tracerInternalErrorFeedV2NotificationsCreateResponseSuccess =
+  tracerInternalErrorFeedV2NotificationsCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerInternalErrorFeedV2NotificationsCreateResponseError = (
+  | tracerInternalErrorFeedV2NotificationsCreateResponse404
+  | tracerInternalErrorFeedV2NotificationsCreateResponse409
+  | tracerInternalErrorFeedV2NotificationsCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerInternalErrorFeedV2NotificationsCreateResponse =
+  | tracerInternalErrorFeedV2NotificationsCreateResponseSuccess
+  | tracerInternalErrorFeedV2NotificationsCreateResponseError;
+
+export const getTracerInternalErrorFeedV2NotificationsCreateUrl = () => {
+  return `/tracer/internal/error-feed-v2/notifications/`;
+};
+
+export const tracerInternalErrorFeedV2NotificationsCreate = async (
+  recordTraceNotificationsRequestApi: RecordTraceNotificationsRequestApi,
+  options?: RequestInit,
+): Promise<tracerInternalErrorFeedV2NotificationsCreateResponse> => {
+  return apiMutator<tracerInternalErrorFeedV2NotificationsCreateResponse>(
+    getTracerInternalErrorFeedV2NotificationsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(recordTraceNotificationsRequestApi),
+    },
+  );
+};
+
+export type tracerInternalErrorFeedV2ReportsCreateResponse200 = {
+  data: PublishInvestigationResponseApi;
+  status: 200;
+};
+
+export type tracerInternalErrorFeedV2ReportsCreateResponse404 = {
+  data: InvestigationControlErrorApi;
+  status: 404;
+};
+
+export type tracerInternalErrorFeedV2ReportsCreateResponse409 = {
+  data: InvestigationControlErrorApi;
+  status: 409;
+};
+
+export type tracerInternalErrorFeedV2ReportsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 409>;
+};
+
+export type tracerInternalErrorFeedV2ReportsCreateResponseSuccess =
+  tracerInternalErrorFeedV2ReportsCreateResponse200 & {
+    headers: Headers;
+  };
+export type tracerInternalErrorFeedV2ReportsCreateResponseError = (
+  | tracerInternalErrorFeedV2ReportsCreateResponse404
+  | tracerInternalErrorFeedV2ReportsCreateResponse409
+  | tracerInternalErrorFeedV2ReportsCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type tracerInternalErrorFeedV2ReportsCreateResponse =
+  | tracerInternalErrorFeedV2ReportsCreateResponseSuccess
+  | tracerInternalErrorFeedV2ReportsCreateResponseError;
+
+export const getTracerInternalErrorFeedV2ReportsCreateUrl = () => {
+  return `/tracer/internal/error-feed-v2/reports/`;
+};
+
+export const tracerInternalErrorFeedV2ReportsCreate = async (
+  publishInvestigationRequestApi: PublishInvestigationRequestApi,
+  options?: RequestInit,
+): Promise<tracerInternalErrorFeedV2ReportsCreateResponse> => {
+  return apiMutator<tracerInternalErrorFeedV2ReportsCreateResponse>(
+    getTracerInternalErrorFeedV2ReportsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(publishInvestigationRequestApi),
     },
   );
 };
