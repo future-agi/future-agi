@@ -36,7 +36,6 @@ describe("PREFLIGHT_CONNECTOR / PROVIDER_TO_CONNECTOR", () => {
       retell: "retell",
       retell_chat: "retell_chat",
       livekit: "livekit",
-      retell_chat: "retell_chat",
       other: "phone",
     });
   });
