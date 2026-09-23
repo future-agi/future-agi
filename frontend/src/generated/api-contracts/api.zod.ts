@@ -34955,6 +34955,7 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
     run_id: zod.string().uuid(),
     source: zod.record(zod.string(), zod.string()),
     metadata: zod.record(zod.string(), zod.string()),
+    runtime: zod.record(zod.string(), zod.string()).optional(),
     run_test_id: zod.string().uuid(),
     test_execution_id: zod.string().uuid(),
   }),
@@ -34965,6 +34966,8 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
     attempt: zod.number(),
     completed_scenarios: zod.number(),
     failed_scenarios: zod.number(),
+    active_scenarios: zod.number().optional(),
+    queued_scenarios: zod.number().optional(),
     total_scenarios: zod.number(),
     deadline_at: zod.string().min(1),
     failure: zod.object({}).passthrough(),
@@ -35018,6 +35021,14 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
           error: zod.string(),
         })
         .optional(),
+    })
+    .optional(),
+  parallelism: zod
+    .object({
+      requested: zod.number(),
+      admitted: zod.number(),
+      effective: zod.number(),
+      degrade_reasons: zod.array(zod.string().min(1)),
     })
     .optional(),
   conversation: zod
@@ -35117,6 +35128,8 @@ export const simulateApiHarnessJobsCreateBodySourceCommitShaRegExp = new RegExp(
 export const simulateApiHarnessJobsCreateBodySourceInstallationIdMax = 255;
 
 export const simulateApiHarnessJobsCreateBodySourceVisibilityDefault = `public`;
+export const simulateApiHarnessJobsCreateBodySourceEnvironmentValuesMaxOne = 65536;
+
 export const simulateApiHarnessJobsCreateBodyAgentConfigDefault = {};
 export const simulateApiHarnessJobsCreateBodyAgentSecretRefsKeyMax = 255;
 
@@ -35234,6 +35247,15 @@ export const SimulateApiHarnessJobsCreateBody = zod.object({
       visibility: zod
         .enum(["public", "private"])
         .default(simulateApiHarnessJobsCreateBodySourceVisibilityDefault),
+      environment_values: zod
+        .record(
+          zod.string(),
+          zod
+            .string()
+            .min(1)
+            .max(simulateApiHarnessJobsCreateBodySourceEnvironmentValuesMaxOne),
+        )
+        .optional(),
     })
     .optional(),
   agent: zod.object({
@@ -35424,6 +35446,8 @@ export const simulateApiHarnessJobsPreflightBodySourceCommitShaRegExp =
 export const simulateApiHarnessJobsPreflightBodySourceInstallationIdMax = 255;
 
 export const simulateApiHarnessJobsPreflightBodySourceVisibilityDefault = `public`;
+export const simulateApiHarnessJobsPreflightBodySourceEnvironmentValuesMaxOne = 65536;
+
 export const simulateApiHarnessJobsPreflightBodyAgentConfigDefault = {};
 export const simulateApiHarnessJobsPreflightBodyAgentSecretRefsKeyMax = 255;
 
@@ -35542,6 +35566,17 @@ export const SimulateApiHarnessJobsPreflightBody = zod.object({
       visibility: zod
         .enum(["public", "private"])
         .default(simulateApiHarnessJobsPreflightBodySourceVisibilityDefault),
+      environment_values: zod
+        .record(
+          zod.string(),
+          zod
+            .string()
+            .min(1)
+            .max(
+              simulateApiHarnessJobsPreflightBodySourceEnvironmentValuesMaxOne,
+            ),
+        )
+        .optional(),
     })
     .optional(),
   agent: zod.object({
@@ -35803,6 +35838,7 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
     run_id: zod.string().uuid(),
     source: zod.record(zod.string(), zod.string()),
     metadata: zod.record(zod.string(), zod.string()),
+    runtime: zod.record(zod.string(), zod.string()).optional(),
     run_test_id: zod.string().uuid(),
     test_execution_id: zod.string().uuid(),
   }),
@@ -35813,6 +35849,8 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
     attempt: zod.number(),
     completed_scenarios: zod.number(),
     failed_scenarios: zod.number(),
+    active_scenarios: zod.number().optional(),
+    queued_scenarios: zod.number().optional(),
     total_scenarios: zod.number(),
     deadline_at: zod.string().min(1),
     failure: zod.object({}).passthrough(),
@@ -35866,6 +35904,14 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
           error: zod.string(),
         })
         .optional(),
+    })
+    .optional(),
+  parallelism: zod
+    .object({
+      requested: zod.number(),
+      admitted: zod.number(),
+      effective: zod.number(),
+      degrade_reasons: zod.array(zod.string().min(1)),
     })
     .optional(),
   conversation: zod
@@ -36004,6 +36050,7 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
     run_id: zod.string().uuid(),
     source: zod.record(zod.string(), zod.string()),
     metadata: zod.record(zod.string(), zod.string()),
+    runtime: zod.record(zod.string(), zod.string()).optional(),
     run_test_id: zod.string().uuid(),
     test_execution_id: zod.string().uuid(),
   }),
@@ -36014,6 +36061,8 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
     attempt: zod.number(),
     completed_scenarios: zod.number(),
     failed_scenarios: zod.number(),
+    active_scenarios: zod.number().optional(),
+    queued_scenarios: zod.number().optional(),
     total_scenarios: zod.number(),
     deadline_at: zod.string().min(1),
     failure: zod.object({}).passthrough(),
@@ -36067,6 +36116,14 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
           error: zod.string(),
         })
         .optional(),
+    })
+    .optional(),
+  parallelism: zod
+    .object({
+      requested: zod.number(),
+      admitted: zod.number(),
+      effective: zod.number(),
+      degrade_reasons: zod.array(zod.string().min(1)),
     })
     .optional(),
   conversation: zod

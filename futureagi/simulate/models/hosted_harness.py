@@ -126,6 +126,14 @@ class HostedHarnessAttempt(BaseModel):
     event_watermark = models.PositiveBigIntegerField(default=0)
     gap_started_at = models.DateTimeField(null=True, blank=True)
     released_event_gaps = models.JSONField(default=list)
+    # Attempt-level parallelism degrade projection (C4 §6, decision D26). Written
+    # only when an accepted ``parallelism_degraded`` event is stored for the first
+    # time (min-monotone effective, append-if-absent reason). ``None`` effective
+    # means "no degrade yet" and the serializer falls back to the requested value.
+    # A new attempt row starts cleared, so attempt N never inherits attempt N-1's
+    # degrade state.
+    effective_parallelism = models.PositiveSmallIntegerField(null=True, blank=True)
+    degrade_reasons = models.JSONField(default=list)
     terminal_stage = models.CharField(max_length=16, null=True, blank=True)
     terminal_reason = models.CharField(max_length=32, null=True, blank=True)
     terminal_failure = models.JSONField(null=True, blank=True)

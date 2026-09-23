@@ -17,6 +17,7 @@ class SandboxLaunchSpec:
     allowed_domains: tuple[str, ...] = ()
     allowed_cidrs: tuple[str, ...] = ()
     unrestricted_egress: bool = False
+    runtime_name: str | None = None
 
 
 @dataclass(frozen=True)

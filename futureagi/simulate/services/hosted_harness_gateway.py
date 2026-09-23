@@ -999,9 +999,8 @@ def _connector_egress_domains(
 ) -> set[str]:
     """Return connector infrastructure hosts implied by resolved run inputs.
 
-    Only static/configured endpoints are admitted here. In particular, Vapi's
-    websocket endpoint is returned by its create-call response and is therefore
-    intentionally not guessed.
+    Provider-owned dynamic call-control hosts use the provider's domain policy;
+    custom endpoints must be explicitly configured.
     """
     agent = payload.get("agent") or {}
     connector = _effective_connector(payload, secrets_map)
@@ -1021,7 +1020,7 @@ def _connector_egress_domains(
             livekit_url = _config_value(config, "livekit_url", "LIVEKIT_URL")
         _add_livekit_host(domains, _hostname_from_url(livekit_url))
     elif connector == "vapi":
-        domains.add("api.vapi.ai")
+        domains.add("*.vapi.ai")
         for name in (
             "api_base_url",
             "VAPI_API_BASE_URL",
@@ -1158,9 +1157,8 @@ def _provider_egress_domains(secrets_map: Mapping[str, Any]) -> set[str]:
     ):
         domains.add("generativelanguage.googleapis.com")
     if "VAPI_API_KEY" in aliases:
-        # Both repository-owned lifecycle commands and the direct websocket caller use Vapi's
-        # public API. Vapi's documented websocket URL is also hosted on api.vapi.ai.
-        domains.add("api.vapi.ai")
+        # Live control uses provider-selected regional hosts, not only api.vapi.ai.
+        domains.add("*.vapi.ai")
     if "RETELL_API_KEY" in aliases:
         # Retell web calls are created through its API, then bridged through Retell's managed
         # LiveKit deployment. Keep these provider-owned hosts derived from the credential type
@@ -1462,8 +1460,9 @@ class HostedHarnessGateway:
         simulator_env, simulator_vertex_credentials = _platform_simulator_material()
         project_id = str(simulator_env.get("GOOGLE_CLOUD_PROJECT") or "")
 
-        # Authoring reaches only the source host and the authoring model provider (Vertex/Claude).
-        # Daytona caps the domain allow list at 20 entries, so this stays focused and excludes the
+        # Authoring reaches the source host, the authoring model provider (Vertex/Claude), and
+        # package indexes needed when real-runtime validation builds the generated environment.
+        # Daytona caps the domain allow list at 20 entries, so this stays focused and excludes
         # call-time media domains (LiveKit/Deepgram) that only the execution sandbox needs.
         default_authoring_egress = [
             "github.com",
@@ -1471,6 +1470,8 @@ class HostedHarnessGateway:
             "api.github.com",
             "objects.githubusercontent.com",
             "raw.githubusercontent.com",
+            "pypi.org",
+            "files.pythonhosted.org",
             "oauth2.googleapis.com",
             "www.googleapis.com",
             "sts.googleapis.com",
@@ -1762,13 +1763,47 @@ class HostedHarnessGateway:
         _validate_resolved_egress_domains(
             allowed_domains, max_domains=self.client.max_egress_domains
         )
+        from simulate.services.harness_capacity import configured_capacity
+
+        try:
+            capacity = configured_capacity(payload)
+        except ValueError as exc:
+            raise HostedHarnessError(
+                "sandbox_capacity_unavailable",
+                str(exc),
+                status_code=503,
+            ) from exc
+        selected_snapshot = capacity.snapshot_name or self.client.runtime_name
+        registered_snapshot_digest = (
+            capacity.snapshot_digest or self.client.runtime_digest
+        )
+        if self.client.name != "daytona" and (
+            (
+                capacity.snapshot_name
+                and capacity.snapshot_name != self.client.runtime_name
+            )
+            or (
+                capacity.snapshot_digest
+                and capacity.snapshot_digest != self.client.runtime_digest
+            )
+        ):
+            raise HostedHarnessError(
+                "sandbox_capacity_unavailable",
+                "configured resource profile does not match the selected sandbox runtime",
+                status_code=503,
+            )
         capability = register_attempt(
             job.id,
             endpoint_base_url=endpoint_base_url,
-            snapshot_name=self.client.runtime_name,
-            snapshot_digest=self.client.runtime_digest or None,
+            snapshot_name=selected_snapshot,
+            snapshot_digest=registered_snapshot_digest,
         )
         attempt = capability.attempt
+        dispatch_runtime = dict(dispatch_payload["runtime"])
+        dispatch_runtime["parallelism"] = capability.admitted_parallelism
+        dispatch_runtime["cpu_units"] = capacity.cpu_units
+        dispatch_runtime["memory_mb"] = capacity.memory_mb
+        dispatch_payload["runtime"] = dispatch_runtime
         cache_attempt_redaction_values(
             attempt.id,
             redaction_values(
@@ -1792,9 +1827,9 @@ class HostedHarnessGateway:
         sandbox = None
         try:
             launch_spec = SandboxLaunchSpec(
-                cpu_units=payload["runtime"]["cpu_units"],
-                memory_mb=payload["runtime"]["memory_mb"],
-                disk_gb=10,
+                cpu_units=capacity.cpu_units,
+                memory_mb=capacity.memory_mb,
+                disk_gb=capacity.disk_gb,
                 ttl_seconds=ttl_seconds,
                 os_user=getattr(settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control"),
                 labels={
@@ -1804,6 +1839,7 @@ class HostedHarnessGateway:
                 allowed_domains=tuple(sorted(allowed_domains)),
                 allowed_cidrs=allowed_cidrs,
                 unrestricted_egress=unrestricted,
+                runtime_name=selected_snapshot,
             )
             sandbox = self.client.create(
                 launch_spec, timeout=self.client.create_timeout_seconds

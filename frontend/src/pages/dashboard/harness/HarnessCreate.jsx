@@ -246,12 +246,20 @@ export default function HarnessCreate() {
     providerCallTransport === "phone";
   const [providerDynamicVariables, setProviderDynamicVariables] = useState("");
   const [scenarioCount, setScenarioCount] = useState(10);
+  // Explicit parallelism control (C4 §6). Default 1; NEVER auto-derived from the
+  // scenario count. Locked at 1 when the environment does not yet enable W>1.
+  const [parallelism, setParallelism] = useState(1);
   // Per call, not per run. See callLimitConfig above.
   const [callTimeoutSeconds, setCallTimeoutSeconds] = useState("");
   const [preflight, setPreflight] = useState(null);
   // Shown beside the Preflight button: the general error banner sits at the foot of the
   // form, out of view when the button is what was clicked.
   const [preflightError, setPreflightError] = useState("");
+  // Control gating: disabled — not hidden — when preflight reports parallel
+  // execution is off for this environment; enabled until a preflight has run.
+  // This is requested concurrency; admission reports what the sandbox can run.
+  const parallelismEnabled = preflight?.parallelism_enabled !== false;
+  const maxParallelism = 8;
   // A changed input does not invalidate what preflight already told us — it just means the
   // answer may be out of date. Hiding the panel loses the findings the user was reading.
   const [preflightDirty, setPreflightDirty] = useState(false);
@@ -426,11 +434,9 @@ export default function HarnessCreate() {
     scenario_count: Number(scenarioCount),
     runtime: {
       isolation: "dedicated_vm",
-      cpu_units: 4,
-      memory_mb: 8192,
-      parallelism: 1,
+      parallelism: parallelismEnabled ? Number(parallelism) || 1 : 1,
       concurrency_weight: 1,
-      max_duration_seconds: Math.max(3600, Number(scenarioCount) * 360),
+      max_duration_seconds: Math.max(600, Number(scenarioCount) * 360),
       network_policy: "live",
     },
     security: {
@@ -1759,6 +1765,28 @@ export default function HarnessCreate() {
                     Each scenario is one generated conversation the agent is put
                     through, then graded. More scenarios means broader coverage
                     and a longer run.
+                  </Typography>
+                </Stack>
+                <Stack
+                  direction={{ xs: "column", sm: "row" }}
+                  spacing={1.5}
+                  alignItems={{ sm: "center" }}
+                  sx={{ mt: 1.5 }}
+                >
+                  <TextField
+                    size="small"
+                    label="Parallel worlds"
+                    type="number"
+                    value={parallelismEnabled ? parallelism : 1}
+                    onChange={(event) => setParallelism(event.target.value)}
+                    disabled={!parallelismEnabled}
+                    inputProps={{ min: 1, max: maxParallelism }}
+                    sx={{ width: 140, flexShrink: 0 }}
+                  />
+                  <Typography variant="caption" color="text.secondary">
+                    {parallelismEnabled
+                      ? "Requested concurrent scenarios in one sandbox. Resources and certified limits may reduce the effective value; remaining scenarios wait for a free world."
+                      : "Parallel execution is not yet enabled for this environment, so runs use a single world."}
                   </Typography>
                 </Stack>
                 <Stack
