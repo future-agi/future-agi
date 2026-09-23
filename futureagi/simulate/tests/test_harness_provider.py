@@ -559,7 +559,7 @@ def test_repository_source_remains_required_for_environment_backed_provider():
     serializer = HarnessJobCreateSerializer(data=payload)
 
     assert not serializer.is_valid()
-    assert "existing provider agent ID" in str(serializer.errors)
+    assert "hosted agent ID or phone number" in str(serializer.errors)
 
 
 @pytest.mark.django_db

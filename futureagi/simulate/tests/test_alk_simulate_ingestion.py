@@ -709,6 +709,26 @@ class TestMixedResultRollup:
         assert test_execution.completed_calls == 1
         assert test_execution.failed_calls == 1
 
+    def test_eval_task_does_not_initialize_a_voice_provider(self):
+        """Provider-neutral eval replay must not require Vapi credentials."""
+        from simulate.services.test_executor import _run_simulate_evaluations_task
+
+        call_execution = SimpleNamespace(id="call-id")
+        with (
+            patch(
+                "simulate.services.test_executor.CallExecution.objects.select_related"
+            ) as selected,
+            patch("simulate.services.test_executor.TestExecutor") as executor_cls,
+        ):
+            selected.return_value.get.return_value = call_execution
+            assert _run_simulate_evaluations_task._original_func("call-id") is True
+            executor_cls.assert_called_once_with(initialize_voice_service=False)
+            executor_cls.return_value._run_simulate_evaluations.assert_called_once_with(
+                call_execution,
+                eval_config_ids=None,
+                skip_existing=False,
+            )
+
 
 # ---------------------------------------------------------------------------
 # result ingest — metrics, duration, tokens, csat
@@ -788,8 +808,11 @@ class TestResultIngest:
         assert execution.completed_calls == 1
         assert execution.failed_calls == 0
 
+    @patch(
+        "model_hub.tasks.user_evaluation.trigger_error_localization_for_simulate"
+    )
     def test_platform_judgement_is_linked_to_run_eval_config_and_output(
-        self, auth_client, run_test
+        self, trigger_localizer, auth_client, run_test
     ):
         template = EvalTemplate.objects.create(
             name="alk-platform-check",
@@ -838,6 +861,20 @@ class TestResultIngest:
             "kind": "eval",
             "platform_template": template.name,
         }
+        trigger_localizer.assert_called_once()
+        localizer_call = trigger_localizer.call_args.kwargs
+        assert localizer_call["eval_template"] == template
+        assert localizer_call["call_execution"].id == call.id
+        assert localizer_call["eval_config"] == config
+        assert localizer_call["value"] == "Passed"
+        assert localizer_call["mapping"] == {
+            "transcript": (
+                "user: Hi, my package is late. Can you check the status?\n"
+                "assistant: Of course, let me look that up for you right away.\n"
+                "user: Thank you, I appreciate it."
+            )
+        }
+        assert localizer_call["eval_explanation"] == "matched the required response"
 
     def test_ingest_computes_metrics_and_duration(self, auth_client, run_test):
         _, call_ids = _start_and_batch(auth_client, run_test)
