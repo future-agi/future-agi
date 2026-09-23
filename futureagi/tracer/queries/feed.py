@@ -164,7 +164,9 @@ def _base_qs(project_ids: list[str]) -> QuerySet:
     # Exclude legacy pre-revamp rows (old agent-compass) that predate
     # feed fields — they have no issue_group and render as fallback K-IDs.
     return (
-        TraceErrorGroup.objects.filter(project_id__in=project_ids, deleted=False)
+        TraceErrorGroup.objects.filter(
+            project_id__in=project_ids, deleted=False, target_type="error_feed"
+        )
         .exclude(issue_group__isnull=True)
         .exclude(issue_state__dirty=True)
         .exclude(issue_state__retired=True)
@@ -216,6 +218,7 @@ def _is_omega_group(cluster_id: str, project_id: str) -> bool:
         cluster_id=cluster_id,
         project_id=project_id,
         deleted=False,
+        target_type="error_feed",
         issue_state__dirty=False,
         issue_state__retired=False,
     ).exists()
@@ -649,7 +652,7 @@ def get_cluster_detail(
     cluster_id is hashed from project+content).
     """
     qs = (
-        TraceErrorGroup.objects.filter(deleted=False)
+        TraceErrorGroup.objects.filter(deleted=False, target_type="error_feed")
         .select_related("project", "assignee")
         .exclude(issue_state__dirty=True)
         .exclude(issue_state__retired=True)
@@ -758,7 +761,9 @@ def update_cluster(
     payload: FeedUpdatePayload,
 ) -> FeedDetailCore | None:
     """Update status/severity/assignee on a cluster, return fresh detail."""
-    qs = TraceErrorGroup.objects.filter(cluster_id=cluster_id, deleted=False)
+    qs = TraceErrorGroup.objects.filter(
+        cluster_id=cluster_id, deleted=False, target_type="error_feed"
+    )
     if project_ids is not None:
         qs = qs.filter(project_id__in=project_ids)
     cluster = qs.first()
@@ -1894,27 +1899,48 @@ def _cluster_findings_by_trace(
     )
     findings = list(
         TraceInvestigationFinding.objects.filter(
-            id__in=finding_ids, report__project_id=project_id,
-            report__trace_id__in=trace_ids, report__is_current=True,
-            report__deleted=False, deleted=False,
-        ).select_related("report").prefetch_related("attributions").order_by("ordinal")
+            id__in=finding_ids,
+            report__project_id=project_id,
+            report__trace_id__in=trace_ids,
+            report__is_current=True,
+            report__deleted=False,
+            deleted=False,
+        )
+        .select_related("report")
+        .prefetch_related("attributions")
+        .order_by("ordinal")
     )
     allowed_ids = {finding.id for finding in findings}
     citations: dict = {finding_id: {} for finding_id in allowed_ids}
-    for link in TraceInvestigationFindingEvidence.objects.filter(
-        finding_id__in=allowed_ids, deleted=False, evidence__deleted=False,
-        evidence__report_id=F("finding__report_id"),
-    ).select_related("evidence").order_by("evidence__ordinal"):
+    for link in (
+        TraceInvestigationFindingEvidence.objects.filter(
+            finding_id__in=allowed_ids,
+            deleted=False,
+            evidence__deleted=False,
+            evidence__report_id=F("finding__report_id"),
+        )
+        .select_related("evidence")
+        .order_by("evidence__ordinal")
+    ):
         citations[link.finding_id].setdefault(None, []).append(link.evidence)
-    for link in TraceInvestigationAttributionEvidence.objects.filter(
-        attribution__finding_id__in=allowed_ids, deleted=False,
-        evidence__deleted=False,
-        evidence__report_id=F("attribution__finding__report_id"),
-    ).select_related("evidence", "attribution").order_by("evidence__ordinal"):
-        citations[link.attribution.finding_id].setdefault(link.attribution.role, []).append(link.evidence)
+    for link in (
+        TraceInvestigationAttributionEvidence.objects.filter(
+            attribution__finding_id__in=allowed_ids,
+            deleted=False,
+            evidence__deleted=False,
+            evidence__report_id=F("attribution__finding__report_id"),
+        )
+        .select_related("evidence", "attribution")
+        .order_by("evidence__ordinal")
+    ):
+        citations[link.attribution.finding_id].setdefault(
+            link.attribution.role, []
+        ).append(link.evidence)
     result: dict[str, list] = {}
     for finding in findings:
-        result.setdefault(str(finding.report.trace_id), []).append((finding, citations[finding.id]))
+        result.setdefault(str(finding.report.trace_id), []).append(
+            (finding, citations[finding.id])
+        )
     return result
 
 
@@ -1933,11 +1959,22 @@ def _finding_span_context(findings_by_trace: dict, project_id: str) -> dict:
         with get_reader() as reader:
             rows = []
             for offset in range(0, len(span_ids), 128):
-                rows.extend(reader.list_by_ids(
-                    span_ids[offset:offset + 128], project_id=project_id,
-                    include_heavy=False,
-                    columns=["id", "trace_id", "name", "operation_name", "attrs_string", "input", "output"],
-                ))
+                rows.extend(
+                    reader.list_by_ids(
+                        span_ids[offset : offset + 128],
+                        project_id=project_id,
+                        include_heavy=False,
+                        columns=[
+                            "id",
+                            "trace_id",
+                            "name",
+                            "operation_name",
+                            "attrs_string",
+                            "input",
+                            "output",
+                        ],
+                    )
+                )
     except Exception:
         logger.warning("omega_reel_span_context_unavailable", exc_info=True)
         return {}
@@ -2045,23 +2082,38 @@ def _omega_findings_to_reel(
     for finding, citations in findings:
         direct = citations.get(None, [])
         first = next((e for e in direct if e.excerpt), None)
-        steps.append({
-            "label": "FINDING", "text": _highlight_text(finding.statement, highlight_terms, "error"),
-            "span": None, "status": "neutral", "isFailure": False,
-            "raw": first.excerpt if first else None,
-            "evidence_id": first.evidence_id if first else None, "role": None, "meta": None,
-        })
+        steps.append(
+            {
+                "label": "FINDING",
+                "text": _highlight_text(finding.statement, highlight_terms, "error"),
+                "span": None,
+                "status": "neutral",
+                "isFailure": False,
+                "raw": first.excerpt if first else None,
+                "evidence_id": first.evidence_id if first else None,
+                "role": None,
+                "meta": None,
+            }
+        )
         roles = {a.role: a for a in finding.attributions.all() if not a.deleted}
         for role in ("origin", "decisive", "symptom"):
             attribution = roles.get(role)
-            if not attribution or attribution.status != "supported" or not attribution.span_id:
+            if (
+                not attribution
+                or attribution.status != "supported"
+                or not attribution.span_id
+            ):
                 continue
             receipt = next(
-                (e for e in citations.get(role, []) if e.span_id == attribution.span_id and e.excerpt),
+                (
+                    e
+                    for e in citations.get(role, [])
+                    if e.span_id == attribution.span_id and e.excerpt
+                ),
                 None,
             )
             context = (span_context or {}).get((trace_id, attribution.span_id)) or {}
-            operation = (context.get("name") or context.get("operation_name"))
+            operation = context.get("name") or context.get("operation_name")
             if not operation and receipt:
                 operation = _receipt_operation(receipt.excerpt)
             attrs = context.get("attrs_string") or {}
@@ -2071,19 +2123,29 @@ def _omega_findings_to_reel(
                 input_value = context["input"]
             if output_value is None and context.get("output") not in (None, "", "null"):
                 output_value = context["output"]
-            steps.append({
-                "label": role.upper(),
-                "text": getattr(attribution, "explanation", "") or operation or "Attributed span",
-                "span": attribution.span_id, "status": "neutral", "isFailure": False,
-                "raw": receipt.excerpt if receipt else None,
-                "evidence_id": receipt.evidence_id if receipt else None,
-                "role": role,
-                "operation": operation,
-                "input_preview": input_value[:240] if input_value is not None else None,
-                "output_preview": output_value[:240] if output_value is not None else None,
-                "io_source": "recorded_span" if context else None,
-                "meta": None,
-            })
+            steps.append(
+                {
+                    "label": role.upper(),
+                    "text": getattr(attribution, "explanation", "")
+                    or operation
+                    or "Attributed span",
+                    "span": attribution.span_id,
+                    "status": "neutral",
+                    "isFailure": False,
+                    "raw": receipt.excerpt if receipt else None,
+                    "evidence_id": receipt.evidence_id if receipt else None,
+                    "role": role,
+                    "operation": operation,
+                    "input_preview": input_value[:240]
+                    if input_value is not None
+                    else None,
+                    "output_preview": output_value[:240]
+                    if output_value is not None
+                    else None,
+                    "io_source": "recorded_span" if context else None,
+                    "meta": None,
+                }
+            )
     return steps[:8]
 
 
@@ -2563,7 +2625,8 @@ def _fetch_representative_traces(
     )
     span_context = (
         _finding_span_context(findings_by_trace, project_id)
-        if findings_by_trace is not None else {}
+        if findings_by_trace is not None
+        else {}
     )
     judges = _trace_judges_batch(trace_ids)
     session_judges = _session_judges_batch(list(session_by_trace.values()))
@@ -2597,7 +2660,8 @@ def _fetch_representative_traces(
                 else None
             ),
             span_context={
-                span_id: row for (tid, span_id), row in span_context.items()
+                span_id: row
+                for (tid, span_id), row in span_context.items()
                 if tid == str(trace.id)
             },
             judge=_judge_for(str(trace.id)),
@@ -2611,7 +2675,9 @@ def _cluster_qs_for_access(
     cluster_id: str, project_ids: list[str] | None = None
 ) -> QuerySet:
     qs = (
-        TraceErrorGroup.objects.filter(cluster_id=cluster_id, deleted=False)
+        TraceErrorGroup.objects.filter(
+            cluster_id=cluster_id, deleted=False, target_type="error_feed"
+        )
         .exclude(issue_state__dirty=True)
         .exclude(issue_state__retired=True)
     )
@@ -3500,7 +3566,9 @@ def _fetch_co_occurring_issues(
 
     # Hydrate with cluster metadata
     cluster_rows = TraceErrorGroup.objects.filter(
-        cluster_id__in=[cid for cid, _, _ in top], deleted=False
+        cluster_id__in=[cid for cid, _, _ in top],
+        deleted=False,
+        target_type="error_feed",
     ).only("cluster_id", "title", "issue_category", "priority")
     cluster_map = {c.cluster_id: c for c in cluster_rows}
 

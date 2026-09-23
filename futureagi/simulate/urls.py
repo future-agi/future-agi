@@ -14,6 +14,7 @@ from simulate.views.chat_simulation import (
     RunTestNameView,
     TestExecutionChatBatchView,
 )
+from simulate.views.debug_analysis import TestExecutionDebugAnalysisView
 from simulate.views.preview_pagination import (
     RunTestPreviewExecutionsView,
     TestExecutionPreviewCallsView,
@@ -162,6 +163,11 @@ urlpatterns = [
         "api/harness/ingress/<str:token>/<path:target_path>",
         HostedHarnessIngressProxyView.as_view(),
         name="hosted-harness-ingress-proxy-path",
+    ),
+    path(
+        "test-executions/<uuid:test_execution_id>/debug-analysis/",
+        TestExecutionDebugAnalysisView.as_view(),
+        name="test-execution-debug-analysis",
     ),
     path(
         "v3/test-executions/<uuid:test_execution_id>/calls/",

@@ -171,6 +171,7 @@ class CreateLinearIssueView(ErrorFeedLicenseRequired, APIView):
         cluster = TraceErrorGroup.objects.filter(
             cluster_id=cluster_id,
             project_id__in=project_ids,
+            target_type="error_feed",
         ).first()
         if cluster is None:
             return self._gm.not_found(f"Cluster {cluster_id} not found")

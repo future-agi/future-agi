@@ -91,7 +91,11 @@ class InvestigationClaimSerializer(serializers.Serializer):
     workspace_id = serializers.UUIDField(allow_null=True)
     project_id = serializers.UUIDField()
     job_id = serializers.UUIDField()
-    trace_id = serializers.UUIDField()
+    workload_type = serializers.ChoiceField(
+        choices=("trace", "simulation_test_execution"), required=False
+    )
+    trace_id = serializers.UUIDField(required=False, allow_null=True)
+    test_execution_id = serializers.UUIDField(required=False, allow_null=True)
     generation = serializers.IntegerField(min_value=1)
     attempt_id = serializers.UUIDField()
     lease_token = serializers.CharField()
@@ -134,10 +138,13 @@ class FindingAttributionRoleSerializer(StrictInputSerializer):
     span_id = serializers.CharField(
         max_length=64, required=False, allow_null=True, allow_blank=False
     )
+    call_execution_id = serializers.UUIDField(required=False, allow_null=True)
     evidence_ids = serializers.ListField(
         child=serializers.CharField(max_length=128), max_length=100
     )
-    explanation = serializers.CharField(max_length=600, required=False, allow_blank=True)
+    explanation = serializers.CharField(
+        max_length=600, required=False, allow_blank=True
+    )
 
     def validate(self, attrs):
         if attrs.get("explanation") and attrs["status"] != "supported":
@@ -164,6 +171,10 @@ class InvestigationFindingSerializer(StrictInputSerializer):
         child=serializers.CharField(max_length=128), max_length=100
     )
     recovery = serializers.CharField(max_length=64)
+    category = serializers.CharField(max_length=100, required=False, allow_null=True)
+    group_label = serializers.CharField(max_length=100, required=False, allow_null=True)
+    fix_layer = serializers.CharField(max_length=50, required=False, allow_null=True)
+    confidence = serializers.CharField(max_length=2, required=False, allow_null=True)
     attribution = FindingAttributionSerializer()
 
 
@@ -178,7 +189,8 @@ class InvestigationRequirementCheckSerializer(StrictInputSerializer):
 
 class InvestigationEvidenceReceiptSerializer(StrictInputSerializer):
     evidence_id = serializers.CharField(max_length=128)
-    span_id = serializers.CharField(max_length=64)
+    span_id = serializers.CharField(max_length=64, required=False, allow_null=True)
+    call_execution_id = serializers.UUIDField(required=False, allow_null=True)
     parent_span_id = serializers.CharField(
         max_length=64, required=False, allow_null=True
     )
@@ -192,10 +204,11 @@ class InvestigationVerificationReceiptSerializer(StrictInputSerializer):
 
 
 class InvestigationCoverageSerializer(StrictInputSerializer):
-    scope = serializers.CharField(max_length=255)
-    observed_span_count = serializers.IntegerField(min_value=0)
+    scope = serializers.CharField(max_length=255, required=False)
+    observed_span_count = serializers.IntegerField(min_value=0, required=False)
+    observed_call_count = serializers.IntegerField(min_value=0, required=False)
     read_complete = serializers.BooleanField()
-    future_arrivals_known = serializers.BooleanField()
+    future_arrivals_known = serializers.BooleanField(required=False)
 
 
 class InvestigationUsageSerializer(StrictInputSerializer):
@@ -218,14 +231,20 @@ class GatewayAccountingSerializer(StrictInputSerializer):
 
 
 class InvestigationResultSerializer(StrictInputSerializer):
-    contract_version = serializers.ChoiceField(choices=("omega-investigation/v1",))
+    contract_version = serializers.ChoiceField(
+        choices=("omega-investigation/v1", "omega-simulation/v1")
+    )
+    workload_type = serializers.ChoiceField(
+        choices=("trace", "simulation_test_execution"), required=False, default="trace"
+    )
     organization_id = serializers.UUIDField()
     workspace_id = serializers.UUIDField(allow_null=True)
     project_id = serializers.UUIDField()
     job_id = serializers.UUIDField()
     generation = serializers.IntegerField(min_value=1)
     attempt_id = serializers.UUIDField()
-    trace_id = serializers.UUIDField()
+    trace_id = serializers.UUIDField(required=False, allow_null=True)
+    test_execution_id = serializers.UUIDField(required=False, allow_null=True)
     engine_version = serializers.CharField(max_length=20)
     read_cutoff = serializers.DateTimeField()
     memory_snapshot_id = serializers.CharField(max_length=128)
@@ -233,6 +252,9 @@ class InvestigationResultSerializer(StrictInputSerializer):
     evidence_digest = serializers.RegexField(r"^sha256:[a-f0-9]{64}$")
     execution_status = serializers.ChoiceField(choices=("completed", "failed"))
     outcome = serializers.ChoiceField(choices=("success", "failure", "unknown"))
+    error_message = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True
+    )
     findings = InvestigationFindingSerializer(many=True, max_length=100)
     requirement_checks = InvestigationRequirementCheckSerializer(
         many=True, max_length=100
@@ -247,6 +269,32 @@ class InvestigationResultSerializer(StrictInputSerializer):
     usage = InvestigationUsageSerializer()
     gateway_accounting = GatewayAccountingSerializer(many=True, max_length=100)
     result_digest = serializers.RegexField(r"^sha256:[a-f0-9]{64}$")
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        simulation = attrs.get("workload_type") == "simulation_test_execution"
+        coverage = attrs["coverage"]
+        if simulation:
+            if (
+                attrs.get("contract_version") != "omega-simulation/v1"
+                or attrs.get("test_execution_id") is None
+                or attrs.get("trace_id") is not None
+                or coverage.get("observed_call_count") is None
+                or coverage.get("observed_span_count") is not None
+                or coverage.get("future_arrivals_known") is not None
+            ):
+                raise serializers.ValidationError("Invalid simulation result scope")
+        elif (
+            attrs.get("contract_version") != "omega-investigation/v1"
+            or attrs.get("trace_id") is None
+            or attrs.get("test_execution_id") is not None
+            or coverage.get("scope") is None
+            or coverage.get("observed_span_count") is None
+            or coverage.get("observed_call_count") is not None
+            or coverage.get("future_arrivals_known") is None
+        ):
+            raise serializers.ValidationError("Invalid trace result scope")
+        return attrs
 
 
 class PublishInvestigationRequestSerializer(StrictInputSerializer):
@@ -272,6 +320,11 @@ class PublishInvestigationResponseSerializer(serializers.Serializer):
     report_id = serializers.UUIDField()
     occurrence_ids = serializers.ListField(child=serializers.UUIDField())
     grouping_status = serializers.CharField()
+
+
+class SimulationEvidenceRequestSerializer(StrictInputSerializer):
+    lease_token = serializers.CharField(max_length=255)
+    cursor = serializers.IntegerField(min_value=0)
 
 
 class InvestigationControlErrorSerializer(ManagementAPIErrorResponseSerializer):

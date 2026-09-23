@@ -58,7 +58,7 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def _eligible_project(project_id: uuid.UUID) -> bool:
+def _eligible_project(project_id: uuid.UUID, *, simulation: bool = False) -> bool:
     if is_oss() or not getattr(settings, "ERROR_FEED_GROUPING_ENABLED", False):
         return False
     if getattr(settings, "ERROR_FEED_GROUPING_BUDGET_ENFORCED", True):
@@ -75,9 +75,11 @@ def _eligible_project(project_id: uuid.UUID) -> bool:
                 return False
         except (InvalidOperation, ValueError):
             return False
-    return getattr(settings, "ERROR_FEED_GROUPING_ALL_PROJECTS", False) or str(
-        project_id
-    ) in getattr(settings, "ERROR_FEED_GROUPING_PROJECT_IDS", ())
+    return (
+        simulation
+        or getattr(settings, "ERROR_FEED_GROUPING_ALL_PROJECTS", False)
+        or str(project_id) in getattr(settings, "ERROR_FEED_GROUPING_PROJECT_IDS", ())
+    )
 
 
 def _live_report(report: TraceInvestigationReport) -> bool:
@@ -89,7 +91,10 @@ def _live_report(report: TraceInvestigationReport) -> bool:
         and report.source == "omega"
         and report.job_id is not None
         and report.job.current_report_id == report.id
-        and _eligible_project(report.project_id)
+        and _eligible_project(
+            report.project_id,
+            simulation=report.workload_type == "simulation_test_execution",
+        )
     )
 
 

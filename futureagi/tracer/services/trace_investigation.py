@@ -15,6 +15,7 @@ from django.utils import timezone
 
 from tracer.models.project import Project
 from tracer.models.trace_investigation import (
+    InvestigationWorkload,
     TraceInvestigationAttempt,
     TraceInvestigationAttemptStatus,
     TraceInvestigationAttribution,
@@ -408,19 +409,17 @@ def _expire_claims(now: datetime) -> None:
 
 def _claim_payload(attempt: TraceInvestigationAttempt, token: str) -> dict[str, object]:
     job = attempt.job
-    return {
+    claim = {
         "organization_id": job.organization_id,
         "workspace_id": job.workspace_id,
         "project_id": job.project_id,
         "job_id": job.id,
-        "trace_id": job.trace_id,
         "generation": attempt.generation,
         "attempt_id": attempt.id,
         "lease_token": token,
         "lease_expires_at": attempt.lease_expires_at,
         "read_cutoff": attempt.read_cutoff,
         "engine_version": attempt.engine_version,
-        "contract_version": CONTRACT_VERSION,
         "memory": {
             "snapshot_id": attempt.memory_snapshot_id,
             "digest": attempt.memory_digest,
@@ -430,6 +429,22 @@ def _claim_payload(attempt: TraceInvestigationAttempt, token: str) -> dict[str, 
         "verification_capabilities": [],
         "feature_enabled": True,
     }
+    if job.workload_type == InvestigationWorkload.SIMULATION_TEST_EXECUTION:
+        claim.update(
+            {
+                "workload_type": InvestigationWorkload.SIMULATION_TEST_EXECUTION,
+                "test_execution_id": job.test_execution_id,
+                "contract_version": "omega-simulation/v1",
+            }
+        )
+    else:
+        claim.update(
+            {
+                "trace_id": job.trace_id,
+                "contract_version": CONTRACT_VERSION,
+            }
+        )
+    return claim
 
 
 def claim_due_investigations(
@@ -438,6 +453,12 @@ def claim_due_investigations(
     """Claim due generations while transactionally enforcing project capacity."""
     now = timezone.now()
     _expire_claims(now)
+    has_due_simulation = TraceInvestigationJob.no_workspace_objects.filter(
+        workload_type=InvestigationWorkload.SIMULATION_TEST_EXECUTION,
+        state=TraceInvestigationJobState.WAITING,
+        not_before__lte=now,
+    ).exists()
+    trace_claim_limit = limit - 1 if has_due_simulation else limit
     due_jobs = TraceInvestigationJob.no_workspace_objects.filter(
         project_id=OuterRef("project_id"),
         state=TraceInvestigationJobState.WAITING,
@@ -469,7 +490,7 @@ def claim_due_investigations(
     )
     claims = []
     for config_id in candidate_ids:
-        if len(claims) >= limit:
+        if len(claims) >= trace_claim_limit:
             break
         with transaction.atomic():
             config = (
@@ -537,6 +558,63 @@ def claim_due_investigations(
             job.save(update_fields=["state", "updated_at"])
             config.omega_last_claimed_at = now
             config.save(update_fields=["omega_last_claimed_at"])
+            claims.append(_claim_payload(attempt, token))
+    simulation_jobs = list(
+        TraceInvestigationJob.no_workspace_objects.filter(
+            workload_type=InvestigationWorkload.SIMULATION_TEST_EXECUTION,
+            state=TraceInvestigationJobState.WAITING,
+            not_before__lte=now,
+        )
+        .exclude(project_id__in=saturated_projects)
+        .order_by("not_before", "created_at", "id")
+        .values_list("id", flat=True)[:limit]
+    )
+    for job_id in simulation_jobs:
+        if len(claims) >= limit:
+            break
+        with transaction.atomic():
+            job = (
+                TraceInvestigationJob.no_workspace_objects.select_for_update(
+                    skip_locked=True
+                )
+                .filter(
+                    id=job_id,
+                    workload_type=InvestigationWorkload.SIMULATION_TEST_EXECUTION,
+                    state=TraceInvestigationJobState.WAITING,
+                    not_before__lte=now,
+                )
+                .first()
+            )
+            if job is None or job.test_execution_id is None:
+                continue
+            active = TraceInvestigationAttempt.no_workspace_objects.filter(
+                job__project_id=job.project_id,
+                status=TraceInvestigationAttemptStatus.CLAIMED,
+                lease_expires_at__gt=now,
+            ).count()
+            if active >= settings.ERROR_FEED_OMEGA_PROJECT_CONCURRENCY:
+                continue
+            token = secrets.token_urlsafe(32)
+            memory = []
+            memory_digest = _digest(memory)
+            attempt = TraceInvestigationAttempt.no_workspace_objects.create(
+                job=job,
+                generation=job.generation,
+                worker_id=worker_id,
+                engine_version=engine_version,
+                lease_token_digest=_token_digest(token),
+                lease_expires_at=now
+                + timedelta(seconds=settings.ERROR_FEED_OMEGA_LEASE_SECONDS),
+                read_cutoff=now,
+                memory_snapshot_id=str(
+                    uuid.uuid5(uuid.NAMESPACE_URL, f"simulation-memory:{job.id}")
+                ),
+                memory_digest=memory_digest,
+                memory=memory,
+                limits=_DEFAULT_LIMITS.copy(),
+            )
+            job.state = TraceInvestigationJobState.RUNNING
+            job.save(update_fields=["state", "updated_at"])
             claims.append(_claim_payload(attempt, token))
     return {"claims": claims}
 
@@ -704,11 +782,34 @@ def _persist_investigation_details(
         evidence_id = row["evidence_id"]
         if evidence_id in evidence:
             raise InvestigationConflict("duplicate evidence_id")
+        simulation = (
+            result.get("workload_type")
+            == InvestigationWorkload.SIMULATION_TEST_EXECUTION
+        )
+        call_execution_id = row.get("call_execution_id")
+        if simulation:
+            from simulate.models.test_execution import CallExecution
+
+            if call_execution_id is None or row.get("span_id") is not None:
+                raise InvestigationConflict(
+                    "simulation receipt requires call_execution_id"
+                )
+            if not CallExecution.no_workspace_objects.filter(
+                id=call_execution_id,
+                test_execution_id=report.test_execution_id,
+                deleted=False,
+            ).exists():
+                raise InvestigationConflict(
+                    "simulation receipt is outside execution scope"
+                )
+        elif call_execution_id is not None or row.get("span_id") is None:
+            raise InvestigationConflict("trace receipt requires span_id")
         evidence[evidence_id] = TraceInvestigationEvidenceReceipt(
             report=report,
             evidence_id=evidence_id,
             ordinal=ordinal,
-            span_id=row["span_id"],
+            span_id=row.get("span_id"),
+            call_execution_id=call_execution_id,
             parent_span_id=row.get("parent_span_id"),
             excerpt=row["excerpt"],
             end_time=row.get("end_time"),
@@ -746,6 +847,10 @@ def _persist_investigation_details(
             kind=row["kind"],
             statement=row["statement"],
             recovery=row["recovery"],
+            category=row.get("category"),
+            group_label=row.get("group_label"),
+            fix_layer=row.get("fix_layer"),
+            confidence=row.get("confidence"),
             requirement=checks.get(requirement_id),
         )
     TraceInvestigationFinding.objects.bulk_create(findings.values())
@@ -759,15 +864,42 @@ def _persist_investigation_details(
 
     attributions = []
     attribution_citations = []
+    simulation = (
+        result.get("workload_type") == InvestigationWorkload.SIMULATION_TEST_EXECUTION
+    )
     for row in result["findings"]:
         finding = findings[row["finding_id"]]
         for role in ("origin", "decisive", "symptom"):
             value = row["attribution"][role]
+            call_execution_id = value.get("call_execution_id")
+            if simulation:
+                from simulate.models.test_execution import CallExecution
+
+                if value.get("span_id") is not None:
+                    raise InvestigationConflict(
+                        "simulation attribution cannot cite spans"
+                    )
+                if (
+                    call_execution_id is not None
+                    and not CallExecution.no_workspace_objects.filter(
+                        id=call_execution_id,
+                        test_execution_id=report.test_execution_id,
+                        deleted=False,
+                    ).exists()
+                ):
+                    raise InvestigationConflict(
+                        "simulation attribution is outside execution scope"
+                    )
+            elif call_execution_id is not None:
+                raise InvestigationConflict(
+                    "trace attribution cannot cite simulation calls"
+                )
             attribution = TraceInvestigationAttribution(
                 finding=finding,
                 role=role,
                 status=value["status"],
                 span_id=value.get("span_id"),
+                call_execution_id=call_execution_id,
                 explanation=value.get("explanation", ""),
             )
             attributions.append(attribution)
@@ -856,16 +988,53 @@ def publish_investigation(
             job_id=result["job_id"],
             lease_token=lease_token,
         )
+        simulation = (
+            job.workload_type == InvestigationWorkload.SIMULATION_TEST_EXECUTION
+        )
+        identity_matches = (
+            result.get("workload_type")
+            == InvestigationWorkload.SIMULATION_TEST_EXECUTION
+            and result.get("test_execution_id") == job.test_execution_id
+            and result["contract_version"] == "omega-simulation/v1"
+            if simulation
+            else result.get("workload_type", "trace") == "trace"
+            and result.get("trace_id") == job.trace_id
+            and result["contract_version"] == CONTRACT_VERSION
+        )
         if (
-            job.trace_id != result["trace_id"]
+            not identity_matches
             or attempt.generation != result["generation"]
             or attempt.engine_version != result["engine_version"]
             or attempt.read_cutoff != result["read_cutoff"]
             or attempt.memory_snapshot_id != result["memory_snapshot_id"]
             or attempt.memory_digest != result["memory_digest"]
-            or result["contract_version"] != CONTRACT_VERSION
         ):
             raise InvestigationConflict("report does not match its claimed attempt")
+        if simulation:
+            from simulate.models.test_execution import CallExecution, TestExecution
+
+            execution = job.test_execution
+            if (
+                execution is None
+                or execution.status != TestExecution.ExecutionStatus.COMPLETED
+            ):
+                raise InvestigationConflict(
+                    "simulation execution is no longer complete"
+                )
+            if result["coverage"]["read_complete"]:
+                total_calls = CallExecution.no_workspace_objects.filter(
+                    test_execution_id=execution.id,
+                    status__in=(
+                        CallExecution.CallStatus.COMPLETED,
+                        CallExecution.CallStatus.FAILED,
+                        CallExecution.CallStatus.CANCELLED,
+                    ),
+                    deleted=False,
+                ).count()
+                if result["coverage"]["observed_call_count"] != total_calls:
+                    raise InvestigationConflict(
+                        "simulation evidence coverage is incomplete"
+                    )
         if result["result_digest"] != wire_result_digest:
             raise InvestigationConflict("result_digest does not match the wire result")
 
@@ -914,18 +1083,26 @@ def publish_investigation(
                 has_issues = False
         old_current_report_id = job.current_report_id if active else None
         if active:
-            TraceInvestigationReport.no_workspace_objects.filter(
+            superseded_reports = TraceInvestigationReport.no_workspace_objects.filter(
                 project_id=job.project_id,
-                trace_id=job.trace_id,
                 is_current=True,
-            ).update(is_current=False)
+            )
+            if simulation:
+                superseded_reports = superseded_reports.filter(
+                    test_execution_id=job.test_execution_id
+                )
+            else:
+                superseded_reports = superseded_reports.filter(trace_id=job.trace_id)
+            superseded_reports.update(is_current=False)
         report = TraceInvestigationReport.no_workspace_objects.create(
             id=report_id,
-            organization_id=job.organization_id,
-            workspace_id=job.workspace_id,
             project_id=job.project_id,
-            trace_id=job.trace_id,
+            organization_id=job.organization_id,
             source=TraceInvestigationSource.OMEGA,
+            workspace_id=job.workspace_id,
+            workload_type=job.workload_type,
+            test_execution_id=job.test_execution_id if simulation else None,
+            trace_id=None if simulation else job.trace_id,
             recorded_at=now,
             is_current=active,
             has_issues=has_issues,
@@ -937,10 +1114,18 @@ def publish_investigation(
             evidence_digest=result["evidence_digest"],
             execution_status=result["execution_status"],
             outcome=result["outcome"],
-            coverage_scope=coverage["scope"],
-            observed_span_count=coverage["observed_span_count"],
+            error_message=result.get("error_message"),
+            coverage_scope=coverage.get("scope") or "simulation_test_execution",
+            observed_span_count=(
+                None if simulation else coverage["observed_span_count"]
+            ),
+            observed_call_count=(
+                coverage["observed_call_count"] if simulation else None
+            ),
             read_complete=coverage["read_complete"],
-            future_arrivals_known=coverage["future_arrivals_known"],
+            future_arrivals_known=(
+                None if simulation else coverage["future_arrivals_known"]
+            ),
             model_calls=usage["model_calls"],
             input_tokens=usage["input_tokens"],
             output_tokens=usage["output_tokens"],

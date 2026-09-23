@@ -523,7 +523,11 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         }
         for track, artifact_kind in hosted_track_kinds.items():
             artifact = hosted.get(artifact_kind)
-            if track not in recordings and isinstance(artifact, dict) and artifact.get("url"):
+            if (
+                track not in recordings
+                and isinstance(artifact, dict)
+                and artifact.get("url")
+            ):
                 recordings[track] = artifact["url"]
 
         # Fall back to the VoiceServiceManager resolution when no URLs are present.
@@ -1684,6 +1688,69 @@ class TestExecutionSerializer(serializers.ModelSerializer):
         # Calculate percentage
         percentage = (call_counts["connected_calls"] / calls_attempted) * 100
         return round(percentage, 2)
+
+
+class DebugAnalysisEvidenceSerializer(serializers.Serializer):
+    evidence_id = serializers.CharField()
+    call_execution_id = serializers.UUIDField(allow_null=True)
+    excerpt = serializers.CharField()
+
+
+class DebugAnalysisClusterSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    cluster_id = serializers.CharField()
+    title = serializers.CharField(allow_null=True)
+    error_type = serializers.CharField()
+
+
+class DebugAnalysisFindingSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    kind = serializers.CharField(allow_null=True)
+    statement = serializers.CharField()
+    recovery = serializers.CharField(allow_null=True)
+    category = serializers.CharField(allow_null=True)
+    group_label = serializers.CharField(allow_null=True)
+    fix_layer = serializers.CharField(allow_null=True)
+    confidence = serializers.CharField(allow_null=True)
+    cluster = DebugAnalysisClusterSerializer(allow_null=True)
+    evidence = DebugAnalysisEvidenceSerializer(many=True)
+
+
+class DebugAnalysisCoverageSerializer(serializers.Serializer):
+    scope = serializers.CharField()
+    observed_call_count = serializers.IntegerField()
+    read_complete = serializers.BooleanField()
+
+
+class DebugAnalysisReportSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    execution_status = serializers.CharField()
+    outcome = serializers.CharField()
+    coverage = DebugAnalysisCoverageSerializer()
+    error_message = serializers.CharField(allow_null=True)
+    grouping_status = serializers.CharField()
+    recorded_at = serializers.DateTimeField()
+
+
+class TestExecutionDebugAnalysisResponseSerializer(serializers.Serializer):
+    test_execution_id = serializers.UUIDField()
+    status = serializers.ChoiceField(
+        choices=("not_requested", "pending", "running", "completed", "failed")
+    )
+    generation = serializers.IntegerField(allow_null=True)
+    job_id = serializers.UUIDField(allow_null=True)
+    error_message = serializers.CharField(allow_null=True)
+    report = DebugAnalysisReportSerializer(allow_null=True)
+    findings = DebugAnalysisFindingSerializer(many=True)
+
+
+class TestExecutionDebugAnalysisErrorSerializer(serializers.Serializer):
+    code = serializers.CharField()
+    detail = serializers.CharField()
+
+
+class TestExecutionDebugAnalysisNotFoundSerializer(serializers.Serializer):
+    detail = serializers.CharField()
 
 
 class TestExecutionStatusSerializer(serializers.Serializer):
