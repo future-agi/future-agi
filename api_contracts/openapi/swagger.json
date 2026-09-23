@@ -45,6 +45,56 @@
         }
     ],
     "paths": {
+        "/simulate/api/harness-jobs/{id}/conversation/messages/": {
+            "post": {
+                "operationId": "simulate_api_harness-jobs_conversation_conversation_message",
+                "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationMessageCreate"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationRead"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/accounts/2fa/recovery-codes/": {
             "get": {
                 "operationId": "accounts_2fa_recovery-codes_list",
@@ -689,7 +739,7 @@
             "get": {
                 "operationId": "accounts_accept-invitation_read",
                 "summary": "Accept an invitation link.",
-                "description": "GET  — validate the token without consuming it. Returns org info so the\n       frontend can render a \"Set Password\" page.\nPOST — set the user's password, activate the account, accept the invite,\n       and return JWT tokens for auto-login.",
+                "description": "GET  \u2014 validate the token without consuming it. Returns org info so the\n       frontend can render a \"Set Password\" page.\nPOST \u2014 set the user's password, activate the account, accept the invite,\n       and return JWT tokens for auto-login.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -742,7 +792,7 @@
             "post": {
                 "operationId": "accounts_accept-invitation_create",
                 "summary": "Accept an invitation link.",
-                "description": "GET  — validate the token without consuming it. Returns org info so the\n       frontend can render a \"Set Password\" page.\nPOST — set the user's password, activate the account, accept the invite,\n       and return JWT tokens for auto-login.",
+                "description": "GET  \u2014 validate the token without consuming it. Returns org info so the\n       frontend can render a \"Set Password\" page.\nPOST \u2014 set the user's password, activate the account, accept the invite,\n       and return JWT tokens for auto-login.",
                 "parameters": [
                     {
                         "name": "data",
@@ -7636,7 +7686,7 @@
             "get": {
                 "operationId": "agent-playground_graphs_read",
                 "summary": "Get graph detail with the active version expanded (or latest draft if no active).",
-                "description": "Returns full nested structure: nodes→ports, edges.",
+                "description": "Returns full nested structure: nodes\u2192ports, edges.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -8011,7 +8061,7 @@
         "/agent-playground/graphs/{id}/versions/{version_id}/": {
             "get": {
                 "operationId": "agent-playground_graphs_versions_read",
-                "description": "Get a specific version with full nested structure (nodes→ports, edges).",
+                "description": "Get a specific version with full nested structure (nodes\u2192ports, edges).",
                 "parameters": [
                     {
                         "name": "page",
@@ -8092,7 +8142,7 @@
             "put": {
                 "operationId": "agent-playground_graphs_versions_update",
                 "summary": "Metadata-only update endpoint (PUT/PATCH).",
-                "description": "Updates commit_message and/or promotes draft → active.\nContent changes (nodes, ports, edges) are done via granular CRUD or create_version.",
+                "description": "Updates commit_message and/or promotes draft \u2192 active.\nContent changes (nodes, ports, edges) are done via granular CRUD or create_version.",
                 "parameters": [
                     {
                         "name": "data",
@@ -8142,7 +8192,7 @@
             "patch": {
                 "operationId": "agent-playground_graphs_versions_partial_update",
                 "summary": "Metadata-only update endpoint (PUT/PATCH).",
-                "description": "Updates commit_message and/or promotes draft → active.\nContent changes (nodes, ports, edges) are done via granular CRUD or create_version.",
+                "description": "Updates commit_message and/or promotes draft \u2192 active.\nContent changes (nodes, ports, edges) are done via granular CRUD or create_version.",
                 "parameters": [
                     {
                         "name": "data",
@@ -10657,7 +10707,7 @@
         "/agentcc/gateways/": {
             "get": {
                 "operationId": "agentcc_gateways_list",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -10719,7 +10769,7 @@
         "/agentcc/gateways/{id}/": {
             "get": {
                 "operationId": "agentcc_gateways_read",
-                "description": "Accept any pk and ignore it — there is only one gateway.",
+                "description": "Accept any pk and ignore it \u2014 there is only one gateway.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -10757,7 +10807,7 @@
         "/agentcc/gateways/{id}/cancel-batch/": {
             "post": {
                 "operationId": "agentcc_gateways_cancel_batch",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
                 "parameters": [
                     {
                         "name": "data",
@@ -10812,7 +10862,7 @@
         "/agentcc/gateways/{id}/config/": {
             "get": {
                 "operationId": "agentcc_gateways_config",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -10850,7 +10900,7 @@
         "/agentcc/gateways/{id}/get-batch/": {
             "get": {
                 "operationId": "agentcc_gateways_get_batch",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -10894,7 +10944,7 @@
         "/agentcc/gateways/{id}/health_check/": {
             "post": {
                 "operationId": "agentcc_gateways_health_check",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
                 "parameters": [
                     {
                         "name": "data",
@@ -10943,7 +10993,7 @@
         "/agentcc/gateways/{id}/mcp-prompts/": {
             "get": {
                 "operationId": "agentcc_gateways_mcp_prompts",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -10975,7 +11025,7 @@
         "/agentcc/gateways/{id}/mcp-resources/": {
             "get": {
                 "operationId": "agentcc_gateways_mcp_resources",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -11007,7 +11057,7 @@
         "/agentcc/gateways/{id}/mcp-status/": {
             "get": {
                 "operationId": "agentcc_gateways_mcp_status",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -11045,7 +11095,7 @@
         "/agentcc/gateways/{id}/mcp-tools/": {
             "get": {
                 "operationId": "agentcc_gateways_mcp_tools",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -11077,7 +11127,7 @@
         "/agentcc/gateways/{id}/providers/": {
             "get": {
                 "operationId": "agentcc_gateways_providers",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -11164,7 +11214,7 @@
         "/agentcc/gateways/{id}/remove-budget/": {
             "post": {
                 "operationId": "agentcc_gateways_remove_budget",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11213,7 +11263,7 @@
         "/agentcc/gateways/{id}/remove-mcp-server/": {
             "post": {
                 "operationId": "agentcc_gateways_remove_mcp_server",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11323,7 +11373,7 @@
         "/agentcc/gateways/{id}/set-budget/": {
             "post": {
                 "operationId": "agentcc_gateways_set_budget",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11372,7 +11422,7 @@
         "/agentcc/gateways/{id}/submit-batch/": {
             "post": {
                 "operationId": "agentcc_gateways_submit_batch",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11421,7 +11471,7 @@
         "/agentcc/gateways/{id}/test-mcp-tool/": {
             "post": {
                 "operationId": "agentcc_gateways_test_mcp_tool",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11519,7 +11569,7 @@
         "/agentcc/gateways/{id}/toggle-guardrail/": {
             "post": {
                 "operationId": "agentcc_gateways_toggle_guardrail",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11617,7 +11667,7 @@
         "/agentcc/gateways/{id}/update-guardrail/": {
             "post": {
                 "operationId": "agentcc_gateways_update_guardrail",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11666,7 +11716,7 @@
         "/agentcc/gateways/{id}/update-mcp-guardrails/": {
             "post": {
                 "operationId": "agentcc_gateways_update_mcp_guardrails",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
                 "parameters": [
                     {
                         "name": "data",
@@ -11715,7 +11765,7 @@
         "/agentcc/gateways/{id}/update-mcp-server/": {
             "post": {
                 "operationId": "agentcc_gateways_update_mcp_server",
-                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model — returns a virtual singleton gateway with live health.",
+                "description": "Stateless proxy to the Go gateway (configured via env vars).\nNo DB model \u2014 returns a virtual singleton gateway with live health.",
                 "parameters": [
                     {
                         "name": "data",
@@ -12713,7 +12763,7 @@
             },
             "put": {
                 "operationId": "agentcc_org-configs_update",
-                "description": "Disabled — configs are immutable versions. Create a new one instead.",
+                "description": "Disabled \u2014 configs are immutable versions. Create a new one instead.",
                 "parameters": [
                     {
                         "name": "data",
@@ -13129,7 +13179,7 @@
         "/agentcc/provider-credentials/{id}/rotate/": {
             "post": {
                 "operationId": "agentcc_provider-credentials_rotate",
-                "description": "Rotate credentials — accepts new credentials, encrypts, and updates.",
+                "description": "Rotate credentials \u2014 accepts new credentials, encrypts, and updates.",
                 "parameters": [
                     {
                         "name": "data",
@@ -13722,7 +13772,7 @@
             },
             "put": {
                 "operationId": "agentcc_routing-policies_update",
-                "description": "Updates are disabled — create a new version instead.",
+                "description": "Updates are disabled \u2014 create a new version instead.",
                 "parameters": [
                     {
                         "name": "data",
@@ -13858,7 +13908,7 @@
         "/agentcc/sessions/": {
             "get": {
                 "operationId": "agentcc_sessions_list",
-                "description": "Session management — create, list, retrieve sessions with stats.",
+                "description": "Session management \u2014 create, list, retrieve sessions with stats.",
                 "parameters": [
                     {
                         "name": "page",
@@ -13920,7 +13970,7 @@
             },
             "post": {
                 "operationId": "agentcc_sessions_create",
-                "description": "Session management — create, list, retrieve sessions with stats.",
+                "description": "Session management \u2014 create, list, retrieve sessions with stats.",
                 "parameters": [
                     {
                         "name": "data",
@@ -13954,7 +14004,7 @@
         "/agentcc/sessions/{id}/": {
             "get": {
                 "operationId": "agentcc_sessions_read",
-                "description": "Session management — create, list, retrieve sessions with stats.",
+                "description": "Session management \u2014 create, list, retrieve sessions with stats.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -13976,7 +14026,7 @@
             },
             "put": {
                 "operationId": "agentcc_sessions_update",
-                "description": "Session management — create, list, retrieve sessions with stats.",
+                "description": "Session management \u2014 create, list, retrieve sessions with stats.",
                 "parameters": [
                     {
                         "name": "data",
@@ -14007,7 +14057,7 @@
             },
             "patch": {
                 "operationId": "agentcc_sessions_partial_update",
-                "description": "Session management — create, list, retrieve sessions with stats.",
+                "description": "Session management \u2014 create, list, retrieve sessions with stats.",
                 "parameters": [
                     {
                         "name": "data",
@@ -14038,7 +14088,7 @@
             },
             "delete": {
                 "operationId": "agentcc_sessions_delete",
-                "description": "Session management — create, list, retrieve sessions with stats.",
+                "description": "Session management \u2014 create, list, retrieve sessions with stats.",
                 "parameters": [],
                 "responses": {
                     "204": {
@@ -15208,7 +15258,7 @@
             "get": {
                 "operationId": "api_deployment-info_list",
                 "summary": "Public deployment-mode probe used by the frontend to gate UI.",
-                "description": "Returns ``{\"mode\": \"oss\"|\"ee\"|\"cloud\"}``. No auth — public config.",
+                "description": "Returns ``{\"mode\": \"oss\"|\"ee\"|\"cloud\"}``. No auth \u2014 public config.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -15406,7 +15456,7 @@
             "get": {
                 "operationId": "api_setup-checks_list",
                 "summary": "Public infrastructure probe for the OSS first-run setup screen.",
-                "description": "Returns ``{\"status\": \"ok\"|\"issues\", \"mode\": ..., \"checks\": [...]}``. No auth —\nit runs before any account exists. Self-hosted only: on cloud and EE the\nroute answers 404, so neither the internal service topology nor the outbound\nprobes it triggers are reachable by an anonymous caller.",
+                "description": "Returns ``{\"status\": \"ok\"|\"issues\", \"mode\": ..., \"checks\": [...]}``. No auth \u2014\nit runs before any account exists. Self-hosted only: on cloud and EE the\nroute answers 404, so neither the internal service topology nor the outbound\nprobes it triggers are reachable by an anonymous caller.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -18139,7 +18189,7 @@
         "/mcp/oauth/authorize/": {
             "get": {
                 "operationId": "mcp_oauth_authorize_list",
-                "description": "GET /mcp/oauth/authorize/ — Return consent screen data.",
+                "description": "GET /mcp/oauth/authorize/ \u2014 Return consent screen data.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -18170,7 +18220,7 @@
         "/mcp/oauth/consent/": {
             "post": {
                 "operationId": "mcp_oauth_consent_create",
-                "description": "POST /mcp/oauth/consent/ — Process user consent decision.",
+                "description": "POST /mcp/oauth/consent/ \u2014 Process user consent decision.",
                 "parameters": [
                     {
                         "name": "data",
@@ -18218,7 +18268,7 @@
         "/mcp/oauth/token/": {
             "post": {
                 "operationId": "mcp_oauth_token_create",
-                "description": "POST /mcp/oauth/token/ — Exchange code or refresh token for access token.",
+                "description": "POST /mcp/oauth/token/ \u2014 Exchange code or refresh token for access token.",
                 "parameters": [
                     {
                         "name": "data",
@@ -19315,7 +19365,7 @@
             "post": {
                 "operationId": "model-hub_annotation-queues_hard_delete",
                 "summary": "Permanently remove a queue + everything attached.",
-                "description": "Hard delete cascades through the FK graph (rules, items,\nassignments, scores) via ``on_delete=CASCADE``. There is no\nrecovery — callers must pass ``force=true`` AND the queue's\nexact name as ``confirm_name`` so the action can't fire from\na typo'd request.",
+                "description": "Hard delete cascades through the FK graph (rules, items,\nassignments, scores) via ``on_delete=CASCADE``. There is no\nrecovery \u2014 callers must pass ``force=true`` AND the queue's\nexact name as ``confirm_name`` so the action can't fire from\na typo'd request.",
                 "parameters": [
                     {
                         "name": "data",
@@ -19904,7 +19954,7 @@
             "post": {
                 "operationId": "model-hub_annotation-queues_automation-rules_evaluate",
                 "summary": "Trigger a manual rule run with a sync-or-async branch.",
-                "description": "Small runs (filter resolves to ≤ ``RULE_RUN_SYNC_THRESHOLD``) finish\nin the HTTP request and return 200 with the result — fast feedback\nfor the common case. Large runs (mostly first-ever runs on backlogs\nor rules with wide filters) hand the work to a Temporal activity and\nreturn 202 immediately. The activity emails creator + queue managers\non completion.\n\nThe peek is a cheap dry-run (``[:cap+1]`` LIMIT, no COUNT(*)) — sub-\n100ms even on 10M+ row trace tables — so this branch costs little\neven when it ends up taking the sync path.",
+                "description": "Small runs (filter resolves to \u2264 ``RULE_RUN_SYNC_THRESHOLD``) finish\nin the HTTP request and return 200 with the result \u2014 fast feedback\nfor the common case. Large runs (mostly first-ever runs on backlogs\nor rules with wide filters) hand the work to a Temporal activity and\nreturn 202 immediately. The activity emails creator + queue managers\non completion.\n\nThe peek is a cheap dry-run (``[:cap+1]`` LIMIT, no COUNT(*)) \u2014 sub-\n100ms even on 10M+ row trace tables \u2014 so this branch costs little\neven when it ends up taking the sync path.",
                 "parameters": [
                     {
                         "name": "data",
@@ -20500,7 +20550,7 @@
             "get": {
                 "operationId": "model-hub_annotation-queues_items_next_item",
                 "summary": "Get the next or previous item in the queue.",
-                "description": "Query params:\n  exclude: comma-separated item IDs to skip\n  before:  item ID — returns the item immediately before this one in order\n  review_status: optional review status filter (for reviewer queues)\n  exclude_review_status: optional review status to omit (for annotator queues)\n  include_completed: when true, navigation can visit completed items too",
+                "description": "Query params:\n  exclude: comma-separated item IDs to skip\n  before:  item ID \u2014 returns the item immediately before this one in order\n  review_status: optional review status filter (for reviewer queues)\n  exclude_review_status: optional review status to omit (for annotator queues)\n  include_completed: when true, navigation can visit completed items too",
                 "parameters": [
                     {
                         "name": "page",
@@ -23343,7 +23393,7 @@
         "/model-hub/cells/{cell_id}/run-error-localizer/": {
             "get": {
                 "operationId": "model-hub_cells_run-error-localizer_list",
-                "description": "Poll endpoint — returns the current state of the localizer task\nfor a given cell, including the analysis once completed.",
+                "description": "Poll endpoint \u2014 returns the current state of the localizer task\nfor a given cell, including the analysis once completed.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -23396,7 +23446,7 @@
             "post": {
                 "operationId": "model-hub_cells_run-error-localizer_create",
                 "summary": "On-demand error localization for a single dataset cell.",
-                "description": "Use case: in the dataset detail drawer, the user opens an eval cell\nthat doesn't have an `error_analysis` block (because the eval was\nrun before error_localization was enabled, or the user wants a\nfresh run). They click \"Run error localization\" and we:\n\n  1. Look up the cell + its UserEvalMetric (column.source_id) +\n     the EvalTemplate.\n  2. Resolve the metric's `mapping` (template_var → column UUID)\n     against the row's other cells to build `input_data`.\n  3. Pull the eval verdict + reason from `cell.value` /\n     `cell.value_infos`.\n  4. Upsert an `ErrorLocalizerTask(source=DATASET, source_id=cell.id,\n     status=PENDING)` so the existing 30s Temporal schedule picks it\n     up and processes it via `process_single_error_localization`.\n\nReturns the task id + status. The frontend then polls the cell\ndetail / task status endpoint until `error_analysis` lands in\n`cell.value_infos`.\n\nPOST /model-hub/cells/{cell_id}/run-error-localizer/",
+                "description": "Use case: in the dataset detail drawer, the user opens an eval cell\nthat doesn't have an `error_analysis` block (because the eval was\nrun before error_localization was enabled, or the user wants a\nfresh run). They click \"Run error localization\" and we:\n\n  1. Look up the cell + its UserEvalMetric (column.source_id) +\n     the EvalTemplate.\n  2. Resolve the metric's `mapping` (template_var \u2192 column UUID)\n     against the row's other cells to build `input_data`.\n  3. Pull the eval verdict + reason from `cell.value` /\n     `cell.value_infos`.\n  4. Upsert an `ErrorLocalizerTask(source=DATASET, source_id=cell.id,\n     status=PENDING)` so the existing 30s Temporal schedule picks it\n     up and processes it via `process_single_error_localization`.\n\nReturns the task id + status. The frontend then polls the cell\ndetail / task status endpoint until `error_analysis` lands in\n`cell.value_infos`.\n\nPOST /model-hub/cells/{cell_id}/run-error-localizer/",
                 "parameters": [
                     {
                         "name": "data",
@@ -32581,7 +32631,7 @@
             },
             "patch": {
                 "operationId": "model-hub_eval-templates_composite_partial_update",
-                "summary": "PATCH — partial update of a composite eval.",
+                "summary": "PATCH \u2014 partial update of a composite eval.",
                 "description": "Supported fields (all optional):\n  name, description, tags,\n  aggregation_enabled, aggregation_function,\n  child_template_ids (replaces the child list),\n  child_weights (map of child_id -> weight).",
                 "parameters": [
                     {
@@ -32656,7 +32706,7 @@
             "post": {
                 "operationId": "model-hub_eval-templates_composite_execute_create",
                 "summary": "POST /model-hub/eval-templates/<template_id>/composite/execute/",
-                "description": "Execute all child evals in a composite and optionally aggregate results.\nThin wrapper around `execute_composite_children_sync` — the same helper\nthe dataset/experiment `CompositeEvaluationRunner` uses, so aggregation\nsemantics stay consistent across surfaces.",
+                "description": "Execute all child evals in a composite and optionally aggregate results.\nThin wrapper around `execute_composite_children_sync` \u2014 the same helper\nthe dataset/experiment `CompositeEvaluationRunner` uses, so aggregation\nsemantics stay consistent across surfaces.",
                 "parameters": [
                     {
                         "name": "data",
@@ -33066,7 +33116,7 @@
             "get": {
                 "operationId": "model-hub_eval-templates_usage_list",
                 "summary": "GET /model-hub/eval-templates/<id>/usage/",
-                "description": "Returns usage stats, chart data, and the paginated usage table.\nQuery params: page (0-based), page_size, period\n(30m|6h|1d|7d|30d|90d|180d|365d), optional start_date/end_date pair\n(overrides period — sent by the FE for Today / Yesterday / Custom).\n\nThe response is rendered through\n``EvalUsageStatsResponseResultSerializer(instance=...).data`` at the\nboundary so shape drift surfaces here instead of shipping silently.",
+                "description": "Returns usage stats, chart data, and the paginated usage table.\nQuery params: page (0-based), page_size, period\n(30m|6h|1d|7d|30d|90d|180d|365d), optional start_date/end_date pair\n(overrides period \u2014 sent by the FE for Today / Yesterday / Custom).\n\nThe response is rendered through\n``EvalUsageStatsResponseResultSerializer(instance=...).data`` at the\nboundary so shape drift surfaces here instead of shipping silently.",
                 "parameters": [
                     {
                         "name": "page",
@@ -33327,7 +33377,7 @@
             "post": {
                 "operationId": "model-hub_eval-templates_versions_restore_create",
                 "summary": "POST /model-hub/eval-templates/<id>/versions/<version_id>/restore/",
-                "description": "Restore a version by creating a new version with the old version's config.\nDoes NOT modify the old version — creates a new one on top.",
+                "description": "Restore a version by creating a new version with the old version's config.\nDoes NOT modify the old version \u2014 creates a new one on top.",
                 "parameters": [
                     {
                         "name": "data",
@@ -34248,7 +34298,7 @@
             "post": {
                 "operationId": "model-hub_experiments_v2_re-run_create",
                 "summary": "V2 re-run: org-scoped, uses V2 Temporal workflow.",
-                "description": "No manual workflow cancel needed — Temporal's TERMINATE_IF_RUNNING ID\nreuse policy automatically cancels any running workflow with the same ID.\nCell reset is handled by the workflow itself (cleanup + setup activities).",
+                "description": "No manual workflow cancel needed \u2014 Temporal's TERMINATE_IF_RUNNING ID\nreuse policy automatically cancels any running workflow with the same ID.\nCell reset is handled by the workflow itself (cleanup + setup activities).",
                 "parameters": [
                     {
                         "name": "data",
@@ -34550,7 +34600,7 @@
             "put": {
                 "operationId": "model-hub_experiments_v2_update",
                 "summary": "Update a V2 experiment with diff-based selective re-run.",
-                "description": "Editable fields: column_id, prompt_config, user_eval_metrics.\nRe-run triggers (determined by fingerprint diffs, not field presence):\n- prompt_config has new/modified entries → re-run those configs + ALL dependent evals\n- user_eval_metrics has new/modified entries → re-run only those evals\n- column_id changed → delete old base eval columns, re-run base evals\n- If FE sends unchanged data, diffs return empty → no re-run",
+                "description": "Editable fields: column_id, prompt_config, user_eval_metrics.\nRe-run triggers (determined by fingerprint diffs, not field presence):\n- prompt_config has new/modified entries \u2192 re-run those configs + ALL dependent evals\n- user_eval_metrics has new/modified entries \u2192 re-run only those evals\n- column_id changed \u2192 delete old base eval columns, re-run base evals\n- If FE sends unchanged data, diffs return empty \u2192 no re-run",
                 "parameters": [
                     {
                         "name": "data",
@@ -35148,7 +35198,7 @@
         "/model-hub/experiments/v2/{experiment_id}/feedback/submit-feedback/": {
             "post": {
                 "operationId": "model-hub_experiments_v2_feedback_submit-feedback_create",
-                "description": "Submit feedback action — triggers temporal eval rerun for experiments.",
+                "description": "Submit feedback action \u2014 triggers temporal eval rerun for experiments.",
                 "parameters": [
                     {
                         "name": "data",
@@ -37699,7 +37749,7 @@
         "/model-hub/ground-truth/{ground_truth_id}/embed/": {
             "post": {
                 "operationId": "model-hub_ground-truth_embed_create",
-                "description": "POST /model-hub/ground-truth/<id>/embed/ — trigger embedding generation.",
+                "description": "POST /model-hub/ground-truth/<id>/embed/ \u2014 trigger embedding generation.",
                 "parameters": [
                     {
                         "name": "data",
@@ -49797,7 +49847,7 @@
         "/simulate/api/alk-simulate/call-executions/{call_execution_id}/status/": {
             "patch": {
                 "operationId": "simulate_api_alk-simulate_call-executions_status",
-                "description": "Non-terminal per-call status ping (currently only ``ongoing``): the\nSDK marks a pre-created PENDING row ONGOING the moment its call starts,\nso the UI shows progress instead of PENDING → terminal. PENDING-gated in\nthe service, so a late ping never clobbers a result that already landed.",
+                "description": "Non-terminal per-call status ping (currently only ``ongoing``): the\nSDK marks a pre-created PENDING row ONGOING the moment its call starts,\nso the UI shows progress instead of PENDING \u2192 terminal. PENDING-gated in\nthe service, so a late ping never clobbers a result that already landed.",
                 "parameters": [
                     {
                         "name": "data",
@@ -49858,7 +49908,7 @@
         "/simulate/api/alk-simulate/run-tests/provision/": {
             "post": {
                 "operationId": "simulate_api_alk-simulate_run-tests_provision_run_test",
-                "description": "Stand up a chat RunTest + scenario-of-record from SDK personas so an\nSDK-first run has somewhere to post — without the native UI's async\nscenario generation. See ``provision_alk_sim_run_test``.",
+                "description": "Stand up a chat RunTest + scenario-of-record from SDK personas so an\nSDK-first run has somewhere to post \u2014 without the native UI's async\nscenario generation. See ``provision_alk_sim_run_test``.",
                 "parameters": [
                     {
                         "name": "data",
@@ -50113,6 +50163,271 @@
             },
             "parameters": []
         },
+        "/simulate/api/harness-environments/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_list",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentListResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": []
+        },
+        "/simulate/api/harness-environments/{id}/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_read",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentDetail"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "patch": {
+                "operationId": "simulate_api_harness-environments_partial_update",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentRename"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentDetail"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "delete": {
+                "operationId": "simulate_api_harness-environments_delete",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "204": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/evaluations/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_add_evaluation",
+                "summary": "Grade this environment by one more eval from the catalogue.",
+                "description": "Applies to scenarios graded from here on. Calls that already ran keep\nthe verdicts they were given, so adding an eval does not backfill a\ncolumn onto past results.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentAddEvaluation"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentDetail"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/evaluations/available/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_evaluations_available_evaluations",
+                "summary": "The evals this environment could still be graded by.",
+                "description": "The same catalogue authoring chose from, filtered to this environment's\nmodality and to the templates the organization can see, minus what is\nalready selected. Every entry is addable as it stands: an eval whose\ninputs this modality does not produce is left out rather than offered\nand then refused.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentAvailableEvals"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/": {
+            "delete": {
+                "operationId": "simulate_api_harness-environments_remove_evaluation",
+                "summary": "Stop running one eval against this environment.",
+                "description": "Soft-delete only. The verdicts an eval already produced live on the call\nexecutions and in their receipts, not on this row, so a hard delete would\nleave past runs showing scores for something the environment no longer\nlists. Removing it stops future scenarios being graded by it and leaves\nthe history it already wrote intact.",
+                "parameters": [],
+                "responses": {
+                    "204": {
+                        "description": "Removed"
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "eval_config_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/run/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_run",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessRunCreate"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessRunCreateResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-jobs/": {
             "get": {
                 "operationId": "simulate_api_harness-jobs_list",
@@ -50215,10 +50530,10 @@
                     }
                 ],
                 "responses": {
-                    "201": {
+                    "200": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/HarnessPreflight"
+                            "$ref": "#/definitions/HarnessPreflightResponse"
                         }
                     },
                     "default": {
@@ -50231,7 +50546,8 @@
                 "tags": [
                     "simulate"
                 ],
-                "x-runtime-request-validation": true
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": []
         },
@@ -50461,56 +50777,6 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/HarnessJobRead"
-                        }
-                    },
-                    "default": {
-                        "description": "Default error response",
-                        "schema": {
-                            "$ref": "#/definitions/ManagementAPIErrorResponse"
-                        }
-                    }
-                },
-                "tags": [
-                    "simulate"
-                ],
-                "x-runtime-request-validation": true,
-                "x-runtime-response-validation": true
-            },
-            "parameters": [
-                {
-                    "name": "id",
-                    "in": "path",
-                    "required": true,
-                    "type": "string"
-                }
-            ]
-        },
-        "/simulate/api/harness-jobs/{id}/conversation/messages/": {
-            "post": {
-                "operationId": "simulate_api_harness-jobs_conversation_conversation_message",
-                "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
-                "parameters": [
-                    {
-                        "name": "data",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/HarnessConversationMessageCreate"
-                        }
-                    }
-                ],
-                "responses": {
-                    "202": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/HarnessConversationRead"
-                        }
-                    },
-                    "409": {
-                        "description": "",
-                        "schema": {
-                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "default": {
@@ -51920,7 +52186,7 @@
             "post": {
                 "operationId": "simulate_api_livekit_webhook_create",
                 "summary": "Receive and process LiveKit server webhooks.",
-                "description": "Handles lifecycle events (room start/finish, participant join/leave,\negress completion). This is the **reliable** path for updating call\nlifecycle and signaling Temporal — it fires even if the agent worker\ncrashes mid-call.",
+                "description": "Handles lifecycle events (room start/finish, participant join/leave,\negress completion). This is the **reliable** path for updating call\nlifecycle and signaling Temporal \u2014 it fires even if the agent worker\ncrashes mid-call.",
                 "parameters": [
                     {
                         "name": "data",
@@ -59796,7 +60062,7 @@
         "/tracer/feed/issues/": {
             "get": {
                 "operationId": "tracer_feed_issues_list",
-                "description": "GET /tracer/feed/issues/ — paginated cluster list with filters/sort.",
+                "description": "GET /tracer/feed/issues/ \u2014 paginated cluster list with filters/sort.",
                 "parameters": [
                     {
                         "name": "project_id",
@@ -59956,7 +60222,7 @@
         "/tracer/feed/issues/stats/": {
             "get": {
                 "operationId": "tracer_feed_issues_stats_list",
-                "description": "GET /tracer/feed/issues/stats/ — top stats bar totals.",
+                "description": "GET /tracer/feed/issues/stats/ \u2014 top stats bar totals.",
                 "parameters": [
                     {
                         "name": "project_id",
@@ -65467,7 +65733,7 @@
             "post": {
                 "operationId": "tracer_trace-session_get_session_graph_data",
                 "summary": "Fetch time-series session metrics for the observe graph.",
-                "description": "Supports the same metric types as the trace graph endpoint:\n- SYSTEM_METRIC: latency, tokens, cost, error_rate, session_count,\n  avg_duration, avg_traces_per_session — all aggregated at session level\n- EVAL: eval scores averaged across sessions\n- ANNOTATION: annotation scores averaged across sessions\n\nResponse shape matches trace graph: {metric_name, data: [{timestamp, value, primary_traffic}]}",
+                "description": "Supports the same metric types as the trace graph endpoint:\n- SYSTEM_METRIC: latency, tokens, cost, error_rate, session_count,\n  avg_duration, avg_traces_per_session \u2014 all aggregated at session level\n- EVAL: eval scores averaged across sessions\n- ANNOTATION: annotation scores averaged across sessions\n\nResponse shape matches trace graph: {metric_name, data: [{timestamp, value, primary_traffic}]}",
                 "parameters": [
                     {
                         "name": "data",
@@ -66004,7 +66270,7 @@
             "get": {
                 "operationId": "tracer_trace-session_eval_logs",
                 "summary": "Session-scoped eval log feed for TracesDrawer's \"Evals\" tab.",
-                "description": "Session-level eval results are walled off from span/trace surfaces\nby ``target_type='session'`` — this endpoint is the only place\nthey appear.\n\nQuery params:\n    page (int, 0-indexed, default 0)\n    page_size (int, default 25, max 100)",
+                "description": "Session-level eval results are walled off from span/trace surfaces\nby ``target_type='session'`` \u2014 this endpoint is the only place\nthey appear.\n\nQuery params:\n    page (int, 0-indexed, default 0)\n    page_size (int, default 25, max 100)",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -67503,7 +67769,7 @@
             "get": {
                 "operationId": "tracer_trace_voice_call_detail",
                 "summary": "Return the heavy / detail-only fields for a single voice call.",
-                "description": "Query params:\n- trace_id or legacy traceId (required) — UUID of the voice call trace.",
+                "description": "Query params:\n- trace_id or legacy traceId (required) \u2014 UUID of the voice call trace.",
                 "parameters": [
                     {
                         "name": "trace_id",
@@ -69470,8 +69736,7 @@
         "/usage/admin/invoice/preview/": {
             "post": {
                 "operationId": "usage_admin_invoice_preview_create",
-                "summary": "Preview invoice for an org+period.",
-                "description": "Creates no invoice and deducts no credits, but does backfill missing\n``UsageSummary`` rows for the usage period. Open to staff so the admin's\nread-only Generate Invoice page can show what would be billed.",
+                "description": "Preview invoice for an org+period (no side effects).",
                 "parameters": [
                     {
                         "name": "data",
@@ -76311,7 +76576,7 @@
             "post": {
                 "operationId": "usage_v2_stripe-webhook_create",
                 "summary": "Handle Stripe webhook events.",
-                "description": "No auth — Stripe authenticates via signature header.\nAPIView.as_view() auto-applies csrf_exempt.",
+                "description": "No auth \u2014 Stripe authenticates via signature header.\nAPIView.as_view() auto-applies csrf_exempt.",
                 "parameters": [
                     {
                         "name": "data",
@@ -76783,7 +77048,7 @@
             "post": {
                 "operationId": "usage_webhook_create",
                 "summary": "Handle Stripe webhook events.",
-                "description": "No auth — Stripe authenticates via signature header.\nAPIView.as_view() auto-applies csrf_exempt.",
+                "description": "No auth \u2014 Stripe authenticates via signature header.\nAPIView.as_view() auto-applies csrf_exempt.",
                 "parameters": [
                     {
                         "name": "data",
@@ -77299,9 +77564,346 @@
                 ]
             },
             "parameters": []
+        },
+        "/simulate/api/harness-jobs/{id}/runs/": {
+            "post": {
+                "operationId": "simulate_api_harness-jobs_runs",
+                "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessRunCreate"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessRunCreateResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
         }
     },
     "definitions": {
+        "HarnessConversationEventRead": {
+            "required": [
+                "event_id",
+                "sequence",
+                "kind",
+                "stage",
+                "payload",
+                "emitted_at"
+            ],
+            "type": "object",
+            "properties": {
+                "event_id": {
+                    "title": "Event id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "sequence": {
+                    "title": "Sequence",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "message_id": {
+                    "title": "Message id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string"
+                },
+                "invocation_id": {
+                    "title": "Invocation id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "function_call_id": {
+                    "title": "Function call id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "payload": {
+                    "title": "Payload",
+                    "type": "object"
+                },
+                "emitted_at": {
+                    "title": "Emitted at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "HarnessConversationMessage": {
+            "required": [
+                "message_id",
+                "sequence",
+                "role",
+                "kind",
+                "state",
+                "stage",
+                "content",
+                "payload",
+                "created_at"
+            ],
+            "type": "object",
+            "properties": {
+                "message_id": {
+                    "title": "Message id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "sequence": {
+                    "title": "Sequence",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "role": {
+                    "title": "Role",
+                    "type": "string",
+                    "enum": [
+                        "user",
+                        "assistant",
+                        "system"
+                    ]
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "message",
+                        "question",
+                        "confirmation",
+                        "status"
+                    ]
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "queued",
+                        "delivered",
+                        "streaming",
+                        "completed",
+                        "failed"
+                    ]
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string"
+                },
+                "content": {
+                    "title": "Content",
+                    "type": "string"
+                },
+                "payload": {
+                    "title": "Payload",
+                    "type": "object"
+                },
+                "invocation_id": {
+                    "title": "Invocation id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "function_call_id": {
+                    "title": "Function call id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "reply_to": {
+                    "title": "Reply to",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "HarnessConversationMessageCreate": {
+            "required": [
+                "content",
+                "client_request_id"
+            ],
+            "type": "object",
+            "properties": {
+                "content": {
+                    "title": "Content",
+                    "type": "string",
+                    "maxLength": 20000,
+                    "minLength": 1
+                },
+                "client_request_id": {
+                    "title": "Client request id",
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,128}$",
+                    "minLength": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "user_message",
+                        "user_response",
+                        "approval",
+                        "interrupt",
+                        "cancel_operation"
+                    ],
+                    "default": "user_message"
+                },
+                "reply_to": {
+                    "title": "Reply to",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "payload": {
+                    "title": "Payload",
+                    "type": "object",
+                    "default": {}
+                }
+            }
+        },
+        "HarnessConversationRead": {
+            "required": [
+                "conversation_id",
+                "job_id",
+                "state",
+                "stage",
+                "active_invocation_id",
+                "blocking_input",
+                "messages",
+                "events",
+                "event_watermark",
+                "runtime"
+            ],
+            "type": "object",
+            "properties": {
+                "conversation_id": {
+                    "title": "Conversation id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "job_id": {
+                    "title": "Job id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "active_invocation_id": {
+                    "title": "Active invocation id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "blocking_input": {
+                    "title": "Blocking input",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "messages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessConversationMessage"
+                    }
+                },
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessConversationEventRead"
+                    }
+                },
+                "event_watermark": {
+                    "title": "Event watermark",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "runtime": {
+                    "$ref": "#/definitions/HarnessConversationRuntime"
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessConversationRuntime": {
+            "required": [
+                "state",
+                "warm_until",
+                "degraded",
+                "available"
+            ],
+            "type": "object",
+            "properties": {
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "warm_until": {
+                    "title": "Warm until",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "degraded": {
+                    "title": "Degraded",
+                    "type": "boolean"
+                },
+                "available": {
+                    "title": "Available",
+                    "type": "boolean"
+                }
+            }
+        },
         "RecoveryCodesRemainingResponse": {
             "required": [
                 "remaining"
@@ -86650,7 +87252,7 @@
                 },
                 "sample_rate": {
                     "title": "Sample rate",
-                    "description": "Fraction of traffic to mirror (0.0–1.0)",
+                    "description": "Fraction of traffic to mirror (0.0\u20131.0)",
                     "type": "number"
                 },
                 "status": {
@@ -119258,6 +119860,1233 @@
                 }
             }
         },
+        "HarnessEnvironment": {
+            "required": [
+                "id",
+                "name",
+                "description",
+                "domain",
+                "source_kind",
+                "agent_type",
+                "status",
+                "stage",
+                "scenario_count",
+                "sub_goals_count",
+                "tools_count",
+                "runs_count",
+                "last_updated",
+                "created_at"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "domain": {
+                    "title": "Domain",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "source_kind": {
+                    "title": "Source kind",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "agent_type": {
+                    "title": "Agent type",
+                    "type": "string",
+                    "enum": [
+                        "voice",
+                        "chat"
+                    ]
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "building",
+                        "running",
+                        "completed",
+                        "failed"
+                    ]
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "scenario_count": {
+                    "title": "Scenario count",
+                    "type": "integer"
+                },
+                "sub_goals_count": {
+                    "title": "Sub goals count",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "tools_count": {
+                    "title": "Tools count",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "runs_count": {
+                    "title": "Runs count",
+                    "type": "integer"
+                },
+                "last_updated": {
+                    "title": "Last updated",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "HarnessEnvironmentListResponse": {
+            "required": [
+                "count",
+                "next",
+                "previous",
+                "total_pages",
+                "current_page",
+                "results"
+            ],
+            "type": "object",
+            "properties": {
+                "count": {
+                    "title": "Count",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "next": {
+                    "title": "Next",
+                    "type": "string",
+                    "format": "uri",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "previous": {
+                    "title": "Previous",
+                    "type": "string",
+                    "format": "uri",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "total_pages": {
+                    "title": "Total pages",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "current_page": {
+                    "title": "Current page",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentListItem"
+                    }
+                }
+            }
+        },
+        "HarnessEnvironmentRunLink": {
+            "required": [
+                "run_test_id",
+                "test_execution_id",
+                "simulation_url"
+            ],
+            "type": "object",
+            "properties": {
+                "run_test_id": {
+                    "title": "Run test id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "test_execution_id": {
+                    "title": "Test execution id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "simulation_url": {
+                    "title": "Simulation url",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessEnvironmentOverview": {
+            "required": [
+                "id",
+                "name",
+                "description",
+                "domain",
+                "source_kind",
+                "agent_type",
+                "status",
+                "stage",
+                "scenario_count",
+                "sub_goals_count",
+                "tools_count",
+                "runs_count",
+                "last_updated",
+                "created_at",
+                "flows_count",
+                "guardrails_count",
+                "personas_count",
+                "evaluations_count",
+                "run"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "domain": {
+                    "title": "Domain",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "source_kind": {
+                    "title": "Source kind",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "agent_type": {
+                    "title": "Agent type",
+                    "type": "string",
+                    "enum": [
+                        "voice",
+                        "chat"
+                    ]
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "building",
+                        "running",
+                        "completed",
+                        "failed"
+                    ]
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "scenario_count": {
+                    "title": "Scenario count",
+                    "type": "integer"
+                },
+                "sub_goals_count": {
+                    "title": "Sub goals count",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "tools_count": {
+                    "title": "Tools count",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "runs_count": {
+                    "title": "Runs count",
+                    "type": "integer"
+                },
+                "last_updated": {
+                    "title": "Last updated",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "flows_count": {
+                    "title": "Flows count",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "guardrails_count": {
+                    "title": "Guardrails count",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "personas_count": {
+                    "title": "Personas count",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "evaluations_count": {
+                    "title": "Evaluations count",
+                    "type": "integer"
+                },
+                "run": {
+                    "$ref": "#/definitions/HarnessEnvironmentRunLink"
+                }
+            }
+        },
+        "HarnessEnvironmentAmendment": {
+            "required": [
+                "subject",
+                "note"
+            ],
+            "type": "object",
+            "properties": {
+                "subject": {
+                    "title": "Subject",
+                    "type": "string"
+                },
+                "note": {
+                    "title": "Note",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessEnvironmentCatalogueSubGoal": {
+            "required": [
+                "name",
+                "what",
+                "kind",
+                "claim",
+                "check"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "what": {
+                    "title": "What",
+                    "type": "string"
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "checkpoint",
+                        "judge"
+                    ]
+                },
+                "claim": {
+                    "title": "Claim",
+                    "type": "string"
+                },
+                "check": {
+                    "title": "Check",
+                    "type": "string"
+                }
+            }
+        },
+        "HarnessEnvironmentEndConditions": {
+            "required": [
+                "max_turns",
+                "max_duration_seconds",
+                "clock",
+                "ended_reasons"
+            ],
+            "type": "object",
+            "properties": {
+                "max_turns": {
+                    "title": "Max turns",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "max_duration_seconds": {
+                    "title": "Max duration seconds",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "clock": {
+                    "title": "Clock",
+                    "type": "string",
+                    "enum": [
+                        "real-time",
+                        "stepped"
+                    ]
+                },
+                "ended_reasons": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "HarnessEnvironmentProvenance": {
+            "required": [
+                "source",
+                "built_by",
+                "attempt",
+                "snapshot",
+                "digests",
+                "authored_at"
+            ],
+            "type": "object",
+            "properties": {
+                "source": {
+                    "title": "Source",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "built_by": {
+                    "title": "Built by",
+                    "type": "string",
+                    "enum": [
+                        "alk",
+                        "repository"
+                    ],
+                    "x-nullable": true
+                },
+                "attempt": {
+                    "title": "Attempt",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "snapshot": {
+                    "title": "Snapshot",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "digests": {
+                    "title": "Digests",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "minLength": 1,
+                        "x-nullable": true
+                    }
+                },
+                "authored_at": {
+                    "title": "Authored at",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "minLength": 1,
+                        "x-nullable": true
+                    }
+                }
+            }
+        },
+        "HarnessEnvironmentContract": {
+            "required": [
+                "amendments",
+                "sub_goals",
+                "end_conditions",
+                "provenance"
+            ],
+            "type": "object",
+            "properties": {
+                "agent": {
+                    "title": "Agent",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "one_liner": {
+                    "title": "One liner",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "modality": {
+                    "title": "Modality",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "call_direction": {
+                    "title": "Call direction",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "system_prompt_excerpt": {
+                    "title": "System prompt excerpt",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    },
+                    "x-nullable": true
+                },
+                "real_use_cases": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "x-nullable": true
+                },
+                "hard_constraints": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "x-nullable": true
+                },
+                "runtime": {
+                    "title": "Runtime",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "dependencies": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    },
+                    "x-nullable": true
+                },
+                "runtime_dependencies": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    },
+                    "x-nullable": true
+                },
+                "implementation": {
+                    "title": "Implementation",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "tool_entrypoints": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    },
+                    "x-nullable": true
+                },
+                "data_store": {
+                    "title": "Data store",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "open_questions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "x-nullable": true
+                },
+                "amendments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentAmendment"
+                    }
+                },
+                "sub_goals": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentCatalogueSubGoal"
+                    }
+                },
+                "end_conditions": {
+                    "$ref": "#/definitions/HarnessEnvironmentEndConditions"
+                },
+                "notes": {
+                    "title": "Notes",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "chosen_evals": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "x-nullable": true
+                },
+                "provenance": {
+                    "$ref": "#/definitions/HarnessEnvironmentProvenance"
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessEnvironmentPersona": {
+            "required": [
+                "scenario_keys"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "scenario_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "HarnessEnvironmentStoreTable": {
+            "required": [
+                "name",
+                "rows"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "rows": {
+                    "title": "Rows",
+                    "type": "integer"
+                }
+            }
+        },
+        "HarnessEnvironmentStore": {
+            "required": [
+                "capability",
+                "engine",
+                "strategy",
+                "tables",
+                "total_rows"
+            ],
+            "type": "object",
+            "properties": {
+                "capability": {
+                    "title": "Capability",
+                    "type": "string"
+                },
+                "engine": {
+                    "title": "Engine",
+                    "type": "string"
+                },
+                "strategy": {
+                    "title": "Strategy",
+                    "type": "string"
+                },
+                "tables": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentStoreTable"
+                    }
+                },
+                "total_rows": {
+                    "title": "Total rows",
+                    "type": "integer"
+                }
+            }
+        },
+        "HarnessEnvironmentWorld": {
+            "required": [
+                "runtime",
+                "personas",
+                "stores"
+            ],
+            "type": "object",
+            "properties": {
+                "runtime": {
+                    "title": "Runtime",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "personas": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentPersona"
+                    }
+                },
+                "stores": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentStore"
+                    }
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessEnvironmentSubGoal": {
+            "required": [
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "what": {
+                    "title": "What",
+                    "type": "string"
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "checkpoint",
+                        "judge"
+                    ]
+                },
+                "claim": {
+                    "title": "Claim",
+                    "type": "string"
+                }
+            }
+        },
+        "HarnessEnvironmentScenario": {
+            "required": [
+                "scenario_key",
+                "scenario_id",
+                "name",
+                "instruction",
+                "use_case",
+                "branch",
+                "tests",
+                "fixture",
+                "steps",
+                "sub_goals",
+                "persona",
+                "situation",
+                "outcome",
+                "status",
+                "call_execution_id"
+            ],
+            "type": "object",
+            "properties": {
+                "scenario_key": {
+                    "title": "Scenario key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "scenario_id": {
+                    "title": "Scenario id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string"
+                },
+                "instruction": {
+                    "title": "Instruction",
+                    "type": "string"
+                },
+                "use_case": {
+                    "title": "Use case",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "branch": {
+                    "title": "Branch",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "tests": {
+                    "title": "Tests",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "fixture": {
+                    "title": "Fixture",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    },
+                    "x-nullable": true
+                },
+                "steps": {
+                    "title": "Steps",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "sub_goals": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentSubGoal"
+                    }
+                },
+                "persona": {
+                    "title": "Persona",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    },
+                    "x-nullable": true
+                },
+                "situation": {
+                    "title": "Situation",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "outcome": {
+                    "title": "Outcome",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "call_execution_id": {
+                    "title": "Call execution id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessEnvironmentSelectedEval": {
+            "required": [
+                "id",
+                "name",
+                "description",
+                "runnable"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string"
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string"
+                },
+                "runnable": {
+                    "title": "Runnable",
+                    "type": "boolean"
+                }
+            }
+        },
+        "HarnessEnvironmentResult": {
+            "required": [
+                "scenario_key",
+                "status",
+                "attempt_number",
+                "evaluations",
+                "coverage"
+            ],
+            "type": "object",
+            "properties": {
+                "scenario_key": {
+                    "title": "Scenario key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "attempt_number": {
+                    "title": "Attempt number",
+                    "type": "integer"
+                },
+                "evaluations": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "coverage": {
+                    "title": "Coverage",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                }
+            }
+        },
+        "HarnessEnvironmentEvaluations": {
+            "required": [
+                "selected",
+                "results"
+            ],
+            "type": "object",
+            "properties": {
+                "selected": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentSelectedEval"
+                    }
+                },
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentResult"
+                    }
+                }
+            }
+        },
+        "HarnessEnvironmentCredentialFile": {
+            "required": [
+                "environment_name"
+            ],
+            "type": "object",
+            "properties": {
+                "environment_name": {
+                    "title": "Environment name",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessEnvironmentAgentSettings": {
+            "required": [
+                "connector",
+                "mode",
+                "call_direction",
+                "config",
+                "secret_refs",
+                "secrets",
+                "credential_files"
+            ],
+            "type": "object",
+            "properties": {
+                "connector": {
+                    "title": "Connector",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "mode": {
+                    "title": "Mode",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "call_direction": {
+                    "title": "Call direction",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "config": {
+                    "title": "Config",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "secret_refs": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "secrets": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "credential_files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentCredentialFile"
+                    }
+                }
+            }
+        },
+        "HarnessEnvironmentSettings": {
+            "required": [
+                "schema_version",
+                "source",
+                "agent",
+                "runtime",
+                "security",
+                "artifacts",
+                "scenario_count",
+                "seed"
+            ],
+            "type": "object",
+            "properties": {
+                "schema_version": {
+                    "title": "Schema version",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "source": {
+                    "title": "Source",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "agent": {
+                    "$ref": "#/definitions/HarnessEnvironmentAgentSettings"
+                },
+                "runtime": {
+                    "title": "Runtime",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    },
+                    "x-nullable": true
+                },
+                "security": {
+                    "title": "Security",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    },
+                    "x-nullable": true
+                },
+                "artifacts": {
+                    "title": "Artifacts",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    },
+                    "x-nullable": true
+                },
+                "scenario_count": {
+                    "title": "Scenario count",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "seed": {
+                    "title": "Seed",
+                    "type": "integer",
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessEnvironmentDetail": {
+            "required": [
+                "id",
+                "overview",
+                "contract",
+                "world",
+                "scenarios",
+                "evaluations",
+                "settings"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "overview": {
+                    "title": "Overview",
+                    "type": "object"
+                },
+                "contract": {
+                    "title": "Contract",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "world": {
+                    "title": "World",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "scenarios": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "evaluations": {
+                    "title": "Evaluations",
+                    "type": "object"
+                },
+                "settings": {
+                    "title": "Settings",
+                    "type": "object"
+                }
+            }
+        },
+        "HarnessEnvironmentRename": {
+            "required": [
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessEnvironmentAddEvaluation": {
+            "required": [
+                "name"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessEnvironmentOfferedEval": {
+            "required": [
+                "name",
+                "description",
+                "required_keys",
+                "modality"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string"
+                },
+                "required_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "modality": {
+                    "title": "Modality",
+                    "type": "string",
+                    "enum": [
+                        "voice",
+                        "text",
+                        "any"
+                    ]
+                }
+            }
+        },
+        "HarnessEnvironmentAvailableEvals": {
+            "required": [
+                "evaluations"
+            ],
+            "type": "object",
+            "properties": {
+                "evaluations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentOfferedEval"
+                    }
+                }
+            }
+        },
+        "HarnessEnvironmentRun": {
+            "type": "object",
+            "properties": {}
+        },
+        "HarnessEnvironmentRunResponse": {
+            "required": [
+                "environment_id",
+                "job_id",
+                "run_id",
+                "state",
+                "stage"
+            ],
+            "type": "object",
+            "properties": {
+                "environment_id": {
+                    "title": "Environment id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "job_id": {
+                    "title": "Job id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "run_id": {
+                    "title": "Run id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
         "HarnessJobInfo": {
             "required": [
                 "job_id",
@@ -119566,255 +121395,6 @@
                     "$ref": "#/definitions/HarnessDiagnostics"
                 }
             }
-        },
-        "HarnessConversationMessage": {
-            "required": [
-                "message_id",
-                "sequence",
-                "role",
-                "kind",
-                "state",
-                "stage",
-                "content",
-                "payload",
-                "created_at"
-            ],
-            "type": "object",
-            "properties": {
-                "message_id": {
-                    "title": "Message id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "sequence": {
-                    "title": "Sequence",
-                    "type": "integer",
-                    "minimum": 1
-                },
-                "role": {
-                    "title": "Role",
-                    "type": "string",
-                    "enum": [
-                        "user",
-                        "assistant",
-                        "system"
-                    ]
-                },
-                "kind": {
-                    "title": "Kind",
-                    "type": "string",
-                    "enum": [
-                        "message",
-                        "question",
-                        "confirmation",
-                        "status"
-                    ]
-                },
-                "state": {
-                    "title": "State",
-                    "type": "string",
-                    "enum": [
-                        "queued",
-                        "delivered",
-                        "streaming",
-                        "completed",
-                        "failed"
-                    ]
-                },
-                "stage": {
-                    "title": "Stage",
-                    "type": "string"
-                },
-                "content": {
-                    "title": "Content",
-                    "type": "string"
-                },
-                "payload": {
-                    "title": "Payload",
-                    "type": "object"
-                },
-                "invocation_id": {
-                    "title": "Invocation id",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "function_call_id": {
-                    "title": "Function call id",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "reply_to": {
-                    "title": "Reply to",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "created_at": {
-                    "title": "Created at",
-                    "type": "string",
-                    "format": "date-time"
-                }
-            }
-        },
-        "HarnessConversationEventRead": {
-            "required": [
-                "event_id",
-                "sequence",
-                "kind",
-                "stage",
-                "payload",
-                "emitted_at"
-            ],
-            "type": "object",
-            "properties": {
-                "event_id": {
-                    "title": "Event id",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "sequence": {
-                    "title": "Sequence",
-                    "type": "integer",
-                    "minimum": 1
-                },
-                "kind": {
-                    "title": "Kind",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "message_id": {
-                    "title": "Message id",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "stage": {
-                    "title": "Stage",
-                    "type": "string"
-                },
-                "invocation_id": {
-                    "title": "Invocation id",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "function_call_id": {
-                    "title": "Function call id",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "payload": {
-                    "title": "Payload",
-                    "type": "object"
-                },
-                "emitted_at": {
-                    "title": "Emitted at",
-                    "type": "string",
-                    "format": "date-time"
-                }
-            }
-        },
-        "HarnessConversationRuntime": {
-            "required": [
-                "state",
-                "warm_until",
-                "degraded",
-                "available"
-            ],
-            "type": "object",
-            "properties": {
-                "state": {
-                    "title": "State",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "warm_until": {
-                    "title": "Warm until",
-                    "type": "string",
-                    "format": "date-time",
-                    "x-nullable": true
-                },
-                "degraded": {
-                    "title": "Degraded",
-                    "type": "boolean"
-                },
-                "available": {
-                    "title": "Available",
-                    "type": "boolean"
-                }
-            }
-        },
-        "HarnessConversationRead": {
-            "required": [
-                "conversation_id",
-                "job_id",
-                "state",
-                "stage",
-                "active_invocation_id",
-                "blocking_input",
-                "messages",
-                "events",
-                "event_watermark",
-                "runtime"
-            ],
-            "type": "object",
-            "properties": {
-                "conversation_id": {
-                    "title": "Conversation id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "job_id": {
-                    "title": "Job id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "state": {
-                    "title": "State",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "stage": {
-                    "title": "Stage",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "active_invocation_id": {
-                    "title": "Active invocation id",
-                    "type": "string",
-                    "minLength": 1,
-                    "x-nullable": true
-                },
-                "blocking_input": {
-                    "title": "Blocking input",
-                    "type": "object",
-                    "x-nullable": true
-                },
-                "messages": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/HarnessConversationMessage"
-                    }
-                },
-                "events": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/HarnessConversationEventRead"
-                    }
-                },
-                "event_watermark": {
-                    "title": "Event watermark",
-                    "type": "integer",
-                    "minimum": 0
-                },
-                "runtime": {
-                    "$ref": "#/definitions/HarnessConversationRuntime"
-                }
-            },
-            "x-nullable": true
         },
         "HarnessConsumption": {
             "required": [
@@ -120399,6 +121979,138 @@
                 }
             }
         },
+        "HarnessPreflightCheck": {
+            "required": [
+                "id",
+                "label",
+                "status",
+                "detail",
+                "missing",
+                "fix"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "passed",
+                        "failed",
+                        "skipped"
+                    ]
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string"
+                },
+                "missing": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "fix": {
+                    "title": "Fix",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessPreflightCredentials": {
+            "required": [
+                "scanned_files",
+                "detected_connectors",
+                "requirements",
+                "credential_choices",
+                "probe"
+            ],
+            "type": "object",
+            "properties": {
+                "scanned_files": {
+                    "title": "Scanned files",
+                    "type": "integer"
+                },
+                "detected_connectors": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "requirements": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "credential_choices": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                },
+                "probe": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    }
+                }
+            }
+        },
+        "HarnessPreflightResponse": {
+            "required": [
+                "ready_to_submit",
+                "state",
+                "checks",
+                "credentials",
+                "effective_parallelism",
+                "snapshot"
+            ],
+            "type": "object",
+            "properties": {
+                "ready_to_submit": {
+                    "title": "Ready to submit",
+                    "type": "boolean"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "connected",
+                        "failed"
+                    ]
+                },
+                "checks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessPreflightCheck"
+                    }
+                },
+                "credentials": {
+                    "$ref": "#/definitions/HarnessPreflightCredentials"
+                },
+                "effective_parallelism": {
+                    "title": "Effective parallelism",
+                    "type": "integer"
+                },
+                "snapshot": {
+                    "title": "Snapshot",
+                    "type": "object"
+                }
+            }
+        },
         "HarnessSecretFileUploadResponse": {
             "required": [
                 "environment_name",
@@ -120501,50 +122213,6 @@
                         "ttl_exceeded"
                     ],
                     "default": "user_canceled"
-                }
-            }
-        },
-        "HarnessConversationMessageCreate": {
-            "required": [
-                "content",
-                "client_request_id"
-            ],
-            "type": "object",
-            "properties": {
-                "content": {
-                    "title": "Content",
-                    "type": "string",
-                    "maxLength": 20000,
-                    "minLength": 1
-                },
-                "client_request_id": {
-                    "title": "Client request id",
-                    "type": "string",
-                    "pattern": "^[A-Za-z0-9_-]{1,128}$",
-                    "minLength": 1
-                },
-                "kind": {
-                    "title": "Kind",
-                    "type": "string",
-                    "enum": [
-                        "user_message",
-                        "user_response",
-                        "approval",
-                        "interrupt",
-                        "cancel_operation"
-                    ],
-                    "default": "user_message"
-                },
-                "reply_to": {
-                    "title": "Reply to",
-                    "type": "string",
-                    "format": "uuid",
-                    "x-nullable": true
-                },
-                "payload": {
-                    "title": "Payload",
-                    "type": "object",
-                    "default": {}
                 }
             }
         },
@@ -123852,6 +125520,16 @@
                     "type": "string",
                     "readOnly": true
                 },
+                "source_scenario_key": {
+                    "title": "Source scenario key",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "trial_index": {
+                    "title": "Trial index",
+                    "type": "string",
+                    "readOnly": true
+                },
                 "scenario_graph": {
                     "title": "Scenario graph",
                     "type": "string",
@@ -126407,6 +128085,51 @@
                     "type": "string",
                     "readOnly": true,
                     "minLength": 1
+                },
+                "scenario_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "readOnly": true
+                },
+                "selected_scenarios": {
+                    "title": "Selected scenarios",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "trials": {
+                    "title": "Trials",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "total_calls": {
+                    "title": "Total calls",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "completed_calls": {
+                    "title": "Completed calls",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "failed_calls": {
+                    "title": "Failed calls",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "pending_calls": {
+                    "title": "Pending calls",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "completed_at": {
+                    "title": "Completed at",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
                 }
             }
         },
@@ -131275,7 +132998,7 @@
                                 "12m",
                                 "custom"
                             ],
-                            "description": "Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced."
+                            "description": "Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query \u2014 date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced."
                         },
                         "created_at": {
                             "type": "string",
@@ -132350,7 +134073,7 @@
                                 "12m",
                                 "custom"
                             ],
-                            "description": "Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced."
+                            "description": "Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query \u2014 date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced."
                         },
                         "created_at": {
                             "type": "string",
@@ -146545,6 +148268,184 @@
                         "oss",
                         "enterprise"
                     ]
+                }
+            }
+        },
+        "HarnessEnvironmentListItem": {
+            "required": [
+                "id",
+                "name",
+                "description",
+                "domain",
+                "status",
+                "agent_type",
+                "tools_count",
+                "scenario_count",
+                "sub_goals_count",
+                "runs_count",
+                "created_at",
+                "last_updated"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "domain": {
+                    "title": "Domain",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "enum": [
+                        "building",
+                        "ready",
+                        "failed"
+                    ]
+                },
+                "agent_type": {
+                    "title": "Agent type",
+                    "type": "string",
+                    "enum": [
+                        "voice",
+                        "chat"
+                    ]
+                },
+                "tools_count": {
+                    "title": "Tools count",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "scenario_count": {
+                    "title": "Scenario count",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "sub_goals_count": {
+                    "title": "Sub goals count",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "runs_count": {
+                    "title": "Runs count",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "last_updated": {
+                    "title": "Last updated",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "HarnessRunCreate": {
+            "required": [
+                "scenario_ids"
+            ],
+            "type": "object",
+            "properties": {
+                "scenario_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    },
+                    "maxItems": 1000
+                },
+                "trials": {
+                    "title": "Trials",
+                    "type": "integer",
+                    "default": 1,
+                    "maximum": 20,
+                    "minimum": 1
+                }
+            }
+        },
+        "HarnessRunCreateResponse": {
+            "required": [
+                "environment_id",
+                "job_id",
+                "run_id",
+                "run_test_id",
+                "test_execution_id",
+                "scenario_count",
+                "trials",
+                "total_calls",
+                "state",
+                "stage"
+            ],
+            "type": "object",
+            "properties": {
+                "environment_id": {
+                    "title": "Environment id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "job_id": {
+                    "title": "Job id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "run_id": {
+                    "title": "Run id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "run_test_id": {
+                    "title": "Run test id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "test_execution_id": {
+                    "title": "Test execution id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "scenario_count": {
+                    "title": "Scenario count",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "trials": {
+                    "title": "Trials",
+                    "type": "integer",
+                    "maximum": 20,
+                    "minimum": 1
+                },
+                "total_calls": {
+                    "title": "Total calls",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string",
+                    "minLength": 1
                 }
             }
         }

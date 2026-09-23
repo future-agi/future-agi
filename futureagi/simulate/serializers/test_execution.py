@@ -310,6 +310,8 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
     service_provider_call_id = serializers.CharField(
         source="customer_call_id", read_only=True
     )
+    source_scenario_key = serializers.SerializerMethodField()
+    trial_index = serializers.SerializerMethodField()
 
     # New fields for simulator and agent definition used in this execution
     simulator_agent_name = serializers.CharField(
@@ -398,6 +400,8 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             "recordings",
             "test_execution_id",
             "scenario_id",
+            "source_scenario_key",
+            "trial_index",
             "scenario_graph",
             "scenario_graph_id",
             # Conversation metrics fields
@@ -439,6 +443,12 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             "phone_number",
         ]
         read_only_fields = ["id", "timestamp"]
+
+    def get_source_scenario_key(self, obj):
+        return (obj.call_metadata or {}).get("harness_scenario_key")
+
+    def get_trial_index(self, obj):
+        return (obj.call_metadata or {}).get("harness_trial_index")
 
     def get_session_id(self, obj):
         """

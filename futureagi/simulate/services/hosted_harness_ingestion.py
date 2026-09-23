@@ -18,6 +18,7 @@ from simulate.models import (
     HostedHarnessArtifact,
     HostedHarnessAttempt,
     HostedHarnessEvent,
+    HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessManifest,
     HostedHarnessReceipt,
@@ -163,28 +164,49 @@ def ingest_result_receipt(
             .get(id=attempt.id)
         )
         _assert_current_attempt(attempt)
-        try:
-            registration = (
-                HostedHarnessScenario.no_workspace_objects.select_related(
-                    "call_execution"
-                )
-                .select_for_update(of=("self",))
-                .get(job=attempt.job, scenario_key=body["scenario_key"])
+        execution = (
+            HostedHarnessExecution.no_workspace_objects.select_related(
+                "source_scenario", "call_execution"
             )
-        except HostedHarnessScenario.DoesNotExist as exc:
-            raise HostedHarnessError(
-                "scenario_unknown", "scenario_key is not registered", status_code=404
-            ) from exc
+            .select_for_update(of=("self",))
+            .filter(job=attempt.job, execution_key=body["scenario_key"])
+            .first()
+        )
+        if execution is not None:
+            allocation = execution
+            registration = execution.source_scenario
+        else:
+            try:
+                registration = (
+                    HostedHarnessScenario.no_workspace_objects.select_related(
+                        "call_execution"
+                    )
+                    .select_for_update(of=("self",))
+                    .get(job=attempt.job, scenario_key=body["scenario_key"])
+                )
+            except HostedHarnessScenario.DoesNotExist as exc:
+                raise HostedHarnessError(
+                    "scenario_unknown",
+                    "scenario execution key is not registered",
+                    status_code=404,
+                ) from exc
+            allocation = registration
         if str(registration.scenario_id) != str(body["scenario_id"]):
             raise HostedHarnessError(
                 "scenario_mismatch",
-                "scenario_id does not match scenario_key",
+                "scenario_id does not match scenario execution",
                 status_code=403,
             )
         _assert_receipt_artifacts(attempt.job, body)
+        receipt_filter = {"job": attempt.job}
+        if execution is not None:
+            receipt_filter["execution"] = execution
+        else:
+            receipt_filter["scenario"] = registration
+            receipt_filter["execution__isnull"] = True
         existing = (
             HostedHarnessReceipt.no_workspace_objects.select_for_update()
-            .filter(job=attempt.job, scenario=registration)
+            .filter(**receipt_filter)
             .first()
         )
         if existing:
@@ -194,7 +216,7 @@ def ingest_result_receipt(
                 # contract modality) was synchronized.  Re-applying the same
                 # sealed receipt is safe and repairs that derived state without
                 # requiring another customer call.
-                _apply_receipt_to_call(registration, body)
+                _apply_receipt_to_call(allocation, body)
                 update_execution_counts(attempt.job)
                 transaction.on_commit(lambda: replay_harness_usage(attempt))
                 return existing, False
@@ -215,7 +237,7 @@ def ingest_result_receipt(
             )
             receipt_history = dict(previous_attempt.receipt_history or {})
             receipt_history.setdefault(
-                registration.scenario_key,
+                body["scenario_key"],
                 {
                     "status": existing.status,
                     "body": existing.body,
@@ -249,12 +271,13 @@ def ingest_result_receipt(
                 job=attempt.job,
                 attempt=attempt,
                 scenario=registration,
+                execution=execution,
                 attempt_number=attempt.attempt_number,
                 digest=supplied_digest,
                 status=body["status"],
                 body=_json_ready(body),
             )
-        _apply_receipt_to_call(registration, body)
+        _apply_receipt_to_call(allocation, body)
         update_execution_counts(attempt.job)
         transaction.on_commit(lambda: replay_harness_usage(attempt))
         return receipt, True
@@ -689,19 +712,21 @@ def _assert_receipt_artifacts(job: HostedHarnessJob, body: dict[str, Any]) -> No
         )
 
 
-def _apply_receipt_to_call(
-    registration: HostedHarnessScenario, body: dict[str, Any]
-) -> None:
-    call = registration.call_execution
+def _apply_receipt_to_call(allocation: Any, body: dict[str, Any]) -> None:
+    call = allocation.call_execution
     if call is None:
         raise HostedHarnessError(
             "scenario_not_begun",
             "scenario has no pre-allocated execution",
             status_code=409,
         )
+    job = allocation.job
+    scenario_key = (
+        getattr(allocation, "execution_key", None) or allocation.scenario_key
+    )
     call.status = _call_lifecycle_status(body)
     call_data = body.get("call")
-    resolved_modality = _resolve_scenario_modality(registration.job, body)
+    resolved_modality = _resolve_scenario_modality(job, body)
     if call_data and call_data.get("recording_artifacts"):
         # A persisted audio recording is definitive evidence of a voice call,
         # even if scenario provisioning raced ahead of contract synchronization.
@@ -750,14 +775,14 @@ def _apply_receipt_to_call(
             artifact_ids.append(transcript_id)
         artifacts = list(
             HostedHarnessArtifact.no_workspace_objects.filter(
-                job=registration.job,
+                job=job,
                 sha256__in=[item.removeprefix("sha256:") for item in artifact_ids],
             )
         )
         tool_trace = (
             HostedHarnessArtifact.no_workspace_objects.filter(
-                job=registration.job,
-                scenario_key=registration.scenario_key,
+                job=job,
+                scenario_key=scenario_key,
                 kind="tool_trace",
             )
             .order_by("created_at")
@@ -859,7 +884,7 @@ def _apply_receipt_to_call(
             )
     call.save(update_fields=list(dict.fromkeys(update_fields)))
     if resolved_modality == CallExecution.SimulationCallType.VOICE:
-        _ensure_run_agent_is_voice(registration.job)
+        _ensure_run_agent_is_voice(job)
     if call.status == CallExecution.CallStatus.COMPLETED:
         call_id = call.id
         run_test_id = getattr(call.test_execution, "run_test_id", None)
@@ -1145,21 +1170,50 @@ def _ingest_hosted_transcript(
 
 
 def _backfill_missing_receipts(attempt: HostedHarnessAttempt) -> None:
-    existing = set(
-        HostedHarnessReceipt.no_workspace_objects.filter(job=attempt.job).values_list(
-            "scenario_id", flat=True
-        )
+    executions = list(
+        HostedHarnessExecution.no_workspace_objects.filter(job=attempt.job)
+        .select_related("source_scenario", "call_execution")
+        .order_by("created_at")
     )
-    registrations = HostedHarnessScenario.no_workspace_objects.filter(job=attempt.job)
-    for registration in registrations:
-        if registration.id in existing:
-            continue
+    if executions:
+        existing = set(
+            HostedHarnessReceipt.no_workspace_objects.filter(
+                job=attempt.job, execution__isnull=False
+            ).values_list("execution_id", flat=True)
+        )
+        allocations: list[tuple[Any, HostedHarnessScenario, HostedHarnessExecution | None]] = [
+            (execution, execution.source_scenario, execution)
+            for execution in executions
+            if execution.id not in existing
+        ]
+    elif attempt.job.test_execution_id:
+        existing = set(
+            HostedHarnessReceipt.no_workspace_objects.filter(
+                job=attempt.job, execution__isnull=True
+            ).values_list("scenario_id", flat=True)
+        )
+        allocations = [
+            (registration, registration, None)
+            for registration in HostedHarnessScenario.no_workspace_objects.filter(
+                job=attempt.job
+            )
+            if registration.id not in existing
+        ]
+    else:
+        # An authored environment has registrations but intentionally no
+        # simulation results until a user submits a Run.
+        return
+
+    for allocation, registration, execution in allocations:
+        scenario_key = (
+            getattr(allocation, "execution_key", None) or registration.scenario_key
+        )
         body = {
             "schema_version": "futureagi.harness-result.v1",
             "job_id": str(attempt.job_id),
             "attempt_id": str(attempt.id),
             "attempt_number": attempt.attempt_number,
-            "scenario_key": registration.scenario_key,
+            "scenario_key": scenario_key,
             "scenario_id": str(registration.scenario_id),
             "scenario_attempt": 1,
             "world_index": None,
@@ -1175,12 +1229,13 @@ def _backfill_missing_receipts(attempt: HostedHarnessAttempt) -> None:
             job=attempt.job,
             attempt=attempt,
             scenario=registration,
+            execution=execution,
             attempt_number=attempt.attempt_number,
             digest=digest,
             status="skipped",
             body=body,
         )
-        _apply_receipt_to_call(registration, body)
+        _apply_receipt_to_call(allocation, body)
 
 
 def _json_ready(value: object) -> object:

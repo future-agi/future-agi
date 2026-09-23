@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1017,
+  endpointCount: 1024,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -843,6 +843,14 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "post",
       ],
       "/simulate/api/call-executions/": ["get"],
+      "/simulate/api/harness-environments/": ["get"],
+      "/simulate/api/harness-environments/{id}/": ["delete", "get", "patch"],
+      "/simulate/api/harness-environments/{id}/evaluations/": ["post"],
+      "/simulate/api/harness-environments/{id}/evaluations/available/": ["get"],
+      "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/": [
+        "delete",
+      ],
+      "/simulate/api/harness-environments/{id}/run/": ["post"],
       "/simulate/api/harness-jobs/": ["get", "post"],
       "/simulate/api/harness-jobs/health/": ["get"],
       "/simulate/api/harness-jobs/preflight/": ["post"],
@@ -854,6 +862,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/harness-jobs/{id}/cancel/": ["post"],
       "/simulate/api/harness-jobs/{id}/conversation/messages/": ["post"],
       "/simulate/api/harness-jobs/{id}/extend/": ["post"],
+      "/simulate/api/harness-jobs/{id}/runs/": ["post"],
       "/simulate/api/harness/attempts/{id}/artifacts/manifest/": ["post"],
       "/simulate/api/harness/attempts/{id}/artifacts/{artifact_digest}/": [
         "put",
@@ -2055,6 +2064,14 @@ export const API_SURFACE_PATHS = Object.freeze({
     "post",
   ],
   "/simulate/api/call-executions/": ["get"],
+  "/simulate/api/harness-environments/": ["get"],
+  "/simulate/api/harness-environments/{id}/": ["delete", "get", "patch"],
+  "/simulate/api/harness-environments/{id}/evaluations/": ["post"],
+  "/simulate/api/harness-environments/{id}/evaluations/available/": ["get"],
+  "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/": [
+    "delete",
+  ],
+  "/simulate/api/harness-environments/{id}/run/": ["post"],
   "/simulate/api/harness-jobs/": ["get", "post"],
   "/simulate/api/harness-jobs/health/": ["get"],
   "/simulate/api/harness-jobs/preflight/": ["post"],
@@ -2066,6 +2083,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/harness-jobs/{id}/cancel/": ["post"],
   "/simulate/api/harness-jobs/{id}/conversation/messages/": ["post"],
   "/simulate/api/harness-jobs/{id}/extend/": ["post"],
+  "/simulate/api/harness-jobs/{id}/runs/": ["post"],
   "/simulate/api/harness/attempts/{id}/artifacts/manifest/": ["post"],
   "/simulate/api/harness/attempts/{id}/artifacts/{artifact_digest}/": ["put"],
   "/simulate/api/harness/attempts/{id}/events/": ["post"],

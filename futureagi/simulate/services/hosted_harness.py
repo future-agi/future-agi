@@ -7,6 +7,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from django.conf import settings
 
 from django.db import transaction
 from django.utils import timezone
@@ -17,6 +18,7 @@ from simulate.models import (
     HostedHarnessCleanupReceipt,
     HostedHarnessConversation,
     HostedHarnessJob,
+    HostedHarnessExecution,
     HostedHarnessReceipt,
     HostedHarnessScenario,
     TestExecution,
@@ -26,6 +28,7 @@ from simulate.services.alk_simulate_ingestion import (
     append_alk_sim_scenarios,
     create_alk_sim_call_execution_batch,
     create_alk_sim_test_execution,
+    precreate_alk_sim_call_executions,
     provision_alk_sim_run_test,
 )
 
@@ -158,6 +161,217 @@ def create_hosted_job(
         return job, True
 
 
+def create_selected_harness_run(
+    environment: HostedHarnessJob,
+    *,
+    scenario_keys: list[str],
+    trials: int,
+    idempotency_key: str,
+) -> tuple[HostedHarnessJob, bool]:
+    """Freeze and preallocate one selected-scenario Run for an authored environment."""
+
+    if environment.environment_id is not None:
+        raise HostedHarnessError(
+            "environment_required",
+            "simulation Runs can only be submitted from an authored environment",
+            status_code=409,
+        )
+    if environment.state != HostedHarnessJob.State.COMPLETED:
+        raise HostedHarnessError(
+            "environment_not_ready",
+            "environment authoring must complete before simulations can run",
+            status_code=409,
+        )
+    metadata = dict((environment.payload or {}).get("metadata") or {})
+    if not environment.run_test_id or not metadata.get("authoring_object_key"):
+        raise HostedHarnessError(
+            "environment_snapshot_missing",
+            "environment has no durable validated snapshot",
+            status_code=409,
+        )
+    if not scenario_keys:
+        raise HostedHarnessError(
+            "scenario_selection_empty",
+            "select at least one scenario",
+            status_code=400,
+        )
+    if len(scenario_keys) != len(set(scenario_keys)):
+        raise HostedHarnessError(
+            "scenario_selection_duplicate",
+            "scenario selection must not contain duplicates",
+            status_code=400,
+        )
+    if trials < 1 or trials > 20:
+        raise HostedHarnessError(
+            "trials_out_of_range",
+            "trials must be between 1 and 20",
+            status_code=400,
+        )
+    max_executions = int(
+        getattr(settings, "HARNESS_MAX_EXECUTIONS_PER_RUN", 200)
+    )
+    if len(scenario_keys) * trials > max_executions:
+        raise HostedHarnessError(
+            "run_too_large",
+            f"selected scenarios × trials must not exceed {max_executions}",
+            status_code=400,
+        )
+
+    with transaction.atomic():
+        environment = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=environment.id
+        )
+        registrations = list(
+            HostedHarnessScenario.no_workspace_objects.filter(
+                job=environment, scenario_key__in=scenario_keys
+            )
+            .select_related("scenario", "dataset_row")
+            .order_by("created_at", "id")
+        )
+        by_key = {registration.scenario_key: registration for registration in registrations}
+        missing = [key for key in scenario_keys if key not in by_key]
+        if missing:
+            raise HostedHarnessError(
+                "scenario_selection_unknown",
+                f"scenario keys do not belong to this environment: {missing}",
+                status_code=400,
+            )
+
+        idempotency_digest = hashlib.sha256(idempotency_key.encode()).hexdigest()
+        child_idempotency_key = f"run:{environment.id}:{idempotency_digest}"
+        manifest: list[dict[str, Any]] = []
+        for scenario_key in scenario_keys:
+            registration = by_key[scenario_key]
+            for trial_index in range(1, trials + 1):
+                execution_key = uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    (
+                        f"futureagi:harness-run:{environment.id}:"
+                        f"{idempotency_digest}:{registration.id}:{trial_index}"
+                    ),
+                ).hex
+                manifest.append(
+                    {
+                        "execution_key": execution_key,
+                        "scenario_key": registration.scenario_key,
+                        "scenario_id": str(registration.scenario_id),
+                        "dataset_row_id": (
+                            str(registration.dataset_row_id)
+                            if registration.dataset_row_id
+                            else None
+                        ),
+                        "trial_index": trial_index,
+                    }
+                )
+
+        child_payload = json.loads(json.dumps(environment.payload))
+        child_payload["scenario_count"] = len(manifest)
+        child_metadata = child_payload.setdefault("metadata", {})
+        child_metadata.pop("scenario_extend", None)
+        child_metadata.pop("usage_limit", None)
+        child_metadata.update(
+            {
+                "environment_job_id": str(environment.id),
+                "simulation_only": True,
+                "execution_manifest": manifest,
+                "selected_scenario_keys": scenario_keys,
+                "trials": trials,
+            }
+        )
+        child_payload.pop("job_id", None)
+        child_payload.pop("run_id", None)
+
+        child, created = create_hosted_job(
+            environment.organization,
+            child_payload,
+            idempotency_key=child_idempotency_key,
+            workspace=environment.workspace,
+        )
+        if not created:
+            return child, False
+
+        scenario_ids = list(
+            dict.fromkeys(entry["scenario_id"] for entry in manifest)
+        )
+        test_execution = TestExecution.no_workspace_objects.create(
+            run_test=environment.run_test,
+            status=TestExecution.ExecutionStatus.PENDING,
+            started_at=timezone.now(),
+            total_scenarios=len(scenario_keys),
+            trials=trials,
+            scenario_ids=scenario_ids,
+            total_calls=len(manifest),
+            picked_up_by_executor=True,
+            simulator_agent=environment.run_test.simulator_agent,
+            agent_definition=environment.run_test.agent_definition,
+            agent_version=environment.run_test.agent_version,
+            execution_metadata={
+                "environment_job_id": str(environment.id),
+                "harness_job_id": str(child.id),
+                "selected_scenario_keys": scenario_keys,
+                "trials": trials,
+                "harness_executions": manifest,
+            },
+        )
+        call_ids = precreate_alk_sim_call_executions(test_execution)
+        calls = CallExecution.no_workspace_objects.filter(id__in=call_ids)
+        calls_by_key = {
+            (call.call_metadata or {}).get("harness_execution_key"): call
+            for call in calls
+        }
+        if set(calls_by_key) != {
+            entry["execution_key"] for entry in manifest
+        }:
+            raise HostedHarnessError(
+                "run_preallocation_incomplete",
+                "could not preallocate every selected scenario trial",
+                status_code=500,
+                retryable=True,
+            )
+        for entry in manifest:
+            entry["call_execution_id"] = str(
+                calls_by_key[entry["execution_key"]].id
+            )
+        child_payload = dict(child.payload)
+        child_metadata = dict(child_payload.get("metadata") or {})
+        child_metadata["execution_manifest"] = manifest
+        child_payload["metadata"] = child_metadata
+        child.payload = child_payload
+        execution_metadata = dict(test_execution.execution_metadata or {})
+        execution_metadata["harness_executions"] = manifest
+        test_execution.execution_metadata = execution_metadata
+        test_execution.save(update_fields=["execution_metadata", "updated_at"])
+        HostedHarnessExecution.no_workspace_objects.bulk_create(
+            [
+                HostedHarnessExecution(
+                    job=child,
+                    source_scenario=by_key[entry["scenario_key"]],
+                    execution_key=entry["execution_key"],
+                    trial_index=entry["trial_index"],
+                    call_execution=calls_by_key[entry["execution_key"]],
+                )
+                for entry in manifest
+            ]
+        )
+        child.environment = environment
+        child.run_test = environment.run_test
+        child.stage_outputs = list(environment.stage_outputs or [])
+        child.bundle_digest = environment.bundle_digest
+        child.test_execution = test_execution
+        child.save(
+            update_fields=[
+                "payload",
+                "environment",
+                "run_test",
+                "test_execution",
+                "updated_at",
+                "stage_outputs",
+                "bundle_digest",
+            ]
+        )
+        return child, True
+
+
 def register_attempt(
     job_id: uuid.UUID | str,
     *,
@@ -225,6 +439,12 @@ def register_attempt(
                 "updated_at",
             ]
         )
+        if job.test_execution_id:
+            TestExecution.no_workspace_objects.filter(id=job.test_execution_id).update(
+                status=TestExecution.ExecutionStatus.RUNNING,
+                completed_at=None,
+                error_reason=None,
+            )
 
     base = endpoint_base_url.rstrip("/")
     prefix = f"{base}/simulate/api/harness/attempts/{attempt.id}"

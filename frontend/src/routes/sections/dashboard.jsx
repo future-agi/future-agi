@@ -330,6 +330,24 @@ const HarnessCreate = lazyWithRetry(
 const HarnessDetail = lazyWithRetry(
   () => import("src/pages/dashboard/harness/HarnessDetail"),
 );
+const SimulateEnvironmentsHome = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate/environments/EnvironmentsHome"),
+);
+const SimulatePrebuiltEnvironments = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate/environments/PrebuiltEnvironments"),
+);
+const SimulateUseTemplate = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate/environments/UseTemplate"),
+);
+const SimulateEnvironmentWorkspace = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate/environments/EnvironmentWorkspace"),
+);
+const WorkspaceExecutionDetail = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/simulate/environments/workspace/runs/WorkspaceExecutionDetail"
+    ),
+);
 const RunTestDetail = lazyWithRetry(
   () => import("src/pages/dashboard/run-tests/RunTestDetail"),
 );
@@ -1335,6 +1353,57 @@ export const dashboardRoutes = (
     {
       path: "simulate",
       children: [
+        {
+          path: "environments",
+          element: <SimulateEnvironmentsHome />,
+        },
+        {
+          path: "environments/templates",
+          element: <SimulatePrebuiltEnvironments />,
+        },
+        {
+          path: "environments/templates/:templateId",
+          element: <SimulateUseTemplate />,
+        },
+        {
+          // Build is no longer a page of its own — the source panels create the
+          // job and route straight to the workspace, which hosts the build. An
+          // old /build link lands back on the Build entry tab.
+          path: "environments/build",
+          element: <Navigate to="/dashboard/simulate/environments?tab=build" replace />,
+        },
+        {
+          path: "environments/:envId",
+          element: <SimulateEnvironmentWorkspace />,
+          children: [
+            {
+              path: "runs/:testId/:executionId",
+              element: <WorkspaceExecutionDetail />,
+              children: [
+                {
+                  index: true,
+                  element: <Navigate to="call-details" replace />,
+                },
+                {
+                  path: "call-details",
+                  element: <TestExecutionCallDetail />,
+                },
+                {
+                  path: "performance",
+                  element: <TestExecutionPerformanceDetail />,
+                },
+                {
+                  path: "analytics",
+                  element: <TestExecutionAnalyticsDetail />,
+                },
+                {
+                  path: "optimization_runs",
+                  element: <TestExecutionOptimizationRunsDetail />,
+                },
+              ],
+            },
+          ],
+        },
         {
           path: "harness",
           element: <HarnessList />,

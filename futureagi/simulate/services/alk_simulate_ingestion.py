@@ -1008,6 +1008,11 @@ def _roll_up_external_execution(test_execution_id) -> None:
 def _build_expected_call_executions(
     test_execution: TestExecution,
 ) -> list[CallExecution]:
+    execution_manifest = list(
+        (test_execution.execution_metadata or {}).get("harness_executions") or []
+    )
+    if execution_manifest:
+        return _build_manifest_call_executions(test_execution, execution_manifest)
     run_test = test_execution.run_test
     agent_definition = run_test.agent_definition
     selected_version = test_execution.agent_version or agent_definition.latest_version
@@ -1069,10 +1074,85 @@ def _build_expected_call_executions(
     return expected_calls
 
 
-def _call_execution_key(call_execution: CallExecution) -> tuple[str, str | None]:
+
+def _build_manifest_call_executions(
+    test_execution: TestExecution,
+    execution_manifest: list[dict[str, Any]],
+) -> list[CallExecution]:
+    """Build exactly the immutable scenario/trial rows frozen by the environment Run."""
+
+    run_test = test_execution.run_test
+    agent_definition = run_test.agent_definition
+    selected_version = test_execution.agent_version or agent_definition.latest_version
+    call_type = (
+        getattr(agent_definition, "agent_type", None)
+        or CallExecution.SimulationCallType.VOICE
+    )
+    scenario_ids = {
+        str(entry["scenario_id"])
+        for entry in execution_manifest
+        if entry.get("scenario_id")
+    }
+    scenarios = {
+        str(scenario.id): scenario
+        for scenario in Scenarios.objects.select_related(
+            "simulator_agent", "dataset", "agent_definition"
+        ).filter(id__in=scenario_ids, deleted=False)
+    }
+    if len(scenarios) != len(scenario_ids):
+        raise ALKSimulateIngestionError(
+            "a selected harness scenario is no longer available"
+        )
+
+    test_executor = TestExecutor(initialize_voice_service=False)
+    expected: list[CallExecution] = []
+    for entry in execution_manifest:
+        scenario = scenarios[str(entry["scenario_id"])]
+        simulator_agent = _resolve_simulator_agent(
+            scenario, run_test, selected_version
+        )
+        base_prompt = simulator_agent.prompt
+        row_id = entry.get("dataset_row_id")
+        row_data_info = (
+            test_executor._get_row_data_and_generate_prompt(
+                row_id=row_id,
+                base_prompt=base_prompt,
+                agent_version=selected_version,
+            )
+            if row_id
+            else None
+        )
+        call = _build_call_execution(
+            test_execution=test_execution,
+            scenario=scenario,
+            agent_definition=agent_definition,
+            selected_version=selected_version,
+            simulator_agent=simulator_agent,
+            base_prompt=base_prompt,
+            row_id=row_id,
+            row_data_info=row_data_info,
+            call_type=call_type,
+        )
+        call.call_metadata.update(
+            {
+                "harness_execution_key": entry["execution_key"],
+                "harness_scenario_key": entry["scenario_key"],
+                "harness_trial_index": entry["trial_index"],
+            }
+        )
+        expected.append(call)
+    return expected
+
+
+def _call_execution_key(call_execution: CallExecution) -> tuple[str, ...]:
+    execution_key = (call_execution.call_metadata or {}).get(
+        "harness_execution_key"
+    )
+    if execution_key:
+        return ("harness", str(execution_key))
     return (
         str(call_execution.scenario_id),
-        str(call_execution.row_id) if call_execution.row_id else None,
+        str(call_execution.row_id) if call_execution.row_id else "",
     )
 
 

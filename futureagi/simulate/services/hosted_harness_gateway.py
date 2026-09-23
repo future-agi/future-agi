@@ -1685,17 +1685,12 @@ class HostedHarnessGateway:
                 raise HostedHarnessError(
                     "authoring_failed", detail, status_code=422, retryable=False
                 )
-            # Pack the authoring directory whole rather than an allow-list of file names: the
-            # guest decides what a saved world consists of (world.sqlite today, world.py +
-            # state.json + manifest.json on newer guests), and an allow-list here silently
-            # drops the marker the next reuse needs. Only the sealed bundle is left out: it is
-            # large and bundle_author_v2 regenerates it from this directory on every launch.
-            # cost.json is this run's bill, not part of a saved world: left in, every reuse
-            # reads the first run's authoring cost back as its own.
+            # Preserve the validated environment bundle with the authored inputs.
+            # Later simulation Runs restore this exact snapshot instead of
+            # regenerating or re-authoring the environment.
             packed = sandbox.process.exec(
                 "cd /work/authoring && tar -czf /tmp/authoring.tar.gz "
-                "--exclude=./environment-bundle --exclude=__pycache__ "
-                "--exclude=./cost.json .",
+                "--exclude=__pycache__ --exclude=./cost.json .",
                 timeout=180,
             )
             if packed.exit_code:
@@ -1957,6 +1952,21 @@ class HostedHarnessGateway:
                 if authoring_target_secrets
                 else ""
             )
+            simulation_only = bool(
+                (dispatch_payload.get("metadata") or {}).get("simulation_only")
+            )
+            bundle_command = (
+                "rm -rf /work/bundle && "
+                "cp -a /work/authoring/environment-bundle /work/bundle"
+                if simulation_only
+                else (
+                    "python -m fi.alk.harness.bundle_author_v2 "
+                    "--job /work/job.json --source /work/source "
+                    "--authoring /work/authoring --output /work/bundle && "
+                    "rm -rf /work/authoring/environment-bundle && "
+                    "cp -a /work/bundle /work/authoring/environment-bundle"
+                )
+            )
             command = sandbox.process.execute_session_command(
                 _ENTRYPOINT_SESSION,
                 SandboxCommandRequest(
@@ -1969,9 +1979,8 @@ class HostedHarnessGateway:
                         + provider_profile_args
                         + "; fi && "
                         + ((extend_command + " && ") if extend_command else "")
-                        + "python -m fi.alk.harness.bundle_author_v2 "
-                        "--job /work/job.json --source /work/source "
-                        "--authoring /work/authoring --output /work/bundle && "
+                        + bundle_command
+                        + " && "
                         "python -m fi.alk.harness.hosted_entrypoint /work/job.json "
                         "--source /work/source --output /work/artifacts"
                     ),
@@ -2872,8 +2881,7 @@ class HostedHarnessGateway:
                     "cd /work/authoring && "
                     "[ -f contract.json ] && [ -d scenarios ] && "
                     "tar -czf /tmp/authoring-rerun.tar.gz "
-                    "--exclude=./environment-bundle --exclude=__pycache__ .",
-                    timeout=180,
+                    "--exclude=__pycache__ --exclude=./cost.json .",
                 )
                 if packed.exit_code:
                     raise RuntimeError(str(packed.result or "authoring pack failed"))
@@ -3620,7 +3628,7 @@ def pack_authoring_archive(authoring_root: Path) -> bytes:
         path = authoring_root / name
         if path.is_file() and not path.is_symlink():
             files.append(path)
-    for directory_name in ("scenarios", "handlers"):
+    for directory_name in ("scenarios", "handlers", "environment-bundle"):
         directory = authoring_root / directory_name
         if directory.is_dir() and not directory.is_symlink():
             files.extend(
@@ -4056,7 +4064,10 @@ def store_authoring_archive(
     job: HostedHarnessJob, body: bytes, *, advance_lifecycle: bool = True
 ) -> str:
     """Persist fresh authoring output and attach its opaque key to the hosted job."""
-    object_key = f"harness-authoring/{job.organization_id}/{job.id}.tar.gz"
+    digest = hashlib.sha256(body).hexdigest()
+    object_key = (
+        f"harness-authoring/{job.organization_id}/{job.id}/{digest}.tar.gz"
+    )
     client = get_storage_client()
     ensure_bucket(client, UPLOAD_BUCKET_NAME)
     client.put_object(

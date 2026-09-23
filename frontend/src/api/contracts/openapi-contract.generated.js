@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1017,
+  endpointCount: 1024,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -27700,6 +27700,139 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-environments/": {
+      get: {
+        operationId: "simulate_api_harness-environments_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessEnvironmentListResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/": {
+      get: {
+        operationId: "simulate_api_harness-environments_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessEnvironmentDetail",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      patch: {
+        operationId: "simulate_api_harness-environments_partial_update",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessEnvironmentRename",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessEnvironmentDetail",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      delete: {
+        operationId: "simulate_api_harness-environments_delete",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/evaluations/": {
+      post: {
+        operationId: "simulate_api_harness-environments_add_evaluation",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessEnvironmentAddEvaluation",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/HarnessEnvironmentDetail",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/evaluations/available/": {
+      get: {
+        operationId:
+          "simulate_api_harness-environments_evaluations_available_evaluations",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessEnvironmentAvailableEvals",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/": {
+      delete: {
+        operationId: "simulate_api_harness-environments_remove_evaluation",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/run/": {
+      post: {
+        operationId: "simulate_api_harness-environments_run",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessRunCreate",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/HarnessRunCreateResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-jobs/": {
       get: {
         operationId: "simulate_api_harness-jobs_list",
@@ -27755,14 +27888,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
       post: {
         operationId: "simulate_api_harness-jobs_preflight",
         runtimeRequestValidation: true,
-        runtimeResponseValidation: false,
+        runtimeResponseValidation: true,
         requestBody: {
           $ref: "#/definitions/HarnessPreflight",
         },
         queryParameters: {},
         responses: {
-          201: {
-            $ref: "#/definitions/HarnessPreflight",
+          200: {
+            $ref: "#/definitions/HarnessPreflightResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -27913,6 +28046,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           201: {
             $ref: "#/definitions/HarnessJobExtend",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-jobs/{id}/runs/": {
+      post: {
+        operationId: "simulate_api_harness-jobs_runs",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessRunCreate",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/HarnessRunCreateResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -50330,6 +50482,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           readOnly: true,
         },
+        source_scenario_key: {
+          title: "Source scenario key",
+          type: "string",
+          readOnly: true,
+        },
+        trial_index: {
+          title: "Trial index",
+          type: "string",
+          readOnly: true,
+        },
         scenario_graph: {
           title: "Scenario graph",
           type: "string",
@@ -59924,6 +60086,137 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentAddEvaluation: {
+      required: ["name"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+      },
+    },
+    HarnessEnvironmentAvailableEvals: {
+      required: ["evaluations"],
+      type: "object",
+      properties: {
+        evaluations: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentOfferedEval",
+          },
+        },
+      },
+    },
+    HarnessEnvironmentDetail: {
+      required: [
+        "id",
+        "overview",
+        "contract",
+        "world",
+        "scenarios",
+        "evaluations",
+        "settings",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        overview: {
+          title: "Overview",
+          type: "object",
+        },
+        contract: {
+          title: "Contract",
+          type: "object",
+          "x-nullable": true,
+        },
+        world: {
+          title: "World",
+          type: "object",
+          "x-nullable": true,
+        },
+        scenarios: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        evaluations: {
+          title: "Evaluations",
+          type: "object",
+        },
+        settings: {
+          title: "Settings",
+          type: "object",
+        },
+      },
+    },
+    HarnessEnvironmentListResponse: {
+      required: [
+        "count",
+        "next",
+        "previous",
+        "total_pages",
+        "current_page",
+        "results",
+      ],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+          minimum: 0,
+        },
+        next: {
+          title: "Next",
+          type: "string",
+          format: "uri",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        previous: {
+          title: "Previous",
+          type: "string",
+          format: "uri",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        total_pages: {
+          title: "Total pages",
+          type: "integer",
+          minimum: 0,
+        },
+        current_page: {
+          title: "Current page",
+          type: "integer",
+          minimum: 1,
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentListItem",
+          },
+        },
+      },
+    },
+    HarnessEnvironmentRename: {
+      required: ["name"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+      },
+    },
     HarnessEventBatch: {
       required: ["schema_version", "events"],
       type: "object",
@@ -60308,6 +60601,45 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessPreflightResponse: {
+      required: [
+        "ready_to_submit",
+        "state",
+        "checks",
+        "credentials",
+        "effective_parallelism",
+        "snapshot",
+      ],
+      type: "object",
+      properties: {
+        ready_to_submit: {
+          title: "Ready to submit",
+          type: "boolean",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: ["connected", "failed"],
+        },
+        checks: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessPreflightCheck",
+          },
+        },
+        credentials: {
+          $ref: "#/definitions/HarnessPreflightCredentials",
+        },
+        effective_parallelism: {
+          title: "Effective parallelism",
+          type: "integer",
+        },
+        snapshot: {
+          title: "Snapshot",
+          type: "object",
+        },
+      },
+    },
     HarnessResultReceipt: {
       required: [
         "schema_version",
@@ -60396,6 +60728,96 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Digest",
           type: "string",
           pattern: "^sha256:[0-9a-f]{64}$",
+          minLength: 1,
+        },
+      },
+    },
+    HarnessRunCreate: {
+      required: ["scenario_ids"],
+      type: "object",
+      properties: {
+        scenario_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 1000,
+        },
+        trials: {
+          title: "Trials",
+          type: "integer",
+          default: 1,
+          maximum: 20,
+          minimum: 1,
+        },
+      },
+    },
+    HarnessRunCreateResponse: {
+      required: [
+        "environment_id",
+        "job_id",
+        "run_id",
+        "run_test_id",
+        "test_execution_id",
+        "scenario_count",
+        "trials",
+        "total_calls",
+        "state",
+        "stage",
+      ],
+      type: "object",
+      properties: {
+        environment_id: {
+          title: "Environment id",
+          type: "string",
+          format: "uuid",
+        },
+        job_id: {
+          title: "Job id",
+          type: "string",
+          format: "uuid",
+        },
+        run_id: {
+          title: "Run id",
+          type: "string",
+          format: "uuid",
+        },
+        run_test_id: {
+          title: "Run test id",
+          type: "string",
+          format: "uuid",
+        },
+        test_execution_id: {
+          title: "Test execution id",
+          type: "string",
+          format: "uuid",
+        },
+        scenario_count: {
+          title: "Scenario count",
+          type: "integer",
+          minimum: 1,
+        },
+        trials: {
+          title: "Trials",
+          type: "integer",
+          maximum: 20,
+          minimum: 1,
+        },
+        total_calls: {
+          title: "Total calls",
+          type: "integer",
+          minimum: 1,
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+        stage: {
+          title: "Stage",
+          type: "string",
           minLength: 1,
         },
       },
@@ -87011,6 +87433,112 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentOfferedEval: {
+      required: ["name", "description", "required_keys", "modality"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+        },
+        required_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        modality: {
+          title: "Modality",
+          type: "string",
+          enum: ["voice", "text", "any"],
+        },
+      },
+    },
+    HarnessEnvironmentListItem: {
+      required: [
+        "id",
+        "name",
+        "description",
+        "domain",
+        "status",
+        "agent_type",
+        "tools_count",
+        "scenario_count",
+        "sub_goals_count",
+        "runs_count",
+        "created_at",
+        "last_updated",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          "x-nullable": true,
+        },
+        domain: {
+          title: "Domain",
+          type: "string",
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["building", "ready", "failed"],
+        },
+        agent_type: {
+          title: "Agent type",
+          type: "string",
+          enum: ["voice", "chat"],
+        },
+        tools_count: {
+          title: "Tools count",
+          type: "integer",
+          minimum: 0,
+        },
+        scenario_count: {
+          title: "Scenario count",
+          type: "integer",
+          minimum: 0,
+        },
+        sub_goals_count: {
+          title: "Sub goals count",
+          type: "integer",
+          minimum: 0,
+        },
+        runs_count: {
+          title: "Runs count",
+          type: "integer",
+          minimum: 0,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        last_updated: {
+          title: "Last updated",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
     HarnessEvent: {
       required: [
         "event_id",
@@ -87685,6 +88213,85 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maxLength: 255,
           minLength: 1,
           "x-nullable": true,
+        },
+      },
+    },
+    HarnessPreflightCheck: {
+      required: ["id", "label", "status", "detail", "missing", "fix"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["passed", "failed", "skipped"],
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+        },
+        missing: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        fix: {
+          title: "Fix",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessPreflightCredentials: {
+      required: [
+        "scanned_files",
+        "detected_connectors",
+        "requirements",
+        "credential_choices",
+        "probe",
+      ],
+      type: "object",
+      properties: {
+        scanned_files: {
+          title: "Scanned files",
+          type: "integer",
+        },
+        detected_connectors: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        requirements: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        credential_choices: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        probe: {
+          type: "array",
+          items: {
+            type: "object",
+          },
         },
       },
     },
@@ -92796,6 +93403,51 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           readOnly: true,
           minLength: 1,
+        },
+        scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+        selected_scenarios: {
+          title: "Selected scenarios",
+          type: "integer",
+          readOnly: true,
+        },
+        trials: {
+          title: "Trials",
+          type: "integer",
+          readOnly: true,
+        },
+        total_calls: {
+          title: "Total calls",
+          type: "integer",
+          readOnly: true,
+        },
+        completed_calls: {
+          title: "Completed calls",
+          type: "integer",
+          readOnly: true,
+        },
+        failed_calls: {
+          title: "Failed calls",
+          type: "integer",
+          readOnly: true,
+        },
+        pending_calls: {
+          title: "Pending calls",
+          type: "integer",
+          readOnly: true,
+        },
+        completed_at: {
+          title: "Completed at",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
         },
       },
     },

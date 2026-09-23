@@ -401,6 +401,28 @@ class HarnessJobActionSerializer(serializers.Serializer):
     )
 
 
+
+class HarnessRunCreateSerializer(serializers.Serializer):
+    scenario_ids = serializers.ListField(
+        child=serializers.CharField(max_length=255),
+        allow_empty=False,
+        max_length=1000,
+    )
+    trials = serializers.IntegerField(min_value=1, max_value=20, default=1)
+
+
+class HarnessRunCreateResponseSerializer(serializers.Serializer):
+    environment_id = serializers.UUIDField()
+    job_id = serializers.UUIDField()
+    run_id = serializers.UUIDField()
+    run_test_id = serializers.UUIDField()
+    test_execution_id = serializers.UUIDField()
+    scenario_count = serializers.IntegerField(min_value=1)
+    trials = serializers.IntegerField(min_value=1, max_value=20)
+    total_calls = serializers.IntegerField(min_value=1)
+    state = serializers.CharField()
+    stage = serializers.CharField()
+
 class HarnessPreflightSerializer(HarnessJobCreateSerializer):
     reject_missing_credentials = False
     # Raw target-provider values the form holds before Run stores them. Preflight exercises

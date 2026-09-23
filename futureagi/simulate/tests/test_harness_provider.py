@@ -10,6 +10,12 @@ from django.test import override_settings
 from rest_framework.response import Response
 from rest_framework.test import APIClient
 
+from simulate.models import (
+    CallExecution,
+    HostedHarnessExecution,
+    HostedHarnessReceipt,
+    HostedHarnessJob,
+)
 from simulate.models.run_test import RunTest
 from simulate.models.test_execution import TestExecution
 from simulate.serializers.harness_job import (
@@ -23,7 +29,15 @@ from simulate.services.harness_provider import (
     _validate_required_credential_files,
     get_harness_provider,
 )
-from simulate.services.hosted_harness import HostedHarnessError, create_hosted_job
+from simulate.services.hosted_harness import (
+    HostedHarnessError,
+    canonical_digest,
+    create_hosted_job,
+    create_selected_harness_run,
+    provision_scenarios,
+    register_attempt,
+)
+from simulate.services.hosted_harness_ingestion import ingest_result_receipt
 
 _LIVEKIT_REFS = {
     "LIVEKIT_URL": {
@@ -152,6 +166,166 @@ def test_small_hosted_job_preserves_the_requested_runtime_budget():
 
     assert serializer.is_valid(), serializer.errors
     assert serializer.validated_data["runtime"]["max_duration_seconds"] == 600
+
+
+@pytest.mark.django_db
+def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
+    user, workspace
+):
+    environment, _ = create_hosted_job(
+        user.organization,
+        _v1_payload(scenario_count=2),
+        idempotency_key="authored-environment",
+        workspace=workspace,
+    )
+    attempt = register_attempt(
+        environment.id, endpoint_base_url="https://harness.example.test"
+    ).attempt
+    provision_scenarios(
+        attempt,
+        {
+            "operation": "provision",
+            "name": "Selected Run suite",
+            "modality": "text",
+            "personas": [
+                {
+                    "scenario_key": "scenario-a",
+                    "name": "A",
+                    "role": "customer",
+                    "situation": "First situation",
+                    "outcome": "First outcome",
+                    "persona": {"name": "A"},
+                },
+                {
+                    "scenario_key": "scenario-b",
+                    "name": "B",
+                    "role": "customer",
+                    "situation": "Second situation",
+                    "outcome": "Second outcome",
+                    "persona": {"name": "B"},
+                },
+            ],
+        },
+    )
+    environment.refresh_from_db()
+    payload = dict(environment.payload)
+    metadata = dict(payload.get("metadata") or {})
+    metadata["authoring_object_key"] = "harness/environments/authored.tar.gz"
+    payload["metadata"] = metadata
+    environment.payload = payload
+    environment.state = environment.State.COMPLETED
+    environment.current_stage = "completed"
+    environment.save(
+        update_fields=["payload", "state", "current_stage", "updated_at"]
+    )
+
+    first, created = create_selected_harness_run(
+        environment,
+        scenario_keys=["scenario-a", "scenario-b"],
+        trials=3,
+        idempotency_key="submission-one",
+    )
+    same, duplicate_created = create_selected_harness_run(
+        environment,
+        scenario_keys=["scenario-a", "scenario-b"],
+        trials=3,
+        idempotency_key="submission-one",
+    )
+    second, second_created = create_selected_harness_run(
+        environment,
+        scenario_keys=["scenario-a"],
+        trials=1,
+        idempotency_key="submission-two",
+    )
+
+    assert created is True
+    assert duplicate_created is False
+    assert same.id == first.id
+    assert second_created is True
+    assert second.id != first.id
+    assert first.environment_id == environment.id
+    assert first.test_execution.trials == 3
+    assert first.test_execution.total_calls == 6
+    assert CallExecution.no_workspace_objects.filter(
+        test_execution=first.test_execution
+    ).count() == 6
+    allocations = list(
+        HostedHarnessExecution.no_workspace_objects.filter(job=first).order_by(
+            "source_scenario__scenario_key", "trial_index"
+        )
+    )
+    assert [
+        (allocation.source_scenario.scenario_key, allocation.trial_index)
+        for allocation in allocations
+    ] == [
+        ("scenario-a", 1),
+        ("scenario-a", 2),
+        ("scenario-a", 3),
+        ("scenario-b", 1),
+        ("scenario-b", 2),
+        ("scenario-b", 3),
+    ]
+    assert len({allocation.execution_key for allocation in allocations}) == 6
+    assert first.test_execution.calls.filter(deleted=False).count() == 6
+    assert second.test_execution.calls.filter(deleted=False).count() == 1
+    client = APIClient()
+    client.force_authenticate(user=user)
+    detail = client.get(
+        f"/simulate/api/harness-environments/{environment.id}/",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+    assert detail.status_code == 200, detail.content
+    assert [
+        scenario["scenario_key"] for scenario in detail.json()["scenarios"]
+    ] == ["scenario-a", "scenario-b"]
+    assert detail.json()["overview"]["runs_count"] == 2
+    listing = client.get(
+        "/simulate/api/harness-environments/",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+    assert listing.status_code == 200, listing.content
+    assert listing.json()["results"][0]["id"] == str(environment.id)
+    with patch(
+        "simulate.temporal.client.start_hosted_harness_gateway_workflow"
+    ) as start:
+        response = client.post(
+            f"/simulate/api/harness-environments/{environment.id}/run/",
+            {"scenario_ids": ["scenario-b"], "trials": 2},
+            format="json",
+            HTTP_IDEMPOTENCY_KEY="submission-three",
+            HTTP_X_WORKSPACE_ID=str(workspace.id),
+        )
+    assert response.status_code == 202, response.content
+    assert response.json()["scenario_count"] == 1
+    assert response.json()["trials"] == 2
+    assert response.json()["total_calls"] == 2
+    start.assert_called_once()
+
+    run_attempt = register_attempt(
+        first.id, endpoint_base_url="https://harness.example.test"
+    ).attempt
+    for allocation in allocations[:2]:
+        body = {
+            "schema_version": "futureagi.harness-result.v1",
+            "job_id": str(first.id),
+            "attempt_id": str(run_attempt.id),
+            "attempt_number": run_attempt.attempt_number,
+            "scenario_key": allocation.execution_key,
+            "scenario_id": str(allocation.source_scenario.scenario_id),
+            "scenario_attempt": 1,
+            "world_index": None,
+            "status": "skipped",
+            "sub_goals": [],
+            "evaluations": [],
+            "call": None,
+            "failure": None,
+        }
+        body["digest"] = canonical_digest(body)
+        ingest_result_receipt(run_attempt, body)
+
+    assert HostedHarnessReceipt.no_workspace_objects.filter(
+        job=first, execution__isnull=False
+    ).count() == 2
 
 
 def test_customer_cannot_submit_platform_simulator_secret_purpose():
@@ -808,82 +982,68 @@ def test_daytona_create_starts_gateway_workflow(user, workspace):
     HARNESS_PROVIDER="daytona",
     HARNESS_PUBLIC_BASE_URL="https://harness.example.test",
 )
-def test_daytona_saved_rerun_reuses_job_and_starts_fresh_attempt_cycle(user, workspace):
-    job, _ = create_hosted_job(
+def test_daytona_saved_rerun_creates_new_run_and_preserves_prior_history(
+    user, workspace
+):
+    environment, _ = create_hosted_job(
         user.organization,
-        _v1_payload(),
+        _v1_payload(scenario_count=1),
         idempotency_key="daytona-rerun",
         workspace=workspace,
     )
-    job.state = job.State.COMPLETED
-    job.current_stage = "completed"
-    job.current_attempt_number = 3
-    job.completed_count = 10
-    job.terminal_at = job.created_at
-    job.scenario_count = 2
-    run_test = RunTest.objects.create(
-        name="Saved hosted run",
-        organization=user.organization,
-        workspace=workspace,
+    attempt = register_attempt(
+        environment.id, endpoint_base_url="https://harness.example.test"
+    ).attempt
+    provision_scenarios(
+        attempt,
+        {
+            "operation": "provision",
+            "name": "Saved hosted environment",
+            "modality": "text",
+            "personas": [
+                {
+                    "scenario_key": "saved-scenario",
+                    "name": "Saved",
+                    "role": "customer",
+                    "situation": "Saved situation",
+                    "outcome": "Saved outcome",
+                    "persona": {"name": "Saved"},
+                }
+            ],
+        },
     )
-    test_execution = TestExecution.objects.create(
-        run_test=run_test,
-        status=TestExecution.ExecutionStatus.COMPLETED,
-        total_scenarios=2,
-        total_calls=2,
-        completed_calls=2,
-        failed_calls=0,
-        completed_at=job.created_at,
-    )
-    job.run_test = run_test
-    job.test_execution = test_execution
-    payload = dict(job.payload)
-    payload["scenario_count"] = 1
+    environment.refresh_from_db()
+    payload = dict(environment.payload)
     payload.setdefault("metadata", {})["authoring_object_key"] = (
         "harness/jobs/saved/authoring.tar.gz"
     )
-    job.payload = payload
-    job.save(
-        update_fields=[
-            "payload",
-            "scenario_count",
-            "run_test",
-            "test_execution",
-            "state",
-            "current_stage",
-            "current_attempt_number",
-            "completed_count",
-            "terminal_at",
-            "updated_at",
-        ]
+    environment.payload = payload
+    environment.state = environment.State.COMPLETED
+    environment.current_stage = "completed"
+    environment.save(
+        update_fields=["payload", "state", "current_stage", "updated_at"]
     )
 
     with patch(
         "simulate.temporal.client.start_hosted_harness_gateway_workflow"
     ) as start:
         result = HostedHarnessProvider().rerun_saved(
-            str(job.id),
+            str(environment.id),
             organization=user.organization,
             workspace=workspace,
             environment_values={"LIVEKIT_URL": "wss://customer.example.test"},
         )
 
-    job.refresh_from_db()
-    assert job.state == job.State.QUEUED
-    assert job.current_stage == "queued"
-    assert job.completed_count == 0
-    assert job.terminal_at is None
-    assert job.payload["metadata"]["attempt_cycle_start"] == 4
-    assert job.payload["scenario_count"] == 2
-    test_execution.refresh_from_db()
-    assert test_execution.status == TestExecution.ExecutionStatus.RUNNING
-    assert test_execution.completed_at is None
-    assert test_execution.completed_calls == 0
-    assert test_execution.failed_calls == 0
-    livekit_ref = job.payload["agent"]["secret_refs"]["LIVEKIT_URL"]
+    environment.refresh_from_db()
+    child = HostedHarnessJob.no_workspace_objects.get(id=result["job"]["job_id"])
+    assert child.id != environment.id
+    assert child.environment_id == environment.id
+    assert environment.state == environment.State.COMPLETED
+    assert child.state == child.State.QUEUED
+    assert child.test_execution_id is not None
+    livekit_ref = child.payload["agent"]["secret_refs"]["LIVEKIT_URL"]
     assert livekit_ref["manager"] == "platform-vault"
-    assert "customer.example.test" not in json.dumps(job.payload)
-    assert result["job"]["job_id"] == str(job.id)
+    assert "customer.example.test" not in json.dumps(child.payload)
     start.assert_called_once()
 
 
@@ -918,7 +1078,7 @@ def test_daytona_saved_rerun_rejects_legacy_run_without_authoring_snapshot(
             environment_values={},
         )
 
-    assert exc_info.value.code == "rerun_authoring_snapshot_missing"
+    assert exc_info.value.code == "environment_snapshot_missing"
     assert exc_info.value.status_code == 409
     job.refresh_from_db()
     assert job.state == job.State.COMPLETED
