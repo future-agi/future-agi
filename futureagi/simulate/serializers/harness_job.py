@@ -111,7 +111,7 @@ class HarnessAgentSerializer(serializers.Serializer):
             "dials the simulated caller. Voice connectors only."
         ),
     )
-    config = serializers.JSONField(default=dict)
+    config = serializers.DictField(default=dict)
     secret_refs = serializers.DictField(
         child=SecretReferenceSerializer(), required=False, default=dict
     )

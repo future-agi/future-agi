@@ -35749,8 +35749,7 @@ export const SimulateApiHarnessJobsCreateBody = zod.object({
         "inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.",
       ),
     config: zod
-      .object({})
-      .passthrough()
+      .record(zod.string(), zod.string())
       .default(simulateApiHarnessJobsCreateBodyAgentConfigDefault),
     secret_refs: zod
       .record(
@@ -36071,8 +36070,7 @@ export const SimulateApiHarnessJobsPreflightBody = zod.object({
         "inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.",
       ),
     config: zod
-      .object({})
-      .passthrough()
+      .record(zod.string(), zod.string())
       .default(simulateApiHarnessJobsPreflightBodyAgentConfigDefault),
     secret_refs: zod
       .record(

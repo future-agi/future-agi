@@ -87583,7 +87583,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Agent type",
           type: "string",
           enum: ["voice", "chat"],
-          "x-nullable": true,
         },
         status: {
           title: "Status",
@@ -87904,7 +87903,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Agent type",
           type: "string",
           enum: ["voice", "chat"],
-          "x-nullable": true,
         },
         status: {
           title: "Status",
@@ -88068,6 +88066,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         config: {
           title: "Config",
           type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
           default: {},
         },
         secret_refs: {
