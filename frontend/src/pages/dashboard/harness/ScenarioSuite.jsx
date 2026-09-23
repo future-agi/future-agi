@@ -58,7 +58,10 @@ const COLUMNS = [
 
 // How the sections are cut. The server tags each row with the group it fell into, so this only
 // names the choices; it never decides which rows belong to which.
-const readable = (name) => String(name || "").replace(/[_-]+/g, " ").trim();
+const readable = (name) =>
+  String(name || "")
+    .replace(/[_-]+/g, " ")
+    .trim();
 
 // The panel answers in two shapes: the Basic tab returns `{field: [values]}` already carrying the
 // `_not` suffix for a negation, the Query tab returns tokens. Both collapse to the same query
@@ -72,7 +75,8 @@ const toQueryParams = (result) => {
       ? token.value
       : [token.value].filter(Boolean);
     if (!held.length) return;
-    const negated = token.operator === "is_not" || token.operator === "not_equals";
+    const negated =
+      token.operator === "is_not" || token.operator === "not_equals";
     const key = negated ? `${token.field}_not` : token.field;
     flat[key] = [...(flat[key] || []), ...held];
   });
@@ -83,7 +87,10 @@ const toQueryParams = (result) => {
 // a single verdict for the batch. A rework that touched files is worth saying out loud.
 const summarise = (receipts) => {
   const counts = receipts.reduce(
-    (totals, one) => ({ ...totals, [one.outcome]: (totals[one.outcome] || 0) + 1 }),
+    (totals, one) => ({
+      ...totals,
+      [one.outcome]: (totals[one.outcome] || 0) + 1,
+    }),
     {},
   );
   const parts = [];
@@ -101,7 +108,13 @@ const summarise = (receipts) => {
  *
  * `scenarios` is only the suite read outside a run, where there is no job to page against.
  */
-export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEditing, onChanged }) {
+export default function ScenarioSuite({
+  scenarios,
+  jobId,
+  editable,
+  scenarioEditing,
+  onChanged,
+}) {
   const { enqueueSnackbar } = useSnackbar();
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
@@ -168,12 +181,16 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
     setPage(0);
   };
 
-  const allSelected = rows.length > 0 && rows.every((one) => selected.has(one.name));
-  const someSelected = !allSelected && rows.some((one) => selected.has(one.name));
+  const allSelected =
+    rows.length > 0 && rows.every((one) => selected.has(one.name));
+  const someSelected =
+    !allSelected && rows.some((one) => selected.has(one.name));
   const toggleAll = () =>
     setSelected((prev) => {
       const next = new Set(prev);
-      rows.forEach((one) => (allSelected ? next.delete(one.name) : next.add(one.name)));
+      rows.forEach((one) =>
+        allSelected ? next.delete(one.name) : next.add(one.name),
+      );
       return next;
     });
 
@@ -214,7 +231,9 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
   const toggleGroup = (inIt, allOn) =>
     setSelected((prev) => {
       const next = new Set(prev);
-      inIt.forEach((row) => (allOn ? next.delete(row.name) : next.add(row.name)));
+      inIt.forEach((row) =>
+        allOn ? next.delete(row.name) : next.add(row.name),
+      );
       return next;
     });
 
@@ -231,7 +250,9 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
       // A refusal carries the reason the harness gave. Showing it is the difference between "that
       // did not work" and knowing which change to send differently.
       refused.forEach((one) =>
-        enqueueSnackbar(`${readable(one.scenario)}: ${one.why}`, { variant: "warning" }),
+        enqueueSnackbar(`${readable(one.scenario)}: ${one.why}`, {
+          variant: "warning",
+        }),
       );
       setSelected(new Set());
       setEditing(null);
@@ -239,12 +260,15 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
     } catch (error) {
       // The harness names the offending op or field; anything else is ours to keep off screen.
       const detail = error?.response?.data?.detail;
-      enqueueSnackbar(detail || "The suite could not be edited", { variant: "error" });
+      enqueueSnackbar(detail || "The suite could not be edited", {
+        variant: "error",
+      });
     }
   };
 
   const busy = amend.isPending;
-  const dropOne = (name) => send([{ op: "drop", scenario: name }], { rework: false });
+  const dropOne = (name) =>
+    send([{ op: "drop", scenario: name }], { rework: false });
   // One change naming every scenario, not one change each: the harness expands it and answers
   // with a receipt per scenario either way, and a single change is what the route is shaped for.
   const deleteSelected = () =>
@@ -298,8 +322,9 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
     <Stack spacing={1.5} sx={{ minWidth: 0 }}>
       {waiting && (
         <Typography variant="caption" color="text.secondary">
-          The harness is re-checking a scenario, rewriting its setup and checks where the change
-          matters and proving it again. This takes a minute or two.
+          The harness is re-checking a scenario, rewriting its setup and checks
+          where the change matters and proving it again. This takes a minute or
+          two.
         </Typography>
       )}
 
@@ -315,7 +340,13 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
         />
       )}
 
-      <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" useFlexGap>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        flexWrap="wrap"
+        useFlexGap
+      >
         <TextField
           size="small"
           value={typed}
@@ -324,7 +355,14 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
           InputProps={{
             sx: { typography: "s2" },
             startAdornment: (
-              <Box sx={{ pr: 0.75, pl: 0.25, display: "flex", color: "text.subtitle" }}>
+              <Box
+                sx={{
+                  pr: 0.75,
+                  pl: 0.25,
+                  display: "flex",
+                  color: "text.subtitle",
+                }}
+              >
                 <Iconify icon="solar:magnifer-linear" width={14} />
               </Box>
             ),
@@ -382,18 +420,26 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
             color="error"
             variant="outlined"
             disabled={busy}
-            startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={16} />}
+            startIcon={
+              <Iconify icon="solar:trash-bin-trash-linear" width={16} />
+            }
             onClick={deleteSelected}
           >
             Delete
           </Button>
-          <Button size="small" disabled={busy} onClick={() => setSelected(new Set())}>
+          <Button
+            size="small"
+            disabled={busy}
+            onClick={() => setSelected(new Set())}
+          >
             Clear
           </Button>
         </Stack>
       )}
 
-      <TableContainer sx={{ width: "100%", maxWidth: "100%", overflowX: "auto" }}>
+      <TableContainer
+        sx={{ width: "100%", maxWidth: "100%", overflowX: "auto" }}
+      >
         <Table size="small" sx={{ minWidth: 1000 }}>
           <TableHead>
             <TableRow>
@@ -454,8 +500,13 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
           <TableBody>
             {!rows.length && (
               <TableRow>
-                <TableCell colSpan={COLUMNS.length} sx={{ py: 4, textAlign: "center" }}>
-                  <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                <TableCell
+                  colSpan={COLUMNS.length}
+                  sx={{ py: 4, textAlign: "center" }}
+                >
+                  <Typography
+                    sx={{ typography: "s2", color: "text.secondary" }}
+                  >
                     No scenario matches that.
                   </Typography>
                   <Button
@@ -476,12 +527,15 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
               // server orders the page by group, so that is exactly where a section starts, and
               // it stays correct even if the counts and the ordering ever disagree. Rebuilding
               // sections by slicing at offsets could not say that.
-              const opens = scenario.group && scenario.group !== rows[index - 1]?.group;
+              const opens =
+                scenario.group && scenario.group !== rows[index - 1]?.group;
               const inIt = opens
                 ? rows.filter((one) => one.group === scenario.group)
                 : [];
-              const allOn = inIt.length > 0 && inIt.every((one) => selected.has(one.name));
-              const someOn = !allOn && inIt.some((one) => selected.has(one.name));
+              const allOn =
+                inIt.length > 0 && inIt.every((one) => selected.has(one.name));
+              const someOn =
+                !allOn && inIt.some((one) => selected.has(one.name));
               const section = totals.get(scenario.group);
               const drawn = [];
               if (opens) {
@@ -491,7 +545,10 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
                       colSpan={COLUMNS.length}
                       sx={{
                         bgcolor: (theme) =>
-                          alpha(theme.palette.text.primary, theme.palette.mode === "dark" ? 0.08 : 0.05),
+                          alpha(
+                            theme.palette.text.primary,
+                            theme.palette.mode === "dark" ? 0.08 : 0.05,
+                          ),
                         py: 1,
                       }}
                     >
@@ -505,7 +562,12 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
                           sx={selectableCheckboxSx}
                         />
                         <Typography
-                          sx={{ typography: "s2", fontWeight: 700, flex: 1, minWidth: 0 }}
+                          sx={{
+                            typography: "s2",
+                            fontWeight: 700,
+                            flex: 1,
+                            minWidth: 0,
+                          }}
                         >
                           {scenario.group}
                         </Typography>
@@ -519,8 +581,12 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
                         >
                           {/* The group's real size, not the slice on this page. */}
                           {section?.total ?? inIt.length}{" "}
-                          {(section?.total ?? inIt.length) === 1 ? "scenario" : "scenarios"}
-                          {section?.total > inIt.length ? ` \u00b7 ${inIt.length} here` : ""}
+                          {(section?.total ?? inIt.length) === 1
+                            ? "scenario"
+                            : "scenarios"}
+                          {section?.total > inIt.length
+                            ? ` \u00b7 ${inIt.length} here`
+                            : ""}
                         </Typography>
                       </Stack>
                     </TableCell>
@@ -529,135 +595,155 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
               }
               drawn.push(
                 (() => {
-
-                    const persona = scenario.persona || {};
-                    const who = [persona.gender, persona.age_group, persona.location]
-                      .filter(Boolean)
-                      .join(" · ");
-                    return (
-                      <TableRow
-                        hover
-                        key={scenario.name}
-                        onClick={() => setEditing(scenario)}
-                        sx={{ cursor: "pointer" }}
+                  const persona = scenario.persona || {};
+                  const who = [
+                    persona.gender,
+                    persona.age_group,
+                    persona.location,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ");
+                  return (
+                    <TableRow
+                      hover
+                      key={scenario.name}
+                      onClick={() => setEditing(scenario)}
+                      sx={{ cursor: "pointer" }}
+                    >
+                      <TableCell
+                        padding="checkbox"
+                        sx={{ pl: 1.5, verticalAlign: "top" }}
+                        onClick={(event) => event.stopPropagation()}
                       >
-                        <TableCell
-                          padding="checkbox"
-                          sx={{ pl: 1.5, verticalAlign: "top" }}
-                          onClick={(event) => event.stopPropagation()}
-                        >
-                          <Checkbox
-                            size="small"
-                            checked={selected.has(scenario.name)}
-                            onChange={() => toggle(scenario.name)}
-                            sx={selectableCheckboxSx}
-                          />
-                        </TableCell>
-                        <TableCell
-                          sx={{
-                            typography: "s3",
-                            color: "text.subtitle",
-                            fontVariantNumeric: "tabular-nums",
-                            verticalAlign: "top",
-                          }}
-                        >
-                          {/* The number is the scenario's place in the whole suite, minted by the
+                        <Checkbox
+                          size="small"
+                          checked={selected.has(scenario.name)}
+                          onChange={() => toggle(scenario.name)}
+                          sx={selectableCheckboxSx}
+                        />
+                      </TableCell>
+                      <TableCell
+                        sx={{
+                          typography: "s3",
+                          color: "text.subtitle",
+                          fontVariantNumeric: "tabular-nums",
+                          verticalAlign: "top",
+                        }}
+                      >
+                        {/* The number is the scenario's place in the whole suite, minted by the
                               server, so it does not renumber under a filter or a page. */}
-                          {scenario.number ?? index + 1}
-                        </TableCell>
-                        <TableCell sx={{ maxWidth: 280, verticalAlign: "top" }}>
-                          <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>
-                            {readable(scenario.name)}
-                          </Typography>
-                          <Tooltip title={scenario.branch || ""}>
-                            <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
-                              {scenario.branch}
-                            </Typography>
-                          </Tooltip>
-                        </TableCell>
-                        <TableCell sx={{ maxWidth: 200, verticalAlign: "top" }}>
-                          <Typography noWrap sx={{ typography: "s2" }}>
-                            {persona.name}
-                          </Typography>
-                          <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
-                            {who}
-                          </Typography>
-                        </TableCell>
-                        <TableCell sx={{ maxWidth: 220, verticalAlign: "top" }}>
-                          <Levers scenario={scenario} persona={persona} />
-                        </TableCell>
-                        <TableCell sx={{ maxWidth: 320, verticalAlign: "top" }}>
-                          <Clamped text={scenario.instruction} />
-                        </TableCell>
-                        <TableCell sx={{ maxWidth: 260, verticalAlign: "top" }}>
-                          <SubGoals names={scenario.sub_goals} />
-                        </TableCell>
-                        <TableCell sx={{ maxWidth: 320, verticalAlign: "top" }}>
-                          <Clamped text={scenario.tests} />
-                        </TableCell>
-                        <TableCell
-                          align="right"
-                          onClick={(event) => event.stopPropagation()}
-                          sx={{
-                            whiteSpace: "nowrap",
-                            verticalAlign: "top",
-                            position: "sticky",
-                            right: 0,
-                            zIndex: 1,
-                            width: 96,
-                            minWidth: 96,
-                            // A sticky cell needs its own opaque ground to hide the columns sliding
-                            // under it, which loses the row hover tint. Painting the same overlay
-                            // back on keeps the pinned column part of the row rather than a patch.
-                            bgcolor: "background.paper",
-                            boxShadow: (theme) =>
-                              `-8px 0 12px -6px ${alpha(
-                                theme.palette.common.black,
-                                theme.palette.mode === "dark" ? 0.45 : 0.08,
-                              )}`,
-                            transition: "background-image 120ms ease",
-                            ".MuiTableRow-hover:hover &": {
-                              backgroundImage: (theme) =>
-                                `linear-gradient(${theme.palette.action.hover}, ${theme.palette.action.hover})`,
-                            },
-                          }}
+                        {scenario.number ?? index + 1}
+                      </TableCell>
+                      <TableCell sx={{ maxWidth: 280, verticalAlign: "top" }}>
+                        <Typography
+                          noWrap
+                          sx={{ typography: "s2", fontWeight: 600 }}
                         >
-                          <Tooltip arrow title={editable ? "Edit scenario" : lockedReason}>
-                            <span>
-                              <IconButton
-                                size="small"
-                                aria-label="Edit scenario"
-                                disabled={!editable}
-                                onClick={() => setEditing(scenario)}
-                              >
-                                <Iconify
-                                  icon="solar:pen-new-square-linear"
-                                  width={15}
-                                  sx={{ color: "text.subtitle" }}
-                                />
-                              </IconButton>
-                            </span>
-                          </Tooltip>
-                          <Tooltip arrow title={editable ? "Remove from this suite" : lockedReason}>
-                            <span>
-                              <IconButton
-                                size="small"
-                                aria-label="Remove from this suite"
-                                disabled={!editable || busy}
-                                onClick={() => dropOne(scenario.name)}
-                              >
-                                <Iconify
-                                  icon="solar:trash-bin-trash-linear"
-                                  width={15}
-                                  sx={{ color: "text.subtitle" }}
-                                />
-                              </IconButton>
-                            </span>
-                          </Tooltip>
-                        </TableCell>
-                      </TableRow>
-                    );
-              })(),
+                          {readable(scenario.name)}
+                        </Typography>
+                        <Tooltip title={scenario.branch || ""}>
+                          <Typography
+                            noWrap
+                            sx={{ typography: "s3", color: "text.subtitle" }}
+                          >
+                            {scenario.branch}
+                          </Typography>
+                        </Tooltip>
+                      </TableCell>
+                      <TableCell sx={{ maxWidth: 200, verticalAlign: "top" }}>
+                        <Typography noWrap sx={{ typography: "s2" }}>
+                          {persona.name}
+                        </Typography>
+                        <Typography
+                          noWrap
+                          sx={{ typography: "s3", color: "text.subtitle" }}
+                        >
+                          {who}
+                        </Typography>
+                      </TableCell>
+                      <TableCell sx={{ maxWidth: 220, verticalAlign: "top" }}>
+                        <Levers scenario={scenario} persona={persona} />
+                      </TableCell>
+                      <TableCell sx={{ maxWidth: 320, verticalAlign: "top" }}>
+                        <Clamped text={scenario.instruction} />
+                      </TableCell>
+                      <TableCell sx={{ maxWidth: 260, verticalAlign: "top" }}>
+                        <SubGoals names={scenario.sub_goals} />
+                      </TableCell>
+                      <TableCell sx={{ maxWidth: 320, verticalAlign: "top" }}>
+                        <Clamped text={scenario.tests} />
+                      </TableCell>
+                      <TableCell
+                        align="right"
+                        onClick={(event) => event.stopPropagation()}
+                        sx={{
+                          whiteSpace: "nowrap",
+                          verticalAlign: "top",
+                          position: "sticky",
+                          right: 0,
+                          zIndex: 1,
+                          width: 96,
+                          minWidth: 96,
+                          // A sticky cell needs its own opaque ground to hide the columns sliding
+                          // under it, which loses the row hover tint. Painting the same overlay
+                          // back on keeps the pinned column part of the row rather than a patch.
+                          bgcolor: "background.paper",
+                          boxShadow: (theme) =>
+                            `-8px 0 12px -6px ${alpha(
+                              theme.palette.common.black,
+                              theme.palette.mode === "dark" ? 0.45 : 0.08,
+                            )}`,
+                          transition: "background-image 120ms ease",
+                          ".MuiTableRow-hover:hover &": {
+                            backgroundImage: (theme) =>
+                              `linear-gradient(${theme.palette.action.hover}, ${theme.palette.action.hover})`,
+                          },
+                        }}
+                      >
+                        <Tooltip
+                          arrow
+                          title={editable ? "Edit scenario" : lockedReason}
+                        >
+                          <span>
+                            <IconButton
+                              size="small"
+                              aria-label="Edit scenario"
+                              disabled={!editable}
+                              onClick={() => setEditing(scenario)}
+                            >
+                              <Iconify
+                                icon="solar:pen-new-square-linear"
+                                width={15}
+                                sx={{ color: "text.subtitle" }}
+                              />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                        <Tooltip
+                          arrow
+                          title={
+                            editable ? "Remove from this suite" : lockedReason
+                          }
+                        >
+                          <span>
+                            <IconButton
+                              size="small"
+                              aria-label="Remove from this suite"
+                              disabled={!editable || busy}
+                              onClick={() => dropOne(scenario.name)}
+                            >
+                              <Iconify
+                                icon="solar:trash-bin-trash-linear"
+                                width={15}
+                                sx={{ color: "text.subtitle" }}
+                              />
+                            </IconButton>
+                          </span>
+                        </Tooltip>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })(),
               );
               return drawn;
             })}
@@ -690,7 +776,11 @@ export default function ScenarioSuite({ scenarios, jobId, editable, scenarioEdit
         aiPlaceholder="e.g. 'Indian accent callers carrying an attack'"
       />
 
-      <Drawer anchor="right" open={Boolean(editing)} onClose={() => setEditing(null)}>
+      <Drawer
+        anchor="right"
+        open={Boolean(editing)}
+        onClose={() => setEditing(null)}
+      >
         <Box sx={{ width: "100vw", maxWidth: 620, height: "100%" }}>
           {editing && (
             <ScenarioEditForm
@@ -713,8 +803,17 @@ function CoverageGrid({ coverage, rowAxis, colAxis, onRowAxis, onColAxis }) {
   const axes = coverage.axes || [];
   const columns = coverage.columns || [];
   const perAxis = coverage.per_axis || [];
+  // Every name a reader sees here comes from the server. `readable` stays only as the fallback for
+  // a level or axis served before the backend knew a name for it, so renaming one is a change
+  // there and never here.
+  const axisName = (axis) => coverage.axis_labels?.[axis] || readable(axis);
+  const levelName = (level) =>
+    coverage.level_labels?.[level] || readable(level);
   const cells = new Map(
-    (coverage.cells || []).map((one) => [`${one.row}␟${one.column}`, one.count]),
+    (coverage.cells || []).map((one) => [
+      `${one.row}␟${one.column}`,
+      one.count,
+    ]),
   );
   return (
     <Stack spacing={1}>
@@ -726,12 +825,12 @@ function CoverageGrid({ coverage, rowAxis, colAxis, onRowAxis, onColAxis }) {
             <Tooltip
               key={one.axis}
               title={Object.entries(one.counts || {})
-                .map(([level, count]) => `${readable(level)} ${count}`)
+                .map(([level, count]) => `${levelName(level)} ${count}`)
                 .join("  \u00b7  ")}
             >
               <Chip
                 size="small"
-                label={`${readable(one.axis)} ${one.levels}`}
+                label={`${one.label || axisName(one.axis)} ${one.levels}`}
                 sx={{
                   height: 22,
                   typography: "s3",
@@ -744,7 +843,13 @@ function CoverageGrid({ coverage, rowAxis, colAxis, onRowAxis, onColAxis }) {
           ))}
         </Stack>
       )}
-      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+      <Stack
+        direction="row"
+        spacing={1}
+        alignItems="center"
+        flexWrap="wrap"
+        useFlexGap
+      >
         <TextField
           select
           size="small"
@@ -755,7 +860,7 @@ function CoverageGrid({ coverage, rowAxis, colAxis, onRowAxis, onColAxis }) {
         >
           {axes.map((axis) => (
             <MenuItem key={axis} value={axis}>
-              {readable(axis)}
+              {axisName(axis)}
             </MenuItem>
           ))}
         </TextField>
@@ -769,7 +874,7 @@ function CoverageGrid({ coverage, rowAxis, colAxis, onRowAxis, onColAxis }) {
         >
           {axes.map((axis) => (
             <MenuItem key={axis} value={axis}>
-              {readable(axis)}
+              {axisName(axis)}
             </MenuItem>
           ))}
         </TextField>
@@ -784,9 +889,13 @@ function CoverageGrid({ coverage, rowAxis, colAxis, onRowAxis, onColAxis }) {
                   <TableCell
                     key={column}
                     align="center"
-                    sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "nowrap" }}
+                    sx={{
+                      typography: "s3",
+                      color: "text.subtitle",
+                      whiteSpace: "nowrap",
+                    }}
                   >
-                    {readable(column)}
+                    {levelName(column)}
                   </TableCell>
                 ))}
               </TableRow>
@@ -795,7 +904,7 @@ function CoverageGrid({ coverage, rowAxis, colAxis, onRowAxis, onColAxis }) {
               {coverage.rows.map((row) => (
                 <TableRow key={row}>
                   <TableCell sx={{ typography: "s3", whiteSpace: "nowrap" }}>
-                    {readable(row)}
+                    {levelName(row)}
                   </TableCell>
                   {columns.map((column) => {
                     const count = cells.get(`${row}␟${column}`) || 0;
@@ -811,7 +920,10 @@ function CoverageGrid({ coverage, rowAxis, colAxis, onRowAxis, onColAxis }) {
                           color: count ? "text.primary" : "text.disabled",
                           bgcolor: (theme) =>
                             count
-                              ? alpha(theme.palette.primary.main, Math.min(0.08 + count * 0.04, 0.32))
+                              ? alpha(
+                                  theme.palette.primary.main,
+                                  Math.min(0.08 + count * 0.04, 0.32),
+                                )
                               : "transparent",
                         }}
                       >
@@ -848,10 +960,20 @@ function Levers({ scenario, persona }) {
       : scenario.background_noise
         ? "present"
         : "";
-  const spoken = (persona.languages || []).filter((one) => one && one !== "English");
+  const spoken = (persona.languages || []).filter(
+    (one) => one && one !== "English",
+  );
   const chips = [
-    persona.accent && { key: `a-${persona.accent}`, label: persona.accent, tone: "default" },
-    spoken.length && { key: `l-${spoken[0]}`, label: spoken[0], tone: "default" },
+    persona.accent && {
+      key: `a-${persona.accent}`,
+      label: persona.accent,
+      tone: "default",
+    },
+    spoken.length && {
+      key: `l-${spoken[0]}`,
+      label: spoken[0],
+      tone: "default",
+    },
     noise && { key: `n-${noise}`, label: readable(noise), tone: "default" },
     overlay &&
       overlay !== "none" && {
@@ -862,7 +984,11 @@ function Levers({ scenario, persona }) {
   ].filter(Boolean);
 
   if (!chips.length) {
-    return <Typography sx={{ typography: "s3", color: "text.subtitle" }}>&mdash;</Typography>;
+    return (
+      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+        &mdash;
+      </Typography>
+    );
   }
   const intensity = String(coverage.overlay_intensity || "").trim();
   return (
@@ -901,14 +1027,25 @@ Levers.propTypes = {
 function SubGoals({ names }) {
   const list = names || [];
   if (!list.length) {
-    return <Typography sx={{ typography: "s3", color: "text.subtitle" }}>&mdash;</Typography>;
+    return (
+      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+        &mdash;
+      </Typography>
+    );
   }
-  const all = list.map((name, index) => `${index + 1}. ${readable(name)}`).join("\n");
+  const all = list
+    .map((name, index) => `${index + 1}. ${readable(name)}`)
+    .join("\n");
   return (
     <Tooltip title={all}>
       <Stack spacing={0.375}>
         {list.slice(0, 3).map((name, index) => (
-          <Stack key={name} direction="row" spacing={0.75} alignItems="flex-start">
+          <Stack
+            key={name}
+            direction="row"
+            spacing={0.75}
+            alignItems="flex-start"
+          >
             <Typography
               sx={{
                 typography: "s3",
@@ -920,13 +1057,18 @@ function SubGoals({ names }) {
             >
               {index + 1}.
             </Typography>
-            <Typography noWrap sx={{ typography: "s3", color: "text.secondary", minWidth: 0 }}>
+            <Typography
+              noWrap
+              sx={{ typography: "s3", color: "text.secondary", minWidth: 0 }}
+            >
               {readable(name)}
             </Typography>
           </Stack>
         ))}
         {list.length > 3 && (
-          <Typography sx={{ typography: "s3", color: "text.subtitle", pl: 1.75 }}>
+          <Typography
+            sx={{ typography: "s3", color: "text.subtitle", pl: 1.75 }}
+          >
             + {list.length - 3} more
           </Typography>
         )}

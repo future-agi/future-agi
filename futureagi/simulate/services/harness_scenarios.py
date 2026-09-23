@@ -135,6 +135,57 @@ AXES = (
     "overlay_intensity",
 )
 
+# What a reader outside this team should see instead of the axis key. The keys are the scenario
+# framework's own words and mean nothing to a customer: "counterparty" and "disposition" in
+# particular were carried over verbatim from the framework write-up. Served rather than written
+# into the client so renaming an axis is one change here and none anywhere else, and so the grid
+# and the filter panel cannot drift apart - `overlay` is "Attack" in both.
+AXIS_LABELS: dict[str, str] = {
+    "task": "Task",
+    "counterparty": "Who is calling",
+    "disposition": "Their situation",
+    "interface": "Line and speech",
+    "interaction": "How the call goes",
+    "overlay": "Attack",
+    "overlay_vector": "Attack method",
+    "overlay_intensity": "Attack intensity",
+}
+
+
+def axis_label(axis: str) -> str:
+    """The reader-facing name for one axis, falling back to the key made readable."""
+    return AXIS_LABELS.get(axis) or str(axis or "").replace("_", " ").strip().capitalize()
+
+
+# The same for a level. Only the ones whose key reads badly are listed; everything else falls
+# through to the key with its underscores removed, which is right far more often than not. Served
+# for the same reason the axis names are: renaming what a reader sees is a change here and nowhere
+# else, and never a change in a client.
+LEVEL_LABELS: dict[str, str] = {
+    "none": "None",
+    "minor_vulnerable": "Vulnerable caller",
+    "emergency_crisis": "Emergency",
+    "privacy_pii": "Personal data",
+    "fraud_policy_abuse": "Fraud attempt",
+    "prompt_injection": "Injected instruction",
+    "social_engineering": "Social engineering",
+    "out_of_scope": "Out of scope",
+    "destructive": "Destructive request",
+    "spoken_caller": "Spoken by the caller",
+    "absent": "None",
+    "quiet_line": "Quiet line",
+    "non_native": "Non-native speaker",
+    "code_switching": "Switches language",
+}
+
+
+def level_label(level: str) -> str:
+    """The reader-facing name for one level of an axis."""
+    said = str(level or "").strip()
+    if not said:
+        return ""
+    return LEVEL_LABELS.get(said) or said.replace("_", " ").strip().capitalize()
+
 
 # Properties that are not columns on the row. Status lives on the call, and is absent until one
 # has been made, which is what "authored" means when it is read back.
@@ -349,6 +400,7 @@ def coverage_grid(queryset: QuerySet, row_axis: str, col_axis: str) -> dict[str,
         "per_axis": [
             {
                 "axis": axis,
+                "label": axis_label(axis),
                 "levels": len(held),
                 "scenarios": sum(held.values()),
                 "counts": dict(sorted(held.items(), key=lambda pair: (-pair[1], pair[0]))),
@@ -357,7 +409,9 @@ def coverage_grid(queryset: QuerySet, row_axis: str, col_axis: str) -> dict[str,
             if held
         ],
         "row_axis": row_axis,
+        "row_axis_label": axis_label(row_axis),
         "col_axis": col_axis,
+        "col_axis_label": axis_label(col_axis),
         "rows": sorted(rows),
         "columns": sorted(cols),
         "cells": [
@@ -370,7 +424,35 @@ def coverage_grid(queryset: QuerySet, row_axis: str, col_axis: str) -> dict[str,
             for across in sorted(cols)
         ],
         "axes": list(AXES),
+        # Every axis the client may offer, with the name to show for it. The client picks its two
+        # dropdowns from this and never spells an axis name itself.
+        "axis_labels": {axis: axis_label(axis) for axis in AXES},
+        # Every level the grid can show, with the name to show for it. A client renders these and
+        # never turns a key into words itself, so renaming one is a change here alone.
+        "level_labels": {
+            level: level_label(level)
+            for axis in levels
+            for level in levels[axis]
+        },
     }
+
+
+def level_labels_for(rows: list[dict[str, Any]]) -> dict[str, str]:
+    """The reader-facing name for every coverage level and noise bed on one page of rows.
+
+    One map for the page rather than a label beside every value: the same dozen levels repeat
+    down a page of fifty, and the client looks each up once.
+    """
+    seen: set[str] = set()
+    for row in rows or []:
+        for value in (row.get("coverage") or {}).values():
+            said = str(value or "").strip()
+            if said:
+                seen.add(said)
+        bed = row.get("background_noise")
+        if isinstance(bed, str) and bed.strip():
+            seen.add(bed.strip())
+    return {level: level_label(level) for level in sorted(seen)}
 
 
 def scenario_row(row: HostedHarnessScenario) -> dict[str, Any]:

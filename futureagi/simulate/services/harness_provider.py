@@ -1283,6 +1283,11 @@ class HostedHarnessProvider:
         from simulate.services.harness_scenarios import GROUPINGS
 
         response.data["groupings"] = [dict(one) for one in GROUPINGS]
+        # Every value on this page that a client would otherwise have to turn into words itself,
+        # already turned into words. A client renders what it is given and never spells a level,
+        # so renaming one is a change in this service and nowhere else.
+        from simulate.services.harness_scenarios import level_labels_for
+        response.data["level_labels"] = level_labels_for(rows)
         return response
 
     def scenario_coverage(self, request, pk) -> Response:

@@ -35,6 +35,9 @@ const toPage = (data) => ({
   // Which grouping the server actually applied, so the control can show it before anyone picks.
   groupBy: data?.group_by ?? "",
   editing: data?.scenario_editing ?? null,
+  // What each coverage level and noise bed is called. Served, never spelled here: renaming one is
+  // a change in the backend and none in this app.
+  levelLabels: data?.level_labels ?? {},
 });
 
 /**
@@ -95,7 +98,6 @@ export function useAmendScenarios(jobId) {
     },
   });
 }
-
 
 export const scenarioCoverageKey = (jobId, params) => [
   ...scenariosListKey(jobId),
