@@ -1,30 +1,16 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
-import useKpis from "src/hooks/useKpis";
 import { extractKpis } from "src/sections/test-detail/common";
 import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
-import { useCallExecutionDetail } from "src/sections/agents/helper";
 import { runColor } from "src/sections/simulate/environments/workspace/runs/runs.constants";
-import { listRunTestExecutions, mapExecutions } from "./runs";
 
 /**
  * The run/execution DETAIL data source.
  *
- * The designer's run views (header, per-call table, call drawer) consume two
- * fixed view-model shapes — `identity` and `stats` — produced in the mock by
- * `runSummaries`. This module produces those same shapes from REAL product
- * payloads so the ported components render unchanged:
- *   - `identity` from the matching `detailExecutions` row (reusing
- *     `executionToRun` + `mapExecutions` for the ordinal, so the list, the
- *     detail header and any comparison agree on one number/letter/colour).
- *   - `stats` from `test-executions/{id}/kpis/` (call counts, duration, eval
- *     scores) and `…/performance-summary/` (pass rate).
- *
- * The adapters are pure and separately exported for unit tests. Later phases
- * add the per-call table (`useRunCalls`) and the call drawer (`useCallDetail`);
- * their output shapes are fixed here as JSDoc typedefs and stubbed so callers
- * can be written against the final contract now.
+ * The run views consume fixed `identity` and `stats` view models. The active
+ * hook builds them from the isolated v3 run-results contract; the pure legacy
+ * adapters remain exported for their existing compatibility tests.
  */
 
 /**
@@ -66,9 +52,6 @@ import { listRunTestExecutions, mapExecutions } from "./runs";
  * @property {number} unmeasured    0 — no per-call verdict feed at run level.
  * @property {number} flaky         0 — GAP: no flaky signal in kpis.
  * @property {number} dropped       0 — GAP: no dropped-scenario signal.
- * @property {number} failedCritical 0 — GAP: no per-task `critical` flag at the
- *                                  run level; the critical banner stays inert
- *                                  until the per-call feed (Phase 2) lands.
  */
 
 /**
@@ -158,44 +141,74 @@ export function buildRunStats(kpis, perf, row) {
  * @returns {{ identity: ?RunIdentity, stats: RunStats, isLoading: boolean }}
  */
 export function useRunDetail(runTestId, executionId, { envName } = {}) {
-  const rowsQuery = useQuery({
-    queryKey: ["run-test-executions", runTestId],
-    queryFn: () => listRunTestExecutions(runTestId),
-    enabled: !!runTestId,
-    select: mapExecutions,
-  });
-
-  const kpisQuery = useKpis(executionId);
-
-  const perfQuery = useQuery({
-    queryKey: ["test-execution-detail", "PERFORMANCE_SUMMARY", executionId],
+  const query = useQuery({
+    queryKey: ["simulation-run-results-v3", executionId, "summary"],
     queryFn: () =>
       axios
-        .get(endpoints.testExecutions.executionPerformanceSummary(executionId))
+        .get(endpoints.runResultsV3.calls(executionId), {
+          params: { page: 1, page_size: 1 },
+        })
         .then((res) => res.data),
     enabled: !!executionId,
     staleTime: 1000 * 60 * 5,
   });
-
-  const row =
-    (rowsQuery.data ?? []).find((r) => r.executionId === executionId) ?? null;
-
-  // Memoised so `identity`/`stats` keep a stable reference across renders — a
-  // later phase's table/drawer can safely put them in effect/memo deps.
-  const identity = useMemo(
-    () => buildRunIdentity(row, envName ?? null),
-    [row, envName],
-  );
+  const execution = query.data?.execution;
+  const summary = execution?.summary;
+  const identity = useMemo(() => {
+    if (!execution) return null;
+    return {
+      id: execution.id,
+      executionId: execution.id,
+      ordinal: execution.ordinal,
+      letter: String(execution.ordinal),
+      color: runColor(execution.ordinal),
+      name: envName ?? null,
+      agentVersion: execution.agent_version ?? null,
+      startedAt: execution.started_at ?? null,
+      finishedAt: execution.completed_at ?? null,
+      status:
+        execution.status === "running" || execution.status === "pending"
+          ? "running"
+          : summary?.outcomes?.passed > 0
+            ? "passed"
+            : "failed",
+    };
+  }, [execution, envName, summary]);
   const stats = useMemo(
-    () => buildRunStats(kpisQuery.data, perfQuery.data, row),
-    [kpisQuery.data, perfQuery.data, row],
+    () => ({
+      total: summary?.total ?? 0,
+      passed: summary?.outcomes?.passed ?? 0,
+      failed:
+        (summary?.outcomes?.failed ?? 0) + (summary?.outcomes?.error ?? 0),
+      passRate: summary?.pass_rate ?? 0,
+      durationS: summary?.duration?.average ?? null,
+      avgDurationMs:
+        summary?.duration?.average != null
+          ? summary.duration.average * 1000
+          : null,
+      avgScore: null,
+      csat: null,
+      avgTurnCount: null,
+      connectedPct: null,
+      agentType: execution?.agent_type ?? null,
+      tokens: summary?.tokens?.total_value ?? null,
+      cost:
+        summary?.cost_cents?.total_value != null
+          ? summary.cost_cents.total_value / 100
+          : null,
+      scores: {},
+      measured: summary?.measured ?? 0,
+      unmeasured: summary?.outcomes?.inconclusive ?? 0,
+      flaky: 0,
+      dropped: 0,
+      failedCritical: 0,
+    }),
+    [execution, summary],
   );
 
-  const isLoading =
-    (!!runTestId && rowsQuery.isLoading) ||
-    (!!executionId && (kpisQuery.isPending || perfQuery.isLoading));
+  const isLoading = !!executionId && query.isPending;
 
-  return { identity, stats, isLoading };
+  return { identity, stats, isLoading, error: query.error };
 }
 
 /**
@@ -283,6 +296,32 @@ function normalizeRole(role) {
   return r;
 }
 
+const displayJson = (value) =>
+  typeof value === "string" ? value : JSON.stringify(value);
+
+export function functionCallTranscriptRows(calls = []) {
+  return calls.map((call, index) => {
+    const duration = call.duration_ms ?? call.durationMs;
+    const heading = `Function call · ${call.name || call.function?.name || "tool"}${duration != null ? ` · ${duration}ms` : ""}`;
+    const args = call.arguments ?? call.function?.arguments;
+    const result = call.result ?? call.output;
+    return {
+      id: call.id || `function-call-${index}`,
+      speaker_role: "tool",
+      content: [
+        heading,
+        args != null ? `→ args: ${displayJson(args)}` : null,
+        result != null ? `← result: ${displayJson(result)}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      start_time_seconds: call.start_time_seconds ?? call.started_at_seconds,
+      end_time_seconds: call.end_time_seconds ?? call.completed_at_seconds,
+      tool_calls: [call],
+    };
+  });
+}
+
 // One eval cell from an `eval_metrics[evalId]` entry, reusing the product's
 // `normalizeEvalResult` (the same path `runCalls` uses for the table). Pending /
 // skipped / errored evals carry no verdict (`passed: null`) so they never feed
@@ -294,7 +333,10 @@ function callEvalResult(evalId, data) {
   // normalise to "empty" and have no cell to show.
   if (norm.kind === "empty") return null;
   const inertStatus =
-    data.status === "pending" || data.status === "skipped" || data.skipped || data.error;
+    data.status === "pending" ||
+    data.status === "skipped" ||
+    data.skipped ||
+    data.error;
 
   const to01 = (n) => (n == null ? null : n <= 1 ? n : n / 100);
   let score = null;
@@ -328,7 +370,9 @@ export function mapCallDetail(raw) {
   if (!raw) return null;
 
   const isChat = raw.simulation_call_type === "text";
-  const turns = (Array.isArray(raw.transcript) ? raw.transcript : []).map((t) => ({
+  const transcript = Array.isArray(raw.transcript) ? raw.transcript : [];
+  const functionCallRows = functionCallTranscriptRows(raw.function_calls);
+  const turns = [...transcript, ...functionCallRows].map((t) => ({
     role: normalizeRole(t.speaker_role ?? t.role),
     text: t.content ?? "",
     at: t.start_time_seconds ?? null,
@@ -336,15 +380,21 @@ export function mapCallDetail(raw) {
   }));
 
   const words = turns.reduce(
-    (a, s) => a + (s.text ? s.text.trim().split(/\s+/).filter(Boolean).length : 0),
+    (a, s) =>
+      a + (s.text ? s.text.trim().split(/\s+/).filter(Boolean).length : 0),
     0,
   );
-  const toolCalls = turns.filter(
-    (s) => Array.isArray(s.toolCalls) && s.toolCalls.length > 0,
-  ).length;
+  const toolCalls = turns.reduce(
+    (count, turn) =>
+      count + (Array.isArray(turn.toolCalls) ? turn.toolCalls.length : 0),
+    0,
+  );
 
   const aiPct = raw.agent_talk_percentage ?? null;
-  const evalMetrics = raw.eval_metrics && typeof raw.eval_metrics === "object" ? raw.eval_metrics : {};
+  const evalMetrics =
+    raw.eval_metrics && typeof raw.eval_metrics === "object"
+      ? raw.eval_metrics
+      : {};
   const evalResults = Object.entries(evalMetrics)
     .map(([id, data]) => callEvalResult(id, data))
     .filter(Boolean);
@@ -371,20 +421,43 @@ export function mapCallDetail(raw) {
     tokens: raw.total_tokens ?? null,
     cost: raw.cost_cents != null ? raw.cost_cents / 100 : null,
     summary: raw.call_summary ?? null,
-    recordings: raw.recordings && typeof raw.recordings === "object" ? raw.recordings : {},
+    recordings:
+      raw.recordings && typeof raw.recordings === "object"
+        ? raw.recordings
+        : {},
     evalResults,
   };
 }
 
 /**
- * The chat call drawer data source. Reuses the product's
- * `useCallExecutionDetail` (same `/simulate/call-executions/{id}/` read, shared
- * cache) and adapts the payload to the `CallDetail` view-model.
+ * The raw v3 call-detail data source shared by the voice and chat drawers.
+ * @param {?string} callExecId
+ * @param {boolean} [enabled]
+ */
+export function useCallExecutionV3Detail(callExecId, enabled = true) {
+  return useQuery({
+    queryKey: ["simulation-call-detail-v3", callExecId],
+    queryFn: () =>
+      axios
+        .get(endpoints.runResultsV3.callDetail(callExecId))
+        .then((response) => response.data),
+    enabled: enabled && !!callExecId,
+    staleTime: 1000 * 60 * 5,
+  });
+}
+
+/**
+ * The chat call drawer data source. Adapts the v3 response to the CallDetail
+ * view-model while sharing its query cache with the voice drawer.
  * @param {?string} callExecId
  * @returns {{ callDetail: ?CallDetail, isLoading: boolean }}
  */
 export function useCallDetail(callExecId) {
-  const query = useCallExecutionDetail(callExecId, !!callExecId);
+  const query = useCallExecutionV3Detail(callExecId);
   const callDetail = useMemo(() => mapCallDetail(query.data), [query.data]);
-  return { callDetail, isLoading: !!callExecId && query.isPending };
+  return {
+    callDetail,
+    isLoading: !!callExecId && query.isPending,
+    error: query.error,
+  };
 }

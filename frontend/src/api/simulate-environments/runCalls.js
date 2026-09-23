@@ -1,70 +1,21 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  getTestRunDetailColumnQuery,
-  TestRunErrorStatus,
-  CallExecutionLoadingStatus,
-} from "src/sections/test-detail/common";
-import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
+import axios, { endpoints } from "src/utils/axios";
 import { TRACE_COLUMNS } from "src/sections/simulate/environments/workspace/runs/detail/trace/traceTable.constants";
 
-/**
- * The per-call table data source (Phase 2). Turns the product's real
- * `testExecutions.list(executionId)` payload — the same `{ column_order, results,
- * count }` the product's TestRunDetailGrid consumes — into the fixed `RunTask` /
- * `TraceColumn` view-models the ported designer TraceTable renders against.
- *
- * The two adapters are pure and separately exported so the mapping is unit-
- * tested without the network.
- */
+/** Adapt the v3 run-results contract for the trace table. */
 
-// A per-call row's status is two axes: whether the call itself ran (its own
-// `status`), and — for a call that ran — whether its evals agreed. `error` and
-// `unmeasured` come from the call status; a completed call is `failed` when any
-// eval explicitly failed, else `passed`. No real per-call "flaky" signal exists,
-// so `flaky` is never emitted (the Mixed chip reads 0 and disables — honest).
-function callRan(row) {
-  const s = String(row?.status || "").toLowerCase();
-  if (TestRunErrorStatus.includes(s)) return "error";
-  if (CallExecutionLoadingStatus.includes(s)) return "unmeasured";
-  return "completed";
-}
-
-// One `evalResults[]` cell from a call row's `eval_metrics[evalId]`. The output
-// type (Pass/Fail vs score vs choices) drives the normalisation via the product's
-// `normalizeEvalResult`; `score` is coerced to the 0–1 scale the designer's Score
-// cell expects (`Math.round(score*100)%`, `interpolateColorBasedOnScore(_, 1)`).
-// `passed` is explicit only for pass/fail and thresholded score; choices carry no
-// verdict (null) so they never count a call as failed.
+// The server owns status, filtering, grouping, and evaluation normalization.
+// These adapters only rename response fields for the existing table components.
 function evalResultFor(row, col) {
-  const data = row?.eval_metrics?.[col.id];
+  const data = row?.evaluations?.find((item) => item.id === col.id);
   if (!data) return null;
-  const outputType = data.type ?? col.eval_config?.output;
-  const norm = normalizeEvalResult(data.value, outputType);
-  if (norm.kind === "empty") return null;
-
-  const to01 = (n) => (n == null ? null : n <= 1 ? n : n / 100);
-  let score = null;
-  let passed = null;
-  let label = null;
-  if (norm.kind === "score") {
-    score = to01(norm.score);
-    passed = score != null ? score >= 0.5 : null;
-  } else if (norm.kind === "passfail") {
-    passed = norm.pass;
-    score = passed == null ? null : passed ? 1 : 0;
-    label = norm.label ?? null;
-  } else if (norm.kind === "choices") {
-    score = to01(norm.score);
-    label = (norm.items || []).join(", ") || null;
-  }
-
   return {
     id: col.id,
-    name: data.name || col.column_name || col.id,
-    score,
-    passed,
-    label,
+    name: data.name || col.name || col.id,
+    score: data.score ?? null,
+    passed: data.passed ?? null,
+    label: typeof data.value === "string" ? data.value : null,
     reason: data.reason || "",
     threshold: 0.5,
   };
@@ -81,34 +32,35 @@ export function mapCallRow(row, evalColumns = []) {
     .map((col) => evalResultFor(row, col))
     .filter(Boolean);
 
-  const ran = callRan(row);
-  const status =
-    ran === "completed"
-      ? evalResults.some((r) => r.passed === false)
-        ? "failed"
-        : "passed"
-      : ran;
+  const status = row?.outcome === "inconclusive" ? "unmeasured" : row?.outcome;
 
   return {
     id: row?.id,
-    scenario: row?.scenario || row?.customer_name || "Untitled scenario",
-    persona: row?.customer_name || null,
+    goal: row?.goal || row?.scenario || "Untitled goal",
+    subGoals: row?.sub_goals ?? [],
+    scenario: row?.scenario || row?.goal || "Untitled scenario",
+    scenarioDetails: row?.scenario_details ?? null,
+    idealOutcome: row?.ideal_outcome ?? null,
+    conversationBranch: row?.conversation_branch ?? null,
+    persona: row?.persona || null,
+    personaDetails: row?.persona_details ?? {
+      name: row?.persona || null,
+      voice: null,
+      age: null,
+      traits: [],
+    },
     status,
-    // No per-call `critical` field on the executions payload — the release-
-    // blocker flag has no real feed yet, so it stays false (never fires the
-    // critical banner on a real run) while the failedCritical seam is kept live.
     critical: false,
-    csat: row?.overall_score != null ? Math.round(row.overall_score * 10) / 10 : null,
+    csat: row?.csat != null ? Math.round(row.csat * 10) / 10 : null,
     turns: row?.turn_count ?? null,
-    latencyMs: row?.avg_agent_latency ?? null,
-    // No per-call token total in the payload — left null (renders "—" under a
-    // Sample header), the My-Environments precedent for an unfed column.
-    tokens: null,
-    durationMs: row?.duration != null ? Math.round(row.duration * 1000) : null,
-    // Routing hints for the call drawer. `simulation_call_type` is the product's
-    // authoritative voice-vs-chat signal (a chat sim is "text"); `provider` feeds
-    // the meta chip. Both live on the list row (not detail_mode-gated).
-    simulationCallType: row?.simulation_call_type ?? null,
+    latencyMs: row?.latency_ms ?? null,
+    tokens: row?.tokens ?? null,
+    durationMs:
+      row?.duration_seconds != null
+        ? Math.round(row.duration_seconds * 1000)
+        : null,
+    // Routing hints for the call drawer.
+    simulationCallType: row?.modality ?? null,
     provider: row?.provider ?? null,
     evalResults,
   };
@@ -125,22 +77,22 @@ export function mapCallRow(row, evalColumns = []) {
  * @returns {import("./runDetail").TraceColumn[]}
  */
 export function buildTraceColumns(columnOrder = []) {
-  const staticCols = TRACE_COLUMNS.filter((c) => c.key !== "evals").map((c) => ({
-    key: c.key,
-    label: c.label,
-    defaultOn: c.defaultOn,
-    width: c.width,
-    group: c.group,
+  const staticCols = TRACE_COLUMNS.filter((c) => c.key !== "evals").map(
+    (c) => ({
+      key: c.key,
+      label: c.label,
+      defaultOn: c.defaultOn,
+      width: c.width,
+      group: c.group,
+    }),
+  );
+  const evalCols = (columnOrder || []).map((c) => ({
+    key: c.id,
+    label: c.name || c.id,
+    defaultOn: true,
+    width: 150,
+    group: "Evaluations",
   }));
-  const evalCols = (columnOrder || [])
-    .filter((c) => c.type === "evaluation")
-    .map((c) => ({
-      key: c.id,
-      label: c.column_name || c.id,
-      defaultOn: true,
-      width: 150,
-      group: "Evaluations",
-    }));
   return [...staticCols, ...evalCols];
 }
 
@@ -148,37 +100,111 @@ export function buildTraceColumns(columnOrder = []) {
  * The per-call table hook. Reads the product's real executions list and adapts
  * it to `{ tasks, columns, count }`. `opts` mirror the product grid's params.
  * @param {string} executionId
- * @param {{ page?: number, limit?: number, search?: string, filters?: Array }} [opts]
+ * @param {{ page?: number, limit?: number, search?: string, filters?: Object }} [opts]
  * @returns {{ tasks: import("./runDetail").RunTask[],
  *   columns: import("./runDetail").TraceColumn[], count: number,
  *   isLoading: boolean }}
  */
 export function useRunCalls(executionId, opts = {}) {
-  const { page = 1, limit = 100, search = "", filters = [] } = opts;
-
-  const productQuery = getTestRunDetailColumnQuery(executionId, page - 1, search, filters, limit);
+  const {
+    page = 1,
+    limit = 100,
+    search = "",
+    filters = {},
+    groupBy = "goal",
+  } = opts;
   const query = useQuery({
-    ...productQuery,
-    // The product's query key omits `pageSize`; this view requests a different
-    // limit than the product grid, so fold it into the key to avoid the two
-    // serving each other a wrong-sized page from cache.
-    queryKey: [...productQuery.queryKey, limit],
+    queryKey: [
+      "simulation-run-results-v3",
+      executionId,
+      page,
+      limit,
+      search,
+      filters,
+      groupBy,
+    ],
+    queryFn: () =>
+      axios
+        .get(endpoints.runResultsV3.calls(executionId), {
+          params: {
+            page,
+            page_size: limit,
+            search,
+            filters: JSON.stringify(filters),
+            group_by: groupBy,
+          },
+        })
+        .then((response) => response.data),
     enabled: !!executionId,
-    select: (res) => res.data,
+    staleTime: 1000 * 60,
   });
 
   const data = query.data;
-  const { tasks, columns, count } = useMemo(() => {
-    if (!data) return { tasks: [], columns: [], count: 0 };
-    const columnOrder = data.column_order ?? [];
-    const evalColumns = columnOrder.filter((c) => c.type === "evaluation");
-    const rows = (data.results ?? []).map((r) => mapCallRow(r, evalColumns));
-    return {
-      tasks: rows,
-      columns: buildTraceColumns(columnOrder),
-      count: data.count ?? rows.length,
-    };
-  }, [data]);
+  const { tasks, columns, count, groups, facets, summary, totalPages } =
+    useMemo(() => {
+      if (!data)
+        return {
+          tasks: [],
+          columns: [],
+          count: 0,
+          groups: [],
+          facets: {},
+          summary: null,
+          totalPages: 1,
+        };
+      const evalColumns = data.evaluation_columns ?? [];
+      const rows = (data.results ?? []).map((r) => mapCallRow(r, evalColumns));
+      const rowsById = new Map(rows.map((row) => [row.id, row]));
+      const serverGroups = (data.groups ?? []).map((group) => {
+        const groupRows = (group.result_ids ?? [])
+          .map((id) => rowsById.get(id))
+          .filter(Boolean);
+        const evals = Object.fromEntries(
+          Object.entries(group.aggregates?.evaluations ?? {}).map(
+            ([id, aggregate]) => [
+              id,
+              {
+                scored: aggregate.scored,
+                scoreSum: aggregate.score_sum,
+              },
+            ],
+          ),
+        );
+        return {
+          label: group.label,
+          rows: groupRows,
+          count: group.total,
+          measured: group.measured,
+          passed: group.outcomes?.passed ?? 0,
+          agg: {
+            csat: group.aggregates?.csat ?? null,
+            turns: group.aggregates?.turns ?? null,
+            latency: group.aggregates?.latency_ms ?? null,
+            tokens: group.aggregates?.tokens ?? null,
+            evals,
+          },
+        };
+      });
+      return {
+        tasks: rows,
+        columns: buildTraceColumns(evalColumns),
+        count: data.count ?? rows.length,
+        groups: serverGroups,
+        facets: data.facets ?? {},
+        summary: data.summary ?? null,
+        totalPages: data.total_pages ?? 1,
+      };
+    }, [data]);
 
-  return { tasks, columns, count, isLoading: !!executionId && query.isPending };
+  return {
+    tasks,
+    columns,
+    count,
+    groups,
+    facets,
+    summary,
+    totalPages,
+    isLoading: !!executionId && query.isPending,
+    error: query.error,
+  };
 }

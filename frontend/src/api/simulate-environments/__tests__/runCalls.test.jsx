@@ -13,58 +13,132 @@ vi.mock("src/utils/axios", async (importOriginal) => {
 const axiosMod = await import("src/utils/axios");
 const axios = axiosMod.default;
 const { endpoints } = axiosMod;
-const { mapCallRow, buildTraceColumns, useRunCalls } = await import("../runCalls");
+const { mapCallRow, buildTraceColumns, useRunCalls } = await import(
+  "../runCalls"
+);
 
 // A real-shaped executions payload: two evaluation columns (one Pass/Fail, one
 // score), two completed calls and one failed call.
 const columnOrder = () => [
-  { id: "call_details", type: "call_details", column_name: "Call Details" },
-  { id: "overall_score", type: "overall_score", column_name: "CSAT" },
-  { id: "eval-1", type: "evaluation", column_name: "Refund correctness", eval_config: { output: "Pass/Fail" } },
-  { id: "eval-2", type: "evaluation", column_name: "Tone", eval_config: { output: "score" } },
+  { id: "eval-1", name: "Refund correctness" },
+  { id: "eval-2", name: "Tone" },
 ];
 
 const payload = () => ({
-  column_order: columnOrder(),
+  evaluation_columns: columnOrder(),
+  groups: [
+    {
+      key: "server-only-group",
+      label: "Server-computed group",
+      result_ids: ["c2", "c1"],
+      total: 2,
+      measured: 2,
+      outcomes: { passed: 1, failed: 1, error: 0, inconclusive: 0 },
+      aggregates: {
+        csat: 5.65,
+        turns: 9.5,
+        latency_ms: 465,
+        tokens: 450,
+        evaluations: {},
+      },
+    },
+  ],
   results: [
     {
-      id: "c1", status: "completed", overall_score: 8.2, turn_count: 5,
-      avg_agent_latency: 320, duration: 42.5, simulation_call_type: "voice", provider: "vapi",
-      scenario: "Refund a double charge", customer_name: "Impatient caller",
-      eval_metrics: {
-        "eval-1": { name: "Refund correctness", value: "Passed", type: "Pass/Fail", reason: "matched policy" },
-        "eval-2": { name: "Tone", value: 0.9, type: "score" },
+      id: "c1",
+      outcome: "passed",
+      csat: 8.2,
+      turn_count: 5,
+      latency_ms: 320,
+      duration_seconds: 42.5,
+      modality: "voice",
+      provider: "vapi",
+      goal: "Refund a double charge",
+      scenario: "Routine refund",
+      scenario_details: "Customer requests a refund for a duplicate charge.",
+      ideal_outcome: "Refund is created after account verification",
+      conversation_branch: "duplicate-charge-refund",
+      persona: "Impatient caller",
+      persona_details: {
+        name: "Impatient caller",
+        voice: "US female",
+        age: "34",
+        traits: ["impatient", "in a hurry"],
       },
+      sub_goals: ["identity_verified", "refund_created"],
+      tokens: 450,
+      evaluations: [
+        {
+          id: "eval-1",
+          name: "Refund correctness",
+          value: "Passed",
+          score: 1,
+          passed: true,
+          reason: "matched policy",
+        },
+        { id: "eval-2", name: "Tone", value: 0.9, score: 0.9, passed: null },
+      ],
     },
     {
-      id: "c2", status: "completed", overall_score: 3.1, turn_count: 14,
-      avg_agent_latency: 610, duration: 88,
-      scenario: "Escalate to a human", customer_name: "Angry caller",
-      eval_metrics: {
-        "eval-1": { name: "Refund correctness", value: "Failed", type: "Pass/Fail" },
-        "eval-2": { name: "Tone", value: 0.4, type: "score" },
-      },
+      id: "c2",
+      outcome: "failed",
+      csat: 3.1,
+      turn_count: 14,
+      latency_ms: 610,
+      duration_seconds: 88,
+      goal: "Escalate to a human",
+      persona: "Angry caller",
+      evaluations: [
+        {
+          id: "eval-1",
+          name: "Refund correctness",
+          value: "Failed",
+          score: 0,
+          passed: false,
+        },
+        { id: "eval-2", name: "Tone", value: 0.4, score: 0.4, passed: null },
+      ],
     },
-    { id: "c3", status: "failed", scenario: "Handle a timeout", customer_name: "Caller", eval_metrics: {} },
+    {
+      id: "c3",
+      outcome: "error",
+      goal: "Handle a timeout",
+      persona: "Caller",
+      evaluations: [],
+    },
   ],
   count: 3,
 });
 
 describe("mapCallRow", () => {
-  const evalCols = columnOrder().filter((c) => c.type === "evaluation");
+  const evalCols = columnOrder();
 
   it("maps a passing completed call: real metrics, CSAT on the 0–10 scale, ms duration", () => {
     const t = mapCallRow(payload().results[0], evalCols);
     expect(t.id).toBe("c1");
-    expect(t.scenario).toBe("Refund a double charge");
+    expect(t.scenario).toBe("Routine refund");
     expect(t.persona).toBe("Impatient caller");
+    expect(t.personaDetails).toEqual({
+      name: "Impatient caller",
+      voice: "US female",
+      age: "34",
+      traits: ["impatient", "in a hurry"],
+    });
+    expect(t.goal).toBe("Refund a double charge");
+    expect(t.subGoals).toEqual(["identity_verified", "refund_created"]);
+    expect(t.scenario).toBe("Routine refund");
+    expect(t.scenarioDetails).toBe(
+      "Customer requests a refund for a duplicate charge.",
+    );
+    expect(t.idealOutcome).toBe("Refund is created after account verification");
+    expect(t.conversationBranch).toBe("duplicate-charge-refund");
     expect(t.status).toBe("passed");
     expect(t.critical).toBe(false);
     expect(t.csat).toBe(8.2);
     expect(t.turns).toBe(5);
     expect(t.latencyMs).toBe(320);
     expect(t.durationMs).toBe(42500);
-    expect(t.tokens).toBeNull();
+    expect(t.tokens).toBe(450);
     // Routing hints carried onto the task for the call drawer.
     expect(t.simulationCallType).toBe("voice");
     expect(t.provider).toBe("vapi");
@@ -72,8 +146,12 @@ describe("mapCallRow", () => {
     expect(t.evalResults).toHaveLength(2);
     const e1 = t.evalResults.find((e) => e.id === "eval-1");
     const e2 = t.evalResults.find((e) => e.id === "eval-2");
-    expect(e1).toMatchObject({ score: 1, passed: true, reason: "matched policy" });
-    expect(e2).toMatchObject({ score: 0.9, passed: true });
+    expect(e1).toMatchObject({
+      score: 1,
+      passed: true,
+      reason: "matched policy",
+    });
+    expect(e2).toMatchObject({ score: 0.9, passed: null });
   });
 
   it("marks a completed call failed when any eval failed", () => {
@@ -97,16 +175,34 @@ describe("buildTraceColumns", () => {
     const cols = buildTraceColumns(columnOrder());
     const keys = cols.map((c) => c.key);
     expect(keys).toEqual(
-      expect.arrayContaining(["callDetails", "persona", "scenario", "csat", "turns", "latency", "tokens", "eval-1", "eval-2"]),
+      expect.arrayContaining([
+        "callDetails",
+        "persona",
+        "scenario",
+        "idealOutcome",
+        "conversationBranch",
+        "csat",
+        "turns",
+        "latency",
+        "tokens",
+        "eval-1",
+        "eval-2",
+      ]),
     );
     const evalCols = cols.filter((c) => c.group === "Evaluations");
     expect(evalCols).toHaveLength(2);
-    expect(evalCols[0]).toMatchObject({ key: "eval-1", label: "Refund correctness", defaultOn: true });
+    expect(evalCols[0]).toMatchObject({
+      key: "eval-1",
+      label: "Refund correctness",
+      defaultOn: true,
+    });
   });
 });
 
 const makeWrapper = () => {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   const Wrapper = ({ children }) => (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   );
@@ -121,16 +217,29 @@ describe("useRunCalls", () => {
   });
 
   it("reads the real executions list and adapts it to tasks + columns", async () => {
-    const { result } = renderHook(() => useRunCalls("ex1"), { wrapper: makeWrapper() });
+    const { result } = renderHook(() => useRunCalls("ex1"), {
+      wrapper: makeWrapper(),
+    });
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
+    expect(result.current.error).toBeNull();
     expect(result.current.tasks).toHaveLength(3);
     expect(result.current.count).toBe(3);
-    expect(result.current.columns.filter((c) => c.group === "Evaluations")).toHaveLength(2);
+    expect(
+      result.current.columns.filter((c) => c.group === "Evaluations"),
+    ).toHaveLength(2);
+    expect(result.current.groups).toHaveLength(1);
+    expect(result.current.groups[0].label).toBe("Server-computed group");
+    expect(result.current.groups[0].rows.map((row) => row.id)).toEqual([
+      "c2",
+      "c1",
+    ]);
     expect(axios.get).toHaveBeenCalledWith(
-      endpoints.testExecutions.list("ex1"),
-      expect.objectContaining({ params: expect.objectContaining({ limit: 100 }) }),
+      endpoints.runResultsV3.calls("ex1"),
+      expect.objectContaining({
+        params: expect.objectContaining({ page_size: 100 }),
+      }),
     );
   });
 });

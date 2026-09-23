@@ -32,11 +32,15 @@ export const readQuery = (url, { params = {}, ...config } = {}) => {
   if (!findOpenApiEndpoint(url, "post")?.contract.readQueryPost) {
     return axiosInstance.get(url, { params, ...config });
   }
-  if (config.data !== undefined) throw new Error("Read query body is owned by params.");
+  if (config.data !== undefined)
+    throw new Error("Read query body is owned by params.");
   const [path, search = ""] = url.split("?");
-  const data = Object.fromEntries(Object.entries(params).filter(([, value]) => value != null));
+  const data = Object.fromEntries(
+    Object.entries(params).filter(([, value]) => value != null),
+  );
   for (const [key, value] of new URLSearchParams(search)) {
-    if (Object.hasOwn(data, key)) throw new Error("Duplicate read query parameter.");
+    if (Object.hasOwn(data, key))
+      throw new Error("Duplicate read query parameter.");
     data[key] = value;
   }
   return axiosInstance.post(path, data, config);
@@ -1291,7 +1295,8 @@ export const endpoints = {
     updateSessionListColumnVisibility: () =>
       apiPath("/tracer/project/update_project_session_config/"),
     traceSession: apiPath("/tracer/trace-session/"),
-    traceSessionQuery: (id) => apiPath("/tracer/trace-session/{id}/query/", { id }),
+    traceSessionQuery: (id) =>
+      apiPath("/tracer/trace-session/{id}/query/", { id }),
     projectExperimentDetail: (projectId) =>
       apiPath("/tracer/project/{id}/", { id: projectId }),
     deleteObservePrototype: apiPath("/tracer/project/"),
@@ -1687,6 +1692,24 @@ export const endpoints = {
         "/simulate/call-executions/{call_execution_id}/session-comparison/",
         { call_execution_id: id },
       ),
+  },
+  runResultsV3: {
+    calls: (id) =>
+      apiPath("/simulate/v3/test-executions/{test_execution_id}/calls/", {
+        test_execution_id: id,
+      }),
+    callDetail: (id) =>
+      apiPath("/simulate/v3/call-executions/{call_execution_id}/", {
+        call_execution_id: id,
+      }),
+    analytics: (id) =>
+      apiPath("/simulate/v3/test-executions/{test_execution_id}/analytics/", {
+        test_execution_id: id,
+      }),
+    export: (id) =>
+      apiPath("/simulate/v3/test-executions/{test_execution_id}/export/", {
+        test_execution_id: id,
+      }),
   },
   optimizeSimulate: {
     createOptimization: apiPath("/simulate/api/agent-prompt-optimiser/"),

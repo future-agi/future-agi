@@ -1,9 +1,18 @@
 import PropTypes from "prop-types";
 import { useMemo } from "react";
-import { Box, CircularProgress, IconButton, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  CircularProgress,
+  IconButton,
+  Stack,
+  Typography,
+} from "@mui/material";
 
 import Iconify from "src/components/iconify";
-import { useCallExecutionDetail } from "src/sections/agents/helper";
+import {
+  functionCallTranscriptRows,
+  useCallExecutionV3Detail,
+} from "src/api/simulate-environments/runDetail";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
 
 // The annotate / queue / dataset / tags actions need project + annotation
@@ -15,8 +24,23 @@ const HIDDEN_VOICE_ACTIONS = ["annotate", "queue", "dataset", "tags"];
 // close (the outer drawer's only other escape is a backdrop click).
 function StatePane({ children, onClose }) {
   return (
-    <Stack sx={{ width: "60vw", maxWidth: "100%", height: "100%", position: "relative" }} alignItems="center" justifyContent="center" spacing={1.5}>
-      <IconButton aria-label="Close" size="small" onClick={onClose} sx={{ position: "absolute", top: 8, right: 8, color: "text.subtitle" }}>
+    <Stack
+      sx={{
+        width: "60vw",
+        maxWidth: "100%",
+        height: "100%",
+        position: "relative",
+      }}
+      alignItems="center"
+      justifyContent="center"
+      spacing={1.5}
+    >
+      <IconButton
+        aria-label="Close"
+        size="small"
+        onClick={onClose}
+        sx={{ position: "absolute", top: 8, right: 8, color: "text.subtitle" }}
+      >
         <Iconify icon="mingcute:close-line" width={18} />
       </IconButton>
       {children}
@@ -26,24 +50,42 @@ function StatePane({ children, onClose }) {
 StatePane.propTypes = { children: PropTypes.node, onClose: PropTypes.func };
 
 // The voice branch reuses the REAL product voice drawer unchanged. It reads the
-// same `/simulate/call-executions/{id}/` detail the chat branch does (via the
-// product's own `useCallExecutionDetail`, so audio/transcript/evals are genuine
-// and the cache is shared), then hands the payload straight to
+// same v3 `/simulate/v3/call-executions/{id}/` detail the chat branch does, so
+// audio/transcript/evals and normalized function calls share one cache, then
+// hands the payload straight to
 // `VoiceDetailDrawerV2` — a content-only component that renders its own header,
 // recording player and analytics. We only tag `module`/`origin` = "simulate"
 // (the fields the panels branch on) and hide the annotation actions.
 export default function VoiceCallDrawer({ task, onClose }) {
-  const { data, isPending, isError } = useCallExecutionDetail(task.id, !!task.id);
+  const { data, isPending, isError } = useCallExecutionV3Detail(
+    task.id,
+    !!task.id,
+  );
 
   const voiceData = useMemo(
-    () => (data ? { ...data, module: "simulate", origin: "simulate" } : null),
+    () =>
+      data
+        ? {
+            ...data,
+            transcript: [
+              ...(Array.isArray(data.transcript) ? data.transcript : []),
+              ...functionCallTranscriptRows(data.function_calls),
+            ],
+            module: "simulate",
+            origin: "simulate",
+          }
+        : null,
     [data],
   );
 
   if (isError) {
     return (
       <StatePane onClose={onClose}>
-        <Iconify icon="solar:danger-triangle-linear" width={22} sx={{ color: "text.subtitle" }} />
+        <Iconify
+          icon="solar:danger-triangle-linear"
+          width={22}
+          sx={{ color: "text.subtitle" }}
+        />
         <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
           Couldn&rsquo;t load this call.
         </Typography>

@@ -1,6 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import PropTypes from "prop-types";
-import { useEffect } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
@@ -24,25 +22,22 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
 });
 
 // The launch drawer hosts the heavy product optimizer form; stub it to a marker.
-vi.mock("src/sections/test-detail/CreateEditOptimization/CreateEditOptimizationForm", () => ({
-  default: () => <div>optimizer-form</div>,
-}));
+vi.mock(
+  "src/sections/test-detail/CreateEditOptimization/CreateEditOptimizationForm",
+  () => ({
+    default: () => <div>optimizer-form</div>,
+  }),
+);
 
 // The Add-evals drawer pulls the heavy product eval picker; stub it to a marker.
 vi.mock("../../../evals/AddEvalsDrawer", () => ({
   default: ({ open }) => (open ? <div>add-evals-drawer</div> : null),
 }));
 
-// The per-call table owns its own network hook; stub it and drive the
-// failed-critical seam (which feeds the header banner) from a controllable value.
-const traceState = vi.hoisted(() => ({ failedCritical: 0 }));
-function RunTraceTableStub({ onFailedCriticalChange }) {
-  useEffect(() => {
-    onFailedCriticalChange?.(traceState.failedCritical);
-  }, [onFailedCriticalChange]);
+// The per-call table owns its own network hook, so stub it to a marker.
+function RunTraceTableStub() {
   return <div>run-trace-table</div>;
 }
-RunTraceTableStub.propTypes = { onFailedCriticalChange: PropTypes.func };
 vi.mock("../trace/RunTraceTable", () => ({ default: RunTraceTableStub }));
 
 const { default: RunDetail } = await import("../RunDetail");
@@ -112,19 +107,30 @@ function LocationProbe() {
 }
 
 const renderDetail = () => {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
         <LocationProbe />
-        <RunDetail env={ENV} envState={{ evals: [] }} testId="rt1" executionId="ex1" />
+        <RunDetail
+          env={ENV}
+          envState={{ evals: [] }}
+          testId="rt1"
+          executionId="ex1"
+        />
       </MemoryRouter>
     </QueryClientProvider>,
   );
 };
 
 beforeEach(() => {
-  useRunDetail.mockReturnValue({ identity: IDENTITY, stats: STATS, isLoading: false });
+  useRunDetail.mockReturnValue({
+    identity: IDENTITY,
+    stats: STATS,
+    isLoading: false,
+  });
   useOptimizationRuns.mockReturnValue({ runs: [], isLoading: false });
   useOptimizerAnalysis.mockReturnValue({
     analysis: ANALYSIS,
@@ -136,18 +142,28 @@ beforeEach(() => {
 
 describe("RunDetail", () => {
   it("renders the identity header with the real ordinal, agent, status and task count", () => {
-    useRunDetail.mockReturnValue({ identity: IDENTITY, stats: STATS, isLoading: false });
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: STATS,
+      isLoading: false,
+    });
     renderDetail();
 
     expect(screen.getByText(/Run 3 · agent v2/)).toBeInTheDocument();
     // Some passed, some failed → the run reads "completed", not "Failed".
     expect(screen.getByText("Completed")).toBeInTheDocument();
     expect(screen.getByText(/Refund Copilot · 12 tasks/)).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /Test runs \(12\)/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: /Test runs \(12\)/ }),
+    ).toBeInTheDocument();
   });
 
   it("opens the Add-evals drawer from the header action", async () => {
-    useRunDetail.mockReturnValue({ identity: IDENTITY, stats: STATS, isLoading: false });
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: STATS,
+      isLoading: false,
+    });
     const user = userEvent.setup();
     renderDetail();
 
@@ -157,27 +173,27 @@ describe("RunDetail", () => {
   });
 
   it("navigates to the run-simulation target on Run again", async () => {
-    useRunDetail.mockReturnValue({ identity: IDENTITY, stats: STATS, isLoading: false });
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: STATS,
+      isLoading: false,
+    });
     const user = userEvent.setup();
     renderDetail();
 
     await user.click(screen.getByRole("button", { name: "Run again" }));
     // ENV carries no platform bridge → the product Run-Simulation entry.
-    expect(screen.getByTestId("location")).toHaveTextContent(paths.dashboard.simulate.test);
+    expect(screen.getByTestId("location")).toHaveTextContent(
+      paths.dashboard.simulate.test,
+    );
   });
 
-  it("shows the critical-failure banner from the per-call table's failed-critical count", () => {
-    useRunDetail.mockReturnValue({ identity: IDENTITY, stats: STATS, isLoading: false });
-    traceState.failedCritical = 2;
-    renderDetail();
-
-    expect(screen.getByText(/2 critical scenarios failed/)).toBeInTheDocument();
-    traceState.failedCritical = 0;
-  });
-
-  it("hides the critical-failure banner when no critical calls failed", () => {
-    useRunDetail.mockReturnValue({ identity: IDENTITY, stats: STATS, isLoading: false });
-    traceState.failedCritical = 0;
+  it("does not invent a critical-failure classification", () => {
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: STATS,
+      isLoading: false,
+    });
     renderDetail();
 
     expect(screen.queryByText(/critical/)).toBeNull();
@@ -187,13 +203,19 @@ describe("RunDetail", () => {
     const user = userEvent.setup();
     renderDetail();
 
-    expect(screen.queryByText("Confirm eligibility before refunding")).toBeNull();
+    expect(
+      screen.queryByText("Confirm eligibility before refunding"),
+    ).toBeNull();
     await user.click(screen.getByRole("button", { name: "Debug failures" }));
 
     // The drawer header + the diagnosis summary and the fixture recommendation.
     expect(screen.getByText(/4 failing of 12 measured/)).toBeInTheDocument();
-    expect(screen.getByText(/skips the refund-eligibility check/)).toBeInTheDocument();
-    expect(screen.getByText("Confirm eligibility before refunding")).toBeInTheDocument();
+    expect(
+      screen.getByText(/skips the refund-eligibility check/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Confirm eligibility before refunding"),
+    ).toBeInTheDocument();
     expect(screen.getByText("High priority")).toBeInTheDocument();
   });
 
