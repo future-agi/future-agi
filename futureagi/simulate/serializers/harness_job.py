@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import re
+
 from rest_framework import serializers
 from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
+
+_E164_PHONE = re.compile(r"^\+[1-9]\d{1,14}$")
 
 RUNNER_RESERVED_ENVIRONMENT = {
     "DOCKER_HOST",
@@ -74,7 +78,7 @@ class HarnessSourceSerializer(serializers.Serializer):
 
 class HarnessAgentSerializer(serializers.Serializer):
     connector = serializers.ChoiceField(
-        choices=("livekit", "vapi", "retell", "retell_chat", "auto")
+        choices=("livekit", "vapi", "retell", "retell_chat", "phone", "auto")
     )
     mode = serializers.ChoiceField(
         choices=("connect_only", "environment_backed", "provider_import"),
@@ -135,10 +139,67 @@ class HarnessAgentSerializer(serializers.Serializer):
         mode = attrs.get("mode")
         config = attrs.get("config") or {}
         provider_connector = "retell" if connector == "retell_chat" else connector
-        if mode and provider_connector not in {"vapi", "retell"}:
+        if "phone_number" in config and connector != "phone":
+            if connector not in {"vapi", "retell"} or mode != "connect_only":
+                raise serializers.ValidationError(
+                    {
+                        "config": "phone_number is supported only for connect-only Vapi or Retell voice agents"
+                    }
+                )
+            if not _E164_PHONE.fullmatch(str(config.get("phone_number") or "").strip()):
+                raise serializers.ValidationError(
+                    {"config": "phone_number must be in E.164 format"}
+                )
+            if any(
+                str(name).lower().startswith(("sip_", "livekit_")) for name in config
+            ):
+                raise serializers.ValidationError(
+                    {"config": "phone dialer and LiveKit settings are platform-owned"}
+                )
+            target_key = "assistant_id" if connector == "vapi" else "agent_id"
+            key_alias = "VAPI_API_KEY" if connector == "vapi" else "RETELL_API_KEY"
+            has_id = bool(str(config.get(target_key) or "").strip())
+            has_key = bool((attrs.get("secret_refs") or {}).get(key_alias))
+            if has_id != has_key:
+                raise serializers.ValidationError(
+                    {
+                        "config": "Supply both provider API key and agent ID, or neither and paste the system prompt"
+                    }
+                )
+            if not has_id:
+                attrs["connector"] = connector = provider_connector = "phone"
+        if mode and provider_connector not in {"vapi", "retell", "phone"}:
             raise serializers.ValidationError(
-                {"mode": "provider mode is supported only for Vapi and Retell"}
+                {"mode": "provider mode is supported only for Vapi, Retell, and phone"}
             )
+        if connector == "phone":
+            if mode != "connect_only":
+                raise serializers.ValidationError(
+                    {"mode": "phone targets support connect_only only"}
+                )
+            forbidden = {
+                str(name)
+                for name in config
+                if str(name).lower().startswith(("sip_", "livekit_"))
+            }
+            if forbidden:
+                raise serializers.ValidationError(
+                    {"config": "phone dialer and LiveKit settings are platform-owned"}
+                )
+            if not _E164_PHONE.fullmatch(str(config.get("phone_number") or "").strip()):
+                raise serializers.ValidationError(
+                    {
+                        "config": "phone_number must be in E.164 format, e.g. +14155551234"
+                    }
+                )
+            prompt = str(config.get("target_system_prompt") or "").strip()
+            if not prompt or len(prompt) > 65536:
+                raise serializers.ValidationError(
+                    {
+                        "config": "target_system_prompt is required (maximum 65536 characters)"
+                    }
+                )
+            return attrs
         if mode == "connect_only":
             target_key = "assistant_id" if provider_connector == "vapi" else "agent_id"
             if not str(config.get(target_key) or "").strip():
@@ -287,22 +348,22 @@ class HarnessJobCreateSerializer(serializers.Serializer):
         }
         if source is None:
             if (
-                agent["connector"] not in {"vapi", "retell", "retell_chat"}
+                agent["connector"] not in {"vapi", "retell", "retell_chat", "phone"}
                 or not provider_target_mode
             ):
                 raise serializers.ValidationError(
                     {
-                        "source": "required unless an existing provider agent ID is connected"
+                        "source": "required unless a hosted agent ID or phone number is connected"
                     }
                 )
             attrs["source"] = {"kind": "provider", "visibility": "public"}
         elif source["kind"] == "provider" and (
-            agent["connector"] not in {"vapi", "retell", "retell_chat"}
+            agent["connector"] not in {"vapi", "retell", "retell_chat", "phone"}
             or not provider_target_mode
         ):
             raise serializers.ValidationError(
                 {
-                    "source": "provider sources require a connected Vapi or Retell agent ID"
+                    "source": "provider sources require a connected Vapi/Retell agent or phone number"
                 }
             )
         # Voice scenarios are intentionally sequential by default and may each consume the
@@ -315,7 +376,7 @@ class HarnessJobCreateSerializer(serializers.Serializer):
                 runtime["max_duration_seconds"], attrs["scenario_count"] * 360
             )
         connector = agent["connector"]
-        if connector in {"livekit", "vapi", "retell", "auto"} and (
+        if connector in {"livekit", "vapi", "retell", "phone", "auto"} and (
             runtime["parallelism"] > runtime["cpu_units"]
         ):
             raise serializers.ValidationError(
@@ -348,6 +409,8 @@ CONNECTOR_ALIASES = {
     "vapi": ("VAPI_API_KEY",),
     "retell": ("RETELL_API_KEY",),
     "retell_chat": ("RETELL_API_KEY",),
+    # The platform's simulator owns LiveKit/SIP credentials for a phone target.
+    "phone": (),
 }
 
 
@@ -366,7 +429,7 @@ def complete_provider_families(agent) -> list[str]:
     return [
         connector
         for connector, aliases in CONNECTOR_ALIASES.items()
-        if all(alias in present for alias in aliases)
+        if aliases and all(alias in present for alias in aliases)
     ]
 
 

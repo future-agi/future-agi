@@ -1463,3 +1463,24 @@ class TestLegacyTranscriptRecordingResolution:
         xl_transcript_data = _build_transcript_data(call_execution)
         assert xl_transcript_data["assistant_recording"] == "s3://bucket/assistant.mp3"
         assert xl_transcript_data["customer_recording"] == "s3://bucket/customer.mp3"
+
+    def test_persisted_recordings_do_not_require_voice_provider_client(
+        self, call_execution
+    ):
+        call_execution.provider_call_data = {
+            "livekit": {
+                "engine": "livekit",
+                "recording": {},
+            }
+        }
+        executor = TestExecutor(initialize_voice_service=False)
+
+        transcript_data = executor._get_call_transcript_data(
+            call_execution, url_save_only=True
+        )
+
+        assert transcript_data["voice_recording"] == call_execution.recording_url
+        assert (
+            transcript_data["stereo_recording"]
+            == call_execution.stereo_recording_url
+        )
