@@ -10,15 +10,16 @@ from django.test import override_settings
 from rest_framework.response import Response
 from rest_framework.test import APIClient
 
-from simulate.models import RunTest, TestExecution
+from simulate.models.run_test import RunTest
+from simulate.models.test_execution import TestExecution
 from simulate.serializers.harness_job import (
     HarnessJobCreateSerializer,
     HarnessPreflightSerializer,
 )
 from simulate.services.harness_provider import (
-    DaytonaHarnessProvider,
+    HostedHarnessProvider,
     SandboxHarnessProvider,
-    _validate_known_daytona_egress,
+    _validate_known_hosted_egress,
     _validate_required_credential_files,
     get_harness_provider,
 )
@@ -96,8 +97,37 @@ def _v1_payload(**overrides):
     return payload
 
 
-def test_default_provider_is_daytona():
-    assert isinstance(get_harness_provider(), DaytonaHarnessProvider)
+def test_default_provider_is_hosted():
+    assert isinstance(get_harness_provider(), HostedHarnessProvider)
+
+
+def test_e2b_health_exposes_relayed_public_ingress(settings):
+    settings.HOSTED_SANDBOX_PROVIDER = "e2b"
+    settings.E2B_API_KEY = "configured"
+    settings.ALK_E2B_TEMPLATE_REFERENCE = "alk-hosted-e2b:build-123"
+    settings.ALK_E2B_TEMPLATE_BUILD_ID = "build-123"
+    settings.ALK_E2B_MAX_TTL_SECONDS = 3600
+
+    assert HostedHarnessProvider().health() == {
+        "configured": True,
+        "provider": "e2b",
+        "sandbox_provider": "e2b",
+        "public_ingress": True,
+    }
+
+
+def test_daytona_health_preserves_public_provider_name(settings):
+    settings.HOSTED_SANDBOX_PROVIDER = "daytona"
+    settings.DAYTONA_API_KEY = "configured"
+    settings.ALK_DAYTONA_SNAPSHOT = "alk-hosted-v1"
+    settings.ALK_DAYTONA_SNAPSHOT_DIGEST = "sha256:digest"
+
+    assert HostedHarnessProvider().health() == {
+        "configured": True,
+        "provider": "daytona",
+        "sandbox_provider": "daytona",
+        "public_ingress": True,
+    }
 
 
 def test_hosted_job_scenario_count_is_bounded_at_two_hundred():
@@ -173,13 +203,53 @@ def test_customer_cannot_use_reserved_simulator_alias_for_agent_secret():
 
 
 def test_known_daytona_egress_rejects_overflow_without_vault_resolution(settings):
+    settings.HOSTED_SANDBOX_PROVIDER = "daytona"
     settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = [
         f"base-{index}.example.com" for index in range(19)
     ]
     settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
 
-    with pytest.raises(HostedHarnessError, match="Daytona supports at most 20"):
-        _validate_known_daytona_egress(_v1_payload(), "https://harness.example.test/")
+    with pytest.raises(
+        HostedHarnessError, match="selected sandbox provider supports at most 20"
+    ):
+        _validate_known_hosted_egress(_v1_payload(), "https://harness.example.test/")
+
+
+def test_daytona_preflight_ignores_webrtc_cidrs_and_keeps_domain_policy(settings):
+    settings.HOSTED_SANDBOX_PROVIDER = "daytona"
+    settings.ALK_HOSTED_WEBRTC_EGRESS_CIDRS = [
+        f"143.223.{index}.0/24" for index in range(11)
+    ]
+    settings.ALK_HOSTED_EGRESS_UNRESTRICTED = False
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
+
+    _validate_known_hosted_egress(_v1_payload(), "https://harness.example.test/")
+
+
+def test_e2b_egress_is_not_subject_to_daytona_domain_cap(settings):
+    settings.HOSTED_SANDBOX_PROVIDER = "e2b"
+    settings.ALK_E2B_MAX_TTL_SECONDS = 86400
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = [
+        f"base-{index}.example.com" for index in range(25)
+    ]
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
+
+    _validate_known_hosted_egress(_v1_payload(), "https://harness.example.test/")
+
+
+def test_e2b_preflight_rejects_resources_larger_than_template(settings):
+    settings.HOSTED_SANDBOX_PROVIDER = "e2b"
+    settings.ALK_E2B_TEMPLATE_REFERENCE = "alk-hosted-e2b:build-123"
+    settings.ALK_E2B_TEMPLATE_CPU_UNITS = 2
+    settings.ALK_E2B_TEMPLATE_MEMORY_MB = 4096
+    settings.ALK_E2B_TEMPLATE_DISK_GB = 10
+    settings.ALK_E2B_MAX_TTL_SECONDS = 86400
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
+
+    with pytest.raises(HostedHarnessError, match="requires 4 vCPU"):
+        _validate_known_hosted_egress(_v1_payload(), "https://harness.example.test/")
 
 
 def test_daytona_preflight_rejects_known_egress_overflow(settings):
@@ -192,7 +262,7 @@ def test_daytona_preflight_rejects_known_egress_overflow(settings):
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
 
-    response = DaytonaHarnessProvider().preflight(request)
+    response = HostedHarnessProvider().preflight(request)
 
     assert response.status_code == 400
     assert response.data["error"] == "egress_domain_limit_exceeded"
@@ -218,7 +288,7 @@ def test_daytona_preflight_requires_only_the_provider_the_source_uses(settings):
         "simulate.services.harness_provider._preflight_source_connectors",
         return_value=(["livekit"], 12),
     ):
-        response = DaytonaHarnessProvider().preflight(request)
+        response = HostedHarnessProvider().preflight(request)
 
     assert response.status_code == 200
     assert response.data["ready_to_submit"] is False
@@ -236,7 +306,7 @@ def test_daytona_preflight_requires_only_the_provider_the_source_uses(settings):
         "simulate.services.harness_provider._preflight_source_connectors",
         return_value=(["livekit"], 12),
     ):
-        ready = DaytonaHarnessProvider().preflight(request)
+        ready = HostedHarnessProvider().preflight(request)
     assert ready.data["ready_to_submit"] is True
     assert _status_by_name(ready)["LIVEKIT_URL"] == "configured"
 
@@ -257,7 +327,7 @@ def test_daytona_preflight_leaves_credentials_optional_when_source_is_unclassifi
         "simulate.services.harness_provider._preflight_source_connectors",
         return_value=([], 3),
     ):
-        response = DaytonaHarnessProvider().preflight(request)
+        response = HostedHarnessProvider().preflight(request)
 
     assert response.data["ready_to_submit"] is True
     assert {
@@ -269,7 +339,7 @@ def test_daytona_preflight_leaves_credentials_optional_when_source_is_unclassifi
         "simulate.services.harness_provider._preflight_source_connectors",
         return_value=(["livekit", "retell"], 3),
     ):
-        ambiguous = DaytonaHarnessProvider().preflight(request)
+        ambiguous = HostedHarnessProvider().preflight(request)
     assert ambiguous.data["ready_to_submit"] is False
     choice = ambiguous.data["credentials"]["credential_choices"][0]
     assert choice["satisfied"] is False
@@ -293,7 +363,7 @@ def test_daytona_preflight_requires_detected_vertex_credential_file(settings):
         "simulate.services.harness_provider._preflight_source_connectors",
         return_value=([], ["GOOGLE_APPLICATION_CREDENTIALS_JSON"], 7),
     ):
-        response = DaytonaHarnessProvider().preflight(request)
+        response = HostedHarnessProvider().preflight(request)
 
     assert response.status_code == 200
     assert response.data["ready_to_submit"] is False
@@ -324,7 +394,7 @@ def test_daytona_preflight_requires_detected_vertex_credential_file(settings):
         "simulate.services.harness_provider._preflight_source_connectors",
         return_value=([], ["GOOGLE_APPLICATION_CREDENTIALS_JSON"], 7),
     ):
-        ready = DaytonaHarnessProvider().preflight(request)
+        ready = HostedHarnessProvider().preflight(request)
 
     assert ready.data["ready_to_submit"] is True
 
@@ -469,7 +539,7 @@ def test_preflight_rejects_unknown_provider_target_before_run(settings):
             return_value=failed_target,
         ),
     ):
-        response = DaytonaHarnessProvider().preflight(request)
+        response = HostedHarnessProvider().preflight(request)
 
     assert response.data["ready_to_submit"] is False
     assert response.data["credentials"]["probe"][-1]["provider"] == "retell_target"
@@ -791,7 +861,7 @@ def test_daytona_saved_rerun_reuses_job_and_starts_fresh_attempt_cycle(user, wor
     with patch(
         "simulate.temporal.client.start_hosted_harness_gateway_workflow"
     ) as start:
-        result = DaytonaHarnessProvider().rerun_saved(
+        result = HostedHarnessProvider().rerun_saved(
             str(job.id),
             organization=user.organization,
             workspace=workspace,
@@ -841,7 +911,7 @@ def test_daytona_saved_rerun_rejects_legacy_run_without_authoring_snapshot(
     job.save(update_fields=["run_test", "state", "current_stage", "updated_at"])
 
     with pytest.raises(HostedHarnessError) as exc_info:
-        DaytonaHarnessProvider().rerun_saved(
+        HostedHarnessProvider().rerun_saved(
             str(job.id),
             organization=user.organization,
             workspace=workspace,
@@ -1027,7 +1097,7 @@ def test_harness_job_adjustment_routes_to_daytona_provider(user):
     expected = {"adjustments": [{"status": "pending"}]}
 
     with patch.object(
-        DaytonaHarnessProvider, "adjust", return_value=Response(expected)
+        HostedHarnessProvider, "adjust", return_value=Response(expected)
     ) as adjust:
         response = client.post(
             f"/simulate/api/harness-jobs/{job_id}/adjust/", payload, format="json"

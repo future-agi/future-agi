@@ -206,7 +206,9 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			url += "&key=" + p.apiKey
 		}
 
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+		upstreamCtx, cancelUpstream := context.WithCancel(ctx)
+		defer cancelUpstream()
+		httpReq, err := http.NewRequestWithContext(upstreamCtx, "POST", url, bytes.NewReader(body))
 		if err != nil {
 			errs <- models.ErrInternal(fmt.Sprintf("gemini: creating request: %v", err))
 			return
@@ -272,6 +274,13 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 			}
 
 			if chunk != nil && len(chunk.Choices) > 0 {
+				finished := false
+				for _, choice := range chunk.Choices {
+					if choice.FinishReason != nil && *choice.FinishReason != "" {
+						finished = true
+						break
+					}
+				}
 				select {
 				case chunks <- *chunk:
 				case <-ctx.Done():
@@ -280,10 +289,9 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 				// Gemini may keep the HTTP stream open after its terminal candidate.
 				// Close our stream as soon as the finish reason arrives so callers
 				// receive their final message event without waiting for EOF.
-				for _, choice := range chunk.Choices {
-					if choice.FinishReason != nil && *choice.FinishReason != "" {
-						return
-					}
+				if finished {
+					cancelUpstream()
+					return
 				}
 			}
 		}

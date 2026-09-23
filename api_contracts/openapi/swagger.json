@@ -50117,7 +50117,7 @@
             "get": {
                 "operationId": "simulate_api_harness-jobs_list",
                 "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the backend\nselected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or\n``sandbox``). See ``simulate.services.harness_provider``.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -50143,7 +50143,7 @@
             "post": {
                 "operationId": "simulate_api_harness-jobs_create",
                 "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the backend\nselected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or\n``sandbox``). See ``simulate.services.harness_provider``.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
                 "parameters": [
                     {
                         "name": "data",
@@ -50180,7 +50180,7 @@
             "get": {
                 "operationId": "simulate_api_harness-jobs_health",
                 "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the backend\nselected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or\n``sandbox``). See ``simulate.services.harness_provider``.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -50203,7 +50203,7 @@
             "post": {
                 "operationId": "simulate_api_harness-jobs_preflight",
                 "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the backend\nselected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or\n``sandbox``). See ``simulate.services.harness_provider``.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
                 "parameters": [
                     {
                         "name": "data",
@@ -50239,7 +50239,7 @@
             "post": {
                 "operationId": "simulate_api_harness-jobs_secret_file_upload",
                 "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the backend\nselected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or\n``sandbox``). See ``simulate.services.harness_provider``.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
                 "parameters": [
                     {
                         "name": "file",
@@ -50319,7 +50319,7 @@
             "post": {
                 "operationId": "simulate_api_harness-jobs_source_upload",
                 "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the backend\nselected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or\n``sandbox``). See ``simulate.services.harness_provider``.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
                 "parameters": [
                     {
                         "name": "files",
@@ -50369,7 +50369,7 @@
             "get": {
                 "operationId": "simulate_api_harness-jobs_read",
                 "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the backend\nselected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or\n``sandbox``). See ``simulate.services.harness_provider``.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -50402,7 +50402,7 @@
             "post": {
                 "operationId": "simulate_api_harness-jobs_adjust",
                 "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the backend\nselected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or\n``sandbox``). See ``simulate.services.harness_provider``.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
                 "parameters": [
                     {
                         "name": "data",
@@ -50445,7 +50445,7 @@
             "post": {
                 "operationId": "simulate_api_harness-jobs_cancel",
                 "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the backend\nselected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or\n``sandbox``). See ``simulate.services.harness_provider``.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
                 "parameters": [
                     {
                         "name": "data",
@@ -50485,11 +50485,61 @@
                 }
             ]
         },
+        "/simulate/api/harness-jobs/{id}/conversation/messages/": {
+            "post": {
+                "operationId": "simulate_api_harness-jobs_conversation_conversation_message",
+                "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationMessageCreate"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationRead"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-jobs/{id}/extend/": {
             "post": {
                 "operationId": "simulate_api_harness-jobs_extend",
                 "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
-                "description": "Validates the v1.6 request contract and delegates execution to the backend\nselected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or\n``sandbox``). See ``simulate.services.harness_provider``.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
                 "parameters": [
                     {
                         "name": "data",
@@ -50672,7 +50722,7 @@
         "/simulate/api/harness/attempts/{id}/ingress/": {
             "post": {
                 "operationId": "simulate_api_harness_attempts_ingress",
-                "summary": "Mint a short-lived, no-header Daytona URL for one guest-selected HTTP port.",
+                "summary": "Mint a short-lived, no-header URL for one guest-selected HTTP port.",
                 "description": "The attempt capability authenticates the trusted ALK guest. Customer processes never\nreceive that bearer and therefore cannot expose arbitrary sandbox ports themselves.",
                 "parameters": [
                     {
@@ -50842,6 +50892,696 @@
             "parameters": [
                 {
                     "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness/conversations/{id}/adjust/": {
+            "post": {
+                "operationId": "simulate_api_harness_conversations_adjust",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationAdjustment"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationAdjustmentResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness/conversations/{id}/commands/": {
+            "get": {
+                "operationId": "simulate_api_harness_conversations_commands",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "after",
+                        "in": "query",
+                        "required": false,
+                        "type": "integer",
+                        "default": 0,
+                        "minimum": 0
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness/conversations/{id}/events/": {
+            "post": {
+                "operationId": "simulate_api_harness_conversations_events",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationEventBatch"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationEventAck"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness/conversations/{id}/rerun/": {
+            "post": {
+                "operationId": "simulate_api_harness_conversations_rerun",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationRerun"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationRunStatus"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness/conversations/{id}/run-status/": {
+            "get": {
+                "operationId": "simulate_api_harness_conversations_run_status",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationRunStatus"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness/conversations/{id}/session-store/": {
+            "get": {
+                "operationId": "simulate_api_harness_conversations_session_store",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "project_key",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    },
+                    {
+                        "name": "session_id",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    },
+                    {
+                        "name": "subpath",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 512
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness/conversations/{id}/session-store/append/": {
+            "post": {
+                "operationId": "simulate_api_harness_conversations_session-store_append_session_store",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationTranscriptAppend"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationTranscriptAppendResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness/conversations/{id}/workspace/": {
+            "put": {
+                "operationId": "simulate_api_harness_conversations_workspace",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "binary"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationWorkspaceResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "consumes": [],
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness/ingress/{token}/": {
+            "get": {
+                "operationId": "simulate_api_harness_ingress_read",
+                "description": "Relay a signed callback URL to the active sandbox without exposing provider headers.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "post": {
+                "operationId": "simulate_api_harness_ingress_create",
+                "description": "Relay a signed callback URL to the active sandbox without exposing provider headers.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessIngressProxyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Raw response returned by the sandbox callback service.",
+                        "schema": {
+                            "type": "string",
+                            "format": "binary"
+                        }
+                    },
+                    "201": {
+                        "description": "Raw response returned by the sandbox callback service.",
+                        "schema": {
+                            "type": "string",
+                            "format": "binary"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "put": {
+                "operationId": "simulate_api_harness_ingress_update",
+                "description": "Relay a signed callback URL to the active sandbox without exposing provider headers.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessIngressProxyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Raw response returned by the sandbox callback service.",
+                        "schema": {
+                            "type": "string",
+                            "format": "binary"
+                        }
+                    },
+                    "201": {
+                        "description": "Raw response returned by the sandbox callback service.",
+                        "schema": {
+                            "type": "string",
+                            "format": "binary"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "patch": {
+                "operationId": "simulate_api_harness_ingress_partial_update",
+                "description": "Relay a signed callback URL to the active sandbox without exposing provider headers.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessIngressProxyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Raw response returned by the sandbox callback service.",
+                        "schema": {
+                            "type": "string",
+                            "format": "binary"
+                        }
+                    },
+                    "201": {
+                        "description": "Raw response returned by the sandbox callback service.",
+                        "schema": {
+                            "type": "string",
+                            "format": "binary"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "delete": {
+                "operationId": "simulate_api_harness_ingress_delete",
+                "description": "Relay a signed callback URL to the active sandbox without exposing provider headers.",
+                "parameters": [],
+                "responses": {
+                    "204": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "token",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness/ingress/{token}/{target_path}": {
+            "get": {
+                "operationId": "simulate_api_harness_ingress_read",
+                "description": "Relay a signed callback URL to the active sandbox without exposing provider headers.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "post": {
+                "operationId": "simulate_api_harness_ingress_create",
+                "description": "Relay a signed callback URL to the active sandbox without exposing provider headers.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessIngressProxyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Raw response returned by the sandbox callback service.",
+                        "schema": {
+                            "type": "string",
+                            "format": "binary"
+                        }
+                    },
+                    "201": {
+                        "description": "Raw response returned by the sandbox callback service.",
+                        "schema": {
+                            "type": "string",
+                            "format": "binary"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "put": {
+                "operationId": "simulate_api_harness_ingress_update",
+                "description": "Relay a signed callback URL to the active sandbox without exposing provider headers.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessIngressProxyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Raw response returned by the sandbox callback service.",
+                        "schema": {
+                            "type": "string",
+                            "format": "binary"
+                        }
+                    },
+                    "201": {
+                        "description": "Raw response returned by the sandbox callback service.",
+                        "schema": {
+                            "type": "string",
+                            "format": "binary"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "patch": {
+                "operationId": "simulate_api_harness_ingress_partial_update",
+                "description": "Relay a signed callback URL to the active sandbox without exposing provider headers.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessIngressProxyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Raw response returned by the sandbox callback service.",
+                        "schema": {
+                            "type": "string",
+                            "format": "binary"
+                        }
+                    },
+                    "201": {
+                        "description": "Raw response returned by the sandbox callback service.",
+                        "schema": {
+                            "type": "string",
+                            "format": "binary"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "delete": {
+                "operationId": "simulate_api_harness_ingress_delete",
+                "description": "Relay a signed callback URL to the active sandbox without exposing provider headers.",
+                "parameters": [],
+                "responses": {
+                    "204": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "token",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "target_path",
                     "in": "path",
                     "required": true,
                     "type": "string"
@@ -118827,6 +119567,255 @@
                 }
             }
         },
+        "HarnessConversationMessage": {
+            "required": [
+                "message_id",
+                "sequence",
+                "role",
+                "kind",
+                "state",
+                "stage",
+                "content",
+                "payload",
+                "created_at"
+            ],
+            "type": "object",
+            "properties": {
+                "message_id": {
+                    "title": "Message id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "sequence": {
+                    "title": "Sequence",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "role": {
+                    "title": "Role",
+                    "type": "string",
+                    "enum": [
+                        "user",
+                        "assistant",
+                        "system"
+                    ]
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "message",
+                        "question",
+                        "confirmation",
+                        "status"
+                    ]
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "queued",
+                        "delivered",
+                        "streaming",
+                        "completed",
+                        "failed"
+                    ]
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string"
+                },
+                "content": {
+                    "title": "Content",
+                    "type": "string"
+                },
+                "payload": {
+                    "title": "Payload",
+                    "type": "object"
+                },
+                "invocation_id": {
+                    "title": "Invocation id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "function_call_id": {
+                    "title": "Function call id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "reply_to": {
+                    "title": "Reply to",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "HarnessConversationEventRead": {
+            "required": [
+                "event_id",
+                "sequence",
+                "kind",
+                "stage",
+                "payload",
+                "emitted_at"
+            ],
+            "type": "object",
+            "properties": {
+                "event_id": {
+                    "title": "Event id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "sequence": {
+                    "title": "Sequence",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "message_id": {
+                    "title": "Message id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string"
+                },
+                "invocation_id": {
+                    "title": "Invocation id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "function_call_id": {
+                    "title": "Function call id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "payload": {
+                    "title": "Payload",
+                    "type": "object"
+                },
+                "emitted_at": {
+                    "title": "Emitted at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "HarnessConversationRuntime": {
+            "required": [
+                "state",
+                "warm_until",
+                "degraded",
+                "available"
+            ],
+            "type": "object",
+            "properties": {
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "warm_until": {
+                    "title": "Warm until",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "degraded": {
+                    "title": "Degraded",
+                    "type": "boolean"
+                },
+                "available": {
+                    "title": "Available",
+                    "type": "boolean"
+                }
+            }
+        },
+        "HarnessConversationRead": {
+            "required": [
+                "conversation_id",
+                "job_id",
+                "state",
+                "stage",
+                "active_invocation_id",
+                "blocking_input",
+                "messages",
+                "events",
+                "event_watermark",
+                "runtime"
+            ],
+            "type": "object",
+            "properties": {
+                "conversation_id": {
+                    "title": "Conversation id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "job_id": {
+                    "title": "Job id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "active_invocation_id": {
+                    "title": "Active invocation id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "blocking_input": {
+                    "title": "Blocking input",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "messages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessConversationMessage"
+                    }
+                },
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessConversationEventRead"
+                    }
+                },
+                "event_watermark": {
+                    "title": "Event watermark",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "runtime": {
+                    "$ref": "#/definitions/HarnessConversationRuntime"
+                }
+            },
+            "x-nullable": true
+        },
         "HarnessConsumption": {
             "required": [
                 "text_sim_tokens",
@@ -118907,6 +119896,9 @@
                 },
                 "runtime": {
                     "$ref": "#/definitions/HarnessRuntimeRead"
+                },
+                "conversation": {
+                    "$ref": "#/definitions/HarnessConversationRead"
                 },
                 "consumption": {
                     "$ref": "#/definitions/HarnessConsumption"
@@ -119509,6 +120501,50 @@
                         "ttl_exceeded"
                     ],
                     "default": "user_canceled"
+                }
+            }
+        },
+        "HarnessConversationMessageCreate": {
+            "required": [
+                "content",
+                "client_request_id"
+            ],
+            "type": "object",
+            "properties": {
+                "content": {
+                    "title": "Content",
+                    "type": "string",
+                    "maxLength": 20000,
+                    "minLength": 1
+                },
+                "client_request_id": {
+                    "title": "Client request id",
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,128}$",
+                    "minLength": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "user_message",
+                        "user_response",
+                        "approval",
+                        "interrupt",
+                        "cancel_operation"
+                    ],
+                    "default": "user_message"
+                },
+                "reply_to": {
+                    "title": "Reply to",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "payload": {
+                    "title": "Payload",
+                    "type": "object",
+                    "default": {}
                 }
             }
         },
@@ -120388,6 +121424,342 @@
                     "title": "Upgrade cta",
                     "type": "object",
                     "x-nullable": true
+                }
+            }
+        },
+        "HarnessConversationAdjustment": {
+            "required": [
+                "instruction"
+            ],
+            "type": "object",
+            "properties": {
+                "instruction": {
+                    "title": "Instruction",
+                    "type": "string",
+                    "maxLength": 2000,
+                    "minLength": 1
+                },
+                "client_request_id": {
+                    "title": "Client request id",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessConversationAdjustmentResponse": {
+            "required": [
+                "adjustment_id",
+                "instruction",
+                "target_stage",
+                "scenario_delta",
+                "status",
+                "created_at"
+            ],
+            "type": "object",
+            "properties": {
+                "adjustment_id": {
+                    "title": "Adjustment id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "client_request_id": {
+                    "title": "Client request id",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "instruction": {
+                    "title": "Instruction",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "target_stage": {
+                    "title": "Target stage",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "scenario_delta": {
+                    "title": "Scenario delta",
+                    "type": "integer"
+                },
+                "status": {
+                    "title": "Status",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "created_at": {
+                    "title": "Created at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "HarnessConversationEvent": {
+            "required": [
+                "schema_version",
+                "event_id",
+                "conversation_id",
+                "sequence",
+                "kind",
+                "emitted_at",
+                "payload",
+                "digest"
+            ],
+            "type": "object",
+            "properties": {
+                "schema_version": {
+                    "title": "Schema version",
+                    "type": "string",
+                    "enum": [
+                        "futureagi.harness-conversation-event.v1"
+                    ]
+                },
+                "event_id": {
+                    "title": "Event id",
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{1,128}$",
+                    "minLength": 1
+                },
+                "conversation_id": {
+                    "title": "Conversation id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "sequence": {
+                    "title": "Sequence",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "turn_started",
+                        "assistant_delta",
+                        "assistant_message",
+                        "stage_changed",
+                        "authoring_activity",
+                        "tool_started",
+                        "tool_result",
+                        "question_requested",
+                        "confirmation_requested",
+                        "turn_interrupted",
+                        "turn_completed",
+                        "checkpoint_committed",
+                        "capability_changed"
+                    ]
+                },
+                "message_id": {
+                    "title": "Message id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string",
+                    "maxLength": 32
+                },
+                "invocation_id": {
+                    "title": "Invocation id",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "function_call_id": {
+                    "title": "Function call id",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "emitted_at": {
+                    "title": "Emitted at",
+                    "type": "string",
+                    "format": "date-time"
+                },
+                "payload": {
+                    "title": "Payload",
+                    "type": "object"
+                },
+                "digest": {
+                    "title": "Digest",
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessConversationEventBatch": {
+            "required": [
+                "schema_version",
+                "acknowledged_through",
+                "events"
+            ],
+            "type": "object",
+            "properties": {
+                "schema_version": {
+                    "title": "Schema version",
+                    "type": "string",
+                    "enum": [
+                        "futureagi.harness-conversation-event.v1"
+                    ]
+                },
+                "acknowledged_through": {
+                    "title": "Acknowledged through",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "events": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessConversationEvent"
+                    }
+                }
+            }
+        },
+        "HarnessConversationEventAck": {
+            "required": [
+                "acked_through_sequence"
+            ],
+            "type": "object",
+            "properties": {
+                "acked_through_sequence": {
+                    "title": "Acked through sequence",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "HarnessConversationRerun": {
+            "type": "object",
+            "properties": {}
+        },
+        "HarnessConversationRunStatus": {
+            "required": [
+                "job_id",
+                "state",
+                "stage",
+                "completed_scenarios",
+                "failed_scenarios",
+                "total_scenarios",
+                "receipts"
+            ],
+            "type": "object",
+            "properties": {
+                "job_id": {
+                    "title": "Job id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "stage": {
+                    "title": "Stage",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "completed_scenarios": {
+                    "title": "Completed scenarios",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "failed_scenarios": {
+                    "title": "Failed scenarios",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "total_scenarios": {
+                    "title": "Total scenarios",
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "receipts": {
+                    "title": "Receipts",
+                    "type": "object"
+                }
+            }
+        },
+        "HarnessConversationTranscriptAppend": {
+            "required": [
+                "project_key",
+                "session_id",
+                "entries"
+            ],
+            "type": "object",
+            "properties": {
+                "project_key": {
+                    "title": "Project key",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "session_id": {
+                    "title": "Session id",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "subpath": {
+                    "title": "Subpath",
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 512
+                },
+                "entries": {
+                    "type": "array",
+                    "items": {
+                        "type": "object"
+                    },
+                    "maxItems": 500,
+                    "minItems": 1
+                }
+            }
+        },
+        "HarnessConversationTranscriptAppendResponse": {
+            "required": [
+                "appended"
+            ],
+            "type": "object",
+            "properties": {
+                "appended": {
+                    "title": "Appended",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "HarnessConversationWorkspaceResponse": {
+            "required": [
+                "digest",
+                "size"
+            ],
+            "type": "object",
+            "properties": {
+                "digest": {
+                    "title": "Digest",
+                    "type": "string",
+                    "pattern": "^sha256:[0-9a-f]{64}$",
+                    "minLength": 1
+                },
+                "size": {
+                    "title": "Size",
+                    "type": "integer",
+                    "minimum": 0
+                }
+            }
+        },
+        "HarnessIngressProxyRequest": {
+            "type": "object",
+            "properties": {
+                "payload": {
+                    "title": "Payload",
+                    "type": "object"
                 }
             }
         },

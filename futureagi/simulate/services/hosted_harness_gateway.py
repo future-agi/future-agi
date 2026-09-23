@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import ipaddress
 import json
@@ -15,6 +16,7 @@ import time
 import uuid
 from collections.abc import Iterable, Mapping
 from contextlib import contextmanager, nullcontext
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -27,6 +29,8 @@ from django.utils import timezone
 
 from simulate.models import (
     HostedHarnessAttempt,
+    HostedHarnessConversation,
+    HostedHarnessConversationLease,
     HostedHarnessJob,
     HostedHarnessSecret,
 )
@@ -36,13 +40,27 @@ from simulate.services.hosted_harness import (
     register_attempt,
     request_cancellation,
 )
+from simulate.services.hosted_harness_conversation import (
+    ensure_conversation,
+    issue_conversation_capability,
+    load_workspace_archive,
+)
 from simulate.services.hosted_harness_diagnostics import (
-    DaytonaDiagnostics,
+    SandboxDiagnostics,
     cache_attempt_redaction_values,
     cached_attempt_redaction_values,
     forget_attempt_redaction_values,
-    poll_daytona_diagnostics,
+    poll_sandbox_diagnostics,
     redaction_values,
+)
+from simulate.services.hosted_sandbox import (
+    SandboxCommandRequest,
+    SandboxConflictError,
+    SandboxLaunchSpec,
+    SandboxNotFoundError,
+    SandboxProviderConfigurationError,
+    SandboxProviderError,
+    get_sandbox_provider,
 )
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import ensure_bucket, get_storage_client
@@ -76,18 +94,81 @@ HOSTED_RUNTIME_CATALOG = {
 }
 _ENTRYPOINT_SESSION = "alk-harness"
 _ENTRYPOINT_COMMAND_ID_FILE = "/run/futureagi/entrypoint-command-id"
+_CHAT_SESSION = "alk-chat"
+_CHAT_CAPABILITIES_PATH = "/run/futureagi/conversation.json"
+_CHAT_COMMAND_ID_FILE = "/run/futureagi/chat-command-id"
+_CHAT_POLICY = (
+    b"schema_version: 1\n"
+    b"harness_chat:\n"
+    b"  enabled: true\n"
+    b"  stages:\n"
+    b"    reception: {enabled: true}\n"
+    b"    understand: {enabled: true}\n"
+    b"    build: {enabled: true}\n"
+    b"    scenarios: {enabled: true}\n"
+    b"    run: {enabled: true}\n"
+    b"  lifecycle:\n"
+    b"    request_user_input: true\n"
+    b"    interrupt_response: true\n"
+)
+_CHAT_RUNTIME_PATH = (
+    "/opt/alk-venv/bin:/usr/lib/postgresql/16/bin:/opt/erlang/bin:"
+    "/opt/rabbitmq/sbin:/opt/node22/bin:/usr/local/sbin:/usr/local/bin:"
+    "/usr/sbin:/usr/bin:/sbin:/bin"
+)
+_CHAT_POLICY_PATH = "/run/futureagi/chat-capabilities.yaml"
 _SCENARIO_DIRECTORY_COUNT_COMMAND = (
     "find /work/authoring/scenarios -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l"
 )
 _ADJUSTMENTS_PATH = "/run/futureagi/adjustments.jsonl"
 _ADJUSTMENT_STATUS_PATH = "/run/futureagi/adjustment-status.jsonl"
-_DIRECT_IMAGE_WITH_ADJUSTMENTS = "direct-image-adjustments-v1"
 _SIMULATOR_SECRETS_PATH = "/run/futureagi/simulator-secrets.json"
 _SIMULATOR_VERTEX_CREDENTIALS_PATH = "/run/futureagi/simulator-vertex-sa.json"
 _PROVIDER_POLL_TIMEOUT_SECONDS = 15
 _DIAGNOSTICS_POLL_INTERVAL_SECONDS = 15
 _PROGRESS_FILE_TIMEOUT_SECONDS = 5
 _PROVIDER_UNREACHABLE_GRACE_SECONDS = 180
+
+
+def _empty_workspace_archive() -> bytes:
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode="w:gz"):
+        pass
+    return stream.getvalue()
+
+
+def _authoring_ttl_seconds(provider_name: str | None = None) -> int:
+    if provider_name == "daytona":
+        return max(
+            60,
+            int(getattr(settings, "ALK_HOSTED_AUTHORING_TTL_MINUTES", 40)) * 60,
+        )
+    return max(60, int(getattr(settings, "ALK_HOSTED_AUTHORING_TIMEOUT", 3900)))
+
+
+def _execution_ttl_seconds(
+    runtime: Mapping[str, Any], provider_name: str | None = None
+) -> int:
+    runtime_seconds = int(runtime["max_duration_seconds"])
+    if provider_name == "e2b":
+        max_ttl_seconds = int(getattr(settings, "ALK_E2B_MAX_TTL_SECONDS", 0))
+        if max_ttl_seconds > 0 and runtime_seconds <= max_ttl_seconds:
+            return max_ttl_seconds
+        return runtime_seconds + 120
+    authoring_seconds = max(
+        0,
+        int(
+            getattr(
+                settings,
+                "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
+                3600,
+            )
+        ),
+    )
+    return max(
+        int(getattr(settings, "ALK_HOSTED_SANDBOX_TTL_SECONDS", 7200)),
+        authoring_seconds + runtime_seconds + 120,
+    )
 
 
 def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
@@ -121,19 +202,52 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
     provider = str(os.environ.get("SIMULATOR_LLM_PROVIDER") or "vertex").strip()
     model = str(os.environ.get("SIMULATOR_LLM_MODEL") or "gemini-3.7-flash").strip()
     location = str(os.environ.get("GOOGLE_CLOUD_LOCATION") or "global").strip()
-    derived_backend = (
-        "vertex-gemini"
-        if provider.lower() in {"google", "vertex", "vertex-gemini", "vertex_gemini"}
-        else provider
+    backend = str(os.environ.get("ALK_HARNESS") or "claude").strip()
+    agentcc_url = str(
+        os.environ.get("ALK_HOSTED_AGENTCC_BASE_URL")
+        or os.environ.get("AGENTCC_BASE_URL")
+        or ""
+    ).strip()
+    agentcc_key = str(
+        os.environ.get("AGENTCC_HARNESS_API_KEY")
+        or os.environ.get("AGENTCC_INTERNAL_API_KEY")
+        or ""
+    ).strip()
+    agentcc_model = str(
+        os.environ.get("ALK_HOSTED_AGENTCC_MODEL") or "vertex_ai/gemini-3.7-flash"
+    ).strip()
+    agentcc_ready = bool(agentcc_url and agentcc_key)
+    default_authoring_model = (
+        model
+        if backend.lower()
+        in {"gemini", "vertex-gemini", "vertex_gemini", "vertexai-gemini"}
+        else agentcc_model
+        if agentcc_ready
+        else "claude-sonnet-4-6"
     )
-    # Authoring and simulation are separate trust/runtime lanes.  Let deployment config select
-    # the ALK stage-loop independently instead of forcing it to use the simulated caller's
-    # provider and model.  This also keeps the customer request unable to influence either one.
-    backend = str(os.environ.get("ALK_HARNESS") or derived_backend).strip()
-    authoring_model = str(os.environ.get("ALK_HARNESS_MODEL") or model).strip()
+    authoring_model = str(
+        os.environ.get("ALK_HARNESS_MODEL") or default_authoring_model
+    ).strip()
+    if (
+        backend.lower() in {"claude", "claude-code"}
+        and ("gemini" in authoring_model.lower() or agentcc_url or agentcc_key)
+        and not agentcc_ready
+    ):
+        raise HostedHarnessError(
+            "authoring_gateway_not_configured",
+            "Claude gateway authoring requires a sandbox-reachable AgentCC URL "
+            "and a platform-owned harness or internal API key",
+            status_code=503,
+        )
+    claude_region = str(
+        os.environ.get("CLOUD_ML_REGION")
+        or getattr(settings, "ALK_HOSTED_AUTHORING_CLAUDE_REGION", "us-east5")
+    ).strip()
     values = {
         "ALK_HARNESS": backend,
         "ALK_HARNESS_MODEL": authoring_model,
+        "CLAUDE_CODE_USE_VERTEX": str(os.environ.get("CLAUDE_CODE_USE_VERTEX") or "1"),
+        "CLOUD_ML_REGION": claude_region,
         "ALK_VERTEX_LOCATION": location,
         "GOOGLE_CLOUD_LOCATION": location,
         "GOOGLE_GENAI_USE_VERTEXAI": str(
@@ -142,23 +256,11 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "SIMULATOR_LLM_PROVIDER": provider,
         "SIMULATOR_LLM_MODEL": model,
     }
-    if backend == "claude":
-        # Authoring may need a virtual key with model aliases that the platform's internal
-        # service key does not have. The key is platform-owned, never taken from the job.
-        gateway_key = str(
-            os.environ.get("AGENTCC_HARNESS_API_KEY")
-            or os.environ.get("AGENTCC_INTERNAL_API_KEY")
-            or ""
-        ).strip()
-        gateway_url = str(os.environ.get("AGENTCC_BASE_URL") or "").strip()
-        if not gateway_key or not gateway_url:
-            raise HostedHarnessError(
-                "authoring_gateway_not_configured",
-                "Claude authoring requires AGENTCC_HARNESS_API_KEY (or the local internal key) and a sandbox-reachable AGENTCC_BASE_URL",
-                status_code=503,
-            )
-        values["AGENTCC_API_KEY"] = gateway_key
-        values["AGENTCC_BASE_URL"] = gateway_url
+    if agentcc_ready:
+        values["ALK_CLAUDE_GATEWAY_URL"] = agentcc_url.rstrip("/")
+        values["ALK_CLAUDE_GATEWAY_API_KEY"] = agentcc_key
+        values["AGENTCC_BASE_URL"] = agentcc_url.rstrip("/")
+        values["AGENTCC_API_KEY"] = agentcc_key
     for name in (
         "LIVEKIT_URL",
         "LIVEKIT_API_KEY",
@@ -198,6 +300,7 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         values["FI_BASE_URL"] = collector
     if project:
         values["GOOGLE_CLOUD_PROJECT"] = project
+        values["ANTHROPIC_VERTEX_PROJECT_ID"] = project
     if credential_bytes is not None:
         values["GOOGLE_APPLICATION_CREDENTIALS"] = _SIMULATOR_VERTEX_CREDENTIALS_PATH
     return values, credential_bytes
@@ -879,6 +982,18 @@ def _effective_connector(
     return connector
 
 
+def _webrtc_egress_cidrs(
+    payload: Mapping[str, Any], secrets_map: Mapping[str, Any]
+) -> tuple[str, ...]:
+    if _effective_connector(payload, secrets_map) not in {
+        "livekit",
+        "vapi",
+        "retell",
+    }:
+        return ()
+    return tuple(sorted(getattr(settings, "ALK_HOSTED_WEBRTC_EGRESS_CIDRS", []) or []))
+
+
 def _connector_egress_domains(
     payload: Mapping[str, Any], secrets_map: Mapping[str, Any]
 ) -> set[str]:
@@ -984,15 +1099,17 @@ def _validate_egress_domains(domains: list[str]) -> None:
         _validate_egress_host(domain)
 
 
-def _validate_resolved_egress_domains(domains: Iterable[str]) -> None:
-    """Enforce Daytona's cap after platform, provider, and customer hosts combine."""
+def _validate_resolved_egress_domains(
+    domains: Iterable[str], *, max_domains: int | None = _MAX_EGRESS_DOMAINS
+) -> None:
+    """Enforce the selected sandbox provider's resolved-domain limit."""
     normalized = _normalize_egress_domains(domains)
-    if len(normalized) > _MAX_EGRESS_DOMAINS:
+    if max_domains is not None and len(normalized) > max_domains:
         raise HostedHarnessError(
             "egress_domain_limit_exceeded",
             "resolved sandbox egress requires "
             f"{len(normalized)} domains after normalization; "
-            f"Daytona supports at most {_MAX_EGRESS_DOMAINS}",
+            f"the selected sandbox provider supports at most {max_domains}",
             status_code=400,
         )
     for domain in normalized:
@@ -1012,6 +1129,9 @@ def _provider_egress_domains(secrets_map: Mapping[str, Any]) -> set[str]:
         str(values.get("SIMULATOR_LLM_PROVIDER") or "").strip().lower()
     )
     domains: set[str] = set()
+    gateway_host = _hostname_from_url(values.get("ALK_CLAUDE_GATEWAY_URL"))
+    if gateway_host and values.get("ALK_CLAUDE_GATEWAY_API_KEY"):
+        domains.add(gateway_host)
     if aliases & {
         "GOOGLE_APPLICATION_CREDENTIALS_JSON",
         "GOOGLE_APPLICATION_CREDENTIALS",
@@ -1044,7 +1164,7 @@ def _provider_egress_domains(secrets_map: Mapping[str, Any]) -> set[str]:
     if "RETELL_API_KEY" in aliases:
         # Retell web calls are created through its API, then bridged through Retell's managed
         # LiveKit deployment. Keep these provider-owned hosts derived from the credential type
-        # instead of asking customers to understand Daytona's network policy.
+        # instead of asking customers to understand the managed sandbox network policy.
         domains.update(
             {
                 "api.retellai.com",
@@ -1077,7 +1197,7 @@ def _resolved_egress_domains(
     simulator_env: Mapping[str, Any] | None = None,
     callback_host: str | None = None,
 ) -> set[str]:
-    """Build Daytona's authoritative minimized domain union for one launch."""
+    """Build the authoritative minimized domain union for one managed launch."""
     target_secrets = target_secrets or {}
     simulator_env = simulator_env or {}
     security = payload.get("security") or {}
@@ -1294,47 +1414,25 @@ def _load_bundle_scenarios(manifest: dict, job: HostedHarnessJob) -> list[dict]:
     return results
 
 
-class DaytonaHostedGateway:
+class HostedHarnessGateway:
     def __init__(self) -> None:
-        from daytona import Daytona, DaytonaConfig
-
-        api_key = getattr(settings, "DAYTONA_API_KEY", "")
-        snapshot = getattr(settings, "ALK_DAYTONA_SNAPSHOT", "")
-        dockerfile = getattr(settings, "ALK_DAYTONA_DOCKERFILE", "")
-        if not api_key or not (snapshot or dockerfile):
+        try:
+            self.client = get_sandbox_provider()
+        except SandboxProviderConfigurationError as exc:
             raise HostedHarnessError(
-                "daytona_not_configured",
-                "DAYTONA_API_KEY and either ALK_DAYTONA_SNAPSHOT or "
-                "ALK_DAYTONA_DOCKERFILE are required",
+                "sandbox_provider_not_configured",
+                str(exc),
                 status_code=503,
                 retryable=True,
-            )
-        self.snapshot = snapshot
-        self.dockerfile = dockerfile
-        self.snapshot_digest = getattr(settings, "ALK_DAYTONA_SNAPSHOT_DIGEST", "")
-        self.client = Daytona(
-            DaytonaConfig(
-                api_key=api_key,
-                api_url=getattr(settings, "DAYTONA_API_URL", None),
-                target=getattr(settings, "DAYTONA_TARGET", None),
-                organization_id=getattr(settings, "DAYTONA_ORGANIZATION_ID", None),
-            )
-        )
+            ) from exc
 
     def author(self, job: HostedHarnessJob) -> bytes:
-        """Run ALK authoring (understand -> environment -> scenarios) inside a Daytona sandbox.
+        """Run ALK authoring inside an isolated managed sandbox.
 
-        Scenario generation is LLM-heavy and must run off the control-plane worker. This provisions
-        a throwaway sandbox with only the authoring model credentials (never the target call
-        secrets), runs the same ``authoring_entrypoint`` the local SDK uses, and returns the packed
-        frozen authoring archive that ``bundle_author_v2`` later seals inside the execution sandbox.
+        Scenario generation is model-heavy and must run off the control-plane worker. This
+        provisions a throwaway sandbox with only the authoring model credentials, runs the same
+        ``authoring_entrypoint`` the local SDK uses, and returns the frozen authoring archive.
         """
-        from daytona import (
-            CreateSandboxFromImageParams,
-            CreateSandboxFromSnapshotParams,
-            Image,
-            Resources,
-        )
 
         _mark_stage(job, "acquiring_source")
         source_archive, commit_sha = HostedSourceAcquirer().acquire(job)
@@ -1395,7 +1493,7 @@ class DaytonaHostedGateway:
                     default_authoring_egress,
                 )
             )
-        )[:20]
+        )
         if authoring_target_secrets:
             provider_domain = {
                 "vapi": "api.vapi.ai",
@@ -1403,7 +1501,10 @@ class DaytonaHostedGateway:
                 "retell_chat": "api.retellai.com",
             }.get(connector)
             if provider_domain and provider_domain not in allowed_domains:
-                allowed_domains = [provider_domain, *allowed_domains][:20]
+                allowed_domains.insert(0, provider_domain)
+        _validate_resolved_egress_domains(
+            allowed_domains, max_domains=self.client.max_egress_domains
+        )
         authoring_env = {
             **{
                 name: value
@@ -1411,7 +1512,7 @@ class DaytonaHostedGateway:
                 if name not in {"LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"}
             },
             "CLAUDE_CODE_USE_VERTEX": (
-                "0" if simulator_env.get("AGENTCC_API_KEY") else "1"
+                "" if simulator_env.get("ALK_CLAUDE_GATEWAY_URL") else "1"
             ),
             "GOOGLE_GENAI_USE_VERTEXAI": "True",
             "CLOUD_ML_REGION": getattr(
@@ -1426,47 +1527,25 @@ class DaytonaHostedGateway:
             authoring_env["GOOGLE_CLOUD_PROJECT"] = project_id
             authoring_env["ANTHROPIC_VERTEX_PROJECT_ID"] = project_id
 
-        ttl_minutes = int(getattr(settings, "ALK_HOSTED_AUTHORING_TTL_MINUTES", 40))
+        ttl_seconds = _authoring_ttl_seconds(self.client.name)
         sandbox = None
         try:
-            common_params = {
-                "language": "python",
-                "os_user": getattr(
-                    settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control"
-                ),
-                "labels": {
+            launch_spec = SandboxLaunchSpec(
+                cpu_units=payload["runtime"]["cpu_units"],
+                memory_mb=payload["runtime"]["memory_mb"],
+                disk_gb=10,
+                ttl_seconds=ttl_seconds,
+                os_user=getattr(settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control"),
+                labels={
                     "futureagi.job": str(job.id),
                     "futureagi.authoring": "1",
                 },
-                "network_block_all": not allowed_domains,
-                "domain_allow_list": ",".join(sorted(allowed_domains)) or None,
-                "ephemeral": True,
-                "ttl_minutes": ttl_minutes,
-                "auto_delete_interval": ttl_minutes,
-            }
-            dockerfile = getattr(self, "dockerfile", "")
-            if dockerfile:
-                launch_params = CreateSandboxFromImageParams(
-                    image=Image.from_dockerfile(dockerfile),
-                    resources=Resources(
-                        cpu=payload["runtime"]["cpu_units"],
-                        memory=max(
-                            4,
-                            (payload["runtime"]["memory_mb"] + 1023) // 1024,
-                        ),
-                        disk=10,
-                    ),
-                    **common_params,
-                )
-                launch_timeout = 1200
-            else:
-                launch_params = CreateSandboxFromSnapshotParams(
-                    snapshot=self.snapshot,
-                    **common_params,
-                )
-                launch_timeout = 300
+                allowed_domains=tuple(sorted(allowed_domains)),
+            )
             _mark_stage(job, "understanding_agent")
-            sandbox = self.client.create(launch_params, timeout=launch_timeout)
+            sandbox = self.client.create(
+                launch_spec, timeout=self.client.create_timeout_seconds
+            )
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(
                 json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(),
@@ -1637,13 +1716,6 @@ class DaytonaHostedGateway:
     def launch(
         self, job: HostedHarnessJob, *, endpoint_base_url: str
     ) -> HostedHarnessAttempt:
-        from daytona import (
-            CreateSandboxFromImageParams,
-            CreateSandboxFromSnapshotParams,
-            Image,
-            Resources,
-            SessionExecuteRequest,
-        )
 
         _mark_stage(job, "acquiring_source")
         source_archive, commit_sha = HostedSourceAcquirer().acquire(job)
@@ -1690,16 +1762,14 @@ class DaytonaHostedGateway:
         # private-host protection remain fail-closed; the resolved cap is checked
         # after wildcard minimization and provider/connector additions.
         _validate_egress_domains(payload["security"]["allowed_egress_domains"])
-        _validate_resolved_egress_domains(allowed_domains)
+        _validate_resolved_egress_domains(
+            allowed_domains, max_domains=self.client.max_egress_domains
+        )
         capability = register_attempt(
             job.id,
             endpoint_base_url=endpoint_base_url,
-            snapshot_name=(
-                _DIRECT_IMAGE_WITH_ADJUSTMENTS
-                if getattr(self, "dockerfile", "")
-                else self.snapshot
-            ),
-            snapshot_digest=(self.snapshot_digest or None) if self.snapshot else None,
+            snapshot_name=self.client.runtime_name,
+            snapshot_digest=self.client.runtime_digest or None,
         )
         attempt = capability.attempt
         cache_attempt_redaction_values(
@@ -1717,72 +1787,55 @@ class DaytonaHostedGateway:
                 f"sha256:{commit_sha}" if len(commit_sha) == 64 else commit_sha
             )
         attempt.save(update_fields=["source_digest", "bundle_digest", "updated_at"])
-        authoring_seconds = max(
-            0,
-            int(
-                getattr(
-                    settings,
-                    "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
-                    3600,
-                )
-            ),
-        )
-        ttl_seconds = max(
-            int(getattr(settings, "ALK_HOSTED_SANDBOX_TTL_SECONDS", 7200)),
-            authoring_seconds + payload["runtime"]["max_duration_seconds"] + 120,
-        )
-        ttl_minutes = max(1, (ttl_seconds + 59) // 60)
-        # Voice/WebRTC media (ICE) needs UDP to the media server's advertised IP, which a DNS
-        # domain-allowlist cannot express when media and signaling resolve to different IPs. When
-        # unrestricted egress is enabled the sandbox runs with open outbound so media can flow;
-        # otherwise the domain allowlist (block-all + allowlist) applies.
+        ttl_seconds = _execution_ttl_seconds(payload["runtime"], self.client.name)
+        # E2B can combine domain and CIDR rules, which keeps LiveKit/WebRTC UDP media bounded.
+        # Daytona deliberately ignores CIDRs to preserve its established domain-only behavior.
         unrestricted = bool(getattr(settings, "ALK_HOSTED_EGRESS_UNRESTRICTED", False))
-        network_block_all = False if unrestricted else (not allowed_domains)
-        domain_allow_list = (
-            None if unrestricted else (",".join(sorted(allowed_domains)) or None)
-        )
+        allowed_cidrs = _webrtc_egress_cidrs(payload, secrets_map)
         sandbox = None
         try:
-            common_params = {
-                "language": "python",
-                "os_user": getattr(
-                    settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control"
-                ),
-                "labels": {
+            launch_spec = SandboxLaunchSpec(
+                cpu_units=payload["runtime"]["cpu_units"],
+                memory_mb=payload["runtime"]["memory_mb"],
+                disk_gb=10,
+                ttl_seconds=ttl_seconds,
+                os_user=getattr(settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control"),
+                labels={
                     "futureagi.job": str(job.id),
                     "futureagi.attempt": str(attempt.id),
                 },
-                "network_block_all": network_block_all,
-                "domain_allow_list": domain_allow_list,
-                "ephemeral": True,
-                "ttl_minutes": ttl_minutes,
-                "auto_delete_interval": ttl_minutes,
-            }
-            dockerfile = getattr(self, "dockerfile", "")
-            if dockerfile:
-                launch_params = CreateSandboxFromImageParams(
-                    image=Image.from_dockerfile(dockerfile),
-                    resources=Resources(
-                        cpu=payload["runtime"]["cpu_units"],
-                        memory=max(4, (payload["runtime"]["memory_mb"] + 1023) // 1024),
-                        disk=10,
-                    ),
-                    **common_params,
-                )
-                launch_timeout = 1200
-            else:
-                launch_params = CreateSandboxFromSnapshotParams(
-                    snapshot=self.snapshot,
-                    **common_params,
-                )
-                launch_timeout = 300
+                allowed_domains=tuple(sorted(allowed_domains)),
+                allowed_cidrs=allowed_cidrs,
+                unrestricted_egress=unrestricted,
+            )
             sandbox = self.client.create(
-                launch_params,
-                timeout=launch_timeout,
+                launch_spec, timeout=self.client.create_timeout_seconds
             )
             attempt.provider_ref = sandbox.id
             attempt.state = HostedHarnessAttempt.State.PROVISIONING
             attempt.save(update_fields=["provider_ref", "state", "updated_at"])
+            conversation = ensure_conversation(job)
+            conversation_capability = issue_conversation_capability(
+                conversation,
+                endpoint_base_url=endpoint_base_url,
+                provider_ref=str(sandbox.id),
+                attempt=attempt,
+                ttl_seconds=_execution_ttl_seconds(
+                    payload["runtime"], self.client.name
+                ),
+                control_only=True,
+                runtime_name=self.client.runtime_name,
+                runtime_digest=self.client.runtime_digest,
+            )
+            sandbox.fs.upload_file(
+                json.dumps(
+                    conversation_capability.document,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode(),
+                _CHAT_CAPABILITIES_PATH,
+            )
+            sandbox.fs.upload_file(_CHAT_POLICY, _CHAT_POLICY_PATH)
             from simulate.services.harness_usage import record_sandbox_runtime
 
             record_sandbox_runtime(attempt, started=True)
@@ -1857,6 +1910,7 @@ class DaytonaHostedGateway:
                 "chmod -R a-w /work/source && "
                 "chmod 0600 /work/job.json /run/futureagi/secrets.json "
                 "/run/futureagi/capabilities.json "
+                f"{_CHAT_CAPABILITIES_PATH} {_CHAT_POLICY_PATH} "
                 f"{_SIMULATOR_SECRETS_PATH} "
                 + (authoring_secrets_path if authoring_target_secrets else "")
                 + " "
@@ -1875,9 +1929,9 @@ class DaytonaHostedGateway:
                     retryable=True,
                 )
             sandbox.process.create_session(_ENTRYPOINT_SESSION)
-            # The fallback authoring command precedes hosted_entrypoint, so provide only the
-            # non-secret Vertex selectors and the protected credential-file path here.  API keys
-            # remain exclusively in simulator-secrets.json and are loaded (then deleted) by ALK.
+            # The fallback authoring command precedes hosted_entrypoint. Export platform-owned
+            # model routing, including the AgentCC credential needed to drive Gemini through the
+            # Claude SDK. Customer target API keys remain in simulator-secrets.json.
             authoring_exports = {
                 name: value
                 for name, value in simulator_env.items()
@@ -1886,8 +1940,9 @@ class DaytonaHostedGateway:
                     "ALK_HARNESS",
                     "ALK_SIMULATOR_FUNDING",
                     "ALK_HARNESS_MODEL",
+                    "ALK_CLAUDE_GATEWAY_URL",
+                    "ALK_CLAUDE_GATEWAY_API_KEY",
                     "ALK_VERTEX_LOCATION",
-                    # Authoring writes the scenarios, so the switch is exported here too.
                     "ALK_VOICEMAIL_SCENARIOS",
                     "GOOGLE_APPLICATION_CREDENTIALS",
                     "GOOGLE_CLOUD_LOCATION",
@@ -1895,10 +1950,7 @@ class DaytonaHostedGateway:
                     "GOOGLE_GENAI_USE_VERTEXAI",
                 }
             }
-            export_command = " ".join(
-                f"{name}={shlex.quote(value)}"
-                for name, value in sorted(authoring_exports.items())
-            )
+            authoring_exports["PATH"] = _CHAT_RUNTIME_PATH
             provider_profile_args = (
                 f"--target-secrets {authoring_secrets_path} "
                 "--provider-profile-cache /work/provider-import-profile.json "
@@ -1907,16 +1959,15 @@ class DaytonaHostedGateway:
             )
             command = sandbox.process.execute_session_command(
                 _ENTRYPOINT_SESSION,
-                SessionExecuteRequest(
+                SandboxCommandRequest(
                     command=(
-                        (f"export {export_command} && " if export_command else "")
-                        + "if [ ! -f /work/authoring/contract.json ]; then "
+                        "if [ ! -f /work/authoring/contract.json ]; then "
                         "python -m fi.alk.harness.hosted_authoring_entrypoint "
                         "/work/job.json --source /work/source --output /work/authoring "
                         f"--adjustments {_ADJUSTMENTS_PATH} "
+                        f"--conversation-capabilities {_CHAT_CAPABILITIES_PATH} "
                         + provider_profile_args
-                        + "; "
-                        "fi && "
+                        + "; fi && "
                         + ((extend_command + " && ") if extend_command else "")
                         + "python -m fi.alk.harness.bundle_author_v2 "
                         "--job /work/job.json --source /work/source "
@@ -1924,6 +1975,7 @@ class DaytonaHostedGateway:
                         "python -m fi.alk.harness.hosted_entrypoint /work/job.json "
                         "--source /work/source --output /work/artifacts"
                     ),
+                    env=authoring_exports,
                     run_async=True,
                     suppress_input_echo=True,
                 ),
@@ -1945,7 +1997,7 @@ class DaytonaHostedGateway:
             ):
                 provider_reason = "organization_suspended_depleted_credits"
             details = {
-                "provider": "daytona",
+                "provider": self.client.name,
                 "exception_type": type(exc).__name__,
             }
             if isinstance(provider_status_code, int):
@@ -2000,7 +2052,7 @@ class DaytonaHostedGateway:
                     provider_ref="",
                     verified_absent=True,
                     retry_pending=retry_pending,
-                    details={"provider": "daytona", "sandbox_created": False},
+                    details={"provider": self.client.name, "sandbox_created": False},
                 )
             else:
                 job = self._delete_and_record(attempt, retry_pending=retry_pending)
@@ -2013,6 +2065,489 @@ class DaytonaHostedGateway:
             attempt.job = job
             return attempt
 
+    def _start_chat_in_sandbox(
+        self,
+        *,
+        job: HostedHarnessJob,
+        conversation: HostedHarnessConversation,
+        attempt: HostedHarnessAttempt,
+        sandbox,
+        endpoint_base_url: str,
+    ) -> HostedHarnessConversationLease:
+        """Start the conversation process beside the job's existing harness process."""
+        simulator_env, simulator_vertex_credentials = _platform_simulator_material()
+        capability = issue_conversation_capability(
+            conversation,
+            endpoint_base_url=endpoint_base_url,
+            provider_ref=str(sandbox.id),
+            attempt=attempt,
+            ttl_seconds=_execution_ttl_seconds(
+                job.payload["runtime"], self.client.name
+            ),
+            control_only=True,
+            runtime_name=self.client.runtime_name,
+            runtime_digest=self.client.runtime_digest,
+        )
+        sandbox.fs.upload_file(
+            json.dumps(
+                capability.document, sort_keys=True, separators=(",", ":")
+            ).encode(),
+            _CHAT_CAPABILITIES_PATH,
+        )
+        sandbox.fs.upload_file(_CHAT_POLICY, _CHAT_POLICY_PATH)
+        if simulator_vertex_credentials is not None:
+            sandbox.fs.upload_file(
+                simulator_vertex_credentials,
+                _SIMULATOR_VERTEX_CREDENTIALS_PATH,
+            )
+        prepared = sandbox.process.exec(
+            "mkdir -p /work/authoring && "
+            "chown -R svc-control:svc-control /work/authoring && "
+            f"chmod 0600 {_CHAT_CAPABILITIES_PATH} {_CHAT_POLICY_PATH}",
+            timeout=60,
+        )
+        if prepared.exit_code:
+            raise HostedHarnessError(
+                "conversation_workspace_prepare_failed",
+                "the active hosted ALK sandbox could not prepare chat",
+                status_code=502,
+                retryable=True,
+            )
+        sandbox.process.create_session(_CHAT_SESSION)
+        chat_exports = {
+            name: value
+            for name, value in simulator_env.items()
+            if name
+            in {
+                "ALK_HARNESS",
+                "ALK_HARNESS_MODEL",
+                "ALK_VERTEX_LOCATION",
+                "ALK_CLAUDE_GATEWAY_URL",
+                "ALK_CLAUDE_GATEWAY_API_KEY",
+                "CLAUDE_CODE_USE_VERTEX",
+                "CLOUD_ML_REGION",
+                "GOOGLE_APPLICATION_CREDENTIALS",
+                "GOOGLE_CLOUD_LOCATION",
+                "GOOGLE_CLOUD_PROJECT",
+                "ANTHROPIC_VERTEX_PROJECT_ID",
+                "GOOGLE_GENAI_USE_VERTEXAI",
+            }
+        }
+        chat_exports["PATH"] = _CHAT_RUNTIME_PATH
+        export_command = " ".join(
+            f"{name}={shlex.quote(value)}"
+            for name, value in sorted(chat_exports.items())
+        )
+        command = sandbox.process.execute_session_command(
+            _CHAT_SESSION,
+            SandboxCommandRequest(
+                command=(
+                    (f"export {export_command} && " if export_command else "")
+                    + "python -m fi.alk.harness.hosted_chat_entrypoint "
+                    "--job /work/job.json --source /work/source "
+                    "--workspace /work/authoring "
+                    f"--capabilities {_CHAT_CAPABILITIES_PATH} "
+                    f"--policy {_CHAT_POLICY_PATH}"
+                ),
+                run_async=True,
+                suppress_input_echo=True,
+            ),
+        )
+        sandbox.fs.upload_file(str(command.cmd_id).encode(), _CHAT_COMMAND_ID_FILE)
+        capability.lease.state = HostedHarnessConversationLease.State.ACTIVE
+        capability.lease.heartbeat_at = timezone.now()
+        capability.lease.save(update_fields=["state", "heartbeat_at", "updated_at"])
+        conversation.state = HostedHarnessConversation.State.WARM_IDLE
+        conversation.save(update_fields=["state", "updated_at"])
+        return capability.lease
+
+    def ensure_conversation_runtime(
+        self,
+        job: HostedHarnessJob,
+        *,
+        conversation: HostedHarnessConversation,
+        endpoint_base_url: str,
+    ) -> HostedHarnessConversationLease:
+        """Keep one isolated ALK conversation process available for this environment."""
+        terminal_states = {
+            HostedHarnessJob.State.COMPLETED,
+            HostedHarnessJob.State.FAILED,
+            HostedHarnessJob.State.CANCELED,
+        }
+        active_attempt = (
+            HostedHarnessAttempt.no_workspace_objects.filter(
+                job=job,
+                attempt_number=job.current_attempt_number,
+                state__in=(
+                    HostedHarnessAttempt.State.PROVISIONING,
+                    HostedHarnessAttempt.State.RUNNING,
+                ),
+            )
+            .exclude(provider_ref__isnull=True)
+            .first()
+        )
+        if active_attempt is not None and job.state not in terminal_states:
+            with transaction.atomic():
+                conversation = HostedHarnessConversation.no_workspace_objects.select_for_update().get(
+                    id=conversation.id
+                )
+                stale_lease = (
+                    HostedHarnessConversationLease.no_workspace_objects.filter(
+                        conversation=conversation,
+                        state__in=(
+                            HostedHarnessConversationLease.State.STARTING,
+                            HostedHarnessConversationLease.State.ACTIVE,
+                        ),
+                    )
+                    .exclude(provider_ref=active_attempt.provider_ref)
+                    .first()
+                )
+                if stale_lease is not None:
+                    if not stale_lease.provider_ref.startswith("pending:"):
+                        try:
+                            stale_sandbox = self.client.get(
+                                stale_lease.provider_ref,
+                                request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+                            )
+                            self.client.delete(stale_sandbox, timeout=120, wait=True)
+                        except SandboxNotFoundError:
+                            pass
+                    stale_lease.state = HostedHarnessConversationLease.State.EXPIRED
+                    stale_lease.save(update_fields=["state", "updated_at"])
+                lease = HostedHarnessConversationLease.no_workspace_objects.filter(
+                    conversation=conversation,
+                    provider_ref=active_attempt.provider_ref,
+                    state__in=(
+                        HostedHarnessConversationLease.State.STARTING,
+                        HostedHarnessConversationLease.State.ACTIVE,
+                    ),
+                    expires_at__gt=timezone.now() + timedelta(seconds=60),
+                ).first()
+                if lease is not None:
+                    if lease.state == HostedHarnessConversationLease.State.ACTIVE:
+                        sandbox = self.client.get(
+                            str(active_attempt.provider_ref),
+                            request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+                        )
+                        command_id = (
+                            sandbox.fs.download_file(
+                                _CHAT_COMMAND_ID_FILE,
+                                _PROVIDER_POLL_TIMEOUT_SECONDS,
+                            )
+                            .decode()
+                            .strip()
+                        )
+                        command = sandbox.process.get_session_command(
+                            _CHAT_SESSION,
+                            command_id,
+                            request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+                        )
+                        if command.exit_code is None:
+                            return lease
+                    lease.state = HostedHarnessConversationLease.State.EXPIRED
+                    lease.save(update_fields=["state", "updated_at"])
+                try:
+                    sandbox = self.client.get(
+                        str(active_attempt.provider_ref),
+                        request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+                    )
+                    return self._start_chat_in_sandbox(
+                        job=job,
+                        conversation=conversation,
+                        attempt=active_attempt,
+                        sandbox=sandbox,
+                        endpoint_base_url=endpoint_base_url,
+                    )
+                except SandboxNotFoundError as exc:
+                    raise HostedHarnessError(
+                        "conversation_runtime_not_ready",
+                        "the active hosted ALK sandbox is no longer available",
+                        status_code=409,
+                        retryable=True,
+                    ) from exc
+
+        lease = HostedHarnessConversationLease.no_workspace_objects.filter(
+            conversation=conversation,
+            state__in=(
+                HostedHarnessConversationLease.State.STARTING,
+                HostedHarnessConversationLease.State.ACTIVE,
+            ),
+            expires_at__gt=timezone.now() + timedelta(seconds=60),
+        ).first()
+        if lease is not None and lease.control_only and job.state in terminal_states:
+            if not lease.provider_ref.startswith("pending:"):
+                try:
+                    sandbox = self.client.get(
+                        lease.provider_ref,
+                        request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+                    )
+                    self.client.delete(sandbox, timeout=120, wait=True)
+                except SandboxNotFoundError:
+                    pass
+            lease.state = HostedHarnessConversationLease.State.EXPIRED
+            lease.save(update_fields=["state", "updated_at"])
+            lease = None
+        if lease is not None:
+            if lease.provider_ref.startswith("pending:"):
+                return lease
+            try:
+                sandbox = self.client.get(
+                    lease.provider_ref,
+                    request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+                )
+                command_id = (
+                    sandbox.fs.download_file(
+                        _CHAT_COMMAND_ID_FILE,
+                        _PROVIDER_POLL_TIMEOUT_SECONDS,
+                    )
+                    .decode()
+                    .strip()
+                )
+                command = sandbox.process.get_session_command(
+                    _CHAT_SESSION,
+                    command_id,
+                    request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+                )
+            except SandboxNotFoundError:
+                lease.state = HostedHarnessConversationLease.State.EXPIRED
+                lease.save(update_fields=["state", "updated_at"])
+            except Exception as exc:
+                raise HostedHarnessError(
+                    "conversation_runtime_probe_failed",
+                    "the hosted ALK conversation runtime could not be inspected",
+                    status_code=503,
+                    retryable=True,
+                ) from exc
+            else:
+                if command.exit_code is None:
+                    return lease
+                lease.state = HostedHarnessConversationLease.State.EXPIRED
+                lease.save(update_fields=["state", "updated_at"])
+
+        workspace_archive = load_workspace_archive(conversation)
+        if workspace_archive is None:
+            workspace_archive = _authoring_archive_for(job)
+        control_only = workspace_archive is None
+        if workspace_archive is None:
+            workspace_archive = _empty_workspace_archive()
+        active_attempt = (
+            HostedHarnessAttempt.no_workspace_objects.filter(
+                job=job,
+                attempt_number=job.current_attempt_number,
+            ).first()
+            if control_only and job.state not in terminal_states
+            else None
+        )
+
+        source_archive, _commit_sha = HostedSourceAcquirer().acquire(job)
+        simulator_env, simulator_vertex_credentials = _platform_simulator_material()
+        platform_host = _hostname_from_url(endpoint_base_url)
+        allowed_domains = _resolved_egress_domains(
+            job.payload,
+            {},
+            simulator_env,
+            platform_host,
+        )
+        _validate_resolved_egress_domains(allowed_domains)
+        ttl_seconds = max(
+            300, int(getattr(settings, "ALK_HOSTED_CHAT_TTL_SECONDS", 1800))
+        )
+        launch_spec = SandboxLaunchSpec(
+            cpu_units=2,
+            memory_mb=4096,
+            disk_gb=10,
+            ttl_seconds=ttl_seconds,
+            os_user=str(getattr(settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control")),
+            labels={
+                "futureagi.job": str(job.id),
+                "futureagi.conversation": str(conversation.id),
+            },
+            allowed_domains=tuple(sorted(allowed_domains)),
+        )
+        claim_ref = f"pending:{uuid.uuid4()}"
+        claim_hash = hashlib.sha256(claim_ref.encode()).hexdigest()
+        claim_now = timezone.now()
+        with transaction.atomic():
+            conversation = (
+                HostedHarnessConversation.no_workspace_objects.select_for_update().get(
+                    id=conversation.id
+                )
+            )
+            existing = (
+                HostedHarnessConversationLease.no_workspace_objects.select_for_update()
+                .filter(
+                    conversation=conversation,
+                    state__in=(
+                        HostedHarnessConversationLease.State.STARTING,
+                        HostedHarnessConversationLease.State.ACTIVE,
+                    ),
+                    expires_at__gt=claim_now + timedelta(seconds=60),
+                )
+                .first()
+            )
+            if existing is not None:
+                return existing
+            HostedHarnessConversationLease.no_workspace_objects.update_or_create(
+                conversation=conversation,
+                defaults={
+                    "attempt": active_attempt,
+                    "control_only": control_only,
+                    "provider_ref": claim_ref,
+                    "state": HostedHarnessConversationLease.State.STARTING,
+                    "token_hash": claim_hash,
+                    "fence_hash": claim_hash,
+                    "expires_at": claim_now + timedelta(minutes=5),
+                    "heartbeat_at": claim_now,
+                    "command_watermark": conversation.command_acked_through,
+                    "event_watermark": conversation.event_acked_through,
+                    "snapshot_name": self.client.runtime_name,
+                    "snapshot_digest": self.client.runtime_digest,
+                },
+            )
+            conversation.policy_hash = hashlib.sha256(_CHAT_POLICY).hexdigest()
+            conversation.state = HostedHarnessConversation.State.STARTING
+            conversation.save(update_fields=["policy_hash", "state", "updated_at"])
+
+        sandbox = None
+        try:
+            sandbox = self.client.create(
+                launch_spec,
+                timeout=self.client.create_timeout_seconds,
+            )
+            capability = issue_conversation_capability(
+                conversation,
+                endpoint_base_url=endpoint_base_url,
+                provider_ref=str(sandbox.id),
+                attempt=active_attempt,
+                ttl_seconds=ttl_seconds,
+                control_only=control_only,
+                runtime_name=self.client.runtime_name,
+                runtime_digest=self.client.runtime_digest,
+            )
+            sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
+            sandbox.fs.upload_file(workspace_archive, "/work/conversation.tar.gz")
+            sandbox.fs.upload_file(
+                json.dumps(job.payload, sort_keys=True, separators=(",", ":")).encode(),
+                "/work/job.json",
+            )
+            sandbox.fs.upload_file(
+                json.dumps(
+                    capability.document, sort_keys=True, separators=(",", ":")
+                ).encode(),
+                _CHAT_CAPABILITIES_PATH,
+            )
+            sandbox.fs.upload_file(_CHAT_POLICY, _CHAT_POLICY_PATH)
+            if simulator_vertex_credentials is not None:
+                sandbox.fs.upload_file(
+                    simulator_vertex_credentials,
+                    _SIMULATOR_VERTEX_CREDENTIALS_PATH,
+                )
+            prepared = sandbox.process.exec(
+                "mkdir -p /work/authoring && "
+                "tar -xzf /work/conversation.tar.gz -C /work/authoring && "
+                "rm /work/conversation.tar.gz && "
+                "tar -xzf /work/source.tar.gz -C /work && "
+                "rm /work/source.tar.gz && "
+                "chown -R svc-control:svc-control /work/source /work/authoring && "
+                "chmod -R a-w /work/source && "
+                f"chmod 0600 /work/job.json {_CHAT_CAPABILITIES_PATH} "
+                f"{_CHAT_POLICY_PATH}",
+                timeout=120,
+            )
+            if prepared.exit_code:
+                raise HostedHarnessError(
+                    "conversation_workspace_prepare_failed",
+                    "the hosted ALK conversation workspace could not be prepared",
+                    status_code=502,
+                    retryable=True,
+                )
+            sandbox.process.create_session(_CHAT_SESSION)
+            chat_exports = {
+                name: value
+                for name, value in simulator_env.items()
+                if name
+                in {
+                    "ALK_HARNESS",
+                    "ALK_HARNESS_MODEL",
+                    "ALK_VERTEX_LOCATION",
+                    "ALK_CLAUDE_GATEWAY_URL",
+                    "ALK_CLAUDE_GATEWAY_API_KEY",
+                    "CLAUDE_CODE_USE_VERTEX",
+                    "CLOUD_ML_REGION",
+                    "GOOGLE_APPLICATION_CREDENTIALS",
+                    "GOOGLE_CLOUD_LOCATION",
+                    "GOOGLE_CLOUD_PROJECT",
+                    "ANTHROPIC_VERTEX_PROJECT_ID",
+                    "GOOGLE_GENAI_USE_VERTEXAI",
+                }
+            }
+            chat_exports["PATH"] = _CHAT_RUNTIME_PATH
+            export_command = " ".join(
+                f"{name}={shlex.quote(value)}"
+                for name, value in sorted(chat_exports.items())
+            )
+            command = sandbox.process.execute_session_command(
+                _CHAT_SESSION,
+                SandboxCommandRequest(
+                    command=(
+                        (f"export {export_command} && " if export_command else "")
+                        + "python -m fi.alk.harness.hosted_chat_entrypoint "
+                        "--job /work/job.json --source /work/source "
+                        "--workspace /work/authoring "
+                        f"--capabilities {_CHAT_CAPABILITIES_PATH} "
+                        f"--policy {_CHAT_POLICY_PATH}"
+                    ),
+                    run_async=True,
+                    suppress_input_echo=True,
+                ),
+            )
+            sandbox.fs.upload_file(str(command.cmd_id).encode(), _CHAT_COMMAND_ID_FILE)
+            capability.lease.state = HostedHarnessConversationLease.State.ACTIVE
+            capability.lease.heartbeat_at = timezone.now()
+            capability.lease.save(update_fields=["state", "heartbeat_at", "updated_at"])
+            conversation.state = HostedHarnessConversation.State.WARM_IDLE
+            conversation.save(update_fields=["state", "updated_at"])
+            return capability.lease
+        except HostedHarnessError:
+            if sandbox is not None:
+                try:
+                    self.client.delete(sandbox, timeout=120, wait=True)
+                except Exception:
+                    logger.exception(
+                        "conversation sandbox cleanup failed conversation=%s",
+                        conversation.id,
+                    )
+            provider_refs = {claim_ref, str(getattr(sandbox, "id", "") or "")}
+            HostedHarnessConversationLease.no_workspace_objects.filter(
+                conversation=conversation,
+                provider_ref__in=provider_refs,
+            ).update(state=HostedHarnessConversationLease.State.EXPIRED)
+            conversation.state = HostedHarnessConversation.State.DEGRADED
+            conversation.save(update_fields=["state", "updated_at"])
+            raise
+        except Exception as exc:
+            if sandbox is not None:
+                try:
+                    self.client.delete(sandbox, timeout=120, wait=True)
+                except Exception:
+                    logger.exception(
+                        "conversation sandbox cleanup failed conversation=%s",
+                        conversation.id,
+                    )
+            provider_refs = {claim_ref, str(getattr(sandbox, "id", "") or "")}
+            HostedHarnessConversationLease.no_workspace_objects.filter(
+                conversation=conversation,
+                provider_ref__in=provider_refs,
+            ).update(state=HostedHarnessConversationLease.State.EXPIRED)
+            conversation.state = HostedHarnessConversation.State.DEGRADED
+            conversation.save(update_fields=["state", "updated_at"])
+            raise HostedHarnessError(
+                "conversation_runtime_start_failed",
+                "the hosted ALK conversation runtime could not be started",
+                status_code=503,
+                retryable=True,
+            ) from exc
+
     @staticmethod
     def _capture_diagnostics(
         attempt: HostedHarnessAttempt,
@@ -2021,7 +2556,7 @@ class DaytonaHostedGateway:
         command_id: str | None = None,
         command: Any | None = None,
         final: bool = False,
-    ) -> DaytonaDiagnostics | None:
+    ) -> SandboxDiagnostics | None:
         if (
             not final
             and attempt.diagnostics_captured_at
@@ -2047,7 +2582,7 @@ class DaytonaHostedGateway:
                 )
                 return None
         try:
-            return poll_daytona_diagnostics(
+            return poll_sandbox_diagnostics(
                 attempt,
                 sandbox,
                 session_id=_ENTRYPOINT_SESSION,
@@ -2119,7 +2654,6 @@ class DaytonaHostedGateway:
         the attempt-local inbox consumed by ALK at stage boundaries. Keeping the
         whole inbox in metadata also makes retries and the UI deterministic.
         """
-        from daytona import DaytonaNotFoundError
 
         terminal_states = {
             HostedHarnessJob.State.COMPLETED,
@@ -2159,7 +2693,7 @@ class DaytonaHostedGateway:
                 status_code=409,
                 retryable=True,
             )
-        if attempt.snapshot_name != _DIRECT_IMAGE_WITH_ADJUSTMENTS:
+        if not self.client.supports_adjustments:
             raise HostedHarnessError(
                 "adjustment_protocol_unavailable",
                 "this run started before live messages were enabled; start a new run to use them",
@@ -2170,7 +2704,7 @@ class DaytonaHostedGateway:
                 str(attempt.provider_ref),
                 request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
             )
-        except DaytonaNotFoundError as exc:
+        except SandboxNotFoundError as exc:
             raise HostedHarnessError(
                 "adjustment_sandbox_missing",
                 "the active hosted sandbox no longer exists",
@@ -2259,6 +2793,31 @@ class DaytonaHostedGateway:
             except Exception:  # noqa: BLE001 - an absent/incomplete stage file is expected
                 return None
 
+        def _activity_events() -> list[dict[str, Any]]:
+            try:
+                raw = sandbox.fs.download_file(
+                    "/work/authoring/harness-events.jsonl",
+                    _PROGRESS_FILE_TIMEOUT_SECONDS,
+                ).decode("utf-8")
+            except Exception:  # noqa: BLE001 - the file appears after the first model event
+                return []
+            events: list[dict[str, Any]] = []
+            for line in raw.splitlines()[-200:]:
+                try:
+                    item = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(item, dict):
+                    events.append(
+                        {
+                            "event_id": item.get("event_id"),
+                            "event_type": item.get("event_type"),
+                            "sequence": item.get("sequence"),
+                            "payload": item.get("payload") or {},
+                        }
+                    )
+            return events
+
         contract = _json("/work/authoring/contract.json")
         environment = _json("/work/authoring/environment.json")
         # The current hosted authoring pipeline writes the deterministic environment compiler
@@ -2333,6 +2892,9 @@ class DaytonaHostedGateway:
             scenarios,
             bundle if isinstance(bundle, dict) else authored_bundle,
         )
+        activities = _activity_events()
+        if activities:
+            outputs.append({"kind": "activity", "events": activities})
         stage = "understanding_agent"
         if isinstance(contract, dict):
             stage = "generating_environment"
@@ -2340,7 +2902,7 @@ class DaytonaHostedGateway:
             stage = "generating_scenarios"
         if isinstance(scenarios, list):
             stage = "validating_environment"
-        DaytonaHostedGateway._sync_adjustment_progress(job, sandbox)
+        HostedHarnessGateway._sync_adjustment_progress(job, sandbox)
         if not outputs:
             return
         # Once the guest event channel advances into runtime stages it is authoritative.
@@ -2402,17 +2964,61 @@ class DaytonaHostedGateway:
         job.save(update_fields=["payload", "updated_at"])
 
     def cancel(self, job: HostedHarnessJob, *, reason: str) -> HostedHarnessJob:
-        from daytona import DaytonaNotFoundError
 
         job = request_cancellation(job, reason)
         attempt = HostedHarnessAttempt.no_workspace_objects.filter(
             job=job, attempt_number=job.current_attempt_number
         ).first()
         if attempt is None or not attempt.provider_ref:
+            if attempt is not None:
+                attempt.terminal_stage = "canceled"
+                attempt.terminal_reason = reason
+                attempt.terminal_failure = None
+                attempt.save(
+                    update_fields=[
+                        "terminal_stage",
+                        "terminal_reason",
+                        "terminal_failure",
+                        "updated_at",
+                    ]
+                )
+                forget_attempt_redaction_values(attempt.id)
+                return record_cleanup(
+                    attempt.id,
+                    provider_ref="",
+                    verified_absent=True,
+                    details={"provider": self.client.name, "sandbox_created": False},
+                )
+            from simulate.models import CallExecution, TestExecution
+
+            job.state = HostedHarnessJob.State.CANCELED
+            job.current_stage = HostedHarnessJob.State.CANCELED
+            job.terminal_at = timezone.now()
+            job.save(
+                update_fields=["state", "current_stage", "terminal_at", "updated_at"]
+            )
+            if job.test_execution_id:
+                TestExecution.no_workspace_objects.filter(
+                    id=job.test_execution_id
+                ).update(
+                    status=TestExecution.ExecutionStatus.CANCELLED,
+                    completed_at=job.terminal_at,
+                )
+                CallExecution.no_workspace_objects.filter(
+                    test_execution_id=job.test_execution_id,
+                    status__in=(
+                        CallExecution.CallStatus.PENDING,
+                        CallExecution.CallStatus.REGISTERED,
+                        CallExecution.CallStatus.ONGOING,
+                    ),
+                ).update(
+                    status=CallExecution.CallStatus.CANCELLED,
+                    completed_at=job.terminal_at,
+                )
             return job
         try:
             sandbox = self.client.get(str(attempt.provider_ref))
-        except DaytonaNotFoundError:
+        except SandboxNotFoundError:
             attempt.terminal_stage = "canceled"
             attempt.terminal_reason = reason
             attempt.save(
@@ -2423,39 +3029,38 @@ class DaytonaHostedGateway:
                 attempt.id,
                 provider_ref=str(attempt.provider_ref),
                 verified_absent=True,
-                details={"provider": "daytona", "already_absent": True},
+                details={"provider": self.client.name, "already_absent": True},
             )
-        sandbox.fs.upload_file(
-            json.dumps({"reason": reason}, separators=(",", ":")).encode(),
-            "/run/futureagi/cancel.json",
-        )
-        sandbox.process.exec(
-            "pkill -TERM -f 'fi.alk.harness.hosted_entrypoint' || true",
-            timeout=30,
-        )
-        deadline = time.monotonic() + 120
-        while time.monotonic() < deadline:
-            observation = self.inspect(attempt)
-            if observation["exit_code"] is not None:
-                break
-            time.sleep(2)
-        # Cleanup derives the final job state from the attempt's terminal
-        # stage. The already-absent branch sets this above; the normal branch
-        # must do the same or an intentional cancellation is misreported as a
-        # platform failure after the sandbox is deleted.
-        attempt.terminal_stage = "canceled"
-        attempt.terminal_reason = reason
-        attempt.terminal_failure = None
-        attempt.save(
-            update_fields=[
-                "terminal_stage",
-                "terminal_reason",
-                "terminal_failure",
-                "updated_at",
-            ]
-        )
-        self._delete_and_record(attempt)
-        return HostedHarnessJob.no_workspace_objects.get(id=job.id)
+        try:
+            try:
+                sandbox.fs.upload_file(
+                    json.dumps({"reason": reason}, separators=(",", ":")).encode(),
+                    "/run/futureagi/cancel.json",
+                )
+                sandbox.process.exec(
+                    "pkill -TERM -f 'fi.alk.harness.hosted_entrypoint' || true",
+                    timeout=30,
+                )
+            except Exception:
+                logger.exception(
+                    "hosted guest cancellation signal failed attempt=%s",
+                    attempt.id,
+                )
+        finally:
+            # Guest signaling is best effort. Provider deletion is the cleanup
+            # contract and must still run when the guest control channel is gone.
+            attempt.terminal_stage = "canceled"
+            attempt.terminal_reason = reason
+            attempt.terminal_failure = None
+            attempt.save(
+                update_fields=[
+                    "terminal_stage",
+                    "terminal_reason",
+                    "terminal_failure",
+                    "updated_at",
+                ]
+            )
+        return self._delete_and_record(attempt)
 
     def _should_retry(self, attempt: HostedHarnessAttempt, domain: str) -> bool:
         # An infrastructure/connectivity failure is worth a fresh attempt while
@@ -2474,13 +3079,10 @@ class DaytonaHostedGateway:
     def reconcile_completed(
         self, attempt: HostedHarnessAttempt
     ) -> HostedHarnessJob | None:
-        from daytona import DaytonaConflictError, DaytonaError, DaytonaNotFoundError
 
-        # ``launch`` can fail before Daytona returns a sandbox id.  That path has already
+        # A launch can fail before the provider returns a sandbox id. That path has already
         # recorded cleanup and projected the job into RETRY_WAIT (or terminal FAILED when the
-        # attempt budget is exhausted).  The workflow deliberately polls the returned attempt
-        # once to learn that durable state; do not try ``client.get("")`` and replace the useful
-        # ``sandbox_launch_failed`` diagnosis with a misleading ``sandbox_disappeared`` error.
+        # attempt budget is exhausted). Do not replace that diagnosis with sandbox_disappeared.
         attempt.refresh_from_db()
         job = attempt.job
         job.refresh_from_db()
@@ -2497,7 +3099,7 @@ class DaytonaHostedGateway:
 
         try:
             observation = self.inspect(attempt)
-        except DaytonaNotFoundError:
+        except SandboxNotFoundError:
             retry_pending = False
             if not attempt.terminal_event_received:
                 attempt.terminal_stage = "failed"
@@ -2523,14 +3125,12 @@ class DaytonaHostedGateway:
                 provider_ref=str(attempt.provider_ref),
                 verified_absent=True,
                 retry_pending=retry_pending,
-                details={"provider": "daytona", "already_absent": True},
+                details={"provider": self.client.name, "already_absent": True},
             )
-        except DaytonaError as exc:
-            # Daytona can keep reporting a sandbox as STARTED while its toolbox/daemon is no
-            # longer reachable. The SDK's default file timeout is much longer than the Temporal
-            # poll activity timeout, which previously left the workflow retrying the poll for
-            # hours with no terminal diagnosis. Tolerate a short control-plane wobble, then
-            # retire the sandbox and start a genuinely fresh infrastructure attempt.
+        except SandboxProviderError as exc:
+            # A provider may still report the sandbox as running while its control channel is
+            # unavailable. Tolerate a short wobble, then replace it using the infrastructure
+            # retry budget.
             grace_seconds = int(
                 getattr(
                     settings,
@@ -2559,7 +3159,7 @@ class DaytonaHostedGateway:
                     "grace period"
                 ),
                 "details": {
-                    "provider": "daytona",
+                    "provider": self.client.name,
                     "exception_type": type(exc).__name__,
                     "grace_seconds": grace_seconds,
                 },
@@ -2578,7 +3178,7 @@ class DaytonaHostedGateway:
                     attempt,
                     retry_pending=self._should_retry(attempt, "infrastructure"),
                 )
-            except DaytonaConflictError:
+            except SandboxConflictError:
                 # The first delete request can be accepted even when its wait call ends in a
                 # lifecycle 409 ("state change in progress"). Cleanup is not verified yet, so
                 # let the next workflow poll observe absence instead of burning all activity
@@ -2595,11 +3195,9 @@ class DaytonaHostedGateway:
             attempt.save(update_fields=["heartbeat_at", "updated_at"])
             return None
 
-        # Event/manifest ingestion runs independently from the provider poll.  The attempt object
-        # held by the workflow may predate the terminal HTTP requests even though both commits are
-        # already visible in the database by the time Daytona reports process exit.  Refresh the
-        # delivery fields before classifying exit 0, or a fully acknowledged run is overwritten
-        # with the false `terminal_delivery_incomplete` platform failure.
+        # Event/manifest ingestion runs independently from the provider poll. The attempt object
+        # held by the workflow may predate terminal HTTP requests even though both commits are
+        # visible by the time the provider reports process exit. Refresh before classifying it.
         attempt.refresh_from_db(
             fields=[
                 "terminal_event_received",
@@ -2724,17 +3322,70 @@ class DaytonaHostedGateway:
             )
         return self._delete_and_record(attempt, retry_pending=retry_pending)
 
+    def _cleanup_conversation_runtime(self, job: HostedHarnessJob) -> None:
+        """Delete the control-only chat sandbox after the execution becomes terminal."""
+        conversation = HostedHarnessConversation.no_workspace_objects.filter(
+            job=job
+        ).first()
+        if conversation is None:
+            return
+        lease = HostedHarnessConversationLease.no_workspace_objects.filter(
+            conversation=conversation,
+            control_only=True,
+            state__in=(
+                HostedHarnessConversationLease.State.STARTING,
+                HostedHarnessConversationLease.State.ACTIVE,
+            ),
+        ).first()
+        if lease is None:
+            return
+        provider_ref = str(lease.provider_ref or "")
+        absent = not provider_ref or provider_ref.startswith("pending:")
+        if not absent:
+            try:
+                sandbox = self.client.get(
+                    provider_ref,
+                    request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+                )
+            except SandboxNotFoundError:
+                absent = True
+            except Exception:
+                logger.exception(
+                    "conversation sandbox cleanup deferred conversation=%s",
+                    conversation.id,
+                )
+                return
+            else:
+                try:
+                    absent = self.client.delete(sandbox, timeout=120, wait=True)
+                    if not absent:
+                        try:
+                            self.client.get(
+                                provider_ref,
+                                request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+                            )
+                        except SandboxNotFoundError:
+                            absent = True
+                except Exception:
+                    logger.exception(
+                        "conversation sandbox deletion failed conversation=%s",
+                        conversation.id,
+                    )
+                    return
+        if absent:
+            lease.state = HostedHarnessConversationLease.State.EXPIRED
+            lease.save(update_fields=["state", "updated_at"])
+
     def _delete_and_record(
         self, attempt: HostedHarnessAttempt, *, retry_pending: bool = False
     ) -> HostedHarnessJob:
-        from daytona import DaytonaNotFoundError
 
         try:
             sandbox = self.client.get(
                 str(attempt.provider_ref),
                 request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
             )
-        except DaytonaNotFoundError:
+        except SandboxNotFoundError:
             absent = True
         else:
             # A terminal poll normally finalized diagnostics already. Launch failures and
@@ -2745,23 +3396,27 @@ class DaytonaHostedGateway:
             # The last moment the ledger exists: after the delete there is nothing to ask.
             _read_harness_spend(attempt, sandbox)
             _read_harness_usage(attempt, sandbox)
-            self.client.delete(sandbox, timeout=120, wait=True)
-            try:
-                self.client.get(
-                    str(attempt.provider_ref),
-                    request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
-                )
-            except DaytonaNotFoundError:
-                absent = True
-            else:
-                absent = False
-        return record_cleanup(
+            absent = self.client.delete(sandbox, timeout=120, wait=True)
+            if not absent:
+                try:
+                    self.client.get(
+                        str(attempt.provider_ref),
+                        request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+                    )
+                except SandboxNotFoundError:
+                    absent = True
+        job = record_cleanup(
             attempt.id,
             provider_ref=str(attempt.provider_ref),
             verified_absent=absent,
             retry_pending=retry_pending,
-            details={"provider": "daytona", "deleted_at": timezone.now().isoformat()},
+            details={
+                "provider": self.client.name,
+                "deleted_at": timezone.now().isoformat(),
+            },
         )
+        self._cleanup_conversation_runtime(job)
+        return job
 
 
 def _empty_source_archive() -> bytes:
