@@ -580,12 +580,27 @@ def _record_target_agent_facts(
     if named and agent_definition.agent_name == "alk-sdk-agent":
         agent_definition.agent_name = named[:255]
         changed.append("agent_name")
+    agent_config = (job.payload.get("agent") or {}).get("config") or {}
+    explicit_inbound = agent_config.get("inbound")
     direction = str(authored.get("call_direction") or "").strip().lower()
-    if direction in {"inbound", "outbound"}:
-        inbound = direction == "inbound"
+    if isinstance(explicit_inbound, bool) or direction in {"inbound", "outbound"}:
+        # The user's RL Environment selection is authoritative. The authored
+        # contract remains the fallback for older jobs that predate the field.
+        inbound = (
+            explicit_inbound
+            if isinstance(explicit_inbound, bool)
+            else direction == "inbound"
+        )
         if agent_definition.inbound != inbound:
             agent_definition.inbound = inbound
             changed.append("inbound")
+    target_speaks_first = agent_config.get("target_speaks_first")
+    if (
+        isinstance(target_speaks_first, bool)
+        and agent_definition.target_speaks_first != target_speaks_first
+    ):
+        agent_definition.target_speaks_first = target_speaks_first
+        changed.append("target_speaks_first")
     if changed:
         agent_definition.save(update_fields=[*changed, "updated_at"])
     if prompt and agent_definition.latest_version is None:

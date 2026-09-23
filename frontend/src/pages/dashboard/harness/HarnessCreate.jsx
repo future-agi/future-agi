@@ -14,6 +14,7 @@ import {
   MenuItem,
   Paper,
   Stack,
+  Switch,
   TextField,
   Typography,
   alpha,
@@ -37,6 +38,10 @@ import {
 } from "src/api/harness/harness";
 import { paths } from "src/routes/paths";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
+import {
+  INBOUND_OUTBOUND_COPY,
+  TARGET_SPEAKS_FIRST_COPY,
+} from "src/sections/agents/constants";
 
 import { parseDotEnv } from "./dotenv";
 import {
@@ -102,6 +107,18 @@ export const callLimitConfig = (value) =>
   String(value ?? "").trim() && Number(value) > 0
     ? { voice_call_timeout_seconds: Number(value) }
     : {};
+
+export const callBehaviorConfig = ({
+  connector,
+  inbound,
+  targetSpeaksFirst,
+}) =>
+  connector === "retell_chat"
+    ? {}
+    : {
+        inbound: Boolean(inbound),
+        target_speaks_first: Boolean(targetSpeaksFirst),
+      };
 
 const providerCredentialName = (connector) =>
   connector === "vapi"
@@ -221,6 +238,8 @@ export default function HarnessCreate() {
   const [phoneSystemPrompt, setPhoneSystemPrompt] = useState("");
   const [providerCallTransport, setProviderCallTransport] = useState("web");
   const [providerPhoneNumber, setProviderPhoneNumber] = useState("");
+  const [inbound, setInbound] = useState(true);
+  const [targetSpeaksFirst, setTargetSpeaksFirst] = useState(false);
   const providerUsesPhone =
     ["vapi", "retell"].includes(connector) &&
     providerMode === "connect_only" &&
@@ -363,6 +382,7 @@ export default function HarnessCreate() {
         ...partitionConfigurationValues(configurationValues)
           .configurationValues,
         ...callLimitConfig(callTimeoutSeconds),
+        ...callBehaviorConfig({ connector, inbound, targetSpeaksFirst }),
         ...(providerUsesPhone
           ? { phone_number: providerPhoneNumber.trim() }
           : {}),
@@ -1392,6 +1412,7 @@ export default function HarnessCreate() {
                       setProviderTargetId("");
                       setProviderCallTransport("web");
                       setProviderPhoneNumber("");
+                      if (event.target.value === "phone") setInbound(true);
                       if (
                         ["retell_chat", "phone"].includes(event.target.value)
                       ) {
@@ -1640,6 +1661,78 @@ export default function HarnessCreate() {
                         </Alert>
                       )}
                     </>
+                  )}
+                  {connector !== "retell_chat" && (
+                    <Stack spacing={1.5}>
+                      <Box
+                        sx={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          gap: 2,
+                          border: 1,
+                          borderColor: "divider",
+                          borderRadius: 1,
+                          p: 1.5,
+                        }}
+                      >
+                        <Box>
+                          <Typography variant="subtitle2">
+                            {inbound
+                              ? INBOUND_OUTBOUND_COPY.inbound.title
+                              : INBOUND_OUTBOUND_COPY.outbound.title}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {connector === "phone"
+                              ? "Others can only receive calls from the simulator."
+                              : inbound
+                                ? INBOUND_OUTBOUND_COPY.inbound.description
+                                : INBOUND_OUTBOUND_COPY.outbound.description}
+                          </Typography>
+                        </Box>
+                        <Switch
+                          checked={inbound}
+                          disabled={connector === "phone"}
+                          onChange={(event) => {
+                            setInbound(event.target.checked);
+                            setPreflightDirty(Boolean(preflight));
+                          }}
+                          inputProps={{
+                            "aria-label": "Agent receives inbound calls",
+                          }}
+                        />
+                      </Box>
+
+                      <Box
+                        sx={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          gap: 2,
+                          border: 1,
+                          borderColor: "divider",
+                          borderRadius: 1,
+                          p: 1.5,
+                        }}
+                      >
+                        <Box>
+                          <Typography variant="subtitle2">
+                            {TARGET_SPEAKS_FIRST_COPY.title}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {TARGET_SPEAKS_FIRST_COPY.description}
+                          </Typography>
+                        </Box>
+                        <Switch
+                          checked={targetSpeaksFirst}
+                          onChange={(event) => {
+                            setTargetSpeaksFirst(event.target.checked);
+                            setPreflightDirty(Boolean(preflight));
+                          }}
+                          inputProps={{ "aria-label": "Agent speaks first" }}
+                        />
+                      </Box>
+                    </Stack>
                   )}
                 </Stack>
               </Section>

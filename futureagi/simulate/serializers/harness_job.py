@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from rest_framework import serializers
+
 from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
@@ -93,6 +94,9 @@ class HarnessAgentSerializer(serializers.Serializer):
     def validate_config(self, value):
         if not isinstance(value, dict):
             raise serializers.ValidationError("config must be an object")
+        for name in ("inbound", "target_speaks_first"):
+            if name in value and not isinstance(value[name], bool):
+                raise serializers.ValidationError(f"{name} must be a boolean")
         secret_names = ("token", "secret", "password", "api_key", "private_key")
         invalid = []
         for key, item in value.items():
@@ -474,6 +478,8 @@ class HarnessPreflightSerializer(HarnessJobCreateSerializer):
         write_only=True,
         help_text="Target-provider values to verify live; used for this check only.",
     )
+
+
 class HarnessJobAdjustmentSerializer(serializers.Serializer):
     instruction = serializers.CharField(
         min_length=1,
@@ -484,7 +490,6 @@ class HarnessJobAdjustmentSerializer(serializers.Serializer):
     client_request_id = serializers.CharField(
         max_length=128, required=False, allow_blank=False
     )
-
 
 
 class HarnessJobExtendSerializer(serializers.Serializer):
