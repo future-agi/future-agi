@@ -261,8 +261,48 @@ func TestTranslateRequest_Tools(t *testing.T) {
 	if decl.Description != "Get current weather" {
 		t.Errorf("Description = %q, want %q", decl.Description, "Get current weather")
 	}
-	if string(decl.Parameters) != string(params) {
-		t.Errorf("Parameters = %s, want %s", decl.Parameters, params)
+	if string(decl.ParametersJSONSchema) != string(params) {
+		t.Errorf("ParametersJSONSchema = %s, want %s", decl.ParametersJSONSchema, params)
+	}
+}
+
+func TestTranslateRequest_NormalizesJSONToolSchemaForGemini(t *testing.T) {
+	params := json.RawMessage(`{
+		"$schema": "https://json-schema.org/draft/2020-12/schema",
+		"type": "object",
+		"properties": {
+			"name": {"type": ["string", "null"]},
+			"options": {
+				"type": ["object", "null"],
+				"propertyNames": {"pattern": "^[a-z]+$"},
+				"properties": {
+					"limit": {"type": ["integer", "null"], "exclusiveMinimum": 0},
+					"labels": {
+						"type": ["array", "null"],
+						"items": {"type": ["string", "null"]}
+					}
+				}
+			}
+		}
+	}`)
+	req := &models.ChatCompletionRequest{
+		Model:    "gemini-3.7-flash",
+		Messages: []models.Message{{Role: "user", Content: mustJSON("Inspect the agent")}},
+		Tools: []models.Tool{{
+			Type: "function",
+			Function: models.ToolFunction{
+				Name:       "inspect_agent",
+				Parameters: params,
+			},
+		}},
+	}
+
+	gr, _ := translateRequest(req)
+
+	got := string(gr.Tools[0].FunctionDeclarations[0].ParametersJSONSchema)
+	want := string(normalizeToolSchema(params))
+	if got != want {
+		t.Errorf("ParametersJSONSchema = %s, want %s", got, want)
 	}
 }
 
@@ -297,6 +337,29 @@ func TestTranslateRequest_ToolsSkipNonFunction(t *testing.T) {
 	}
 	if gr.Tools[0].FunctionDeclarations[0].Name != "real_func" {
 		t.Errorf("Name = %q, want %q", gr.Tools[0].FunctionDeclarations[0].Name, "real_func")
+	}
+}
+
+func TestTranslateRequest_ToolsRemoveUnsupportedVertexSchemaKeywords(t *testing.T) {
+	params := json.RawMessage(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"count":{"type":"integer","exclusiveMinimum":0},"labels":{"type":"object","propertyNames":{"type":"string"}}}}`)
+	req := &models.ChatCompletionRequest{
+		Model:    "gemini-3.7-flash",
+		Messages: []models.Message{{Role: "user", Content: mustJSON("Use a tool")}},
+		Tools: []models.Tool{{
+			Type:     "function",
+			Function: models.ToolFunction{Name: "claude_builtin", Parameters: params},
+		}},
+	}
+
+	gr, _ := translateRequest(req)
+	got := string(gr.Tools[0].FunctionDeclarations[0].ParametersJSONSchema)
+	for _, unsupported := range []string{"$schema", "exclusiveMinimum", "propertyNames"} {
+		if strings.Contains(got, unsupported) {
+			t.Errorf("Parameters still contain unsupported keyword %q: %s", unsupported, got)
+		}
+	}
+	if !strings.Contains(got, `"count"`) || !strings.Contains(got, `"labels"`) {
+		t.Errorf("Parameters lost supported properties: %s", got)
 	}
 }
 
@@ -800,9 +863,9 @@ func TestTranslateVisionContent_Gemini_HTTPUrl(t *testing.T) {
 	}
 }
 
-// The ``file`` content block used to only accept ``file_id`` (a URL).
+// The “file“ content block used to only accept “file_id“ (a URL).
 // Callers (OpenAI-format chat completion with inline PDFs) send a
-// ``file_data`` data URI instead, which must be translated into a Gemini
+// “file_data“ data URI instead, which must be translated into a Gemini
 // inlineData part rather than silently dropped.
 func TestTranslateVisionContent_Gemini_FileDataInlinePdf(t *testing.T) {
 	content := json.RawMessage(`[
@@ -828,8 +891,8 @@ func TestTranslateVisionContent_Gemini_FileDataInlinePdf(t *testing.T) {
 	}
 }
 
-// Remote files via ``file_id`` should still be forwarded as a fileData
-// part (with default MIME type fallback when ``format`` is absent).
+// Remote files via “file_id“ should still be forwarded as a fileData
+// part (with default MIME type fallback when “format“ is absent).
 func TestTranslateVisionContent_Gemini_FileIDWithDefaultMime(t *testing.T) {
 	content := json.RawMessage(`[
 		{"type":"file","file":{"file_id":"https://example.com/doc.pdf"}}

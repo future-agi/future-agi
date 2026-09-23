@@ -49,6 +49,7 @@ function headerStatus(identity, stats) {
 export default function RunDetail({ env, envState, testId, executionId }) {
   const navigate = useNavigate();
   const [tab, setTab] = useState("tasks");
+  const [analyticsFilters, setAnalyticsFilters] = useState({});
   const [addingEvals, setAddingEvals] = useState(false);
   const [openCall, setOpenCall] = useState(null);
   const [debugging, setDebugging] = useState(false);
@@ -255,7 +256,11 @@ export default function RunDetail({ env, envState, testId, executionId }) {
           </CustomTabs>
 
           {tab === "tasks" && (
-            <RunTraceTable executionId={executionId} onOpenCall={setOpenCall} />
+            <RunTraceTable
+              executionId={executionId}
+              onOpenCall={setOpenCall}
+              initialFilters={analyticsFilters}
+            />
           )}
 
           {tab === "trials" && hasTrials && (
@@ -290,7 +295,16 @@ export default function RunDetail({ env, envState, testId, executionId }) {
             </SectionCard>
           )}
 
-          {tab === "analytics" && <RunAnalytics executionId={executionId} />}
+          {tab === "analytics" && (
+            <RunAnalytics
+              executionId={executionId}
+              onOpenCall={setOpenCall}
+              onOpenCalls={(filters) => {
+                setAnalyticsFilters(filters);
+                setTab("tasks");
+              }}
+            />
+          )}
         </Box>
       </Box>
 

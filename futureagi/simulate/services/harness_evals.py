@@ -193,6 +193,7 @@ def create_selected_eval_configs(
                 "mapping": mapping,
                 "run_test": run_test,
                 "filters": {},
+                "error_localizer": True,
                 "model": template.model or getattr(settings, "HARNESS_EVAL_MODEL", FALLBACK_EVAL_MODEL),
             },
         )

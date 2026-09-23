@@ -210,7 +210,7 @@ export function useNavData() {
         items: [
           {
             title: "Environment",
-            path: paths.dashboard.simulate.environments.root,
+            path: paths.dashboard.simulate.harness.root,
             icon: <Iconify icon="solar:server-square-cloud-linear" />,
           },
           {

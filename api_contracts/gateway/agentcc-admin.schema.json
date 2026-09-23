@@ -21,7 +21,8 @@
         "aws_access_key_id": { "type": "string" },
         "aws_secret_access_key": { "type": "string" },
         "aws_region": { "type": "string" },
-        "aws_session_token": { "type": "string" }
+        "aws_session_token": { "type": "string" },
+        "service_account_json": { "type": "string" }
       }
     },
     "GuardrailCheck": {

@@ -39,7 +39,12 @@ const filterButtonSx = {
 
 // The per-call table for a run's Test-runs tab. Owns the hook, the group-by /
 // status / column / filter controls and the row selection, over REAL call data.
-export default function RunTraceTable({ executionId, onOpenCall, onRerun }) {
+export default function RunTraceTable({
+  executionId,
+  onOpenCall,
+  onRerun,
+  initialFilters = {},
+}) {
   const [groupBy, setGroupBy] = useState("useCase");
   const [statusChip, setStatusChip] = useState("all");
   const [page, setPage] = useState(1);
@@ -47,7 +52,7 @@ export default function RunTraceTable({ executionId, onOpenCall, onRerun }) {
     defaultTraceColumns(),
   );
   const [filterAnchor, setFilterAnchor] = useState(null);
-  const [filters, setFilters] = useState({});
+  const [filters, setFilters] = useState(initialFilters);
   const [selected, setSelected] = useState(() => new Set());
 
   const serverFilters = useMemo(() => {
@@ -323,4 +328,5 @@ RunTraceTable.propTypes = {
   executionId: PropTypes.string,
   onOpenCall: PropTypes.func,
   onRerun: PropTypes.func,
+  initialFilters: PropTypes.object,
 };

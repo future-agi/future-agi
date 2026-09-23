@@ -18,6 +18,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from simulate.models import CallExecution, TestExecution
+from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.services.run_results_v3 import (
     GROUP_FIELDS,
@@ -344,6 +345,7 @@ class TrendSerializer(RunSummarySerializer):
 
 
 class RunAnalyticsV3ResponseSerializer(serializers.Serializer):
+    dashboard = RunDashboardV3Serializer()
     execution = AnalyticsExecutionSerializer()
     summary = AnalyticsSummarySerializer()
     scenario_risk = RiskSerializer(many=True)

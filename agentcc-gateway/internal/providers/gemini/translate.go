@@ -101,14 +101,14 @@ type geminiFuncResponse struct {
 }
 
 type geminiGenerationConfig struct {
-	Temperature        *float64            `json:"temperature,omitempty"`
-	TopP               *float64            `json:"topP,omitempty"`
-	MaxOutputTokens    *int                `json:"maxOutputTokens,omitempty"`
-	StopSequences      []string            `json:"stopSequences,omitempty"`
-	ResponseMimeType   string              `json:"responseMimeType,omitempty"`
-	ResponseSchema     json.RawMessage     `json:"responseSchema,omitempty"`
-	ResponseModalities []string            `json:"responseModalities,omitempty"`
-	SpeechConfig       *geminiSpeechConfig `json:"speechConfig,omitempty"`
+	Temperature        *float64              `json:"temperature,omitempty"`
+	TopP               *float64              `json:"topP,omitempty"`
+	MaxOutputTokens    *int                  `json:"maxOutputTokens,omitempty"`
+	StopSequences      []string              `json:"stopSequences,omitempty"`
+	ResponseMimeType   string                `json:"responseMimeType,omitempty"`
+	ResponseSchema     json.RawMessage       `json:"responseSchema,omitempty"`
+	ResponseModalities []string              `json:"responseModalities,omitempty"`
+	SpeechConfig       *geminiSpeechConfig   `json:"speechConfig,omitempty"`
 	ThinkingConfig     *geminiThinkingConfig `json:"thinkingConfig,omitempty"`
 }
 
@@ -140,9 +140,9 @@ type geminiToolDeclarations struct {
 }
 
 type geminiFuncDecl struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	Parameters  json.RawMessage `json:"parameters,omitempty"`
+	Name                 string          `json:"name"`
+	Description          string          `json:"description,omitempty"`
+	ParametersJSONSchema json.RawMessage `json:"parametersJsonSchema,omitempty"`
 }
 
 type geminiResponse struct {
@@ -306,9 +306,9 @@ func translateRequest(req *models.ChatCompletionRequest) (*geminiRequest, string
 				continue
 			}
 			decls = append(decls, geminiFuncDecl{
-				Name:        t.Function.Name,
-				Description: t.Function.Description,
-				Parameters:  t.Function.Parameters,
+				Name:                 t.Function.Name,
+				Description:          t.Function.Description,
+				ParametersJSONSchema: normalizeToolSchema(t.Function.Parameters),
 			})
 		}
 		if len(decls) > 0 {

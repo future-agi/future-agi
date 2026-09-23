@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+
 from django.utils import timezone
 from temporalio import activity
 
@@ -9,7 +10,9 @@ from simulate.temporal.types.hosted_harness_gateway import (
     HostedHarnessAttemptInput,
     HostedHarnessAuthoringOutput,
     HostedHarnessGatewayInput,
+    HostedHarnessLaunchFailureInput,
     HostedHarnessLaunchOutput,
+    HostedHarnessLaunchRecoveryOutput,
     HostedHarnessPollOutput,
 )
 
@@ -18,7 +21,7 @@ from simulate.temporal.types.hosted_harness_gateway import (
 async def author_hosted_harness_job(
     input: HostedHarnessGatewayInput,
 ) -> HostedHarnessAuthoringOutput:
-    """Author the frozen bundle inside a Daytona sandbox before the execution launch.
+    """Author the frozen bundle in a managed sandbox before execution launch.
 
     Contract/environment/scenario generation is model-heavy, so it runs in a throwaway sandbox
     (authoring credentials only) rather than on the control-plane worker. A job that already
@@ -27,7 +30,7 @@ async def author_hosted_harness_job(
     from simulate.models import HostedHarnessJob
     from simulate.services.hosted_harness import HostedHarnessError
     from simulate.services.hosted_harness_gateway import (
-        DaytonaHostedGateway,
+        HostedHarnessGateway,
         store_authoring_archive,
     )
 
@@ -47,7 +50,7 @@ async def author_hosted_harness_job(
         job = HostedHarnessJob.no_workspace_objects.select_related("organization").get(
             id=input.job_id
         )
-        body = DaytonaHostedGateway().author(job)
+        body = HostedHarnessGateway().author(job)
         store_authoring_archive(job, body)
 
     def _failed(code: str, detail: str) -> None:
@@ -108,13 +111,13 @@ async def launch_hosted_harness_job(
     input: HostedHarnessGatewayInput,
 ) -> HostedHarnessLaunchOutput:
     from simulate.models import HostedHarnessJob
-    from simulate.services.hosted_harness_gateway import DaytonaHostedGateway
+    from simulate.services.hosted_harness_gateway import HostedHarnessGateway
 
     def _launch() -> str:
         job = HostedHarnessJob.no_workspace_objects.select_related("organization").get(
             id=input.job_id
         )
-        attempt = DaytonaHostedGateway().launch(
+        attempt = HostedHarnessGateway().launch(
             job, endpoint_base_url=input.endpoint_base_url
         )
         return str(attempt.id)
@@ -123,18 +126,56 @@ async def launch_hosted_harness_job(
     return HostedHarnessLaunchOutput(attempt_id=attempt_id)
 
 
+@activity.defn(name="record_hosted_harness_launch_failure")
+async def record_hosted_harness_launch_failure(
+    input: HostedHarnessLaunchFailureInput,
+) -> HostedHarnessLaunchRecoveryOutput:
+    """Make exhausted pre-attempt launch failures visible instead of leaving jobs queued."""
+    from simulate.models import HostedHarnessJob
+
+    def _record() -> HostedHarnessLaunchRecoveryOutput:
+        job = HostedHarnessJob.no_workspace_objects.get(id=input.job_id)
+        if job.state in {
+            HostedHarnessJob.State.COMPLETED,
+            HostedHarnessJob.State.FAILED,
+            HostedHarnessJob.State.CANCELED,
+        }:
+            return HostedHarnessLaunchRecoveryOutput(state=job.state)
+        # If a launch created an attempt, its provider cleanup belongs to the
+        # gateway's attempt protocol.  Do not turn an active call into a false
+        # terminal job just because the Temporal activity response was lost.
+        attempt = job.attempts.order_by('-attempt_number').first()
+        if attempt is not None and attempt.provider_ref:
+            return HostedHarnessLaunchRecoveryOutput(
+                state=job.state, attempt_id=str(attempt.id)
+            )
+        job.state = HostedHarnessJob.State.FAILED
+        job.current_stage = "failed"
+        job.failure = {
+            "domain": "infrastructure",
+            "stage": "acquiring_source",
+            "code": "hosted_launch_failed",
+            "message": "The hosted run could not launch after its bounded retries; no call was attempted.",
+        }
+        job.terminal_at = timezone.now()
+        job.save(update_fields=["state", "current_stage", "failure", "terminal_at", "updated_at"])
+        return HostedHarnessLaunchRecoveryOutput(state=job.state)
+
+    return await _run_db(_record)
+
+
 @activity.defn(name="poll_hosted_harness_attempt")
 async def poll_hosted_harness_attempt(
     input: HostedHarnessAttemptInput,
 ) -> HostedHarnessPollOutput:
     from simulate.models import HostedHarnessAttempt, HostedHarnessJob
-    from simulate.services.hosted_harness_gateway import DaytonaHostedGateway
+    from simulate.services.hosted_harness_gateway import HostedHarnessGateway
 
     def _poll() -> tuple[bool, str, bool]:
         attempt = HostedHarnessAttempt.no_workspace_objects.select_related(
             "job", "job__organization"
         ).get(id=input.attempt_id)
-        job = DaytonaHostedGateway().reconcile_completed(attempt)
+        job = HostedHarnessGateway().reconcile_completed(attempt)
         if job is None:
             return False, attempt.job.state, False
         retryable = job.state == HostedHarnessJob.State.RETRY_WAIT
@@ -149,15 +190,25 @@ async def cancel_hosted_harness_attempt(
     input: HostedHarnessAttemptInput,
 ) -> HostedHarnessPollOutput:
     from simulate.models import HostedHarnessAttempt
-    from simulate.services.hosted_harness_gateway import DaytonaHostedGateway
+    from simulate.services.hosted_harness_gateway import HostedHarnessGateway
 
     def _cancel() -> str:
         attempt = HostedHarnessAttempt.no_workspace_objects.select_related(
             "job", "job__organization"
         ).get(id=input.attempt_id)
         reason = attempt.job.cancel_reason or "user_canceled"
-        job = DaytonaHostedGateway().cancel(attempt.job, reason=reason)
+        job = HostedHarnessGateway().cancel(attempt.job, reason=reason)
         return job.state
 
-    state = await _run_db(_cancel)
+    try:
+        state = await _run_db(_cancel)
+    except Exception:
+        activity.logger.exception(
+            "hosted harness cancellation cleanup is still pending",
+            attempt_id=input.attempt_id,
+        )
+        return HostedHarnessPollOutput(
+            done=False,
+            state="cleaning_up",
+        )
     return HostedHarnessPollOutput(done=True, state=state)

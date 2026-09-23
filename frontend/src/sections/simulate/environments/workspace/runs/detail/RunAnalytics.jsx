@@ -1,500 +1,614 @@
+import { useRef } from "react";
 import PropTypes from "prop-types";
-import { alpha } from "@mui/material/styles";
 import {
   Box,
+  Button,
   CircularProgress,
+  LinearProgress,
   Stack,
   Table,
   TableBody,
   TableCell,
   TableHead,
   TableRow,
+  Tooltip,
   Typography,
 } from "@mui/material";
-
 import { useRunAnalytics } from "src/api/simulate-environments/runAnalytics";
-
 import EmptyState from "../../../components/EmptyState";
-import SectionCard from "../../../components/SectionCard";
-import { BUILD_TONES } from "../../../buildEnvironment/buildTones";
+import {
+  Bars,
+  COLORS,
+  Donut,
+  format,
+  NoMeasurement,
+  number,
+  TrendLine,
+  Widget,
+} from "./analytics/DashboardCharts";
+import DashboardControls, {
+  printDashboard,
+  useDashboardLayout,
+} from "./analytics/DashboardControls";
+import DashboardHistogram from "./analytics/DashboardHistogram";
+import { CHART_GUIDE } from "./analytics/chartGuide";
 
-const formatNumber = (value, maximumFractionDigits = 1) =>
-  value == null
-    ? "—"
-    : new Intl.NumberFormat(undefined, { maximumFractionDigits }).format(value);
-
-const percent = (value) => (value == null ? "—" : `${formatNumber(value)}%`);
-const money = (cents) =>
-  cents == null ? "—" : `$${formatNumber(cents / 100, 2)}`;
-
-function MetricCard({ label, value, detail, tone }) {
-  return (
-    <Box
-      sx={{
-        p: 2,
-        minWidth: 0,
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: 1.25,
-        bgcolor: "background.paper",
-      }}
-    >
-      <Typography
-        sx={{
-          typography: "s3",
-          color: "text.subtitle",
-          textTransform: "uppercase",
-        }}
-      >
-        {label}
-      </Typography>
-      <Typography
-        sx={{ typography: "h5", color: tone || "text.primary", mt: 0.5 }}
-      >
-        {value}
-      </Typography>
-      {detail && (
-        <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>
-          {detail}
-        </Typography>
-      )}
-    </Box>
-  );
-}
-
-MetricCard.propTypes = {
-  label: PropTypes.string.isRequired,
-  value: PropTypes.node,
-  detail: PropTypes.node,
-  tone: PropTypes.string,
-};
-
-function OutcomeBar({ row }) {
-  const total = row.passed + row.failed + row.error + row.inconclusive;
-  if (!total) return <Box sx={{ color: "text.disabled" }}>—</Box>;
-  const segments = [
-    ["passed", BUILD_TONES.green],
-    ["failed", BUILD_TONES.red],
-    ["error", BUILD_TONES.orange],
-    ["inconclusive", BUILD_TONES.grey],
-  ];
-  return (
-    <Box
-      sx={{
-        display: "flex",
-        height: 18,
-        minWidth: 32,
-        borderRadius: 0.75,
-        overflow: "hidden",
-      }}
-    >
-      {segments.map(
-        ([key, color]) =>
-          row[key] > 0 && (
-            <Box
-              key={key}
-              title={`${key}: ${row[key]}`}
-              sx={{ width: `${(row[key] / total) * 100}%`, bgcolor: color }}
-            />
-          ),
-      )}
-    </Box>
-  );
-}
-
-OutcomeBar.propTypes = { row: PropTypes.object.isRequired };
-
-const tableSx = {
-  "& th": {
-    typography: "s3",
-    color: "text.subtitle",
-    fontWeight: 600,
-    whiteSpace: "nowrap",
+const WIDGETS = [
+  { id: "call_success", title: "Call successful", section: "Breakdowns" },
+  {
+    id: "goal_outcome",
+    title: "Goal outcome breakdown",
+    section: "Breakdowns",
   },
-  "& td": { typography: "s2", color: "text.secondary" },
+  { id: "sentiment", title: "User sentiment", section: "Breakdowns" },
+  { id: "disconnection", title: "Disconnection reason", section: "Breakdowns" },
+  {
+    id: "evaluations",
+    title: "Evaluations",
+    section: "Evaluations",
+    wide: true,
+  },
+  {
+    id: "voice_slos",
+    title: "Voice latency SLOs",
+    section: "Voice latency SLOs",
+  },
+  {
+    id: "pipeline_cost",
+    title: "Cost breakdown by pipeline stage",
+    section: "Voice latency SLOs",
+  },
+  {
+    id: "csat",
+    title: "CSAT distribution (0–10)",
+    section: "CSAT and provider scores",
+    wide: true,
+  },
+  { id: "task_latency", title: "Task latency", section: "Latency" },
+  { id: "percentiles", title: "Latency percentiles", section: "Latency" },
+  {
+    id: "response_time",
+    title: "Agent response time per call",
+    section: "Latency",
+    wide: true,
+  },
+  {
+    id: "distribution",
+    title: "Distribution summary",
+    section: "Distribution",
+    wide: true,
+  },
+  {
+    id: "risk",
+    title: "Use case risk",
+    section: "Failure analysis",
+    wide: true,
+  },
+  { id: "tools_volume", title: "Tool call volume", section: "Tools" },
+  { id: "tools_failure", title: "Tool failure rate", section: "Tools" },
+  { id: "slowest", title: "Slowest tasks", section: "Performance tails" },
+  {
+    id: "expensive",
+    title: "Most expensive tasks",
+    section: "Performance tails",
+  },
+];
+const SECTIONS = [
+  "Breakdowns",
+  "Evaluations",
+  "CSAT and provider scores",
+  "Voice latency SLOs",
+  "Latency",
+  "Distribution",
+  "Failure analysis",
+  "Tools",
+  "Performance tails",
+];
+const OUTCOMES = [
+  { key: "passed", label: "Passed", color: COLORS[0] },
+  { key: "failed", label: "Failed", color: COLORS[2] },
+  { key: "error", label: "Errored", color: COLORS[3] },
+  { key: "inconclusive", label: "Inconclusive", color: COLORS[5] },
+];
+const DISTRIBUTIONS = {
+  end_to_end_ms: ["End-to-end latency", "ms"],
+  duration_seconds: ["Task duration", "seconds"],
+  tokens: ["Tokens per task", "number"],
+  cost_cents: ["Cost per task", "cents"],
+  turns: ["Turns per task", "number"],
+};
+const tableSx = {
+  "& th": { fontSize: 10, textTransform: "uppercase", color: "text.secondary" },
+  "& td": { fontSize: 12 },
+  "& tr:last-child td": { borderBottom: 0 },
 };
 
-function BreakdownTable({ rows, labelKey, label, empty = "No measured data" }) {
-  return rows.length ? (
-    <Table size="small" sx={tableSx}>
-      <TableHead>
-        <TableRow>
-          <TableCell>{label}</TableCell>
-          <TableCell align="right">Tasks</TableCell>
-          <TableCell align="right">Failed</TableCell>
-          <TableCell align="right">Pass rate</TableCell>
-        </TableRow>
-      </TableHead>
-      <TableBody>
-        {rows.map((row) => (
-          <TableRow key={row[labelKey]}>
-            <TableCell>{row[labelKey]}</TableCell>
-            <TableCell align="right">{row.total}</TableCell>
-            <TableCell align="right">
-              {(row.outcomes?.failed || 0) + (row.outcomes?.error || 0)}
-            </TableCell>
-            <TableCell align="right">{percent(row.pass_rate)}</TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
-  ) : (
-    <EmptyState icon="solar:chart-2-linear" title={empty} />
+export default function RunAnalytics({ executionId, onOpenCall, onOpenCalls }) {
+  return (
+    <AnalyticsDashboard
+      key={executionId}
+      executionId={executionId}
+      onOpenCall={onOpenCall}
+      onOpenCalls={onOpenCalls}
+    />
   );
 }
-
-BreakdownTable.propTypes = {
-  rows: PropTypes.array.isRequired,
-  labelKey: PropTypes.string.isRequired,
-  label: PropTypes.string.isRequired,
-  empty: PropTypes.string,
+RunAnalytics.propTypes = {
+  executionId: PropTypes.string.isRequired,
+  onOpenCall: PropTypes.func,
+  onOpenCalls: PropTypes.func,
 };
 
-export default function RunAnalytics({ executionId }) {
-  const { data, isPending, isError } = useRunAnalytics(executionId);
-
-  if (isPending) {
+function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
+  const { data, isPending, isError, refetch } = useRunAnalytics(executionId);
+  const layout = useDashboardLayout(executionId);
+  const printable = useRef(null);
+  if (isPending)
     return (
       <Stack alignItems="center" sx={{ py: 8 }}>
         <CircularProgress size={26} />
       </Stack>
     );
-  }
-  if (isError) {
+  if (isError)
     return (
-      <EmptyState
-        icon="solar:danger-triangle-linear"
-        title="Analytics could not be loaded"
-      />
+      <Stack alignItems="center">
+        <EmptyState
+          icon="solar:danger-triangle-linear"
+          title="Analytics could not be loaded"
+        />
+        <Button onClick={() => refetch()}>Retry</Button>
+      </Stack>
     );
-  }
-  if (!data?.summary?.total) {
+  if (!data?.summary?.total)
+    return (
+      <EmptyState icon="solar:chart-2-linear" title="No calls to analyze" />
+    );
+  if (!data.dashboard)
     return (
       <EmptyState
         icon="solar:chart-2-linear"
-        title="No completed calls to analyze"
+        title="Dashboard data is unavailable"
       />
     );
-  }
-
-  const { summary } = data;
-  const failed =
-    (summary.outcomes?.failed || 0) + (summary.outcomes?.error || 0);
-  const maxTurns = Math.max(
-    1,
-    ...data.turn_distribution.map(
-      (row) => row.passed + row.failed + row.error + row.inconclusive,
-    ),
-  );
-
-  return (
-    <Stack spacing={2}>
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
-          gap: 1,
-        }}
-      >
-        <MetricCard
-          label="Pass rate"
-          value={percent(summary.pass_rate)}
-          detail={`${summary.measured}/${summary.total} measured`}
-          tone={BUILD_TONES.amber}
+  const dashboard = data.dashboard;
+  const hide = (id) =>
+    layout.update((current) => ({
+      ...current,
+      hidden: [...new Set([...current.hidden, id])],
+    }));
+  const open = onOpenCall
+    ? (task) =>
+        onOpenCall({
+          id: task.id,
+          scenario: task.label,
+          simulationCallType: task.modality,
+          provider: task.provider,
+        })
+    : undefined;
+  const subtitles = {
+    call_success:
+      "Successful vs unsuccessful — the top-level task verdict; unknowns shown separately",
+    goal_outcome: `${data.summary.total} tasks · shares use all tasks, including unknown outcomes`,
+    sentiment: "How the counterparty came across during the task",
+    disconnection: "Why each call ended",
+    evaluations: `${dashboard.evaluation_summary.graders} graders · ${dashboard.evaluation_summary.passed} of ${dashboard.evaluation_summary.measured} measured checks passed (${format(dashboard.evaluation_summary.pass_rate, "percent")})`,
+    csat: "Existing score · scores the run already produced — no new cost",
+    response_time: "Platform, transcript timing",
+    voice_slos: "p50 / p90 / p99 of recorded per-call pipeline timings (ms)",
+    pipeline_cost:
+      dashboard.series_mode === "time_buckets"
+        ? "LLM / TTS / STT / Storage · up to 100 time buckets; costs summed per bucket"
+        : "Recorded LLM / TTS / STT / Storage cost per call",
+    task_latency:
+      dashboard.series_mode === "time_buckets"
+        ? "End-to-end task wall clock · average per time bucket"
+        : "End-to-end task wall clock per call",
+    percentiles: `p50 ${format(dashboard.distributions.find((row) => row.key === "end_to_end_ms")?.p50, "ms")} · p90 ${format(dashboard.distributions.find((row) => row.key === "end_to_end_ms")?.p90, "ms")} · p99 ${format(dashboard.distributions.find((row) => row.key === "end_to_end_ms")?.p99, "ms")}`,
+    distribution: "p50 · p90 · p99 · max for every measured task metric",
+    risk: `Weakest ${dashboard.use_case_risk.length} of ${dashboard.goal_count} goals`,
+    tools_volume: `${dashboard.tools.total_invocations} recorded invocations · ${dashboard.tools.total_tools} tools · top 20`,
+    tools_failure:
+      "Failures among invocations with a recorded verdict · threshold at 40%",
+    slowest: "Top 8 by wall-clock duration · select a task to inspect the call",
+    expensive: "Top 8 by recorded cost · select a task to inspect the call",
+  };
+  const renderWidget = (id) => {
+    if (
+      ["call_success", "goal_outcome", "sentiment", "disconnection"].includes(
+        id,
+      )
+    )
+      return (
+        <Donut
+          data={dashboard.breakdowns.find((item) => item.key === id)}
+          onOpen={id === "call_success" ? onOpenCalls : undefined}
         />
-        <MetricCard
-          label="Failed"
-          value={failed}
-          detail={`${summary.outcomes?.error || 0} execution errors`}
-          tone={failed ? BUILD_TONES.red : BUILD_TONES.green}
+      );
+    if (id === "csat" || id === "response_time")
+      return (
+        <DashboardHistogram
+          kind={id}
+          data={id === "csat" ? dashboard.csat : dashboard.agent_response_time}
         />
-        <MetricCard
-          label="Median duration"
-          value={
-            summary.duration?.p50 == null
-              ? "—"
-              : `${formatNumber(summary.duration.p50)}s`
-          }
-          detail={`p95 ${formatNumber(summary.duration?.p95)}s`}
-        />
-        <MetricCard
-          label="Median latency"
-          value={
-            summary.latency?.p50 == null
-              ? "—"
-              : `${formatNumber(summary.latency.p50)}ms`
-          }
-          detail={`p95 call-average ${formatNumber(summary.latency?.p95)}ms`}
-        />
-        <MetricCard
-          label="Tokens"
-          value={formatNumber(summary.tokens?.total_value, 0)}
-          detail={`${summary.tokens?.measured || 0} measured calls`}
-        />
-        <MetricCard
-          label="Cost"
-          value={money(summary.cost_cents?.total_value)}
-          detail={`${money(summary.cost_cents?.average)} average`}
-        />
-        <MetricCard
-          label="Evaluators"
-          value={summary.evaluators}
-          detail="graders applied"
-        />
-      </Box>
-
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: { xs: "1fr", lg: "1.2fr 1fr" },
-          gap: 2,
-        }}
-      >
-        <SectionCard
-          title="Use-case risk"
-          subtitle="Weakest measured goals first"
-          dense
-        >
-          <BreakdownTable
-            rows={data.scenario_risk}
-            labelKey="goal"
-            label="Goal"
-          />
-        </SectionCard>
-
-        <SectionCard
-          title="Tasks by turn count"
-          subtitle="Stacked by outcome"
-          dense
-        >
-          <Stack spacing={1.25} sx={{ p: 2 }}>
-            {data.turn_distribution.length ? (
-              data.turn_distribution.map((row) => {
-                const count =
-                  row.passed + row.failed + row.error + row.inconclusive;
-                return (
-                  <Stack
-                    key={row.turn_count}
-                    direction="row"
-                    alignItems="center"
-                    spacing={1.5}
-                  >
-                    <Typography
-                      sx={{ typography: "s3", width: 26, textAlign: "right" }}
-                    >
-                      {row.turn_count}
-                    </Typography>
-                    <Box
-                      sx={{
-                        width: `${Math.max(8, (count / maxTurns) * 100)}%`,
-                      }}
-                    >
-                      <OutcomeBar row={row} />
-                    </Box>
-                    <Typography
-                      sx={{ typography: "s3", color: "text.subtitle" }}
-                    >
-                      {count}
-                    </Typography>
-                  </Stack>
-                );
-              })
-            ) : (
-              <EmptyState
-                icon="solar:chart-square-linear"
-                title="Turn count is unavailable"
-              />
-            )}
-          </Stack>
-        </SectionCard>
-      </Box>
-
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: { xs: "1fr", lg: "1fr 1fr" },
-          gap: 2,
-        }}
-      >
-        <SectionCard
-          title="Evaluations"
-          subtitle="Pass rates and measurement coverage"
-          dense
-        >
-          {data.evaluations.length ? (
-            <Table size="small" sx={tableSx}>
-              <TableHead>
-                <TableRow>
-                  <TableCell>Evaluation</TableCell>
-                  <TableCell align="right">Passed</TableCell>
-                  <TableCell align="right">Measured</TableCell>
-                  <TableCell align="right">Pass rate</TableCell>
+      );
+    if (id === "evaluations")
+      return data.evaluations.length ? (
+        <Box sx={{ overflowX: "auto" }}>
+          <Table size="small" sx={tableSx}>
+            <TableHead>
+              <TableRow>
+                <TableCell>Grader</TableCell>
+                <TableCell>Category</TableCell>
+                <TableCell sx={{ minWidth: 180 }}>Pass rate</TableCell>
+                <TableCell align="right">%</TableCell>
+                <TableCell align="right">Passed / measured</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {data.evaluations.map((row) => (
+                <TableRow key={row.id}>
+                  <TableCell>{row.name}</TableCell>
+                  <TableCell>—</TableCell>
+                  <TableCell>
+                    {row.pass_rate == null ? (
+                      "—"
+                    ) : (
+                      <LinearProgress
+                        variant="determinate"
+                        value={row.pass_rate}
+                        sx={{
+                          height: 6,
+                          borderRadius: 1,
+                          bgcolor: "action.hover",
+                          "& .MuiLinearProgress-bar": {
+                            bgcolor: row.pass_rate < 50 ? COLORS[2] : COLORS[1],
+                          },
+                        }}
+                      />
+                    )}
+                  </TableCell>
+                  <TableCell align="right">
+                    {format(row.pass_rate, "percent")}
+                  </TableCell>
+                  <TableCell align="right">
+                    {row.passed} / {row.measured}
+                  </TableCell>
                 </TableRow>
-              </TableHead>
-              <TableBody>
-                {data.evaluations.map((row) => (
-                  <TableRow key={row.id}>
-                    <TableCell>{row.name}</TableCell>
-                    <TableCell align="right">{row.passed}</TableCell>
-                    <TableCell align="right">{row.measured}</TableCell>
-                    <TableCell align="right">
-                      {percent(row.pass_rate)}
+              ))}
+            </TableBody>
+          </Table>
+        </Box>
+      ) : (
+        <NoMeasurement text="No evaluations were recorded" />
+      );
+    if (id === "voice_slos")
+      return (
+        <>
+          <Table size="small" sx={tableSx}>
+            <TableHead>
+              <TableRow>
+                <TableCell>Segment</TableCell>
+                <TableCell align="right">p50</TableCell>
+                <TableCell align="right">p90</TableCell>
+                <TableCell align="right">p99</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {dashboard.voice_slos.map((row) => (
+                <TableRow key={row.key}>
+                  <TableCell>
+                    <Tooltip title={`${row.measured} measured calls`}>
+                      <span>{row.label}</span>
+                    </Tooltip>
+                  </TableCell>
+                  {["p50", "p90", "p99"].map((p) => (
+                    <TableCell key={p} align="right">
+                      {format(row[p], "ms")}
                     </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          ) : (
-            <EmptyState
-              icon="solar:checklist-minimalistic-linear"
-              title="No evaluations were recorded"
-            />
-          )}
-        </SectionCard>
-
-        <SectionCard
-          title="Failure reasons"
-          subtitle="Native execution and evaluator evidence"
-          dense
-        >
-          {data.failure_breakdown.length ? (
-            <Table size="small" sx={tableSx}>
-              <TableHead>
-                <TableRow>
-                  <TableCell>Reason</TableCell>
-                  <TableCell align="right">Failures</TableCell>
-                  <TableCell align="right">Share</TableCell>
+                  ))}
                 </TableRow>
-              </TableHead>
-              <TableBody>
-                {data.failure_breakdown.map((row) => (
-                  <TableRow key={row.reason}>
-                    <TableCell>{row.reason}</TableCell>
-                    <TableCell align="right">{row.failures}</TableCell>
-                    <TableCell align="right">{percent(row.share)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          ) : (
-            <EmptyState
-              icon="solar:shield-check-linear"
-              title="No failures recorded"
-            />
-          )}
-        </SectionCard>
-      </Box>
-
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: { xs: "1fr", lg: "1fr 1fr" },
-          gap: 2,
-        }}
-      >
-        <SectionCard title="Provider performance" dense>
-          <BreakdownTable
-            rows={data.provider_breakdown}
-            labelKey="provider"
-            label="Provider"
+              ))}
+            </TableBody>
+          </Table>
+          <Typography sx={{ p: 2, fontSize: 11, color: "text.secondary" }}>
+            ASR word-error rate: not recorded · User interruptions:{" "}
+            {number(dashboard.interruptions.average)} / measured call ·{" "}
+            {number(dashboard.interruptions.total, 0)} total
+          </Typography>
+        </>
+      );
+    if (id === "pipeline_cost")
+      return (
+        <>
+          <Bars
+            rows={dashboard.series}
+            xKey="label"
+            unit="cents"
+            series={[
+              { key: "llm_cents", label: "LLM" },
+              { key: "tts_cents", label: "TTS", color: COLORS[4] },
+              { key: "stt_cents", label: "STT", color: COLORS[3] },
+              { key: "storage_cents", label: "Storage", color: COLORS[5] },
+            ]}
           />
-        </SectionCard>
-        <SectionCard title="Modality performance" dense>
-          <BreakdownTable
-            rows={data.modality_breakdown}
-            labelKey="modality"
-            label="Modality"
-          />
-        </SectionCard>
-      </Box>
-
-      <SectionCard
-        title="Cost breakdown"
-        subtitle="Stored components; unavailable values are not treated as zero"
-        dense
-      >
+          <Stack
+            direction="row"
+            gap={1.5}
+            flexWrap="wrap"
+            sx={{ px: 2, pb: 2 }}
+          >
+            {dashboard.pipeline_cost?.map((component) => (
+              <Typography
+                key={component.key}
+                sx={{ fontSize: 10, color: "text.secondary" }}
+              >
+                {component.label} {format(component.total_cents, "cents")} (
+                {format(component.share, "percent")})
+              </Typography>
+            ))}
+          </Stack>
+          <Typography
+            sx={{ px: 2, pb: 1.5, fontSize: 10, color: "text.secondary" }}
+          >
+            Transport cost is not recorded. Storage is shown separately.
+          </Typography>
+        </>
+      );
+    if (id === "task_latency")
+      return (
+        <TrendLine
+          rows={dashboard.series}
+          xKey="label"
+          valueKey="duration_ms"
+          bucketed={dashboard.series_mode === "time_buckets"}
+        />
+      );
+    if (id === "percentiles")
+      return (
+        <TrendLine
+          rows={dashboard.latency_percentiles}
+          xKey="percentile"
+          valueKey="value"
+          percentile
+        />
+      );
+    if (id === "distribution")
+      return (
         <Box
           sx={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
-            gap: 1,
-            p: 2,
+            gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))",
+            gap: 2,
+            px: 2,
+            pb: 2,
           }}
         >
-          {Object.entries(data.cost_breakdown_cents).map(([key, value]) => (
-            <Box
-              key={key}
-              sx={{
-                p: 1.5,
-                borderRadius: 1,
-                bgcolor: (theme) => alpha(theme.palette.text.primary, 0.035),
-              }}
+          {dashboard.distributions.map((row) => {
+            const [label, unit] = DISTRIBUTIONS[row.key] || [row.key, "number"];
+            return (
+              <Box key={row.key}>
+                <Typography
+                  sx={{
+                    fontSize: 10,
+                    color: "text.secondary",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {label}
+                </Typography>
+                <Typography sx={{ fontSize: 21, fontWeight: 600, my: 0.5 }}>
+                  {format(row.p90, unit)}{" "}
+                  <Typography
+                    component="span"
+                    sx={{ fontSize: 10, color: "text.secondary" }}
+                  >
+                    p90
+                  </Typography>
+                </Typography>
+                {["p50", "p99", "max"].map((p) => (
+                  <Stack key={p} direction="row" justifyContent="space-between">
+                    <Typography
+                      sx={{
+                        fontSize: 10,
+                        color: "text.secondary",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      {p}
+                    </Typography>
+                    <Typography sx={{ fontSize: 11 }}>
+                      {format(row[p], unit)}
+                    </Typography>
+                  </Stack>
+                ))}
+                <Typography
+                  sx={{ mt: 0.5, fontSize: 10, color: "text.secondary" }}
+                >
+                  {row.measured} measured
+                </Typography>
+              </Box>
+            );
+          })}
+        </Box>
+      );
+    if (id === "risk")
+      return (
+        <Bars
+          rows={dashboard.use_case_risk}
+          xKey="goal"
+          series={OUTCOMES}
+          horizontal
+          height={330}
+          legend
+          labels
+        />
+      );
+    if (id === "tools_volume")
+      return (
+        <Bars
+          rows={dashboard.tools.volume}
+          xKey="name"
+          height={300}
+          labels
+          multicolor
+          angled
+          series={[
+            { key: "invocations", label: "Invocations", color: COLORS[4] },
+          ]}
+        />
+      );
+    if (id === "tools_failure")
+      return (
+        <Bars
+          rows={dashboard.tools.failures}
+          xKey="name"
+          horizontal
+          height={Math.max(245, dashboard.tools.failures.length * 25)}
+          unit="percent"
+          threshold={40}
+          labels
+          labelKey="failure_label"
+          multicolor
+          series={[
+            { key: "failure_rate", label: "Failure rate", color: COLORS[2] },
+          ]}
+        />
+      );
+    if (id === "slowest" || id === "expensive")
+      return (
+        <Bars
+          rows={
+            id === "slowest"
+              ? dashboard.slowest_tasks
+              : dashboard.most_expensive_tasks
+          }
+          xKey="axis_label"
+          angled
+          labels
+          unit={id === "slowest" ? "seconds" : "cents"}
+          series={[
+            {
+              key: "value",
+              label: id === "slowest" ? "Duration" : "Cost",
+              color: id === "slowest" ? COLORS[0] : "#c02f80",
+            },
+          ]}
+          onOpen={open}
+        />
+      );
+    return null;
+  };
+  return (
+    <>
+      <DashboardControls
+        layout={layout}
+        widgets={WIDGETS}
+        onPrint={() =>
+          printDashboard(
+            printable.current,
+            `${data.execution?.name || "Simulation run"} — Analytics`,
+          )
+        }
+      />
+      <Stack ref={printable} spacing={2.5}>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: {
+              xs: "repeat(2,minmax(0,1fr))",
+              md: "repeat(4,minmax(0,1fr))",
+              lg: "repeat(7,minmax(0,1fr))",
+            },
+            border: "1px solid",
+            borderColor: "divider",
+            bgcolor: "background.paper",
+            borderRadius: 1.5,
+            overflow: "hidden",
+          }}
+        >
+          {dashboard.metrics.map((metric) => (
+            <Tooltip
+              key={metric.key}
+              title={metric.note || `${metric.measured ?? 0} measured calls`}
             >
-              <Typography
+              <Box
                 sx={{
-                  typography: "s3",
-                  color: "text.subtitle",
-                  textTransform: "uppercase",
+                  p: 1.5,
+                  borderRight: "1px solid",
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                  minWidth: 0,
                 }}
               >
-                {key}
-              </Typography>
-              <Typography sx={{ typography: "s1", mt: 0.25 }}>
-                {money(value.total)}
-              </Typography>
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                {value.measured}/{value.calls} measured
-              </Typography>
-            </Box>
+                <Typography sx={{ fontSize: 10, color: "text.secondary" }}>
+                  {metric.label}
+                </Typography>
+                <Typography sx={{ fontSize: 22, fontWeight: 650, mt: 0.5 }}>
+                  {format(metric.value, metric.unit)}
+                </Typography>
+                <Typography
+                  sx={{ fontSize: 10, color: "text.secondary", mt: 0.3 }}
+                >
+                  {metric.value == null
+                    ? "Not recorded"
+                    : `${metric.measured ?? 0} / ${metric.total} measured`}
+                </Typography>
+              </Box>
+            </Tooltip>
           ))}
         </Box>
-      </SectionCard>
-
-      <SectionCard
-        title="Cross-run trend"
-        subtitle="Latest 20 completed runs"
-        dense
-      >
-        <Table size="small" sx={tableSx}>
-          <TableHead>
-            <TableRow>
-              <TableCell>Started</TableCell>
-              <TableCell align="right">Tasks</TableCell>
-              <TableCell align="right">Pass rate</TableCell>
-              <TableCell align="right">p95 latency</TableCell>
-              <TableCell align="right">Tokens</TableCell>
-              <TableCell align="right">Cost</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {data.trends.map((row) => (
-              <TableRow
-                key={row.execution_id}
-                selected={row.execution_id === executionId}
+        {SECTIONS.map((section) => {
+          const visible = WIDGETS.filter(
+            (widget) =>
+              widget.section === section && !layout.hidden.includes(widget.id),
+          );
+          if (!visible.length) return null;
+          return (
+            <Box key={section}>
+              <Typography
+                component="h2"
+                sx={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  mb: 1,
+                  pt: 1,
+                  borderTop: "1px solid",
+                  borderColor: "divider",
+                }}
               >
-                <TableCell>
-                  {new Date(row.started_at).toLocaleString()}
-                </TableCell>
-                <TableCell align="right">{row.total}</TableCell>
-                <TableCell align="right">{percent(row.pass_rate)}</TableCell>
-                <TableCell align="right">
-                  {row.latency?.p95 == null
-                    ? "—"
-                    : `${formatNumber(row.latency.p95)}ms`}
-                </TableCell>
-                <TableCell align="right">
-                  {formatNumber(row.tokens?.total_value, 0)}
-                </TableCell>
-                <TableCell align="right">
-                  {money(row.cost_cents?.total_value)}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </SectionCard>
-    </Stack>
+                {section}
+              </Typography>
+              <Box
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: {
+                    xs: "1fr",
+                    md: "repeat(2,minmax(0,1fr))",
+                    lg:
+                      section === "Breakdowns"
+                        ? "repeat(4,minmax(0,1fr))"
+                        : "repeat(2,minmax(0,1fr))",
+                  },
+                  gap: 1.5,
+                }}
+              >
+                {visible.map((widget) => (
+                  <Widget
+                    key={widget.id}
+                    {...widget}
+                    subtitle={subtitles[widget.id]}
+                    help={CHART_GUIDE[widget.id]}
+                    onHide={hide}
+                  >
+                    {renderWidget(widget.id)}
+                  </Widget>
+                ))}
+              </Box>
+            </Box>
+          );
+        })}
+      </Stack>
+    </>
   );
 }
-
-RunAnalytics.propTypes = { executionId: PropTypes.string.isRequired };
+AnalyticsDashboard.propTypes = RunAnalytics.propTypes;

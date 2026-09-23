@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -15,6 +16,7 @@ from simulate.models import (
     CallExecution,
     HostedHarnessAttempt,
     HostedHarnessCleanupReceipt,
+    HostedHarnessConversation,
     HostedHarnessJob,
     HostedHarnessReceipt,
     HostedHarnessScenario,
@@ -31,6 +33,22 @@ from simulate.services.alk_simulate_ingestion import (
 _CAPABILITY_SCHEMA_VERSION = "futureagi.harness-capabilities.v1"
 _JOB_SCHEMA_VERSION = "futureagi.harness-job.v1"
 _TOKEN_TAIL_SECONDS = 120 + 300
+
+
+def _active_attempt_budget_seconds(job: HostedHarnessJob) -> int:
+    """Budget an active capability for authoring plus scenario execution."""
+
+    authoring_seconds = max(
+        0,
+        int(
+            getattr(
+                settings,
+                "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
+                3600,
+            )
+        ),
+    )
+    return authoring_seconds + int(job.payload["runtime"]["max_duration_seconds"])
 
 
 class HostedHarnessError(Exception):
@@ -62,6 +80,7 @@ class AttemptCapability:
     token: str
     fence: str
     document: dict[str, Any]
+    admitted_parallelism: int
 
 
 def canonical_json_bytes(value: object) -> bytes:
@@ -80,6 +99,48 @@ def canonical_digest(value: object) -> str:
 
 def hash_secret(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def parallelism_w_gt_1_enabled(snapshot_digest: str | None) -> bool:
+    """The ONE shared W>1 admission predicate (C4 §5, decisions D12/D23/D24).
+
+    W>1 is admitted only when the ``HARNESS_PARALLELISM_ENABLED`` flag is truthy
+    AND the selected guest runtime identifier is certified by
+    ``HARNESS_PARALLEL_SNAPSHOT_DIGESTS``. In the dockerfile-mode dev lane
+    (``ALK_DAYTONA_DOCKERFILE`` set) the digest half is skipped — that lane
+    carries no meaningful registered digest — so W>1 needs the FLAG only. In the
+    production snapshot lane an empty/unset digest FAILS CLOSED (never matches
+    the allowlist). This single predicate backs both the ``register_attempt``
+    authoritative gate and the create-time serializer / preflight advisory.
+    """
+    if not getattr(settings, "HARNESS_PARALLELISM_ENABLED", False):
+        return False
+    from simulate.services.hosted_sandbox import sandbox_runtime_policy
+
+    if sandbox_runtime_policy().permits_unpinned_parallelism:
+        return True
+    digest = (snapshot_digest or "").strip()
+    if not digest:
+        return False
+    allowlist = set(getattr(settings, "HARNESS_PARALLEL_SNAPSHOT_DIGESTS", ()) or ())
+    return digest in allowlist
+
+
+def clamp_parallelism(
+    requested: int | None, snapshot_digest: str | None
+) -> tuple[int, bool]:
+    """Return ``(admitted, clamped)`` for a requested parallelism.
+
+    A request of W>1 is admitted at 1 (``clamped=True``) whenever the shared
+    predicate denies it (flag off OR digest unlisted). W<=1 is always admitted
+    unchanged. The caller preserves the requested value separately so a later
+    rerun re-evaluates against the then-current flag/digest.
+    """
+    value = requested or 1
+    if value > 1 and not parallelism_w_gt_1_enabled(snapshot_digest):
+        return 1, True
+    admitted = min(value, getattr(settings, "HARNESS_MAX_WORLD_SLOTS", 8), 8)
+    return admitted, admitted != value
 
 
 def create_hosted_job(
@@ -148,7 +209,55 @@ def create_hosted_job(
         normalized["job_id"] = str(job.id)
         job.payload = normalized
         job.save(update_fields=["payload", "updated_at"])
+        HostedHarnessConversation.no_workspace_objects.create(
+            job=job,
+            organization=organization,
+            workspace=workspace,
+            current_stage="reception",
+        )
         return job, True
+
+
+def _apply_parallelism_admission(
+    job: HostedHarnessJob, snapshot_digest: str | None
+) -> int:
+    """Decide + record the W>1 admission under the shared guard; return admitted W.
+
+    Reads the requested parallelism from ``job.payload.runtime.parallelism`` (the
+    immutable stored intent) and, when the shared guard denies W>1, records
+    ``metadata.parallelism_clamped = {"requested": N}`` so support and the FE can
+    see it. When the request is admitted (W<=1, or W>1 that qualifies), any stale
+    clamp marker from a prior attempt is cleared so a rerun that now qualifies
+    drops the notice. The requested value itself is never rewritten.
+
+    Returns the ADMITTED parallelism so ``register_attempt`` can surface it as the
+    single admission source of truth — the gateway applies this returned value to
+    the ephemeral guest job.json rather than independently re-running the guard.
+    """
+    runtime = job.payload.get("runtime") or {}
+    requested = runtime.get("parallelism") or 1
+    admitted, clamped = clamp_parallelism(requested, snapshot_digest)
+    from simulate.services.harness_capacity import configured_capacity
+
+    capacity = configured_capacity(job.payload)
+    admitted = min(admitted, capacity.parallelism)
+    clamped = admitted != requested
+    metadata = dict(job.payload.get("metadata") or {})
+    changed = False
+    if clamped:
+        marker = {"requested": requested, "admitted": admitted}
+        if metadata.get("parallelism_clamped") != marker:
+            metadata["parallelism_clamped"] = marker
+            changed = True
+    elif "parallelism_clamped" in metadata:
+        metadata.pop("parallelism_clamped")
+        changed = True
+    if changed:
+        payload = dict(job.payload)
+        payload["metadata"] = metadata
+        job.payload = payload
+        job.save(update_fields=["payload", "updated_at"])
+    return admitted
 
 
 def register_attempt(
@@ -164,6 +273,18 @@ def register_attempt(
     fence = secrets.token_urlsafe(32)
     with transaction.atomic():
         job = HostedHarnessJob.no_workspace_objects.select_for_update().get(id=job_id)
+        # AUTHORITATIVE W>1 admission gate (C4 §4 pin ii / §5, decision D23).
+        # register_attempt is the single chokepoint every attempt crosses — fresh
+        # create, rerun_saved, harness_sandbox.rerun, and gateway retry all reach
+        # here — so the shared guard runs here regardless of how the attempt was
+        # requested. A denied W>1 is admitted at 1 and the clamp is recorded on
+        # the job metadata; the job's stored REQUESTED value
+        # (job.payload.runtime.parallelism) is preserved so a later rerun
+        # re-evaluates honestly against the then-current flag/digest. A saved W=4
+        # job therefore reruns at W=1 when the flag/digest no longer qualify. The
+        # admitted value is returned on the capability so the gateway applies it
+        # verbatim (single source of truth) instead of re-deriving the guard.
+        admitted_parallelism = _apply_parallelism_admission(job, snapshot_digest)
         previous_number = job.current_attempt_number
         attempt_number = previous_number + 1
         if previous_number:
@@ -178,9 +299,7 @@ def register_attempt(
                     HostedHarnessAttempt.State.CLEANING_UP,
                 ),
             ).update(state=HostedHarnessAttempt.State.SUPERSEDED)
-        runnable_deadline = now + timedelta(
-            seconds=job.payload["runtime"]["max_duration_seconds"]
-        )
+        runnable_deadline = now + timedelta(seconds=_active_attempt_budget_seconds(job))
         expires_at = runnable_deadline + timedelta(seconds=_TOKEN_TAIL_SECONDS)
         attempt = HostedHarnessAttempt.no_workspace_objects.create(
             job=job,
@@ -238,7 +357,57 @@ def register_attempt(
         },
     }
     return AttemptCapability(
-        attempt=attempt, token=token, fence=fence, document=document
+        attempt=attempt,
+        token=token,
+        fence=fence,
+        document=document,
+        admitted_parallelism=admitted_parallelism,
+    )
+
+
+def activate_attempt_capability(capability: AttemptCapability) -> AttemptCapability:
+    """Start the guest's time budget immediately before its capability is uploaded.
+
+    A managed sandbox can take a long time to create or accept source uploads. The
+    token is not available to the guest during that work, so charging that time
+    against the guest's deadline can expire an otherwise healthy run before its
+    first call. This is only for the unissued, provisioning capability; it must
+    never extend a running guest's access.
+    """
+
+    with transaction.atomic():
+        job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=capability.attempt.job_id
+        )
+        attempt = HostedHarnessAttempt.no_workspace_objects.select_for_update().get(
+            id=capability.attempt.id, job_id=job.id
+        )
+        if (
+            attempt.state != HostedHarnessAttempt.State.PROVISIONING
+            or not attempt.provider_ref
+            or job.current_attempt_number != attempt.attempt_number
+        ):
+            raise HostedHarnessError(
+                "attempt_capability_activation_invalid",
+                "Only the current, provisioned attempt can be activated",
+            )
+        runnable_deadline = timezone.now() + timedelta(
+            seconds=_active_attempt_budget_seconds(job)
+        )
+        attempt.expires_at = runnable_deadline + timedelta(seconds=_TOKEN_TAIL_SECONDS)
+        attempt.save(update_fields=["expires_at", "updated_at"])
+        job.deadline_at = runnable_deadline
+        job.save(update_fields=["deadline_at", "updated_at"])
+
+    return AttemptCapability(
+        attempt=attempt,
+        token=capability.token,
+        fence=capability.fence,
+        document={
+            **capability.document,
+            "expires_at": _rfc3339(attempt.expires_at),
+        },
+        admitted_parallelism=capability.admitted_parallelism,
     )
 
 
@@ -458,6 +627,13 @@ def _target_agent_prompt(job: HostedHarnessJob, payload: dict[str, Any]) -> str:
     supplied = str(payload.get("agent_prompt") or "").strip()
     if supplied:
         return supplied
+    if str((job.payload.get("agent") or {}).get("connector") or "") == "phone":
+        return str(
+            ((job.payload.get("agent") or {}).get("config") or {}).get(
+                "target_system_prompt"
+            )
+            or ""
+        ).strip()
     return str(_authored_contract_data(job).get("system_prompt_excerpt") or "").strip()
 
 
@@ -490,7 +666,7 @@ def _record_target_agent_facts(
     # model and language are left alone: the contract carries neither.
     connector = str((job.payload.get("agent") or {}).get("connector") or "").lower()
     if (
-        connector in {"livekit", "vapi", "retell", "retell_chat"}
+        connector in {"livekit", "vapi", "retell", "retell_chat", "phone"}
         and not agent_definition.provider
     ):
         agent_definition.provider = (
@@ -502,12 +678,27 @@ def _record_target_agent_facts(
     if named and agent_definition.agent_name == "alk-sdk-agent":
         agent_definition.agent_name = named[:255]
         changed.append("agent_name")
+    agent_config = (job.payload.get("agent") or {}).get("config") or {}
+    explicit_inbound = agent_config.get("inbound")
     direction = str(authored.get("call_direction") or "").strip().lower()
-    if direction in {"inbound", "outbound"}:
-        inbound = direction == "inbound"
+    if isinstance(explicit_inbound, bool) or direction in {"inbound", "outbound"}:
+        # The user's RL Environment selection is authoritative. The authored
+        # contract remains the fallback for older jobs that predate the field.
+        inbound = (
+            explicit_inbound
+            if isinstance(explicit_inbound, bool)
+            else direction == "inbound"
+        )
         if agent_definition.inbound != inbound:
             agent_definition.inbound = inbound
             changed.append("inbound")
+    target_speaks_first = agent_config.get("target_speaks_first")
+    if (
+        isinstance(target_speaks_first, bool)
+        and agent_definition.target_speaks_first != target_speaks_first
+    ):
+        agent_definition.target_speaks_first = target_speaks_first
+        changed.append("target_speaks_first")
     if changed:
         agent_definition.save(update_fields=[*changed, "updated_at"])
     if prompt and agent_definition.latest_version is None:
@@ -711,6 +902,14 @@ def record_cleanup(
         if attempt.state != HostedHarnessAttempt.State.SUPERSEDED:
             attempt.state = _attempt_terminal_state(attempt)
         attempt.save(update_fields=["cleanup_verified_at", "state", "updated_at"])
+        from simulate.services.harness_usage import (
+            record_sandbox_runtime,
+            replay_harness_usage,
+        )
+
+        record_sandbox_runtime(attempt, final=True)
+        # Teardown seals all measured authoring, even when no bundle was produced.
+        replay_harness_usage(attempt)
         job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
             id=attempt.job_id
         )
@@ -775,33 +974,51 @@ def record_cleanup(
 
 
 def update_execution_counts(job: HostedHarnessJob) -> None:
-    if not job.test_execution_id:
-        return
-    receipts = HostedHarnessReceipt.no_workspace_objects.filter(job=job)
-    # Harness receipt outcomes answer "did the scenario satisfy its checks?";
-    # TestExecution counters answer "did the call transport complete?".  Keep
-    # those dimensions separate so a completed, playable call with a failed
-    # behavioural/evidence verdict is not reported as a failed call.
-    scenario_completed = receipts.filter(status="passed").count()
-    scenario_failed = receipts.filter(status__in=("failed", "errored")).count()
-    calls = CallExecution.no_workspace_objects.filter(
-        test_execution_id=job.test_execution_id
-    )
-    calls_completed = calls.filter(status=CallExecution.CallStatus.COMPLETED).count()
-    calls_failed = calls.filter(
-        status__in=(
-            CallExecution.CallStatus.FAILED,
-            CallExecution.CallStatus.CANCELLED,
+    # Receipt deliveries for parallel scenarios arrive independently. Lock the job projection
+    # while taking the snapshot so a slower request cannot overwrite counters with an older view
+    # after a faster request has already accounted a later receipt.
+    with transaction.atomic():
+        locked_job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=job.id
         )
-    ).count()
-    TestExecution.no_workspace_objects.filter(id=job.test_execution_id).update(
-        completed_calls=calls_completed,
-        failed_calls=calls_failed,
-    )
-    HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
-        completed_count=scenario_completed,
-        failed_count=scenario_failed,
-    )
+        if not locked_job.test_execution_id:
+            return
+        current_attempt_number = locked_job.current_attempt_number
+        # Reruns retain old receipts until their replacements arrive. Counters must describe
+        # only the current attempt while its parallel receipts are delivered independently.
+        receipts = HostedHarnessReceipt.no_workspace_objects.filter(
+            job=locked_job,
+            attempt_number=current_attempt_number,
+        )
+        # Harness receipt outcomes answer "did the scenario satisfy its checks?"; TestExecution
+        # counters answer "did the call transport complete?". Keep those dimensions separate so a
+        # completed, playable call with a failed behavioural/evidence verdict is not reported as a
+        # failed call.
+        scenario_completed = receipts.filter(status="passed").count()
+        scenario_failed = receipts.filter(status__in=("failed", "errored")).count()
+        calls = CallExecution.no_workspace_objects.filter(
+            test_execution_id=locked_job.test_execution_id,
+            hosted_registration__receipts__attempt_number=current_attempt_number,
+        )
+        calls_completed = calls.filter(
+            status=CallExecution.CallStatus.COMPLETED
+        ).count()
+        calls_failed = calls.filter(
+            status__in=(
+                CallExecution.CallStatus.FAILED,
+                CallExecution.CallStatus.CANCELLED,
+            )
+        ).count()
+        TestExecution.no_workspace_objects.filter(
+            id=locked_job.test_execution_id
+        ).update(
+            completed_calls=calls_completed,
+            failed_calls=calls_failed,
+        )
+        HostedHarnessJob.no_workspace_objects.filter(id=locked_job.id).update(
+            completed_count=scenario_completed,
+            failed_count=scenario_failed,
+        )
 
 
 def _attempt_terminal_state(attempt: HostedHarnessAttempt) -> str:

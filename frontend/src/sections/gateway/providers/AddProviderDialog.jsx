@@ -47,6 +47,13 @@ const PROVIDER_PRESETS = {
     keyPlaceholder: "AIza...",
     supportedFormats: ["openai", "google"],
   },
+  vertex: {
+    label: "Google Vertex AI",
+    baseUrl: "",
+    apiFormat: "gemini",
+    authType: "gcp",
+    supportedFormats: ["gemini"],
+  },
   azure: {
     label: "Azure OpenAI",
     baseUrl: "",
@@ -129,9 +136,17 @@ const API_FORMATS = [
   "anthropic",
   "cohere",
   "google",
+  "gemini",
   "azure",
   "bedrock",
 ];
+
+const vertexSettingsFromUrl = (url) => {
+  const match = String(url || "").match(
+    /^https:\/\/(?:[a-z0-9-]+-)?aiplatform\.googleapis\.com\/v1beta1\/projects\/([^/]+)\/locations\/([^/]+)\/?$/,
+  );
+  return { project: match?.[1] || "", location: match?.[2] || "us-central1" };
+};
 
 // The API types a provider's models as free-form JSON, so an entry need not be
 // a string — and a non-string one takes the dialog down when it reaches state.
@@ -180,6 +195,9 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   const [awsSecretAccessKey, setAwsSecretAccessKey] = useState("");
   const [awsRegion, setAwsRegion] = useState("us-east-1");
   const [awsSessionToken, setAwsSessionToken] = useState("");
+  const [gcpProject, setGcpProject] = useState("");
+  const [gcpLocation, setGcpLocation] = useState("us-central1");
+  const [serviceAccountJSON, setServiceAccountJSON] = useState("");
 
   // Validation state
   const [errors, setErrors] = useState({});
@@ -281,11 +299,16 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
           ? String(c.max_concurrent ?? c.maxConcurrent ?? "")
           : "",
       );
+      const vertexSettings = vertexSettingsFromUrl(c.base_url ?? c.baseUrl);
+      setGcpProject(vertexSettings.project);
+      setGcpLocation(vertexSettings.location);
+      setServiceAccountJSON("");
       setErrors({});
       setSummaryDismissed(false);
       offeredModels.current = new Set(normalizeModels(c.models));
       storedKeyResult.current = null;
-      doFetchModels({ providerName: provider.name });
+      if (provider.name !== "vertex")
+        doFetchModels({ providerName: provider.name });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, isEditMode, provider]);
@@ -299,12 +322,13 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   }, [open, isEditMode]);
 
   const isAwsAuth = PROVIDER_PRESETS[name]?.authType === "aws";
+  const isVertexAuth = PROVIDER_PRESETS[name]?.authType === "gcp";
 
   // Auto-fetch when an API key is entered (debounced). Edit mode included: a
   // typed key replaces the stored one, so it has to list models before Save.
   // Skip auto-fetch for AWS providers (Bedrock models must be entered manually)
   useEffect(() => {
-    if (isAwsAuth) {
+    if (isAwsAuth || isVertexAuth) {
       setFetchScheduled(false);
       return;
     }
@@ -349,7 +373,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     }, 600);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiKey, baseUrl, apiFormat, isEditMode, isAwsAuth]);
+  }, [apiKey, baseUrl, apiFormat, isEditMode, isAwsAuth, isVertexAuth]);
 
   const resetForm = () => {
     const defaultPreset = PROVIDER_PRESETS.openai;
@@ -369,6 +393,9 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     setAwsSecretAccessKey("");
     setAwsRegion("us-east-1");
     setAwsSessionToken("");
+    setGcpProject("");
+    setGcpLocation("us-central1");
+    setServiceAccountJSON("");
     setErrors({});
     setSummaryDismissed(false);
     offeredModels.current = new Set();
@@ -381,6 +408,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   };
 
   const handleProviderChange = (newName) => {
+    fetchSeqRef.current += 1;
     setName(newName);
     const preset = PROVIDER_PRESETS[newName];
     if (preset) {
@@ -396,6 +424,10 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
           : prev,
       );
     }
+    setApiKey("");
+    setGcpProject("");
+    setGcpLocation("us-central1");
+    setServiceAccountJSON("");
     // Clear models since provider changed
     setModels([]);
     setModelOptions([]);
@@ -435,7 +467,33 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       newErrors.name = "Provider name is required";
     }
 
-    if (isAwsAuth) {
+    if (isVertexAuth) {
+      if (!/^[a-z][a-z0-9-]{4,62}$/.test(gcpProject.trim())) {
+        newErrors.gcpProject = "Enter a valid Google Cloud project ID";
+      }
+      if (!/^[a-z][a-z0-9-]{1,62}$/.test(gcpLocation.trim())) {
+        newErrors.gcpLocation = "Enter a valid Vertex AI location";
+      }
+      if (!isEditMode && !serviceAccountJSON) {
+        newErrors.serviceAccountJSON = "Paste the Google service-account JSON";
+      } else if (serviceAccountJSON) {
+        try {
+          const parsed = JSON.parse(serviceAccountJSON);
+          if (
+            parsed?.type !== "service_account" ||
+            !parsed.client_email ||
+            !parsed.private_key ||
+            !parsed.project_id ||
+            parsed.token_uri !== "https://oauth2.googleapis.com/token"
+          ) {
+            newErrors.serviceAccountJSON =
+              "Paste a complete Google service-account JSON key";
+          }
+        } catch {
+          newErrors.serviceAccountJSON = "Paste valid JSON";
+        }
+      }
+    } else if (isAwsAuth) {
       // AWS-specific validation
       if (!isEditMode && !awsAccessKeyId.trim()) {
         newErrors.awsAccessKeyId = "AWS Access Key ID is required";
@@ -490,7 +548,11 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     }
 
     const config = { base_url: baseUrl, api_format: apiFormat };
-    if (isAwsAuth) {
+    if (isVertexAuth) {
+      config.gcp_project = gcpProject.trim();
+      config.gcp_location = gcpLocation.trim();
+      if (serviceAccountJSON) config.service_account_json = serviceAccountJSON;
+    } else if (isAwsAuth) {
       if (awsAccessKeyId) config.aws_access_key_id = awsAccessKeyId;
       if (awsSecretAccessKey) config.aws_secret_access_key = awsSecretAccessKey;
       if (awsRegion) config.aws_region = awsRegion;
@@ -535,6 +597,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   const savedKeyUnverified =
     isEditMode &&
     !isAwsAuth &&
+    !isVertexAuth &&
     hasFetched &&
     modelOptions.length === 0 &&
     !apiKey.trim() &&
@@ -610,7 +673,59 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
             </TextField>
           )}
 
-          {isAwsAuth ? (
+          {isVertexAuth ? (
+            <>
+              <TextField
+                label="Google Cloud project ID"
+                fullWidth
+                required
+                value={gcpProject}
+                onChange={(e) => {
+                  setGcpProject(e.target.value);
+                  setErrors((prev) => ({ ...prev, gcpProject: undefined }));
+                }}
+                error={!!errors.gcpProject}
+                helperText={errors.gcpProject}
+              />
+              <TextField
+                label="Vertex AI location"
+                fullWidth
+                required
+                value={gcpLocation}
+                onChange={(e) => {
+                  setGcpLocation(e.target.value);
+                  setErrors((prev) => ({ ...prev, gcpLocation: undefined }));
+                }}
+                error={!!errors.gcpLocation}
+                helperText={errors.gcpLocation || "For example, us-central1"}
+              />
+              <TextField
+                label="Service-account JSON"
+                fullWidth
+                required={!isEditMode}
+                type="password"
+                autoComplete="off"
+                value={serviceAccountJSON}
+                onChange={(e) => {
+                  setServiceAccountJSON(e.target.value);
+                  setErrors((prev) => ({
+                    ...prev,
+                    serviceAccountJSON: undefined,
+                  }));
+                }}
+                placeholder={
+                  isEditMode
+                    ? "Leave blank to keep current key"
+                    : "Paste the entire JSON key"
+                }
+                error={!!errors.serviceAccountJSON}
+                helperText={
+                  errors.serviceAccountJSON ||
+                  "Encrypted at rest. Never returned to the browser after saving."
+                }
+              />
+            </>
+          ) : isAwsAuth ? (
             <>
               <TextField
                 label="AWS Region"
@@ -826,7 +941,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
                       ? "Fetching models..."
                       : modelOptions.length > 0
                         ? "Select models..."
-                        : isAwsAuth
+                        : isAwsAuth || isVertexAuth
                           ? "Type or paste comma-separated model IDs"
                           : "Enter API key to load models, or type manually"
                   }

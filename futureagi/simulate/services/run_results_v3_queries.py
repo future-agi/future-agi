@@ -23,35 +23,21 @@ from django.db.models import (
     Value,
     When,
 )
-from django.db.models.aggregates import Aggregate
-from django.db.models.fields.json import KeyTextTransform, KeyTransform
+from django.db.models.fields.json import KeyTransform
 from django.db.models.functions import Cast, Coalesce, NullIf
 
 from model_hub.models.develop_dataset import Cell
 from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
 from simulate.semantics import SupportedProviders
 from simulate.services.run_results_v3 import build_evaluation_catalog
+from simulate.services.run_results_v3_expressions import (
+    PercentileCont,
+    _json_text,
+    _safe_json_float,
+)
 
 OUTCOMES = ("passed", "failed", "error", "inconclusive")
 GROUP_FIELDS = {"goal": "result_goal", "status": "result_outcome"}
-NUMERIC_JSON_PATTERN = r"^-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$"
-
-
-class PercentileCont(Aggregate):
-    function = "PERCENTILE_CONT"
-    name = "PercentileCont"
-    output_field = FloatField()
-    template = "%(function)s(%(percentile)s) WITHIN GROUP (ORDER BY %(expressions)s)"
-
-    def __init__(self, expression, percentile: float, **extra):
-        super().__init__(expression, percentile=percentile, **extra)
-
-
-def _json_text(field: str, *keys: str):
-    expression = F(field)
-    for key in keys:
-        expression = KeyTextTransform(key, expression)
-    return NullIf(expression, Value(""))
 
 
 def _json_value(field: str, *keys: str):
@@ -59,20 +45,6 @@ def _json_value(field: str, *keys: str):
     for key in keys:
         expression = KeyTransform(key, expression)
     return expression
-
-
-def _safe_json_float(field: str, *keys: str):
-    lookup = "__".join((field, *keys, "regex"))
-    return Case(
-        When(
-            **{
-                lookup: NUMERIC_JSON_PATTERN,
-                "then": Cast(_json_text(field, *keys), FloatField()),
-            }
-        ),
-        default=None,
-        output_field=FloatField(),
-    )
 
 
 def _eval_verdict_q(eval_ids: set[str], values: list[Any]) -> Q:
@@ -99,10 +71,11 @@ def run_calls_queryset(
         live_eval_ids,
         [False, "false", "fail", "failed", "failure", "unsuccessful"],
     )
-    passed_eval = _eval_verdict_q(
-        live_eval_ids,
-        [True, "true", "pass", "passed", "success", "successful"],
-    )
+    passed_eval = Q() if live_eval_ids else Q(pk__in=[])
+    for eval_id in live_eval_ids:
+        passed_eval &= _eval_verdict_q(
+            {eval_id}, [True, "true", "pass", "passed", "success", "successful"]
+        )
 
     # The common hosted-harness fields live in JSONB today. These annotations
     # keep filtering, grouping, ordering and aggregation inside PostgreSQL while
@@ -127,6 +100,12 @@ def run_calls_queryset(
         "created_at",
     )
     queryset = CallExecution.objects.filter(execution_filter).annotate(
+        result_eval_outcome=Case(
+            When(failed_eval, then=Value("failed")),
+            When(passed_eval, then=Value("passed")),
+            default=Value("inconclusive"),
+            output_field=CharField(),
+        ),
         result_goal=Coalesce(
             _json_text("call_metadata", "use_case"),
             _json_text("call_metadata", "goal"),
@@ -308,9 +287,9 @@ def _summary_from_values(values: dict[str, Any]) -> dict[str, Any]:
         "total": total,
         "outcomes": outcomes,
         "measured": measured,
-        "pass_rate": round(outcomes["passed"] / measured * 100, 2)
-        if measured
-        else None,
+        "pass_rate": (
+            round(outcomes["passed"] / measured * 100, 2) if measured else None
+        ),
         "duration": stats("duration"),
         "latency": stats("latency"),
         "tokens": tokens,
@@ -468,6 +447,8 @@ def _breakdown_run_calls(queryset: QuerySet, field: str) -> list[dict[str, Any]]
 
 
 def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
+    from simulate.services.run_dashboard_v3 import build_run_dashboard
+
     queryset = run_calls_queryset(execution)
     summary = summarize_run_calls(queryset)
     configs, _ = build_evaluation_catalog(execution)
@@ -629,7 +610,15 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
         "summary": {**summary, "evaluators": len(configs)},
         "scenario_risk": risk,
         "turn_distribution": list(turn_distribution.values()),
-        "evaluations": evaluations,
+        "evaluations": sorted(
+            evaluations,
+            key=lambda row: (
+                row["pass_rate"] is None,
+                row["pass_rate"] or 0,
+                row["name"],
+            ),
+        ),
+        "dashboard": build_run_dashboard(queryset, summary, evaluations, risk),
         "failure_breakdown": [
             {
                 "reason": reason,

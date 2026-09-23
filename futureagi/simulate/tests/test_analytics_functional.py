@@ -731,6 +731,102 @@ class TestRunResultsV3Views:
         assert str(call.id) in csv_body
         assert str(analytics_call_executions[-1].id) not in csv_body
 
+    def test_dashboard_distinguishes_missing_metrics_and_tool_verdicts(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
+
+        call = analytics_call_executions[0]
+        call.call_metadata = {"harness_outcome_status": "failed"}
+        call.conversation_metrics_data = {"csat_score": 7, "turn_count": 3}
+        call.provider_call_data = {
+            "livekit": {
+                "tool_calls": [
+                    {"name": "lookup", "ok": True},
+                    {"name": "lookup", "ok": False},
+                    {"name": "unclassified", "result": {"order_id": "synthetic-order"}},
+                ]
+            }
+        }
+        call.customer_latency_metrics = {
+            "systemMetrics": {"model": 240, "voice": "unavailable"}
+        }
+        call.simulation_call_type = "voice"
+        call.save()
+        other = analytics_call_executions[1]
+        other.conversation_metrics_data = {"csat_score": "unavailable"}
+        other.save(update_fields=["conversation_metrics_data"])
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/analytics/"
+        )
+        assert response.status_code == 200
+        dashboard = response.json()["dashboard"]
+        serializer = RunDashboardV3Serializer(data=dashboard)
+        assert serializer.is_valid(), serializer.errors
+        metrics = {row["key"]: row for row in dashboard["metrics"]}
+        assert len(metrics) == 14
+        assert metrics["csat"]["value"] == 7
+        assert metrics["csat"]["measured"] == 1
+        tools = {row["name"]: row for row in dashboard["tools"]["failures"]}
+        assert tools["lookup"]["failure_rate"] == 50
+        assert tools["lookup"]["measured"] == 2
+        assert tools["unclassified"]["failure_rate"] is None
+        assert dashboard["series_mode"] == "calls"
+        assert len(dashboard["latency_percentiles"]) == 101
+        assert all(
+            sum(segment["count"] for segment in chart["segments"]) == 4
+            for chart in dashboard["breakdowns"]
+        )
+        assert "failure_attribution" in {
+            row["key"] for row in dashboard["unavailable_features"]
+        }
+
+    def test_dashboard_task_success_is_independent_of_provider_verdict(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        call = analytics_call_executions[0]
+        call.call_metadata = {"harness_outcome_status": "passed"}
+        call.analysis_data = {"call_successful": False, "user_sentiment": "negative"}
+        call.save()
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/analytics/"
+        )
+        assert response.status_code == 200
+        charts = {row["key"]: row for row in response.json()["dashboard"]["breakdowns"]}
+        success = {
+            row["label"]: row["count"] for row in charts["call_success"]["segments"]
+        }
+        goals = {
+            row["label"]: row["count"] for row in charts["goal_outcome"]["segments"]
+        }
+        assert success == {"successful": 1, "unsuccessful": 1, "unknown": 2}
+        assert goals["passed"] == 1
+
+    def test_dashboard_histograms_use_measured_values_and_exact_threshold(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        for call, score, latency in zip(
+            analytics_call_executions, [0, 4, 10, "missing"], [549, 550, 575, None]
+        ):
+            call.conversation_metrics_data = {"csat_score": score}
+            call.avg_agent_latency_ms = latency
+            call.save(
+                update_fields=["conversation_metrics_data", "avg_agent_latency_ms"]
+            )
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/analytics/"
+        )
+        assert response.status_code == 200
+        dashboard = response.json()["dashboard"]
+        assert dashboard["csat"]["measured"] == 3
+        assert len(dashboard["csat"]["bins"]) == 11
+        assert sum(row["count"] for row in dashboard["csat"]["bins"]) == 3
+        assert dashboard["agent_response_time"]["at_or_above_target"] == 2
+        assert dashboard["agent_response_time"]["measured"] == 3
+        assert dashboard["agent_response_time"]["at_or_above_target_percent"] == 66.67
+        assert dashboard["csat"]["agreement"]["percent"] is None
+
     def test_export_escapes_spreadsheet_formulas(
         self, auth_client, test_execution, analytics_call_executions
     ):

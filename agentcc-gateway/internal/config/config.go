@@ -315,6 +315,7 @@ type KeyGuardrailOverride struct {
 type ServerConfig struct {
 	Port                  int           `yaml:"port" json:"port"`
 	Host                  string        `yaml:"host" json:"host"`
+	ReadHeaderTimeout     time.Duration `yaml:"read_header_timeout" json:"read_header_timeout"`
 	ReadTimeout           time.Duration `yaml:"read_timeout" json:"read_timeout"`
 	WriteTimeout          time.Duration `yaml:"write_timeout" json:"write_timeout"`
 	IdleTimeout           time.Duration `yaml:"idle_timeout" json:"idle_timeout"`
@@ -359,8 +360,9 @@ type ProviderConfig struct {
 	AWSRegion          string `yaml:"aws_region" json:"aws_region"`
 
 	// Google service account credentials file (for Vertex AI OAuth2 token generation).
-	CredentialsFile string `yaml:"credentials_file" json:"-"`
-	AWSSessionToken string `yaml:"aws_session_token" json:"-"`
+	CredentialsFile    string `yaml:"credentials_file" json:"-"`
+	ServiceAccountJSON string `yaml:"service_account_json" json:"-"`
+	AWSSessionToken    string `yaml:"aws_session_token" json:"-"`
 }
 
 type LoggingConfig struct {
@@ -950,7 +952,8 @@ func DefaultConfig() *Config {
 		Server: ServerConfig{
 			Port:                  8080,
 			Host:                  "0.0.0.0",
-			ReadTimeout:           5 * time.Second,
+			ReadHeaderTimeout:     5 * time.Second,
+			ReadTimeout:           60 * time.Second,
 			WriteTimeout:          300 * time.Second,
 			IdleTimeout:           120 * time.Second,
 			ShutdownTimeout:       30 * time.Second,
@@ -1112,10 +1115,11 @@ func loadFromEnv(cfg *Config) {
 		// — and could re-type — an operator's explicit entry.
 		if !authKeyConfigured(cfg.Auth.Keys, v) {
 			cfg.Auth.Keys = append(cfg.Auth.Keys, AuthKeyConfig{
-				Name:    "internal-backend",
-				Key:     v,
-				Owner:   "futureagi-backend",
-				KeyType: "internal",
+				Name:     "internal-backend",
+				Key:      v,
+				Owner:    "futureagi-backend",
+				KeyType:  "internal",
+				Metadata: map[string]string{"access_groups": "internal"},
 			})
 		}
 	}
@@ -1142,6 +1146,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Server.ReadTimeout <= 0 {
 		return fmt.Errorf("server.read_timeout must be positive")
+	}
+	if c.Server.ReadHeaderTimeout <= 0 {
+		return fmt.Errorf("server.read_header_timeout must be positive")
 	}
 	if c.Server.WriteTimeout <= 0 {
 		return fmt.Errorf("server.write_timeout must be positive")

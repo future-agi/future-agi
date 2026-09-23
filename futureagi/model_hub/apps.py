@@ -23,6 +23,9 @@ STARTUP_SAFE_MANAGEMENT_COMMANDS = frozenset(
         "ch25_property_catalog_lifecycle_controller",
         "check",
         "collectstatic",
+        # First-account bootstrap for self-hosted installs; AppConfig.ready
+        # stays mutation-free.
+        "create_user",
         "generate_swagger",
         "grpcrunaioserver",
         "runserver",
@@ -195,10 +198,11 @@ class ModelHubConfig(AppConfig):
         if command := guarded_management_command(sys.argv):
             if not explicit_management_mutation_authorized(sys.argv):
                 raise RuntimeError(
-                    f"{command} is disabled during mutation-free startup; "
-                    "use the explicit local migration mode or a one-shot "
-                    "SERVICE_TYPE=bootstrap process with "
-                    "STARTUP_DB_MUTATION_MODE=operator"
+                    f"{command} is disabled during mutation-free startup. "
+                    f"Only {sorted(OPERATOR_STARTUP_MUTATION_COMMANDS)} may run "
+                    "in a one-shot SERVICE_TYPE=bootstrap process with "
+                    "STARTUP_DB_MUTATION_MODE=operator, or via the explicit "
+                    "local migration mode"
                 )
             if command == "migrate":
                 post_migrate.connect(
