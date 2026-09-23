@@ -85,6 +85,7 @@ describe("hostedPlatforms", () => {
       "other",
     ]);
     expect(HOSTED_PLATFORMS_BY_TYPE.text.map((p) => p.id)).toEqual([
+      "retell_chat",
       "openai_assistants",
       "langgraph",
       "crewai",

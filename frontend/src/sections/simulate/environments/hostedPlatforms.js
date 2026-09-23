@@ -35,6 +35,8 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       idLabel: "Pathway ID",
       idPlaceholder: "pathway_9f2c…",
       keyLabel: "Bland API key",
+      // Not a real connector yet (submit would 400) — surfaced but not selectable.
+      comingSoon: true,
     },
     {
       id: "elevenlabs",
@@ -44,6 +46,8 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       idLabel: "Agent ID",
       idPlaceholder: "agent_9f2c…",
       keyLabel: "ElevenLabs API key",
+      // Not a real connector yet (submit would 400) — surfaced but not selectable.
+      comingSoon: true,
     },
     {
       id: "livekit",
@@ -69,12 +73,25 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
   ],
   [AGENT_TYPES.CHAT]: [
     {
+      // The only real chat connector today (maps to `retell_chat`); listed first
+      // so it's the default when Chat is selected. The rest are not connectors
+      // yet, so they're surfaced coming-soon (not selectable).
+      id: "retell_chat",
+      name: "Retell AI",
+      icon: "solar:chat-round-line-linear",
+      brand: "#635BFF",
+      idLabel: "Agent ID",
+      idPlaceholder: "agent_9f2c…",
+      keyLabel: "Retell API key",
+    },
+    {
       id: "openai_assistants",
       name: "OpenAI Assistants",
       icon: "solar:magic-stick-3-linear",
       idLabel: "Assistant ID",
       idPlaceholder: "asst_9f2c…",
       keyLabel: "OpenAI API key",
+      comingSoon: true,
     },
     {
       id: "langgraph",
@@ -83,6 +100,7 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       idLabel: "Deployment URL",
       idPlaceholder: "https://…",
       keyLabel: "LangSmith API key",
+      comingSoon: true,
     },
     {
       id: "crewai",
@@ -91,6 +109,7 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       idLabel: "Crew ID",
       idPlaceholder: "crew_9f2c…",
       keyLabel: "CrewAI API key",
+      comingSoon: true,
     },
     {
       id: "claude_agents",
@@ -99,6 +118,7 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       idLabel: "Agent name",
       idPlaceholder: "support-agent",
       keyLabel: "Anthropic API key",
+      comingSoon: true,
     },
   ],
 };

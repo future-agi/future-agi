@@ -29,10 +29,11 @@ describe("PREFLIGHT_CONNECTOR / PROVIDER_TO_CONNECTOR", () => {
     });
   });
 
-  it("maps only the reachable Phase-1 providers to a connector", () => {
+  it("maps the roster providers to a connector (retell_chat is the chat one)", () => {
     expect(PROVIDER_TO_CONNECTOR).toEqual({
       vapi: "vapi",
       retell: "retell",
+      retell_chat: "retell_chat",
       livekit: "livekit",
     });
   });

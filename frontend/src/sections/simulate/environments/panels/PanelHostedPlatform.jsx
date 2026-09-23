@@ -53,6 +53,11 @@ export default function PanelHostedPlatform() {
     simMode, countryIso, contactNumber, inboundCalls, agentSpeaksFirst, otherPrompt,
   } = form;
   const platforms = HOSTED_PLATFORMS_BY_TYPE[agentType] || [];
+  // Coming-soon (not-yet-a-connector) platforms sort to the end, so the
+  // selectable ones lead the row. Stable, so each group keeps its roster order.
+  const orderedPlatforms = [...platforms].sort(
+    (a, b) => Number(!!a.comingSoon) - Number(!!b.comingSoon),
+  );
 
   /* When agent type flips, snap to the first platform of the new type and clear
      the credentials so we do not carry a key into another provider's form. */
@@ -130,7 +135,7 @@ export default function PanelHostedPlatform() {
           </Typography>
         ) : (
           <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, mt: 0.75 }}>
-            {platforms.map((p) => (
+            {orderedPlatforms.map((p) => (
               <ChipCard
                 key={p.id}
                 /* "Others" has no brand logo — render its Solar icon instead. */
@@ -140,6 +145,7 @@ export default function PanelHostedPlatform() {
                 label={PLATFORM_LOGOS[p.id]?.type === "wordmark" ? null : p.name}
                 on={platform === p.id}
                 onClick={() => set("platform")(p.id)}
+                comingSoon={p.comingSoon}
               />
             ))}
           </Box>

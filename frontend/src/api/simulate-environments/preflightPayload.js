@@ -34,11 +34,12 @@ export const PREFLIGHT_CONNECTOR = {
   LIVEKIT: "livekit",
 };
 
-// Only the Phase-1 roster providers that exist in the HarnessAgent.connector
-// enum. `retell_chat` is in the enum but unreachable from the Phase-1 rosters.
+// The roster providers that exist in the HarnessAgent.connector enum. `retell`
+// is the voice connector; `retell_chat` is the only real chat connector.
 export const PROVIDER_TO_CONNECTOR = {
   vapi: PREFLIGHT_CONNECTOR.VAPI,
   retell: PREFLIGHT_CONNECTOR.RETELL,
+  retell_chat: PREFLIGHT_CONNECTOR.RETELL_CHAT,
   livekit: PREFLIGHT_CONNECTOR.LIVEKIT,
 };
 
