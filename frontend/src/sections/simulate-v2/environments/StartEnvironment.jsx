@@ -2027,22 +2027,22 @@ function deriveScratchScenarios(flowText, envName) {
 
 function personaFor(i) {
   const names = [
-    "The Focused Requester",
-    "The Rushed Caller",
-    "The Distressed User",
-    "The Wandering Chatter",
-    "The Curious Skeptic",
-    "The Insistent Advocate",
-    "The Polite Newcomer",
-    "The Impatient Regular",
-    "The Anxious First-timer",
-    "The Frustrated Repeat",
-    "The Assertive Insider",
-    "The Confused Observer",
-    "The Detail-obsessed User",
-    "The Bare-minimum User",
-    "The Rule-tester",
-    "The Silent Waiter",
+    "Ellie Marsh",
+    "Marcus Reid",
+    "Aditi Rao",
+    "Harper Lang",
+    "Priya Shah",
+    "Kevin Delaney",
+    "Isabela Ferreira",
+    "Nathan Cole",
+    "Lucas Reyes",
+    "Rachel Greene",
+    "Douglas Kim",
+    "Sasha Novak",
+    "Rowan Bishop",
+    "Tyler Brooks",
+    "Elena Vargas",
+    "Ben Alvarado",
   ];
   return names[i % names.length];
 }

@@ -20,7 +20,11 @@ export const PERSONA_TRAITS = [
   brief actually needs: a shape the simulator can play, not a name. The
   slug is a compact kebab id used to prefix scenario names.
 */
-const P = (name, slug, age, traits, voice) => ({ name, slug, age, traits, voice });
+/* Persona records read as PEOPLE — `name` is the caller's real name
+   ("Marcus Reid"), `archetype` is the earlier evocative label
+   ("The Impatient Truck Driver") kept as secondary metadata for
+   filters and tooltips. `slug` stays stable as the identity key. */
+const P = (name, archetype, slug, age, traits, voice) => ({ name, archetype, slug, age, traits, voice });
 
 /* ── derived packs ────────────────────────────────────────────────────────
  *
@@ -42,37 +46,37 @@ const P = (name, slug, age, traits, voice) => ({ name, slug, age, traits, voice 
 
 /** Customer on a conversational channel. */
 const CUSTOMER_POOL = [
-  P("The Polite Senior Caller", "polite-senior", 68, ["polite", "elderly", "hard of hearing"], "US female"),
-  P("The Hungry Customer in a Rush", "hungry-rushed", 34, ["impatient", "in a hurry"], "US male"),
-  P("The Impatient Truck Driver", "impatient-driver", 45, ["impatient", "background noise", "distracted"], "US male"),
-  P("The Delivery Driver on the Move", "delivery-mobile", 29, ["in a hurry", "background noise", "distracted"], "US male"),
-  P("The Local Restaurant Owner", "restaurant-owner", 52, ["chatty", "assumes context"], "UK male"),
-  P("The Tech-Savvy Young Professional", "tech-savvy-pro", 27, ["sceptical", "tests boundaries"], "US female"),
-  P("The Telecom Customer in Distress", "telecom-distress", 41, ["angry", "confused"], "IN female"),
-  P("The Hustling Homemaker", "hustling-homemaker", 38, ["in a hurry", "chatty"], "US female"),
-  P("The Emotional Loyalist", "emotional-loyalist", 55, ["chatty", "polite"], "US female"),
-  P("The Reserved Senior", "reserved-senior", 71, ["polite", "elderly", "hard of hearing"], "UK female"),
-  P("The Frustrated Everyday User", "frustrated-user", 40, ["angry", "impatient"], "US male"),
-  P("The Confused First-Time User", "first-time-user", 33, ["confused", "non-native speaker"], "BR female"),
-  P("The Frustrated Subscriber", "frustrated-subscriber", 47, ["angry", "sceptical"], "US male"),
-  P("The Curious Evaluator", "curious-evaluator", 36, ["sceptical", "tests boundaries", "chatty"], "US female"),
+  P("Margaret Whitaker",  "The Polite Senior Caller",         "polite-senior",         68, ["polite", "elderly", "hard of hearing"],        "US female"),
+  P("Tyler Brooks",       "The Hungry Customer in a Rush",    "hungry-rushed",         34, ["impatient", "in a hurry"],                     "US male"),
+  P("Marcus Reid",        "The Impatient Truck Driver",       "impatient-driver",      45, ["impatient", "background noise", "distracted"], "US male"),
+  P("Jamal Carter",       "The Delivery Driver on the Move",  "delivery-mobile",       29, ["in a hurry", "background noise", "distracted"], "US male"),
+  P("Alan Whitfield",     "The Local Restaurant Owner",       "restaurant-owner",      52, ["chatty", "assumes context"],                   "UK male"),
+  P("Priya Shah",         "The Tech-Savvy Young Professional","tech-savvy-pro",        27, ["sceptical", "tests boundaries"],               "US female"),
+  P("Aditi Rao",          "The Telecom Customer in Distress", "telecom-distress",      41, ["angry", "confused"],                          "IN female"),
+  P("Rachel Greene",      "The Hustling Homemaker",           "hustling-homemaker",    38, ["in a hurry", "chatty"],                        "US female"),
+  P("Diane Sullivan",     "The Emotional Loyalist",           "emotional-loyalist",    55, ["chatty", "polite"],                            "US female"),
+  P("Eleanor Ashford",    "The Reserved Senior",              "reserved-senior",       71, ["polite", "elderly", "hard of hearing"],        "UK female"),
+  P("Nathan Cole",        "The Frustrated Everyday User",     "frustrated-user",       40, ["angry", "impatient"],                          "US male"),
+  P("Isabela Ferreira",   "The Confused First-Time User",     "first-time-user",       33, ["confused", "non-native speaker"],              "BR female"),
+  P("Kevin Delaney",      "The Frustrated Subscriber",        "frustrated-subscriber", 47, ["angry", "sceptical"],                          "US male"),
+  P("Elena Vargas",       "The Curious Evaluator",            "curious-evaluator",     36, ["sceptical", "tests boundaries", "chatty"],     "US female"),
 ];
 
 /** Colleague filing a request against a technical environment. */
-const R = (name, slug, role, traits) => ({ name, slug, role, traits });
+const R = (name, archetype, slug, role, traits) => ({ name, archetype, slug, role, traits });
 
 const REQUESTER_POOL = [
-  R("The Terse Staff Engineer", "staff-engineer", "Staff engineer", ["terse", "assumes context"]),
-  R("The Scope-Shifting PM", "scope-shifting-pm", "Product manager", ["vague requirements", "changes scope"]),
-  R("The On-Call SRE Under Pressure", "on-call-sre", "On-call SRE", ["urgent", "interrupt-driven"]),
-  R("The Distrustful Data Analyst", "data-analyst", "Data analyst", ["precise", "distrusts the numbers"]),
-  R("The Suspicious Security Reviewer", "security-reviewer", "Security reviewer", ["asks for proof", "tests boundaries"]),
-  R("The Escalation-Happy Support Lead", "support-lead", "Support lead", ["escalates quickly", "cites ticket IDs"]),
-  R("The No-Nonsense Executive", "exec", "Finance controller", ["audit-minded", "detail-oriented"]),
-  R("The Delegating Operations Manager", "ops-manager", "Operations manager", ["in a hurry", "delegates detail"]),
-  R("The Formal Compliance Officer", "compliance-officer", "Compliance officer", ["formal", "policy-first"]),
-  R("The Stressed Accountant", "stressed-accountant", "Junior accountant", ["unsure", "asks follow-ups"]),
-  R("The Enterprise IT Admin", "it-admin", "Enterprise IT admin", ["precise", "policy-first"]),
+  R("Mira Patel",         "The Terse Staff Engineer",             "staff-engineer",     "Staff engineer",       ["terse", "assumes context"]),
+  R("Chris Harmon",       "The Scope-Shifting PM",                "scope-shifting-pm",  "Product manager",      ["vague requirements", "changes scope"]),
+  R("Ben Alvarado",       "The On-Call SRE Under Pressure",       "on-call-sre",        "On-call SRE",          ["urgent", "interrupt-driven"]),
+  R("Sasha Novak",        "The Distrustful Data Analyst",         "data-analyst",       "Data analyst",         ["precise", "distrusts the numbers"]),
+  R("Rowan Bishop",       "The Suspicious Security Reviewer",     "security-reviewer",  "Security reviewer",    ["asks for proof", "tests boundaries"]),
+  R("Meera Iyer",         "The Escalation-Happy Support Lead",    "support-lead",       "Support lead",         ["escalates quickly", "cites ticket IDs"]),
+  R("Douglas Kim",        "The No-Nonsense Executive",            "exec",               "Finance controller",   ["audit-minded", "detail-oriented"]),
+  R("Ana Okonkwo",        "The Delegating Operations Manager",    "ops-manager",        "Operations manager",   ["in a hurry", "delegates detail"]),
+  R("Fatima Karimov",     "The Formal Compliance Officer",        "compliance-officer", "Compliance officer",   ["formal", "policy-first"]),
+  R("Lucas Reyes",        "The Stressed Accountant",              "stressed-accountant","Junior accountant",    ["unsure", "asks follow-ups"]),
+  R("Naomi Chen",         "The Enterprise IT Admin",              "it-admin",           "Enterprise IT admin",  ["precise", "policy-first"]),
 ];
 
 /** Surfaces where a human is genuinely on the other end of the conversation. */

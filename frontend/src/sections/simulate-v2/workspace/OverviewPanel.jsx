@@ -1,9 +1,10 @@
 import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
+import { useSnackbar } from "notistack";
 import { alpha } from "@mui/material/styles";
 import {
   Box, Stack, Typography, Button, Grid, Chip, Tooltip,
-  IconButton,
+  IconButton, CircularProgress,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import AgentsPanel from "./AgentsPanel";
@@ -411,17 +412,15 @@ OverviewPanel.propTypes = {
  * StateSummary — the state-of-the-env answer that Overview should lead with.
  *
  * Four tiles (Scenarios, Evaluations, Runs, Rules) each clickable to jump to
- * the relevant tab, plus a latest-run card when there is one. Every number
- * comes from the same state Runs/Scenarios/Evaluations tabs read from, so
- * the summary and the detail can't drift.
+ * the relevant tab. Every number comes from the same state
+ * Runs/Scenarios/Evaluations tabs read from, so the summary and the detail
+ * can't drift.
  */
 function StateSummary({ env, envState, onGo }) {
   const scenarioCount = envState?.scenarios?.length || 0;
   const evalCount = envState?.evals?.length || 0;
   const runs = envState?.runs || [];
   const ruleCount = env?.rules?.length || 0;
-  const latest = runs[0] || null;
-  const latestPassRate = latest?.passRate != null ? Math.round(latest.passRate) : null;
 
   const tiles = [
     { id: "scenarios", label: "Scenarios",     value: scenarioCount, icon: "solar:layers-minimalistic-linear", to: "scenarios" },
@@ -432,7 +431,7 @@ function StateSummary({ env, envState, onGo }) {
 
   return (
     <Box sx={{ mb: 3 }}>
-      <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} sx={{ mb: latest ? 1.5 : 0 }}>
+      <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
         {tiles.map((t) => (
           <Box
             key={t.id}
@@ -465,53 +464,6 @@ function StateSummary({ env, envState, onGo }) {
         ))}
       </Stack>
 
-      {latest && (
-        <Box
-          onClick={() => onGo?.("runs")}
-          sx={{
-            p: 1.75, borderRadius: 1.5, cursor: "pointer",
-            border: "1px solid", borderColor: "divider",
-            bgcolor: "background.paper",
-            "&:hover": {
-              borderColor: "text.disabled",
-              bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.03 : 0.02),
-            },
-          }}
-        >
-          <Stack direction="row" alignItems="center" spacing={1.5}>
-            <Box
-              sx={{
-                width: 32, height: 32, borderRadius: 1, display: "grid", placeItems: "center",
-                flexShrink: 0,
-                bgcolor: (t) => alpha("#16A34A", t.palette.mode === "dark" ? 0.16 : 0.1),
-                color: "#16A34A",
-              }}
-            >
-              <Iconify icon="solar:play-circle-linear" width={16} />
-            </Box>
-            <Box flex={1} minWidth={0}>
-              <Typography sx={{ typography: "s3", color: "text.subtitle", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4 }}>
-                Latest run
-              </Typography>
-              <Typography noWrap sx={{ typography: "s2", fontWeight: 700 }}>
-                {latest.label || latest.name || "Run"}
-                {latest.agentVersion ? ` · ${latest.agentVersion}` : ""}
-              </Typography>
-            </Box>
-            {latestPassRate != null && (
-              <Stack alignItems="flex-end" sx={{ flexShrink: 0 }}>
-                <Typography sx={{ typography: "s1", fontWeight: 700, color: latestPassRate >= 80 ? "#16A34A" : latestPassRate >= 50 ? "#CA8A04" : "#DC2626", fontVariantNumeric: "tabular-nums" }}>
-                  {latestPassRate}%
-                </Typography>
-                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                  pass rate
-                </Typography>
-              </Stack>
-            )}
-            <Iconify icon="solar:alt-arrow-right-linear" width={14} sx={{ color: "text.disabled", flexShrink: 0 }} />
-          </Stack>
-        </Box>
-      )}
     </Box>
   );
 }
@@ -628,6 +580,26 @@ function AgentSummarySection({ env, envState, onGo, onManageVersions, agentConne
     || "v1";
   const versionCount = Math.max(1, versions.length);
   const endpoint = agent?.values?.sdkEndpoint || agent?.values?.endpoint || null;
+  /* Sync affordance — only for hosted agent types (voice_platform,
+     chat_openai, mcp_agent) whose runtime lives on a third-party
+     platform we don't own. Repo / raw SIP / user-hosted endpoint
+     types are the source of truth themselves. */
+  const values = agent?.values || {};
+  const HOSTED_TYPE_IDS = new Set(["voice_platform", "chat_openai", "mcp_agent"]);
+  const hosted = Boolean(agent?.typeId && HOSTED_TYPE_IDS.has(agent.typeId));
+  const { enqueueSnackbar } = useSnackbar();
+  const [syncing, setSyncing] = useState(false);
+  const handleSync = () => {
+    if (syncing) return;
+    setSyncing(true);
+    const provider = values.provider || "the hosted platform";
+    setTimeout(() => {
+      setSyncing(false);
+      enqueueSnackbar(`Fetched latest from ${provider} — already in sync with ${activeLabel}`, {
+        variant: "success", autoHideDuration: 4000,
+      });
+    }, 900);
+  };
 
   return (
     <Box
@@ -675,6 +647,30 @@ function AgentSummarySection({ env, envState, onGo, onManageVersions, agentConne
           </Typography>
         </Box>
         <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
+          {agent && hosted && !locked && (
+            <Tooltip arrow title={syncing
+              ? "Re-fetching from the hosted platform…"
+              : `Re-fetch the latest definition from ${values.provider || "the hosted platform"}.`}
+            >
+              <span>
+                <Button
+                  variant="outlined" size="small"
+                  onClick={handleSync}
+                  disabled={syncing}
+                  startIcon={syncing
+                    ? <CircularProgress size={13} thickness={5} sx={{ color: "text.subtitle" }} />
+                    : <Iconify icon="solar:refresh-linear" width={15} />}
+                  sx={{
+                    typography: "s2", fontWeight: 700,
+                    color: "text.primary", borderColor: "divider",
+                    "&:hover": { borderColor: "text.subtitle", bgcolor: "action.hover" },
+                  }}
+                >
+                  {syncing ? "Syncing…" : "Sync"}
+                </Button>
+              </span>
+            </Tooltip>
+          )}
           {locked ? null : (
             <Button
               variant="contained" size="small"

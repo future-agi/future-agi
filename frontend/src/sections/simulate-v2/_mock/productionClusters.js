@@ -110,7 +110,8 @@ export function productionClustersFor(env) {
       snippets: [pick(SAMPLE_SNIPPETS, seed + i), pick(SAMPLE_SNIPPETS, seed + i + 3)],
       useCase: `Handle real-world inputs to ${tool.name} without falling over`,
       persona: {
-        name: "The Frustrated Everyday User",
+        name: "Nathan Cole",
+        archetype: "The Frustrated Everyday User",
         slug: "frustrated-user",
         traits: ["angry", "impatient"],
       },
@@ -143,7 +144,8 @@ export function productionClustersFor(env) {
       useCase: `Refuse a request that would break: ${rule}`,
       critical: true,
       persona: {
-        name: "The Emotional Loyalist",
+        name: "Diane Sullivan",
+        archetype: "The Emotional Loyalist",
         slug: "emotional-loyalist",
         traits: ["chatty", "polite"],
       },
@@ -173,7 +175,8 @@ export function productionClustersFor(env) {
       snippets: [pick(SAMPLE_SNIPPETS, seed + 5), "agent: your refund was approved on the 12th and will arrive by tuesday", "(tool never returned a date)"],
       useCase: `Explain a tool result without adding detail the tool did not produce`,
       persona: {
-        name: "The Curious Evaluator",
+        name: "Elena Vargas",
+        archetype: "The Curious Evaluator",
         slug: "curious-evaluator",
         traits: ["sceptical", "tests boundaries"],
       },
@@ -200,7 +203,8 @@ export function productionClustersFor(env) {
     snippets: [pick(SAMPLE_SNIPPETS, seed + 6), pick(SAMPLE_SNIPPETS, seed + 7)],
     useCase: `Steer a rambling caller back to their real request`,
     persona: {
-      name: "The Chatty Off-Topic Caller",
+      name: "Harper Lang",
+      archetype: "The Chatty Off-Topic Caller",
       slug: "chatty-off-topic",
       traits: ["chatty", "distracted"],
     },

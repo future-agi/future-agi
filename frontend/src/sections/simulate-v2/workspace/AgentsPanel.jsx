@@ -1,9 +1,11 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useState } from "react";
+import { useSnackbar } from "notistack";
 import { alpha } from "@mui/material/styles";
 import {
   Box, Stack, Typography, Button, IconButton, Tooltip, Collapse,
   Dialog, DialogTitle, DialogContent, DialogActions, Chip, Divider,
+  CircularProgress,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { getAgentType } from "../_mock/agentTypes";
@@ -427,6 +429,30 @@ function AgentHeroCard({ agent, onAddVersion, locked = false }) {
   const values = agent.values || {};
   const connectionRows = connectionRowsFor(agent, type, values);
   const sourceRows = sourceRowsFor(agent);
+  const hosted = isHostedAgent(agent);
+  const { enqueueSnackbar } = useSnackbar();
+  const [syncing, setSyncing] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState(null);
+
+  /* Mock re-fetch of the hosted assistant. In production this would
+     hit the platform (Vapi / Retell / OpenAI / etc.) with the stored
+     assistant id, diff the returned definition against the active
+     version, and either mark it in-sync or open the New Version
+     drawer with the delta pre-filled. Here we just spin briefly and
+     toast the outcome — enough to prove the affordance. */
+  const handleSync = () => {
+    if (syncing) return;
+    setSyncing(true);
+    const provider = values.provider || "the hosted platform";
+    setTimeout(() => {
+      setSyncing(false);
+      setLastSyncedAt(new Date());
+      enqueueSnackbar(`Fetched latest ${name} from ${provider} — already in sync with ${activeLabel}`, {
+        variant: "success",
+        autoHideDuration: 4000,
+      });
+    }, 900);
+  };
 
   return (
     <Box sx={{
@@ -484,6 +510,34 @@ function AgentHeroCard({ agent, onAddVersion, locked = false }) {
           </Typography>
         </Box>
 
+        {hosted && (
+          <Tooltip
+            arrow
+            title={syncing
+              ? "Re-fetching from the hosted platform…"
+              : lastSyncedAt
+                ? `Last checked ${formatSyncedAt(lastSyncedAt)}. Re-fetch the latest definition from ${values.provider || "the platform"}.`
+                : `Re-fetch the latest ${name} definition from ${values.provider || "the hosted platform"}.`}
+          >
+            <span>
+              <Button
+                variant="outlined"
+                onClick={handleSync}
+                disabled={syncing || locked}
+                startIcon={syncing
+                  ? <CircularProgress size={14} thickness={5} sx={{ color: "text.subtitle" }} />
+                  : <Iconify icon="solar:refresh-linear" width={16} />}
+                sx={{
+                  typography: "s2", fontWeight: 700, flexShrink: 0,
+                  color: "text.primary", borderColor: "divider",
+                  "&:hover": { borderColor: "text.subtitle", bgcolor: "action.hover" },
+                }}
+              >
+                {syncing ? "Syncing…" : "Sync"}
+              </Button>
+            </span>
+          </Tooltip>
+        )}
         <Tooltip arrow title={locked ? "Fork this environment to add an agent version." : ""}>
           <span>
             <Button
@@ -1482,6 +1536,28 @@ function endpointNameFrom(url) {
 function short(u) {
   if (!u) return "";
   return u.replace(/^https?:\/\//, "").replace(/^www\./, "");
+}
+
+/**
+ * A hosted agent lives on a third-party platform whose runtime we
+ * don't own — the definition we care about (voice, tools, prompts)
+ * can drift underneath us, so the card needs a re-fetch affordance.
+ * Type IDs, not value sniffing: values can carry extra fields (an
+ * mcpUrl note, an sdkEndpoint hint) that don't change whether the
+ * runtime is remote or local. Repo / raw SIP / user-hosted endpoint
+ * agents are the source of truth themselves and don't need Sync.
+ */
+const HOSTED_TYPE_IDS = new Set(["voice_platform", "chat_openai", "mcp_agent"]);
+function isHostedAgent(agent) {
+  return Boolean(agent?.typeId && HOSTED_TYPE_IDS.has(agent.typeId));
+}
+
+function formatSyncedAt(date) {
+  if (!date) return "just now";
+  const diff = Math.max(0, (Date.now() - date.getTime()) / 1000);
+  if (diff < 60) return "just now";
+  if (diff < 3600) return `${Math.round(diff / 60)}m ago`;
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 function connectionRowsFor(agent, type, values) {
