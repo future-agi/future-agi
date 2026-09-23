@@ -538,12 +538,11 @@ def provision_scenarios(
         with transaction.atomic():
             for persona, (scenario, row) in zip(new_personas, bindings, strict=True):
                 registrations.append(
-                    HostedHarnessScenario.no_workspace_objects.create(
+                    HostedHarnessScenario.no_workspace_objects.update_or_create(
                         job=job,
                         scenario_key=persona["scenario_key"],
-                        scenario=scenario,
-                        dataset_row=row,
-                    )
+                        defaults={"scenario": scenario, "dataset_row": row},
+                    )[0]
                 )
         return _provision_response(job, registrations)
 
