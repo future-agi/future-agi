@@ -33,8 +33,56 @@ from simulate.services.hosted_harness_ingestion import (
     ingest_artifact,
     ingest_result_receipt,
 )
+from simulate.services.harness_scenarios import index_scenarios
 
 BASE = "/simulate/api/harness/attempts"
+
+
+@pytest.mark.django_db
+def test_provision_binds_rows_indexed_during_authoring(organization):
+    job, _ = create_hosted_job(
+        organization,
+        _payload(scenario_count=2),
+        idempotency_key="bind-indexed-authoring-scenarios",
+    )
+    personas = [
+        {
+            "scenario_key": "late-refund",
+            "name": "Sam",
+            "situation": "My refund is late",
+            "outcome": "Explain the status",
+        },
+        {
+            "scenario_key": "duplicate-charge",
+            "name": "Avery",
+            "situation": "I was charged twice",
+            "outcome": "Reverse the duplicate",
+        },
+    ]
+    index_scenarios(job, personas)
+    indexed_ids = set(job.scenario_registrations.values_list("id", flat=True))
+
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    response = APIClient().post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Billing support suite",
+            "modality": "text",
+            "personas": personas,
+        },
+        format="json",
+        **_headers(capability),
+    )
+
+    assert response.status_code == 200, response.content
+    job.refresh_from_db()
+    registrations = list(
+        job.scenario_registrations.select_related("scenario", "dataset_row")
+    )
+    assert {registration.id for registration in registrations} == indexed_ids
+    assert all(registration.scenario_id for registration in registrations)
+    assert all(registration.dataset_row_id for registration in registrations)
 
 
 @pytest.mark.django_db
