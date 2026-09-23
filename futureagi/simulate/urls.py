@@ -14,6 +14,7 @@ from simulate.views.chat_simulation import (
     RunTestNameView,
     TestExecutionChatBatchView,
 )
+from simulate.views.debug_analysis import TestExecutionDebugAnalysisView
 from simulate.views.preview_pagination import (
     RunTestPreviewExecutionsView,
     TestExecutionPreviewCallsView,
@@ -159,6 +160,11 @@ router.register(
 
 urlpatterns = [
     path("api/", include(router.urls)),
+    path(
+        "test-executions/<uuid:test_execution_id>/debug-analysis/",
+        TestExecutionDebugAnalysisView.as_view(),
+        name="test-execution-debug-analysis",
+    ),
     path(
         "v3/test-executions/<uuid:test_execution_id>/calls/",
         RunCallsV3View.as_view(),

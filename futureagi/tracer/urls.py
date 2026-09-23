@@ -56,6 +56,7 @@ from tracer.views.trace_investigation import (
     ClaimInvestigationsView,
     PublishInvestigationView,
     RecordTraceNotificationsView,
+    SimulationEvidenceView,
     UpdateInvestigationAttemptView,
 )
 from tracer.views.trace_session import TraceSessionView
@@ -188,6 +189,11 @@ urlpatterns = [
         "internal/error-feed-v2/attempts/<uuid:attempt_id>/",
         UpdateInvestigationAttemptView.as_view(),
         name="error-feed-v2-attempt",
+    ),
+    path(
+        "internal/error-feed-v2/attempts/<uuid:attempt_id>/simulation-evidence/",
+        SimulationEvidenceView.as_view(),
+        name="error-feed-v2-simulation-evidence",
     ),
     path(
         "internal/error-feed-v2/reports/",

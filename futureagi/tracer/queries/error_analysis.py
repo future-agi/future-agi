@@ -1,6 +1,5 @@
 import os
 import random
-import traceback
 import uuid
 from datetime import datetime, timedelta
 from typing import Any
@@ -12,7 +11,6 @@ from django.db.models import Count, Max, Min, Q, QuerySet
 from django.db.models.functions import TruncDate, TruncHour
 from django.utils import timezone
 
-logger = structlog.get_logger(__name__)
 from accounts.models.workspace import Workspace
 from model_hub.models.score import Score
 from tracer.models.project import Project, ProjectSourceChoices
@@ -33,6 +31,8 @@ from tracer.models.trace_error_analysis_task import (
 from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.clickhouse.v2.span_reader import CHSpan
 from tracer.utils.sql_queries import SQL_query_handler
+
+logger = structlog.get_logger(__name__)
 
 
 class TraceErrorAnalysisDB:
@@ -192,7 +192,7 @@ class TraceErrorAnalysisDB:
             )
 
             return result
-        except Exception as e:
+        except Exception:
             logger.exception("get_analysis_by_trace_id_failed", trace_id=trace_id)
             return None
 
@@ -743,7 +743,6 @@ class TraceErrorAnalysisDB:
         Returns dict with clusters and total count
         """
         try:
-
             cutoff_date = timezone.now() - timedelta(days=days)
 
             # Get total count first (without limit/offset)
@@ -791,7 +790,6 @@ class TraceErrorAnalysisDB:
         Returns list of dicts with timestamp and value for each hour
         """
         try:
-
             now = timezone.now()
             start_time = now - timedelta(hours=hours)
 
@@ -853,7 +851,9 @@ class TraceErrorAnalysisDB:
         """
         try:
             # Get cluster
-            cluster = TraceErrorGroup.objects.filter(cluster_id=cluster_id).first()
+            cluster = TraceErrorGroup.objects.filter(
+                cluster_id=cluster_id, target_type="error_feed"
+            ).first()
 
             if not cluster:
                 return None
@@ -885,7 +885,6 @@ class TraceErrorAnalysisDB:
             Dict with trace navigation info
         """
         try:
-
             # Get unique trace_ids ordered by when they first appeared in the cluster
             traces_with_first_seen = (
                 ErrorClusterTraces.objects.filter(cluster__cluster_id=cluster_id)
@@ -968,7 +967,6 @@ class TraceErrorAnalysisDB:
         Returns list of dicts with timestamp and value for each day
         """
         try:
-
             now = timezone.now()
             start_date = now - timedelta(days=days)
 
@@ -1033,11 +1031,11 @@ class TraceErrorAnalysisDB:
         Returns None if not found or access denied.
         """
         try:
-            cluster = (
-                TraceErrorGroup.objects.filter(cluster_id=cluster_id, deleted=False)
-                .select_related("project")
-                .first()
-            )
+            cluster = TraceErrorGroup.objects.filter(
+                cluster_id=cluster_id,
+                deleted=False,
+                target_type="error_feed",
+            ).first()
 
             if not cluster:
                 return None
@@ -1376,7 +1374,10 @@ class TraceErrorAnalysisDB:
                 )
             except ImportError:
                 if settings.DEBUG:
-                    logger.warning("Could not import ee.agenthub.traceerroragent.error_cluster", exc_info=True)
+                    logger.warning(
+                        "Could not import ee.agenthub.traceerroragent.error_cluster",
+                        exc_info=True,
+                    )
                 return None
             from agentic_eval.core.embeddings.embedding_manager import (
                 EmbeddingManager,

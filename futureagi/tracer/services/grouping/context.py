@@ -371,7 +371,16 @@ def build_claim_context(
                 {
                     "occurrence_id": str(member.id),
                     "report_id": str(member.report_id),
-                    "trace_id": str(member.report.trace_id),
+                    "trace_id": (
+                        str(member.report.trace_id)
+                        if member.report.trace_id is not None
+                        else None
+                    ),
+                    **(
+                        {"test_execution_id": str(member.report.test_execution_id)}
+                        if member.report.test_execution_id
+                        else {}
+                    ),
                 }
             )
         issues.append(

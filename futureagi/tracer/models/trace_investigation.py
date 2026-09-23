@@ -35,6 +35,11 @@ class TraceInvestigationSource(models.TextChoices):
     LEGACY_SCAN = "legacy_scan"
 
 
+class InvestigationWorkload(models.TextChoices):
+    TRACE = "trace"
+    SIMULATION_TEST_EXECUTION = "simulation_test_execution"
+
+
 class TraceInvestigationDelivery(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
@@ -65,9 +70,21 @@ class TraceInvestigationJob(BaseModel):
         Workspace, on_delete=models.CASCADE, null=True, blank=True
     )
     project = models.ForeignKey(Project, on_delete=models.CASCADE)
-    trace_id = models.UUIDField()
-    root_span_id = models.CharField(max_length=64)
-    root_end_time = models.DateTimeField()
+    workload_type = models.CharField(
+        max_length=40,
+        choices=InvestigationWorkload.choices,
+        default=InvestigationWorkload.TRACE,
+    )
+    test_execution = models.ForeignKey(
+        "simulate.TestExecution",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="debug_analysis_jobs",
+    )
+    trace_id = models.UUIDField(null=True, blank=True)
+    root_span_id = models.CharField(max_length=64, null=True, blank=True)
+    root_end_time = models.DateTimeField(null=True, blank=True)
     generation = models.PositiveBigIntegerField(default=1)
     state = models.CharField(
         max_length=20,
@@ -88,8 +105,29 @@ class TraceInvestigationJob(BaseModel):
         constraints = [
             models.UniqueConstraint(
                 fields=["project", "trace_id"],
+                condition=models.Q(trace_id__isnull=False),
                 name="unique_trace_investigation_job",
-            )
+            ),
+            models.UniqueConstraint(
+                fields=["project", "test_execution"],
+                condition=models.Q(test_execution__isnull=False),
+                name="unique_simulation_investigation_job",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        workload_type=InvestigationWorkload.TRACE,
+                        trace_id__isnull=False,
+                        test_execution__isnull=True,
+                    )
+                    | models.Q(
+                        workload_type=InvestigationWorkload.SIMULATION_TEST_EXECUTION,
+                        trace_id__isnull=True,
+                        test_execution__isnull=False,
+                    )
+                ),
+                name="valid_trace_investigation_workload",
+            ),
         ]
         indexes = [
             models.Index(
@@ -155,8 +193,23 @@ class TraceInvestigationReport(BaseModel):
         Workspace, on_delete=models.CASCADE, null=True, blank=True
     )
     project = models.ForeignKey(Project, on_delete=models.CASCADE)
-    trace_id = models.UUIDField()
-    source = models.CharField(max_length=20, choices=TraceInvestigationSource.choices)
+    source = models.CharField(
+        max_length=20,
+        choices=TraceInvestigationSource.choices,
+    )
+    test_execution = models.ForeignKey(
+        "simulate.TestExecution",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="debug_analysis_reports",
+    )
+    workload_type = models.CharField(
+        max_length=40,
+        choices=InvestigationWorkload.choices,
+        default=InvestigationWorkload.TRACE,
+    )
+    trace_id = models.UUIDField(null=True, blank=True)
     source_record_id = models.UUIDField(null=True, blank=True)
     source_version = models.CharField(max_length=64, null=True, blank=True)
     recorded_at = models.DateTimeField()
@@ -186,10 +239,12 @@ class TraceInvestigationReport(BaseModel):
     outcome = models.CharField(max_length=20, null=True, blank=True)
     coverage_scope = models.CharField(max_length=255, null=True, blank=True)
     observed_span_count = models.PositiveIntegerField(null=True, blank=True)
+    observed_call_count = models.PositiveIntegerField(null=True, blank=True)
     read_complete = models.BooleanField(null=True, blank=True)
     future_arrivals_known = models.BooleanField(null=True, blank=True)
     model_calls = models.PositiveIntegerField(null=True, blank=True)
     input_tokens = models.PositiveBigIntegerField(null=True, blank=True)
+
     output_tokens = models.PositiveBigIntegerField(null=True, blank=True)
     cost_usd = models.DecimalField(max_digits=20, decimal_places=9, null=True)
     cost_status = models.CharField(max_length=64, null=True, blank=True)
@@ -211,6 +266,15 @@ class TraceInvestigationReport(BaseModel):
                 condition=models.Q(is_current=True, deleted=False),
                 name="unique_current_trace_investigation",
             ),
+            models.UniqueConstraint(
+                fields=["project", "test_execution"],
+                condition=models.Q(
+                    is_current=True,
+                    deleted=False,
+                    test_execution__isnull=False,
+                ),
+                name="unique_current_simulation_investigation",
+            ),
             models.CheckConstraint(
                 condition=(
                     models.Q(
@@ -230,13 +294,29 @@ class TraceInvestigationReport(BaseModel):
                         evidence_digest__isnull=False,
                         outcome__isnull=False,
                         coverage_scope__isnull=False,
-                        observed_span_count__isnull=False,
                         read_complete__isnull=False,
-                        future_arrivals_known__isnull=False,
                         model_calls__isnull=False,
                         input_tokens__isnull=False,
                         output_tokens__isnull=False,
                         cost_status__isnull=False,
+                    )
+                    & (
+                        models.Q(
+                            workload_type=InvestigationWorkload.TRACE,
+                            test_execution__isnull=True,
+                            trace_id__isnull=False,
+                            observed_span_count__isnull=False,
+                            observed_call_count__isnull=True,
+                            future_arrivals_known__isnull=False,
+                        )
+                        | models.Q(
+                            workload_type=InvestigationWorkload.SIMULATION_TEST_EXECUTION,
+                            test_execution__isnull=False,
+                            trace_id__isnull=True,
+                            observed_span_count__isnull=True,
+                            observed_call_count__isnull=False,
+                            future_arrivals_known__isnull=True,
+                        )
                     )
                 ),
                 name="valid_inv_report_source_fields",
@@ -364,7 +444,14 @@ class TraceInvestigationEvidenceReceipt(BaseModel):
     )
     evidence_id = models.CharField(max_length=128)
     ordinal = models.PositiveIntegerField()
-    span_id = models.CharField(max_length=64)
+    call_execution = models.ForeignKey(
+        "simulate.CallExecution",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="debug_analysis_evidence",
+    )
+    span_id = models.CharField(max_length=64, null=True, blank=True)
     parent_span_id = models.CharField(max_length=64, null=True, blank=True)
     excerpt = models.TextField()
     end_time = models.DateTimeField(null=True, blank=True)
@@ -374,7 +461,14 @@ class TraceInvestigationEvidenceReceipt(BaseModel):
         constraints = [
             models.UniqueConstraint(
                 fields=["report", "evidence_id"], name="unique_inv_evidence_id"
-            )
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(call_execution__isnull=False, span_id__isnull=True)
+                    | models.Q(call_execution__isnull=True, span_id__isnull=False)
+                ),
+                name="valid_inv_evidence_locator",
+            ),
         ]
 
 
@@ -386,6 +480,13 @@ class TraceInvestigationAttribution(BaseModel):
     role = models.CharField(max_length=16)
     status = models.CharField(max_length=16)
     span_id = models.CharField(max_length=64, null=True, blank=True)
+    call_execution = models.ForeignKey(
+        "simulate.CallExecution",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="debug_analysis_attributions",
+    )
     explanation = models.CharField(max_length=600, blank=True, default="")
 
     class Meta:

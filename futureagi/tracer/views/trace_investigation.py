@@ -15,8 +15,13 @@ from tracer.serializers.trace_investigation import (
     PublishInvestigationResponseSerializer,
     RecordTraceNotificationsRequestSerializer,
     RecordTraceNotificationsResponseSerializer,
+    SimulationEvidenceRequestSerializer,
     UpdateInvestigationAttemptRequestSerializer,
     UpdateInvestigationAttemptResponseSerializer,
+)
+from tracer.services.simulation_investigation import (
+    SimulationInvestigationConflict,
+    simulation_evidence_page,
 )
 from tracer.services.trace_investigation import (
     InvestigationConflict,
@@ -114,3 +119,25 @@ class PublishInvestigationView(InternalInvestigationView):
             return Response(publish_investigation(**request.validated_data))
         except InvestigationControlError as error:
             return _error_response(error)
+
+
+class SimulationEvidenceView(InternalInvestigationView):
+    def post(self, request: Request, attempt_id):
+        serializer = SimulationEvidenceRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {"code": "invalid_request", "detail": serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            payload = simulation_evidence_page(
+                attempt_id=attempt_id,
+                lease_token=serializer.validated_data["lease_token"],
+                cursor=serializer.validated_data["cursor"],
+            )
+        except SimulationInvestigationConflict as error:
+            return Response(
+                {"code": "conflict", "detail": str(error)},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response(payload, status=status.HTTP_200_OK)
