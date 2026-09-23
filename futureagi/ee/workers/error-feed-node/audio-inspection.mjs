@@ -1,7 +1,6 @@
 import {open} from 'node:fs/promises';
 import {tool} from '@future-agi/omega-runtime';
 
-const maxAudioBytes = 8 * 1024 * 1024;
 const recordingKeys = ['gen_ai.voice.recording.url', 'conversation.recording.mono.combined'];
 
 function recordingUrl(row) {
@@ -23,7 +22,7 @@ function recordingUrl(row) {
   return null;
 }
 
-export function createStorageRecordingResolver({allowedOrigins, fetchImpl = fetch}) {
+export function createStorageRecordingResolver({allowedOrigins}) {
   const origins = new Set(allowedOrigins);
   if (!origins.size || [...origins].some(value => {
     try {const url = new URL(value); return url.origin !== value || url.protocol !== 'https:';}
@@ -50,22 +49,14 @@ export function createStorageRecordingResolver({allowedOrigins, fetchImpl = fetc
     let url;
     try {url = new URL(rawUrl);} catch {return null;}
     if (!origins.has(url.origin) || url.username || url.password || url.hash) return null;
-    const response = await fetchImpl(url, {method: 'HEAD', signal, redirect: 'error'});
-    if (!response.ok) {await response.body?.cancel(); return null;}
-    const contentType = response.headers.get('content-type')?.split(';')[0]?.trim();
-    const format = /\.mp3$/i.test(url.pathname) || contentType === 'audio/mpeg' ? 'mp3'
-      : /\.wav$/i.test(url.pathname) || ['audio/wav', 'audio/x-wav'].includes(contentType) ? 'wav' : null;
-    const size = Number(response.headers.get('content-length'));
-    if (!format || !Number.isSafeInteger(size) || size < 1 || size > maxAudioBytes) {
-      await response.body?.cancel(); return null;
-    }
-    await response.body?.cancel();
+    const format = /\.mp3$/i.test(url.pathname) ? 'mp3'
+      : /\.wav$/i.test(url.pathname) ? 'wav' : null;
+    if (!format) return null;
     return {url: url.href, format};
   };
 }
 
-// The resolver is trusted worker code. It must prove the recording belongs to
-// the claimed trace before returning bytes; no model-supplied URL reaches it.
+// The resolver reads a URL only from the claimed trace; no model-supplied URL reaches it.
 export function createAudioInspectionTool({claim, store, gateway, resolveRecording, callsRemaining,
   canSpendOutput = () => true, onModelUsage = () => {}, maxResultBytes = 8000, signal}) {
   if (typeof resolveRecording !== 'function') throw new Error('Audio resolver required');

@@ -3,6 +3,7 @@ import {fileURLToPath} from 'node:url';
 import {resolve, dirname, join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
+import {workerFiles} from './image-files.mjs';
 
 const worker = dirname(fileURLToPath(import.meta.url));
 const context = resolve(worker, '../../.artifacts/node-worker');
@@ -15,9 +16,8 @@ for (const item of manifest.packages) {
   if (digest !== item.sha256) throw new Error('Package checksum mismatch: ' + item.name);
 }
 await mkdir(join(context, 'worker'), {recursive: true});
-const workerFiles = ['gateway-provider.mjs', 'worker.mjs', 'daemon.mjs', 'control-client.mjs',
-  'coordinator.mjs', 'evidence-store.mjs', 'investigation.mjs', 'audio-inspection.mjs'];
 for (const name of workerFiles) {
+  await mkdir(dirname(join(context, 'worker', name)), {recursive:true});
   await copyFile(join(worker, name), join(context, 'worker', name));
 }
 await copyFile(join(worker, 'Dockerfile'), join(context, 'Dockerfile'));
@@ -57,6 +57,7 @@ for (const file of await readdir(join(context, 'packages'))) {
 await writeFile(join(context, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
 await writeFile(join(context, '.dockerignore'), [
   '*', '!Dockerfile', '!.dockerignore', '!package.json', '!package-lock.json',
-  '!packages/', '!packages/*.tgz', '!worker/', ...workerFiles.map(name => '!worker/' + name), ''
+  '!packages/', '!packages/*.tgz', '!worker/', '!worker/grouping/', '!worker/grouping/f6/',
+  ...workerFiles.map(name => '!worker/' + name), ''
 ].join('\n'));
 console.log('Prepared local Docker context: ' + context);

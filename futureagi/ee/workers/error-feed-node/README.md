@@ -76,11 +76,11 @@ Set these variables at runtime, never in the image:
 | `OMEGA_KAFKA_TLS` | `true` for TLS |
 | `OMEGA_KAFKA_USERNAME`, `OMEGA_KAFKA_PASSWORD_FILE` | Optional SCRAM-SHA-512 credentials |
 | `OMEGA_ENGINE_VERSION` | Must match the enabled project's `scan_version` |
-| `OMEGA_CONCURRENCY` | Active investigations per worker; default 4, maximum 50 |
+| `OMEGA_CONCURRENCY` | Active investigations per worker; default 4, maximum 512. Claims are fetched in batches of at most 50. |
 | `OMEGA_CLICKHOUSE_URL` | HTTP endpoint for the v2 spans table |
 | `OMEGA_CLICKHOUSE_DATABASE` | Database; default `default` |
 | `OMEGA_CLICKHOUSE_USERNAME`, `OMEGA_CLICKHOUSE_PASSWORD_FILE` | Dedicated SELECT-only account |
-| `OMEGA_AUDIO_ALLOWED_ORIGINS` | Optional comma-separated exact HTTPS storage origins; enables one question-driven Gemini audio inspection per investigation. The worker reads the URL from a scoped span, checks it with HEAD, and passes the URL through AgentCC without downloading audio. Leave unset to disable. |
+| `OMEGA_AUDIO_ALLOWED_ORIGINS` | Optional comma-separated exact HTTPS storage origins; enables one question-driven Gemini audio inspection per investigation. The worker reads the URL from a scoped span and passes it through AgentCC without probing or downloading audio. Leave unset to disable. |
 | `OMEGA_REPORT_SPOOL` | Persistent mounted directory writable by UID 1000; image default `/var/lib/omega/reports` |
 | `OMEGA_SCRATCH_DIR` | Temporary evidence on disk; image default `/var/lib/omega/scratch` |
 
@@ -169,3 +169,52 @@ pricing is read after gateway completion.
 Local HTTP mock tests exercise protocol and accounting; they are not live-model
 quality evaluations. Gateway error bodies are excluded from worker error logs.
 No model calls happen during package building or image healthcheck.
+
+## F6 grouping worker (separate process)
+
+The image also contains `worker/grouping-daemon.mjs`. Run it as a separate
+deployment by overriding the image command; the existing investigation command
+and model-serving API are unchanged. This code is not enabled by building it.
+
+The grouping process uses the existing `OMEGA_DJANGO_URL`,
+`OMEGA_INTERNAL_API_SECRET[_FILE]`, `AGENTCC_BASE_URL`, and
+`AGENTCC_API_KEY[_FILE]` settings. It additionally requires:
+
+- `GROUPING_MODEL_ID=google/gemini-3.8-flash`.
+- `GROUPING_CALL_RESERVATION_USD`: explicit worst-case per-call reservation.
+  Django independently enforces cumulative work, project and tenant caps;
+  unknown charges retain their reservations. A reservation is not a provider
+  price guarantee.
+- `GROUPING_EMBEDDING_URL`: the existing serving `/model/v1/embed` endpoint.
+- `GROUPING_EMBEDDING_SERVING_RELEASE`: an operator-managed cache namespace.
+  This is **not** a verified model-weights revision. The serving API does not
+  supply a weights digest or token-coverage proof.
+
+Optional concurrency settings are `GROUPING_FEATURE_CONCURRENCY` (default 2)
+and `GROUPING_CONCURRENCY` (default 1). Feature work and LLM work use separate
+pools. The worker has no PostgreSQL or ClickHouse credentials; Django owns
+feature persistence, scoped snapshots and atomic Feed publication.
+
+With `OMEGA_KAFKA_BROKERS` configured, the process reuses existing Kafka
+TLS/SASL settings to publish durable outbox notifications and consume hints.
+`GROUPING_KAFKA_TOPIC` defaults to `error-feed.grouping-ready.v1`; provision
+the topic explicitly and grant producer/consumer permissions. Auto-topic
+creation is disabled. `GROUPING_KAFKA_GROUP` defaults to `omega-grouping-v1`.
+Broker acknowledgement precedes outbox acknowledgement. Lost acknowledgements
+may duplicate hints, not memberships. Polling continues if Kafka is unavailable;
+restart the process after a terminal Kafka connection failure to restore hints.
+
+Before enabling Django grouping, provision its versioned feature/bucket tables
+through the operator migration path and set all three explicit budget caps.
+Do not enable it merely because mocked tests pass. This production adaptation
+uses MiniLM and bounded, lossless-input chunk pooling rather than the historical
+Gemini embeddings, so historical benchmark scores are not production scores.
+
+Review limits remain explicit: existing issues above 16 members, or beyond the
+64-member candidate-window budget, are omitted rather than partially validated.
+These are review-window limits, not permission to delete existing memberships.
+Deferred findings are retained, but automatic reconsideration when a later
+report arrives is not yet wired. An oversized checkpoint fails closed without
+Feed publication. Paid-call receipts survive a checkpoint failure; exact received
+results are reused on retry instead of automatically spending again. These
+limits need capacity testing before broad rollout.

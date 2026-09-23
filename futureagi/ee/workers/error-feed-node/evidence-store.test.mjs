@@ -62,13 +62,22 @@ test('query binds the claimed tenant and cutoff and never silently truncates pay
         // an older live row could reappear when a newer tombstone is filtered.
         const prewhere = request.body.split('PREWHERE')[1].split('WHERE')[0];
         assert.doesNotMatch(prewhere, /is_deleted|updated_at|created_at|org_id/);
-        assert.match(request.body, /max_threads=1, max_memory_usage=134217728/);
+        assert.match(request.body, /max_threads=1, max_memory_usage=268435456/);
         assert.match(request.body, /result_overflow_mode='throw'/);
         assert.doesNotMatch(request.body, /\breadonly\s*=/);
         assert.doesNotMatch(request.body, /substring|summary/i);
         return new Response(JSON.stringify(row) + '\n');
       }});
   } finally { await rm(dir, {recursive: true, force: true}); }
+});
+
+test('ClickHouse query memory override stays within a bounded range', async () => {
+  const claim = makeClaim();
+  for (const maxQueryMemoryBytes of [0, 127 * 1024 * 1024, 1025 * 1024 * 1024, NaN]) {
+    await assert.rejects(downloadEvidence(claim, '/tmp/unopened-evidence', {baseUrl: 'http://clickhouse:8123',
+      database: 'default', username: 'readonly', password: 'fixture', maxQueryMemoryBytes}),
+    /Invalid ClickHouse query memory budget/);
+  }
 });
 
 test('bounded tool pages reconstruct escaped and multibyte payloads without dropped content', async () => {

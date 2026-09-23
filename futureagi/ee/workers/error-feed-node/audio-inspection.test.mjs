@@ -58,23 +58,18 @@ test('audio request shares the investigation call and cost ledger', async () => 
     question: 'What happened?'}), /budget exhausted/);
 });
 
-test('recording resolver reads only allowlisted URLs from the scoped span file', async () => {
+test('recording resolver passes scoped URL references without probing audio', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'audio-resolver-test-'));
   try {
     const row = JSON.stringify({attrs_string: {'gen_ai.voice.recording.url': 'https://media.example.test/a.wav'}});
     const path = join(dir, 'trace.jsonl');
     await writeFile(path, row + '\n');
     const scopedStore = {path, index: new Map([['span-1', {offset: 0, bytes: Buffer.byteLength(row)}]])};
-    let requests = 0;
-    const resolver = createStorageRecordingResolver({allowedOrigins: ['https://media.example.test'],
-      fetchImpl: async (_url, init) => {requests++; assert.equal(init.method, 'HEAD');
-        return new Response(null, {headers: {'content-type': 'audio/wav', 'content-length': '1000'}});}});
+    const resolver = createStorageRecordingResolver({allowedOrigins: ['https://media.example.test']});
     const result = await resolver({store: scopedStore, span_id: 'span-1'});
     assert.equal(result.url, 'https://media.example.test/a.wav');
-    assert.equal(requests, 1);
     assert.equal(await resolver({store: scopedStore, span_id: 'other'}), null);
-    const blocked = createStorageRecordingResolver({allowedOrigins: ['https://other.example.test'],
-      fetchImpl: () => assert.fail('untrusted origin must not be fetched')});
+    const blocked = createStorageRecordingResolver({allowedOrigins: ['https://other.example.test']});
     assert.equal(await blocked({store: scopedStore, span_id: 'span-1'}), null);
   } finally {await rm(dir, {recursive: true});}
 });

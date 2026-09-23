@@ -55,6 +55,26 @@ test('revoked lease cancels model work and preserves failed report for accountin
     assert.equal((await readdir(spool)).length, 1);
   } finally { await rm(spool, {recursive: true, force: true}); }
 });
+test('transient renewal failure is retried before the lease expires', async () => {
+  const spool = await mkdtemp(join(tmpdir(), 'omega-spool-test-'));
+  try {
+    const c = claim();
+    c.lease_expires_at = new Date(Date.now() + 10000).toISOString();
+    let renewals = 0;
+    await processClaim(c, {spool, heartbeatMs: 1,
+      control: async (path) => {
+        if (path === '/reports/') return {status: 'accepted'};
+        if (++renewals === 1) throw Object.assign(new Error('temporarily unavailable'), {status: 503});
+        return {status: 'claimed', lease_expires_at: new Date(Date.now() + 10000).toISOString()};
+      },
+      investigate: async (_claim, {signal}) => {
+        await new Promise(resolve => setTimeout(resolve, 1200));
+        assert.equal(signal.aborted, false);
+        return {execution_status: 'completed', outcome: 'success'};
+      }});
+    assert.ok(renewals >= 2);
+  } finally { await rm(spool, {recursive: true, force: true}); }
+});
 test('coordinator never claims beyond available slots and drains on shutdown', async () => {
   const spool = await mkdtemp(join(tmpdir(), 'omega-spool-test-'));
   const stop = new AbortController(); let running = 0, peak = 0, claimed = false;
@@ -74,6 +94,23 @@ test('coordinator never claims beyond available slots and drains on shutdown', a
       }});
     assert.equal(peak, 2); assert.equal(running, 0);
   } finally { await rm(spool, {recursive: true, force: true}); }
+});
+
+test('high concurrency remains bounded by the backend claim batch contract', async () => {
+  const spool = await mkdtemp(join(tmpdir(), 'omega-spool-test-'));
+  const stop = new AbortController();
+  try {
+    await runCoordinator({spool, signal: stop.signal, workerId: 'test', engineVersion: 'test',
+      concurrency: 256, pollMs: 1, control: async (path, payload) => {
+        assert.equal(path, '/claims/');
+        assert.equal(payload.limit, 50);
+        stop.abort();
+        return {claims: []};
+      }, investigate: async () => {throw new Error('Unexpected investigation');}});
+    await assert.rejects(runCoordinator({spool, signal: AbortSignal.abort(), workerId: 'test',
+      engineVersion: 'test', concurrency: 513, control: async () => ({claims: []}),
+      investigate: async () => {throw new Error('Unexpected investigation');}}), /Invalid worker concurrency/);
+  } finally {await rm(spool, {recursive: true, force: true});}
 });
 
 test('terminally rejected saved report is quarantined without blocking later reports or claims', async () => {

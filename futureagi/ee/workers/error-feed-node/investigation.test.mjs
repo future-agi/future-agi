@@ -26,6 +26,9 @@ test('failure diagnostics classify host budget errors without exposing upstream 
     ['Structured output failed validation: private-key', 'structured_output_invalid'],
     ['Structured output expected JSON, but parsing failed: private-key', 'structured_output_unparseable'],
     ['Structured output expected JSON, but the model returned empty content.', 'structured_output_empty'],
+    ['Gateway request aborted', 'gateway_request_aborted'],
+    ['Gateway transport failed', 'gateway_transport_failed'],
+    ['Gateway response could not be processed', 'gateway_response_invalid'],
   ]) {
     const result = failureDiagnostic(new Error(message), 'verifier', 'attempt');
     assert.equal(result.reason, code);
@@ -33,19 +36,64 @@ test('failure diagnostics classify host budget errors without exposing upstream 
   }
 });
 
-for (const scenario of ['controller_truncated', 'controller_exhausted', 'verifier_truncated', 'provider_overrun']) {
-  test(`output budget reserves verification and rejects partial assessments: ${scenario}`, async () => {
+test('Omega compacts a long investigation transcript through the accounted gateway', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'omega-compaction-test-'));
+  try {
+    const claim = makeClaim();
+    claim.limits.max_model_calls = 24;
+    const row = {id: 'span-context', project_id: claim.project_id, trace_id: claim.trace_id,
+      input: 'Investigate the recorded refund', output: 'Outcome unresolved'};
+    const raw = JSON.stringify(row);
+    const assessment = {outcome: 'unknown', findings: [], requirement_checks: []};
+    let controllerCalls = 0, summaryCalls = 0, sawCompactedSummary = false;
+    const result = await investigateTrace(claim, {scratchRoot: scratch, contextWindowTokens: 3000,
+      fetchEvidence: async (c, path) => storeEvidence([Buffer.from(raw + '\n')], path, c),
+      gatewayConfig: {baseUrl: 'http://fixture/v1', model: 'fixture', apiKey: 'fixture',
+        fetchImpl: async (_url, init) => {
+          const request = JSON.parse(init.body);
+          const system = request.messages.find(message => message.role === 'system').content;
+          sawCompactedSummary ||= request.messages.some(item =>
+            typeof item.content === 'string' && item.content.includes('The refund outcome remains unresolved'));
+          let message;
+          if (system.startsWith('Summarize earlier investigation dialogue')) {
+            summaryCalls++;
+            message = {role: 'assistant', content: 'The refund outcome remains unresolved; re-read the span.'};
+          } else if (system.includes('Independently check')) {
+            message = {role: 'assistant', content: JSON.stringify(assessment)};
+          } else if (++controllerCalls <= 6) {
+            message = {role: 'assistant', content: '', tool_calls: [{id: `read-${controllerCalls}`,
+              type: 'function', function: {name: 'read_span', arguments: JSON.stringify({
+                span_id: row.id, offset: 0, length: 8})}}]};
+          } else {
+            message = {role: 'assistant', content: JSON.stringify({action: 'finish', question: '',
+              child_instructions: '', assessment})};
+          }
+          return new Response(JSON.stringify({choices: [{message, finish_reason: 'stop'}],
+            usage: {prompt_tokens: 100, completion_tokens: 10}}),
+          {headers: {'content-type': 'application/json', 'x-agentcc-cost': '0.000100'}});
+        }}});
+    assert.equal(result.execution_status, 'completed');
+    assert.ok(summaryCalls > 0);
+    assert.equal(sawCompactedSummary, true);
+    assert.equal(result.usage.model_calls, controllerCalls + summaryCalls + 1);
+    assert.equal(Math.round(result.usage.cost_usd * 1e6), result.usage.model_calls * 100);
+  } finally { await rm(scratch, {recursive: true, force: true}); }
+});
+
+for (const scenario of ['controller_truncated', 'verifier_truncated', 'provider_overrun']) {
+  test(`legacy token totals do not cap requests; truncated assessments remain safe: ${scenario}`, async () => {
     const scratch = await mkdtemp(join(tmpdir(), 'omega-budget-test-'));
     try {
       const claim = makeClaim();
-      claim.limits.max_output_tokens_total = 1000;
+      claim.limits.max_input_tokens_total = 1;
+      claim.limits.max_output_tokens_total = 1;
       const row = {id: 'span-budget', project_id: claim.project_id, trace_id: claim.trace_id,
         input: 'Refund 10', output: 'Refunded 10'};
       const raw = JSON.stringify(row);
       const evidenceId = `${row.id}:0:${Buffer.byteLength(raw)}`;
       const assessment = {outcome: 'success', findings: [], requirement_checks: [
         {requirement_id: 'refund', requirement: 'Refund 10', status: 'satisfied', evidence_ids: [evidenceId]}]};
-      const caps = [], phases = [];
+      const phases = [];
       const result = await investigateTrace(claim, {scratchRoot: scratch,
         fetchEvidence: async (c, path) => storeEvidence([Buffer.from(raw + '\n')], path, c),
         gatewayConfig: {baseUrl: 'http://fixture/v1', model: 'fixture', apiKey: 'fixture',
@@ -53,15 +101,15 @@ for (const scenario of ['controller_truncated', 'controller_exhausted', 'verifie
             const request = JSON.parse(init.body);
             const verifier = request.messages.find(m => m.role === 'system').content.includes('Independently check');
             phases.push(verifier ? 'verifier' : 'controller');
-            caps.push(request.max_tokens);
+            assert.equal(Object.hasOwn(request, 'max_tokens'), false);
             let message, used, finishReason = 'stop';
-            if (caps.length === 1) {
+            if (phases.length === 1) {
               used = 100;
               message = {role: 'assistant', content: '', tool_calls: [{id: 'read-budget', type: 'function',
                 function: {name: 'read_span', arguments: JSON.stringify({span_id: row.id, offset: 0, length: 4096})}}]};
             } else if (!verifier) {
               used = 400;
-              finishReason = scenario === 'controller_exhausted' ? 'stop' : 'length';
+              finishReason = 'length';
               message = {role: 'assistant', content: finishReason === 'length' ? '{"action":' : JSON.stringify({
                 action: 'investigate', question: 'Check refund', child_instructions: 'Compare amount', assessment})};
             } else {
@@ -73,11 +121,10 @@ for (const scenario of ['controller_truncated', 'controller_exhausted', 'verifie
               usage: {prompt_tokens: 100, completion_tokens: used}}),
             {headers: {'content-type': 'application/json', 'x-agentcc-cost': '0.000100'}});
           }}});
-      assert.deepEqual(caps, [500, 400, 500]);
       assert.deepEqual(phases, ['controller', 'controller', 'verifier']);
       assert.equal(result.usage.model_calls, 3);
       assert.equal(result.usage.cost_usd, 0.0003);
-      const failed = ['verifier_truncated', 'provider_overrun'].includes(scenario);
+      const failed = scenario === 'verifier_truncated';
       assert.equal(result.execution_status, failed ? 'failed' : 'completed');
       assert.equal(result.outcome, failed ? 'unknown' : 'success');
       if (!failed) assert.equal(result.coverage.read_complete, true);
@@ -143,7 +190,9 @@ test('real Omega controller, child, return and verifier use file tools and prese
       requirement: 'Refund 10', status: 'violated', evidence_ids: [evidenceId]}],
       findings: [{finding_id: 'f1', kind: 'incorrect refund amount', statement: 'Only 5 refunded instead of 10',
         requirement_id: 'refund-amount', recovery: 'not_recovered', evidence_ids: [evidenceId],
-        attribution: {origin: {status: 'supported', span_id: row.id, evidence_ids: [evidenceId]}, decisive: unknownRole, symptom: unknownRole}}]};
+        attribution: {origin: {status: 'supported', span_id: row.id, evidence_ids: [evidenceId],
+          explanation: 'The refund span records 5 refunded against the request for 10, making it the first observed mismatch.'},
+        decisive: unknownRole, symptom: unknownRole}}]};
     const phases = [];
     const result = await investigateTrace(claim, {scratchRoot: scratch,
       fetchEvidence: async (c, path) => storeEvidence([Buffer.from(raw + '\n')], path, c),
@@ -152,6 +201,8 @@ test('real Omega controller, child, return and verifier use file tools and prese
           const request = JSON.parse(init.body);
           const system = request.messages.find(message => message.role === 'system').content;
           const phase = system.includes('Independently check') ? 'verifier' : system.includes('Focused assignment') ? 'child' : 'controller';
+          assert.match(system, /one concise sentence \(at most 600 characters\)/);
+          if (phase === 'verifier') assert.match(system, /matches its cited evidence/);
           phases.push(phase);
           const toolMessage = request.messages.find(message => message.role === 'tool');
           const hasChildren = request.messages.some(message => message.role === 'user' && message.content.includes('"question":"Check refund amount"'));
@@ -171,6 +222,8 @@ test('real Omega controller, child, return and verifier use file tools and prese
     assert.equal(result.usage.cost_usd, 0.0007);
     assert.equal(result.evidence_receipts[0].excerpt, raw);
     assert.equal(result.findings[0].attribution.origin.span_id, row.id);
+    assert.match(result.findings[0].attribution.origin.explanation, /5 refunded against the request for 10/);
+    assert.equal(result.findings[0].attribution.decisive.explanation, undefined);
     assert.deepEqual(await readdir(scratch), []);
     const {result_digest, ...body} = result;
     assert.equal(result_digest, canonicalDigest(body));
@@ -188,6 +241,25 @@ test('unobserved citations, unsupported success and guessed origin cannot publis
   assert.throws(() => validateAssessment({outcome: 'success', findings: [], requirement_checks: [
     {requirement_id: 'r1', status: 'satisfied', evidence_ids: ['e1']}],
   }, [{evidence_id: 'e1', span_id: 'right'}], {read_complete: false}), /incomplete evidence coverage/);
+});
+
+test('role explanations are optional for legacy reports but only valid on supported roles', () => {
+  const role = {status: 'supported', span_id: 'span-1', evidence_ids: ['e1']};
+  const finding = {finding_id: 'f1', requirement_id: null, evidence_ids: ['e1'], attribution: {origin: role}};
+  const report = {outcome: 'unknown', findings: [finding], requirement_checks: []};
+  const receipts = [{evidence_id: 'e1', span_id: 'span-1'}];
+  assert.doesNotThrow(() => validateAssessment(report, receipts));
+  assert.doesNotThrow(() => validateAssessment({...report, findings: [{...finding, attribution: {
+    origin: {...role, explanation: 'This span records the first observed mismatch.'}}}]}, receipts));
+  for (const explanation of ['', '   ', 'x'.repeat(601), null, 7]) {
+    assert.throws(() => validateAssessment({...report, findings: [{...finding, attribution: {
+      origin: {...role, explanation}}}]}, receipts), /Invalid role explanation/);
+  }
+  for (const status of ['unknown', 'unsupported']) {
+    assert.throws(() => validateAssessment({...report, findings: [{...finding, attribution: {
+      origin: {status, span_id: null, evidence_ids: [], explanation: 'A guessed cause.'}}}]}, receipts),
+    /Unsupported role explanation/);
+  }
 });
 
 test('Node report digest matches the Django wire fixture', () => {
