@@ -12,18 +12,12 @@ import VoiceInput from "./VoiceInput";
 import { BUILDER_MODES, getBuilderMode, subscribeBuilderMode, setBuilderMode } from "./builderModeBus";
 import { subscribeComposerScaffold } from "./composerScaffoldBus";
 
-const MONO = "ui-monospace, Menlo, monospace";
-
-const INITIAL = { draft: "", attachments: [], scaffolds: [] };
+const INITIAL = { draft: "", scaffolds: [] };
 
 function composerReducer(state, action) {
   switch (action.type) {
     case "draft":
       return { ...state, draft: action.value };
-    case "attach":
-      return { ...state, attachments: [...state.attachments, ...action.files] };
-    case "remove":
-      return { ...state, attachments: state.attachments.filter((_, i) => i !== action.index) };
     case "scaffold":
       return state.scaffolds.includes(action.text)
         ? state
@@ -45,8 +39,6 @@ function composerReducer(state, action) {
  * quiet rows. Steps stream in one at a time so you can watch the work and
  * interrupt it.
  *
- * Attachments are held in component state only and handed to `onSend(text,
- * attachments)` as-is — nothing here uploads them; the caller decides.
  * `preComposer` is kept for parity with the designer (an intake questionnaire
  * or a selection-context chip pins there).
  *
@@ -60,12 +52,14 @@ export default function BuilderConsole({
   chips,
   onSend,
   onChip,
+  onStop,
+  canStop = false,
   preComposer,
   frozen = false,
   frozenReason,
 }) {
   const [state, dispatch] = useReducer(composerReducer, INITIAL);
-  const { draft, attachments, scaffolds } = state;
+  const { draft, scaffolds } = state;
   const endRef = useRef(null);
 
   useEffect(
@@ -75,22 +69,27 @@ export default function BuilderConsole({
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [turns, running]);
+  }, [turns, running, canStop]);
 
   // Frozen === the env is not Live yet, so the builder can't accept edits. It
   // blocks the composer exactly like `running`, but persists across turns.
   const blocked = running || frozen;
   const reason = frozenReason || CONSOLE_COPY.frozen;
 
-  const hasContent = draft.trim() || attachments.length > 0 || scaffolds.length > 0;
+  const hasContent = draft.trim() || scaffolds.length > 0;
+
+  // "Busy" drives the working indicator: the brief send round-trip (running) OR a
+  // turn still in flight (canStop = a queued/responding message waiting on the
+  // agent). Distinct from `blocked`, so the composer stays usable while waiting.
+  const busy = running || canStop;
 
   const send = () => {
     const text = draft.trim();
     const scaffoldText = scaffolds.join(". ");
     const combined = [scaffoldText, text].filter(Boolean).join(scaffoldText && text ? ". " : "");
-    if ((!combined && attachments.length === 0) || blocked) return;
+    if (!combined || blocked) return;
     dispatch({ type: "clear" });
-    onSend?.(combined, attachments);
+    onSend?.(combined);
   };
 
   return (
@@ -110,14 +109,14 @@ export default function BuilderConsole({
         </Box>
         <Box flex={1} minWidth={0}>
           <Typography sx={{ typography: "s3", color: "text.subtitle", lineHeight: 1.2 }}>
-            {frozen ? reason : running ? CONSOLE_COPY.working : CONSOLE_COPY.idle}
+            {frozen ? reason : busy ? CONSOLE_COPY.working : CONSOLE_COPY.idle}
           </Typography>
         </Box>
       </Stack>
 
       <Box sx={{ flex: 1, overflowY: "auto", px: 2.5, py: 3 }}>
         <Stack spacing={4}>
-          {(turns || []).length === 0 && !running ? (
+          {(turns || []).length === 0 && !busy ? (
             <Stack alignItems="center" spacing={1.25} sx={{ py: 6, opacity: 0.7 }}>
               <Box
                 sx={{
@@ -135,7 +134,7 @@ export default function BuilderConsole({
           ) : (
             <>
               {(turns || []).map((turn) => <Turn key={turn.id} turn={turn} />)}
-              {running && <Working label={CONSOLE_COPY.workingDot} />}
+              {busy && <Working label={CONSOLE_COPY.workingDot} />}
             </>
           )}
           <Box ref={endRef} />
@@ -217,39 +216,6 @@ export default function BuilderConsole({
             </Stack>
           )}
 
-          {attachments.length > 0 && (
-            <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75, mb: 1 }}>
-              {attachments.map((f, i) => (
-                <Stack
-                  key={`${f.name}-${i}`}
-                  direction="row" alignItems="center" spacing={0.75}
-                  sx={{
-                    px: 1, py: 0.5, borderRadius: 1,
-                    bgcolor: "background.neutral",
-                    border: "1px solid", borderColor: "divider",
-                    maxWidth: 260,
-                  }}
-                >
-                  <Iconify icon="solar:paperclip-linear" width={12} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-                  <Typography noWrap sx={{ typography: "s3", fontFamily: MONO, flex: 1, minWidth: 0 }}>
-                    {f.name}
-                  </Typography>
-                  <Typography sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>
-                    {(f.size / 1024).toFixed(0)} kB
-                  </Typography>
-                  <IconButton
-                    size="small"
-                    aria-label={`Remove ${f.name}`}
-                    onClick={() => dispatch({ type: "remove", index: i })}
-                    sx={{ p: 0, ml: 0.25 }}
-                  >
-                    <Iconify icon="solar:close-circle-linear" width={13} sx={{ color: "text.subtitle" }} />
-                  </IconButton>
-                </Stack>
-              ))}
-            </Stack>
-          )}
-
           {/* Row 1: the text field on its own line so long drafts get the full width. */}
           <TextField
             fullWidth
@@ -266,30 +232,29 @@ export default function BuilderConsole({
             InputProps={{ disableUnderline: true, sx: { typography: "s2", lineHeight: 1.55, px: 0.75, py: 0.5 } }}
           />
 
-          {/* Row 2: toolbar — attach · voice · mode picker · flex-spacer · send. */}
+          {/* Row 2: toolbar — voice · mode picker · flex-spacer · send. */}
           <Stack direction="row" alignItems="center" spacing={0.25} sx={{ mt: 0.5, pl: 0.25 }}>
-            <IconButton
-              component="label"
-              aria-label="Attach a file"
-              title={CONSOLE_COPY.attach}
-              disabled={blocked}
-              sx={{
-                width: 30, height: 30, borderRadius: 1,
-                color: "text.subtitle",
-                "&:hover": { bgcolor: "action.hover", color: "text.primary" },
-              }}
-            >
-              <Iconify icon="solar:paperclip-linear" width={15} />
-              <input
-                hidden multiple type="file"
-                accept={CONSOLE_COPY.attachAccept}
-                onChange={(e) => dispatch({ type: "attach", files: Array.from(e.target.files || []) })}
-              />
-            </IconButton>
             <VoiceInput onTranscript={(text) => dispatch({ type: "draft", value: text })} disabled={blocked} />
             <ModePicker disabled={blocked} />
 
             <Box flex={1} />
+
+            {onStop && canStop && !frozen && (
+              <IconButton
+                aria-label="Stop"
+                title={CONSOLE_COPY.stop}
+                disabled={running}
+                onClick={onStop}
+                sx={{
+                  width: 30, height: 30, borderRadius: 1, mr: 0.5,
+                  color: "text.subtitle",
+                  border: "1px solid", borderColor: "divider",
+                  "&:hover": { bgcolor: "action.hover", color: "text.primary" },
+                }}
+              >
+                <Iconify icon="solar:stop-bold" width={13} />
+              </IconButton>
+            )}
 
             <IconButton
               aria-label="Send"
@@ -321,6 +286,8 @@ BuilderConsole.propTypes = {
   chips: PropTypes.array,
   onSend: PropTypes.func,
   onChip: PropTypes.func,
+  onStop: PropTypes.func,
+  canStop: PropTypes.bool,
   preComposer: PropTypes.node,
   frozen: PropTypes.bool,
   frozenReason: PropTypes.string,

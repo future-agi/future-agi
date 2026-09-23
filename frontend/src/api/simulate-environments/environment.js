@@ -18,6 +18,7 @@ import {
 import { generatedPool } from "./_fixtures/scenarioPool";
 import { MOCK_WORLD } from "./_fixtures/world";
 import { usePrebuiltEnvironments } from "./prebuilt";
+import { conversationInFlight } from "./conversationProjection";
 
 // While the real world seam (stage_outputs) is still thin, an environment whose
 // outputs carry nothing parseable falls back to the MOCK_WORLD overlay. Flip this
@@ -32,11 +33,20 @@ export const MOCK_WORLD_OVERLAY = true;
 // merge + real scenarios/evals/amendments/end_conditions/stores) turns on with it.
 export const HARNESS_DETAIL_ENABLED = false;
 
-// The harness detail poll cadence, matching HarnessDetail's own 2s tick.
+// The harness detail poll cadence, matching HarnessDetail's own 2s tick, with a
+// faster 1s tick while a conversation turn is in flight so a reply lands promptly.
 const REFETCH_MS = 2000;
+const REFETCH_ACTIVE_MS = 1000;
 
-const jobRefetchInterval = (data) =>
-  terminalStages.has(data?.status?.stage) ? false : REFETCH_MS;
+// A READY env is terminal, so without the conversation check a chat reply would
+// never poll in. Poll fast while the agent has a turn in flight; otherwise stop
+// at a terminal stage; otherwise the steady live tick. `waiting_for_user` is not
+// "in flight" — nothing changes server-side until the user answers, and we keep
+// the composer enabled while waiting.
+const jobRefetchInterval = (data) => {
+  if (conversationInFlight(data?.conversation)) return REFETCH_ACTIVE_MS;
+  return terminalStages.has(data?.status?.stage) ? false : REFETCH_MS;
+};
 
 // Shared react-query config for the single harness-job poll. The build page's
 // progress hook and the workspace both read the same ["harness-job", id] cache

@@ -15,6 +15,8 @@ const secretValuesPath = () =>
   apiPath("/simulate/api/harness-jobs/secret-values/");
 const extendPath = (id) =>
   apiPath("/simulate/api/harness-jobs/{id}/extend/", { id });
+const conversationMessagesPath = (id) =>
+  apiPath("/simulate/api/harness-jobs/{id}/conversation/messages/", { id });
 
 export const listHarnessJobs = async () => (await axios.get(jobsPath())).data;
 
@@ -81,3 +83,11 @@ export const adjustHarnessJob = async (id, payload) =>
 // just reruns the saved suite.
 export const extendHarnessJob = async (id, payload) =>
   (await axios.post(extendPath(id), payload)).data;
+
+// Post a turn into the live builder conversation. `payload` carries the required
+// { content, client_request_id, kind } and, for a reply to a blocking question,
+// { reply_to }. The backend returns the full conversation (202); the caller
+// writes it straight into the ["harness-job", id] cache so the composer clears
+// against the real state, not an optimistic guess.
+export const sendHarnessConversationMessage = async (id, payload) =>
+  (await axios.post(conversationMessagesPath(id), payload)).data;

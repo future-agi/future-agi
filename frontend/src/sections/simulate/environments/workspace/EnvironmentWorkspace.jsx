@@ -92,7 +92,7 @@ export default function EnvironmentWorkspace() {
     building || buildFailed ? undefined : bootstrapState,
   );
   const { tab, setTab } = useWorkspaceTab();
-  const chat = useWorkspaceChat(env);
+  const chat = useWorkspaceChat(env, { source });
   const registerFork = useEnvironmentsStore((s) => s.forkEnvironment);
   const selection = useScenarioSelection();
 
@@ -190,6 +190,7 @@ export default function EnvironmentWorkspace() {
         <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden", p: 2 }}>
           <BuildingStage
             progress={progress}
+            chat={chat}
             env={env}
             envState={envState}
             patch={patch}
@@ -339,8 +340,10 @@ export default function EnvironmentWorkspace() {
             chips={CHIPS_BY_TAB[activeTab] || CHIPS_BY_TAB.overview}
             onSend={chat.send}
             onChip={chat.send}
-            frozen={!envLive}
-            frozenReason={CONSOLE_COPY.frozen}
+            onStop={chat.stop}
+            canStop={chat.inFlight}
+            frozen={!envLive || chat.frozen}
+            frozenReason={!envLive ? CONSOLE_COPY.frozen : chat.frozenReason}
             preComposer={
               (selection.count ?? selection.ids.length) > 0 ? (
                 <SelectionContextChip
