@@ -57,12 +57,27 @@ test('query binds the claimed tenant and cutoff and never silently truncates pay
         assert.equal(url.searchParams.get('param_project'), claim.project_id);
         assert.equal(url.searchParams.get('param_org'), claim.organization_id);
         assert.match(request.body, /SELECT \*/);
+        assert.match(request.body, /FROM spans FINAL\s+PREWHERE project_id = \{project:UUID\} AND trace_id = \{trace:String\}\s+WHERE \(org_id/);
+        // Mutable deletion/version filters must remain after FINAL: otherwise
+        // an older live row could reappear when a newer tombstone is filtered.
+        const prewhere = request.body.split('PREWHERE')[1].split('WHERE')[0];
+        assert.doesNotMatch(prewhere, /is_deleted|updated_at|created_at|org_id/);
+        assert.match(request.body, /max_threads=1, max_memory_usage=268435456/);
         assert.match(request.body, /result_overflow_mode='throw'/);
         assert.doesNotMatch(request.body, /\breadonly\s*=/);
         assert.doesNotMatch(request.body, /substring|summary/i);
         return new Response(JSON.stringify(row) + '\n');
       }});
   } finally { await rm(dir, {recursive: true, force: true}); }
+});
+
+test('ClickHouse query memory override stays within a bounded range', async () => {
+  const claim = makeClaim();
+  for (const maxQueryMemoryBytes of [0, 127 * 1024 * 1024, 1025 * 1024 * 1024, NaN]) {
+    await assert.rejects(downloadEvidence(claim, '/tmp/unopened-evidence', {baseUrl: 'http://clickhouse:8123',
+      database: 'default', username: 'readonly', password: 'fixture', maxQueryMemoryBytes}),
+    /Invalid ClickHouse query memory budget/);
+  }
 });
 
 test('bounded tool pages reconstruct escaped and multibyte payloads without dropped content', async () => {
@@ -74,6 +89,8 @@ test('bounded tool pages reconstruct escaped and multibyte payloads without drop
     const raw = JSON.stringify(row);
     const store = await storeEvidence([Buffer.from(raw + '\n')], join(dir, 'trace'), claim);
     const reader = createEvidenceReader(store, {maxResultBytes: 1024, maxTotalBytes: 65536});
+    assert.equal(reader.allSpansRead(), false);
+    assert.deepEqual(reader.unreadSpanIds(), [row.id]);
     let offset = 0, reconstructed = '';
     for (;;) {
       const part = await reader.read(row.id, offset, 1024);
@@ -84,6 +101,8 @@ test('bounded tool pages reconstruct escaped and multibyte payloads without drop
       offset = part.next_offset;
     }
     assert.equal(reconstructed, raw);
+    assert.equal(reader.allSpansRead(), true);
+    assert.deepEqual(reader.unreadSpanIds(), []);
   } finally { await rm(dir, {recursive: true, force: true}); }
 });
 

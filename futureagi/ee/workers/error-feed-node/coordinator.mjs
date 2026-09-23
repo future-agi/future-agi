@@ -35,12 +35,28 @@ export async function saveReport(spool, claim, result) {
 }
 
 export async function publishSavedReport(path, control, signal) {
-  if ((await stat(path)).size > 2 * 1024 * 1024) throw new Error('Invalid saved report size');
-  const payload = JSON.parse(await readFile(path, 'utf8'));
+  if ((await stat(path)).size > 2 * 1024 * 1024) {
+    const error = new Error('Invalid saved report size');
+    error.terminal = true;
+    throw error;
+  }
+  let payload;
+  try { payload = JSON.parse(await readFile(path, 'utf8')); }
+  catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    error.terminal = true;
+    throw error;
+  }
   const reply = await control('/reports/', payload, {signal});
   if (!['accepted', 'duplicate'].includes(reply.status)) throw new Error('Report was not durably acknowledged');
   await unlink(path);
   return reply;
+}
+
+async function quarantineRejectedReport(spool, name) {
+  const rejected = join(spool, 'rejected');
+  await mkdir(rejected, {recursive: true, mode: 0o700});
+  await rename(join(spool, name), join(rejected, name));
 }
 
 // Model execution and publication have separate retry boundaries. A finished
@@ -52,15 +68,34 @@ export async function processClaim(claim, {control, investigate, spool, signal, 
   const scope = Object.fromEntries(['organization_id', 'workspace_id', 'project_id', 'job_id', 'lease_token'].map(key => [key, claim[key]]));
   const heartbeatStop = new AbortController();
   let leaseError;
+  let leaseExpiresAt = Date.parse(claim.lease_expires_at) || Date.now() + 120000;
   const heartbeats = (async () => {
     try {
       while (!heartbeatStop.signal.aborted) {
         await delay(heartbeatMs, null, {signal: heartbeatStop.signal});
-        const reply = await control(`/attempts/${claim.attempt_id}/`, {...scope, action: 'renew'}, {method: 'PATCH', signal: runSignal});
-        if (reply.cancellation_requested || reply.status !== 'claimed') throw new Error('Investigation lease revoked');
+        while (!heartbeatStop.signal.aborted) {
+          try {
+            const reply = await control(`/attempts/${claim.attempt_id}/`, {...scope, action: 'renew'}, {method: 'PATCH', signal: runSignal});
+            if (reply.cancellation_requested || reply.status !== 'claimed') throw new Error('Investigation lease revoked');
+            leaseExpiresAt = Date.parse(reply.lease_expires_at) || Date.now() + heartbeatMs * 4;
+            break;
+          } catch (error) {
+            if (runSignal.aborted || error?.status === 409 || error?.message === 'Investigation lease revoked'
+                || (error?.status >= 400 && error?.status < 500) || Date.now() + 1000 >= leaseExpiresAt) throw error;
+            // A transient control-plane failure must not abort an in-flight model call.
+            // Retry only while the original lease is valid; Django still fences publication.
+            await delay(1000, null, {signal: heartbeatStop.signal});
+          }
+        }
       }
     } catch (error) {
-      if (!heartbeatStop.signal.aborted) { leaseError = error; cancel.abort(); }
+      if (!heartbeatStop.signal.aborted) {
+        leaseError = error;
+        process.stderr.write(JSON.stringify({event: 'omega_lease_renew_failed', attempt_id: claim.attempt_id,
+          status: Number.isInteger(error?.status) ? error.status : null,
+          error_type: error?.name === 'AbortError' ? 'AbortError' : 'Error'}) + '\n');
+        cancel.abort();
+      }
     }
   })();
   try {
@@ -77,7 +112,7 @@ export async function processClaim(claim, {control, investigate, spool, signal, 
 
 export async function runCoordinator({control, investigate, spool, workerId, engineVersion,
   concurrency = 4, pollMs = 1000, maxSpoolFiles = 1000, signal, onError = () => {}}) {
-  if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 50) throw new Error('Invalid worker concurrency');
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 512) throw new Error('Invalid worker concurrency');
   await mkdir(spool, {recursive: true, mode: 0o700});
   const active = new Map();
   const publishing = new Set();
@@ -86,15 +121,25 @@ export async function runCoordinator({control, investigate, spool, workerId, eng
       try {
         // Bounded spool; stop admission if publication is unhealthy. No trace payloads in it.
         const files = (await readdir(spool)).filter(name => /^[a-f0-9-]{36}\.json$/.test(name));
+        const rejectedCount = (await readdir(join(spool, 'rejected')).catch(error => {
+          if (error.code === 'ENOENT') return [];
+          throw error;
+        })).length;
         for (const name of files.slice(0, 50)) {
           const attemptId = name.slice(0, -5);
           if (active.has(attemptId) || publishing.has(name)) continue;
           publishing.add(name);
           try { await publishSavedReport(join(spool, name), control, signal); }
+          catch (error) {
+            if (!error.terminal && ![400, 404, 409, 422].includes(error.status)) throw error;
+            await quarantineRejectedReport(spool, name);
+            onError(error, attemptId);
+          }
           finally { publishing.delete(name); }
         }
-        if (files.length + active.size < maxSpoolFiles && active.size < concurrency) {
-          const {claims} = await control('/claims/', {worker_id: workerId, engine_version: engineVersion, limit: concurrency - active.size}, {signal});
+        if (files.length + rejectedCount + active.size < maxSpoolFiles && active.size < concurrency) {
+          const {claims} = await control('/claims/', {worker_id: workerId, engine_version: engineVersion,
+            limit: Math.min(50, concurrency - active.size)}, {signal});
           if (!Array.isArray(claims) || claims.length > concurrency - active.size) throw new Error('Invalid claim response');
           for (const claim of claims) {
             if (active.has(claim.attempt_id)) throw new Error('Duplicate claimed attempt');
