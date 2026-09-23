@@ -1961,7 +1961,10 @@ class HostedHarnessGateway:
             )
             bundle_command = (
                 "rm -rf /work/bundle && "
-                "cp -a /work/authoring/environment-bundle /work/bundle"
+                "cp -a /work/authoring/environment-bundle /work/bundle && "
+                "if [ -f /work/authoring/runtime-validation.json ]; then "
+                "cp /work/authoring/runtime-validation.json /work/runtime-validation.json; "
+                "fi"
                 if simulation_only
                 else (
                     "python -m fi.alk.harness.bundle_author_v2 "
@@ -2937,13 +2940,19 @@ class HostedHarnessGateway:
         spend = _json("/work/authoring/cost.json")
         _read_harness_usage(attempt, sandbox)
         job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
-        _record_harness_spend(job, spend, attempt.attempt_number)
+        metadata = (job.payload or {}).get("metadata") or {}
+        if not metadata.get("simulation_only"):
+            _record_harness_spend(job, spend, attempt.attempt_number)
         authoring_complete = (
             isinstance(bundle, dict)
             and isinstance(scenarios, list)
             and len(scenarios) == job.scenario_count
         )
-        if authoring_complete and isinstance(spend, dict):
+        if (
+            not metadata.get("simulation_only")
+            and authoring_complete
+            and isinstance(spend, dict)
+        ):
             from simulate.services.harness_usage import (
                 record_harness_authoring_usage,
             )
@@ -2965,7 +2974,6 @@ class HostedHarnessGateway:
         # A chat "add scenarios" extend re-authors the SAME RunTest up to N+delta, so it must
         # re-freeze even though a key already exists — gated on its one-shot marker.
         # store_authoring_archive clears that marker in the same save.
-        metadata = (job.payload or {}).get("metadata") or {}
         if authoring_complete and (
             not metadata.get("authoring_object_key") or metadata.get("scenario_extend")
         ):

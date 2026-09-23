@@ -299,8 +299,15 @@ def create_selected_harness_run(
             runtime["max_duration_seconds"], len(manifest) * 360
         )
         child_metadata = child_payload.setdefault("metadata", {})
-        child_metadata.pop("scenario_extend", None)
-        child_metadata.pop("usage_limit", None)
+        for key in (
+            "scenario_extend",
+            "usage_limit",
+            "harness_spend",
+            "authoring_usage_reports",
+            "usage_reports",
+            "sandbox_runtime",
+        ):
+            child_metadata.pop(key, None)
         child_metadata.update(
             {
                 "environment_job_id": str(environment.id),
