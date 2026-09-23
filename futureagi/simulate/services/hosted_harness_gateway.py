@@ -3044,7 +3044,13 @@ class HostedHarnessGateway:
             from simulate.services.harness_scenarios import index_scenarios
 
             try:
-                index_scenarios(job, scenarios)
+                index_scenarios(
+                    job,
+                    scenarios,
+                    prune=authoring_complete
+                    or isinstance(invariants, dict)
+                    or isinstance(certified, dict),
+                )
             except Exception:  # noqa: BLE001 - indexing must never stop a run
                 logger.exception("could not index authored scenarios job=%s", job.id)
         stage = "understanding_agent"
@@ -3055,14 +3061,12 @@ class HostedHarnessGateway:
         if isinstance(scenarios, list):
             # scenarios.json exists from the first save, so it cannot mean checking has begun.
             written = len(scenarios) >= (job.scenario_count or len(scenarios))
+            world_ir = _json("/work/authoring/generic-harness/world-ir.json")
             if certified is not None:
                 stage = "validating_scenarios"
-            elif invariants is not None:
+            elif invariants is not None or (written and world_ir is not None):
                 stage = "validating_environment"
             else:
-                stage = "generating_scenarios"
-            if written and invariants is None:
-                # Suite complete, checking not started: the guest is sealing it.
                 stage = "generating_scenarios"
         HostedHarnessGateway._sync_adjustment_progress(job, sandbox)
         if not outputs:

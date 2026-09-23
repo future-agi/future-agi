@@ -283,6 +283,7 @@ export default function ScenarioSuite({
     const changes = [
       { op: "set_field", ...naming, field: "tests", value: form.tests },
       { op: "set_field", ...naming, field: "max_turns", value: form.max_turns },
+      { op: "set_field", ...naming, field: "keywords", value: form.keywords },
       {
         op: "set_field",
         ...naming,
@@ -297,7 +298,6 @@ export default function ScenarioSuite({
         op: "set_persona",
         ...naming,
         persona: {
-          keywords: form.keywords,
           personality: form.personality,
           communication_style: form.communication_style,
           accent: form.accent,

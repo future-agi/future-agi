@@ -46,7 +46,8 @@ const pick = (options) =>
 const NOISE = ["off", "home", "office", "retail", "street", "vehicle", "transit", "outdoors"];
 
 const noiseOf = (value) => {
-  if (!value) return "off";
+  if (!value || value === "quiet line") return "off";
+  if (value === "present") return "home";
   return typeof value === "string" ? value : "home";
 };
 
@@ -55,7 +56,7 @@ const draftOf = (scenario) => {
   return {
     tests: scenario.tests || "",
     branch: scenario.branch || "",
-    keywords: persona.keywords || [],
+    keywords: scenario.keywords || persona.keywords || [],
     personality: persona.personality || "",
     communication_style: persona.communication_style || "",
     accent: persona.accent || "",

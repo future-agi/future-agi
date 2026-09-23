@@ -1203,10 +1203,9 @@ class HostedHarnessProvider:
     # found out; the rest change what the run does, so they are refused when the caller declines
     # a re-proof.
     _DESCRIPTIVE_FIELDS = frozenset({"tests"})
-    _BEHAVIOURAL_FIELDS = frozenset({"max_turns", "background_noise"})
+    _BEHAVIOURAL_FIELDS = frozenset({"max_turns", "background_noise", "keywords"})
     _PERSONA_FIELDS = frozenset(
         {
-            "keywords",
             "personality",
             "communication_style",
             "accent",
