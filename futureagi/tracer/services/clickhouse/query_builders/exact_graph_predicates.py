@@ -27,6 +27,7 @@ from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import (
     build_annotation_value_predicate,
     normalize_filter_op,
+    parse_boolean_meta_filter,
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
@@ -124,16 +125,13 @@ def _local_param(params: dict[str, Any], prefix: str, value: Any) -> str:
     return name
 
 
-def _parse_boolean_filter(column_id: str, value: Any, operator: str | None) -> bool:
-    if normalize_filter_op(operator) != "equals":
-        raise UnsupportedFilterShapeError(
-            f"{column_id} supports only the equals operation"
-        )
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
-        return value.strip().lower() == "true"
-    raise UnsupportedFilterShapeError(f"{column_id} requires a boolean value")
+def _parse_boolean_filter(
+    column_id: str, value: Any, operator: str | None
+) -> bool | None:
+    try:
+        return parse_boolean_meta_filter(column_id, value, operator)
+    except ValueError as exc:
+        raise UnsupportedFilterShapeError(str(exc)) from exc
 
 
 def _validated_uuid(value: Any, *, field: str) -> str:
@@ -262,6 +260,8 @@ def _compile_annotation_filter(
 
     if column_id == "has_annotation":
         required = _parse_boolean_filter(column_id, filter_value, filter_op)
+        if required is None:
+            return []
         if annotation_label_ids is not None:
             if not annotation_label_ids:
                 # Completeness across an authoritative empty label set is
@@ -294,6 +294,8 @@ def _compile_annotation_filter(
 
     if column_id == "my_annotations":
         required = _parse_boolean_filter(column_id, filter_value, filter_op)
+        if required is None:
+            return []
         user_id = config.get("user_id") or config.get("userId")
         if not user_id:
             return [("0 = 1", True, {})]
@@ -473,6 +475,8 @@ def _compile_has_eval_filter(
         config.get("filter_value", config.get("filterValue")),
         config.get("filter_op") or config.get("filterOp"),
     )
+    if required is None:
+        return []
     try:
         config_ids = tuple(
             str(config_id)

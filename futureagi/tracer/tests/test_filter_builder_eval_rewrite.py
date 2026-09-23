@@ -846,20 +846,82 @@ class TestHasEvalHasAnnotationShape:
     @pytest.mark.parametrize(
         "column_id", ["has_eval", "has_annotation", "my_annotations"]
     )
-    @pytest.mark.parametrize("filter_op", ["not_equals", "is_null", "is_not_null"])
-    def test_boolean_meta_filters_reject_non_equals_operations(
+    def test_boolean_meta_filters_compile_advertised_operations(
         self,
         column_id: str,
-        filter_op: str,
+    ) -> None:
+        builder = ClickHouseFilterBuilder(
+            project_id="p1", candidate_ids_param="candidate_trace_ids"
+        )
+        base_item = self._bool_filter(column_id, True)[0]
+        if column_id == "my_annotations":
+            base_item["filter_config"][
+                "user_id"
+            ] = "00000000-0000-4000-8000-000000000002"
+
+        # not_equals True -> negation (NOT IN)
+        item_ne_true = {
+            **base_item,
+            "filter_config": {
+                **base_item["filter_config"],
+                "filter_op": "not_equals",
+                "filter_value": True,
+            },
+        }
+        where, _ = builder.translate([item_ne_true])
+        assert "NOT IN" in where
+
+        # not_equals False -> positive (IN)
+        item_ne_false = {
+            **base_item,
+            "filter_config": {
+                **base_item["filter_config"],
+                "filter_op": "not_equals",
+                "filter_value": False,
+            },
+        }
+        where, _ = builder.translate([item_ne_false])
+        assert " IN " in where and "NOT IN" not in where
+
+        # is_null -> absence (NOT IN)
+        item_is_null = {
+            **base_item,
+            "filter_config": {
+                **base_item["filter_config"],
+                "filter_op": "is_null",
+                "filter_value": None,
+            },
+        }
+        where, _ = builder.translate([item_is_null])
+        assert "NOT IN" in where
+
+        # is_not_null -> unfiltered control (no condition emitted)
+        item_is_not_null = {
+            **base_item,
+            "filter_config": {
+                **base_item["filter_config"],
+                "filter_op": "is_not_null",
+                "filter_value": None,
+            },
+        }
+        where, _ = builder.translate([item_is_not_null])
+        assert where == ""
+
+    @pytest.mark.parametrize(
+        "column_id", ["has_eval", "has_annotation", "my_annotations"]
+    )
+    def test_boolean_meta_filters_reject_unsupported_operations(
+        self,
+        column_id: str,
     ) -> None:
         filter_item = self._bool_filter(column_id, True)[0]
-        filter_item["filter_config"]["filter_op"] = filter_op
+        filter_item["filter_config"]["filter_op"] = "greater_than"
         if column_id == "my_annotations":
-            filter_item["filter_config"]["user_id"] = (
-                "00000000-0000-4000-8000-000000000002"
-            )
+            filter_item["filter_config"][
+                "user_id"
+            ] = "00000000-0000-4000-8000-000000000002"
 
-        with pytest.raises(ValueError, match="supports only the equals operation"):
+        with pytest.raises(ValueError, match="does not support"):
             ClickHouseFilterBuilder(
                 project_id="p1", candidate_ids_param="candidate_trace_ids"
             ).translate([filter_item])
