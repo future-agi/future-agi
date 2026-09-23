@@ -8,7 +8,9 @@ import CustomTooltip from "src/components/tooltip";
 import { BUILD_TONES } from "../buildTones";
 import { CONSOLE_COPY } from "../build.constants";
 import { Turn, Working } from "./ConsoleTurn";
-import VoiceInput from "./VoiceInput";
+// Voice input is temporarily disabled (Web Speech is blocked in Brave); re-enable
+// with a server-side transcription path. Kept for that follow-up.
+// import VoiceInput from "./VoiceInput";
 import { BUILDER_MODES, getBuilderMode, subscribeBuilderMode, setBuilderMode } from "./builderModeBus";
 import { subscribeComposerScaffold } from "./composerScaffoldBus";
 
@@ -232,9 +234,13 @@ export default function BuilderConsole({
             InputProps={{ disableUnderline: true, sx: { typography: "s2", lineHeight: 1.55, px: 0.75, py: 0.5 } }}
           />
 
-          {/* Row 2: toolbar — voice · mode picker · flex-spacer · send. */}
+          {/* Row 2: toolbar — mode picker · flex-spacer · send. */}
           <Stack direction="row" alignItems="center" spacing={0.25} sx={{ mt: 0.5, pl: 0.25 }}>
-            <VoiceInput onTranscript={(text) => dispatch({ type: "draft", value: text })} disabled={blocked} />
+            {/* Voice input disabled for now: the Web Speech API is blocked in
+                Brave, so it only works in Chrome/Edge/Safari. Re-enable once a
+                server-side transcription endpoint (record -> /audio/transcriptions)
+                is wired so it works in every browser. VoiceInput.jsx is kept. */}
+            {/* <VoiceInput onTranscript={(text) => dispatch({ type: "draft", value: text })} disabled={blocked} /> */}
             <ModePicker disabled={blocked} />
 
             <Box flex={1} />
