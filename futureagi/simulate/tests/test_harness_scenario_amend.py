@@ -228,3 +228,11 @@ def test_a_short_suite_on_a_poll_never_deletes_a_row(user, workspace):
     index_scenarios(job, suite)
     index_scenarios(job, suite[:1])
     assert HostedHarnessScenario.no_workspace_objects.filter(job=job).count() == 3
+
+
+def test_a_scenario_with_no_attack_reads_as_no_attack_on_every_attack_axis():
+    from simulate.services.harness_scenarios import level_label
+
+    assert level_label("none") == "No attack"
+    assert level_label("absent") == "No attack"
+    assert level_label("prompt_injection") == "Injected instruction"

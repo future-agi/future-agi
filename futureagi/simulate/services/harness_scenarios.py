@@ -162,7 +162,7 @@ def axis_label(axis: str) -> str:
 # for the same reason the axis names are: renaming what a reader sees is a change here and nowhere
 # else, and never a change in a client.
 LEVEL_LABELS: dict[str, str] = {
-    "none": "None",
+    "none": "No attack",
     "minor_vulnerable": "Vulnerable caller",
     "emergency_crisis": "Emergency",
     "privacy_pii": "Personal data",
@@ -172,7 +172,7 @@ LEVEL_LABELS: dict[str, str] = {
     "out_of_scope": "Out of scope",
     "destructive": "Destructive request",
     "spoken_caller": "Spoken by the caller",
-    "absent": "None",
+    "absent": "No attack",
     "quiet_line": "Quiet line",
     "non_native": "Non-native speaker",
     "code_switching": "Switches language",
