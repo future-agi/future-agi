@@ -384,6 +384,9 @@ func TestLoadFromEnvAuthFailsClosedWhenKeyPresent(t *testing.T) {
 	if seeded.KeyType != "internal" {
 		t.Fatalf("seeded key KeyType = %q, want \"internal\"", seeded.KeyType)
 	}
+	if seeded.Metadata["access_groups"] != "internal" {
+		t.Fatalf("seeded key access group = %q, want internal", seeded.Metadata["access_groups"])
+	}
 }
 
 // The explicit toggle still applies on its own when no key is configured.

@@ -51,6 +51,8 @@ services:
   # Local implementation of the hosted ALK sandbox contract. It is reachable by the
   # backend over the private Compose network; its host port is loopback-only.
   alk-harness-sandbox:
+    profiles:
+      - local-sandbox
     build:
       context: ${ALK_REPOSITORY_PATH:-../alk-pr58}
       dockerfile: Dockerfile.sandbox

@@ -6,6 +6,10 @@ from typing import Any
 from django.conf import settings
 from rest_framework import serializers
 
+from simulate.serializers.hosted_harness_conversation import (
+    HarnessConversationReadSerializer,
+)
+
 # Port-generic loopback pattern for the C4 §7 Channel-1 literal-endpoint scan.
 # The declared fixed port is unknowable platform-side (the bundle is authored
 # in-sandbox), so the match is any port on localhost / 127.0.0.1 / [::1].
@@ -530,8 +534,6 @@ class HarnessPreflightSerializer(HarnessJobCreateSerializer):
         write_only=True,
         help_text="Target-provider values to verify live; used for this check only.",
     )
-
-
 class HarnessJobAdjustmentSerializer(serializers.Serializer):
     instruction = serializers.CharField(
         min_length=1,
@@ -542,6 +544,7 @@ class HarnessJobAdjustmentSerializer(serializers.Serializer):
     client_request_id = serializers.CharField(
         max_length=128, required=False, allow_blank=False
     )
+
 
 
 class HarnessJobExtendSerializer(serializers.Serializer):
@@ -697,6 +700,13 @@ class HarnessParallelismSerializer(serializers.Serializer):
     degrade_reasons = serializers.ListField(child=serializers.CharField())
 
 
+class HarnessConsumptionSerializer(serializers.Serializer):
+    text_sim_tokens = serializers.IntegerField(min_value=0)
+    voice_sim_minutes = serializers.FloatField(min_value=0)
+    ai_credits = serializers.FloatField(min_value=0, allow_null=True)
+    sandbox_seconds = serializers.FloatField(min_value=0)
+
+
 class HarnessJobReadSerializer(serializers.Serializer):
     """Consolidated public read DTO for list/create/retrieve/cancel/poll."""
 
@@ -709,3 +719,6 @@ class HarnessJobReadSerializer(serializers.Serializer):
     platform = HarnessPlatformSerializer()
     runtime = HarnessRuntimeReadSerializer(required=False)
     parallelism = HarnessParallelismSerializer(required=False)
+    conversation = HarnessConversationReadSerializer(allow_null=True, required=False)
+    consumption = HarnessConsumptionSerializer(required=False, allow_null=True)
+    usage_limit = serializers.JSONField(required=False, allow_null=True)

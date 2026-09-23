@@ -50,7 +50,7 @@ class TestBackfillUsageLogsCommand:
             config={"output": {"output": 1.0}},
         )
 
-        result = backfill_usage_logs(only_template=str(template.id))
+        result = backfill_usage_logs(only_template=str(template.id), database="default")
 
         log.refresh_from_db()
         assert log.config.get("version_id") == str(version.id)
@@ -86,7 +86,7 @@ class TestBackfillUsageLogsCommand:
             config={"output": {"output": 1.0}, "version_id": existing_version_id},
         )
 
-        backfill_usage_logs(only_template=str(template.id))
+        backfill_usage_logs(only_template=str(template.id), database="default")
 
         log.refresh_from_db()
         assert log.config["version_id"] == existing_version_id
@@ -116,7 +116,7 @@ class TestBackfillUsageLogsCommand:
         log.refresh_from_db()
         assert isinstance(log.config, str), "Precondition: config should be a string"
 
-        backfill_usage_logs(only_template=str(template.id))
+        backfill_usage_logs(only_template=str(template.id), database="default")
 
         log.refresh_from_db()
         assert isinstance(log.config, dict)
@@ -147,7 +147,7 @@ class TestBackfillUsageLogsCommand:
             config={"output": {"output": 1.0}},
         )
 
-        backfill_usage_logs(only_template=str(template.id))
+        backfill_usage_logs(only_template=str(template.id), database="default")
 
         created = EvalTemplateVersion.objects.filter(
             eval_template=template, deleted=False
@@ -198,7 +198,7 @@ class TestBackfillUsageLogsCommand:
                 )
             )
 
-        result = backfill_usage_logs()
+        result = backfill_usage_logs(database="default")
 
         assert result["updated"] >= 3
         for log in logs:
@@ -251,7 +251,7 @@ class TestBackfillUsageLogsCommand:
             config=json.dumps({"output": {"output": 0.7}}),  # double-encoded
         )
 
-        backfill_usage_logs()
+        backfill_usage_logs(database="default")
 
         stamped_log.refresh_from_db()
         assert isinstance(stamped_log.config, dict)

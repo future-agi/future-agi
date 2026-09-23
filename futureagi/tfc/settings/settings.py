@@ -975,6 +975,11 @@ ALK_HOSTED_AUTHORING_TIMEOUT = int(
 ALK_HOSTED_SANDBOX_TTL_SECONDS = int(
     os.getenv("ALK_HOSTED_SANDBOX_TTL_SECONDS", "7200")
 )
+# Conversational sandboxes are replaceable warm caches. Their persistent ADK session and
+# workspace checkpoint survive deletion; this only controls the cost/latency window.
+ALK_HOSTED_CHAT_TTL_SECONDS = int(
+    os.getenv("ALK_HOSTED_CHAT_TTL_SECONDS", "1800")
+)
 DAYTONA_API_KEY = os.getenv("DAYTONA_API_KEY", "")
 DAYTONA_API_URL = os.getenv("DAYTONA_API_URL") or None
 DAYTONA_TARGET = os.getenv("DAYTONA_TARGET") or None
@@ -1116,7 +1121,11 @@ sentry_sdk_enabled = (
 )
 
 # ── CSRF trusted origins (built dynamically from BASE_URL / APP_URL) ──
-CSRF_TRUSTED_ORIGINS = ["http://localhost:5173", "http://localhost:3031"]
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:3031",
+]
 if APP_URL:
     CSRF_TRUSTED_ORIGINS += [f"https://{APP_URL}", f"http://{APP_URL}"]
 if BASE_URL:

@@ -120,3 +120,89 @@ class HarnessAttemptAuthentication(BaseAuthentication):
                 status_code=409,
             )
         return HarnessAttemptUser(attempt), attempt
+
+
+class HarnessConversationUser:
+    is_authenticated = True
+    is_harness_conversation = True
+
+    def __init__(self, conversation) -> None:
+        self.conversation = conversation
+        self.organization = conversation.organization
+
+
+class HarnessConversationAuthentication(BaseAuthentication):
+    """Authenticate the outbound guest holding one conversation lease."""
+
+    def authenticate(self, request):
+        from django.utils import timezone
+
+        from simulate.models import HostedHarnessConversationLease
+        from simulate.services.hosted_harness import HostedHarnessError, hash_secret
+
+        resolver_match = getattr(request, "resolver_match", None)
+        kwargs = getattr(resolver_match, "kwargs", {}) if resolver_match else {}
+        conversation_id = kwargs.get("pk") or kwargs.get("conversation_id")
+        if not conversation_id:
+            raise HostedHarnessError(
+                "conversation_mismatch",
+                "conversation id is missing from the request path",
+                status_code=403,
+            )
+        parts = get_authorization_header(request).split()
+        if len(parts) != 2 or parts[0].lower() != b"bearer":
+            raise HostedHarnessError(
+                "authentication_required",
+                "a harness conversation bearer is required",
+                status_code=401,
+            )
+        try:
+            supplied_token = parts[1].decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise HostedHarnessError(
+                "authentication_invalid",
+                "conversation bearer is not valid UTF-8",
+                status_code=401,
+            ) from exc
+        fence = request.headers.get("X-Harness-Conversation-Fence", "")
+        try:
+            lease = HostedHarnessConversationLease.no_workspace_objects.select_related(
+                "conversation", "conversation__organization"
+            ).get(conversation_id=conversation_id)
+        except HostedHarnessConversationLease.DoesNotExist as exc:
+            raise HostedHarnessError(
+                "conversation_lease_not_found",
+                "conversation lease was not found",
+                status_code=404,
+            ) from exc
+        if not secrets.compare_digest(lease.token_hash, hash_secret(supplied_token)):
+            raise HostedHarnessError(
+                "authentication_invalid",
+                "conversation bearer is invalid",
+                status_code=401,
+            )
+        if not fence or not secrets.compare_digest(
+            lease.fence_hash, hash_secret(fence)
+        ):
+            raise HostedHarnessError(
+                "conversation_fenced",
+                "conversation fence is invalid",
+                status_code=403,
+            )
+        if timezone.now() >= lease.expires_at:
+            raise HostedHarnessError(
+                "conversation_lease_expired",
+                "conversation lease has expired",
+                status_code=401,
+            )
+        if lease.state in {
+            HostedHarnessConversationLease.State.EXPIRED,
+            HostedHarnessConversationLease.State.RELEASED,
+        }:
+            raise HostedHarnessError(
+                "conversation_lease_inactive",
+                "conversation lease is no longer active",
+                status_code=409,
+            )
+        conversation = lease.conversation
+        return HarnessConversationUser(conversation), conversation

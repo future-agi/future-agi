@@ -52,7 +52,9 @@ def test_a_later_read_never_lowers_the_bill():
             "harness_spend": {
                 "total_usd": 1.5,
                 "unpriced_turns": 0,
-                "attempts": {"1": {"total_usd": 1.5, "unpriced_turns": 0, "stages": []}},
+                "attempts": {
+                    "1": {"total_usd": 1.5, "unpriced_turns": 0, "stages": []}
+                },
             }
         }
     )
@@ -68,11 +70,15 @@ def test_a_growing_total_replaces_the_earlier_one():
             "harness_spend": {
                 "total_usd": 0.5,
                 "unpriced_turns": 0,
-                "attempts": {"1": {"total_usd": 0.5, "unpriced_turns": 0, "stages": []}},
+                "attempts": {
+                    "1": {"total_usd": 0.5, "unpriced_turns": 0, "stages": []}
+                },
             }
         }
     )
-    _record_harness_spend(job, {"total_usd": 0.9, "stages": [{"stage": "x", "usd": 0.9}]})
+    _record_harness_spend(
+        job, {"total_usd": 0.9, "stages": [{"stage": "x", "usd": 0.9}]}
+    )
 
     assert _spend(job)["total_usd"] == 0.9
     assert job.saved
@@ -167,6 +173,7 @@ def test_the_ledger_is_read_before_the_only_delete_that_exists(monkeypatch):
 
     class _Client:
         name = "test-provider"
+
         # **kwargs so a new option on the real call (request_timeout, say) does not read as a
         # broken ordering invariant.
         def get(self, ref, **kwargs):
@@ -189,9 +196,14 @@ def test_the_ledger_is_read_before_the_only_delete_that_exists(monkeypatch):
         gateway, "_read_harness_spend", lambda *_: order.append("read_spend")
     )
     monkeypatch.setattr(gateway, "record_cleanup", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "simulate.services.harness_usage.record_sandbox_runtime",
+        lambda *args, **kwargs: None,
+    )
 
     driver = gateway.HostedHarnessGateway.__new__(gateway.HostedHarnessGateway)
     driver.client = _Client()
+    monkeypatch.setattr(driver, "_cleanup_conversation_runtime", lambda job: None)
     driver._delete_and_record(_Attempt())
 
     assert order == ["read_spend", "delete"]
