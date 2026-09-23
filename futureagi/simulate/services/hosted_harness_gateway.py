@@ -265,9 +265,14 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         values["ALK_CLAUDE_GATEWAY_API_KEY"] = agentcc_key
         values["AGENTCC_BASE_URL"] = agentcc_url.rstrip("/")
         values["AGENTCC_API_KEY"] = agentcc_key
-    from simulate.services.phone_telephony import platform_phone_telephony
-
-    values.update({name: value for name, value in platform_phone_telephony().items() if value})
+    try:
+        from simulate.services.phone_telephony import platform_phone_telephony
+    except ImportError:  # platform telephony arrives with the phone-connector work
+        platform_phone_telephony = None
+    if platform_phone_telephony is not None:
+        values.update(
+            {name: value for name, value in platform_phone_telephony().items() if value}
+        )
     for name in (
         "CARTESIA_API_KEY",
         "DEEPGRAM_API_KEY",
@@ -1767,47 +1772,13 @@ class HostedHarnessGateway:
         _validate_resolved_egress_domains(
             allowed_domains, max_domains=self.client.max_egress_domains
         )
-        from simulate.services.harness_capacity import configured_capacity
-
-        try:
-            capacity = configured_capacity(payload)
-        except ValueError as exc:
-            raise HostedHarnessError(
-                "sandbox_capacity_unavailable",
-                str(exc),
-                status_code=503,
-            ) from exc
-        selected_snapshot = capacity.snapshot_name or self.client.runtime_name
-        registered_snapshot_digest = (
-            capacity.snapshot_digest or self.client.runtime_digest
-        )
-        if self.client.name != "daytona" and (
-            (
-                capacity.snapshot_name
-                and capacity.snapshot_name != self.client.runtime_name
-            )
-            or (
-                capacity.snapshot_digest
-                and capacity.snapshot_digest != self.client.runtime_digest
-            )
-        ):
-            raise HostedHarnessError(
-                "sandbox_capacity_unavailable",
-                "configured resource profile does not match the selected sandbox runtime",
-                status_code=503,
-            )
         capability = register_attempt(
             job.id,
             endpoint_base_url=endpoint_base_url,
-            snapshot_name=selected_snapshot,
-            snapshot_digest=registered_snapshot_digest,
+            snapshot_name=self.client.runtime_name,
+            snapshot_digest=self.client.runtime_digest or None,
         )
         attempt = capability.attempt
-        dispatch_runtime = dict(dispatch_payload["runtime"])
-        dispatch_runtime["parallelism"] = capability.admitted_parallelism
-        dispatch_runtime["cpu_units"] = capacity.cpu_units
-        dispatch_runtime["memory_mb"] = capacity.memory_mb
-        dispatch_payload["runtime"] = dispatch_runtime
         cache_attempt_redaction_values(
             attempt.id,
             redaction_values(
@@ -1831,9 +1802,9 @@ class HostedHarnessGateway:
         sandbox = None
         try:
             launch_spec = SandboxLaunchSpec(
-                cpu_units=capacity.cpu_units,
-                memory_mb=capacity.memory_mb,
-                disk_gb=capacity.disk_gb,
+                cpu_units=payload["runtime"]["cpu_units"],
+                memory_mb=payload["runtime"]["memory_mb"],
+                disk_gb=10,
                 ttl_seconds=ttl_seconds,
                 os_user=getattr(settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control"),
                 labels={
@@ -1843,7 +1814,6 @@ class HostedHarnessGateway:
                 allowed_domains=tuple(sorted(allowed_domains)),
                 allowed_cidrs=allowed_cidrs,
                 unrestricted_egress=unrestricted,
-                runtime_name=selected_snapshot,
             )
             sandbox = self.client.create(
                 launch_spec, timeout=self.client.create_timeout_seconds
@@ -1977,23 +1947,18 @@ class HostedHarnessGateway:
                     "ALK_HARNESS",
                     "ALK_SIMULATOR_FUNDING",
                     "ALK_HARNESS_MODEL",
+                    # Authoring is where the writers fan out, so the ceiling belongs here.
+                    "ALK_HARNESS_WORKERS_AT_ONCE",
                     "ALK_CLAUDE_GATEWAY_URL",
                     "ALK_CLAUDE_GATEWAY_API_KEY",
                     "ALK_VERTEX_LOCATION",
                     "ALK_VOICEMAIL_SCENARIOS",
-                    # Authoring is where the writers fan out, so the ceiling belongs here.
-                    "ALK_HARNESS_WORKERS_AT_ONCE",
-                    "ALK_VALIDATION_INSTANCES",
                     "GOOGLE_APPLICATION_CREDENTIALS",
                     "GOOGLE_CLOUD_LOCATION",
                     "GOOGLE_CLOUD_PROJECT",
                     "GOOGLE_GENAI_USE_VERTEXAI",
                 }
             }
-            from simulate.services.hosted_sandbox import sandbox_runtime_policy
-
-            if sandbox_runtime_policy().experimental_two_slots_on_2cpu:
-                authoring_exports["ALK_EXPERIMENTAL_TWO_SLOTS_ON_2CPU"] = "1"
             authoring_exports["PATH"] = _CHAT_RUNTIME_PATH
             provider_profile_args = (
                 f"--target-secrets {authoring_secrets_path} "
