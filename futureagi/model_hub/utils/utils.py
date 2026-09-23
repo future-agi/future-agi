@@ -17,8 +17,6 @@ from litellm.llms.custom_llm import CustomLLM, ModelResponse
 from nltk.corpus import stopwords, wordnet
 from nltk.stem import WordNetLemmatizer
 
-logger = structlog.get_logger(__name__)
-
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
 
 # (available_models always available)
@@ -36,6 +34,8 @@ from tfc.settings.settings import (
 from tfc.utils.clickhouse import ClickHouseClientSingleton
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.types import ClickhouseDatatypes
+
+logger = structlog.get_logger(__name__)
 
 # The HuggingFace Hub now emits the `List` feature type (datasets 4.0) in dataset
 # metadata, which pinned datasets 3.6.0 can't parse: load_dataset() raises
@@ -926,17 +926,9 @@ def track_running_eval_count(
 
 class AnnotationCorpusBuilder:
     def __init__(self):
-        # Download necessary resources once
-        # Catch FileExistsError in case NLTK data directory already exists
-        try:
-            nltk.download("punkt", quiet=True)
-            nltk.download("averaged_perceptron_tagger", quiet=True)
-            nltk.download("wordnet", quiet=True)
-            nltk.download("omw-1.4", quiet=True)
-            nltk.download("stopwords", quiet=True)
-        except FileExistsError:
-            # Directory already exists, downloads can proceed
-            pass
+        # NLTK data is pinned in the image at build time. A runtime downloader
+        # contacts the package index even when archives are present, blocking
+        # every backend/worker startup when registry access is unavailable.
 
         self.lemmatizer = WordNetLemmatizer()
         self.stop_words = set(stopwords.words("english"))

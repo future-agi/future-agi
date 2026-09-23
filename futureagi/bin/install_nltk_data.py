@@ -80,9 +80,8 @@ def install() -> None:
 
         archive_path = NLTK_DATA_ROOT / package_path
         archive_path.parent.mkdir(parents=True, exist_ok=True)
-        # NLTK's downloader status checks the original archive size/checksum.
-        # Keep the pinned archive alongside the extracted tree so a runtime
-        # ``nltk.download`` check cannot misclassify baked data as missing.
+        # Keep the pinned archive alongside the extracted corpus: NLTK can
+        # resolve resources from either form without invoking its downloader.
         archive_path.write_bytes(payload)
 
         resource_group = resource_name.split("/", 1)[0]
