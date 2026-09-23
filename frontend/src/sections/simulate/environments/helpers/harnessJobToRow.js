@@ -34,10 +34,15 @@ export const buildStatusFor = (stage) => {
   return BUILD_STATUS.BUILDING;
 };
 
-const agentTypeFor = (connectors = []) =>
-  connectors.some((name) => VOICE_CONNECTORS.includes(name))
+// A voice transport in the detected connectors wins; any other detected
+// connector is a chat agent. With NOTHING detected we can't tell — return null
+// so the table shows "Not identified" rather than misreporting the env as Chat.
+const agentTypeFor = (connectors = []) => {
+  if (!connectors?.length) return null;
+  return connectors.some((name) => VOICE_CONNECTORS.includes(name))
     ? AGENT_TYPES.VOICE
     : AGENT_TYPES.CHAT;
+};
 
 // Map one harness-jobs list item ({ job, status, credentials }) to the flat row
 // the My Environments table reads. The list payload carries no description,

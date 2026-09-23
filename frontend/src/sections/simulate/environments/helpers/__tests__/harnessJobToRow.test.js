@@ -39,11 +39,16 @@ describe("harnessJobToRow", () => {
     ).toBe("voice");
   });
 
-  it("falls back to text when no voice connector is detected", () => {
+  it("reads text from a detected non-voice connector", () => {
     expect(harnessJobToRow(item({ connectors: ["http"] })).agentType).toBe(
       "text",
     );
-    expect(harnessJobToRow(item({ connectors: [] })).agentType).toBe("text");
+  });
+
+  it("leaves the agent type unidentified (null) when nothing is detected", () => {
+    // Nothing detected — we can't tell the modality, so don't misreport it as
+    // Chat. The table renders null as "Not identified".
+    expect(harnessJobToRow(item({ connectors: [] })).agentType).toBeNull();
   });
 
   it("supplies null/zero placeholders for the fields the list cannot fill", () => {
@@ -60,7 +65,7 @@ describe("harnessJobToRow", () => {
     const row = harnessJobToRow(undefined);
     expect(row.id).toBeUndefined();
     expect(row.status).toBe(ENV_STATUS.BUILDING);
-    expect(row.agentType).toBe("text");
+    expect(row.agentType).toBeNull();
     expect(row.updatedAt).toBeNull();
   });
 });
