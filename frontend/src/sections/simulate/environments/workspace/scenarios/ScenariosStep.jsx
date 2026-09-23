@@ -22,6 +22,7 @@ import {
 import { SCENARIOS_COPY } from "./scenarios.constants";
 import { ENV_SHAPE, ENV_STATE_SHAPE } from "./scenarios.shapes";
 import useScenarioPage, { PAGE_SIZE } from "./useScenarioPage";
+import { isScenarioSampleMode, SAMPLE_PAGE_SIZE } from "src/api/simulate-environments/scenariosSampleMode";
 import { useHarnessScenarios } from "src/api/simulate-environments/scenariosHooks";
 import useSelection from "./useSelection";
 import PagedScenarioViews from "./PagedScenarioViews";
@@ -116,13 +117,16 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   // params the server answers — and selection is a predicate (useSelection) so
   // "select all N matching" never needs every id loaded.
   const [page, setPage] = useState(0);
+  // Sample mode (?scnSample) pages the 20-row captured suite in smaller pages so
+  // the pager is exercisable; the live default is PAGE_SIZE (25).
+  const pageSize = isScenarioSampleMode() ? SAMPLE_PAGE_SIZE : PAGE_SIZE;
   const pageData = useScenarioPage({
     jobId: env?.id,
     search: query,
     filters,
     groupBy,
     page,
-    pageSize: PAGE_SIZE,
+    pageSize,
   });
   // The grouping the server actually applied (its default until the user picks).
   const activeGroupBy = groupBy ?? pageData.groupBy;

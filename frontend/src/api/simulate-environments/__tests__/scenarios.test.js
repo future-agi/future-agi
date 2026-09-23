@@ -1,6 +1,20 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-import { serializeScenarioParams, scenarioFromApi } from "../scenarios";
+// The runtime source switch: force it per-test to exercise the sample-mode
+// delegation without touching window.location.
+vi.mock("../scenariosSampleMode", () => ({
+  isScenarioSampleMode: vi.fn(() => false),
+  SAMPLE_PAGE_SIZE: 5,
+}));
+
+import {
+  serializeScenarioParams,
+  scenarioFromApi,
+  listScenarios,
+  scenarioCoverage,
+  amendScenarios,
+} from "../scenarios";
+import { isScenarioSampleMode } from "../scenariosSampleMode";
 import {
   queryScenarioFixture,
   amendScenarioFixture,
@@ -24,6 +38,30 @@ const numbersOf = (res) => res.results.map((r) => r.number);
 // The list / coverage / amend engines share one mutable WORKING copy; restore
 // the committed suite before every test so an amend never leaks across cases.
 beforeEach(() => resetScenarioFixture());
+
+describe("scenarios.js — sample-mode delegation (?scnSample)", () => {
+  afterEach(() => isScenarioSampleMode.mockReturnValue(false));
+
+  it("serves the list from the emulator (not axios) when sample mode is on", async () => {
+    isScenarioSampleMode.mockReturnValue(true);
+    const res = await listScenarios("any-job", { page: 1, limit: 5 });
+    expect(res.count).toBe(SAMPLE_ROWS.length);
+    expect(res.current_page).toBe(1);
+    expect(res.results).toHaveLength(5);
+  });
+
+  it("serves coverage from the emulator when sample mode is on", async () => {
+    isScenarioSampleMode.mockReturnValue(true);
+    expect(await scenarioCoverage("any-job", {})).toEqual(coverageSample);
+  });
+
+  it("routes an amend through the emulator when sample mode is on", async () => {
+    isScenarioSampleMode.mockReturnValue(true);
+    const name = SAMPLE_ROWS[3].name;
+    const res = await amendScenarios("any-job", { changes: [{ op: "drop", scenario: name }] });
+    expect(res.receipts).toEqual([{ scenario: name, outcome: "applied" }]);
+  });
+});
 
 describe("serializeScenarioParams", () => {
   it("repeats an array key so it becomes an OR-set on the wire", () => {

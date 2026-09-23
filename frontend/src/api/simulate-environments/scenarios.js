@@ -1,5 +1,16 @@
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
+import { isScenarioSampleMode } from "./scenariosSampleMode";
+
+// Dev sample mode (?scnSample=1): serve the in-repo captured 20-row suite from
+// the fixtures emulator instead of the live endpoints. Dynamically imported so
+// the emulator and its sample JSON never enter the production bundle, and given
+// a small latency so the loading states still show. Deleted with the emulator
+// on the live flip.
+const SAMPLE_LATENCY_MS = 250;
+const withSampleLatency = (value) =>
+  new Promise((resolve) => setTimeout(() => resolve(value), SAMPLE_LATENCY_MS));
+const sampleEmulator = () => import("./_fixtures/scenariosFixtures");
 
 /**
  * The scenarios resource for one harness job — list, coverage and amend.
@@ -39,30 +50,45 @@ export const serializeScenarioParams = (params = {}) => {
   return search.toString();
 };
 
-export const listScenarios = async (jobId, params = {}) =>
-  (
+export const listScenarios = async (jobId, params = {}) => {
+  if (isScenarioSampleMode()) {
+    const { queryScenarioFixture } = await sampleEmulator();
+    return withSampleLatency(queryScenarioFixture(params));
+  }
+  return (
     await axios.get(scenariosPath(jobId), {
       params,
       paramsSerializer: serializeScenarioParams,
     })
   ).data;
+};
 
 // Amend one job's scenarios — edit (set_field / set_persona) and delete/bulk
 // delete (drop). The body is { rework, changes:[...] }; the response is
 // { receipts:[{ scenario, outcome, why }] }. There is no create route.
-export const amendScenarios = async (jobId, body) =>
-  (await axios.post(scenariosAmendPath(jobId), body)).data;
+export const amendScenarios = async (jobId, body) => {
+  if (isScenarioSampleMode()) {
+    const { amendScenarioFixture } = await sampleEmulator();
+    return withSampleLatency(amendScenarioFixture(body));
+  }
+  return (await axios.post(scenariosAmendPath(jobId), body)).data;
+};
 
 // The coverage cross-tab for one job — separate from the list because the grid
 // does not change with the page but does change with the filter. Takes the same
 // search + object-style filters as the list, plus row_axis / col_axis.
-export const scenarioCoverage = async (jobId, params = {}) =>
-  (
+export const scenarioCoverage = async (jobId, params = {}) => {
+  if (isScenarioSampleMode()) {
+    const { coverageScenarioFixture } = await sampleEmulator();
+    return withSampleLatency(coverageScenarioFixture(params));
+  }
+  return (
     await axios.get(scenariosCoveragePath(jobId), {
       params,
       paramsSerializer: serializeScenarioParams,
     })
   ).data;
+};
 
 // Map a server row to the SCENARIO_SHAPE the table/list render, carrying the
 // raw row on `_raw` for the Phase-2 edit drawer. The persona is normalised to
