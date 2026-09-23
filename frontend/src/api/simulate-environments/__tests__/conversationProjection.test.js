@@ -109,6 +109,48 @@ describe("projectConversation", () => {
     expect(ask.answerText).toBe("Strict");
   });
 
+  it("finalizes a lingering running tool once the run is no longer active", () => {
+    // A tool call whose result never arrived because the run stopped mid-call:
+    // its dot must not keep pulsing after the run is no longer working.
+    const turns = projectConversation({
+      state: "idle",
+      messages: [],
+      events: [
+        evt({ event_id: "e1", kind: "tool_started", function_call_id: "c1", emitted_at: "2026-09-22T10:00:00Z", payload: { label: "read run" } }),
+      ],
+    });
+    const tool = turns.flatMap((t) => t.steps || []).find((s) => s.kind === "tool");
+    expect(tool.state).not.toBe("running");
+    expect(tool.state).toBe("interrupted");
+  });
+
+  it("keeps a running tool pulsing while the run is actively responding", () => {
+    const turns = projectConversation({
+      state: "responding",
+      messages: [],
+      events: [
+        evt({ event_id: "e1", kind: "tool_started", function_call_id: "c1", emitted_at: "2026-09-22T10:00:00Z", payload: { label: "read run" } }),
+      ],
+    });
+    const tool = turns.flatMap((t) => t.steps || []).find((s) => s.kind === "tool");
+    expect(tool.state).toBe("running");
+  });
+
+  it("finalizes a running tool from an earlier turn when a new user turn starts", () => {
+    const turns = projectConversation({
+      state: "responding",
+      messages: [
+        msg({ message_id: "u1", role: "user", content: "go", created_at: "2026-09-22T10:00:00Z" }),
+        msg({ message_id: "u2", role: "user", content: "again", created_at: "2026-09-22T10:00:10Z" }),
+      ],
+      events: [
+        evt({ event_id: "e1", kind: "tool_started", function_call_id: "c1", emitted_at: "2026-09-22T10:00:01Z", payload: { label: "read run" } }),
+      ],
+    });
+    const tool = turns.flatMap((t) => t.steps || []).find((s) => s.kind === "tool");
+    expect(tool.state).toBe("interrupted");
+  });
+
   it("maps a failed assistant message to an error step and an interrupt to cancelled", () => {
     const turns = projectConversation({
       messages: [msg({ message_id: "a1", state: "failed", content: "nope" })],

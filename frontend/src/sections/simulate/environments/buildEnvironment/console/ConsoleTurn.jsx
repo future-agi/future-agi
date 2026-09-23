@@ -32,7 +32,7 @@ const STEP_SHAPE = PropTypes.shape({
   markdown: PropTypes.bool,
   label: PropTypes.string,
   result: PropTypes.string,
-  state: PropTypes.oneOf(["running", "completed", "failed"]),
+  state: PropTypes.oneOf(["running", "completed", "failed", "interrupted"]),
   path: PropTypes.string,
   note: PropTypes.string,
   value: PropTypes.string,
@@ -102,6 +102,8 @@ const TOOL_TONE = {
   running: BUILD_TONES.amber,
   completed: BUILD_TONES.green,
   failed: BUILD_TONES.red,
+  // A tool that never finished because the run stopped — a muted, non-pulsing dot.
+  interrupted: BUILD_TONES.zinc,
 };
 
 export function Step({ step }) {

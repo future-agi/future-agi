@@ -16,6 +16,17 @@ describe("ConsoleTurn new step kinds", () => {
     expect(screen.getByText("42 lines")).toBeInTheDocument();
   });
 
+  it("renders an interrupted tool as finalized — its result, not the pulsing ellipsis", () => {
+    // A tool that never finished (the run stopped): it must read as done, not as
+    // a still-running (pulsing "…") row.
+    render(<Turn turn={builder([
+      { id: "s1", kind: "tool", label: "read run", state: "interrupted", result: "Didn't finish" },
+    ])} />);
+    expect(screen.getByText("read run")).toBeInTheDocument();
+    expect(screen.getByText("Didn't finish")).toBeInTheDocument();
+    expect(screen.queryByText("…")).toBeNull();
+  });
+
   it("folds activity into a collapsible 'Run activity · N updates' group", () => {
     render(<Turn turn={builder([
       { id: "g1", kind: "group", count: 2, lines: ["scanning tests", "ALK moved to Build"] },
