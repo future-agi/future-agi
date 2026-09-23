@@ -65,9 +65,13 @@ func TestEventsBoundedScopedAndDeduplicated(t *testing.T) {
 	}
 }
 
-func TestNotifierRequiresBrokerConfiguration(t *testing.T) {
+func TestNotifierDisabledWithoutBrokerConfiguration(t *testing.T) {
 	t.Setenv("FI_ERROR_FEED_KAFKA_BROKERS", "")
+	if publisher, err := FromEnv(nil); err != nil || publisher != nil {
+		t.Fatalf("unset broker must disable notifications, publisher=%v err=%v", publisher, err)
+	}
+	t.Setenv("FI_ERROR_FEED_KAFKA_BROKERS", "localhost:9092, ")
 	if _, err := FromEnv(nil); err == nil {
-		t.Fatal("missing broker configuration must fail")
+		t.Fatal("invalid broker configuration must fail")
 	}
 }

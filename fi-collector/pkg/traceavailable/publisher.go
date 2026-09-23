@@ -151,10 +151,14 @@ type Publisher struct {
 	log    *slog.Logger
 }
 
-// FromEnv requires a broker. Authenticated production transport must be
-// configured before exposing this path beyond a trusted network.
+// FromEnv leaves notifications disabled when no broker is configured.
+// Authenticated production transport must be configured before exposing this path beyond a trusted network.
 func FromEnv(log *slog.Logger) (*Publisher, error) {
-	brokers := strings.Split(os.Getenv("FI_ERROR_FEED_KAFKA_BROKERS"), ",")
+	configured := strings.TrimSpace(os.Getenv("FI_ERROR_FEED_KAFKA_BROKERS"))
+	if configured == "" {
+		return nil, nil
+	}
+	brokers := strings.Split(configured, ",")
 	for i, b := range brokers {
 		brokers[i] = strings.TrimSpace(b)
 		if brokers[i] == "" {

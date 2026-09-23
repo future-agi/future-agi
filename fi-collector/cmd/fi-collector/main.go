@@ -283,16 +283,16 @@ func main() {
 		log.Error("unsupported property catalog mode", "mode", propertyMode)
 		os.Exit(1)
 	}
-	if cfg.Writer.AsyncInsert {
-		log.Error("Error Feed stored-root notifications require synchronous ClickHouse inserts")
-		os.Exit(1)
-	}
 	traceNotifications, err := traceavailable.FromEnv(log)
 	if err != nil {
 		log.Error("Error Feed notification configuration failed", "error", err)
 		os.Exit(1)
 	}
 	if traceNotifications != nil {
+		if cfg.Writer.AsyncInsert {
+			log.Error("Error Feed stored-root notifications require synchronous ClickHouse inserts")
+			os.Exit(1)
+		}
 		opts = append(opts, server.WithTraceNotifier(traceNotifications))
 	}
 	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, opts...)
