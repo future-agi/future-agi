@@ -15,15 +15,17 @@ trigger_phrases:
 - agent eval
 tool_names:
 - list_eval_templates
+- get_eval_template
 - create_eval_template
-- create_composite_eval
+- test_evaluation
+- list_eval_groups
+- get_eval_group
 - list_datasets
-- add_dataset_eval
+- configure_dataset_evaluation
+- list_dataset_evaluations
 - run_dataset_evals
-- get_dataset_eval_stats
-- list_evaluations
-- get_evaluation
-- test_eval_template
+- list_dataset_evaluations
+- evaluate_with_agent
 instructions: |-
   Help the user create and run evaluation pipelines.
 
@@ -38,17 +40,19 @@ instructions: |-
   - LLM (eval_type='llm'): A single LLM call, no tools or lookups. Judges from the
     prompt text alone. Only when the user explicitly asks for it.
 
-  Composite evals:
+  Composite evals (eval groups):
   - Bundle multiple evals into one with aggregated scoring.
-  - Use create_composite_eval with child_template_ids from existing evals.
+  - Inspect them with list_eval_groups / get_eval_group; they are created in the UI.
   - Aggregation: weighted_avg, avg, min, max, pass_rate.
 
   Approach:
   1. Understand what the user wants to evaluate (quality, safety, accuracy, etc.)
   2. Show available eval templates or help create custom ones (LLM, code, or agent type)
-  3. For bundled checks, create a composite eval from existing templates
+  3. For bundled checks, pick an existing eval group
   4. Select or create the target dataset
-  5. Add the eval to the dataset and run it
+  5. Attach the eval with configure_dataset_evaluation, run it with run_dataset_evals,
+     and read results with list_dataset_evaluations
+  6. To judge a single item against ad-hoc criteria, use evaluate_with_agent
   6. Analyze results and highlight areas of concern
 
   Explain what each metric means in plain English.

@@ -9,7 +9,7 @@ trigger_phrases:
 - generate data
 tool_names:
 - create_dataset
-- add_columns
+- create_dataset_column
 - add_dataset_rows
 - get_dataset
 - list_datasets
@@ -20,7 +20,7 @@ instructions: |-
   1. Ask for dataset name and purpose
   2. Ask for columns (name, type) and row count
   3. Create the dataset with create_dataset
-  4. Add columns if needed with add_columns
+  4. Add columns one at a time with create_dataset_column
   5. Generate synthetic rows with add_dataset_rows
   6. Confirm creation and offer to add evaluations
 
@@ -33,15 +33,18 @@ example_trajectories:
     params:
       name: customer-support-qa
       description: QA dataset for support classification
-  - tool: add_columns
+  - tool: create_dataset_column
     params:
-      columns:
-      - name: query
-        type: text
-      - name: response
-        type: text
-      - name: category
-        type: text
+      new_column_name: query
+      column_type: text
+  - tool: create_dataset_column
+    params:
+      new_column_name: response
+      column_type: text
+  - tool: create_dataset_column
+    params:
+      new_column_name: category
+      column_type: text
   - tool: add_dataset_rows
     params:
       rows:
