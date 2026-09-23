@@ -103,7 +103,11 @@ const SaveViewPopover = ({ anchorEl, open, onClose, onSave, isLoading }) => {
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") handleSave();
+            if (e.key === "Enter") {
+              // Without this the Enter re-clicks the anchor button once focus returns to it, reopening the popover.
+              e.preventDefault();
+              handleSave();
+            }
           }}
           autoFocus
           InputLabelProps={{

@@ -1,11 +1,28 @@
 import PropTypes from "prop-types";
-import { createContext, memo, useContext, useMemo, useState } from "react";
+import { memo, useContext, useEffect, useMemo, useState } from "react";
+import { DrilldownContext } from "./drilldownContext";
 import { useTheme, alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, Table, TableHead, TableRow, TableCell, TableBody, Tooltip, Popover, Dialog, IconButton } from "@mui/material";
 import Iconify from "src/components/iconify";
-import ReactApexChart from "react-apexcharts";
+import ReactApexChart from "../components/SafeApexChart";
 import { attribute, isMeasured, DOMAINS } from "../_mock/failures";
-import { deriveUseCaseLabel } from "./TraceTable";
+import { deriveUseCaseLabel, csatOf, latencyOf as agentLatencyOf } from "./TraceTable";
+import { attachPersonaDims } from "./personaDimensions";
+import { deriveToolCalls } from "./toolCalls.js";
+import { CustomWidgetBody } from "./layout/customWidgetRenderer";
+import { GoldenSetManager, DropoffFunnel, DivergenceTimeline, PitchBreakThemes, useGoldenSet } from "./goldenSet.jsx";
+import { useRunLayout, readViewFromUrl, writeViewToUrl } from "./layout/useRunLayout";
+import { SECTIONS, getPanelMeta, panelSection, snapshotAsCustom } from "./layout/panelRegistry";
+import HiddenWidgetsPopover from "./layout/HiddenWidgetsPopover";
+import ViewTabBar from "./layout/ViewTabBar";
+import SortablePanel from "./layout/SortablePanel";
+import SortableSection from "./layout/SortableSection";
+import WidgetEditor from "./layout/WidgetEditor";
+import {
+  DndContext, DragOverlay, closestCenter, PointerSensor, KeyboardSensor,
+  useSensor, useSensors,
+} from "@dnd-kit/core";
+import { SortableContext, arrayMove, sortableKeyboardCoordinates, rectSortingStrategy } from "@dnd-kit/sortable";
 
 /**
  * Analytics — enterprise density. Prioritises numbers and small
@@ -207,26 +224,6 @@ function deriveFailureClusters(tasks, limit = 4) {
     buckets.set(key, cur);
   });
   return [...buckets.values()].sort((a, b) => b.count - a.count).slice(0, limit);
-}
-
-/* Persona × outcome heatmap data. Groups tasks by persona name and
-   computes pass rate. Sorted worst first so the reader sees the
-   caller archetype most likely to trip the agent. */
-function derivePersonaMatrix(tasks, limit = 6) {
-  const groups = new Map();
-  tasks.forEach((t) => {
-    if (!isMeasured(t)) return;
-    const name = t.persona?.name || "Unknown";
-    const row = groups.get(name) || { name, passed: 0, total: 0 };
-    row.total += 1;
-    if (t.status === "passed") row.passed += 1;
-    groups.set(name, row);
-  });
-  return [...groups.values()]
-    .filter((r) => r.total > 0)
-    .map((r) => ({ ...r, rate: pct(r.passed, r.total) }))
-    .sort((a, b) => a.rate - b.rate)
-    .slice(0, limit);
 }
 
 /* ── kpi strip ─────────────────────────────────────────────────────── */
@@ -865,6 +862,7 @@ function VolumeAreaChart({ tasks }) {
     <Panel
       title="Task outcomes"
       subtitle={`Every test task in this run, in execution order · ${passed} passed / ${total}`}
+      info="Every task as a single green/red bar in the order it ran. Clusters of red next to each other usually mean the agent hit a regression around the same input or persona — worth clicking through to compare those specific tasks."
     >
       <Box sx={{ px: 1.5, py: 1.5 }}>
         <ReactApexChart
@@ -916,63 +914,44 @@ function VolumeAreaChart({ tasks }) {
 }
 VolumeAreaChart.propTypes = { tasks: PropTypes.array };
 
-/**
- * Two lines that both operate on THIS run's task sequence:
- *   - Rolling pass rate as tasks accumulate (running average)
- *   - Task latency along the sequence (with a smoothed line)
- * Together they answer "did the agent get better or worse as
- * the run went on?" for this specific run.
- */
-const DualLineOverTime = memo(function DualLineOverTime({ tasks }) {
+/* Task latency along this run's task sequence. */
+const TaskLatencyOverTime = memo(function TaskLatencyOverTime({ tasks }) {
   const theme = useTheme();
-  const { categories, rollingPass, latSeries } = useMemo(() => {
+  const { categories, latSeries } = useMemo(() => {
     const ordered = [...(tasks || [])];
-    const cats = ordered.map((_, i) => `T${i + 1}`);
-    let passed = 0;
-    const rolling = ordered.map((t, i) => {
-      if (t.status === "passed") passed += 1;
-      return Math.round((passed / (i + 1)) * 100);
-    });
-    const lat = ordered.map((t) => Math.round(latencyOf(t)));
-    return { categories: cats, rollingPass: rolling, latSeries: lat };
+    return {
+      categories: ordered.map((_, i) => `T${i + 1}`),
+      latSeries: ordered.map((t) => Math.round(latencyOf(t))),
+    };
   }, [tasks]);
 
-  const commonXAxis = {
-    categories,
-    axisBorder: { show: false }, axisTicks: { show: false },
-    /* Let Apex pick ~8 evenly-spaced ticks itself — the earlier
-       formatter used a non-existent `idx` arg on xaxis labels
-       (ApexCharts passes it to yaxis, not xaxis) which collapsed
-       every label to an empty string. */
-    tickAmount: Math.min(8, Math.max(1, categories.length - 1)),
-    labels: {
-      style: { colors: theme.palette.text.secondary, fontSize: "10px" },
-      rotate: 0, hideOverlappingLabels: true,
-    },
-  };
-
-  const chart = (title, subtitle, data, unit, color) => (
-    <Panel title={title} subtitle={subtitle}>
+  return (
+    <Panel
+      title="Task latency"
+      subtitle="Per-task wall clock"
+      info="Latency for each task in the order it ran. Random spikes = flaky infra; a steady climb = something the agent is doing more of over time (retries, context growth); a step change = usually a new tool or model kicking in mid-run."
+    >
       <Box sx={{ px: 1.5, py: 1.5 }}>
         <ReactApexChart
           type="line" height={220}
-          series={[{ name: title, data }]}
+          series={[{ name: "Task latency", data: latSeries }]}
           options={{
             chart: { toolbar: { show: false }, animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily },
             theme: { mode: theme.palette.mode },
-            stroke: { curve: "smooth", width: 2, colors: [color] },
+            stroke: { curve: "smooth", width: 2, colors: ["#7857FC"] },
             dataLabels: { enabled: false },
-            xaxis: commonXAxis,
-            yaxis: {
-              labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, formatter: (v) => `${Math.round(v)}${unit === "%" ? "%" : ""}` },
-              min: unit === "%" ? 0 : undefined,
-              max: unit === "%" ? 100 : undefined,
+            xaxis: {
+              categories,
+              axisBorder: { show: false }, axisTicks: { show: false },
+              tickAmount: Math.min(8, Math.max(1, categories.length - 1)),
+              labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, rotate: 0, hideOverlappingLabels: true },
             },
+            yaxis: { labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, formatter: (v) => `${Math.round(v)}` } },
             grid: { borderColor: theme.palette.divider, strokeDashArray: 4, padding: { left: 8, right: 8, top: -6, bottom: -6 } },
             tooltip: {
               theme: theme.palette.mode,
               x: { formatter: (v, opts) => categories[opts?.dataPointIndex] || "" },
-              y: { formatter: (v) => `${Math.round(v)}${unit}` },
+              y: { formatter: (v) => `${Math.round(v)}ms` },
             },
             markers: { size: 0 },
           }}
@@ -980,15 +959,8 @@ const DualLineOverTime = memo(function DualLineOverTime({ tasks }) {
       </Box>
     </Panel>
   );
-
-  return (
-    <Box sx={{ display: "grid", gap: 2.5, gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" } }}>
-      {chart("Running pass rate", "Across this run's task sequence", rollingPass, "%", CHART_GREEN)}
-      {chart("Task latency", "Per-task wall clock", latSeries, "ms", "#7857FC")}
-    </Box>
-  );
 });
-DualLineOverTime.propTypes = { tasks: PropTypes.array };
+TaskLatencyOverTime.propTypes = { tasks: PropTypes.array };
 
 /* Outcome breakdown donut — passed / failed / errored / escalated,
    with a legend on the right showing counts + share %. Cekura and
@@ -1008,8 +980,8 @@ const OutcomeDonutChart = memo(function OutcomeDonutChart({ tasks, biz }) {
   };
   return (
     <DonutBreakdown
-      title="Outcome breakdown"
-      subtitle={`${tasks.length} tasks classified`}
+      title="Goal outcome breakdown"
+      subtitle={`${tasks.length} tasks classified · what share hit the business goal vs stalled`}
       buckets={[
         { label: "Passed",    value: passed.length },
         { label: "Failed",    value: failed.length },
@@ -1018,6 +990,7 @@ const OutcomeDonutChart = memo(function OutcomeDonutChart({ tasks, biz }) {
       ]}
       colors={[CHART_GREEN, CHART_RED, "#F59E0B", "#7857FC"]}
       onSliceClick={onSliceClick}
+      info="Splits the run four ways: passed, failed on evaluator, hard-errored (crash / timeout), or escalated to a human. A big amber wedge points at infra / tool problems; a big purple wedge means the agent bailed instead of trying — both are different fixes than a normal failure."
     />
   );
 });
@@ -1036,7 +1009,7 @@ OutcomeDonutChart.propTypes = { tasks: PropTypes.array, biz: PropTypes.object };
  * so the color slices dominate.
  */
 const DonutBreakdown = memo(function DonutBreakdown({
-  title, subtitle, buckets, colors, height = 160, onSliceClick,
+  title, subtitle, buckets, colors, height = 160, onSliceClick, info,
 }) {
   const theme = useTheme();
   const total = buckets.reduce((a, b) => a + b.value, 0) || 1;
@@ -1049,7 +1022,7 @@ const DonutBreakdown = memo(function DonutBreakdown({
     label: b.label, count: b.value, share_pct: Math.round((b.value / total) * 100),
   }));
   return (
-    <Panel title={title} subtitle={subtitle} exportRows={exportRows}>
+    <Panel title={title} subtitle={subtitle} exportRows={exportRows} info={info}>
       <Stack sx={{ px: 1.5, pt: 1.25, pb: 1.5 }} spacing={1} alignItems="stretch">
         <ReactApexChart
           type="donut" height={height}
@@ -1057,27 +1030,44 @@ const DonutBreakdown = memo(function DonutBreakdown({
           options={{
             chart: {
               animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily,
-              events: onSliceClick
-                ? { dataPointSelection: (_e, _ctx, cfg) => onSliceClick(cfg.dataPointIndex, labels[cfg.dataPointIndex]) }
-                : undefined,
+              ...(onSliceClick && {
+                events: { dataPointSelection: (_e, _ctx, cfg) => onSliceClick(cfg.dataPointIndex, labels[cfg.dataPointIndex]) },
+              }),
             },
             theme: { mode: theme.palette.mode },
             labels, colors,
             legend: { show: false },
             dataLabels: { enabled: false },
             stroke: { width: 2, colors: [theme.palette.background.paper] },
-            plotOptions: { pie: { donut: { size: "68%", labels: { show: true,
-              name: { fontSize: "10px", color: theme.palette.text.subtitle, formatter: () => (largest ? largest.label : "Total") },
-              value: {
-                fontSize: "18px", fontWeight: 700, color: theme.palette.text.primary,
-                formatter: () => `${largestPct}%`,
-                offsetY: 4,
-              },
-              total: { show: true, label: largest ? largest.label : "Total",
-                fontSize: "10px", color: theme.palette.text.subtitle,
-                formatter: () => `${largestPct}%` },
-            } } } },
+            /* Kill the slice's built-in hover/active-state animations.
+               ApexCharts otherwise "expands" the slice on hover and
+               "selects" it on click; both re-layout the SVG and the
+               tooltip DOM gets rebuilt from scratch, which reads as
+               the tooltip randomly vanishing while the user is still
+               pointing at the slice. With these three off, the slice
+               stays put and the tooltip persists as long as the
+               cursor is inside it. */
+            states: {
+              hover: { filter: { type: "none" } },
+              active: { filter: { type: "none" } },
+            },
+            plotOptions: { pie: {
+              expandOnClick: false,
+              donut: { size: "68%", labels: { show: true,
+                name: { fontSize: "10px", color: theme.palette.text.subtitle, formatter: () => (largest ? largest.label : "Total") },
+                value: {
+                  fontSize: "18px", fontWeight: 700, color: theme.palette.text.primary,
+                  formatter: () => `${largestPct}%`,
+                  offsetY: 4,
+                },
+                total: { show: true, label: largest ? largest.label : "Total",
+                  fontSize: "10px", color: theme.palette.text.subtitle,
+                  formatter: () => `${largestPct}%` },
+              } },
+            } },
             tooltip: {
+              intersect: false, followCursor: false,
+              fixed: { enabled: false },
               y: {
                 formatter: (v) => `${v} tasks · ${Math.round((v / total) * 100)}%${onSliceClick ? " · click to drill down" : ""}`,
               },
@@ -1119,7 +1109,7 @@ const DonutBreakdown = memo(function DonutBreakdown({
 DonutBreakdown.propTypes = {
   title: PropTypes.node, subtitle: PropTypes.node,
   buckets: PropTypes.array, colors: PropTypes.array, height: PropTypes.number,
-  onSliceClick: PropTypes.func,
+  onSliceClick: PropTypes.func, info: PropTypes.node,
 };
 
 /* Success = passed vs everything else. Cekura / Retell surface this
@@ -1151,6 +1141,7 @@ const SuccessDonut = memo(function SuccessDonut({ tasks }) {
       buckets={buckets}
       colors={SUCCESS_COLORS}
       onSliceClick={onSliceClick}
+      info="The single-line answer: what share of tasks the agent actually completed. Everything else on this page tries to explain the delta between this number and 100%. Click either slice to jump straight to the passing or failing tasks."
     />
   );
 });
@@ -1180,6 +1171,7 @@ const SentimentDonut = memo(function SentimentDonut({ tasks }) {
       buckets={buckets}
       colors={SENTIMENT_COLORS}
       onSliceClick={onSliceClick}
+      info="How the simulated caller sounded by the end of the task. A big negative wedge — even on passing tasks — usually means the agent got the answer right the wrong way (too curt, too slow, too many clarifiers). Pair with disconnection reason to spot rude-but-successful patterns."
     />
   );
 });
@@ -1211,6 +1203,7 @@ const DisconnectionDonut = memo(function DisconnectionDonut({ tasks }) {
       buckets={buckets}
       colors={DISCONNECT_COLORS}
       onSliceClick={onSliceClick}
+      info="How each task actually ended — completed, escalated to a human, ran out of turns, timed out, or errored. Big Timeout / Error slices are infrastructure smells; big Escalated is an over-cautious agent; big Incomplete is one that gave up mid-task."
     />
   );
 });
@@ -1222,132 +1215,79 @@ const DISCONNECT_COLORS = ["#7857FC", "#F59E0B", "#94A3B8", "#DB2777", "#DC2626"
  * meaningful for a voice env; other envs collapse to 100%
  * outbound. Kept for parity with Retell's dashboard shape.
  */
-const PhoneIODonut = memo(function PhoneIODonut({ tasks, env }) {
-  const isVoice = env?.surface === "voice";
-  const drill = useDrilldown();
-  if (!isVoice) return null;
-  const inboundTasks = tasks.filter((t) => (hashId(t.id || "") % 5) === 0);
-  const outboundTasks = tasks.filter((t) => (hashId(t.id || "") % 5) !== 0);
-  const onSliceClick = (i) => {
-    const list = i === 0 ? outboundTasks : inboundTasks;
-    const label = i === 0 ? "Outbound" : "Inbound";
-    drill({ title: `Phone direction — ${label}`, subtitle: `${list.length} tasks`, tasks: list });
-  };
-  return (
-    <DonutBreakdown
-      title="Phone inbound / outbound"
-      subtitle="Direction split for the run's calls"
-      buckets={[
-        { label: "Outbound", value: outboundTasks.length },
-        { label: "Inbound",  value: inboundTasks.length  },
-      ]}
-      colors={["#7857FC", "#0EA5E9"]}
-      onSliceClick={onSliceClick}
-    />
-  );
-});
-PhoneIODonut.propTypes = { tasks: PropTypes.array, env: PropTypes.object };
-
 /**
- * Latency percentiles — p50 · p90 · p99 as three big-number tiles.
- * Complements the Latency histogram, which shows shape; this shows
- * the actual boundary numbers a CX lead reads to check the SLO.
- * Mirrors Retell's End-to-End Latency measurements.
+ * Latency percentiles — the percentile curve of end-to-end task
+ * latency (x = percentile, y = latency) with p50 / p90 / p99 marked.
+ * Shows the boundary numbers an SLO is written against and where the
+ * tail starts to lift away from the median.
  */
 const LatencyPercentilesPanel = memo(function LatencyPercentilesPanel({ tasks }) {
-  const latencies = sortedNums(tasks, (t) => latencyOf(t));
+  const theme = useTheme();
+  const latencies = useMemo(() => sortedNums(tasks, (t) => latencyOf(t)), [tasks]);
   const p50 = percentile(latencies, 50);
   const p90 = percentile(latencies, 90);
   const p99 = percentile(latencies, 99);
-  const tiles = [
-    { label: "p50 latency", value: `${Math.round(p50)}ms`, sub: "median" },
-    { label: "p90 latency", value: `${Math.round(p90)}ms`, sub: "90% of tasks under" },
-    { label: "p99 latency", value: `${Math.round(p99)}ms`, sub: "the tail" },
-  ];
+  const curve = useMemo(
+    () => (latencies.length ? Array.from({ length: 101 }, (_, p) => [p, Math.round(percentile(latencies, p))]) : []),
+    [latencies],
+  );
   const exportRows = [
     { percentile: "p50", latency_ms: Math.round(p50) },
     { percentile: "p90", latency_ms: Math.round(p90) },
     { percentile: "p99", latency_ms: Math.round(p99) },
   ];
+  const color = "#0EA5E9";
+  const marks = [
+    { p: 50, v: p50, label: "p50" },
+    { p: 90, v: p90, label: "p90" },
+    { p: 99, v: p99, label: "p99" },
+  ];
   return (
     <Panel
       title="Latency percentiles"
-      subtitle="End-to-end task latency at p50, p90, p99"
+      subtitle={`p50 ${Math.round(p50)}ms · p90 ${Math.round(p90)}ms · p99 ${Math.round(p99)}ms`}
       exportRows={exportRows}
+      info="Every task's end-to-end latency, sorted: read across to a percentile, up to the latency. p50 = typical; p90 = the slower 10% of tasks (the ones your SLO is really written for); p99 = your worst tail. A curve that bends sharply upward near the right edge means a small set of tasks is dragging the tail."
     >
-      <Box sx={{
-        display: "grid",
-        gridTemplateColumns: { xs: "1fr", sm: "repeat(3, 1fr)" },
-        bgcolor: "divider", gap: "1px",
-        "& > *": { bgcolor: "background.paper" },
-      }}>
-        {tiles.map((t) => (
-          <Box key={t.label} sx={{ px: 2, py: 2 }}>
-            <Typography sx={{
-              fontSize: 11, fontWeight: 500, color: "text.subtitle",
-            }}>
-              {t.label}
-            </Typography>
-            <Typography sx={{
-              mt: 0.75, fontSize: 26, fontWeight: 700, lineHeight: 1,
-              fontVariantNumeric: "tabular-nums", letterSpacing: -0.5,
-            }}>
-              {t.value}
-            </Typography>
-            <Typography sx={{ mt: 0.75, fontSize: 11, color: "text.subtitle" }}>
-              {t.sub}
-            </Typography>
-          </Box>
-        ))}
-      </Box>
-    </Panel>
-  );
-});
-LatencyPercentilesPanel.propTypes = { tasks: PropTypes.array };
-
-/**
- * Concurrency used — a line chart of how many tasks were in-flight
- * at each moment through the run. Peak-usage number lives above.
- * Retell's "Concurrency Used" chart.
- */
-const ConcurrencyPanel = memo(function ConcurrencyPanel({ tasks }) {
-  const theme = useTheme();
-  const { series, categories, peak } = useMemo(() => {
-    const n = tasks.length;
-    if (n === 0) return { series: [{ data: [] }], categories: [], peak: 0 };
-    /* Simulate concurrency across the run: assume tasks kicked off in
-       waves of ~6 in parallel. Deterministic from task index so the
-       shape stays stable across renders. */
-    const slots = Math.min(24, n);
-    const cats = [];
-    const data = [];
-    for (let i = 0; i < slots; i += 1) {
-      cats.push(`T${Math.round((i / (slots - 1)) * (n - 1)) + 1}`);
-      const wave = 3 + Math.round(Math.sin(i / 3) * 2 + (hashId(String(i)) % 3));
-      data.push(Math.max(1, wave));
-    }
-    return { series: [{ name: "Concurrency", data }], categories: cats, peak: Math.max(...data) };
-  }, [tasks]);
-  return (
-    <Panel title="Concurrency used" subtitle={`Peak ${peak} concurrent tasks in flight during the run`}>
       <Box sx={{ px: 1.5, py: 1.5 }}>
         <ReactApexChart
-          type="line" height={220}
-          series={series}
+          type="area" height={220}
+          series={[{ name: "Latency", data: curve }]}
           options={{
             chart: { toolbar: { show: false }, animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily, zoom: { enabled: false } },
             theme: { mode: theme.palette.mode },
-            stroke: { curve: "smooth", width: 2, colors: ["#0EA5E9"] },
+            colors: [color],
+            stroke: { curve: "smooth", width: 2 },
+            fill: { type: "gradient", gradient: { shadeIntensity: 0, opacityFrom: 0.25, opacityTo: 0.02, stops: [0, 100] } },
             dataLabels: { enabled: false },
             xaxis: {
-              categories,
+              type: "numeric", min: 0, max: 100, tickAmount: 10,
               axisBorder: { show: false }, axisTicks: { show: false },
-              tickAmount: Math.min(8, Math.max(1, categories.length - 1)),
-              labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, hideOverlappingLabels: true },
+              labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, formatter: (v) => `p${Math.round(v)}` },
+              tooltip: { enabled: false },
             },
             yaxis: { labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, formatter: (v) => `${Math.round(v)}` } },
-            grid: { borderColor: theme.palette.divider, strokeDashArray: 4, padding: { left: 8, right: 8, top: -6, bottom: -6 } },
-            tooltip: { theme: theme.palette.mode, y: { formatter: (v) => `${v} in flight` } },
+            grid: { borderColor: theme.palette.divider, strokeDashArray: 4, padding: { left: 8, right: 12, top: -6, bottom: 8 } },
+            annotations: {
+              xaxis: marks.map((m) => ({
+                x: m.p,
+                borderColor: alpha(theme.palette.text.primary, 0.35),
+                strokeDashArray: 3,
+                label: {
+                  text: m.label, orientation: "horizontal", borderWidth: 0,
+                  style: { background: "transparent", color: theme.palette.text.secondary, fontSize: "10px", fontWeight: 600 },
+                },
+              })),
+              points: marks.map((m) => ({
+                x: m.p, y: Math.round(m.v),
+                marker: { size: 4, fillColor: color, strokeColor: theme.palette.background.paper, strokeWidth: 2 },
+              })),
+            },
+            tooltip: {
+              theme: theme.palette.mode,
+              x: { formatter: (v) => `p${Math.round(v)}` },
+              y: { formatter: (v) => `${Math.round(v)}ms` },
+            },
             markers: { size: 0 },
           }}
         />
@@ -1355,7 +1295,7 @@ const ConcurrencyPanel = memo(function ConcurrencyPanel({ tasks }) {
     </Panel>
   );
 });
-ConcurrencyPanel.propTypes = { tasks: PropTypes.array };
+LatencyPercentilesPanel.propTypes = { tasks: PropTypes.array };
 
 /**
  * Voice cost breakdown — LLM / STT / TTS / Transport split per Vapi's
@@ -1420,6 +1360,7 @@ const VoiceCostBreakdownPanel = memo(function VoiceCostBreakdownPanel({ tasks })
       title="Cost breakdown by pipeline stage"
       subtitle={`$${totalCost.toFixed(2)} total across ${series[0].data.length} calls — LLM / TTS / STT / Transport split`}
       exportRows={exportRows}
+      info="Per-call spend, split by voice-pipeline stage. If LLM towers over everything, you're overspending on model tokens (shorter prompt, cheaper model, cache). If TTS or STT dominate, look at voice provider tier. Transport bloat usually means calls staying open too long."
     >
       <Box sx={{ px: 1.5, py: 1.5 }}>
         <ReactApexChart
@@ -1482,7 +1423,7 @@ VoiceCostBreakdownPanel.propTypes = { tasks: PropTypes.array };
  * as first-class panels.
  */
 const MetricDistribution = memo(function MetricDistribution({
-  title, subtitle, tasks, accessor, formatter, color = "#7857FC",
+  title, subtitle, tasks, accessor, formatter, color = "#7857FC", info,
 }) {
   const theme = useTheme();
   const { series, categories, exportRows } = useMemo(() => {
@@ -1513,7 +1454,7 @@ const MetricDistribution = memo(function MetricDistribution({
   }, [tasks, accessor, formatter]);
 
   return (
-    <Panel title={title} subtitle={subtitle} exportRows={exportRows}>
+    <Panel title={title} subtitle={subtitle} exportRows={exportRows} info={info}>
       <Box sx={{ px: 1.5, py: 1.5 }}>
         <ReactApexChart
           type="bar" height={220}
@@ -1544,7 +1485,7 @@ const MetricDistribution = memo(function MetricDistribution({
 MetricDistribution.propTypes = {
   title: PropTypes.node, subtitle: PropTypes.node,
   tasks: PropTypes.array, accessor: PropTypes.func, formatter: PropTypes.func,
-  color: PropTypes.string,
+  color: PropTypes.string, info: PropTypes.node,
 };
 
 /**
@@ -1590,6 +1531,7 @@ const DistributionSummary = memo(function DistributionSummary({ tasks }) {
       title="Distribution summary"
       subtitle="p50 · p90 · p99 · max for every task-level metric"
       exportRows={exportRows}
+      info="One row per metric with the four numbers that describe its shape. p90 is the number to defend in a review; the max tells you how bad your worst tail actually got. A big gap between p50 and p99 means a few outliers are dragging the run and are worth investigating first."
     >
       <Box sx={{
         display: "grid",
@@ -1657,13 +1599,9 @@ const DistributionSummary = memo(function DistributionSummary({ tasks }) {
 });
 DistributionSummary.propTypes = { tasks: PropTypes.array };
 
-/**
- * DrilldownContext — a lightweight "when a chart segment is clicked,
- * open a task list filtered to that segment" bus. Every chart calls
- * `onDrill({ title, subtitle, tasks })` with the filtered tasks; the
- * top-level shell owns a drawer that shows them.
- */
-const DrilldownContext = createContext(null);
+/* DrilldownContext moved to its own module (./drilldownContext) so
+   the unified widget renderer can use the same context without
+   importing this file. */
 function useDrilldown() { return useContext(DrilldownContext) || (() => {}); }
 
 /**
@@ -1673,7 +1611,8 @@ function useDrilldown() { return useContext(DrilldownContext) || (() => {}); }
  * in the URL — the Test runs table reads that and scrolls / opens
  * the task row.
  */
-function TaskDrilldownDrawer({ open, onClose, title, subtitle, tasks: filtered }) {
+function TaskDrilldownDrawer({ open, onClose, title, subtitle, tasks: filtered, env }) {
+  const golden = useGoldenSet(env || {});
   return (
     <Dialog
       open={open}
@@ -1729,6 +1668,7 @@ function TaskDrilldownDrawer({ open, onClose, title, subtitle, tasks: filtered }
                 : t.status === "error" ? "#DC2626"
                 : t.status === "failed" ? "#DC2626"
                 : "text.subtitle";
+              const isGold = golden.ids.includes(t.id);
               return (
                 <Box key={t.id || i} sx={{ px: 2.5, py: 1.5 }}>
                   <Stack direction="row" alignItems="baseline" spacing={1}>
@@ -1738,6 +1678,15 @@ function TaskDrilldownDrawer({ open, onClose, title, subtitle, tasks: filtered }
                     <Typography sx={{ fontSize: 13, fontWeight: 600, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {t.title || t.name || t.id}
                     </Typography>
+                    <Tooltip arrow title={isGold ? "Remove from golden set" : "Mark as golden — ground truth for the divergence widgets"}>
+                      <IconButton
+                        size="small" onClick={() => golden.toggle(t.id)}
+                        sx={{ width: 26, height: 26, color: isGold ? "#F59E0B" : "text.disabled", "&:hover": { color: "#F59E0B" } }}
+                        aria-label={isGold ? "Remove from golden set" : "Mark as golden"}
+                      >
+                        <Iconify icon={isGold ? "solar:star-bold" : "solar:star-linear"} width={14} />
+                      </IconButton>
+                    </Tooltip>
                     <Typography sx={{ fontSize: 11, fontWeight: 700, color: statusColor }}>
                       {status}
                     </Typography>
@@ -1770,6 +1719,7 @@ function TaskDrilldownDrawer({ open, onClose, title, subtitle, tasks: filtered }
 TaskDrilldownDrawer.propTypes = {
   open: PropTypes.bool, onClose: PropTypes.func,
   title: PropTypes.node, subtitle: PropTypes.node, tasks: PropTypes.array,
+  env: PropTypes.object,
 };
 
 /**
@@ -1793,6 +1743,7 @@ const TaskVolumeChart = memo(function TaskVolumeChart({ tasks }) {
     <Panel
       title="Task grid"
       subtitle={`Every task in this run · ${passed} passed / ${total} · hover for details`}
+      info="One cell per task, colour-coded by outcome. Useful when the run has enough tasks that a bar chart blurs — the grid keeps every task visible at once so bad clusters (a block of red) show up as visual patterns you can point at."
     >
       <Box sx={{ px: 2, py: 2 }}>
         <Box sx={{
@@ -1886,7 +1837,11 @@ const DurationByBucketChart = memo(function DurationByBucketChart({ tasks }) {
   }, [tasks]);
 
   return (
-    <Panel title="Avg duration by complexity" subtitle="Seconds per task, bucketed by turn count">
+    <Panel
+      title="Avg duration by complexity"
+      subtitle="Seconds per task, bucketed by turn count"
+      info="Cross-checks whether long tasks are actually complex or just slow. A steep left-to-right rise means each extra turn genuinely costs more thinking time; a flat line with a spike at the end means the agent hangs on specific edge cases regardless of complexity."
+    >
       <Box sx={{ px: 1.5, py: 1.5 }}>
         <ReactApexChart
           type="bar" height={260}
@@ -1925,53 +1880,57 @@ DurationByBucketChart.propTypes = { tasks: PropTypes.array };
  * history (first run), the sparkline area stays empty and the delta
  * chip is hidden — the value alone still reads.
  */
-function KpiStrip({ tasks, biz, trend }) {
+function KpiStrip({ tasks, biz, trend, env }) {
   const latencies = sortedNums(tasks, (t) => latencyOf(t));
   const p90Lat = percentile(latencies, 90);
-  const critical = tasks.filter((t) => t.critical && (t.status === "failed" || t.status === "error")).length;
   const avgDurationS = latencies.length
     ? latencies.reduce((a, v) => a + v, 0) / latencies.length / 1000
     : 0;
-
+  const turnCounts = tasks
+    .map((t) => t.steps?.length || 0)
+    .filter((n) => n > 0);
+  const avgTurns = turnCounts.length
+    ? turnCounts.reduce((a, v) => a + v, 0) / turnCounts.length
+    : 0;
   const deltaPct = (curr, prev) => {
     if (typeof prev !== "number" || prev === 0) return null;
     return Math.round(((curr - prev) / prev) * 100);
   };
 
-  /* 8 cards, ordered by importance from top-left:
-     Pass rate → Total tasks → Escalation → Critical
-     Avg duration → Latency p90 → Cost/pass → Total cost
-     Follows the shape Bland / Retell / Cekura all converge on:
-     outcome first, volume second, latency third, cost last. */
+  const isVoice = env?.surface === "voice";
+  const n = tasks.length;
+  const avgOf = (sel) => (n ? tasks.reduce((a, t) => a + sel(t), 0) / n : 0);
+  const connected = tasks.filter((t) => t.status !== "error").length;
+  const agentTalkPct = Math.round(avgOf((t) => {
+    const steps = t.steps || [];
+    return steps.length ? (steps.filter((s) => s.role === "agent").length / steps.length) * 100 : 50;
+  }));
+
+  /* Legacy test-run KPIs (Call details + System metrics), in the
+     legacy order. WPM, stop latency and talk ratio are voice-only. */
+  const legacyCards = [
+    { label: isVoice ? "Total Calls" : "Total Chats", value: numFmt.format(n) },
+    { label: isVoice ? "Connected" : "Completed", value: numFmt.format(connected), sub: `of ${n}` },
+    { label: isVoice ? "Calls Connected(%)" : "Completion(%)", value: `${pct(connected, n)}%` },
+    { label: "Avg CSAT Score", value: n ? avgOf(csatOf).toFixed(1) : "—" },
+    { label: "Agent Latency", value: `${Math.round(avgOf(agentLatencyOf))}ms` },
+    isVoice && { label: "Agent WPM", value: Math.round(avgOf((t) => jitter(t.id, "wpm", 150, 40))), sub: "words/min" },
+    isVoice && { label: "Agent Stop Latency", value: `${Math.round(avgOf((t) => jitter(t.id, "stop", 180, 240)))}ms` },
+    { label: "Avg Turn Count", value: avgTurns ? avgTurns.toFixed(1) : "—" },
+    isVoice && { label: "Talk Ratio", value: `${agentTalkPct}/${100 - agentTalkPct}`, sub: "agent/customer" },
+  ].filter(Boolean);
+
   const cards = [
-    {
-      label: "Pass rate",
-      value: `${biz.resolutionRate}%`,
-      sub: `${biz.passed} / ${biz.measured}`,
-      delta: deltaPct(biz.resolutionRate, trend?.prevPassRate),
-      goodUp: true,
-    },
-    {
-      label: "Total tasks",
-      value: numFmt.format(biz.total),
-      sub: `${biz.measured} measured`,
-    },
-    {
-      label: "Escalation",
-      value: `${biz.escalationRate}%`,
-      sub: `${biz.escalated} handed off`,
-      delta: deltaPct(biz.escalationRate, trend?.prevEscalationRate),
-      goodUp: false,
-    },
-    {
-      label: "Critical issues",
-      value: numFmt.format(critical),
-      sub: critical > 0 ? "release blockers" : "none",
-    },
+    ...legacyCards,
     {
       label: "Avg duration",
       value: `${avgDurationS.toFixed(1)}s`,
       sub: `${latencies.length} timed tasks`,
+    },
+    {
+      label: "Avg turns",
+      value: avgTurns ? avgTurns.toFixed(1) : "—",
+      sub: turnCounts.length ? `${turnCounts.length} tasks` : "no traces",
     },
     {
       label: "Latency p90",
@@ -1995,24 +1954,20 @@ function KpiStrip({ tasks, biz, trend }) {
   return (
     <Box sx={{
       border: "1px solid", borderColor: "divider", borderRadius: 1.5,
-      /* Container's bgcolor shows through the `gap: 1px` between cells,
-         so setting it to the divider color paints a perfect 1px seam
-         between every cell. Each cell then restores background.paper.
-         Avoids the nth-of-type juggling that forgot to reset
-         borderColor at every 4n seam. */
-      bgcolor: "divider",
+      bgcolor: "background.paper",
       display: "grid",
-      gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(4, 1fr)", md: "repeat(8, 1fr)" },
-      gap: "1px",
+      gridTemplateColumns: { xs: "repeat(2, 1fr)", sm: "repeat(3, 1fr)", md: "repeat(5, 1fr)", lg: "repeat(7, 1fr)" },
       overflow: "hidden",
-      "& > *": { bgcolor: "background.paper" },
+      /* Right + bottom hairline per cell; the container clips the ones on
+         its outer edge, and a partial last row leaves no grey gap cells. */
+      "& > *": { boxShadow: (t) => `1px 0 0 ${t.palette.divider}, 0 1px 0 ${t.palette.divider}` },
     }}>
       {cards.map((c) => <HeroKpi key={c.label} {...c} />)}
     </Box>
   );
 }
 KpiStrip.propTypes = {
-  tasks: PropTypes.array, evals: PropTypes.array, biz: PropTypes.object, trend: PropTypes.object,
+  tasks: PropTypes.array, evals: PropTypes.array, biz: PropTypes.object, trend: PropTypes.object, env: PropTypes.object,
   runHistory: PropTypes.array, currentRunId: PropTypes.string,
 };
 
@@ -2119,6 +2074,7 @@ const UseCaseRiskList = memo(function UseCaseRiskList({ tasks }) {
       title="Use case risk"
       subtitle={`Weakest ${rows.length} of ${totalGroups} · red segment = failed, purple = passed`}
       exportRows={exportRows}
+      info="Ranks the tasks by the use case they exercise (refund, escalation, tool call, etc.) and shows the pass/fail split for each. The use case at the top is the one the agent struggles with most — usually a better fix target than picking off individual failing tasks."
     >
       <UseCaseRiskStacked rows={rows} />
     </Panel>
@@ -2154,7 +2110,7 @@ const UseCaseRiskStacked = memo(function UseCaseRiskStacked({ rows }) {
   const chartHeight = Math.max(160, ordered.length * 42 + 40);
 
   return (
-    <Box sx={{ px: 1, pt: 1, pb: 1.5 }}>
+    <Box sx={{ px: 2, pt: 1, pb: 1.5 }}>
       <ReactApexChart
         type="bar" height={chartHeight}
         series={[
@@ -2190,7 +2146,7 @@ const UseCaseRiskStacked = memo(function UseCaseRiskStacked({ rows }) {
             labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, formatter: (v) => `${Math.round(v)}` },
           },
           yaxis: {
-            labels: { style: { colors: theme.palette.text.secondary, fontSize: "12px" }, maxWidth: 220 },
+            labels: { style: { colors: theme.palette.text.secondary, fontSize: "12px" }, maxWidth: 620 },
           },
           grid: {
             borderColor: theme.palette.divider, strokeDashArray: 4,
@@ -2328,9 +2284,9 @@ const TurnBars = memo(function TurnBars({ tasks }) {
 
   return (
     <PanelChart
-      title="Tasks by turn count"
-      subtitle="One bar per turn count, stacked by outcome. Rising red on the right = complex tasks fail more."
-
+      title="Pass / fail by conversation length"
+      subtitle="Each bar groups tasks by how many turns they took — green passed, red failed. Growing red as you move right means the agent breaks down on longer conversations."
+      info="Groups every task by how many turns it took, then stacks the pass/fail split inside each bar. Short-turn failures usually mean the agent gave up too fast; long-turn failures usually mean it lost the thread. The shape of the red segment across bars tells you which pattern you've got."
     >
       <ReactApexChart
         type="bar" height={260}
@@ -2400,6 +2356,7 @@ const EvalsTable = memo(function EvalsTable({ tasks, evals }) {
         ? `${rows.length} grader${rows.length === 1 ? "" : "s"} · ${overall.passed} of ${overall.total} checks passed (${overall.rate}%)`
         : "Grader pass rates"}
       exportRows={rows.map((r) => ({ grader: r.name, category: r.category, pass_rate: r.passRate, passed: r.passed, total: r.total }))}
+      info="One row per evaluator with its own pass rate. The task's overall pass/fail is an AND across every grader — so a single grader in the red is often the actual bottleneck. Sort your fix work by the grader that's failing hardest."
     >
       <EvalGraderTable rows={rows} />
     </Panel>
@@ -2594,7 +2551,11 @@ function AttributionTable({ tasks }) {
   if (!rows.length) return null;
 
   return (
-    <Panel title="Failure attribution" subtitle="Which layer to blame first — read counter-clockwise from Agent.">
+    <Panel
+      title="Failure attribution"
+      subtitle="Which layer to blame first — read counter-clockwise from Agent."
+      info="Groups every failure by the layer that owns the fix: agent behaviour, transport, environment / tooling, simulated caller, or grader. Before you assign an engineer, this tells you whether it's an agent-code bug, an infra flake, or a bad evaluator. Skips passing tasks entirely."
+    >
       <AttributionDonut rows={rows} />
     </Panel>
   );
@@ -2627,12 +2588,25 @@ function AttributionDonut({ rows }) {
           legend: { show: false },
           dataLabels: { enabled: false },
           stroke: { width: 2, colors: [theme.palette.background.paper] },
-          plotOptions: { pie: { donut: { size: "70%", labels: { show: true,
-            name: { fontSize: "10px", color: theme.palette.text.subtitle },
-            value: { fontSize: "22px", fontWeight: 700, color: theme.palette.text.primary, formatter: (v) => `${v}` },
-            total: { show: true, label: "Failures", fontSize: "10px", color: theme.palette.text.subtitle, formatter: () => `${total}` },
-          } } } },
-          tooltip: { y: { formatter: (v) => `${v} failures` } },
+          /* Freeze the slice on hover/click so ApexCharts doesn't
+             re-layout the SVG and blow away the tooltip mid-hover. */
+          states: {
+            hover: { filter: { type: "none" } },
+            active: { filter: { type: "none" } },
+          },
+          plotOptions: { pie: {
+            expandOnClick: false,
+            donut: { size: "70%", labels: { show: true,
+              name: { fontSize: "10px", color: theme.palette.text.subtitle },
+              value: { fontSize: "22px", fontWeight: 700, color: theme.palette.text.primary, formatter: (v) => `${v}` },
+              total: { show: true, label: "Failures", fontSize: "10px", color: theme.palette.text.subtitle, formatter: () => `${total}` },
+            } },
+          } },
+          tooltip: {
+            intersect: false, followCursor: false,
+            fixed: { enabled: false },
+            y: { formatter: (v) => `${v} failures` },
+          },
         }}
       />
       <Stack spacing={0.75}>
@@ -2692,6 +2666,7 @@ const SlowestTable = memo(function SlowestTable({ tasks }) {
       title="Slowest tasks"
       subtitle="Ranked by wall-clock duration — hover to see the task"
       exportRows={exportRows}
+      info="The eight worst offenders on latency. These are the ones driving your p90 and p99 up — fix one of these and the percentile tiles above visibly improve. If the top ones share a persona or use case, you've found a pattern, not a one-off."
     >
       <RankedColumnChart
         rows={rows.map((t) => ({
@@ -2729,6 +2704,7 @@ const ExpensiveTable = memo(function ExpensiveTable({ tasks }) {
       title="Most expensive tasks"
       subtitle="Ranked by cost — hover to see the task"
       exportRows={exportRows}
+      info="The eight tasks that ate the most dollars this run. A handful of expensive tasks usually dominate the total — a shorter prompt on these often saves more than optimising every task. Cross-check with tokens: high cost + high tokens is prompt bloat, high cost + low tokens is a pricey model."
     >
       <RankedColumnChart
         rows={rows.map((t) => ({
@@ -2744,6 +2720,158 @@ const ExpensiveTable = memo(function ExpensiveTable({ tasks }) {
   );
 });
 ExpensiveTable.propTypes = { tasks: PropTypes.array };
+
+/* ── Tools section — W&B aesthetic: dense, colorful chart canvases
+   with tight chrome. Data derived per render from
+   `deriveToolCalls(tasks)` which turns each task's steps into one
+   row per tool invocation. */
+
+/* Vivid palette that matches the W&B categorical look — bright,
+   saturated, high-contrast. Each tool holds its color across all
+   three panels so the eye tracks a tool between charts. */
+const TOOL_COLORS = ["#3B82F6", "#F97316", "#14B8A6", "#A855F7", "#EC4899", "#EAB308", "#22C55E", "#EF4444", "#06B6D4", "#8B5CF6"];
+
+function colorForTool(name, allNames) {
+  const idx = allNames.indexOf(name);
+  return TOOL_COLORS[(idx >= 0 ? idx : 0) % TOOL_COLORS.length];
+}
+
+/**
+ * TOOL CALL VOLUME — vertical column chart with tools on X and
+ * counts on Y. Each column colored per tool (distributed) so it
+ * reads like a W&B categorical breakdown. Compact chart chrome. */
+const ToolCallVolumePanel = memo(function ToolCallVolumePanel({ tasks }) {
+  const theme = useTheme();
+  const rows = useMemo(() => {
+    const calls = deriveToolCalls(tasks);
+    const byName = new Map();
+    calls.forEach((c) => byName.set(c.toolName, (byName.get(c.toolName) || 0) + 1));
+    return [...byName.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [tasks]);
+  const total = rows.reduce((a, r) => a + r.count, 0);
+  const allNames = rows.map((r) => r.name);
+  const exportRows = rows.map((r, i) => ({ rank: i + 1, tool: r.name, calls: r.count, share_pct: total ? Math.round((r.count / total) * 100) : 0 }));
+  return (
+    <Panel
+      title="Tool call volume"
+      subtitle={`${total} invocations · ${rows.length} tools`}
+      info="Fixes here usually belong to the infra team, not the prompt team."
+      exportRows={exportRows}
+    >
+      <Box sx={{ px: 1.5, pt: 0.5, pb: 1 }}>
+        <ReactApexChart
+          type="bar" height={320}
+          series={[{ name: "Calls", data: rows.map((r) => r.count) }]}
+          options={{
+            chart: { toolbar: { show: false }, animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily },
+            theme: { mode: theme.palette.mode },
+            colors: rows.map((r) => colorForTool(r.name, allNames)),
+            plotOptions: { bar: { columnWidth: "72%", borderRadius: 3, borderRadiusApplication: "end", distributed: true } },
+            dataLabels: { enabled: true, formatter: (v) => v, style: { fontSize: "10px", fontWeight: 700, colors: [theme.palette.text.primary] }, offsetY: -16 },
+            xaxis: {
+              categories: rows.map((r) => r.name),
+              axisBorder: { show: false }, axisTicks: { show: false },
+              labels: { style: { fontSize: "10px", colors: theme.palette.text.secondary }, rotate: -30, trim: false, hideOverlappingLabels: false },
+            },
+            yaxis: { labels: { style: { fontSize: "10px", colors: theme.palette.text.secondary } } },
+            grid: { borderColor: alpha(theme.palette.text.primary, 0.06), strokeDashArray: 3, xaxis: { lines: { show: false } }, padding: { bottom: 24, top: 8 } },
+            legend: { show: false },
+            tooltip: { theme: theme.palette.mode, y: { formatter: (v) => `${v} calls · ${total ? Math.round((v / total) * 100) : 0}%` } },
+          }}
+        />
+      </Box>
+    </Panel>
+  );
+});
+ToolCallVolumePanel.propTypes = { tasks: PropTypes.array };
+
+/**
+ * TOOL FAILURE RATE — dense horizontal bar chart, one bar per
+ * tool, sorted by failure rate descending. Bar length = fail %,
+ * per-tool color from the shared palette (matches Volume + Slowest
+ * so the same tool = same color across all three panels). Numeric
+ * "X / Y" label sits at the end of every bar. A dashed 40% marker
+ * calls out the danger threshold. */
+const ToolFailureRatePanel = memo(function ToolFailureRatePanel({ tasks }) {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === "dark";
+  const rows = useMemo(() => {
+    const calls = deriveToolCalls(tasks);
+    const byName = new Map();
+    calls.forEach((c) => {
+      const rec = byName.get(c.toolName) || { total: 0, fails: 0 };
+      rec.total += 1;
+      if (c.toolStatus === "failed" || c.toolStatus === "error" || c.toolStatus === "timeout") rec.fails += 1;
+      byName.set(c.toolName, rec);
+    });
+    return [...byName.entries()]
+      .map(([name, r]) => ({
+        name,
+        rate: r.total ? Math.round((r.fails / r.total) * 100) : 0,
+        fails: r.fails,
+        total: r.total,
+      }))
+      .sort((a, b) => b.rate - a.rate);
+  }, [tasks]);
+  const allNames = rows.map((r) => r.name);
+  const exportRows = rows.map((r, i) => ({ rank: i + 1, tool: r.name, failure_rate_pct: r.rate, failed: r.fails, total: r.total }));
+  return (
+    <Panel
+      title="Tool failure rate"
+      subtitle="Fail % per tool — sorted, danger threshold at 40%"
+      info="High-failure tools break the agent's flow. Route to infra, not the prompt team."
+      exportRows={exportRows}
+    >
+      <Box sx={{ px: 1.5, pt: 0.5, pb: 1 }}>
+        <ReactApexChart
+          type="bar" height={320}
+          series={[{ name: "Failure rate", data: rows.map((r) => r.rate) }]}
+          options={{
+            chart: { toolbar: { show: false }, animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily },
+            theme: { mode: theme.palette.mode },
+            colors: rows.map((r) => colorForTool(r.name, allNames)),
+            plotOptions: { bar: { horizontal: true, barHeight: "62%", borderRadius: 3, borderRadiusApplication: "end", distributed: true, dataLabels: { position: "top" } } },
+            dataLabels: {
+              enabled: true,
+              formatter: (v, opts) => {
+                const r = rows[opts.dataPointIndex];
+                return r ? `${Math.round(v)}%  ·  ${r.fails}/${r.total}` : `${Math.round(v)}%`;
+              },
+              style: { fontSize: "10.5px", fontWeight: 700, colors: [theme.palette.text.primary] },
+              offsetX: 56,
+            },
+            xaxis: {
+              categories: rows.map((r) => r.name),
+              axisBorder: { show: false }, axisTicks: { show: false },
+              labels: { style: { fontSize: "10px", colors: theme.palette.text.secondary }, formatter: (v) => `${Math.round(v)}%` },
+            },
+            yaxis: { labels: { style: { fontSize: "11px", colors: theme.palette.text.primary, fontWeight: 600 } } },
+            grid: {
+              borderColor: alpha(theme.palette.text.primary, isDark ? 0.08 : 0.06),
+              strokeDashArray: 3,
+              xaxis: { lines: { show: true } },
+              yaxis: { lines: { show: false } },
+              padding: { right: 70, left: 4, top: 8, bottom: 8 },
+            },
+            legend: { show: false },
+            tooltip: {
+              theme: theme.palette.mode,
+              y: {
+                formatter: (v, opts) => {
+                  const r = rows[opts.dataPointIndex];
+                  return r ? `${r.fails} of ${r.total} failed (${r.rate}%)` : `${v}%`;
+                },
+              },
+            },
+          }}
+        />
+      </Box>
+    </Panel>
+  );
+});
+ToolFailureRatePanel.propTypes = { tasks: PropTypes.array };
 
 /**
  * Ranked column chart — vertical bars sorted descending, x-axis
@@ -2767,7 +2895,16 @@ const RankedColumnChart = memo(function RankedColumnChart({ rows, formatter, col
     );
   }
   const fmt = formatter || ((v) => `${Math.round(v)}`);
-  const categories = rows.map((_, i) => `#${i + 1}`);
+  /* Truncate long task slugs so the axis stays readable but the full
+     name still surfaces on hover via the custom tooltip below. Rank
+     prefix (#1, #2…) is now part of the label so users still know
+     the ordering at a glance. */
+  const truncate = (s, n = 16) => {
+    const str = String(s || "");
+    if (str.length <= n) return str;
+    return `${str.slice(0, n - 1)}…`;
+  };
+  const categories = rows.map((r, i) => `#${i + 1} ${truncate(r.label)}`);
   const values = rows.map((r) => r.value);
   const labels = rows.map((r) => r.label);
   const metas = rows.map((r) => r.meta || "");
@@ -2775,7 +2912,7 @@ const RankedColumnChart = memo(function RankedColumnChart({ rows, formatter, col
   return (
     <Box sx={{ px: 1, pt: 1, pb: 0.5 }}>
       <ReactApexChart
-        type="bar" height={280}
+        type="bar" height={320}
         series={[{ name: "value", data: values }]}
         options={{
           chart: { toolbar: { show: false }, animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily },
@@ -2797,7 +2934,10 @@ const RankedColumnChart = memo(function RankedColumnChart({ rows, formatter, col
             categories,
             axisBorder: { show: false }, axisTicks: { show: false },
             labels: {
-              style: { colors: theme.palette.text.secondary, fontSize: "11px", fontWeight: 600 },
+              style: { colors: theme.palette.text.secondary, fontSize: "10.5px", fontWeight: 600 },
+              rotate: -35, rotateAlways: true,
+              trim: false, hideOverlappingLabels: false,
+              offsetY: 2,
             },
           },
           yaxis: {
@@ -2809,7 +2949,7 @@ const RankedColumnChart = memo(function RankedColumnChart({ rows, formatter, col
           grid: {
             borderColor: theme.palette.divider, strokeDashArray: 4,
             xaxis: { lines: { show: false } }, yaxis: { lines: { show: true } },
-            padding: { left: 8, right: 8, top: 20, bottom: -4 },
+            padding: { left: 8, right: 8, top: 20, bottom: 40 },
           },
           tooltip: {
             theme: theme.palette.mode,
@@ -3230,7 +3370,7 @@ RankedList.propTypes = { rows: PropTypes.array, emptyText: PropTypes.string };
    Just a clean surface with a plain title + subtitle header and lots
    of padding. Deliberately restrained to stop reading as "AI dashboard
    template". Rule from memory: never edge-stripe a rounded card. */
-function Panel({ title, subtitle, children, minHeight, action, exportRows, exportFilename }) {
+function Panel({ title, subtitle, children, minHeight, action, exportRows, exportFilename, info }) {
   const hasExport = Array.isArray(exportRows) && exportRows.length > 0;
   const onExport = () => {
     const safe = (title || "panel").toString().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -3247,12 +3387,15 @@ function Panel({ title, subtitle, children, minHeight, action, exportRows, expor
         px: 3, pt: 2.5, pb: 2,
       }}>
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography sx={{
-            typography: "s1", color: "text.primary", fontWeight: 700,
-            fontSize: 15, letterSpacing: -0.1, lineHeight: 1.3,
-          }}>
-            {title}
-          </Typography>
+          <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
+            <Typography sx={{
+              typography: "s1", color: "text.primary", fontWeight: 700,
+              fontSize: 15, letterSpacing: -0.1, lineHeight: 1.3,
+            }}>
+              {title}
+            </Typography>
+            {info && <PanelInfoIcon info={info} title={title} />}
+          </Stack>
           {subtitle && (
             <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 12.5, mt: 0.5, lineHeight: 1.45 }}>
               {subtitle}
@@ -3261,24 +3404,22 @@ function Panel({ title, subtitle, children, minHeight, action, exportRows, expor
         </Box>
         {action}
         {hasExport && (
-          <Tooltip arrow title="Download data as CSV">
-            <Box
-              component="button"
-              type="button"
-              onClick={onExport}
-              className="analytics-no-print"
-              aria-label={`Download ${title} as CSV`}
-              sx={{
-                display: "inline-flex", alignItems: "center", justifyContent: "center",
-                width: 26, height: 26, borderRadius: 999,
-                bgcolor: "transparent", border: "none", cursor: "pointer",
-                color: "text.subtitle",
-                "&:hover": { bgcolor: "action.hover", color: "text.primary" },
-              }}
-            >
-              <Iconify icon="solar:download-minimalistic-linear" width={14} />
-            </Box>
-          </Tooltip>
+          /* Visually hidden — the kebab menu's Download item finds
+             this button by aria-label and click()s it, so the CSV
+             download stays exactly one code path while the header
+             loses its second icon. Kept in the DOM (not display:none
+             on the JSX tree) so the queryselector still lands. */
+          <Box
+            component="button"
+            type="button"
+            onClick={onExport}
+            className="analytics-no-print"
+            aria-label={`Download ${title} as CSV`}
+            sx={{
+              position: "absolute", width: 1, height: 1, padding: 0, margin: -1,
+              overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap", border: 0,
+            }}
+          />
         )}
       </Stack>
       <Box sx={{ flex: 1, minHeight: 0 }}>
@@ -3291,16 +3432,46 @@ Panel.propTypes = {
   title: PropTypes.node, subtitle: PropTypes.node, children: PropTypes.node, minHeight: PropTypes.number,
   action: PropTypes.node,
   exportRows: PropTypes.array, exportFilename: PropTypes.string,
+  info: PropTypes.node,
 };
 
-function PanelChart({ title, subtitle, children }) {
+/* Small info glyph rendered next to a Panel title. Hovering surfaces
+   a plain-English "why this panel matters" note so users don't have
+   to guess what a chart is trying to tell them. */
+function PanelInfoIcon({ info, title }) {
   return (
-    <Panel title={title} subtitle={subtitle}>
+    <Tooltip
+      arrow
+      placement="top"
+      title={<Box sx={{ px: 0.25, py: 0.25, fontSize: 12, lineHeight: 1.5, maxWidth: 280 }}>{info}</Box>}
+    >
+      <Box
+        component="span"
+        aria-label={`About ${title || "this chart"}`}
+        className="analytics-no-print"
+        sx={{
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
+          width: 16, height: 16, borderRadius: 999,
+          color: "text.subtitle", cursor: "help", flexShrink: 0,
+          transition: "color 120ms",
+          "&:hover": { color: "text.primary" },
+        }}
+      >
+        <Iconify icon="solar:info-circle-linear" width={13} />
+      </Box>
+    </Tooltip>
+  );
+}
+PanelInfoIcon.propTypes = { info: PropTypes.node, title: PropTypes.node };
+
+function PanelChart({ title, subtitle, children, info }) {
+  return (
+    <Panel title={title} subtitle={subtitle} info={info}>
       <Box sx={{ px: 2, pb: 2.5 }}>{children}</Box>
     </Panel>
   );
 }
-PanelChart.propTypes = { title: PropTypes.node, subtitle: PropTypes.node, children: PropTypes.node };
+PanelChart.propTypes = { title: PropTypes.node, subtitle: PropTypes.node, children: PropTypes.node, info: PropTypes.node };
 
 /* Richer table styling — taller rows, larger typography, colored
    hover with a subtle left accent that appears on hover, uppercase
@@ -3466,7 +3637,7 @@ function VoiceLatencyPanel({ voice }) {
     <Panel
       title="Voice latency SLOs"
       subtitle="TTFW · LLM · TTS · ASR — the four segments that decide caller experience."
-
+      info="Latency broken down by the four voice-pipeline segments callers actually feel: Time-to-First-Word, model thinking, text-to-speech, speech-to-text. Any red p90 means callers heard silence past your SLO — that's the one to fix first."
     >
       <DataTableShell>
         <TableHead>
@@ -3517,7 +3688,7 @@ function FailureClustersPanel({ tasks }) {
     <Panel
       title="Top failure themes"
       subtitle={`Where losses cluster · ${totalFailed} measured failures`}
-
+      info="Auto-groups failures by (attribution layer × use case) and ranks the clusters by count. Fixing the top cluster typically resolves several failing tasks at once — better ROI than triaging individual tasks."
     >
       {clusters.length === 0 ? (
         <Box sx={{ p: 3, textAlign: "center" }}>
@@ -3573,105 +3744,6 @@ function FailureClustersPanel({ tasks }) {
 }
 FailureClustersPanel.propTypes = { tasks: PropTypes.array };
 
-/* ── persona × outcome matrix ─────────────────────────────────────── */
-
-/* One row per caller archetype: name · runs · pass rate + inline
-   colour bar. Weakest personas surface first so "impatient callers
-   only pass 18%" jumps out — the persona angle competitors highlight
-   in their marketing. */
-/**
- * Persona × outcome — radar chart.
- * A radar reads "shape of performance across archetypes" at a glance:
- * a symmetric hexagon = the agent handles every persona equally, a
- * spiky one = there's a weak flank. Much more scannable than a stack
- * of horizontal bars, and orthogonal in visual language from the
- * other bar/scatter panels below.
- */
-const PersonaMatrixPanel = memo(function PersonaMatrixPanel({ tasks }) {
-  const theme = useTheme();
-  const rows = useMemo(() => derivePersonaMatrix(tasks, 6), [tasks]);
-  if (!rows.length) {
-    return (
-      <Panel title="Persona × outcome" subtitle="Which caller archetype the agent handles worst">
-        <Box sx={{ p: 3, textAlign: "center" }}>
-          <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 12 }}>
-            No persona-tagged tasks yet.
-          </Typography>
-        </Box>
-      </Panel>
-    );
-  }
-  const exportRows = rows.map((r) => ({
-    persona: r.name, passed: r.passed, total: r.total, pass_rate_pct: r.rate,
-  }));
-  return (
-    <Panel
-      title="Persona × outcome"
-      subtitle="Pass rate per archetype — the shape shows the weak flanks"
-      exportRows={exportRows}
-    >
-      <Box sx={{ px: 1, pt: 1, pb: 0.5 }}>
-        <ReactApexChart
-          type="radar" height={340}
-          series={[{ name: "Pass rate", data: rows.map((r) => r.rate) }]}
-          options={{
-            chart: {
-              toolbar: { show: false }, animations: { enabled: false },
-              background: "transparent", fontFamily: theme.typography.fontFamily,
-              /* Grow the plotting area so the polygon fills the panel;
-                 offsets pull the shape back into view once the reserved
-                 label margin is out of the equation. */
-              parentHeightOffset: 0,
-              offsetY: 10,
-            },
-            theme: { mode: theme.palette.mode },
-            colors: ["#7857FC"],
-            stroke: { width: 2, colors: ["#7857FC"] },
-            fill: { opacity: 0.25 },
-            markers: { size: 5, colors: ["#7857FC"], strokeColors: theme.palette.background.paper, strokeWidth: 2 },
-            xaxis: {
-              categories: rows.map((r) => r.name),
-              labels: {
-                show: true,
-                style: {
-                  colors: theme.palette.text.secondary,
-                  fontSize: "12px",
-                  fontWeight: 500,
-                },
-              },
-            },
-            yaxis: { show: false, min: 0, max: 100 },
-            plotOptions: {
-              radar: {
-                /* Explicit size pushes the polygon to fill the panel
-                   width; ApexCharts otherwise reserves ~40% for label
-                   padding and leaves a tiny hexagon in the middle. */
-                size: 130,
-                polygons: {
-                  strokeColors: theme.palette.divider,
-                  connectorColors: theme.palette.divider,
-                  fill: { colors: ["transparent", "transparent"] },
-                },
-              },
-            },
-            tooltip: {
-              theme: theme.palette.mode,
-              y: {
-                formatter: (v, opts) => {
-                  const r = rows[opts?.dataPointIndex];
-                  return r ? `${v}% · ${r.passed}/${r.total} passed` : `${v}%`;
-                },
-                title: { formatter: () => "" },
-              },
-            },
-          }}
-        />
-      </Box>
-    </Panel>
-  );
-});
-PersonaMatrixPanel.propTypes = { tasks: PropTypes.array };
-
 /* ── latency histogram with SLA overlay ───────────────────────────── */
 
 /* Buckets tasks by latency, overlays a 2000ms SLA line so the reader
@@ -3701,7 +3773,7 @@ const LatencyHistogramPanel = memo(function LatencyHistogramPanel({ tasks, slaMs
     <PanelChart
       title="Latency distribution"
       subtitle={`${pctUnder}% of tasks under the ${(slaMs / 1000).toFixed(1)}s SLA · ${underSla} / ${total}`}
-
+      info="Shape of the latency curve, bucketed. A tall stack on the left = most tasks are fast, healthy. A long tail on the right = a few slow tasks that are dragging your percentiles. The subtitle counts how many tasks stayed under your SLA."
     >
       <ReactApexChart
         type="bar" height={260}
@@ -3729,6 +3801,35 @@ LatencyHistogramPanel.propTypes = { tasks: PropTypes.array, slaMs: PropTypes.num
 /* ── shell ─────────────────────────────────────────────────────────── */
 
 export default function RunAnalyticsV2({ tasks, evals, env, runHistory, currentRunId }) {
+  const layout = useRunLayout({ surface: env?.surface || "generic" });
+  const [hiddenAnchor, setHiddenAnchor] = useState(null);
+  const [editorState, setEditorState] = useState({ open: false, target: null, opts: null });
+  const [renameTarget, setRenameTarget] = useState(null); // custom widget id
+  const [renameValue, setRenameValue] = useState("");
+
+  /* Deep-link: on mount, if the URL carries ?view=<name> and the
+     name matches a saved view, switch to it. Also keep the URL in
+     sync so switching in the popover updates the shareable link. */
+  useEffect(() => {
+    const desired = readViewFromUrl();
+    if (desired && layout.viewNames.includes(desired) && desired !== layout.activeView) {
+      layout.switchView(desired);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => { writeViewToUrl(layout.activeView); }, [layout.activeView]);
+
+  /* Rename dialog is opened via a window CustomEvent so the deep-in
+     render loop doesn't have to hoist setState refs up here. */
+  useEffect(() => {
+    const handler = (e) => {
+      setRenameTarget(e.detail?.id || null);
+      setRenameValue(e.detail?.title || "");
+    };
+    window.addEventListener("run-analytics:rename", handler);
+    return () => window.removeEventListener("run-analytics:rename", handler);
+  }, []);
+
   const biz = useMemo(() => deriveBusiness(tasks), [tasks]);
   /* Drilldown state — every chart can call `onDrill({ title, tasks })`
      via the context and the shell opens a right-side drawer with
@@ -3777,6 +3878,7 @@ export default function RunAnalyticsV2({ tasks, evals, env, runHistory, currentR
       title={drilldown?.title}
       subtitle={drilldown?.subtitle}
       tasks={drilldown?.tasks}
+      env={env}
     />
     <Stack spacing={2} className="analytics-root">
       {/* Print CSS — activates when the user hits Cmd+P or the Export
@@ -3803,12 +3905,40 @@ export default function RunAnalyticsV2({ tasks, evals, env, runHistory, currentR
             background: #fff !important;
             border: 1px solid #e5e7eb !important;
           }
+          /* Print-only-this-widget: shell tags the non-target
+             wrappers with .print-suppress right before opening the
+             print dialog; that class collapses their space so only
+             the chosen widget ships to paper. */
+          .analytics-root .print-suppress { display: none !important; }
         }
       `}</style>
 
-      {/* Toolbar — CSV / PDF export triggers. Hidden in print output. */}
+      {/* Toolbar — Views on the left, Add widget + Export on the right.
+          Drag-to-reorder happens directly on the widgets, and every
+          panel's kebab menu handles delete/resize/duplicate/download,
+          so no standalone Customize button is needed. Hidden from print. */}
       <Stack direction="row" alignItems="center" spacing={1} className="analytics-no-print" sx={{ mb: 0 }}>
-        <Box sx={{ flex: 1 }} />
+        <ViewTabBar
+          activeView={layout.activeView}
+          viewNames={layout.viewNames}
+          defaultName={layout.DEFAULT_VIEW_NAME}
+          onSwitch={layout.switchView}
+          onSave={layout.saveAsView}
+          onRename={layout.renameView}
+          onDuplicate={layout.duplicateView}
+          onDelete={layout.deleteView}
+          onReorder={layout.reorderViews}
+        />
+        <ToolbarButton
+          icon="solar:add-circle-linear"
+          label="Add widget"
+          onClick={() => setEditorState({ open: true, target: null })}
+        />
+        <ToolbarButton
+          icon="solar:eye-closed-linear"
+          label={layout.hiddenIds.length > 0 ? `Hidden (${layout.hiddenIds.length})` : "Hidden"}
+          onClick={(e) => setHiddenAnchor(e.currentTarget)}
+        />
         <ToolbarButton
           icon="solar:printer-linear"
           label="Export PDF"
@@ -3816,97 +3946,521 @@ export default function RunAnalyticsV2({ tasks, evals, env, runHistory, currentR
         />
       </Stack>
 
-      {/* 2. Regression banner (only when a prior run exists) */}
+      {/* 2. Regression banner (only when a prior run exists). Kept as a
+          fixed lede — it's a run-level alert, not a widget the user
+          would reorder. */}
       <RegressionBanner delta={delta} />
 
-      {/* 3. Top-of-page KPI strip (8 cells in Retell/Bland shape) */}
-      <KpiStrip tasks={tasks} evals={evals} biz={biz} trend={trend} runHistory={runHistory} currentRunId={currentRunId} />
+      {/* 3. Top-of-page KPI strip. Also fixed at the top — it's the
+          answer the user came for, not something to reorder past. */}
+      <KpiStrip tasks={tasks} evals={evals} biz={biz} trend={trend} runHistory={runHistory} currentRunId={currentRunId} env={env} />
 
-      {/* SECTION: Breakdowns — the categorical splits that answer
-          "how did each task actually go?" Placed above Trends
-          because a single run's inner trend (running pass rate) is
-          less actionable than the categorical shape of outcomes. */}
-      <SectionHeader
-        title="Breakdowns"
-        subtitle="How each task went, split by category"
+      {/* Registry-driven body. The list of visible ids comes from the
+          layout hook, and we render them in sections in the order the
+          user has arranged. This is what makes reorder, hide/show,
+          named views and custom widgets all work with one code path. */}
+      <LayoutBody
+        layout={layout}
+        renderPanel={(id) => renderBuiltinPanel(id, { tasks, evals, biz, voice, env })}
+        renderCustomPanel={(widget) => renderCustomPanel(widget, { tasks, evals, biz, voice, env }, layout.getOverride(widget.id))}
+        openEditor={(widget) => setEditorState({ open: true, target: widget, opts: null })}
       />
-      <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr", lg: "repeat(4, 1fr)" }, alignItems: "stretch" }}>
-        <SuccessDonut tasks={tasks} />
-        <OutcomeDonutChart tasks={tasks} biz={biz} />
-        <SentimentDonut tasks={tasks} />
-        <DisconnectionDonut tasks={tasks} />
-        {env?.surface === "voice" && <PhoneIODonut tasks={tasks} env={env} />}
-      </Box>
-
-      {/* SECTION: Trends — pass rate and latency across the run's task
-          sequence + concurrency + latency percentiles (Retell parity). */}
-      <SectionHeader
-        title="Trends"
-        subtitle={`Pass rate, latency and concurrency across this run's ${tasks.length} tasks`}
-      />
-      <DualLineOverTime tasks={tasks} />
-      <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, alignItems: "stretch" }}>
-        <ConcurrencyPanel tasks={tasks} />
-        <LatencyPercentilesPanel tasks={tasks} />
-      </Box>
-
-      {/* SECTION: Distribution — one compact summary table for the
-          five spread-shape metrics (Grafana/Sentry pattern), plus
-          the two deeper cuts (complexity × duration, turn count ×
-          outcome) that don't fit a percentile summary. Much tighter
-          than four stacked histogram panels of the same shape. */}
-      <SectionHeader
-        title="Distribution"
-        subtitle="How each metric spreads across the tasks — percentiles + shape"
-      />
-      <DistributionSummary tasks={tasks} env={env} />
-      <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, alignItems: "stretch" }}>
-        <DurationByBucketChart tasks={tasks} />
-        <TurnBars tasks={tasks} />
-      </Box>
-      <Box>
-        <AttributionTable tasks={tasks} />
-      </Box>
-
-      {/* SECTION: Failure analysis — deep dive into what's failing */}
-      <SectionHeader
-        title="Failure analysis"
-        subtitle="Where losses cluster and which caller archetypes trip the agent"
-      />
-      <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, alignItems: "stretch" }}>
-        <PersonaMatrixPanel tasks={tasks} />
-        <UseCaseRiskList tasks={tasks} />
-      </Box>
-      <Box>
-        <EvalsTable tasks={tasks} evals={evals} />
-      </Box>
-
-      {/* SECTION: Voice-only latency SLOs + cost breakdown (voice runs). */}
-      {voice && (
-        <>
-          <SectionHeader
-            title="Voice latency SLOs"
-            subtitle="TTFW · LLM · TTS · ASR — the four segments that decide caller experience"
-          />
-          <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, alignItems: "stretch" }}>
-            <VoiceLatencyPanel voice={voice} />
-            <VoiceCostBreakdownPanel tasks={tasks} />
-          </Box>
-        </>
-      )}
-
-      {/* SECTION: Performance tails — what to trim first */}
-      <SectionHeader
-        title="Performance tails"
-        subtitle="The slowest and priciest tasks — the shortest path to cost / latency wins"
-      />
-      <Box sx={{ display: "grid", gap: 1.5, gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, alignItems: "stretch" }}>
-        <SlowestTable tasks={tasks} />
-        <ExpensiveTable tasks={tasks} />
-      </Box>
     </Stack>
+    <HiddenWidgetsPopover
+      anchorEl={hiddenAnchor}
+      onClose={() => setHiddenAnchor(null)}
+      layout={layout}
+    />
+    <WidgetEditor
+      open={editorState.open}
+      onClose={() => setEditorState({ open: false, target: null, opts: null })}
+      initial={editorState.target}
+      onSave={(widget) => {
+        if (editorState.target) layout.updateCustomWidget(editorState.target.id, widget);
+        else layout.addCustomWidget(widget);
+      }}
+      ctx={{ tasks, evals, biz, voice, env, graderResults: deriveGraderResults(tasks, evals) }}
+    />
+    <RenameWidgetDialog
+      open={!!renameTarget}
+      title={renameValue}
+      onClose={() => setRenameTarget(null)}
+      onChange={setRenameValue}
+      onSave={() => {
+        const t = renameValue.trim();
+        /* Rename goes through the override map, not the base config,
+           so "Reset to default" restores the shipped/first-save name. */
+        if (renameTarget && t) layout.patchOverride(renameTarget, { title: t });
+        setRenameTarget(null);
+      }}
+    />
     </DrilldownContext.Provider>
   );
+}
+RunAnalyticsV2.propTypes = {
+  tasks: PropTypes.array, evals: PropTypes.array, env: PropTypes.object,
+  runHistory: PropTypes.array, currentRunId: PropTypes.string,
+};
+
+/* ── layout renderer ─────────────────────────────────────────────
+   Walks the user's visible id list and renders each panel through
+   its section's grid. ONE DndContext + ONE SortableContext wrap the
+   whole thing so a user can drag any widget to any position across
+   any section — the drop target isn't limited to the source's
+   section. On drop we reorder `visibleIds` end-to-end and if the
+   moved panel landed inside a different section's block, that
+   section becomes its new home. */
+function LayoutBody({ layout, renderPanel, renderCustomPanel, openEditor }) {
+  const customById = new Map(layout.customWidgets.map((w) => [w.id, w]));
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const [activeId, setActiveId] = useState(null);
+
+  const bySection = useMemo(() => {
+    const map = new Map();
+    layout.visibleIds.forEach((id) => {
+      const isCustom = customById.has(id);
+      /* Look up the panel's *effective* section — either an
+         explicit override the user set by dragging it into another
+         section, or (for built-ins) the registry section, or
+         "custom" for custom widgets. */
+      const override = layout.sectionOverrides?.[id];
+      const sec = override || (isCustom ? "custom" : panelSection(id));
+      if (!map.has(sec)) map.set(sec, []);
+      map.get(sec).push(id);
+    });
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layout.visibleIds, layout.customWidgets, layout.sectionOverrides]);
+
+  const onDragStart = (event) => setActiveId(event.active?.id || null);
+  const onDragCancel = () => setActiveId(null);
+  const onDragEnd = (event) => {
+    setActiveId(null);
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = layout.visibleIds.indexOf(active.id);
+    const newIndex = layout.visibleIds.indexOf(over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+    const nextOrder = arrayMove(layout.visibleIds, oldIndex, newIndex);
+    /* Adopt the drop target's section as the new home so the widget
+       visually stays where the user let go, not where the registry
+       says it "should" live. Atomic patch so no transient render
+       ends up with the new position but the old section. */
+    const targetSection = sectionForId(over.id, layout, customById);
+    layout.reorderAndSection(nextOrder, active.id, targetSection);
+  };
+
+  /* Section-level drag. A separate DndContext handles the "reorder
+     entire sections" gesture; its items live under a "section:xxx"
+     namespace so they never collide with widget ids. Only the
+     section header responds to this DndContext's listeners. */
+  const [activeSectionId, setActiveSectionId] = useState(null);
+  const onSectionDragStart = (event) => setActiveSectionId(event.active?.id || null);
+  const onSectionDragCancel = () => setActiveSectionId(null);
+  const onSectionDragEnd = (event) => {
+    setActiveSectionId(null);
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const currentOrder = layout.sectionOrder.map((id) => `section:${id}`);
+    const oldIndex = currentOrder.indexOf(active.id);
+    const newIndex = currentOrder.indexOf(over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+    const nextOrder = arrayMove(currentOrder, oldIndex, newIndex).map((id) => id.replace(/^section:/, ""));
+    layout.reorderSections(nextOrder);
+  };
+
+  const orderedSections = (layout.sectionOrder || SECTIONS.map((s) => s.id))
+    .map((sid) => SECTIONS.find((s) => s.id === sid))
+    .filter(Boolean);
+
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragStart={onSectionDragStart}
+      onDragCancel={onSectionDragCancel}
+      onDragEnd={onSectionDragEnd}
+    >
+      <SortableContext
+        items={orderedSections.map((s) => `section:${s.id}`)}
+        strategy={rectSortingStrategy}
+      >
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragStart={onDragStart}
+          onDragCancel={onDragCancel}
+          onDragEnd={onDragEnd}
+        >
+          <SortableContext items={layout.visibleIds} strategy={rectSortingStrategy}>
+            {orderedSections.map((section) => {
+              const ids = bySection.get(section.id);
+              if (!ids || ids.length === 0) return null;
+              return (
+                <SortableSection key={section.id} sectionId={section.id} label={section.label}>
+                  <LayoutSection
+                    section={section}
+                    ids={ids}
+                    layout={layout}
+                    customById={customById}
+                    renderPanel={renderPanel}
+                    renderCustomPanel={renderCustomPanel}
+                    openEditor={openEditor}
+                    activeId={activeId}
+                  />
+                </SortableSection>
+              );
+            })}
+          </SortableContext>
+          <DragOverlay dropAnimation={null}>
+            {activeId ? <DragGhost label={labelForId(activeId, layout, customById)} /> : null}
+          </DragOverlay>
+        </DndContext>
+      </SortableContext>
+      <DragOverlay dropAnimation={null}>
+        {activeSectionId
+          ? <DragGhost label={`Section: ${SECTIONS.find((s) => `section:${s.id}` === activeSectionId)?.label || activeSectionId}`} />
+          : null}
+      </DragOverlay>
+    </DndContext>
+  );
+}
+
+function labelForId(id, layout, customById) {
+  if (customById.has(id)) return customById.get(id).title || "Widget";
+  return getPanelMeta(id)?.title || id;
+}
+
+function DragGhost({ label }) {
+  return (
+    <Box sx={(t) => ({
+      pointerEvents: "none",
+      px: 1.5, py: 1,
+      borderRadius: 1.25,
+      border: "1px solid",
+      borderColor: alpha(t.palette.primary.main, 0.8),
+      bgcolor: alpha(t.palette.background.paper, 0.98),
+      color: "text.primary",
+      fontSize: 13, fontWeight: 700,
+      boxShadow: "0 12px 32px -8px rgba(0,0,0,0.35)",
+      display: "inline-flex", alignItems: "center", gap: 1,
+    })}>
+      <Iconify icon="solar:hamburger-menu-linear" width={14} />
+      {label}
+    </Box>
+  );
+}
+DragGhost.propTypes = { label: PropTypes.node };
+
+/* Quick rename — TextField in a dialog. Keeps the full editor for
+   deeper reshapes and gives users a one-field escape hatch for
+   the common "just fix the title" case. */
+function RenameWidgetDialog({ open, title, onClose, onChange, onSave }) {
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+      <Box sx={{ p: 2.5 }}>
+        <Typography sx={{ fontSize: 15, fontWeight: 700, mb: 1.5 }}>Rename widget</Typography>
+        <Box
+          component="input"
+          autoFocus
+          value={title}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") onSave(); if (e.key === "Escape") onClose(); }}
+          sx={{
+            width: "100%",
+            fontSize: 14, fontFamily: "inherit",
+            px: 1.25, py: 1, borderRadius: 1,
+            border: "1px solid", borderColor: "divider",
+            bgcolor: "background.paper", color: "text.primary",
+            outline: "none",
+            "&:focus": { borderColor: "primary.main" },
+          }}
+        />
+        <Stack direction="row" spacing={1} justifyContent="flex-end" sx={{ mt: 2 }}>
+          <Box component="button" type="button" onClick={onClose} sx={ghostBtnSx}>Cancel</Box>
+          <Box component="button" type="button" onClick={onSave} sx={{ ...ghostBtnSx, bgcolor: "primary.main", color: "#fff", borderColor: "primary.main" }}>Save</Box>
+        </Stack>
+      </Box>
+    </Dialog>
+  );
+}
+RenameWidgetDialog.propTypes = {
+  open: PropTypes.bool, title: PropTypes.string,
+  onClose: PropTypes.func, onChange: PropTypes.func, onSave: PropTypes.func,
+};
+const ghostBtnSx = {
+  fontFamily: "inherit", fontSize: 12.5, fontWeight: 700,
+  px: 1.5, py: 0.75, borderRadius: 1, cursor: "pointer",
+  border: "1px solid", borderColor: "divider",
+  bgcolor: "transparent", color: "text.primary",
+  "&:hover": { bgcolor: "action.hover" },
+};
+LayoutBody.propTypes = {
+  layout: PropTypes.object.isRequired,
+  renderPanel: PropTypes.func.isRequired,
+  renderCustomPanel: PropTypes.func.isRequired,
+  openEditor: PropTypes.func.isRequired,
+};
+
+function sectionForId(id, layout, customById) {
+  const override = layout.sectionOverrides?.[id];
+  if (override) return override;
+  if (customById.has(id)) return "custom";
+  return panelSection(id);
+}
+
+/**
+ * One section — a header + a responsive grid of its panels. All the
+ * dnd wiring lives at the parent so users can drop cross-section;
+ * this component just lays out its slice of the full visible list.
+ */
+function LayoutSection({ section, ids, layout, customById, renderPanel, renderCustomPanel, openEditor, activeId }) {
+  const cols = section.columns || 2;
+
+  return (
+    /* Section header is rendered by SortableSection wrapping this
+       component, so we only emit the grid here. */
+    <Box>
+      <Box sx={{
+        display: "grid", gap: 1.5,
+        gridTemplateColumns: {
+          xs: "1fr",
+          sm: cols >= 4 ? "repeat(2, 1fr)" : `repeat(${Math.min(cols, 2)}, 1fr)`,
+          md: `repeat(${cols}, 1fr)`,
+        },
+        alignItems: "stretch",
+      }}>
+        {ids.map((id, index) => {
+          const isCustom = customById.has(id);
+          const customWidget = customById.get(id);
+          const meta = getPanelMeta(id);
+          const defaultSpan = isCustom ? cols : (meta?.defaultSpan || 1);
+          const overrideSpan = layout.spans?.[id];
+          const span = Math.min(overrideSpan || defaultSpan, cols);
+
+          const actions = buildPanelActions({
+            id, index, ids, layout, isCustom, customWidget,
+            cols, currentSpan: span,
+            openEditor,
+            openRename: (targetId, title) => {
+              /* Rename shows a lightweight dialog owned by the shell.
+                 Broadcast via a custom event so this render loop
+                 doesn't need to prop-thread setState three levels up. */
+              window.dispatchEvent(new CustomEvent("run-analytics:rename", { detail: { id: targetId, title } }));
+            },
+            openCustomizeCopy: (targetId) => {
+              const snap = snapshotAsCustom(targetId);
+              layout.addCustomWidget(snap);
+              layout.hide(targetId);
+              openEditor(snap);
+            },
+          });
+
+          return (
+            <Box key={id} sx={{ gridColumn: { md: span > 1 ? `span ${span}` : "auto" } }}>
+              <SortablePanel
+                id={id}
+                sectionColumns={cols}
+                currentSpan={span}
+                isFirstInSection={index === 0}
+                isLastInSection={index === ids.length - 1}
+                isCustom={isCustom}
+                /* Only custom widgets are editable / renameable in
+                   place. Built-ins are curated — users reshape them
+                   via "Customize a copy" from the kebab. */
+                hasEdit={isCustom}
+                /* Menu-driven Download works for any panel — the click
+                   walks up to the panel's own CSV button to trigger
+                   the export, so the built-in + custom paths share
+                   one affordance. */
+                hasExport
+                hasOverrides={isCustom && layout.hasOverrides(id)}
+                {...actions}
+              >
+                {isCustom ? renderCustomPanel(customWidget) : renderPanel(id)}
+              </SortablePanel>
+            </Box>
+          );
+        })}
+      </Box>
+    </Box>
+  );
+}
+LayoutSection.propTypes = {
+  section: PropTypes.object.isRequired, ids: PropTypes.array.isRequired,
+  layout: PropTypes.object.isRequired, customById: PropTypes.instanceOf(Map).isRequired,
+  renderPanel: PropTypes.func.isRequired, renderCustomPanel: PropTypes.func.isRequired,
+  openEditor: PropTypes.func.isRequired,
+};
+
+/**
+ * Wires the kebab-menu actions for a single panel. Delegates all
+ * mutations to the layout hook (single source of truth) and packages
+ * the callbacks in the shape SortablePanel expects.
+ */
+function buildPanelActions({ id, index, ids, layout, isCustom, customWidget, cols, currentSpan, openEditor, openRename, openCustomizeCopy }) {
+  const positionInGlobal = layout.visibleIds.indexOf(id);
+  const sectionIndices = ids.map((sid) => layout.visibleIds.indexOf(sid));
+  const firstGlobal = Math.min(...sectionIndices);
+  const lastGlobal = Math.max(...sectionIndices);
+  return {
+    onMoveUp:     () => index > 0            && layout.moveTo(id, positionInGlobal - 1),
+    onMoveDown:   () => index < ids.length-1 && layout.moveTo(id, positionInGlobal + 1),
+    onMoveTop:    () => layout.moveTo(id, firstGlobal),
+    onMoveBottom: () => layout.moveTo(id, lastGlobal),
+    onSetSpan:    (span) => layout.setSpan(id, Math.min(span, cols)),
+    onResetSpan:  () => layout.resetSpan(id),
+    onHide:       () => layout.hide(id),
+    onDuplicate:  isCustom ? () => layout.duplicateCustomWidget(id) : null,
+    onEdit:       isCustom ? () => openEditor(customWidget) : null,
+    onRename:     isCustom ? () => openRename?.(id, customWidget?.title || "") : null,
+    onCustomizeCopy: isCustom ? null : () => openCustomizeCopy?.(id),
+    onDelete:     isCustom ? () => layout.removeCustomWidget(id) : null,
+    /* Menu Download → click the panel's own CSV icon so built-in
+       and custom widgets share the same download path without
+       prop-threading exportRows all the way back up here. */
+    onExport:     () => triggerPanelExport(id),
+    onCopyLink:   () => copyWidgetLink(id, layout.activeView),
+    onPrintOnly:  () => printOnly(id),
+    onResetOverride: () => layout.resetOverride(id),
+  };
+}
+
+function copyWidgetLink(id, viewName) {
+  try {
+    const url = new URL(window.location.href);
+    if (viewName && viewName !== "Default") url.searchParams.set("view", viewName);
+    url.hash = `widget-${id}`;
+    navigator.clipboard?.writeText(url.toString());
+  } catch { /* clipboard may be blocked in dev — noop */ }
+}
+
+function triggerPanelExport(id) {
+  /* Every panel's built-in CSV button carries aria-label
+     "Download {title} as CSV". Find the button inside this
+     widget's sortable wrapper and click it — one code path,
+     both entry points. */
+  const wrap = document.querySelector(`.sortable-panel-wrap[data-widget-id="${CSS.escape(id)}"]`);
+  const btn = wrap?.querySelector('[aria-label^="Download "]');
+  btn?.click();
+}
+
+function printOnly(id) {
+  const root = document.querySelector(".analytics-root");
+  if (!root) { window.print(); return; }
+  const wraps = root.querySelectorAll(".sortable-panel-wrap");
+  const suppressed = [];
+  wraps.forEach((el) => {
+    if (el.getAttribute("data-widget-id") !== id) {
+      el.classList.add("print-suppress");
+      suppressed.push(el);
+    }
+  });
+  const cleanup = () => {
+    suppressed.forEach((el) => el.classList.remove("print-suppress"));
+    window.removeEventListener("afterprint", cleanup);
+  };
+  window.addEventListener("afterprint", cleanup);
+  window.print();
+}
+
+/* Dispatch table for built-in panels — each registry id maps to its
+   corresponding component with the right context props. Keeping this
+   as a single switch beats prop-threading a factory through every
+   component and stays easy to grep for. */
+/* Built-ins keep their hand-tuned components — no in-place editing.
+   Users who want to reshape a built-in use "Customize a copy" from
+   the kebab, which snapshots it as a custom widget they own.
+   Tool + Golden-set widgets are unified-renderer configs since
+   they're new and don't need bespoke hand-coded components. */
+function renderBuiltinPanel(id, ctx) {
+  const { tasks, evals, biz, voice, env } = ctx;
+  switch (id) {
+    case "success_donut":        return <SuccessDonut tasks={tasks} />;
+    case "outcome_donut":        return <OutcomeDonutChart tasks={tasks} biz={biz} />;
+    case "sentiment_donut":      return <SentimentDonut tasks={tasks} />;
+    case "disconnection_donut":  return <DisconnectionDonut tasks={tasks} />;
+    case "dual_line_over_time":  return <TaskLatencyOverTime tasks={tasks} />;
+    case "latency_percentiles":  return <LatencyPercentilesPanel tasks={tasks} />;
+    case "distribution_summary": return <DistributionSummary tasks={tasks} env={env} />;
+    case "duration_by_bucket":   return <DurationByBucketChart tasks={tasks} />;
+    case "turn_bars":            return <TurnBars tasks={tasks} />;
+    case "attribution":          return <AttributionTable tasks={tasks} />;
+    case "use_case_risk_list":   return <UseCaseRiskList tasks={tasks} />;
+    case "evals_table":          return <EvalsTable tasks={tasks} evals={evals} />;
+    case "voice_latency":        return voice ? <VoiceLatencyPanel voice={voice} /> : null;
+    case "voice_cost_breakdown": return voice ? <VoiceCostBreakdownPanel tasks={tasks} /> : null;
+    case "slowest_tasks":        return <SlowestTable tasks={tasks} />;
+    case "expensive_tasks":      return <ExpensiveTable tasks={tasks} />;
+
+    /* Tools section — new per Monika's ask. Info tooltip flags
+       infra vs prompt so users route the fix to the right team. */
+    case "tool_call_volume":  return <ToolCallVolumePanel tasks={tasks} />;
+    case "tool_failure_rate": return <ToolFailureRatePanel tasks={tasks} />;
+
+    /* Golden set & divergence — per Ajeevansh. Section header hint
+       tells users what "golden" means before they read the widgets. */
+    case "golden_set_manager":  return <GoldenSetManager tasks={tasks} env={env} />;
+    case "dropoff_funnel":      return <DropoffFunnel tasks={tasks} env={env} />;
+    case "divergence_timeline": return <DivergenceTimeline tasks={tasks} env={env} />;
+    case "pitch_break_themes":  return <PitchBreakThemes tasks={tasks} env={env} />;
+
+    default: return null;
+  }
+}
+
+/* Ctx enricher used by the tool + golden-set panels — attaches
+   persona dims + gender/ageGroup so custom widgets can group by
+   any user-defined dim without re-deriving. */
+function ctxWithDerived(ctx) {
+  attachPersonaDims(ctx.tasks || []);
+  return { ...ctx, graderResults: deriveGraderResults(ctx.tasks, ctx.evals) };
+}
+
+function renderCustomPanel(widget, ctx, override) {
+  /* Merge the override map on top of the base config so the
+     rendered widget reflects any user tweaks (title, chart type,
+     etc.) without mutating the "last-save" config underneath.
+     Reset clears the override and the widget snaps back. */
+  const config = override ? { ...widget, ...override } : widget;
+  return (
+    <Panel title={config.title} subtitle="Custom widget" info={config.info}>
+      <CustomWidgetBody
+        config={config}
+        ctx={{ ...ctx, graderResults: deriveGraderResults(ctx.tasks, ctx.evals) }}
+      />
+    </Panel>
+  );
+}
+
+/* Flatten per-task eval results into one row per (task × grader)
+   so custom widgets can group by evaluator or filter by pass. Kept
+   memo-free intentionally — cheap to compute and the tasks array
+   identity already changes rarely. */
+function deriveGraderResults(tasks, evals) {
+  const evalsById = new Map((evals || []).map((e) => [e.id, e]));
+  const out = [];
+  (tasks || []).forEach((t) => {
+    (t.evalResults || []).forEach((r) => {
+      const e = evalsById.get(r.id);
+      out.push({
+        taskId: t.id,
+        status: r.passed ? "passed" : "failed",
+        passed: !!r.passed,
+        evalId: r.id,
+        evalName: e?.name || r.id,
+        category: e?.category || "—",
+        persona: t.persona,
+        useCase: t.useCase,
+      });
+    });
+  });
+  return out;
 }
 
 /**

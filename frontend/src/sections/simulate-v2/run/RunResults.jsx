@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
+import { ErrorBoundary } from "react-error-boundary";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { alpha, useTheme } from "@mui/material/styles";
 import {
@@ -577,6 +578,23 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
             <Tab value="analytics" label="Analytics" sx={{ minHeight: 38 }} />
           </CustomTabs>
 
+          {/* Wraps both tab bodies so it survives a tab switch: errors thrown
+              while one tab unmounts land here, not on the app-root boundary. */}
+          <ErrorBoundary
+            resetKeys={[tab]}
+            onError={(error, info) => console.error("[RunResults tab]", error, info?.componentStack)}
+            fallbackRender={({ error, resetErrorBoundary }) => (
+              <SectionCard sx={{ p: 3 }}>
+                <Stack spacing={1.5}>
+                  <Typography sx={{ typography: "s1", fontWeight: 700 }}>This tab failed to render</Typography>
+                  <Typography sx={{ typography: "s2", color: "text.subtitle", fontFamily: "monospace", whiteSpace: "pre-wrap" }}>
+                    {String(error?.stack || error?.message || error).split("\n").slice(0, 4).join("\n")}
+                  </Typography>
+                  <Button size="small" variant="outlined" onClick={resetErrorBoundary} sx={{ alignSelf: "flex-start" }}>Retry</Button>
+                </Stack>
+              </SectionCard>
+            )}
+          >
           {tab === "tasks" && (
             <SectionCard
               /*
@@ -727,7 +745,10 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
             </SectionCard>
           )}
 
-          {tab === "analytics" && <RunAnalytics tasks={tasks} evals={shownEvals} env={env} stats={stats} runHistory={summaries} currentRunId={runId} />}
+          {tab === "analytics" && (
+            <RunAnalytics tasks={tasks} evals={shownEvals} env={env} stats={stats} runHistory={summaries} currentRunId={runId} />
+          )}
+          </ErrorBoundary>
 
 
           <ReplayDrawer task={replaying} seed={seed} onClose={() => setReplaying(null)} />

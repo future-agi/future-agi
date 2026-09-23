@@ -2,7 +2,7 @@ import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { alpha, useTheme } from "@mui/material/styles";
-import ReactApexChart from "react-apexcharts";
+import ReactApexChart from "../components/SafeApexChart";
 import {
   Box, Stack, Typography, Button, Checkbox, Popover, Tooltip, IconButton,
   TextField, MenuItem, ListItemText,

@@ -33,8 +33,8 @@ const hash = (str) => {
   for (let i = 0; i < String(str).length; i += 1) h = (h * 31 + String(str).charCodeAt(i)) >>> 0;
   return h;
 };
-const csatOf = (t) => Math.max(1, Math.round((t.evalResults?.[0]?.score ?? 0.5) * 10) - 4);
-const latencyOf = (t) => 280 + (hash(t.id) % 320);
+export const csatOf = (t) => Math.max(1, Math.round((t.evalResults?.[0]?.score ?? 0.5) * 10) - 4);
+export const latencyOf = (t) => 280 + (hash(t.id) % 320);
 
 /*
   Only truly bad values get called out — a single-tier red signal reads

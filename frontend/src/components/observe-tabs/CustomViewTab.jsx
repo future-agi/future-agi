@@ -145,6 +145,9 @@ const CustomViewTab = ({
               flexShrink: 0,
               transition: "opacity 100ms",
               "&:hover": { color: "text.primary" },
+              // Iconify swaps the inner <path> on every re-render; the press re-renders the tab, so a
+              // mousedown on the old path loses its click. Hit-test the stable <svg> instead.
+              "& *": { pointerEvents: "none" },
             }}
           />
         )}
