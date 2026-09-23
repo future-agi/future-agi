@@ -101,6 +101,23 @@ def test_phone_connect_only_accepts_number_and_prompt_without_provider_key():
     assert serializer.is_valid(), serializer.errors
 
 
+def test_voice_call_behavior_accepts_only_boolean_values():
+    serializer = HarnessAgentSerializer(
+        data={
+            "connector": "livekit",
+            "config": {"inbound": False, "target_speaks_first": True},
+        }
+    )
+    assert serializer.is_valid(), serializer.errors
+
+    for name in ("inbound", "target_speaks_first"):
+        serializer = HarnessAgentSerializer(
+            data={"connector": "livekit", "config": {name: "false"}}
+        )
+        assert not serializer.is_valid()
+        assert "config" in serializer.errors
+
+
 def test_phone_connect_only_rejects_invalid_number_or_missing_prompt():
     serializer = HarnessAgentSerializer(
         data={

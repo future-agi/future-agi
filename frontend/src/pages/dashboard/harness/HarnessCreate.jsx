@@ -14,6 +14,7 @@ import {
   MenuItem,
   Paper,
   Stack,
+  Switch,
   TextField,
   Typography,
   alpha,
@@ -37,6 +38,10 @@ import {
 } from "src/api/harness/harness";
 import { paths } from "src/routes/paths";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
+import {
+  INBOUND_OUTBOUND_COPY,
+  TARGET_SPEAKS_FIRST_COPY,
+} from "src/sections/agents/constants";
 
 import { parseDotEnv } from "./dotenv";
 import {
@@ -102,6 +107,18 @@ export const callLimitConfig = (value) =>
   String(value ?? "").trim() && Number(value) > 0
     ? { voice_call_timeout_seconds: Number(value) }
     : {};
+
+export const callBehaviorConfig = ({
+  connector,
+  inbound,
+  targetSpeaksFirst,
+}) =>
+  connector === "retell_chat"
+    ? {}
+    : {
+        inbound: Boolean(inbound),
+        target_speaks_first: Boolean(targetSpeaksFirst),
+      };
 
 const providerCredentialName = (connector) =>
   connector === "vapi"
@@ -221,18 +238,28 @@ export default function HarnessCreate() {
   const [phoneSystemPrompt, setPhoneSystemPrompt] = useState("");
   const [providerCallTransport, setProviderCallTransport] = useState("web");
   const [providerPhoneNumber, setProviderPhoneNumber] = useState("");
+  const [inbound, setInbound] = useState(true);
+  const [targetSpeaksFirst, setTargetSpeaksFirst] = useState(false);
   const providerUsesPhone =
     ["vapi", "retell"].includes(connector) &&
     providerMode === "connect_only" &&
     providerCallTransport === "phone";
   const [providerDynamicVariables, setProviderDynamicVariables] = useState("");
   const [scenarioCount, setScenarioCount] = useState(10);
+  // Explicit parallelism control (C4 §6). Default 1; NEVER auto-derived from the
+  // scenario count. Locked at 1 when the environment does not yet enable W>1.
+  const [parallelism, setParallelism] = useState(1);
   // Per call, not per run. See callLimitConfig above.
   const [callTimeoutSeconds, setCallTimeoutSeconds] = useState("");
   const [preflight, setPreflight] = useState(null);
   // Shown beside the Preflight button: the general error banner sits at the foot of the
   // form, out of view when the button is what was clicked.
   const [preflightError, setPreflightError] = useState("");
+  // Control gating: disabled — not hidden — when preflight reports parallel
+  // execution is off for this environment; enabled until a preflight has run.
+  // This is requested concurrency; admission reports what the sandbox can run.
+  const parallelismEnabled = preflight?.parallelism_enabled !== false;
+  const maxParallelism = 8;
   // A changed input does not invalidate what preflight already told us — it just means the
   // answer may be out of date. Hiding the panel loses the findings the user was reading.
   const [preflightDirty, setPreflightDirty] = useState(false);
@@ -363,6 +390,7 @@ export default function HarnessCreate() {
         ...partitionConfigurationValues(configurationValues)
           .configurationValues,
         ...callLimitConfig(callTimeoutSeconds),
+        ...callBehaviorConfig({ connector, inbound, targetSpeaksFirst }),
         ...(providerUsesPhone
           ? { phone_number: providerPhoneNumber.trim() }
           : {}),
@@ -406,11 +434,9 @@ export default function HarnessCreate() {
     scenario_count: Number(scenarioCount),
     runtime: {
       isolation: "dedicated_vm",
-      cpu_units: 4,
-      memory_mb: 8192,
-      parallelism: 1,
+      parallelism: parallelismEnabled ? Number(parallelism) || 1 : 1,
       concurrency_weight: 1,
-      max_duration_seconds: Math.max(3600, Number(scenarioCount) * 360),
+      max_duration_seconds: Math.max(600, Number(scenarioCount) * 360),
       network_policy: "live",
     },
     security: {
@@ -1392,6 +1418,7 @@ export default function HarnessCreate() {
                       setProviderTargetId("");
                       setProviderCallTransport("web");
                       setProviderPhoneNumber("");
+                      if (event.target.value === "phone") setInbound(true);
                       if (
                         ["retell_chat", "phone"].includes(event.target.value)
                       ) {
@@ -1641,6 +1668,78 @@ export default function HarnessCreate() {
                       )}
                     </>
                   )}
+                  {connector !== "retell_chat" && (
+                    <Stack spacing={1.5}>
+                      <Box
+                        sx={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          gap: 2,
+                          border: 1,
+                          borderColor: "divider",
+                          borderRadius: 1,
+                          p: 1.5,
+                        }}
+                      >
+                        <Box>
+                          <Typography variant="subtitle2">
+                            {inbound
+                              ? INBOUND_OUTBOUND_COPY.inbound.title
+                              : INBOUND_OUTBOUND_COPY.outbound.title}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {connector === "phone"
+                              ? "Others can only receive calls from the simulator."
+                              : inbound
+                                ? INBOUND_OUTBOUND_COPY.inbound.description
+                                : INBOUND_OUTBOUND_COPY.outbound.description}
+                          </Typography>
+                        </Box>
+                        <Switch
+                          checked={inbound}
+                          disabled={connector === "phone"}
+                          onChange={(event) => {
+                            setInbound(event.target.checked);
+                            setPreflightDirty(Boolean(preflight));
+                          }}
+                          inputProps={{
+                            "aria-label": "Agent receives inbound calls",
+                          }}
+                        />
+                      </Box>
+
+                      <Box
+                        sx={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          gap: 2,
+                          border: 1,
+                          borderColor: "divider",
+                          borderRadius: 1,
+                          p: 1.5,
+                        }}
+                      >
+                        <Box>
+                          <Typography variant="subtitle2">
+                            {TARGET_SPEAKS_FIRST_COPY.title}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {TARGET_SPEAKS_FIRST_COPY.description}
+                          </Typography>
+                        </Box>
+                        <Switch
+                          checked={targetSpeaksFirst}
+                          onChange={(event) => {
+                            setTargetSpeaksFirst(event.target.checked);
+                            setPreflightDirty(Boolean(preflight));
+                          }}
+                          inputProps={{ "aria-label": "Agent speaks first" }}
+                        />
+                      </Box>
+                    </Stack>
+                  )}
                 </Stack>
               </Section>
 
@@ -1666,6 +1765,28 @@ export default function HarnessCreate() {
                     Each scenario is one generated conversation the agent is put
                     through, then graded. More scenarios means broader coverage
                     and a longer run.
+                  </Typography>
+                </Stack>
+                <Stack
+                  direction={{ xs: "column", sm: "row" }}
+                  spacing={1.5}
+                  alignItems={{ sm: "center" }}
+                  sx={{ mt: 1.5 }}
+                >
+                  <TextField
+                    size="small"
+                    label="Parallel worlds"
+                    type="number"
+                    value={parallelismEnabled ? parallelism : 1}
+                    onChange={(event) => setParallelism(event.target.value)}
+                    disabled={!parallelismEnabled}
+                    inputProps={{ min: 1, max: maxParallelism }}
+                    sx={{ width: 140, flexShrink: 0 }}
+                  />
+                  <Typography variant="caption" color="text.secondary">
+                    {parallelismEnabled
+                      ? "Requested concurrent scenarios in one sandbox. Resources and certified limits may reduce the effective value; remaining scenarios wait for a free world."
+                      : "Parallel execution is not yet enabled for this environment, so runs use a single world."}
                   </Typography>
                 </Stack>
                 <Stack

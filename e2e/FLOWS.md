@@ -80,8 +80,8 @@
 
 ### GW-E2E-001 — gateway traffic is filtered by the application that sent it
 
-**Goal:** A platform engineer finds the gateway requests one application made, out of everything the org sent  
-**Spec:** `flows/gateway/request-log-tags.spec.ts:44`  
+**Goal:** A platform engineer finds the gateway requests one application made, out of everything the org sent
+**Spec:** `flows/gateway/request-log-tags.spec.ts:44`
 **Tags:** —
 
 **User steps:**

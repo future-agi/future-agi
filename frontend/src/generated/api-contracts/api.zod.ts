@@ -28,57 +28,6 @@ const jsonValueSchema: zod.ZodType<JsonValue> = zod.lazy(() =>
 );
 
 /**
- * Validates the v1.6 request contract and delegates execution to the public backend selected by
-``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
-selects its managed sandbox runtime.
- * @summary Provider-neutral control plane for hosted ALK harness jobs.
- */
-export const SimulateApiHarnessJobsConversationConversationMessageParams =
-  zod.object({
-    id: zod.string(),
-  });
-
-export const simulateApiHarnessJobsConversationConversationMessageBodyContentMax = 20000;
-
-export const simulateApiHarnessJobsConversationConversationMessageBodyClientRequestIdRegExp =
-  new RegExp("^[A-Za-z0-9_-]{1,128}$");
-export const simulateApiHarnessJobsConversationConversationMessageBodyKindDefault = `user_message`;
-export const simulateApiHarnessJobsConversationConversationMessageBodyPayloadDefault =
-  {};
-
-export const SimulateApiHarnessJobsConversationConversationMessageBody =
-  zod.object({
-    content: zod
-      .string()
-      .min(1)
-      .max(simulateApiHarnessJobsConversationConversationMessageBodyContentMax),
-    client_request_id: zod
-      .string()
-      .min(1)
-      .regex(
-        simulateApiHarnessJobsConversationConversationMessageBodyClientRequestIdRegExp,
-      ),
-    kind: zod
-      .enum([
-        "user_message",
-        "user_response",
-        "approval",
-        "interrupt",
-        "cancel_operation",
-      ])
-      .default(
-        simulateApiHarnessJobsConversationConversationMessageBodyKindDefault,
-      ),
-    reply_to: zod.string().uuid().optional(),
-    payload: zod
-      .object({})
-      .passthrough()
-      .default(
-        simulateApiHarnessJobsConversationConversationMessageBodyPayloadDefault,
-      ),
-  });
-
-/**
  * GET /accounts/2fa/recovery-codes/ - Get remaining count.
  */
 export const Accounts2faRecoveryCodesListResponse = zod.object({
@@ -35076,63 +35025,6 @@ export const SimulateApiHarnessEnvironmentsDeleteParams = zod.object({
   id: zod.string(),
 });
 
-/**
- * Applies to scenarios graded from here on. Calls that already ran keep
-the verdicts they were given, so adding an eval does not backfill a
-column onto past results.
- * @summary Grade this environment by one more eval from the catalogue.
- */
-export const SimulateApiHarnessEnvironmentsAddEvaluationParams = zod.object({
-  id: zod.string(),
-});
-
-export const simulateApiHarnessEnvironmentsAddEvaluationBodyNameMax = 255;
-
-export const SimulateApiHarnessEnvironmentsAddEvaluationBody = zod.object({
-  name: zod
-    .string()
-    .min(1)
-    .max(simulateApiHarnessEnvironmentsAddEvaluationBodyNameMax),
-});
-
-/**
- * The same catalogue authoring chose from, filtered to this environment's
-modality and to the templates the organization can see, minus what is
-already selected. Every entry is addable as it stands: an eval whose
-inputs this modality does not produce is left out rather than offered
-and then refused.
- * @summary The evals this environment could still be graded by.
- */
-export const SimulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsParams =
-  zod.object({
-    id: zod.string(),
-  });
-
-export const SimulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponse =
-  zod.object({
-    evaluations: zod.array(
-      zod.object({
-        name: zod.string().min(1),
-        description: zod.string(),
-        required_keys: zod.array(zod.string().min(1)),
-        modality: zod.enum(["voice", "text", "any"]),
-      }),
-    ),
-  });
-
-/**
- * Soft-delete only. The verdicts an eval already produced live on the call
-executions and in their receipts, not on this row, so a hard delete would
-leave past runs showing scores for something the environment no longer
-lists. Removing it stops future scenarios being graded by it and leaves
-the history it already wrote intact.
- * @summary Stop running one eval against this environment.
- */
-export const SimulateApiHarnessEnvironmentsRemoveEvaluationParams = zod.object({
-  id: zod.string(),
-  eval_config_id: zod.string(),
-});
-
 export const SimulateApiHarnessEnvironmentsRunParams = zod.object({
   id: zod.string(),
 });
@@ -35183,6 +35075,7 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
     run_id: zod.string().uuid(),
     source: zod.record(zod.string(), zod.string()),
     metadata: zod.record(zod.string(), zod.string()),
+    runtime: zod.record(zod.string(), zod.string()).optional(),
     run_test_id: zod.string().uuid(),
     test_execution_id: zod.string().uuid(),
   }),
@@ -35193,6 +35086,8 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
     attempt: zod.number(),
     completed_scenarios: zod.number(),
     failed_scenarios: zod.number(),
+    active_scenarios: zod.number().optional(),
+    queued_scenarios: zod.number().optional(),
     total_scenarios: zod.number(),
     deadline_at: zod.string().min(1),
     failure: zod.object({}).passthrough(),
@@ -35246,6 +35141,14 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
           error: zod.string(),
         })
         .optional(),
+    })
+    .optional(),
+  parallelism: zod
+    .object({
+      requested: zod.number(),
+      admitted: zod.number(),
+      effective: zod.number(),
+      degrade_reasons: zod.array(zod.string().min(1)),
     })
     .optional(),
   conversation: zod
@@ -35345,6 +35248,8 @@ export const simulateApiHarnessJobsCreateBodySourceCommitShaRegExp = new RegExp(
 export const simulateApiHarnessJobsCreateBodySourceInstallationIdMax = 255;
 
 export const simulateApiHarnessJobsCreateBodySourceVisibilityDefault = `public`;
+export const simulateApiHarnessJobsCreateBodySourceEnvironmentValuesMaxOne = 65536;
+
 export const simulateApiHarnessJobsCreateBodyAgentConfigDefault = {};
 export const simulateApiHarnessJobsCreateBodyAgentSecretRefsKeyMax = 255;
 
@@ -35462,10 +35367,26 @@ export const SimulateApiHarnessJobsCreateBody = zod.object({
       visibility: zod
         .enum(["public", "private"])
         .default(simulateApiHarnessJobsCreateBodySourceVisibilityDefault),
+      environment_values: zod
+        .record(
+          zod.string(),
+          zod
+            .string()
+            .min(1)
+            .max(simulateApiHarnessJobsCreateBodySourceEnvironmentValuesMaxOne),
+        )
+        .optional(),
     })
     .optional(),
   agent: zod.object({
-    connector: zod.enum(["livekit", "vapi", "retell", "retell_chat", "auto"]),
+    connector: zod.enum([
+      "livekit",
+      "vapi",
+      "retell",
+      "retell_chat",
+      "phone",
+      "auto",
+    ]),
     mode: zod
       .enum(["connect_only", "environment_backed", "provider_import"])
       .optional(),
@@ -35652,6 +35573,8 @@ export const simulateApiHarnessJobsPreflightBodySourceCommitShaRegExp =
 export const simulateApiHarnessJobsPreflightBodySourceInstallationIdMax = 255;
 
 export const simulateApiHarnessJobsPreflightBodySourceVisibilityDefault = `public`;
+export const simulateApiHarnessJobsPreflightBodySourceEnvironmentValuesMaxOne = 65536;
+
 export const simulateApiHarnessJobsPreflightBodyAgentConfigDefault = {};
 export const simulateApiHarnessJobsPreflightBodyAgentSecretRefsKeyMax = 255;
 
@@ -35770,10 +35693,28 @@ export const SimulateApiHarnessJobsPreflightBody = zod.object({
       visibility: zod
         .enum(["public", "private"])
         .default(simulateApiHarnessJobsPreflightBodySourceVisibilityDefault),
+      environment_values: zod
+        .record(
+          zod.string(),
+          zod
+            .string()
+            .min(1)
+            .max(
+              simulateApiHarnessJobsPreflightBodySourceEnvironmentValuesMaxOne,
+            ),
+        )
+        .optional(),
     })
     .optional(),
   agent: zod.object({
-    connector: zod.enum(["livekit", "vapi", "retell", "retell_chat", "auto"]),
+    connector: zod.enum([
+      "livekit",
+      "vapi",
+      "retell",
+      "retell_chat",
+      "phone",
+      "auto",
+    ]),
     mode: zod
       .enum(["connect_only", "environment_backed", "provider_import"])
       .optional(),
@@ -35961,30 +35902,6 @@ export const SimulateApiHarnessJobsPreflightBody = zod.object({
     ),
 });
 
-export const SimulateApiHarnessJobsPreflightResponse = zod.object({
-  ready_to_submit: zod.boolean(),
-  state: zod.enum(["connected", "failed"]),
-  checks: zod.array(
-    zod.object({
-      id: zod.string().min(1),
-      label: zod.string().min(1),
-      status: zod.enum(["passed", "failed", "skipped"]),
-      detail: zod.string(),
-      missing: zod.array(zod.string().min(1)),
-      fix: zod.string().min(1),
-    }),
-  ),
-  credentials: zod.object({
-    scanned_files: zod.number(),
-    detected_connectors: zod.array(zod.string().min(1)),
-    requirements: zod.array(zod.object({}).passthrough()),
-    credential_choices: zod.array(zod.object({}).passthrough()),
-    probe: zod.array(zod.object({}).passthrough()),
-  }),
-  effective_parallelism: zod.number(),
-  snapshot: zod.object({}).passthrough(),
-});
-
 /**
  * Validates the v1.6 request contract and delegates execution to the public backend selected by
 ``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
@@ -36055,6 +35972,7 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
     run_id: zod.string().uuid(),
     source: zod.record(zod.string(), zod.string()),
     metadata: zod.record(zod.string(), zod.string()),
+    runtime: zod.record(zod.string(), zod.string()).optional(),
     run_test_id: zod.string().uuid(),
     test_execution_id: zod.string().uuid(),
   }),
@@ -36065,6 +35983,8 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
     attempt: zod.number(),
     completed_scenarios: zod.number(),
     failed_scenarios: zod.number(),
+    active_scenarios: zod.number().optional(),
+    queued_scenarios: zod.number().optional(),
     total_scenarios: zod.number(),
     deadline_at: zod.string().min(1),
     failure: zod.object({}).passthrough(),
@@ -36118,6 +36038,14 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
           error: zod.string(),
         })
         .optional(),
+    })
+    .optional(),
+  parallelism: zod
+    .object({
+      requested: zod.number(),
+      admitted: zod.number(),
+      effective: zod.number(),
+      degrade_reasons: zod.array(zod.string().min(1)),
     })
     .optional(),
   conversation: zod
@@ -36256,6 +36184,7 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
     run_id: zod.string().uuid(),
     source: zod.record(zod.string(), zod.string()),
     metadata: zod.record(zod.string(), zod.string()),
+    runtime: zod.record(zod.string(), zod.string()).optional(),
     run_test_id: zod.string().uuid(),
     test_execution_id: zod.string().uuid(),
   }),
@@ -36266,6 +36195,8 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
     attempt: zod.number(),
     completed_scenarios: zod.number(),
     failed_scenarios: zod.number(),
+    active_scenarios: zod.number().optional(),
+    queued_scenarios: zod.number().optional(),
     total_scenarios: zod.number(),
     deadline_at: zod.string().min(1),
     failure: zod.object({}).passthrough(),
@@ -36319,6 +36250,14 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
           error: zod.string(),
         })
         .optional(),
+    })
+    .optional(),
+  parallelism: zod
+    .object({
+      requested: zod.number(),
+      admitted: zod.number(),
+      effective: zod.number(),
+      degrade_reasons: zod.array(zod.string().min(1)),
     })
     .optional(),
   conversation: zod
@@ -36400,6 +36339,57 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
 selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
+export const SimulateApiHarnessJobsConversationConversationMessageParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const simulateApiHarnessJobsConversationConversationMessageBodyContentMax = 20000;
+
+export const simulateApiHarnessJobsConversationConversationMessageBodyClientRequestIdRegExp =
+  new RegExp("^[A-Za-z0-9_-]{1,128}$");
+export const simulateApiHarnessJobsConversationConversationMessageBodyKindDefault = `user_message`;
+export const simulateApiHarnessJobsConversationConversationMessageBodyPayloadDefault =
+  {};
+
+export const SimulateApiHarnessJobsConversationConversationMessageBody =
+  zod.object({
+    content: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessJobsConversationConversationMessageBodyContentMax),
+    client_request_id: zod
+      .string()
+      .min(1)
+      .regex(
+        simulateApiHarnessJobsConversationConversationMessageBodyClientRequestIdRegExp,
+      ),
+    kind: zod
+      .enum([
+        "user_message",
+        "user_response",
+        "approval",
+        "interrupt",
+        "cancel_operation",
+      ])
+      .default(
+        simulateApiHarnessJobsConversationConversationMessageBodyKindDefault,
+      ),
+    reply_to: zod.string().uuid().optional(),
+    payload: zod
+      .object({})
+      .passthrough()
+      .default(
+        simulateApiHarnessJobsConversationConversationMessageBodyPayloadDefault,
+      ),
+  });
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
 export const SimulateApiHarnessJobsExtendParams = zod.object({
   id: zod.string(),
 });
@@ -36429,6 +36419,36 @@ export const SimulateApiHarnessJobsExtendBody = zod.object({
     .min(1)
     .max(simulateApiHarnessJobsExtendBodyClientRequestIdMax)
     .optional(),
+});
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const SimulateApiHarnessJobsRunsParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessJobsRunsBodyScenarioIdsItemMax = 255;
+
+export const simulateApiHarnessJobsRunsBodyScenarioIdsMax = 1000;
+
+export const simulateApiHarnessJobsRunsBodyTrialsDefault = 1;
+export const simulateApiHarnessJobsRunsBodyTrialsMax = 20;
+
+export const SimulateApiHarnessJobsRunsBody = zod.object({
+  scenario_ids: zod
+    .array(
+      zod.string().min(1).max(simulateApiHarnessJobsRunsBodyScenarioIdsItemMax),
+    )
+    .max(simulateApiHarnessJobsRunsBodyScenarioIdsMax),
+  trials: zod
+    .number()
+    .min(1)
+    .max(simulateApiHarnessJobsRunsBodyTrialsMax)
+    .default(simulateApiHarnessJobsRunsBodyTrialsDefault),
 });
 
 export const SimulateApiHarnessAttemptsArtifactsArtifactManifestParams =
@@ -63305,7 +63325,10 @@ export const UsageAdminInvoiceGenerateCreateResponse = zod.object({
 });
 
 /**
- * Preview invoice for an org+period (no side effects).
+ * Creates no invoice and deducts no credits, but does backfill missing
+``UsageSummary`` rows for the usage period. Open to staff so the admin's
+read-only Generate Invoice page can show what would be billed.
+ * @summary Preview invoice for an org+period.
  */
 
 export const usageAdminInvoicePreviewCreateBodyPeriodRegExp = new RegExp(
@@ -66497,31 +66520,58 @@ export const V1SelfHostedActivationsCreateResponse = zod.object({
 });
 
 /**
- * Validates the v1.6 request contract and delegates execution to the public backend selected by
-``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
-selects its managed sandbox runtime.
- * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ * Applies to scenarios graded from here on. Calls that already ran keep
+the verdicts they were given, so adding an eval does not backfill a
+column onto past results.
+ * @summary Grade this environment by one more eval from the catalogue.
  */
-export const SimulateApiHarnessJobsRunsParams = zod.object({
+export const SimulateApiHarnessEnvironmentsAddEvaluationParams = zod.object({
   id: zod.string(),
 });
 
-export const simulateApiHarnessJobsRunsBodyScenarioIdsItemMax = 255;
+export const simulateApiHarnessEnvironmentsAddEvaluationBodyNameMax = 255;
 
-export const simulateApiHarnessJobsRunsBodyScenarioIdsMax = 1000;
-
-export const simulateApiHarnessJobsRunsBodyTrialsDefault = 1;
-export const simulateApiHarnessJobsRunsBodyTrialsMax = 20;
-
-export const SimulateApiHarnessJobsRunsBody = zod.object({
-  scenario_ids: zod
-    .array(
-      zod.string().min(1).max(simulateApiHarnessJobsRunsBodyScenarioIdsItemMax),
-    )
-    .max(simulateApiHarnessJobsRunsBodyScenarioIdsMax),
-  trials: zod
-    .number()
+export const SimulateApiHarnessEnvironmentsAddEvaluationBody = zod.object({
+  name: zod
+    .string()
     .min(1)
-    .max(simulateApiHarnessJobsRunsBodyTrialsMax)
-    .default(simulateApiHarnessJobsRunsBodyTrialsDefault),
+    .max(simulateApiHarnessEnvironmentsAddEvaluationBodyNameMax),
+});
+
+/**
+ * The same catalogue authoring chose from, filtered to this environment's
+modality and to the templates the organization can see, minus what is
+already selected. Every entry is addable as it stands: an eval whose
+inputs this modality does not produce is left out rather than offered
+and then refused.
+ * @summary The evals this environment could still be graded by.
+ */
+export const SimulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const SimulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponse =
+  zod.object({
+    evaluations: zod.array(
+      zod.object({
+        name: zod.string().min(1),
+        description: zod.string(),
+        required_keys: zod.array(zod.string().min(1)),
+        modality: zod.enum(["voice", "text", "any"]),
+      }),
+    ),
+  });
+
+/**
+ * Soft-delete only. The verdicts an eval already produced live on the call
+executions and in their receipts, not on this row, so a hard delete would
+leave past runs showing scores for something the environment no longer
+lists. Removing it stops future scenarios being graded by it and leaves
+the history it already wrote intact.
+ * @summary Stop running one eval against this environment.
+ */
+export const SimulateApiHarnessEnvironmentsRemoveEvaluationParams = zod.object({
+  id: zod.string(),
+  eval_config_id: zod.string(),
 });

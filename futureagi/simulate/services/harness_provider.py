@@ -163,6 +163,7 @@ def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) ->
         SandboxProviderConfigurationError,
         sandbox_egress_domain_limit,
         sandbox_provider_name,
+        sandbox_runtime_policy,
         validate_sandbox_requirements,
     )
 
@@ -185,6 +186,8 @@ def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) ->
         domains, max_domains=sandbox_egress_domain_limit()
     )
     runtime = payload["runtime"]
+    policy = sandbox_runtime_policy()
+    disk_gb = policy.fixed_resources[2] if policy.fixed_resources else 10
     provider_name = sandbox_provider_name()
     max_ttl_seconds = max(
         _authoring_ttl_seconds(provider_name),
@@ -194,7 +197,7 @@ def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) ->
         validate_sandbox_requirements(
             runtime["cpu_units"],
             runtime["memory_mb"],
-            10,
+            disk_gb,
             max_ttl_seconds,
         )
     except SandboxProviderConfigurationError as exc:
@@ -267,7 +270,42 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
     receipt_qs = HostedHarnessReceipt.no_workspace_objects.filter(job=job).order_by(
         "created_at"
     )[: job.scenario_count]
-    receipts = [r.body for r in receipt_qs]
+    receipt_rows = list(receipt_qs)
+    receipts = [r.body for r in receipt_rows]
+    cycle_start = (job.payload.get("metadata") or {}).get("attempt_cycle_start")
+    if type(cycle_start) is not int or cycle_start < 1:
+        cycle_start = 1
+    current_attempt = (
+        attempt if attempt and attempt.attempt_number >= cycle_start else None
+    )
+    registered_keys = {reg.scenario_key for reg in scenario_regs}
+    finished = {
+        row.body.get("scenario_key")
+        for row in receipt_rows
+        if current_attempt
+        and row.attempt_number == current_attempt.attempt_number
+        and isinstance(row.body, dict)
+        and isinstance(row.body.get("scenario_key"), str)
+        and row.body["scenario_key"] in registered_keys
+    }
+    started = set()
+    if current_attempt:
+        started = set(
+            current_attempt.events.filter(
+                accepted=True,
+                event_type="scenario_started",
+                payload__scenario_key__in=registered_keys,
+            )
+            .values_list("payload__scenario_key", flat=True)
+            .distinct()
+        ) - {None}
+    terminal = job.state in {
+        HostedHarnessJob.State.COMPLETED,
+        HostedHarnessJob.State.FAILED,
+        HostedHarnessJob.State.CANCELED,
+    }
+    active = 0 if terminal else len(started - finished)
+    queued = 0 if terminal else max(0, job.scenario_count - len(finished) - active)
     platform = {
         "run_test_id": str(job.run_test_id) if job.run_test_id else None,
         "test_execution_id": str(job.test_execution_id)
@@ -303,6 +341,22 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
     _agent_cfg = job.payload.get("agent") or {}
     _connector = str(_agent_cfg.get("connector") or "").strip().lower()
     detected_connectors = [_connector] if _connector and _connector != "auto" else []
+    # Parallelism surfacing (C4 §6). ``requested`` is the immutable stored intent;
+    # ``effective`` and ``degrade_reasons`` come from the LATEST attempt's
+    # attempt-level projection (updated at ingestion), never the 100-event window
+    # a long run evicts. A new attempt starts cleared, so this reflects the
+    # current attempt only. With no degrade event, effective == requested.
+    _runtime = job.payload.get("runtime") or {}
+    _requested_parallelism = _runtime.get("parallelism") or 1
+    _clamp = (job.payload.get("metadata") or {}).get("parallelism_clamped") or {}
+    if not isinstance(_clamp, dict):
+        _clamp = {}
+    _admitted = _clamp.get("admitted", 1 if _clamp else _requested_parallelism)
+    if type(_admitted) is not int or _admitted < 1:
+        _admitted = 1
+    _admitted = min(_admitted, _requested_parallelism)
+    _effective = attempt.effective_parallelism if attempt else None
+    _degrade_reasons = list(attempt.degrade_reasons or []) if attempt else []
     conversation = HostedHarnessConversation.no_workspace_objects.filter(
         job=job
     ).first()
@@ -312,10 +366,22 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
             "run_id": str(job.run_id),
             "source": job.payload["source"],
             "metadata": job.payload.get("metadata", {}),
+            "runtime": {
+                "parallelism": _requested_parallelism,
+                "cpu_units": _runtime.get("cpu_units"),
+            },
             "run_test_id": str(job.run_test_id) if job.run_test_id else None,
             "test_execution_id": str(job.test_execution_id)
             if job.test_execution_id
             else None,
+        },
+        "parallelism": {
+            "requested": _requested_parallelism,
+            "admitted": _admitted,
+            "effective": min(_effective, _admitted)
+            if _effective is not None
+            else _admitted,
+            "degrade_reasons": _degrade_reasons,
         },
         "status": {
             "state": job.state,
@@ -324,6 +390,8 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
             "attempt": attempt.attempt_number if attempt else 0,
             "completed_scenarios": job.completed_count,
             "failed_scenarios": job.failed_count,
+            "active_scenarios": active,
+            "queued_scenarios": queued,
             "total_scenarios": job.scenario_count,
             "deadline_at": job.deadline_at.isoformat(),
             "cancel_requested_at": (
@@ -638,6 +706,8 @@ class HostedHarnessProvider:
             _validate_known_hosted_egress(payload, base_url)
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
+        from simulate.services.hosted_harness import clamp_parallelism
+
         runtime = payload["runtime"]
         try:
             source_analysis = _preflight_source_connectors(request, payload)
@@ -659,14 +729,57 @@ class HostedHarnessProvider:
         # key still ends in a run that cannot speak.
         probe_failed = any(not item["ok"] for item in probe)
         runtime_name, runtime_digest = sandbox_runtime_reference()
+        # Continuous advisory surface (C4 §4 pin ii / §5). ``parallelism_enabled``
+        # reflects the same flag-AND-digest state the register_attempt guard
+        # enforces; the ``effective_parallelism`` echo reflects the clamped value
+        # (never the requested value) whenever admission would clamp, so the FE
+        # is never promised a W the platform will refuse.
+        from simulate.services.harness_capacity import configured_capacity
+
+        try:
+            capacity = configured_capacity(payload)
+            parallel_capacity = configured_capacity(
+                {
+                    **payload,
+                    "scenario_count": max(2, payload.get("scenario_count", 1)),
+                    "runtime": {**runtime, "parallelism": 2},
+                }
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=503)
+        from simulate.services.hosted_sandbox import sandbox_provider_name
+
+        if sandbox_provider_name() != "daytona" and (
+            (capacity.snapshot_name and capacity.snapshot_name != runtime_name)
+            or (capacity.snapshot_digest and capacity.snapshot_digest != runtime_digest)
+        ):
+            return Response(
+                {
+                    "detail": "configured resource profile does not match the selected sandbox runtime"
+                },
+                status=503,
+            )
+        digest = capacity.snapshot_digest or runtime_digest
+        admitted, _clamped = clamp_parallelism(runtime["parallelism"], digest)
+        admitted = min(admitted, capacity.parallelism)
+        parallel_digest = parallel_capacity.snapshot_digest or runtime_digest
+        _, denied_at_2 = clamp_parallelism(2, parallel_digest)
         return Response(
             {
                 "ready_to_submit": not credentials["missing"] and not probe_failed,
                 "credentials": credentials["report"],
-                "effective_parallelism": runtime["parallelism"],
+                "parallelism_enabled": not denied_at_2
+                and parallel_capacity.parallelism > 1,
+                "effective_parallelism": admitted,
+                "resource_profile": {
+                    "name": capacity.name,
+                    "cpu_units": capacity.cpu_units,
+                    "memory_mb": capacity.memory_mb,
+                    "disk_gb": capacity.disk_gb,
+                },
                 "snapshot": {
-                    "name": runtime_name or None,
-                    "digest": runtime_digest or None,
+                    "name": capacity.snapshot_name or runtime_name or None,
+                    "digest": digest,
                     "engines": HOSTED_ENGINE_CATALOG,
                     "runtimes": HOSTED_RUNTIME_CATALOG,
                 },

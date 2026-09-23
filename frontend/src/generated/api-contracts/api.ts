@@ -584,7 +584,6 @@ import type {
   HarnessJobReadApi,
   HarnessManifestApi,
   HarnessPreflightApi,
-  HarnessPreflightResponseApi,
   HarnessResultReceiptApi,
   HarnessRunCreateApi,
   HarnessRunCreateResponseApi,
@@ -1510,66 +1509,6 @@ export type HTTPStatusCodes =
   | HTTPStatusCode3xx
   | HTTPStatusCode4xx
   | HTTPStatusCode5xx;
-
-export type simulateApiHarnessJobsConversationConversationMessageResponse202 = {
-  data: HarnessConversationReadApi;
-  status: 202;
-};
-
-export type simulateApiHarnessJobsConversationConversationMessageResponse409 = {
-  data: ApiTextErrorResponseApi;
-  status: 409;
-};
-
-export type simulateApiHarnessJobsConversationConversationMessageResponseDefault =
-  {
-    data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 202 | 409>;
-  };
-
-export type simulateApiHarnessJobsConversationConversationMessageResponseSuccess =
-  simulateApiHarnessJobsConversationConversationMessageResponse202 & {
-    headers: Headers;
-  };
-export type simulateApiHarnessJobsConversationConversationMessageResponseError =
-  (
-    | simulateApiHarnessJobsConversationConversationMessageResponse409
-    | simulateApiHarnessJobsConversationConversationMessageResponseDefault
-  ) & {
-    headers: Headers;
-  };
-
-export type simulateApiHarnessJobsConversationConversationMessageResponse =
-  | simulateApiHarnessJobsConversationConversationMessageResponseSuccess
-  | simulateApiHarnessJobsConversationConversationMessageResponseError;
-
-export const getSimulateApiHarnessJobsConversationConversationMessageUrl = (
-  id: string,
-) => {
-  return `/simulate/api/harness-jobs/${id}/conversation/messages/`;
-};
-
-/**
- * Validates the v1.6 request contract and delegates execution to the public backend selected by
-``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
-selects its managed sandbox runtime.
- * @summary Provider-neutral control plane for hosted ALK harness jobs.
- */
-export const simulateApiHarnessJobsConversationConversationMessage = async (
-  id: string,
-  harnessConversationMessageCreateApi: HarnessConversationMessageCreateApi,
-  options?: RequestInit,
-): Promise<simulateApiHarnessJobsConversationConversationMessageResponse> => {
-  return apiMutator<simulateApiHarnessJobsConversationConversationMessageResponse>(
-    getSimulateApiHarnessJobsConversationConversationMessageUrl(id),
-    {
-      ...options,
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(harnessConversationMessageCreateApi),
-    },
-  );
-};
 
 export type accounts2faRecoveryCodesListResponse200 = {
   data: RecoveryCodesRemainingResponseApi;
@@ -58398,162 +58337,6 @@ export const simulateApiHarnessEnvironmentsDelete = async (
   );
 };
 
-export type simulateApiHarnessEnvironmentsAddEvaluationResponse201 = {
-  data: HarnessEnvironmentDetailApi;
-  status: 201;
-};
-
-export type simulateApiHarnessEnvironmentsAddEvaluationResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
-};
-
-export type simulateApiHarnessEnvironmentsAddEvaluationResponseSuccess =
-  simulateApiHarnessEnvironmentsAddEvaluationResponse201 & {
-    headers: Headers;
-  };
-export type simulateApiHarnessEnvironmentsAddEvaluationResponseError =
-  simulateApiHarnessEnvironmentsAddEvaluationResponseDefault & {
-    headers: Headers;
-  };
-
-export type simulateApiHarnessEnvironmentsAddEvaluationResponse =
-  | simulateApiHarnessEnvironmentsAddEvaluationResponseSuccess
-  | simulateApiHarnessEnvironmentsAddEvaluationResponseError;
-
-export const getSimulateApiHarnessEnvironmentsAddEvaluationUrl = (
-  id: string,
-) => {
-  return `/simulate/api/harness-environments/${id}/evaluations/`;
-};
-
-/**
- * Applies to scenarios graded from here on. Calls that already ran keep
-the verdicts they were given, so adding an eval does not backfill a
-column onto past results.
- * @summary Grade this environment by one more eval from the catalogue.
- */
-export const simulateApiHarnessEnvironmentsAddEvaluation = async (
-  id: string,
-  harnessEnvironmentAddEvaluationApi: HarnessEnvironmentAddEvaluationApi,
-  options?: RequestInit,
-): Promise<simulateApiHarnessEnvironmentsAddEvaluationResponse> => {
-  return apiMutator<simulateApiHarnessEnvironmentsAddEvaluationResponse>(
-    getSimulateApiHarnessEnvironmentsAddEvaluationUrl(id),
-    {
-      ...options,
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(harnessEnvironmentAddEvaluationApi),
-    },
-  );
-};
-
-export type simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponse200 =
-  {
-    data: HarnessEnvironmentAvailableEvalsApi;
-    status: 200;
-  };
-
-export type simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponseDefault =
-  {
-    data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 200>;
-  };
-
-export type simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponseSuccess =
-  simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponse200 & {
-    headers: Headers;
-  };
-export type simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponseError =
-  simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponseDefault & {
-    headers: Headers;
-  };
-
-export type simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponse =
-
-    | simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponseSuccess
-    | simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponseError;
-
-export const getSimulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsUrl =
-  (id: string) => {
-    return `/simulate/api/harness-environments/${id}/evaluations/available/`;
-  };
-
-/**
- * The same catalogue authoring chose from, filtered to this environment's
-modality and to the templates the organization can see, minus what is
-already selected. Every entry is addable as it stands: an eval whose
-inputs this modality does not produce is left out rather than offered
-and then refused.
- * @summary The evals this environment could still be graded by.
- */
-export const simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluations =
-  async (
-    id: string,
-    options?: RequestInit,
-  ): Promise<simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponse> => {
-    return apiMutator<simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponse>(
-      getSimulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsUrl(id),
-      {
-        ...options,
-        method: "GET",
-      },
-    );
-  };
-
-export type simulateApiHarnessEnvironmentsRemoveEvaluationResponse204 = {
-  data: void;
-  status: 204;
-};
-
-export type simulateApiHarnessEnvironmentsRemoveEvaluationResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 204>;
-};
-
-export type simulateApiHarnessEnvironmentsRemoveEvaluationResponseSuccess =
-  simulateApiHarnessEnvironmentsRemoveEvaluationResponse204 & {
-    headers: Headers;
-  };
-export type simulateApiHarnessEnvironmentsRemoveEvaluationResponseError =
-  simulateApiHarnessEnvironmentsRemoveEvaluationResponseDefault & {
-    headers: Headers;
-  };
-
-export type simulateApiHarnessEnvironmentsRemoveEvaluationResponse =
-  | simulateApiHarnessEnvironmentsRemoveEvaluationResponseSuccess
-  | simulateApiHarnessEnvironmentsRemoveEvaluationResponseError;
-
-export const getSimulateApiHarnessEnvironmentsRemoveEvaluationUrl = (
-  id: string,
-  evalConfigId: string,
-) => {
-  return `/simulate/api/harness-environments/${id}/evaluations/${evalConfigId}/`;
-};
-
-/**
- * Soft-delete only. The verdicts an eval already produced live on the call
-executions and in their receipts, not on this row, so a hard delete would
-leave past runs showing scores for something the environment no longer
-lists. Removing it stops future scenarios being graded by it and leaves
-the history it already wrote intact.
- * @summary Stop running one eval against this environment.
- */
-export const simulateApiHarnessEnvironmentsRemoveEvaluation = async (
-  id: string,
-  evalConfigId: string,
-  options?: RequestInit,
-): Promise<simulateApiHarnessEnvironmentsRemoveEvaluationResponse> => {
-  return apiMutator<simulateApiHarnessEnvironmentsRemoveEvaluationResponse>(
-    getSimulateApiHarnessEnvironmentsRemoveEvaluationUrl(id, evalConfigId),
-    {
-      ...options,
-      method: "DELETE",
-    },
-  );
-};
-
 export type simulateApiHarnessEnvironmentsRunResponse202 = {
   data: HarnessRunCreateResponseApi;
   status: 202;
@@ -58735,18 +58518,18 @@ export const simulateApiHarnessJobsHealth = async (
   );
 };
 
-export type simulateApiHarnessJobsPreflightResponse200 = {
-  data: HarnessPreflightResponseApi;
-  status: 200;
+export type simulateApiHarnessJobsPreflightResponse201 = {
+  data: HarnessPreflightApi;
+  status: 201;
 };
 
 export type simulateApiHarnessJobsPreflightResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 201>;
 };
 
 export type simulateApiHarnessJobsPreflightResponseSuccess =
-  simulateApiHarnessJobsPreflightResponse200 & {
+  simulateApiHarnessJobsPreflightResponse201 & {
     headers: Headers;
   };
 export type simulateApiHarnessJobsPreflightResponseError =
@@ -59092,6 +58875,66 @@ export const simulateApiHarnessJobsCancel = async (
   );
 };
 
+export type simulateApiHarnessJobsConversationConversationMessageResponse202 = {
+  data: HarnessConversationReadApi;
+  status: 202;
+};
+
+export type simulateApiHarnessJobsConversationConversationMessageResponse409 = {
+  data: ApiTextErrorResponseApi;
+  status: 409;
+};
+
+export type simulateApiHarnessJobsConversationConversationMessageResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 202 | 409>;
+  };
+
+export type simulateApiHarnessJobsConversationConversationMessageResponseSuccess =
+  simulateApiHarnessJobsConversationConversationMessageResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsConversationConversationMessageResponseError =
+  (
+    | simulateApiHarnessJobsConversationConversationMessageResponse409
+    | simulateApiHarnessJobsConversationConversationMessageResponseDefault
+  ) & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsConversationConversationMessageResponse =
+  | simulateApiHarnessJobsConversationConversationMessageResponseSuccess
+  | simulateApiHarnessJobsConversationConversationMessageResponseError;
+
+export const getSimulateApiHarnessJobsConversationConversationMessageUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-jobs/${id}/conversation/messages/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsConversationConversationMessage = async (
+  id: string,
+  harnessConversationMessageCreateApi: HarnessConversationMessageCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsConversationConversationMessageResponse> => {
+  return apiMutator<simulateApiHarnessJobsConversationConversationMessageResponse>(
+    getSimulateApiHarnessJobsConversationConversationMessageUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessConversationMessageCreateApi),
+    },
+  );
+};
+
 export type simulateApiHarnessJobsExtendResponse201 = {
   data: HarnessJobExtendApi;
   status: 201;
@@ -59137,6 +58980,55 @@ export const simulateApiHarnessJobsExtend = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(harnessJobExtendApi),
+    },
+  );
+};
+
+export type simulateApiHarnessJobsRunsResponse202 = {
+  data: HarnessRunCreateResponseApi;
+  status: 202;
+};
+
+export type simulateApiHarnessJobsRunsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202>;
+};
+
+export type simulateApiHarnessJobsRunsResponseSuccess =
+  simulateApiHarnessJobsRunsResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsRunsResponseError =
+  simulateApiHarnessJobsRunsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsRunsResponse =
+  | simulateApiHarnessJobsRunsResponseSuccess
+  | simulateApiHarnessJobsRunsResponseError;
+
+export const getSimulateApiHarnessJobsRunsUrl = (id: string) => {
+  return `/simulate/api/harness-jobs/${id}/runs/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsRuns = async (
+  id: string,
+  harnessRunCreateApi: HarnessRunCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsRunsResponse> => {
+  return apiMutator<simulateApiHarnessJobsRunsResponse>(
+    getSimulateApiHarnessJobsRunsUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessRunCreateApi),
     },
   );
 };
@@ -80274,7 +80166,10 @@ export const getUsageAdminInvoicePreviewCreateUrl = () => {
 };
 
 /**
- * Preview invoice for an org+period (no side effects).
+ * Creates no invoice and deducts no credits, but does backfill missing
+``UsageSummary`` rows for the usage period. Open to staff so the admin's
+read-only Generate Invoice page can show what would be billed.
+ * @summary Preview invoice for an org+period.
  */
 export const usageAdminInvoicePreviewCreate = async (
   adminInvoiceRequestApi: AdminInvoiceRequestApi,
@@ -88245,51 +88140,158 @@ export const v1SelfHostedActivationsCreate = async (
   );
 };
 
-export type simulateApiHarnessJobsRunsResponse202 = {
-  data: HarnessRunCreateResponseApi;
-  status: 202;
+export type simulateApiHarnessEnvironmentsAddEvaluationResponse201 = {
+  data: HarnessEnvironmentDetailApi;
+  status: 201;
 };
 
-export type simulateApiHarnessJobsRunsResponseDefault = {
+export type simulateApiHarnessEnvironmentsAddEvaluationResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 202>;
+  status: Exclude<HTTPStatusCodes, 201>;
 };
 
-export type simulateApiHarnessJobsRunsResponseSuccess =
-  simulateApiHarnessJobsRunsResponse202 & {
+export type simulateApiHarnessEnvironmentsAddEvaluationResponseSuccess =
+  simulateApiHarnessEnvironmentsAddEvaluationResponse201 & {
     headers: Headers;
   };
-export type simulateApiHarnessJobsRunsResponseError =
-  simulateApiHarnessJobsRunsResponseDefault & {
+export type simulateApiHarnessEnvironmentsAddEvaluationResponseError =
+  simulateApiHarnessEnvironmentsAddEvaluationResponseDefault & {
     headers: Headers;
   };
 
-export type simulateApiHarnessJobsRunsResponse =
-  | simulateApiHarnessJobsRunsResponseSuccess
-  | simulateApiHarnessJobsRunsResponseError;
+export type simulateApiHarnessEnvironmentsAddEvaluationResponse =
+  | simulateApiHarnessEnvironmentsAddEvaluationResponseSuccess
+  | simulateApiHarnessEnvironmentsAddEvaluationResponseError;
 
-export const getSimulateApiHarnessJobsRunsUrl = (id: string) => {
-  return `/simulate/api/harness-jobs/${id}/runs/`;
+export const getSimulateApiHarnessEnvironmentsAddEvaluationUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/evaluations/`;
 };
 
 /**
- * Validates the v1.6 request contract and delegates execution to the public backend selected by
-``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
-selects its managed sandbox runtime.
- * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ * Applies to scenarios graded from here on. Calls that already ran keep
+the verdicts they were given, so adding an eval does not backfill a
+column onto past results.
+ * @summary Grade this environment by one more eval from the catalogue.
  */
-export const simulateApiHarnessJobsRuns = async (
+export const simulateApiHarnessEnvironmentsAddEvaluation = async (
   id: string,
-  harnessRunCreateApi: HarnessRunCreateApi,
+  harnessEnvironmentAddEvaluationApi: HarnessEnvironmentAddEvaluationApi,
   options?: RequestInit,
-): Promise<simulateApiHarnessJobsRunsResponse> => {
-  return apiMutator<simulateApiHarnessJobsRunsResponse>(
-    getSimulateApiHarnessJobsRunsUrl(id),
+): Promise<simulateApiHarnessEnvironmentsAddEvaluationResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsAddEvaluationResponse>(
+    getSimulateApiHarnessEnvironmentsAddEvaluationUrl(id),
     {
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(harnessRunCreateApi),
+      body: JSON.stringify(harnessEnvironmentAddEvaluationApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponse200 =
+  {
+    data: HarnessEnvironmentAvailableEvalsApi;
+    status: 200;
+  };
+
+export type simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200>;
+  };
+
+export type simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponseSuccess =
+  simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponseError =
+  simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponse =
+
+    | simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponseSuccess
+    | simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponseError;
+
+export const getSimulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsUrl =
+  (id: string) => {
+    return `/simulate/api/harness-environments/${id}/evaluations/available/`;
+  };
+
+/**
+ * The same catalogue authoring chose from, filtered to this environment's
+modality and to the templates the organization can see, minus what is
+already selected. Every entry is addable as it stands: an eval whose
+inputs this modality does not produce is left out rather than offered
+and then refused.
+ * @summary The evals this environment could still be graded by.
+ */
+export const simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluations =
+  async (
+    id: string,
+    options?: RequestInit,
+  ): Promise<simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponse> => {
+    return apiMutator<simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsResponse>(
+      getSimulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsUrl(id),
+      {
+        ...options,
+        method: "GET",
+      },
+    );
+  };
+
+export type simulateApiHarnessEnvironmentsRemoveEvaluationResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type simulateApiHarnessEnvironmentsRemoveEvaluationResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 204>;
+};
+
+export type simulateApiHarnessEnvironmentsRemoveEvaluationResponseSuccess =
+  simulateApiHarnessEnvironmentsRemoveEvaluationResponse204 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsRemoveEvaluationResponseError =
+  simulateApiHarnessEnvironmentsRemoveEvaluationResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsRemoveEvaluationResponse =
+  | simulateApiHarnessEnvironmentsRemoveEvaluationResponseSuccess
+  | simulateApiHarnessEnvironmentsRemoveEvaluationResponseError;
+
+export const getSimulateApiHarnessEnvironmentsRemoveEvaluationUrl = (
+  id: string,
+  evalConfigId: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/evaluations/${evalConfigId}/`;
+};
+
+/**
+ * Soft-delete only. The verdicts an eval already produced live on the call
+executions and in their receipts, not on this row, so a hard delete would
+leave past runs showing scores for something the environment no longer
+lists. Removing it stops future scenarios being graded by it and leaves
+the history it already wrote intact.
+ * @summary Stop running one eval against this environment.
+ */
+export const simulateApiHarnessEnvironmentsRemoveEvaluation = async (
+  id: string,
+  evalConfigId: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsRemoveEvaluationResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsRemoveEvaluationResponse>(
+    getSimulateApiHarnessEnvironmentsRemoveEvaluationUrl(id, evalConfigId),
+    {
+      ...options,
+      method: "DELETE",
     },
   );
 };

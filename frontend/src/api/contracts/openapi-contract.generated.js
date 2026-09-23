@@ -27888,14 +27888,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
       post: {
         operationId: "simulate_api_harness-jobs_preflight",
         runtimeRequestValidation: true,
-        runtimeResponseValidation: true,
+        runtimeResponseValidation: false,
         requestBody: {
           $ref: "#/definitions/HarnessPreflight",
         },
         queryParameters: {},
         responses: {
-          200: {
-            $ref: "#/definitions/HarnessPreflightResponse",
+          201: {
+            $ref: "#/definitions/HarnessPreflight",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -60465,6 +60465,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtime: {
           $ref: "#/definitions/HarnessRuntimeRead",
         },
+        parallelism: {
+          $ref: "#/definitions/HarnessParallelism",
+        },
         conversation: {
           $ref: "#/definitions/HarnessConversationRead",
         },
@@ -60598,45 +60601,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "string",
             maxLength: 4096,
           },
-        },
-      },
-    },
-    HarnessPreflightResponse: {
-      required: [
-        "ready_to_submit",
-        "state",
-        "checks",
-        "credentials",
-        "effective_parallelism",
-        "snapshot",
-      ],
-      type: "object",
-      properties: {
-        ready_to_submit: {
-          title: "Ready to submit",
-          type: "boolean",
-        },
-        state: {
-          title: "State",
-          type: "string",
-          enum: ["connected", "failed"],
-        },
-        checks: {
-          type: "array",
-          items: {
-            $ref: "#/definitions/HarnessPreflightCheck",
-          },
-        },
-        credentials: {
-          $ref: "#/definitions/HarnessPreflightCredentials",
-        },
-        effective_parallelism: {
-          title: "Effective parallelism",
-          type: "integer",
-        },
-        snapshot: {
-          title: "Snapshot",
-          type: "object",
         },
       },
     },
@@ -87641,7 +87605,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         connector: {
           title: "Connector",
           type: "string",
-          enum: ["livekit", "vapi", "retell", "retell_chat", "auto"],
+          enum: ["livekit", "vapi", "retell", "retell_chat", "phone", "auto"],
         },
         mode: {
           title: "Mode",
@@ -87893,6 +87857,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           enum: ["public", "private"],
           default: "public",
         },
+        environment_values: {
+          title: "Environment values",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            maxLength: 65536,
+            minLength: 1,
+          },
+        },
       },
     },
     HarnessConsumption: {
@@ -88007,6 +87980,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "x-nullable": true,
           },
         },
+        runtime: {
+          title: "Runtime",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
         run_test_id: {
           title: "Run test id",
           type: "string",
@@ -88062,6 +88043,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Failed scenarios",
           type: "integer",
         },
+        active_scenarios: {
+          title: "Active scenarios",
+          type: "integer",
+        },
+        queued_scenarios: {
+          title: "Queued scenarios",
+          type: "integer",
+        },
         total_scenarios: {
           title: "Total scenarios",
           type: "integer",
@@ -88075,6 +88064,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Failure",
           type: "object",
           "x-nullable": true,
+        },
+      },
+    },
+    HarnessParallelism: {
+      required: ["requested", "admitted", "effective", "degrade_reasons"],
+      type: "object",
+      properties: {
+        requested: {
+          title: "Requested",
+          type: "integer",
+        },
+        admitted: {
+          title: "Admitted",
+          type: "integer",
+        },
+        effective: {
+          title: "Effective",
+          type: "integer",
+        },
+        degrade_reasons: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },
@@ -88213,85 +88227,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maxLength: 255,
           minLength: 1,
           "x-nullable": true,
-        },
-      },
-    },
-    HarnessPreflightCheck: {
-      required: ["id", "label", "status", "detail", "missing", "fix"],
-      type: "object",
-      properties: {
-        id: {
-          title: "Id",
-          type: "string",
-          minLength: 1,
-        },
-        label: {
-          title: "Label",
-          type: "string",
-          minLength: 1,
-        },
-        status: {
-          title: "Status",
-          type: "string",
-          enum: ["passed", "failed", "skipped"],
-        },
-        detail: {
-          title: "Detail",
-          type: "string",
-        },
-        missing: {
-          type: "array",
-          items: {
-            type: "string",
-            minLength: 1,
-          },
-        },
-        fix: {
-          title: "Fix",
-          type: "string",
-          minLength: 1,
-          "x-nullable": true,
-        },
-      },
-    },
-    HarnessPreflightCredentials: {
-      required: [
-        "scanned_files",
-        "detected_connectors",
-        "requirements",
-        "credential_choices",
-        "probe",
-      ],
-      type: "object",
-      properties: {
-        scanned_files: {
-          title: "Scanned files",
-          type: "integer",
-        },
-        detected_connectors: {
-          type: "array",
-          items: {
-            type: "string",
-            minLength: 1,
-          },
-        },
-        requirements: {
-          type: "array",
-          items: {
-            type: "object",
-          },
-        },
-        credential_choices: {
-          type: "array",
-          items: {
-            type: "object",
-          },
-        },
-        probe: {
-          type: "array",
-          items: {
-            type: "object",
-          },
         },
       },
     },
