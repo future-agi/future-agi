@@ -43,19 +43,28 @@ const TOOL_INTENT_RULES = [
   { pat: /refund|reimburs|money\s*back|charge\s*back/i, name: "issue_refund", argsFor: (ctx) => ({ order_id: ctx.orderId, amount_cents: 4999 }), result: () => ({ ok: true, refund_id: "rf_9c3e4a" }) },
   { pat: /return\s*(window|label|policy|eligib)|eligib/i, name: "check_return_eligibility", argsFor: (ctx) => ({ order_id: ctx.orderId }), result: () => ({ eligible: true, window_days: 30, days_remaining: 4 }) },
   { pat: /escalat|supervisor|manager|human\s*agent|transfer/i, name: "escalate_to_human", argsFor: () => ({ queue: "supervisor" }), result: () => ({ queued: true, wait_seconds: 42 }) },
-  { pat: /cancel|stop\s*(the\s*)?order/i, name: "cancel_order", argsFor: (ctx) => ({ order_id: ctx.orderId }), result: () => ({ cancelled: true, cancelled_at: new Date().toISOString() }) },
+  { pat: /cancel|stop\s*(the\s*)?order/i, name: "cancel_order", argsFor: (ctx) => ({ order_id: ctx.orderId }), result: (ctx) => ({ cancelled: true, cancelled_at: ctx.callTime }) },
   { pat: /return\s*label|print|email\s*(it|the)?\s*(label)?/i, name: "generate_return_label", argsFor: (ctx) => ({ order_id: ctx.orderId }), result: () => ({ url: "https://ship.futureagi.com/labels/rl_1a2b3c.pdf" }) },
   { pat: /order|number|status|placed|invoice/i, name: "lookup_order", argsFor: (ctx) => ({ query: ctx.orderId || "AB-102401" }), result: (ctx) => ({ order_id: ctx.orderId || "AB-102401", status: "shipped", total_cents: 4999 }) },
 ];
 
-function inferToolCall(assistantText, ctx, allowedTools) {
+/* Stable hash, so a past call's numbers are the same on every render. */
+const hash = (str) => {
+  let h = 0;
+  for (let i = 0; i < str.length; i += 1) h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+  return Math.abs(h);
+};
+
+function inferToolCall(assistantText, ctx, allowedTools, key) {
   if (!assistantText) return null;
   const rule = TOOL_INTENT_RULES.find((r) => r.pat.test(assistantText));
   if (!rule) return null;
   if (allowedTools && allowedTools.length && !allowedTools.includes(rule.name)) return null;
   const args = rule.argsFor(ctx);
   const result = rule.result(ctx);
-  const latencyMs = 80 + Math.floor(Math.random() * 240);
+  /* This is a finished call, so the latency is a recorded fact — derived
+     from the task + turn, never re-rolled on render. */
+  const latencyMs = 80 + (hash(`${key}·${rule.name}`) % 240);
   return { name: rule.name, args, result, latencyMs };
 }
 
@@ -89,7 +98,11 @@ function buildTranscriptWithTools(steps, env, task) {
   // Pick a stable order id per task so every tool call within a call references the same order.
   const orderId = task?.attributes?.order_id
     || (task?.id ? `AB-${(task.id.split("-").pop() || "102401").slice(0, 6).toUpperCase()}` : "AB-102401");
-  const ctx = { orderId, eta: task?.attributes?.eta };
+  const ctx = {
+    orderId,
+    eta: task?.attributes?.eta,
+    callTime: task?.finishedAt || task?.startedAt || task?.timestamp || null,
+  };
 
   const out = [];
   let cursor = 0;
@@ -116,7 +129,7 @@ function buildTranscriptWithTools(steps, env, task) {
        assistant bubble as a footer. Amber accent (the drawer's `tool`
        role color) keeps them visually attached to the turn above. */
     if (role === "assistant") {
-      const tool = inferToolCall(s.text, ctx, allowedTools);
+      const tool = inferToolCall(s.text, ctx, allowedTools, `${task?.id || "t"}-${i}`);
       if (tool) {
         const dur = Math.max(0.2, tool.latencyMs / 1000);
         out.push({

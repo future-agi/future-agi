@@ -73,6 +73,7 @@ const VoiceDetailDrawerV2 = ({
   hideAnnotationTab = false,
   initialTab,
   focusEvalName,
+  hideEvalRowFix = false,
 }) => {
   const queryClient = useQueryClient();
   const { observeId } = useParams();
@@ -507,6 +508,7 @@ const VoiceDetailDrawerV2 = ({
                 hideAnnotationTab={hideAnnotationTab}
                 initialTab={initialTab}
                 focusEvalName={focusEvalName}
+                hideEvalRowFix={hideEvalRowFix}
               />
             </Box>
           </>
@@ -631,6 +633,7 @@ VoiceDetailDrawerV2.propTypes = {
   hideAnnotationTab: PropTypes.bool,
   initialTab: PropTypes.string,
   focusEvalName: PropTypes.string,
+  hideEvalRowFix: PropTypes.bool,
 };
 
 export default VoiceDetailDrawerV2;

@@ -121,6 +121,7 @@ const EvalTableRow = ({
   showSpanColumn,
   onFixWithFalcon,
   focused = false,
+  hideRowFix = false,
 }) => {
   const [expanded, setExpanded] = useState(focused);
   const rowRef = useRef(null);
@@ -350,7 +351,6 @@ const EvalTableRow = ({
         <Box
           sx={{
             px: 1.5,
-            pl: 4.5,
             py: 0.75,
             bgcolor: "background.default",
             borderBottom: "1px solid",
@@ -402,7 +402,7 @@ const EvalTableRow = ({
 
           {/* Fix with Falcon — hidden for passed evals (nothing to fix);
               shown for failed and unscored rows whenever expanded. */}
-          {!isPassedEval(ev) && (
+          {!isPassedEval(ev) && !hideRowFix && (
             <Box
               onClick={(e) => {
                 e.stopPropagation();
@@ -449,6 +449,7 @@ EvalTableRow.propTypes = {
   showSpanColumn: PropTypes.bool,
   onFixWithFalcon: PropTypes.func,
   focused: PropTypes.bool,
+  hideRowFix: PropTypes.bool,
 };
 
 /**
@@ -464,6 +465,7 @@ const EvalsTabView = ({
   showSpanColumn = true,
   onFixWithFalcon,
   focusEvalName,
+  hideRowFix = false,
 }) => {
   const [search, setSearch] = useState("");
   const list = useMemo(() => (Array.isArray(evals) ? evals : []), [evals]);
@@ -770,6 +772,7 @@ const EvalsTabView = ({
             showSpanColumn={showSpanColumn}
             onFixWithFalcon={onFixWithFalcon}
             focused={!!focusEvalName && ev.eval_name === focusEvalName}
+            hideRowFix={hideRowFix}
           />
         ))}
       </Box>
@@ -785,6 +788,9 @@ EvalsTabView.propTypes = {
   onFixWithFalcon: PropTypes.func,
   /* Opens this eval's row expanded and scrolls to it. */
   focusEvalName: PropTypes.string,
+  /* Drops the per-eval "Fix with Falcon" under an expanded row; the
+     summary-bar one stays. */
+  hideRowFix: PropTypes.bool,
 };
 
 export default EvalsTabView;

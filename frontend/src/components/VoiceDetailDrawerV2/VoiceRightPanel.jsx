@@ -54,6 +54,7 @@ const VoiceRightPanel = ({
   hideAnnotationTab,
   initialTab,
   focusEvalName,
+  hideEvalRowFix = false,
 }) => {
   const [currentTab, setCurrentTab] = useState(initialTab || TABS.ANALYTICS);
   const isSimulate = data?.module === "simulate";
@@ -417,6 +418,7 @@ const VoiceRightPanel = ({
               emptyMessage="No evaluations for this call"
               showSpanColumn={false}
               focusEvalName={focusEvalName}
+              hideRowFix={hideEvalRowFix}
               onFixWithFalcon={({ level, ev, failingEvals, allEvals }) => {
                 const projectId = data?.project_id;
                 const callId = data?.id;
@@ -526,6 +528,7 @@ VoiceRightPanel.propTypes = {
   /* Tab to open on, e.g. "evaluations"; defaults to Analytics. */
   initialTab: PropTypes.string,
   focusEvalName: PropTypes.string,
+  hideEvalRowFix: PropTypes.bool,
   data: PropTypes.object.isRequired,
   onCompareBaseline: PropTypes.func,
   onAction: PropTypes.func,

@@ -861,6 +861,7 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
                   data={taskToVoiceData(openTask, { env, voice: true })}
                   initialTab={evalFocus ? "evaluations" : undefined}
                   focusEvalName={evalFocus || undefined}
+                  hideEvalRowFix
                   onClose={closeTask}
                   onPrev={goPrev}
                   onNext={goNext}

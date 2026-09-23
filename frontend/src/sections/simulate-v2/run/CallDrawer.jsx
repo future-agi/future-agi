@@ -500,6 +500,7 @@ export default function CallDrawer({ task, env, envState, focus, focusEvalName, 
                 emptyMessage="No evaluations for this run"
                 showSpanColumn={false}
                 focusEvalName={focusEvalName}
+                hideRowFix
               />
             )}
 
