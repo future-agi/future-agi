@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import re
 from typing import Any
 
 from django.conf import settings
@@ -47,6 +48,40 @@ def _rejected_archive_upload(files) -> Response | None:
             status=status.HTTP_400_BAD_REQUEST,
         )
     return None
+
+
+_E164_PHONE = re.compile(r"^\+[1-9]\d{1,14}$")
+
+
+def _validate_phone_connectivity(payload) -> None:
+    """A phone-only target uses platform telephony, never customer SIP credentials."""
+    agent = payload["agent"]
+    if agent["connector"] != "phone" and not (
+        agent["connector"] in {"vapi", "retell"}
+        and agent.get("mode") == "connect_only"
+        and (agent.get("config") or {}).get("phone_number")
+    ):
+        return
+    from simulate.services.phone_telephony import platform_phone_telephony
+
+    telephony = platform_phone_telephony()
+    missing = [name for name, value in telephony.items() if not value]
+    if missing:
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        raise HostedHarnessError(
+            "phone_dialer_not_configured",
+            "Platform outbound calling is not configured: " + ", ".join(missing),
+            status_code=503,
+        )
+    if not _E164_PHONE.fullmatch(telephony["SIP_OUTBOUND_FROM_NUMBER"]):
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        raise HostedHarnessError(
+            "phone_dialer_caller_id_invalid",
+            "Platform SIP_OUTBOUND_FROM_NUMBER must be an E.164 caller ID",
+            status_code=503,
+        )
 
 
 def get_harness_provider():
@@ -509,7 +544,10 @@ def _preflight_credential_probe(payload) -> list[dict[str, Any]]:
     agent = payload["agent"]
     connector = str(agent.get("connector") or "").strip().lower()
     mode = str(agent.get("mode") or "").strip().lower()
-    if mode in {"connect_only", "provider_import"}:
+    if connector in {"vapi", "retell", "retell_chat"} and mode in {
+        "connect_only",
+        "provider_import",
+    }:
         target_field = "assistant_id" if connector == "vapi" else "agent_id"
         target = probe_provider_target(
             connector,
@@ -870,6 +908,7 @@ class HostedHarnessProvider:
         # Definitive launch validation runs again after vault resolution.
         try:
             _validate_secret_refs_hosted(payload["agent"]["secret_refs"])
+            _validate_phone_connectivity(payload)
             _validate_known_hosted_egress(payload, base_url)
             _validate_required_credential_files(request, payload)
         except HostedHarnessError as exc:
@@ -921,6 +960,7 @@ class HostedHarnessProvider:
         ).rstrip("/")
         try:
             _validate_secret_refs_hosted(payload["agent"]["secret_refs"])
+            _validate_phone_connectivity(payload)
             _validate_known_hosted_egress(payload, base_url)
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)

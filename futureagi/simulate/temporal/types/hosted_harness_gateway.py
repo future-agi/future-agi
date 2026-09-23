@@ -34,6 +34,17 @@ class HostedHarnessLaunchOutput:
 
 
 @dataclass(frozen=True)
+class HostedHarnessLaunchFailureInput:
+    job_id: str
+
+
+@dataclass(frozen=True)
+class HostedHarnessLaunchRecoveryOutput:
+    state: str
+    attempt_id: str | None = None
+
+
+@dataclass(frozen=True)
 class HostedHarnessPollOutput:
     done: bool
     state: str

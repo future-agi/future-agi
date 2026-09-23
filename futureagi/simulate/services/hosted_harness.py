@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -32,6 +33,22 @@ from simulate.services.alk_simulate_ingestion import (
 _CAPABILITY_SCHEMA_VERSION = "futureagi.harness-capabilities.v1"
 _JOB_SCHEMA_VERSION = "futureagi.harness-job.v1"
 _TOKEN_TAIL_SECONDS = 120 + 300
+
+
+def _active_attempt_budget_seconds(job: HostedHarnessJob) -> int:
+    """Budget an active capability for authoring plus scenario execution."""
+
+    authoring_seconds = max(
+        0,
+        int(
+            getattr(
+                settings,
+                "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
+                3600,
+            )
+        ),
+    )
+    return authoring_seconds + int(job.payload["runtime"]["max_duration_seconds"])
 
 
 class HostedHarnessError(Exception):
@@ -186,9 +203,7 @@ def register_attempt(
                     HostedHarnessAttempt.State.CLEANING_UP,
                 ),
             ).update(state=HostedHarnessAttempt.State.SUPERSEDED)
-        runnable_deadline = now + timedelta(
-            seconds=job.payload["runtime"]["max_duration_seconds"]
-        )
+        runnable_deadline = now + timedelta(seconds=_active_attempt_budget_seconds(job))
         expires_at = runnable_deadline + timedelta(seconds=_TOKEN_TAIL_SECONDS)
         attempt = HostedHarnessAttempt.no_workspace_objects.create(
             job=job,
@@ -247,6 +262,51 @@ def register_attempt(
     }
     return AttemptCapability(
         attempt=attempt, token=token, fence=fence, document=document
+    )
+
+
+def activate_attempt_capability(capability: AttemptCapability) -> AttemptCapability:
+    """Start the guest's time budget immediately before its capability is uploaded.
+
+    A managed sandbox can take a long time to create or accept source uploads. The
+    token is not available to the guest during that work, so charging that time
+    against the guest's deadline can expire an otherwise healthy run before its
+    first call. This is only for the unissued, provisioning capability; it must
+    never extend a running guest's access.
+    """
+
+    with transaction.atomic():
+        job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=capability.attempt.job_id
+        )
+        attempt = HostedHarnessAttempt.no_workspace_objects.select_for_update().get(
+            id=capability.attempt.id, job_id=job.id
+        )
+        if (
+            attempt.state != HostedHarnessAttempt.State.PROVISIONING
+            or not attempt.provider_ref
+            or job.current_attempt_number != attempt.attempt_number
+        ):
+            raise HostedHarnessError(
+                "attempt_capability_activation_invalid",
+                "Only the current, provisioned attempt can be activated",
+            )
+        runnable_deadline = timezone.now() + timedelta(
+            seconds=_active_attempt_budget_seconds(job)
+        )
+        attempt.expires_at = runnable_deadline + timedelta(seconds=_TOKEN_TAIL_SECONDS)
+        attempt.save(update_fields=["expires_at", "updated_at"])
+        job.deadline_at = runnable_deadline
+        job.save(update_fields=["deadline_at", "updated_at"])
+
+    return AttemptCapability(
+        attempt=attempt,
+        token=capability.token,
+        fence=capability.fence,
+        document={
+            **capability.document,
+            "expires_at": _rfc3339(attempt.expires_at),
+        },
     )
 
 
@@ -467,6 +527,13 @@ def _target_agent_prompt(job: HostedHarnessJob, payload: dict[str, Any]) -> str:
     supplied = str(payload.get("agent_prompt") or "").strip()
     if supplied:
         return supplied
+    if str((job.payload.get("agent") or {}).get("connector") or "") == "phone":
+        return str(
+            ((job.payload.get("agent") or {}).get("config") or {}).get(
+                "target_system_prompt"
+            )
+            or ""
+        ).strip()
     return str(_authored_contract_data(job).get("system_prompt_excerpt") or "").strip()
 
 
@@ -499,7 +566,7 @@ def _record_target_agent_facts(
     # model and language are left alone: the contract carries neither.
     connector = str((job.payload.get("agent") or {}).get("connector") or "").lower()
     if (
-        connector in {"livekit", "vapi", "retell", "retell_chat"}
+        connector in {"livekit", "vapi", "retell", "retell_chat", "phone"}
         and not agent_definition.provider
     ):
         agent_definition.provider = (
@@ -511,17 +578,29 @@ def _record_target_agent_facts(
     if named and agent_definition.agent_name == "alk-sdk-agent":
         agent_definition.agent_name = named[:255]
         changed.append("agent_name")
-    declared = (
-        str((job.payload.get("agent") or {}).get("call_direction") or "")
-        .strip()
-        .lower()
-    )
+    agent = job.payload.get("agent") or {}
+    agent_config = agent.get("config") or {}
+    explicit_inbound = agent_config.get("inbound")
+    declared = str(agent.get("call_direction") or "").strip().lower()
     direction = declared or str(authored.get("call_direction") or "").strip().lower()
-    if direction in {"inbound", "outbound"}:
-        inbound = direction == "inbound"
+    if isinstance(explicit_inbound, bool) or direction in {"inbound", "outbound"}:
+        # The user's RL Environment selection is authoritative: the explicit
+        # boolean first, then the submitted direction, then the authored guess.
+        inbound = (
+            explicit_inbound
+            if isinstance(explicit_inbound, bool)
+            else direction == "inbound"
+        )
         if agent_definition.inbound != inbound:
             agent_definition.inbound = inbound
             changed.append("inbound")
+    target_speaks_first = agent_config.get("target_speaks_first")
+    if (
+        isinstance(target_speaks_first, bool)
+        and agent_definition.target_speaks_first != target_speaks_first
+    ):
+        agent_definition.target_speaks_first = target_speaks_first
+        changed.append("target_speaks_first")
     if changed:
         agent_definition.save(update_fields=[*changed, "updated_at"])
     if prompt and agent_definition.latest_version is None:
@@ -809,7 +888,19 @@ def record_cleanup(
 def update_execution_counts(job: HostedHarnessJob) -> None:
     if not job.test_execution_id:
         return
-    receipts = HostedHarnessReceipt.no_workspace_objects.filter(job=job)
+    current_attempt_number = (
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id)
+        .values_list("current_attempt_number", flat=True)
+        .get()
+    )
+    # Reruns retain each not-yet-replaced prior receipt so the old result stays
+    # visible while the fresh suite is executing.  Progress must nevertheless
+    # describe only the current attempt; otherwise one new receipt plus four
+    # retained receipts incorrectly appears as a completed 5/5 rerun.
+    receipts = HostedHarnessReceipt.no_workspace_objects.filter(
+        job=job,
+        attempt_number=current_attempt_number,
+    )
     # Harness receipt outcomes answer "did the scenario satisfy its checks?";
     # TestExecution counters answer "did the call transport complete?".  Keep
     # those dimensions separate so a completed, playable call with a failed
@@ -817,7 +908,8 @@ def update_execution_counts(job: HostedHarnessJob) -> None:
     scenario_completed = receipts.filter(status="passed").count()
     scenario_failed = receipts.filter(status__in=("failed", "errored")).count()
     calls = CallExecution.no_workspace_objects.filter(
-        test_execution_id=job.test_execution_id
+        test_execution_id=job.test_execution_id,
+        hosted_registration__receipts__attempt_number=current_attempt_number,
     )
     calls_completed = calls.filter(status=CallExecution.CallStatus.COMPLETED).count()
     calls_failed = calls.filter(
