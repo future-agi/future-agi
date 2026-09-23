@@ -69,7 +69,7 @@ export default function BuilderConsole({
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [turns, running]);
+  }, [turns, running, canStop]);
 
   // Frozen === the env is not Live yet, so the builder can't accept edits. It
   // blocks the composer exactly like `running`, but persists across turns.
@@ -77,6 +77,11 @@ export default function BuilderConsole({
   const reason = frozenReason || CONSOLE_COPY.frozen;
 
   const hasContent = draft.trim() || scaffolds.length > 0;
+
+  // "Busy" drives the working indicator: the brief send round-trip (running) OR a
+  // turn still in flight (canStop = a queued/responding message waiting on the
+  // agent). Distinct from `blocked`, so the composer stays usable while waiting.
+  const busy = running || canStop;
 
   const send = () => {
     const text = draft.trim();
@@ -104,14 +109,14 @@ export default function BuilderConsole({
         </Box>
         <Box flex={1} minWidth={0}>
           <Typography sx={{ typography: "s3", color: "text.subtitle", lineHeight: 1.2 }}>
-            {frozen ? reason : running ? CONSOLE_COPY.working : CONSOLE_COPY.idle}
+            {frozen ? reason : busy ? CONSOLE_COPY.working : CONSOLE_COPY.idle}
           </Typography>
         </Box>
       </Stack>
 
       <Box sx={{ flex: 1, overflowY: "auto", px: 2.5, py: 3 }}>
         <Stack spacing={4}>
-          {(turns || []).length === 0 && !running ? (
+          {(turns || []).length === 0 && !busy ? (
             <Stack alignItems="center" spacing={1.25} sx={{ py: 6, opacity: 0.7 }}>
               <Box
                 sx={{
@@ -129,7 +134,7 @@ export default function BuilderConsole({
           ) : (
             <>
               {(turns || []).map((turn) => <Turn key={turn.id} turn={turn} />)}
-              {running && <Working label={CONSOLE_COPY.workingDot} />}
+              {busy && <Working label={CONSOLE_COPY.workingDot} />}
             </>
           )}
           <Box ref={endRef} />

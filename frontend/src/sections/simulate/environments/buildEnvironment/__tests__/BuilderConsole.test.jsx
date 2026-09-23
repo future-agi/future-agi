@@ -46,6 +46,22 @@ describe("BuilderConsole", () => {
     expect(screen.getByText(CONSOLE_COPY.workingDot)).toBeInTheDocument();
   });
 
+  it("shows the working cue while a turn is in flight (canStop) but keeps the composer usable", () => {
+    render(
+      <BuilderConsole
+        turns={[{ id: "u1", role: "user", text: "hey" }]}
+        running={false}
+        canStop
+        onStop={vi.fn()}
+      />,
+    );
+    // waiting-for-reply indicator is visible even though the POST already returned
+    expect(screen.getByText(CONSOLE_COPY.workingDot)).toBeInTheDocument();
+    expect(screen.getByText(CONSOLE_COPY.working)).toBeInTheDocument();
+    // ...and the user can still type an interjection (not blocked)
+    expect(screen.getByPlaceholderText(CONSOLE_COPY.placeholder)).not.toBeDisabled();
+  });
+
   it("renders a builder turn: title, prose, tool, file and expandable json", () => {
     render(<BuilderConsole turns={[builderTurn]} running={false} />);
 
