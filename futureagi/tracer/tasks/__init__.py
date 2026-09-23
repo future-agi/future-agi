@@ -5,7 +5,6 @@ Re-exports all tasks from submodules for backward compatibility.
 Tasks are organized by domain:
 
 - error_analysis: Trace error analysis and clustering
-- external_eval: External evaluation processing
 - dataset: Dataset creation from spans
 """
 
@@ -30,11 +29,6 @@ from tracer.tasks.eval_clustering import (
 # Exact aggregation refreshes
 from tracer.tasks.exact_aggregation import refresh_exact_aggregation_snapshot
 
-# External Eval Tasks
-from tracer.tasks.external_eval import (
-    process_external_evals,
-)
-
 __all__ = [
     # Error Analysis
     "analyze_single_trace",
@@ -42,8 +36,6 @@ __all__ = [
     "run_deep_analysis_on_demand",
     # Eval Clustering
     "cluster_eval_results_task",
-    # External Eval
-    "process_external_evals",
     # Dataset
     "process_spans_chunk_task",
     "CHUNK_SIZE",

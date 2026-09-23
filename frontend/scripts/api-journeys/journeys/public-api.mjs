@@ -1079,12 +1079,6 @@ export const publicApiJourneys = [
     async run({ apiBase, evidence }) {
       const endpoints = [
         {
-          label: "SDK configure evaluations",
-          method: "POST",
-          path: apiPath("/sdk/api/v1/configure-evaluations/"),
-          body: {},
-        },
-        {
           label: "SDK standalone eval v1",
           method: "POST",
           path: apiPath("/sdk/api/v1/eval/"),

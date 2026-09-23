@@ -89,19 +89,6 @@ class DeleteEvalTemplateTool(BaseTool):
                 )
 
             try:
-                from tracer.models.external_eval_config import ExternalEvalConfig
-
-                ExternalEvalConfig.objects.filter(eval_template=template).update(
-                    deleted=True, deleted_at=now
-                )
-            except Exception as e:
-                import structlog
-
-                structlog.get_logger(__name__).warning(
-                    "cascade_delete_failed", model="ExternalEvalConfig", error=str(e)
-                )
-
-            try:
                 from tracer.models.custom_eval_config import InlineEval
 
                 InlineEval.objects.filter(evaluation__eval_template=template).update(

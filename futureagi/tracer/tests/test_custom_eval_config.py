@@ -531,14 +531,6 @@ class TestEvalConfigBYOModel:
         serializer.is_valid(raise_exception=False)
         assert "model" not in serializer.errors, serializer.errors["model"]
 
-    @pytest.mark.parametrize("model_value", BYO_MODEL_STRINGS)
-    def test_external_eval_config_clean_fields_accepts_byo(self, model_value):
-        from tracer.models.external_eval_config import ExternalEvalConfig
-
-        config = ExternalEvalConfig(model=model_value)
-        exclude = [f.name for f in ExternalEvalConfig._meta.fields if f.name != "model"]
-        config.clean_fields(exclude=exclude)
-
 
 @pytest.mark.integration
 class TestScanEvalMappingPathsCommand:
