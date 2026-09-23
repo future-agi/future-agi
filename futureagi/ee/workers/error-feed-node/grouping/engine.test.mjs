@@ -148,6 +148,23 @@ test('incomplete or stale candidate membership fails before any model call', asy
   assert.equal(calls, 0);
 });
 
+test('refresh preserves the legacy mechanism shape for an issue without a title', async () => {
+  const setup = fixture();
+  const second = addSecondFinding(setup);
+  const ownedRows = [setup.row, second];
+  const pending = addThirdFinding(setup);
+  const issue = offeredIssue(ownedRows);
+  issue.mechanism.mechanism = 'A long existing mechanism explains the faulty refund decision and its evidence in detail. '.repeat(2);
+  issue.prototype_occurrence_ids = [setup.row.id];
+  const result = await runGrouping({rows: [...ownedRows, pending], pendingIds: [pending.id], features: setup.features,
+    candidateWindow: {...setup.candidateWindow, issues: [issue]}, store: setup.store,
+    investigate: withReceipts(async prompt => ({groups: [], deferred: prompt.findings.map(item =>
+      ({finding_id: item.id, reason: 'No supported assignment'}))}))});
+  assert.equal(result.status, 'complete');
+  assert.deepEqual(result.commands.map(command => command.type), ['refresh']);
+  assert.deepEqual(result.commands[0].mechanism, issue.mechanism);
+});
+
 test('feature revision and policy mismatches fail closed', async () => {
   const {row, features, candidateWindow, store} = fixture();
   features.rows[row.id].source_digest = 'stale';
