@@ -19,7 +19,6 @@ import {
   publishScenarioSelection,
   clearScenarioSelection,
 } from "../../buildEnvironment/console/scenarioSelectionBus";
-import { injectComposerScaffold } from "../../buildEnvironment/console/composerScaffoldBus";
 import { SCENARIOS_COPY } from "./scenarios.constants";
 import { ENV_SHAPE, ENV_STATE_SHAPE } from "./scenarios.shapes";
 import useScenarioPage, { PAGE_SIZE } from "./useScenarioPage";
@@ -222,13 +221,6 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
 
   // Edit → hand the selection to the builder chat as a pinned scaffold, so the
   // user can add an instruction and send it as a bulk edit against those rows.
-  const handleEditSelected = () => {
-    const n = sel.count;
-    injectComposerScaffold(
-      `Edit the ${n} selected ${n === 1 ? "scenario" : "scenarios"}: `,
-    );
-  };
-
   // Run → start a run scoped to the selection × k. The target rides ?only=…&
   // trials=k; the product run page doesn't honour those yet (honest gap).
   const handleRunSelected = (k) => {
@@ -405,8 +397,11 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
               {!locked && sel.count > 0 && (
                 <Box
                   sx={{
+                    // No horizontal padding here — SelectionBar owns its own
+                    // inset so the chip's left edge lines up with the table's
+                    // checkbox column below (an extra px here double-padded it).
                     position: "absolute", inset: 0, zIndex: 2,
-                    display: "flex", alignItems: "center", px: 2.5,
+                    display: "flex", alignItems: "center",
                     bgcolor: "background.paper",
                     borderBottom: "1px solid", borderColor: "divider",
                   }}
@@ -416,7 +411,6 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
                       count={sel.count}
                       onDelete={bulkDelete}
                       onClear={sel.clear}
-                      onEdit={handleEditSelected}
                       onRun={canRun && onStartRun ? handleRunSelected : undefined}
                       trials={trials}
                       onTrialsChange={setTrials}
