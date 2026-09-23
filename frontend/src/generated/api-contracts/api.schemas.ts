@@ -16857,120 +16857,6 @@ export interface CallExecutionErrorResponseApi {
   details?: CallExecutionErrorResponseApiDetails;
 }
 
-export type HarnessEnvironmentListItemApiStatus =
-  (typeof HarnessEnvironmentListItemApiStatus)[keyof typeof HarnessEnvironmentListItemApiStatus];
-
-export const HarnessEnvironmentListItemApiStatus = {
-  building: "building",
-  ready: "ready",
-  failed: "failed",
-} as const;
-
-export type HarnessEnvironmentListItemApiAgentType =
-  (typeof HarnessEnvironmentListItemApiAgentType)[keyof typeof HarnessEnvironmentListItemApiAgentType];
-
-export const HarnessEnvironmentListItemApiAgentType = {
-  voice: "voice",
-  chat: "chat",
-} as const;
-
-export interface HarnessEnvironmentListItemApi {
-  id: string;
-  /** @minLength 1 */
-  name: string;
-  description: string;
-  domain: string;
-  status: HarnessEnvironmentListItemApiStatus;
-  agent_type: HarnessEnvironmentListItemApiAgentType;
-  /** @minimum 0 */
-  tools_count: number;
-  /** @minimum 0 */
-  scenario_count: number;
-  /** @minimum 0 */
-  sub_goals_count: number;
-  /** @minimum 0 */
-  runs_count: number;
-  created_at: string;
-  last_updated: string;
-}
-
-export interface HarnessEnvironmentListResponseApi {
-  /** @minimum 0 */
-  count: number;
-  /** @minLength 1 */
-  next: string;
-  /** @minLength 1 */
-  previous: string;
-  /** @minimum 0 */
-  total_pages: number;
-  /** @minimum 1 */
-  current_page: number;
-  results: HarnessEnvironmentListItemApi[];
-}
-
-export type HarnessEnvironmentDetailApiOverview = { [key: string]: unknown };
-
-export type HarnessEnvironmentDetailApiContract = { [key: string]: unknown };
-
-export type HarnessEnvironmentDetailApiWorld = { [key: string]: unknown };
-
-export type HarnessEnvironmentDetailApiScenariosItem = {
-  [key: string]: unknown;
-};
-
-export type HarnessEnvironmentDetailApiEvaluations = { [key: string]: unknown };
-
-export type HarnessEnvironmentDetailApiSettings = { [key: string]: unknown };
-
-export interface HarnessEnvironmentDetailApi {
-  id: string;
-  overview: HarnessEnvironmentDetailApiOverview;
-  contract: HarnessEnvironmentDetailApiContract;
-  world: HarnessEnvironmentDetailApiWorld;
-  scenarios: HarnessEnvironmentDetailApiScenariosItem[];
-  evaluations: HarnessEnvironmentDetailApiEvaluations;
-  settings: HarnessEnvironmentDetailApiSettings;
-}
-
-export interface HarnessEnvironmentRenameApi {
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  name: string;
-}
-
-export interface HarnessRunCreateApi {
-  /** @maxItems 1000 */
-  scenario_ids: string[];
-  /**
-   * @minimum 1
-   * @maximum 20
-   */
-  trials?: number;
-}
-
-export interface HarnessRunCreateResponseApi {
-  environment_id: string;
-  job_id: string;
-  run_id: string;
-  run_test_id: string;
-  test_execution_id: string;
-  /** @minimum 1 */
-  scenario_count: number;
-  /**
-   * @minimum 1
-   * @maximum 20
-   */
-  trials: number;
-  /** @minimum 1 */
-  total_calls: number;
-  /** @minLength 1 */
-  state: string;
-  /** @minLength 1 */
-  stage: string;
-}
-
 export type HarnessJobReadApiReceiptsItem = { [key: string]: unknown };
 
 export type HarnessJobReadApiUsageLimit = { [key: string]: unknown };
@@ -17272,7 +17158,6 @@ export const HarnessAgentApiConnector = {
   vapi: "vapi",
   retell: "retell",
   retell_chat: "retell_chat",
-  phone: "phone",
   auto: "auto",
 } as const;
 
@@ -19279,8 +19164,6 @@ export interface CallExecutionDetailApi {
   readonly recordings?: string;
   readonly test_execution_id?: string;
   readonly scenario_id?: string;
-  readonly source_scenario_key?: string;
-  readonly trial_index?: string;
   readonly scenario_graph?: string;
   readonly scenario_graph_id?: string;
   readonly avg_agent_latency?: number;
@@ -20246,18 +20129,6 @@ export interface TestExecutionItemResponseApi {
   readonly total_number_of_fagi_agent_turns?: number;
   /** @minLength 1 */
   readonly source_type?: string;
-  readonly scenario_keys?: readonly string[];
-  readonly selected_scenarios?: number;
-  readonly trials?: number;
-  readonly total_calls?: number;
-  readonly completed_calls?: number;
-  readonly failed_calls?: number;
-  readonly pending_calls?: number;
-  /** @minLength 1 */
-  readonly completed_at?: string;
-  readonly outcome_passed?: number;
-  readonly outcome_failed?: number;
-  readonly outcome_skipped?: number;
 }
 
 export interface RunTestExecutionsResponseApi {
@@ -28519,6 +28390,120 @@ export interface ActivationResponseApi {
   allowed_services: string[];
   allowed_models: string[];
   scope: ActivationResponseApiScope;
+}
+
+export type HarnessEnvironmentListItemApiStatus =
+  (typeof HarnessEnvironmentListItemApiStatus)[keyof typeof HarnessEnvironmentListItemApiStatus];
+
+export const HarnessEnvironmentListItemApiStatus = {
+  building: "building",
+  ready: "ready",
+  failed: "failed",
+} as const;
+
+export type HarnessEnvironmentListItemApiAgentType =
+  (typeof HarnessEnvironmentListItemApiAgentType)[keyof typeof HarnessEnvironmentListItemApiAgentType];
+
+export const HarnessEnvironmentListItemApiAgentType = {
+  voice: "voice",
+  chat: "chat",
+} as const;
+
+export interface HarnessEnvironmentListItemApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  description: string;
+  domain: string;
+  status: HarnessEnvironmentListItemApiStatus;
+  agent_type: HarnessEnvironmentListItemApiAgentType;
+  /** @minimum 0 */
+  tools_count: number;
+  /** @minimum 0 */
+  scenario_count: number;
+  /** @minimum 0 */
+  sub_goals_count: number;
+  /** @minimum 0 */
+  runs_count: number;
+  created_at: string;
+  last_updated: string;
+}
+
+export interface HarnessEnvironmentListResponseApi {
+  /** @minimum 0 */
+  count: number;
+  /** @minLength 1 */
+  next: string;
+  /** @minLength 1 */
+  previous: string;
+  /** @minimum 0 */
+  total_pages: number;
+  /** @minimum 1 */
+  current_page: number;
+  results: HarnessEnvironmentListItemApi[];
+}
+
+export type HarnessEnvironmentDetailApiOverview = { [key: string]: unknown };
+
+export type HarnessEnvironmentDetailApiContract = { [key: string]: unknown };
+
+export type HarnessEnvironmentDetailApiWorld = { [key: string]: unknown };
+
+export type HarnessEnvironmentDetailApiScenariosItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentDetailApiEvaluations = { [key: string]: unknown };
+
+export type HarnessEnvironmentDetailApiSettings = { [key: string]: unknown };
+
+export interface HarnessEnvironmentDetailApi {
+  id: string;
+  overview: HarnessEnvironmentDetailApiOverview;
+  contract: HarnessEnvironmentDetailApiContract;
+  world: HarnessEnvironmentDetailApiWorld;
+  scenarios: HarnessEnvironmentDetailApiScenariosItem[];
+  evaluations: HarnessEnvironmentDetailApiEvaluations;
+  settings: HarnessEnvironmentDetailApiSettings;
+}
+
+export interface HarnessEnvironmentRenameApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+}
+
+export interface HarnessRunCreateApi {
+  /** @maxItems 1000 */
+  scenario_ids: string[];
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials?: number;
+}
+
+export interface HarnessRunCreateResponseApi {
+  environment_id: string;
+  job_id: string;
+  run_id: string;
+  run_test_id: string;
+  test_execution_id: string;
+  /** @minimum 1 */
+  scenario_count: number;
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials: number;
+  /** @minimum 1 */
+  total_calls: number;
+  /** @minLength 1 */
+  state: string;
+  /** @minLength 1 */
+  stage: string;
 }
 
 export interface HarnessEnvironmentAddEvaluationApi {

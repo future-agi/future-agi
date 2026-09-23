@@ -58173,213 +58173,6 @@ export const simulateApiCallExecutionsList = async (
   );
 };
 
-export type simulateApiHarnessEnvironmentsListResponse200 = {
-  data: HarnessEnvironmentListResponseApi;
-  status: 200;
-};
-
-export type simulateApiHarnessEnvironmentsListResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
-};
-
-export type simulateApiHarnessEnvironmentsListResponseSuccess =
-  simulateApiHarnessEnvironmentsListResponse200 & {
-    headers: Headers;
-  };
-export type simulateApiHarnessEnvironmentsListResponseError =
-  simulateApiHarnessEnvironmentsListResponseDefault & {
-    headers: Headers;
-  };
-
-export type simulateApiHarnessEnvironmentsListResponse =
-  | simulateApiHarnessEnvironmentsListResponseSuccess
-  | simulateApiHarnessEnvironmentsListResponseError;
-
-export const getSimulateApiHarnessEnvironmentsListUrl = () => {
-  return `/simulate/api/harness-environments/`;
-};
-
-export const simulateApiHarnessEnvironmentsList = async (
-  options?: RequestInit,
-): Promise<simulateApiHarnessEnvironmentsListResponse> => {
-  return apiMutator<simulateApiHarnessEnvironmentsListResponse>(
-    getSimulateApiHarnessEnvironmentsListUrl(),
-    {
-      ...options,
-      method: "GET",
-    },
-  );
-};
-
-export type simulateApiHarnessEnvironmentsReadResponse200 = {
-  data: HarnessEnvironmentDetailApi;
-  status: 200;
-};
-
-export type simulateApiHarnessEnvironmentsReadResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
-};
-
-export type simulateApiHarnessEnvironmentsReadResponseSuccess =
-  simulateApiHarnessEnvironmentsReadResponse200 & {
-    headers: Headers;
-  };
-export type simulateApiHarnessEnvironmentsReadResponseError =
-  simulateApiHarnessEnvironmentsReadResponseDefault & {
-    headers: Headers;
-  };
-
-export type simulateApiHarnessEnvironmentsReadResponse =
-  | simulateApiHarnessEnvironmentsReadResponseSuccess
-  | simulateApiHarnessEnvironmentsReadResponseError;
-
-export const getSimulateApiHarnessEnvironmentsReadUrl = (id: string) => {
-  return `/simulate/api/harness-environments/${id}/`;
-};
-
-export const simulateApiHarnessEnvironmentsRead = async (
-  id: string,
-  options?: RequestInit,
-): Promise<simulateApiHarnessEnvironmentsReadResponse> => {
-  return apiMutator<simulateApiHarnessEnvironmentsReadResponse>(
-    getSimulateApiHarnessEnvironmentsReadUrl(id),
-    {
-      ...options,
-      method: "GET",
-    },
-  );
-};
-
-export type simulateApiHarnessEnvironmentsPartialUpdateResponse200 = {
-  data: HarnessEnvironmentDetailApi;
-  status: 200;
-};
-
-export type simulateApiHarnessEnvironmentsPartialUpdateResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
-};
-
-export type simulateApiHarnessEnvironmentsPartialUpdateResponseSuccess =
-  simulateApiHarnessEnvironmentsPartialUpdateResponse200 & {
-    headers: Headers;
-  };
-export type simulateApiHarnessEnvironmentsPartialUpdateResponseError =
-  simulateApiHarnessEnvironmentsPartialUpdateResponseDefault & {
-    headers: Headers;
-  };
-
-export type simulateApiHarnessEnvironmentsPartialUpdateResponse =
-  | simulateApiHarnessEnvironmentsPartialUpdateResponseSuccess
-  | simulateApiHarnessEnvironmentsPartialUpdateResponseError;
-
-export const getSimulateApiHarnessEnvironmentsPartialUpdateUrl = (
-  id: string,
-) => {
-  return `/simulate/api/harness-environments/${id}/`;
-};
-
-export const simulateApiHarnessEnvironmentsPartialUpdate = async (
-  id: string,
-  harnessEnvironmentRenameApi: HarnessEnvironmentRenameApi,
-  options?: RequestInit,
-): Promise<simulateApiHarnessEnvironmentsPartialUpdateResponse> => {
-  return apiMutator<simulateApiHarnessEnvironmentsPartialUpdateResponse>(
-    getSimulateApiHarnessEnvironmentsPartialUpdateUrl(id),
-    {
-      ...options,
-      method: "PATCH",
-      headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(harnessEnvironmentRenameApi),
-    },
-  );
-};
-
-export type simulateApiHarnessEnvironmentsDeleteResponse204 = {
-  data: void;
-  status: 204;
-};
-
-export type simulateApiHarnessEnvironmentsDeleteResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 204>;
-};
-
-export type simulateApiHarnessEnvironmentsDeleteResponseSuccess =
-  simulateApiHarnessEnvironmentsDeleteResponse204 & {
-    headers: Headers;
-  };
-export type simulateApiHarnessEnvironmentsDeleteResponseError =
-  simulateApiHarnessEnvironmentsDeleteResponseDefault & {
-    headers: Headers;
-  };
-
-export type simulateApiHarnessEnvironmentsDeleteResponse =
-  | simulateApiHarnessEnvironmentsDeleteResponseSuccess
-  | simulateApiHarnessEnvironmentsDeleteResponseError;
-
-export const getSimulateApiHarnessEnvironmentsDeleteUrl = (id: string) => {
-  return `/simulate/api/harness-environments/${id}/`;
-};
-
-export const simulateApiHarnessEnvironmentsDelete = async (
-  id: string,
-  options?: RequestInit,
-): Promise<simulateApiHarnessEnvironmentsDeleteResponse> => {
-  return apiMutator<simulateApiHarnessEnvironmentsDeleteResponse>(
-    getSimulateApiHarnessEnvironmentsDeleteUrl(id),
-    {
-      ...options,
-      method: "DELETE",
-    },
-  );
-};
-
-export type simulateApiHarnessEnvironmentsRunResponse202 = {
-  data: HarnessRunCreateResponseApi;
-  status: 202;
-};
-
-export type simulateApiHarnessEnvironmentsRunResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 202>;
-};
-
-export type simulateApiHarnessEnvironmentsRunResponseSuccess =
-  simulateApiHarnessEnvironmentsRunResponse202 & {
-    headers: Headers;
-  };
-export type simulateApiHarnessEnvironmentsRunResponseError =
-  simulateApiHarnessEnvironmentsRunResponseDefault & {
-    headers: Headers;
-  };
-
-export type simulateApiHarnessEnvironmentsRunResponse =
-  | simulateApiHarnessEnvironmentsRunResponseSuccess
-  | simulateApiHarnessEnvironmentsRunResponseError;
-
-export const getSimulateApiHarnessEnvironmentsRunUrl = (id: string) => {
-  return `/simulate/api/harness-environments/${id}/run/`;
-};
-
-export const simulateApiHarnessEnvironmentsRun = async (
-  id: string,
-  harnessRunCreateApi: HarnessRunCreateApi,
-  options?: RequestInit,
-): Promise<simulateApiHarnessEnvironmentsRunResponse> => {
-  return apiMutator<simulateApiHarnessEnvironmentsRunResponse>(
-    getSimulateApiHarnessEnvironmentsRunUrl(id),
-    {
-      ...options,
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(harnessRunCreateApi),
-    },
-  );
-};
-
 export type simulateApiHarnessJobsListResponse200 = {
   data: HarnessJobReadApi[];
   status: 200;
@@ -58980,55 +58773,6 @@ export const simulateApiHarnessJobsExtend = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(harnessJobExtendApi),
-    },
-  );
-};
-
-export type simulateApiHarnessJobsRunsResponse202 = {
-  data: HarnessRunCreateResponseApi;
-  status: 202;
-};
-
-export type simulateApiHarnessJobsRunsResponseDefault = {
-  data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 202>;
-};
-
-export type simulateApiHarnessJobsRunsResponseSuccess =
-  simulateApiHarnessJobsRunsResponse202 & {
-    headers: Headers;
-  };
-export type simulateApiHarnessJobsRunsResponseError =
-  simulateApiHarnessJobsRunsResponseDefault & {
-    headers: Headers;
-  };
-
-export type simulateApiHarnessJobsRunsResponse =
-  | simulateApiHarnessJobsRunsResponseSuccess
-  | simulateApiHarnessJobsRunsResponseError;
-
-export const getSimulateApiHarnessJobsRunsUrl = (id: string) => {
-  return `/simulate/api/harness-jobs/${id}/runs/`;
-};
-
-/**
- * Validates the v1.6 request contract and delegates execution to the public backend selected by
-``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
-selects its managed sandbox runtime.
- * @summary Provider-neutral control plane for hosted ALK harness jobs.
- */
-export const simulateApiHarnessJobsRuns = async (
-  id: string,
-  harnessRunCreateApi: HarnessRunCreateApi,
-  options?: RequestInit,
-): Promise<simulateApiHarnessJobsRunsResponse> => {
-  return apiMutator<simulateApiHarnessJobsRunsResponse>(
-    getSimulateApiHarnessJobsRunsUrl(id),
-    {
-      ...options,
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(harnessRunCreateApi),
     },
   );
 };
@@ -88136,6 +87880,262 @@ export const v1SelfHostedActivationsCreate = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(activationRequestApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsListResponse200 = {
+  data: HarnessEnvironmentListResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsListResponseSuccess =
+  simulateApiHarnessEnvironmentsListResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsListResponseError =
+  simulateApiHarnessEnvironmentsListResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsListResponse =
+  | simulateApiHarnessEnvironmentsListResponseSuccess
+  | simulateApiHarnessEnvironmentsListResponseError;
+
+export const getSimulateApiHarnessEnvironmentsListUrl = () => {
+  return `/simulate/api/harness-environments/`;
+};
+
+export const simulateApiHarnessEnvironmentsList = async (
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsListResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsListResponse>(
+    getSimulateApiHarnessEnvironmentsListUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsReadResponse200 = {
+  data: HarnessEnvironmentDetailApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsReadResponseSuccess =
+  simulateApiHarnessEnvironmentsReadResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsReadResponseError =
+  simulateApiHarnessEnvironmentsReadResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsReadResponse =
+  | simulateApiHarnessEnvironmentsReadResponseSuccess
+  | simulateApiHarnessEnvironmentsReadResponseError;
+
+export const getSimulateApiHarnessEnvironmentsReadUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/`;
+};
+
+export const simulateApiHarnessEnvironmentsRead = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsReadResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsReadResponse>(
+    getSimulateApiHarnessEnvironmentsReadUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsPartialUpdateResponse200 = {
+  data: HarnessEnvironmentDetailApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsPartialUpdateResponseSuccess =
+  simulateApiHarnessEnvironmentsPartialUpdateResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsPartialUpdateResponseError =
+  simulateApiHarnessEnvironmentsPartialUpdateResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsPartialUpdateResponse =
+  | simulateApiHarnessEnvironmentsPartialUpdateResponseSuccess
+  | simulateApiHarnessEnvironmentsPartialUpdateResponseError;
+
+export const getSimulateApiHarnessEnvironmentsPartialUpdateUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/`;
+};
+
+export const simulateApiHarnessEnvironmentsPartialUpdate = async (
+  id: string,
+  harnessEnvironmentRenameApi: HarnessEnvironmentRenameApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsPartialUpdateResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsPartialUpdateResponse>(
+    getSimulateApiHarnessEnvironmentsPartialUpdateUrl(id),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessEnvironmentRenameApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsDeleteResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type simulateApiHarnessEnvironmentsDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 204>;
+};
+
+export type simulateApiHarnessEnvironmentsDeleteResponseSuccess =
+  simulateApiHarnessEnvironmentsDeleteResponse204 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsDeleteResponseError =
+  simulateApiHarnessEnvironmentsDeleteResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsDeleteResponse =
+  | simulateApiHarnessEnvironmentsDeleteResponseSuccess
+  | simulateApiHarnessEnvironmentsDeleteResponseError;
+
+export const getSimulateApiHarnessEnvironmentsDeleteUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/`;
+};
+
+export const simulateApiHarnessEnvironmentsDelete = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsDeleteResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsDeleteResponse>(
+    getSimulateApiHarnessEnvironmentsDeleteUrl(id),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsRunResponse202 = {
+  data: HarnessRunCreateResponseApi;
+  status: 202;
+};
+
+export type simulateApiHarnessEnvironmentsRunResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202>;
+};
+
+export type simulateApiHarnessEnvironmentsRunResponseSuccess =
+  simulateApiHarnessEnvironmentsRunResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsRunResponseError =
+  simulateApiHarnessEnvironmentsRunResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsRunResponse =
+  | simulateApiHarnessEnvironmentsRunResponseSuccess
+  | simulateApiHarnessEnvironmentsRunResponseError;
+
+export const getSimulateApiHarnessEnvironmentsRunUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/run/`;
+};
+
+export const simulateApiHarnessEnvironmentsRun = async (
+  id: string,
+  harnessRunCreateApi: HarnessRunCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsRunResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsRunResponse>(
+    getSimulateApiHarnessEnvironmentsRunUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessRunCreateApi),
+    },
+  );
+};
+
+export type simulateApiHarnessJobsRunsResponse202 = {
+  data: HarnessRunCreateResponseApi;
+  status: 202;
+};
+
+export type simulateApiHarnessJobsRunsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202>;
+};
+
+export type simulateApiHarnessJobsRunsResponseSuccess =
+  simulateApiHarnessJobsRunsResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsRunsResponseError =
+  simulateApiHarnessJobsRunsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsRunsResponse =
+  | simulateApiHarnessJobsRunsResponseSuccess
+  | simulateApiHarnessJobsRunsResponseError;
+
+export const getSimulateApiHarnessJobsRunsUrl = (id: string) => {
+  return `/simulate/api/harness-jobs/${id}/runs/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsRuns = async (
+  id: string,
+  harnessRunCreateApi: HarnessRunCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsRunsResponse> => {
+  return apiMutator<simulateApiHarnessJobsRunsResponse>(
+    getSimulateApiHarnessJobsRunsUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessRunCreateApi),
     },
   );
 };

@@ -50482,16 +50482,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           readOnly: true,
         },
-        source_scenario_key: {
-          title: "Source scenario key",
-          type: "string",
-          readOnly: true,
-        },
-        trial_index: {
-          title: "Trial index",
-          type: "string",
-          readOnly: true,
-        },
         scenario_graph: {
           title: "Scenario graph",
           type: "string",
@@ -87605,7 +87595,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         connector: {
           title: "Connector",
           type: "string",
-          enum: ["livekit", "vapi", "retell", "retell_chat", "phone", "auto"],
+          enum: ["livekit", "vapi", "retell", "retell_chat", "auto"],
         },
         mode: {
           title: "Mode",
@@ -93338,69 +93328,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           readOnly: true,
           minLength: 1,
-        },
-        scenario_keys: {
-          type: "array",
-          items: {
-            type: "string",
-            minLength: 1,
-          },
-          readOnly: true,
-        },
-        selected_scenarios: {
-          title: "Selected scenarios",
-          type: "integer",
-          readOnly: true,
-        },
-        trials: {
-          title: "Trials",
-          type: "integer",
-          readOnly: true,
-        },
-        total_calls: {
-          title: "Total calls",
-          type: "integer",
-          readOnly: true,
-        },
-        completed_calls: {
-          title: "Completed calls",
-          type: "integer",
-          readOnly: true,
-        },
-        failed_calls: {
-          title: "Failed calls",
-          type: "integer",
-          readOnly: true,
-        },
-        pending_calls: {
-          title: "Pending calls",
-          type: "integer",
-          readOnly: true,
-        },
-        completed_at: {
-          title: "Completed at",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-          "x-nullable": true,
-        },
-        outcome_passed: {
-          title: "Outcome passed",
-          type: "integer",
-          readOnly: true,
-          "x-nullable": true,
-        },
-        outcome_failed: {
-          title: "Outcome failed",
-          type: "integer",
-          readOnly: true,
-          "x-nullable": true,
-        },
-        outcome_skipped: {
-          title: "Outcome skipped",
-          type: "integer",
-          readOnly: true,
-          "x-nullable": true,
         },
       },
     },
