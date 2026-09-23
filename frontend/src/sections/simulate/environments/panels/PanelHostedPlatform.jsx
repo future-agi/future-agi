@@ -10,7 +10,7 @@ import { PLATFORM_LOGOS } from "../components/platformLogos";
 import { COUNTRY_BY_ISO } from "../components/countryCodes";
 import ContactInformation from "./ContactInformation";
 import ScenarioCount from "./ScenarioCount";
-import { DEFAULT_SCENARIOS, isValidScenarioCount } from "./scenarioCountRules";
+import { DEFAULT_SCENARIOS } from "./scenarioCountRules";
 import RuntimePreflight from "./RuntimePreflight";
 import usePanelBuild from "../hooks/usePanelBuild";
 import { ENTRY_AGENT_TYPES } from "../agentTypes";
@@ -88,7 +88,7 @@ export default function PanelHostedPlatform() {
     kind: "platform",
     agentType,
     provider: chosen?.id,
-    scenarioCount: Number(scenarioCount),
+    scenarioCount: Number(scenarioCount) || undefined,
     ...(isOther
       ? { agentMode: "prompt", prompt: otherPrompt.trim() }
       : { agentId: id.trim(), apiKey: key.trim() }),
@@ -217,7 +217,7 @@ export default function PanelHostedPlatform() {
         error={build.error}
       />
       <ContinueRow
-        disabled={!build.readyToSubmit || !isValidScenarioCount(scenarioCount)}
+        disabled={!build.readyToSubmit}
         busy={build.committing}
         hint={build.status === "done" ? "Resolve the checks above" : "Run preflight to continue"}
         onClick={build.commitBuild}

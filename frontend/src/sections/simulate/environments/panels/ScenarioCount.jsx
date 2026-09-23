@@ -1,25 +1,17 @@
 import PropTypes from "prop-types";
 import { Box, Stack, Typography, TextField } from "@mui/material";
-import { MAX_SCENARIOS, isValidScenarioCount } from "./scenarioCountRules";
 
 // The shared "Scenarios to generate" field, rendered in every build-source flow.
-// Digits only, capped at 500; shows an error state until a valid count is set.
+// Digits only, defaults to 10. No hard cap or blocking validation here — the
+// admission ceiling is deployment-settable on the backend, so it stays the
+// authority: an out-of-range value surfaces as its error rather than being
+// second-guessed in the UI, and a blank falls back to the backend default.
 export default function ScenarioCount({ value, onChange }) {
   const n = Number(value) || 0;
-  const valid = isValidScenarioCount(value);
-
-  const onInput = (raw) => {
-    const digits = raw.replace(/\D/g, "").replace(/^0+/, "").slice(0, 3);
-    onChange(digits && Number(digits) > MAX_SCENARIOS ? String(MAX_SCENARIOS) : digits);
-  };
+  const onInput = (raw) => onChange(raw.replace(/\D/g, "").replace(/^0+/, "").slice(0, 4));
 
   return (
-    <Box
-      sx={{
-        px: 1.75, py: 1.25, borderRadius: 1, border: "1px solid",
-        borderColor: valid ? "divider" : "error.main",
-      }}
-    >
+    <Box sx={{ px: 1.75, py: 1.25, borderRadius: 1, border: "1px solid", borderColor: "divider" }}>
       <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold" }}>
         Scenarios to generate
       </Typography>
@@ -33,7 +25,6 @@ export default function ScenarioCount({ value, onChange }) {
           size="small"
           value={value}
           onChange={(e) => onInput(e.target.value)}
-          error={!valid}
           placeholder="e.g. 25"
           inputProps={{ inputMode: "numeric", "aria-label": "Number of scenarios to generate" }}
           InputProps={{
@@ -45,10 +36,10 @@ export default function ScenarioCount({ value, onChange }) {
           }}
           sx={{ width: 150, flexShrink: 0, "& .MuiInputBase-input": { typography: "s2", fontVariantNumeric: "tabular-nums" } }}
         />
-        <Typography sx={{ typography: "s3", color: valid ? "text.subtitle" : "error.main", minWidth: 0 }}>
-          {valid
-            ? `We'll generate ${n} scenario${n === 1 ? "" : "s"}. Set any number up to ${MAX_SCENARIOS}.`
-            : `Enter a number between 1 and ${MAX_SCENARIOS}.`}
+        <Typography sx={{ typography: "s3", color: "text.subtitle", minWidth: 0 }}>
+          {n
+            ? `We'll generate ${n} scenario${n === 1 ? "" : "s"} for your agent.`
+            : "Leave blank to use the default."}
         </Typography>
       </Stack>
     </Box>
