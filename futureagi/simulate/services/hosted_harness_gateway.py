@@ -149,26 +149,30 @@ def _authoring_ttl_seconds(provider_name: str | None = None) -> int:
 def _execution_ttl_seconds(
     runtime: Mapping[str, Any], provider_name: str | None = None
 ) -> int:
+    # One sandbox authors and then runs, so its lifetime is the granted window plus launch
+    # overhead. Reserving the authoring budget on top asked for a box no provider would sell.
     runtime_seconds = int(runtime["max_duration_seconds"])
     if provider_name == "e2b":
         max_ttl_seconds = int(getattr(settings, "ALK_E2B_MAX_TTL_SECONDS", 0))
         if max_ttl_seconds > 0 and runtime_seconds <= max_ttl_seconds:
             return max_ttl_seconds
         return runtime_seconds + 120
-    authoring_seconds = max(
-        0,
-        int(
-            getattr(
-                settings,
-                "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
-                3600,
-            )
-        ),
-    )
     return max(
         int(getattr(settings, "ALK_HOSTED_SANDBOX_TTL_SECONDS", 7200)),
-        authoring_seconds + runtime_seconds + 120,
+        runtime_seconds + 120,
     )
+
+
+def _claude_code_use_vertex(gateway_ready: bool) -> str:
+    """Whether the Claude CLI talks to Vertex directly or through our gateway.
+
+    With the gateway in play this must be an explicit "0". An empty value is not the same thing:
+    the CLI reads the variable as set and routes to Vertex, which then rejects the gateway's
+    `vertex_ai/`-prefixed model id as a model that does not exist.
+    """
+    if gateway_ready:
+        return "0"
+    return str(os.environ.get("CLAUDE_CODE_USE_VERTEX") or "1")
 
 
 def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
@@ -246,7 +250,7 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
     values = {
         "ALK_HARNESS": backend,
         "ALK_HARNESS_MODEL": authoring_model,
-        "CLAUDE_CODE_USE_VERTEX": str(os.environ.get("CLAUDE_CODE_USE_VERTEX") or "1"),
+        "CLAUDE_CODE_USE_VERTEX": _claude_code_use_vertex(agentcc_ready),
         "CLOUD_ML_REGION": claude_region,
         "ALK_VERTEX_LOCATION": location,
         "GOOGLE_CLOUD_LOCATION": location,
@@ -287,6 +291,11 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "HARNESS_BACKGROUND_NOISE_VOLUME",
         # Off has to travel: decided here, enforced inside the sandbox.
         "ALK_VOICEMAIL_SCENARIOS",
+        # How many scenario writers the orchestrator may run at once. Authoring is the expensive
+        # half of a run, so this is the lever that decides whether a large suite fits the hour.
+        "ALK_HARNESS_WORKERS_AT_ONCE",
+        # Validation lanes; unset, the guest checks the suite one scenario at a time.
+        "ALK_VALIDATION_INSTANCES",
     ):
         value = str(os.environ.get(name) or "").strip()
         if value:
@@ -1511,8 +1520,8 @@ class HostedHarnessGateway:
                 for name, value in simulator_env.items()
                 if name not in {"LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"}
             },
-            "CLAUDE_CODE_USE_VERTEX": (
-                "" if simulator_env.get("ALK_CLAUDE_GATEWAY_URL") else "1"
+            "CLAUDE_CODE_USE_VERTEX": _claude_code_use_vertex(
+                bool(simulator_env.get("ALK_CLAUDE_GATEWAY_URL"))
             ),
             "GOOGLE_GENAI_USE_VERTEXAI": "True",
             "CLOUD_ML_REGION": getattr(
@@ -1944,6 +1953,9 @@ class HostedHarnessGateway:
                     "ALK_CLAUDE_GATEWAY_API_KEY",
                     "ALK_VERTEX_LOCATION",
                     "ALK_VOICEMAIL_SCENARIOS",
+                    # Authoring is where the writers fan out, so the ceiling belongs here.
+                    "ALK_HARNESS_WORKERS_AT_ONCE",
+                    "ALK_VALIDATION_INSTANCES",
                     "GOOGLE_APPLICATION_CREDENTIALS",
                     "GOOGLE_CLOUD_LOCATION",
                     "GOOGLE_CLOUD_PROJECT",
@@ -2833,6 +2845,10 @@ class HostedHarnessGateway:
         bundle = _json("/work/bundle/manifest.json")
         # Read on every poll, so a sandbox deleted later still leaves its last known total.
         spend = _json("/work/authoring/cost.json")
+        coverage = _json("/work/authoring/coverage.json")
+        # Validation writes these in order, and their presence is what says it has begun.
+        invariants = _json("/work/authoring/source-data-invariants.json")
+        certified = _json("/work/authoring/generic-harness/certification.json")
         _read_harness_usage(attempt, sandbox)
         job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
         _record_harness_spend(job, spend, attempt.attempt_number)
@@ -2891,17 +2907,37 @@ class HostedHarnessGateway:
             environment,
             scenarios,
             bundle if isinstance(bundle, dict) else authored_bundle,
+            coverage=coverage,
         )
         activities = _activity_events()
         if activities:
             outputs.append({"kind": "activity", "events": activities})
+        if isinstance(scenarios, list) and scenarios:
+            # Index the suite as rows as it is written, not when a call registers one. The tab
+            # exists to read the suite before anything is called, and a filter needs SQL.
+            from simulate.services.harness_scenarios import index_scenarios
+
+            try:
+                index_scenarios(job, scenarios)
+            except Exception:  # noqa: BLE001 - indexing must never stop a run
+                logger.exception("could not index authored scenarios job=%s", job.id)
         stage = "understanding_agent"
         if isinstance(contract, dict):
             stage = "generating_environment"
         if isinstance(environment, dict):
             stage = "generating_scenarios"
         if isinstance(scenarios, list):
-            stage = "validating_environment"
+            # scenarios.json exists from the first save, so it cannot mean checking has begun.
+            written = len(scenarios) >= (job.scenario_count or len(scenarios))
+            if certified is not None:
+                stage = "validating_scenarios"
+            elif invariants is not None:
+                stage = "validating_environment"
+            else:
+                stage = "generating_scenarios"
+            if written and invariants is None:
+                # Suite complete, checking not started: the guest is sealing it.
+                stage = "generating_scenarios"
         HostedHarnessGateway._sync_adjustment_progress(job, sandbox)
         if not outputs:
             return

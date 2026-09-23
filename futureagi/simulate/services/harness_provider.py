@@ -95,6 +95,27 @@ def _scope_jobs(queryset, request):
     return queryset.filter(workspace=workspace)
 
 
+def _scoped_job(request, pk):
+    """One job, or None, resolved under the caller's full tenant scope.
+
+    Organization alone is not the scope. A job belongs to a workspace, and matching only on the
+    organization let a caller in one workspace read a job from another in the same organization,
+    provided they held its id. Every scenario read and write goes through here so the scope is
+    applied once rather than remembered at each call site.
+    """
+    organization = _organization(request)
+    if organization is None:
+        return None
+    return (
+        _scope_jobs(
+            HostedHarnessJob.no_workspace_objects.filter(organization=organization),
+            request,
+        )
+        .filter(id=pk)
+        .first()
+    )
+
+
 def _validate_secret_refs_hosted(secret_refs: dict) -> None:
     """Reject secret references that the managed gateway cannot materialize.
 
@@ -213,22 +234,7 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
         .order_by("created_at")[: job.scenario_count]
     )
     scenarios = [
-        {
-            "scenario_key": reg.scenario_key,
-            "scenario_id": str(reg.scenario_id),
-            "name": getattr(reg.scenario, "name", "") if reg.scenario else "",
-            "instruction": (getattr(reg.scenario, "prompt", None) or "")
-            if reg.scenario
-            else None,
-            "use_case": (getattr(reg.scenario, "use_case", None) or "")
-            if reg.scenario
-            else None,
-            "call_execution_id": str(reg.call_execution_id)
-            if reg.call_execution_id
-            else None,
-            "status": _scenario_status(reg),
-        }
-        for reg in scenario_regs
+        _scenario_row(reg, number) for number, reg in enumerate(scenario_regs, start=1)
     ]
     # Receipts — bounded.
     receipt_qs = HostedHarnessReceipt.no_workspace_objects.filter(job=job).order_by(
@@ -499,6 +505,96 @@ def _preflight_credential_probe(payload) -> list[dict[str, Any]]:
         if target is not None:
             results.append(target)
     return [result.as_dict() for result in results]
+
+
+_ORDINAL_WORDS = {
+    word: number
+    for number, word in enumerate(
+        (
+            "first second third fourth fifth sixth seventh eighth ninth tenth "
+            "eleventh twelfth thirteenth fourteenth fifteenth sixteenth seventeenth "
+            "eighteenth nineteenth twentieth"
+        ).split(),
+        start=1,
+    )
+}
+
+
+def scenarios_meant(
+    said: Any, suite: list[dict], numbering: dict[int, str] | None = None
+) -> list[str]:
+    """The scenario names a person meant, from whatever they said.
+
+    People point at scenarios the way they read them: "4", "12-30", "12, 15, 18", or the name
+    itself. So "4" has to mean the row the table calls 4, and the table serves the number stored
+    against the scenario, which survives a deletion rather than shifting up to fill the gap.
+    `numbering` is that stored mapping; falling back to list position is only for a suite that has
+    not been indexed yet, where position is all there is.
+    """
+    by_number = numbering or {
+        position: str(one.get("name") or "") for position, one in enumerate(suite, 1)
+    }
+    known = {str(one.get("name") or "") for one in suite}
+    keys = {
+        str(one.get("scenario_key") or ""): str(one.get("name") or "") for one in suite
+    }
+    found: list[str] = []
+
+    def take(name: str) -> None:
+        if name and name not in found:
+            found.append(name)
+
+    for piece in said if isinstance(said, (list, tuple)) else [said]:
+        for part in re.split(r"[,\s]+(?:and\s+)?", str(piece or "").strip()):
+            part = part.strip().strip(".")
+            if not part:
+                continue
+            if part in known:
+                take(part)
+                continue
+            if part in keys:
+                take(keys[part])
+                continue
+            span = re.fullmatch(r"(\d+)\s*(?:-|–|to|through)\s*(\d+)", part)
+            if span:
+                low, high = sorted((int(span.group(1)), int(span.group(2))))
+                for number in range(low, high + 1):
+                    take(by_number.get(number, ""))
+                continue
+            # "#4", "4th", "the fourth": people say the position, not the index.
+            plain = re.sub(r"^(?:the|scenario|no\.?|#)\s*", "", part, flags=re.IGNORECASE)
+            plain = re.sub(r"(?<=\d)(?:st|nd|rd|th)$", "", plain, flags=re.IGNORECASE)
+            if plain.isdigit():
+                take(by_number.get(int(plain), ""))
+                continue
+            if plain.lower() in _ORDINAL_WORDS:
+                take(by_number.get(_ORDINAL_WORDS[plain.lower()], ""))
+    return found
+
+
+def _scenario_row(reg, number: int | None = None) -> dict:
+    """One registered scenario, shaped the same way wherever it is read.
+
+    ``number`` is the scenario's place in its own suite, one-based. It is what a person says out
+    loud ("the fourth one", "12 to 30"), so it is served rather than derived from whatever subset
+    a screen happens to be showing.
+    """
+    return {
+        "number": number,
+        "scenario_key": reg.scenario_key,
+        "scenario_id": str(reg.scenario_id),
+        "name": getattr(reg.scenario, "name", "") if reg.scenario else "",
+        "instruction": (getattr(reg.scenario, "prompt", None) or "")
+        if reg.scenario
+        else None,
+        "use_case": (getattr(reg.scenario, "use_case", None) or "")
+        if reg.scenario
+        else None,
+        "call_execution_id": str(reg.call_execution_id)
+        if reg.call_execution_id
+        else None,
+        "status": _scenario_status(reg),
+    }
 
 
 class HostedHarnessProvider:
@@ -936,6 +1032,392 @@ class HostedHarnessProvider:
         job.refresh_from_db()
         return serialize_job(job)
 
+    # Fields a person may edit on an authored scenario. `tests` is what the report says the run
+    # found out; the rest change what the run does, so they are refused when the caller declines
+    # a re-proof.
+    _DESCRIPTIVE_FIELDS = frozenset({"tests"})
+    _BEHAVIOURAL_FIELDS = frozenset({"max_turns", "background_noise"})
+    _PERSONA_FIELDS = frozenset(
+        {
+            "keywords",
+            "personality",
+            "communication_style",
+            "accent",
+            "languages",
+            "occupation",
+            "location",
+        }
+    )
+
+    def _editing_contract(self) -> dict[str, list[str]]:
+        """Which fields an amend will take, and which of them cannot be taken without a re-proof."""
+        return {
+            "editable_fields": sorted(self._DESCRIPTIVE_FIELDS | self._BEHAVIOURAL_FIELDS),
+            "persona_fields": sorted(self._PERSONA_FIELDS),
+            "rework_fields": sorted(self._BEHAVIOURAL_FIELDS | self._PERSONA_FIELDS),
+        }
+
+    def list_scenarios(self, request, pk) -> Response:
+        """One page of a run's authored scenarios, in the order they were written."""
+        from tfc.utils.pagination import ExtendedPageNumberPagination
+
+        job = _scoped_job(request, pk)
+        if job is None:
+            return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        from simulate.services.harness_scenarios import (
+            apply_filters,
+            index_scenarios,
+            apply_ordering,
+            apply_search,
+            field_catalogue,
+            group_counts,
+            grouped,
+            scenario_row,
+        )
+
+        queryset = HostedHarnessScenario.no_workspace_objects.filter(
+            job=job
+        ).select_related("scenario", "call_execution")
+        if not queryset.filter(number__isnull=False).exists():
+            # A run from before the suite was indexed has rows only where a call registered one,
+            # and those carry nothing but a key. Index from the artefact on first read rather than
+            # leaving those jobs permanently thin on this route.
+            # The suite is held in one of two places: its own stage-output row, or the JSON
+            # column on the job that a sealed archive is unpacked into. The detail endpoint falls
+            # back the same way, so indexing has to look in both or it misses every archived run.
+            artefact = (
+                HostedHarnessStageOutput.no_workspace_objects.filter(
+                    job=job, kind="scenarios"
+                )
+                .values_list("data", flat=True)
+                .first()
+            )
+            if not artefact:
+                artefact = next(
+                    (
+                        one.get("data")
+                        for one in (job.stage_outputs or [])
+                        if isinstance(one, dict) and one.get("kind") == "scenarios"
+                    ),
+                    None,
+                )
+            if isinstance(artefact, list) and artefact:
+                index_scenarios(job, artefact)
+                queryset = HostedHarnessScenario.no_workspace_objects.filter(
+                    job=job
+                ).select_related("scenario", "call_execution")
+        # Search first. What the search leaves is the set the filter panel offers values from:
+        # counting them over the FILTERED set instead would drop every value the current filter
+        # excludes, so picking "Canadian" would remove "Indian" from the list and an OR could
+        # never be built. The grid is the same: it describes what the suite holds, not what one
+        # filter left of it.
+        queryset = apply_search(queryset, request.query_params.get("search", ""))
+        offerable = queryset
+        queryset = apply_filters(queryset, request.query_params)
+        queryset = apply_ordering(queryset, request.query_params.get("ordering", ""))
+
+        paginator = ExtendedPageNumberPagination()
+        page = paginator.paginate_queryset(queryset, request)
+        from simulate.services.harness_scenarios import DEFAULT_GROUP_BY
+
+        asked = request.query_params.get("group_by")
+        group_by = DEFAULT_GROUP_BY if asked is None else asked
+        rows = grouped([scenario_row(one) for one in page or []], group_by)
+        response = paginator.get_paginated_response(rows)
+        # The sections this page carries, already counted and in row order, so drawing them is a
+        # walk rather than a regrouping.
+        response.data["groups"] = group_counts(rows, queryset, group_by)
+        response.data["group_by"] = group_by
+        # The panel's own field list, counted over the whole filtered suite rather than the page.
+        # Computed here so the client draws its controls without a second call or a second source.
+        response.data["fields"] = field_catalogue(offerable)
+        response.data["scenario_editing"] = self._editing_contract()
+        from simulate.services.harness_scenarios import GROUPINGS
+
+        response.data["groupings"] = [dict(one) for one in GROUPINGS]
+        # Every value on this page that a client would otherwise have to turn into words itself,
+        # already turned into words. A client renders what it is given and never spells a level,
+        # so renaming one is a change in this service and nowhere else.
+        from simulate.services.harness_scenarios import level_labels_for
+        response.data["level_labels"] = level_labels_for(rows)
+        return response
+
+    def scenario_coverage(self, request, pk) -> Response:
+        """The suite's coverage grid. Its own route because it is its own question.
+
+        The grid describes the whole suite, not a page of it, and its two axes are a filter of a
+        different kind from the list's properties. Folding it into the list recomputed a whole-suite
+        cross-tab on every page turn and every poll, for an answer that had not changed.
+        """
+        job = _scoped_job(request, pk)
+        if job is None:
+            return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        from simulate.services.harness_scenarios import (
+            DEFAULT_COL_AXIS,
+            DEFAULT_ROW_AXIS,
+            apply_filters,
+            apply_search,
+            coverage_grid,
+        )
+
+        # The grid does not move with the page, but it does move with the filter: it describes
+        # whatever the reader has narrowed the suite to. So it takes the list's own search and
+        # filters, and only the paging is absent.
+        queryset = HostedHarnessScenario.no_workspace_objects.filter(job=job)
+        queryset = apply_search(queryset, request.query_params.get("search", ""))
+        queryset = apply_filters(queryset, request.query_params)
+        return Response(
+            coverage_grid(
+                queryset,
+                request.query_params.get("row_axis") or DEFAULT_ROW_AXIS,
+                request.query_params.get("col_axis") or DEFAULT_COL_AXIS,
+            )
+        )
+
+    def amend_scenarios(self, request, pk) -> Response:
+        """Edit a finished run's authored suite, one receipt per requested change."""
+        from simulate.services.hosted_harness_gateway import (
+            push_scenarios_into_live_sandbox,
+            rewrite_authoring_scenarios,
+        )
+
+        changes = request.validated_data["changes"]
+        rework = bool(request.validated_data.get("rework", True))
+        with transaction.atomic():
+            # Scope first, then lock: locking a row the caller may not read would answer "busy"
+            # for a job in another workspace, which is itself an answer about that job.
+            scoped = _scoped_job(request, pk)
+            if scoped is None:
+                return Response(
+                    {"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND
+                )
+            job = (
+                HostedHarnessJob.no_workspace_objects.select_for_update()
+                .filter(id=scoped.id)
+                .first()
+            )
+            if job is None:
+                return Response(
+                    {"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND
+                )
+            output = (
+                HostedHarnessStageOutput.no_workspace_objects.select_for_update()
+                .filter(job=job, kind="scenarios")
+                .first()
+            )
+            suite = list(output.data or []) if output is not None else None
+            if suite is None:
+                suite = [
+                    dict(one)
+                    for one in next(
+                        (
+                            item.get("data") or []
+                            for item in (job.stage_outputs or [])
+                            if item.get("kind") == "scenarios"
+                        ),
+                        [],
+                    )
+                ]
+            if not suite:
+                return Response(
+                    {
+                        "error": "no_authored_suite",
+                        "message": "this run has no authored scenarios to amend",
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+            by_name = {str(one.get("name") or ""): one for one in suite}
+            receipts = []
+            touched = False
+            # One change may name many scenarios: "12-30", a comma list, or a selection sent from
+            # the table. Expand before applying so each gets its own receipt.
+            spread = []
+            for change in changes:
+                said = change.get("scenarios") or change.get("scenario")
+                # Resolve a number the way the table shows it, not by where the scenario happens
+                # to sit in the list: after a deletion those two stop agreeing.
+                numbering = {
+                    row.number: row.name or row.scenario_key
+                    for row in HostedHarnessScenario.no_workspace_objects.filter(
+                        job=job, number__isnull=False
+                    )
+                }
+                meant = scenarios_meant(said, suite, numbering or None)
+                if not meant:
+                    receipts.append(
+                        {
+                            "scenario": str(change.get("scenario") or ""),
+                            "outcome": "refused",
+                            "why": "nothing in this suite answers to that",
+                        }
+                    )
+                    continue
+                spread.extend({**change, "scenario": name} for name in meant)
+            for change in spread:
+                name = str(change.get("scenario") or "")
+                target = by_name.get(name)
+                if target is None:
+                    receipts.append(
+                        {
+                            "scenario": name,
+                            "outcome": "refused",
+                            "why": "no scenario of that name in this suite",
+                        }
+                    )
+                    continue
+                op = str(change.get("op") or "")
+                if op == "drop":
+                    if not rework:
+                        receipts.append(
+                            {
+                                "scenario": name,
+                                "outcome": "refused",
+                                "why": "dropping a scenario changes the suite, so it needs a re-proof",
+                            }
+                        )
+                        continue
+                    suite = [one for one in suite if one is not target]
+                    by_name.pop(name, None)
+                    touched = True
+                    receipts.append(
+                        {"scenario": name, "outcome": "applied", "why": "dropped"}
+                    )
+                    continue
+                if op == "set_field":
+                    field = str(change.get("field") or "")
+                    if field in self._DESCRIPTIVE_FIELDS:
+                        pass
+                    elif field in self._BEHAVIOURAL_FIELDS:
+                        if not rework:
+                            receipts.append(
+                                {
+                                    "scenario": name,
+                                    "outcome": "refused",
+                                    "why": f"{field} changes what the run does, so it needs a re-proof",
+                                }
+                            )
+                            continue
+                    else:
+                        receipts.append(
+                            {
+                                "scenario": name,
+                                "outcome": "refused",
+                                "why": f"{field} is not editable: it is proved, not described",
+                            }
+                        )
+                        continue
+                    target[field] = change.get("value")
+                    touched = True
+                    receipts.append(
+                        {"scenario": name, "outcome": "applied", "why": f"{field} updated"}
+                    )
+                    continue
+                if op == "set_persona":
+                    if not rework:
+                        receipts.append(
+                            {
+                                "scenario": name,
+                                "outcome": "refused",
+                                "why": "the persona is what the agent hears, so it needs a re-proof",
+                            }
+                        )
+                        continue
+                    given = dict(change.get("persona") or {})
+                    unknown = sorted(set(given) - self._PERSONA_FIELDS)
+                    if unknown:
+                        receipts.append(
+                            {
+                                "scenario": name,
+                                "outcome": "refused",
+                                "why": f"not editable on a persona: {', '.join(unknown)}",
+                            }
+                        )
+                        continue
+                    persona = dict(target.get("persona") or {})
+                    persona.update(
+                        {key: value for key, value in given.items() if value is not None}
+                    )
+                    target["persona"] = persona
+                    touched = True
+                    receipts.append(
+                        {"scenario": name, "outcome": "applied", "why": "persona updated"}
+                    )
+                    continue
+                receipts.append(
+                    {"scenario": name, "outcome": "refused", "why": f"unknown change {op!r}"}
+                )
+            # An edit is held to the bar a written scenario is held to. Without this a person can
+            # hand-edit straight past the gates the writer is refused by.
+            if touched:
+                from fi.alk.harness.scenario import Scenario, scenario_edit_problems
+
+                rejected = []
+                for one in suite:
+                    try:
+                        problems = scenario_edit_problems(Scenario.model_validate(one))
+                    except Exception:  # noqa: BLE001 - a document we cannot read is the edit's fault
+                        problems = ["the edited scenario could not be read"]
+                    if problems:
+                        rejected.append((str(one.get("name") or ""), problems))
+                if rejected:
+                    named = {name for name, _ in rejected}
+                    return Response(
+                        {
+                            "receipts": [
+                                {
+                                    "scenario": name,
+                                    "outcome": "refused",
+                                    "why": "; ".join(problems),
+                                }
+                                for name, problems in rejected
+                            ]
+                            + [
+                                one
+                                for one in receipts
+                                if one.get("scenario") not in named
+                                and one.get("outcome") == "refused"
+                            ]
+                        }
+                    )
+            if touched:
+                if output is not None:
+                    output.data = suite
+                    output.summary = f"{len(suite)} pre-authored scenarios"
+                    output.save(update_fields=["data", "summary", "updated_at"])
+                else:
+                    job.stage_outputs = [
+                        {**item, "data": suite}
+                        if item.get("kind") == "scenarios"
+                        else item
+                        for item in (job.stage_outputs or [])
+                    ]
+                    job.save(update_fields=["stage_outputs", "updated_at"])
+                # Two places hold the suite: the archive a rerun replays, and the live guest's
+                # own copy, which it re-packs over the archive on a later poll. An edit that
+                # misses either one is an edit that comes back.
+                # The list route serves the indexed rows, not the artefact, so an edit that
+                # skips the index is an edit the table goes on not showing.
+                try:
+                    from simulate.services.harness_scenarios import index_scenarios
+
+                    index_scenarios(job, suite, prune=True)
+                except Exception:  # noqa: BLE001 - the edit itself applied; the index can lag
+                    logger.warning(
+                        "harness_scenario_reindex_failed job_id=%s", job.id, exc_info=True
+                    )
+                rewrite_authoring_scenarios(job, suite)
+                delivered = push_scenarios_into_live_sandbox(job, suite)
+                if delivered:
+                    receipts = [
+                        {**one, "outcome": "queued"}
+                        if one.get("outcome") == "applied"
+                        else one
+                        for one in receipts
+                    ]
+        return Response({"receipts": receipts})
+
     def extend(self, request, pk) -> Response:
         """Chat 'Add scenarios' on a finished RL environment: add ``count`` new scenarios,
         steered by optional guidance, replaying the authored world. Rerun is a separate action."""
@@ -1163,6 +1645,33 @@ class SandboxHarnessProvider:
                 "secret_refs": secret_refs,
                 "only": [],
             },
+        )
+
+    def list_scenarios(self, request, pk) -> Response:
+        return Response(
+            {
+                "error": "scenarios_not_supported",
+                "message": "reading an authored suite is only available on the hosted provider",
+            },
+            status=status.HTTP_501_NOT_IMPLEMENTED,
+        )
+
+    def scenario_coverage(self, request, pk) -> Response:
+        return Response(
+            {
+                "error": "scenarios_not_supported",
+                "message": "reading an authored suite is only available on the hosted provider",
+            },
+            status=status.HTTP_501_NOT_IMPLEMENTED,
+        )
+
+    def amend_scenarios(self, request, pk) -> Response:
+        return Response(
+            {
+                "error": "amend_not_supported",
+                "message": "editing an authored suite is only available on the hosted provider",
+            },
+            status=status.HTTP_501_NOT_IMPLEMENTED,
         )
 
     def extend(self, request, pk) -> Response:

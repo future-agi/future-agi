@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import uuid
 
+from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 
 from accounts.models import Organization
 from accounts.models.workspace import Workspace
 from tfc.utils.base_model import BaseModel
+
+# The ceiling on one hosted run, enforced by the DB constraint below and reused wherever a request
+# is validated so the surfaces cannot drift apart. A migration carries its own literal because
+# migrations are frozen.
+MAX_SCENARIOS_PER_JOB = 5000
 
 
 class HostedHarnessJob(BaseModel):
@@ -84,8 +90,10 @@ class HostedHarnessJob(BaseModel):
                 name="uniq_harness_job_org_idempotency",
             ),
             models.CheckConstraint(
-                condition=models.Q(scenario_count__gte=1, scenario_count__lte=200),
-                name="harness_job_scenario_count_1_200",
+                condition=models.Q(
+                    scenario_count__gte=1, scenario_count__lte=MAX_SCENARIOS_PER_JOB
+                ),
+                name="harness_job_scenario_count_1_5000",
             ),
         ]
         indexes = [
@@ -174,6 +182,11 @@ class HostedHarnessScenario(BaseModel):
         "simulate.Scenarios",
         on_delete=models.CASCADE,
         related_name="hosted_registrations",
+        # An authored scenario is a row from the moment it is written. The platform Scenarios
+        # record is minted when a call is prepared, which is far later, and the suite has to be
+        # readable long before anything is called.
+        null=True,
+        blank=True,
     )
     dataset_row = models.ForeignKey(
         "model_hub.Row",
@@ -193,6 +206,26 @@ class HostedHarnessScenario(BaseModel):
         blank=True,
         related_name="hosted_registration",
     )
+    # The authored scenario, stored so it can be queried. It reached the front end only as a JSON
+    # stage artefact, which is why every filter, every dropdown's options and every keyword count
+    # was computed in the browser over whatever had been downloaded. None of that can move to SQL
+    # until the fields are columns.
+    number = models.PositiveIntegerField(null=True, blank=True)
+    name = models.CharField(max_length=255, blank=True, default="")
+    instruction = models.TextField(blank=True, default="")
+    use_case = models.CharField(max_length=255, blank=True, default="")
+    branch = models.TextField(blank=True, default="")
+    tests = models.TextField(blank=True, default="")
+    folder = models.CharField(max_length=512, blank=True, default="")
+    persona = models.JSONField(null=True, blank=True)
+    coverage = models.JSONField(null=True, blank=True)
+    sub_goals = models.JSONField(null=True, blank=True)
+    # How somebody finds a scenario in a large suite. A column of its own because they describe the
+    # situation, not the caller: reading them out of the persona document tied them to a field that
+    # a suite without callers does not have.
+    keywords = models.JSONField(null=True, blank=True)
+    background_noise = models.CharField(max_length=64, blank=True, default="")
+    max_turns = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
         db_table = "simulate_hosted_harness_scenario"
@@ -200,6 +233,13 @@ class HostedHarnessScenario(BaseModel):
             models.UniqueConstraint(
                 fields=["job", "scenario_key"], name="uniq_harness_scenario_key"
             )
+        ]
+        indexes = [
+            # The suite is read in its own order, and filtered on the two JSON documents.
+            models.Index(fields=["job", "number"], name="idx_harness_scenario_order"),
+            GinIndex(fields=["persona"], name="idx_harness_scenario_persona"),
+            GinIndex(fields=["coverage"], name="idx_harness_scenario_coverage"),
+            GinIndex(fields=["keywords"], name="idx_harness_scenario_keywords"),
         ]
 
 

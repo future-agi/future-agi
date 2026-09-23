@@ -969,6 +969,9 @@ ALK_HOSTED_AUTHORING_TIMEOUT = int(
     os.getenv("ALK_HOSTED_AUTHORING_TIMEOUT", "")
     or ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS + 300
 )
+# How many scenarios one hosted job may ask for. The database allows up to MAX_SCENARIOS_PER_JOB;
+# this is the admission ceiling, which stays lower until a suite that size has been run end to end.
+ALK_MAX_SCENARIOS_PER_REQUEST = int(os.getenv("ALK_MAX_SCENARIOS_PER_REQUEST", "1000"))
 # Sandbox lifetime is a separate infrastructure envelope. A customer's call-runtime limit must
 # never shorten fresh authoring; two hours is the hosted default/minimum.
 ALK_HOSTED_SANDBOX_TTL_SECONDS = int(

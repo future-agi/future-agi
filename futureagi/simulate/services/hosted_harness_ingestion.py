@@ -951,9 +951,22 @@ def _receipt_evaluations(body: dict[str, Any]) -> list[dict[str, Any]]:
     for goal in body.get("sub_goals") or []:
         if not isinstance(goal, dict) or not goal.get("name"):
             continue
-        # Nothing decided this sub-goal, which is not the same as deciding against it.
-        # Coercing it would publish a failed, reasonless eval. Coverage carries the count.
+        # Nothing decided this sub-goal: its check would not compile, raised, or never ran because
+        # the world was unreachable. That is not a pass and it is not a considered failure, and
+        # dropping it from the list published neither - a call whose checks mostly broke came back
+        # showing only the two that survived, both green. Surfaced as its own outcome so the reader
+        # sees that a judgement is missing rather than inferring success from silence. Everything
+        # that DID decide is still reported: a broken check costs its own verdict, never the rest.
         if goal.get("held") is None:
+            results.append(
+                {
+                    "name": str(goal["name"]),
+                    "kind": "errored",
+                    "passed": False,
+                    "reason": str(goal.get("reason") or "")
+                    or "this check did not run, so nothing was judged for it",
+                }
+            )
             continue
         results.append(
             {

@@ -260,7 +260,15 @@ class HarnessJobCreateSerializer(serializers.Serializer):
     run_id = serializers.UUIDField(required=False)
     source = HarnessSourceSerializer(required=False)
     agent = HarnessAgentSerializer()
-    scenario_count = serializers.IntegerField(default=10, min_value=1, max_value=200)
+    scenario_count = serializers.IntegerField(
+        default=10,
+        min_value=1,
+        # The admission ceiling is deployment-settable and never above what the database allows.
+        max_value=min(
+            int(getattr(settings, "ALK_MAX_SCENARIOS_PER_REQUEST", 1000)),
+            MAX_SCENARIOS_PER_JOB,
+        ),
+    )
     seed = serializers.IntegerField(required=False, allow_null=True)
     runtime = HarnessRuntimeSerializer(default=dict)
     security = HarnessSecuritySerializer(default=dict)
@@ -525,6 +533,31 @@ class HarnessJobEventSerializer(serializers.Serializer):
     type = serializers.CharField()
     payload = serializers.JSONField(allow_null=True)
     emitted_at = serializers.CharField()
+
+
+class HarnessScenarioChangeSerializer(serializers.Serializer):
+    op = serializers.ChoiceField(choices=["drop", "set_field", "set_persona"])
+    # A name, a scenario key, a number, a range ("12-30") or a comma list; `scenarios` carries a
+    # selection sent from the table.
+    scenario = serializers.CharField(required=False, allow_blank=True)
+    scenarios = serializers.ListField(
+        child=serializers.CharField(), required=False, allow_empty=False
+    )
+    field = serializers.CharField(required=False, allow_blank=True)
+    # A field's new value is whatever that field holds: `tests` is a string, `max_turns` a number,
+    # `background_noise` a place name or false. A plain JSONField is published as `type: object`,
+    # which made the contract reject every real edit before it left the browser.
+    value = JsonValueField(required=False, allow_null=True)
+    # Persona values are strings except `keywords` and `languages`, which are lists. A bare
+    # DictField publishes its values as strings, so those two were rejected the same way.
+    persona = serializers.DictField(
+        required=False, child=JsonValueField(allow_null=True)
+    )
+
+
+class HarnessScenarioAmendSerializer(serializers.Serializer):
+    changes = HarnessScenarioChangeSerializer(many=True, allow_empty=False)
+    rework = serializers.BooleanField(required=False, default=True)
 
 
 class HarnessStageOutputSerializer(serializers.Serializer):
