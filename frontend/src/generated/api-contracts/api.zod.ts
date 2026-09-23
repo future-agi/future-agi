@@ -52305,6 +52305,672 @@ export const TracerInternalErrorFeedV2ClaimsCreateResponse = zod.object({
   ),
 });
 
+export const TracerInternalErrorFeedV2GroupingAttemptsPartialUpdateParams =
+  zod.object({
+    attempt_id: zod.string(),
+  });
+
+export const tracerInternalErrorFeedV2GroupingAttemptsPartialUpdateBodyLeaseTokenMax = 255;
+
+export const TracerInternalErrorFeedV2GroupingAttemptsPartialUpdateBody =
+  zod.object({
+    lease_token: zod
+      .string()
+      .min(1)
+      .max(
+        tracerInternalErrorFeedV2GroupingAttemptsPartialUpdateBodyLeaseTokenMax,
+      ),
+    action: zod.enum(["renew", "cancel"]),
+  });
+
+export const TracerInternalErrorFeedV2GroupingAttemptsPartialUpdateResponse =
+  zod.object({
+    state: zod.string().min(1).optional(),
+    status: zod.string().min(1).optional(),
+    checkpoint_revision: zod.number().optional(),
+    receipt_id: zod.string().uuid().optional(),
+  });
+
+export const TracerInternalErrorFeedV2GroupingAttemptsCheckpointUpdateParams =
+  zod.object({
+    attempt_id: zod.string(),
+  });
+
+export const tracerInternalErrorFeedV2GroupingAttemptsCheckpointUpdateBodyLeaseTokenMax = 255;
+
+export const tracerInternalErrorFeedV2GroupingAttemptsCheckpointUpdateBodyExpectedRevisionMin = 0;
+
+export const TracerInternalErrorFeedV2GroupingAttemptsCheckpointUpdateBody =
+  zod.object({
+    lease_token: zod
+      .string()
+      .min(1)
+      .max(
+        tracerInternalErrorFeedV2GroupingAttemptsCheckpointUpdateBodyLeaseTokenMax,
+      ),
+    expected_revision: zod
+      .number()
+      .min(
+        tracerInternalErrorFeedV2GroupingAttemptsCheckpointUpdateBodyExpectedRevisionMin,
+      ),
+    checkpoint: zod.object({}).passthrough(),
+  });
+
+export const TracerInternalErrorFeedV2GroupingAttemptsCheckpointUpdateResponse =
+  zod.object({
+    state: zod.string().min(1).optional(),
+    status: zod.string().min(1).optional(),
+    checkpoint_revision: zod.number().optional(),
+    receipt_id: zod.string().uuid().optional(),
+  });
+
+export const TracerInternalErrorFeedV2GroupingAttemptsPublishCreateParams =
+  zod.object({
+    attempt_id: zod.string(),
+  });
+
+export const tracerInternalErrorFeedV2GroupingAttemptsPublishCreateBodyLeaseTokenMax = 255;
+
+export const tracerInternalErrorFeedV2GroupingAttemptsPublishCreateBodyIdempotencyKeyMax = 255;
+
+export const tracerInternalErrorFeedV2GroupingAttemptsPublishCreateBodySnapshotDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const tracerInternalErrorFeedV2GroupingAttemptsPublishCreateBodyRegistryRevisionMin = 0;
+
+export const tracerInternalErrorFeedV2GroupingAttemptsPublishCreateBodyCommandsMax = 1000;
+
+export const tracerInternalErrorFeedV2GroupingAttemptsPublishCreateBodyReceiptIdsMax = 100;
+
+export const TracerInternalErrorFeedV2GroupingAttemptsPublishCreateBody =
+  zod.object({
+    lease_token: zod
+      .string()
+      .min(1)
+      .max(
+        tracerInternalErrorFeedV2GroupingAttemptsPublishCreateBodyLeaseTokenMax,
+      ),
+    idempotency_key: zod
+      .string()
+      .min(1)
+      .max(
+        tracerInternalErrorFeedV2GroupingAttemptsPublishCreateBodyIdempotencyKeyMax,
+      ),
+    snapshot_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        tracerInternalErrorFeedV2GroupingAttemptsPublishCreateBodySnapshotDigestRegExp,
+      ),
+    registry_revision: zod
+      .number()
+      .min(
+        tracerInternalErrorFeedV2GroupingAttemptsPublishCreateBodyRegistryRevisionMin,
+      ),
+    commands: zod
+      .array(zod.object({}).passthrough())
+      .max(
+        tracerInternalErrorFeedV2GroupingAttemptsPublishCreateBodyCommandsMax,
+      ),
+    receipt_ids: zod
+      .array(zod.string().uuid())
+      .max(
+        tracerInternalErrorFeedV2GroupingAttemptsPublishCreateBodyReceiptIdsMax,
+      ),
+  });
+
+export const TracerInternalErrorFeedV2GroupingAttemptsPublishCreateResponse =
+  zod.object({
+    state: zod.string().min(1).optional(),
+    status: zod.string().min(1).optional(),
+    checkpoint_revision: zod.number().optional(),
+    receipt_id: zod.string().uuid().optional(),
+  });
+
+export const TracerInternalErrorFeedV2GroupingAttemptsReserveCreateParams =
+  zod.object({
+    attempt_id: zod.string(),
+  });
+
+export const tracerInternalErrorFeedV2GroupingAttemptsReserveCreateBodyLeaseTokenMax = 255;
+
+export const tracerInternalErrorFeedV2GroupingAttemptsReserveCreateBodyRequestKeyMax = 255;
+
+export const tracerInternalErrorFeedV2GroupingAttemptsReserveCreateBodyRequestDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const tracerInternalErrorFeedV2GroupingAttemptsReserveCreateBodyRepairIntentPrimaryReceiptIdRegExp =
+  new RegExp("^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$");
+export const tracerInternalErrorFeedV2GroupingAttemptsReserveCreateBodyRepairIntentGroupIndexMin = 0;
+export const tracerInternalErrorFeedV2GroupingAttemptsReserveCreateBodyRepairIntentGroupIndexMax = 99;
+
+export const tracerInternalErrorFeedV2GroupingAttemptsReserveCreateBodyRepairIntentMissingOwnReportIdsItemRegExp =
+  new RegExp("^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$");
+export const tracerInternalErrorFeedV2GroupingAttemptsReserveCreateBodyRepairIntentMissingOwnReportIdsMax = 100;
+
+export const TracerInternalErrorFeedV2GroupingAttemptsReserveCreateBody =
+  zod.object({
+    lease_token: zod
+      .string()
+      .min(1)
+      .max(
+        tracerInternalErrorFeedV2GroupingAttemptsReserveCreateBodyLeaseTokenMax,
+      ),
+    request_key: zod
+      .string()
+      .min(1)
+      .max(
+        tracerInternalErrorFeedV2GroupingAttemptsReserveCreateBodyRequestKeyMax,
+      ),
+    request_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        tracerInternalErrorFeedV2GroupingAttemptsReserveCreateBodyRequestDigestRegExp,
+      ),
+    max_cost_usd: zod.string(),
+    repair_intent: zod
+      .object({
+        primary_receipt_id: zod
+          .string()
+          .min(1)
+          .regex(
+            tracerInternalErrorFeedV2GroupingAttemptsReserveCreateBodyRepairIntentPrimaryReceiptIdRegExp,
+          ),
+        group_index: zod
+          .number()
+          .min(
+            tracerInternalErrorFeedV2GroupingAttemptsReserveCreateBodyRepairIntentGroupIndexMin,
+          )
+          .max(
+            tracerInternalErrorFeedV2GroupingAttemptsReserveCreateBodyRepairIntentGroupIndexMax,
+          ),
+        missing_own_report_ids: zod
+          .array(
+            zod
+              .string()
+              .min(1)
+              .regex(
+                tracerInternalErrorFeedV2GroupingAttemptsReserveCreateBodyRepairIntentMissingOwnReportIdsItemRegExp,
+              ),
+          )
+          .min(1)
+          .max(
+            tracerInternalErrorFeedV2GroupingAttemptsReserveCreateBodyRepairIntentMissingOwnReportIdsMax,
+          ),
+      })
+      .optional(),
+  });
+
+export const TracerInternalErrorFeedV2GroupingAttemptsReserveCreateResponse =
+  zod.object({
+    state: zod.string().min(1).optional(),
+    status: zod.string().min(1).optional(),
+    checkpoint_revision: zod.number().optional(),
+    receipt_id: zod.string().uuid().optional(),
+  });
+
+export const TracerInternalErrorFeedV2GroupingAttemptsSettleCreateParams =
+  zod.object({
+    attempt_id: zod.string(),
+  });
+
+export const tracerInternalErrorFeedV2GroupingAttemptsSettleCreateBodyLeaseTokenMax = 255;
+
+export const tracerInternalErrorFeedV2GroupingAttemptsSettleCreateBodyRequestKeyMax = 255;
+
+export const tracerInternalErrorFeedV2GroupingAttemptsSettleCreateBodyRequestDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const tracerInternalErrorFeedV2GroupingAttemptsSettleCreateBodyModelUsedMax = 255;
+
+export const tracerInternalErrorFeedV2GroupingAttemptsSettleCreateBodyInputTokensMin = 0;
+
+export const tracerInternalErrorFeedV2GroupingAttemptsSettleCreateBodyOutputTokensMin = 0;
+
+export const tracerInternalErrorFeedV2GroupingAttemptsSettleCreateBodyFailureCodeDefault = ``;
+export const tracerInternalErrorFeedV2GroupingAttemptsSettleCreateBodyFailureCodeMax = 100;
+
+export const TracerInternalErrorFeedV2GroupingAttemptsSettleCreateBody =
+  zod.object({
+    lease_token: zod
+      .string()
+      .min(1)
+      .max(
+        tracerInternalErrorFeedV2GroupingAttemptsSettleCreateBodyLeaseTokenMax,
+      ),
+    request_key: zod
+      .string()
+      .min(1)
+      .max(
+        tracerInternalErrorFeedV2GroupingAttemptsSettleCreateBodyRequestKeyMax,
+      ),
+    request_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        tracerInternalErrorFeedV2GroupingAttemptsSettleCreateBodyRequestDigestRegExp,
+      ),
+    status: zod.enum(["settled", "unknown"]),
+    result: zod.object({}).passthrough().optional(),
+    model_used: zod
+      .string()
+      .min(1)
+      .max(
+        tracerInternalErrorFeedV2GroupingAttemptsSettleCreateBodyModelUsedMax,
+      )
+      .optional(),
+    input_tokens: zod
+      .number()
+      .min(
+        tracerInternalErrorFeedV2GroupingAttemptsSettleCreateBodyInputTokensMin,
+      )
+      .optional(),
+    output_tokens: zod
+      .number()
+      .min(
+        tracerInternalErrorFeedV2GroupingAttemptsSettleCreateBodyOutputTokensMin,
+      )
+      .optional(),
+    cost_usd: zod.string().optional(),
+    failure_code: zod
+      .string()
+      .max(
+        tracerInternalErrorFeedV2GroupingAttemptsSettleCreateBodyFailureCodeMax,
+      )
+      .default(
+        tracerInternalErrorFeedV2GroupingAttemptsSettleCreateBodyFailureCodeDefault,
+      ),
+  });
+
+export const TracerInternalErrorFeedV2GroupingAttemptsSettleCreateResponse =
+  zod.object({
+    state: zod.string().min(1).optional(),
+    status: zod.string().min(1).optional(),
+    checkpoint_revision: zod.number().optional(),
+    receipt_id: zod.string().uuid().optional(),
+  });
+
+export const tracerInternalErrorFeedV2GroupingClaimsCreateBodyWorkerIdMax = 255;
+
+export const tracerInternalErrorFeedV2GroupingClaimsCreateBodyLimitMax = 10;
+
+export const TracerInternalErrorFeedV2GroupingClaimsCreateBody = zod.object({
+  worker_id: zod
+    .string()
+    .min(1)
+    .max(tracerInternalErrorFeedV2GroupingClaimsCreateBodyWorkerIdMax),
+  limit: zod
+    .number()
+    .min(1)
+    .max(tracerInternalErrorFeedV2GroupingClaimsCreateBodyLimitMax),
+});
+
+export const TracerInternalErrorFeedV2GroupingClaimsCreateResponse = zod.object(
+  {
+    claims: zod.array(zod.object({}).passthrough()),
+  },
+);
+
+export const TracerInternalErrorFeedV2GroupingFeatureAttemptsPartialUpdateParams =
+  zod.object({
+    feature_job_id: zod.string(),
+  });
+
+export const tracerInternalErrorFeedV2GroupingFeatureAttemptsPartialUpdateBodyLeaseTokenMax = 255;
+
+export const TracerInternalErrorFeedV2GroupingFeatureAttemptsPartialUpdateBody =
+  zod.object({
+    lease_token: zod
+      .string()
+      .min(1)
+      .max(
+        tracerInternalErrorFeedV2GroupingFeatureAttemptsPartialUpdateBodyLeaseTokenMax,
+      ),
+    action: zod.enum(["renew"]),
+  });
+
+export const TracerInternalErrorFeedV2GroupingFeatureAttemptsPartialUpdateResponse =
+  zod.object({
+    state: zod.string().min(1).optional(),
+    status: zod.string().min(1).optional(),
+    checkpoint_revision: zod.number().optional(),
+    receipt_id: zod.string().uuid().optional(),
+  });
+
+export const TracerInternalErrorFeedV2GroupingFeatureAttemptsCompleteCreateParams =
+  zod.object({
+    feature_job_id: zod.string(),
+  });
+
+export const tracerInternalErrorFeedV2GroupingFeatureAttemptsCompleteCreateBodyLeaseTokenMax = 255;
+
+export const tracerInternalErrorFeedV2GroupingFeatureAttemptsCompleteCreateBodyFeaturesMax = 200;
+
+export const tracerInternalErrorFeedV2GroupingFeatureAttemptsCompleteCreateBodyErrorCodeDefault = ``;
+export const tracerInternalErrorFeedV2GroupingFeatureAttemptsCompleteCreateBodyErrorCodeMax = 100;
+
+export const TracerInternalErrorFeedV2GroupingFeatureAttemptsCompleteCreateBody =
+  zod.object({
+    lease_token: zod
+      .string()
+      .min(1)
+      .max(
+        tracerInternalErrorFeedV2GroupingFeatureAttemptsCompleteCreateBodyLeaseTokenMax,
+      ),
+    status: zod.enum(["ready", "failed"]),
+    features: zod
+      .array(zod.object({}).passthrough())
+      .max(
+        tracerInternalErrorFeedV2GroupingFeatureAttemptsCompleteCreateBodyFeaturesMax,
+      ),
+    error_code: zod
+      .string()
+      .max(
+        tracerInternalErrorFeedV2GroupingFeatureAttemptsCompleteCreateBodyErrorCodeMax,
+      )
+      .default(
+        tracerInternalErrorFeedV2GroupingFeatureAttemptsCompleteCreateBodyErrorCodeDefault,
+      ),
+  });
+
+export const TracerInternalErrorFeedV2GroupingFeatureAttemptsCompleteCreateResponse =
+  zod.object({
+    state: zod.string().min(1).optional(),
+    status: zod.string().min(1).optional(),
+    checkpoint_revision: zod.number().optional(),
+    receipt_id: zod.string().uuid().optional(),
+  });
+
+export const tracerInternalErrorFeedV2GroupingFeatureClaimsCreateBodyWorkerIdMax = 255;
+
+export const tracerInternalErrorFeedV2GroupingFeatureClaimsCreateBodyLimitMax = 10;
+
+export const TracerInternalErrorFeedV2GroupingFeatureClaimsCreateBody =
+  zod.object({
+    worker_id: zod
+      .string()
+      .min(1)
+      .max(tracerInternalErrorFeedV2GroupingFeatureClaimsCreateBodyWorkerIdMax),
+    limit: zod
+      .number()
+      .min(1)
+      .max(tracerInternalErrorFeedV2GroupingFeatureClaimsCreateBodyLimitMax),
+  });
+
+export const TracerInternalErrorFeedV2GroupingFeatureClaimsCreateResponse =
+  zod.object({
+    claims: zod.array(zod.object({}).passthrough()),
+  });
+
+export const tracerInternalErrorFeedV2GroupingOutboxCreateBodyLimitMax = 100;
+
+export const TracerInternalErrorFeedV2GroupingOutboxCreateBody = zod.object({
+  limit: zod
+    .number()
+    .min(1)
+    .max(tracerInternalErrorFeedV2GroupingOutboxCreateBodyLimitMax),
+});
+
+export const TracerInternalErrorFeedV2GroupingOutboxCreateResponse = zod.object(
+  {
+    events: zod.array(zod.object({}).passthrough()),
+  },
+);
+
+export const TracerInternalErrorFeedV2GroupingOutboxAckCreateParams =
+  zod.object({
+    event_id: zod.string(),
+  });
+
+export const TracerInternalErrorFeedV2GroupingOutboxAckCreateBody = zod
+  .object({})
+  .passthrough();
+
+export const TracerInternalErrorFeedV2GroupingOutboxAckCreateResponse =
+  zod.object({
+    state: zod.string().min(1).optional(),
+    status: zod.string().min(1).optional(),
+    checkpoint_revision: zod.number().optional(),
+    receipt_id: zod.string().uuid().optional(),
+  });
+
+export const TracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateParams =
+  zod.object({
+    job_id: zod.string(),
+  });
+
+export const tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateBodyLeaseTokenMax = 255;
+
+export const TracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateBody =
+  zod.object({
+    lease_token: zod
+      .string()
+      .min(1)
+      .max(
+        tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateBodyLeaseTokenMax,
+      ),
+    action: zod.enum(["renew"]),
+  });
+
+export const TracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponse =
+  zod.object({
+    state: zod.string().min(1).optional(),
+    status: zod.string().min(1).optional(),
+    checkpoint_revision: zod.number().optional(),
+    receipt_id: zod.string().uuid().optional(),
+  });
+
+export const TracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateParams =
+  zod.object({
+    job_id: zod.string(),
+  });
+
+export const tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateBodyLeaseTokenMax = 255;
+
+export const TracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateBody =
+  zod.object({
+    lease_token: zod
+      .string()
+      .min(1)
+      .max(
+        tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateBodyLeaseTokenMax,
+      ),
+    receipt_id: zod.string().uuid(),
+  });
+
+export const TracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponse =
+  zod.object({
+    state: zod.string().min(1).optional(),
+    status: zod.string().min(1).optional(),
+    checkpoint_revision: zod.number().optional(),
+    receipt_id: zod.string().uuid().optional(),
+  });
+
+export const TracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateParams =
+  zod.object({
+    job_id: zod.string(),
+  });
+
+export const tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyLeaseTokenMax = 255;
+
+export const tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRequestKeyMax = 255;
+
+export const tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRequestDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+
+export const tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRepairIntentPrimaryReceiptIdRegExp =
+  new RegExp("^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$");
+export const tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRepairIntentGroupIndexMin = 0;
+export const tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRepairIntentGroupIndexMax = 99;
+
+export const tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRepairIntentMissingOwnReportIdsItemRegExp =
+  new RegExp("^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$");
+export const tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRepairIntentMissingOwnReportIdsMax = 100;
+
+export const TracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBody =
+  zod.object({
+    lease_token: zod
+      .string()
+      .min(1)
+      .max(
+        tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyLeaseTokenMax,
+      ),
+    request_key: zod
+      .string()
+      .min(1)
+      .max(
+        tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRequestKeyMax,
+      ),
+    request_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRequestDigestRegExp,
+      ),
+    max_cost_usd: zod.string(),
+    repair_intent: zod
+      .object({
+        primary_receipt_id: zod
+          .string()
+          .min(1)
+          .regex(
+            tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRepairIntentPrimaryReceiptIdRegExp,
+          ),
+        group_index: zod
+          .number()
+          .min(
+            tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRepairIntentGroupIndexMin,
+          )
+          .max(
+            tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRepairIntentGroupIndexMax,
+          ),
+        missing_own_report_ids: zod
+          .array(
+            zod
+              .string()
+              .min(1)
+              .regex(
+                tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRepairIntentMissingOwnReportIdsItemRegExp,
+              ),
+          )
+          .min(1)
+          .max(
+            tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRepairIntentMissingOwnReportIdsMax,
+          ),
+      })
+      .optional(),
+  });
+
+export const TracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponse =
+  zod.object({
+    state: zod.string().min(1).optional(),
+    status: zod.string().min(1).optional(),
+    checkpoint_revision: zod.number().optional(),
+    receipt_id: zod.string().uuid().optional(),
+  });
+
+export const TracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateParams =
+  zod.object({
+    job_id: zod.string(),
+  });
+
+export const tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyLeaseTokenMax = 255;
+
+export const tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyRequestKeyMax = 255;
+
+export const tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyRequestDigestRegExp =
+  new RegExp("^sha256:[a-f0-9]{64}$");
+export const tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyModelUsedMax = 255;
+
+export const tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyInputTokensMin = 0;
+
+export const tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyOutputTokensMin = 0;
+
+export const tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyFailureCodeDefault = ``;
+export const tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyFailureCodeMax = 100;
+
+export const TracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBody =
+  zod.object({
+    lease_token: zod
+      .string()
+      .min(1)
+      .max(
+        tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyLeaseTokenMax,
+      ),
+    request_key: zod
+      .string()
+      .min(1)
+      .max(
+        tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyRequestKeyMax,
+      ),
+    request_digest: zod
+      .string()
+      .min(1)
+      .regex(
+        tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyRequestDigestRegExp,
+      ),
+    status: zod.enum(["settled", "unknown"]),
+    result: zod.object({}).passthrough().optional(),
+    model_used: zod
+      .string()
+      .min(1)
+      .max(
+        tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyModelUsedMax,
+      )
+      .optional(),
+    input_tokens: zod
+      .number()
+      .min(
+        tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyInputTokensMin,
+      )
+      .optional(),
+    output_tokens: zod
+      .number()
+      .min(
+        tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyOutputTokensMin,
+      )
+      .optional(),
+    cost_usd: zod.string().optional(),
+    failure_code: zod
+      .string()
+      .max(
+        tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyFailureCodeMax,
+      )
+      .default(
+        tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyFailureCodeDefault,
+      ),
+  });
+
+export const TracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponse =
+  zod.object({
+    state: zod.string().min(1).optional(),
+    status: zod.string().min(1).optional(),
+    checkpoint_revision: zod.number().optional(),
+    receipt_id: zod.string().uuid().optional(),
+  });
+
+export const tracerInternalErrorFeedV2GroupingSeverityClaimsCreateBodyWorkerIdMax = 255;
+
+export const tracerInternalErrorFeedV2GroupingSeverityClaimsCreateBodyLimitMax = 10;
+
+export const TracerInternalErrorFeedV2GroupingSeverityClaimsCreateBody =
+  zod.object({
+    worker_id: zod
+      .string()
+      .min(1)
+      .max(
+        tracerInternalErrorFeedV2GroupingSeverityClaimsCreateBodyWorkerIdMax,
+      ),
+    limit: zod
+      .number()
+      .min(1)
+      .max(tracerInternalErrorFeedV2GroupingSeverityClaimsCreateBodyLimitMax),
+  });
+
+export const TracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponse =
+  zod.object({
+    claims: zod.array(zod.object({}).passthrough()),
+  });
+
 export const tracerInternalErrorFeedV2NotificationsCreateBodyDeliveriesItemPartitionMin = 0;
 
 export const tracerInternalErrorFeedV2NotificationsCreateBodyDeliveriesItemOffsetMin = 0;
@@ -66992,241 +67658,3 @@ export const V1SelfHostedActivationsCreateResponse = zod.object({
   allowed_models: zod.array(zod.string().min(1)),
   scope: zod.enum(["oss", "enterprise"]),
 });
-
-export const TracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateParams =
-  zod.object({
-    job_id: zod.string(),
-  });
-
-export const tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateBodyLeaseTokenMax = 255;
-
-export const TracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateBody =
-  zod.object({
-    lease_token: zod
-      .string()
-      .min(1)
-      .max(
-        tracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateBodyLeaseTokenMax,
-      ),
-    action: zod.enum(["renew"]),
-  });
-
-export const TracerInternalErrorFeedV2GroupingSeverityAttemptsPartialUpdateResponse =
-  zod.object({
-    state: zod.string().min(1).optional(),
-    status: zod.string().min(1).optional(),
-    checkpoint_revision: zod.number().optional(),
-    receipt_id: zod.string().uuid().optional(),
-  });
-
-export const TracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateParams =
-  zod.object({
-    job_id: zod.string(),
-  });
-
-export const tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateBodyLeaseTokenMax = 255;
-
-export const TracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateBody =
-  zod.object({
-    lease_token: zod
-      .string()
-      .min(1)
-      .max(
-        tracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateBodyLeaseTokenMax,
-      ),
-    receipt_id: zod.string().uuid(),
-  });
-
-export const TracerInternalErrorFeedV2GroupingSeverityAttemptsPublishCreateResponse =
-  zod.object({
-    state: zod.string().min(1).optional(),
-    status: zod.string().min(1).optional(),
-    checkpoint_revision: zod.number().optional(),
-    receipt_id: zod.string().uuid().optional(),
-  });
-
-export const TracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateParams =
-  zod.object({
-    job_id: zod.string(),
-  });
-
-export const tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyLeaseTokenMax = 255;
-
-export const tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRequestKeyMax = 255;
-
-export const tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRequestDigestRegExp =
-  new RegExp("^sha256:[a-f0-9]{64}$");
-
-export const tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRepairIntentPrimaryReceiptIdRegExp =
-  new RegExp("^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$");
-export const tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRepairIntentGroupIndexMin = 0;
-export const tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRepairIntentGroupIndexMax = 99;
-
-export const tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRepairIntentMissingOwnReportIdsItemRegExp =
-  new RegExp("^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$");
-export const tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRepairIntentMissingOwnReportIdsMax = 100;
-
-export const TracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBody =
-  zod.object({
-    lease_token: zod
-      .string()
-      .min(1)
-      .max(
-        tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyLeaseTokenMax,
-      ),
-    request_key: zod
-      .string()
-      .min(1)
-      .max(
-        tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRequestKeyMax,
-      ),
-    request_digest: zod
-      .string()
-      .min(1)
-      .regex(
-        tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRequestDigestRegExp,
-      ),
-    max_cost_usd: zod.string(),
-    repair_intent: zod
-      .object({
-        primary_receipt_id: zod
-          .string()
-          .min(1)
-          .regex(
-            tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRepairIntentPrimaryReceiptIdRegExp,
-          ),
-        group_index: zod
-          .number()
-          .min(
-            tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRepairIntentGroupIndexMin,
-          )
-          .max(
-            tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRepairIntentGroupIndexMax,
-          ),
-        missing_own_report_ids: zod
-          .array(
-            zod
-              .string()
-              .min(1)
-              .regex(
-                tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRepairIntentMissingOwnReportIdsItemRegExp,
-              ),
-          )
-          .min(1)
-          .max(
-            tracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateBodyRepairIntentMissingOwnReportIdsMax,
-          ),
-      })
-      .optional(),
-  });
-
-export const TracerInternalErrorFeedV2GroupingSeverityAttemptsReserveCreateResponse =
-  zod.object({
-    state: zod.string().min(1).optional(),
-    status: zod.string().min(1).optional(),
-    checkpoint_revision: zod.number().optional(),
-    receipt_id: zod.string().uuid().optional(),
-  });
-
-export const TracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateParams =
-  zod.object({
-    job_id: zod.string(),
-  });
-
-export const tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyLeaseTokenMax = 255;
-
-export const tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyRequestKeyMax = 255;
-
-export const tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyRequestDigestRegExp =
-  new RegExp("^sha256:[a-f0-9]{64}$");
-export const tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyModelUsedMax = 255;
-
-export const tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyInputTokensMin = 0;
-
-export const tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyOutputTokensMin = 0;
-
-export const tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyFailureCodeDefault = ``;
-export const tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyFailureCodeMax = 100;
-
-export const TracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBody =
-  zod.object({
-    lease_token: zod
-      .string()
-      .min(1)
-      .max(
-        tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyLeaseTokenMax,
-      ),
-    request_key: zod
-      .string()
-      .min(1)
-      .max(
-        tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyRequestKeyMax,
-      ),
-    request_digest: zod
-      .string()
-      .min(1)
-      .regex(
-        tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyRequestDigestRegExp,
-      ),
-    status: zod.enum(["settled", "unknown"]),
-    result: zod.object({}).passthrough().optional(),
-    model_used: zod
-      .string()
-      .min(1)
-      .max(
-        tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyModelUsedMax,
-      )
-      .optional(),
-    input_tokens: zod
-      .number()
-      .min(
-        tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyInputTokensMin,
-      )
-      .optional(),
-    output_tokens: zod
-      .number()
-      .min(
-        tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyOutputTokensMin,
-      )
-      .optional(),
-    cost_usd: zod.string().optional(),
-    failure_code: zod
-      .string()
-      .max(
-        tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyFailureCodeMax,
-      )
-      .default(
-        tracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateBodyFailureCodeDefault,
-      ),
-  });
-
-export const TracerInternalErrorFeedV2GroupingSeverityAttemptsSettleCreateResponse =
-  zod.object({
-    state: zod.string().min(1).optional(),
-    status: zod.string().min(1).optional(),
-    checkpoint_revision: zod.number().optional(),
-    receipt_id: zod.string().uuid().optional(),
-  });
-
-export const tracerInternalErrorFeedV2GroupingSeverityClaimsCreateBodyWorkerIdMax = 255;
-
-export const tracerInternalErrorFeedV2GroupingSeverityClaimsCreateBodyLimitMax = 10;
-
-export const TracerInternalErrorFeedV2GroupingSeverityClaimsCreateBody =
-  zod.object({
-    worker_id: zod
-      .string()
-      .min(1)
-      .max(
-        tracerInternalErrorFeedV2GroupingSeverityClaimsCreateBodyWorkerIdMax,
-      ),
-    limit: zod
-      .number()
-      .min(1)
-      .max(tracerInternalErrorFeedV2GroupingSeverityClaimsCreateBodyLimitMax),
-  });
-
-export const TracerInternalErrorFeedV2GroupingSeverityClaimsCreateResponse =
-  zod.object({
-    claims: zod.array(zod.object({}).passthrough()),
-  });
