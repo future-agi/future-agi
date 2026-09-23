@@ -150,11 +150,13 @@ def _billable_records(
 ):
     cached = getattr(attempt, "_prefetched_objects_cache", {}).get("result_receipts")
     receipts = {
-        receipt.scenario.scenario_key: receipt
+        receipt.execution.execution_key
+        if receipt.execution_id
+        else receipt.scenario.scenario_key: receipt
         for receipt in (
             cached
             if cached is not None
-            else attempt.result_receipts.select_related("scenario").all()
+            else attempt.result_receipts.select_related("scenario", "execution").all()
         )
     }
     history = attempt.receipt_history or {}

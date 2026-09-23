@@ -36,6 +36,8 @@ from simulate.models import (
     CallExecution,
     CallLogEntry,
     ChatMessageModel,
+    HostedHarnessJob,
+    HostedHarnessReceipt,
     RunTest,
     Scenarios,
     SimulateEvalConfig,
@@ -5525,6 +5527,15 @@ class RunTestExecutionsView(APIView):
                             calls__status=CallExecution.CallStatus.REGISTERED
                         ),
                     ),
+                    _failed_calls=Count(
+                        "calls",
+                        filter=models.Q(
+                            calls__status__in=(
+                                CallExecution.CallStatus.FAILED,
+                                CallExecution.CallStatus.CANCELLED,
+                            )
+                        ),
+                    ),
                     _connected_calls=Count(
                         "calls",
                         filter=models.Q(calls__duration_seconds__gt=0),
@@ -5594,6 +5605,24 @@ class RunTestExecutionsView(APIView):
 
             # Batch fetch agent turn counts for all executions in one query
             execution_ids = [te.id for te in result_page]
+            hosted_jobs = {
+                job.test_execution_id: job.id
+                for job in HostedHarnessJob.no_workspace_objects.filter(
+                    test_execution_id__in=execution_ids
+                ).only("id", "test_execution_id")
+            }
+            outcome_counts = {}
+            if hosted_jobs:
+                for row in (
+                    HostedHarnessReceipt.no_workspace_objects.filter(
+                        job_id__in=hosted_jobs.values()
+                    )
+                    .values("job_id", "status")
+                    .annotate(count=Count("id"))
+                ):
+                    outcome_counts.setdefault(row["job_id"], {})[row["status"]] = row[
+                        "count"
+                    ]
             agent_turn_counts = {}
             chat_duration_map = {}
             if execution_ids:
@@ -5648,6 +5677,7 @@ class RunTestExecutionsView(APIView):
                 total_calls = test_execution._total_calls or 0
                 completed_calls = test_execution._completed_calls or 0
                 pending_calls = test_execution._pending_calls or 0
+                failed_calls = test_execution._failed_calls or 0
                 queued_calls = test_execution._queued_calls or 0
                 connected_calls = test_execution._connected_calls or 0
                 avg_response_time_ms = test_execution._avg_response_time_ms
@@ -5802,6 +5832,30 @@ class RunTestExecutionsView(APIView):
                         "completed_at": (
                             test_execution.completed_at.isoformat()
                             if test_execution.completed_at
+                            else None
+                        ),
+                        "outcome_passed": (
+                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
+                                "passed", 0
+                            )
+                            if test_execution.id in hosted_jobs
+                            else None
+                        ),
+                        "outcome_failed": (
+                            sum(
+                                outcome_counts.get(
+                                    hosted_jobs[test_execution.id], {}
+                                ).get(status, 0)
+                                for status in ("failed", "errored")
+                            )
+                            if test_execution.id in hosted_jobs
+                            else None
+                        ),
+                        "outcome_skipped": (
+                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
+                                "skipped", 0
+                            )
+                            if test_execution.id in hosted_jobs
                             else None
                         ),
                     }

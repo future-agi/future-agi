@@ -20327,6 +20327,9 @@ export interface TestExecutionItemResponseApi {
   readonly pending_calls?: number;
   /** @minLength 1 */
   readonly completed_at?: string;
+  readonly outcome_passed?: number;
+  readonly outcome_failed?: number;
+  readonly outcome_skipped?: number;
 }
 
 export interface RunTestExecutionsResponseApi {

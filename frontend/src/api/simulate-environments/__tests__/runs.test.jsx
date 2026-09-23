@@ -151,6 +151,28 @@ describe("executionToRun", () => {
       status: "running",
     });
   });
+
+  it("uses scenario verdicts rather than successful transport calls", () => {
+    const run = executionToRun({
+      id: "ex-outcomes",
+      status: "Completed",
+      total_calls: 6,
+      completed_calls: 6,
+      failed_calls: 0,
+      outcome_passed: 3,
+      outcome_failed: 2,
+      outcome_skipped: 1,
+    });
+
+    expect(run).toMatchObject({
+      total: 6,
+      passed: 3,
+      failed: 3,
+      skipped: 1,
+      pending: 0,
+      status: "failed",
+    });
+  });
 });
 
 describe("useEnvironmentRuns", () => {

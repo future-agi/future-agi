@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -13,11 +15,10 @@ from rest_framework.test import APIClient
 from simulate.models import (
     CallExecution,
     HostedHarnessExecution,
-    HostedHarnessReceipt,
     HostedHarnessJob,
+    HostedHarnessReceipt,
 )
 from simulate.models.run_test import RunTest
-from simulate.models.test_execution import TestExecution
 from simulate.serializers.harness_job import (
     HarnessJobCreateSerializer,
     HarnessPreflightSerializer,
@@ -29,15 +30,20 @@ from simulate.services.harness_provider import (
     _validate_required_credential_files,
     get_harness_provider,
 )
+from simulate.services.harness_usage import _billable_records
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     canonical_digest,
     create_hosted_job,
     create_selected_harness_run,
     provision_scenarios,
+    record_cleanup,
     register_attempt,
 )
-from simulate.services.hosted_harness_ingestion import ingest_result_receipt
+from simulate.services.hosted_harness_ingestion import (
+    ingest_event_batch,
+    ingest_result_receipt,
+)
 
 _LIVEKIT_REFS = {
     "LIVEKIT_URL": {
@@ -169,6 +175,26 @@ def test_small_hosted_job_preserves_the_requested_runtime_budget():
 
 
 @pytest.mark.django_db
+def test_authoring_cannot_be_ready_without_registered_durable_snapshot(user, workspace):
+    environment, _ = create_hosted_job(
+        user.organization,
+        _v1_payload(scenario_count=1),
+        idempotency_key="missing-authoring-snapshot",
+        workspace=workspace,
+    )
+    attempt = register_attempt(
+        environment.id, endpoint_base_url="https://harness.example.test"
+    ).attempt
+    attempt.terminal_stage = "completed"
+    attempt.save(update_fields=["terminal_stage", "updated_at"])
+
+    result = record_cleanup(attempt.id, provider_ref="", verified_absent=True)
+
+    assert result.state == HostedHarnessJob.State.FAILED
+    assert result.failure["code"] == "authoring_snapshot_missing"
+
+
+@pytest.mark.django_db
 def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
     user, workspace
 ):
@@ -215,9 +241,9 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
     environment.payload = payload
     environment.state = environment.State.COMPLETED
     environment.current_stage = "completed"
-    environment.save(
-        update_fields=["payload", "state", "current_stage", "updated_at"]
-    )
+    environment.save(update_fields=["payload", "state", "current_stage", "updated_at"])
+    assert environment.test_execution_id is None
+    assert environment.run_test.executions.filter(deleted=False).count() == 0
 
     first, created = create_selected_harness_run(
         environment,
@@ -246,9 +272,13 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
     assert first.environment_id == environment.id
     assert first.test_execution.trials == 3
     assert first.test_execution.total_calls == 6
-    assert CallExecution.no_workspace_objects.filter(
-        test_execution=first.test_execution
-    ).count() == 6
+    assert first.payload["runtime"]["max_duration_seconds"] >= 6 * 360
+    assert (
+        CallExecution.no_workspace_objects.filter(
+            test_execution=first.test_execution
+        ).count()
+        == 6
+    )
     allocations = list(
         HostedHarnessExecution.no_workspace_objects.filter(job=first).order_by(
             "source_scenario__scenario_key", "trial_index"
@@ -266,6 +296,29 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
         ("scenario-b", 3),
     ]
     assert len({allocation.execution_key for allocation in allocations}) == 6
+    for group in (allocations[:3], allocations[3:]):
+        assert len({allocation.call_execution.row_id for allocation in group}) == 1
+        assert (
+            len(
+                {
+                    allocation.call_execution.call_metadata["system_prompt"]
+                    for allocation in group
+                }
+            )
+            == 1
+        )
+        assert (
+            len(
+                {
+                    json.dumps(
+                        allocation.call_execution.call_metadata["row_data"],
+                        sort_keys=True,
+                    )
+                    for allocation in group
+                }
+            )
+            == 1
+        )
     assert first.test_execution.calls.filter(deleted=False).count() == 6
     assert second.test_execution.calls.filter(deleted=False).count() == 1
     client = APIClient()
@@ -275,9 +328,10 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
         HTTP_X_WORKSPACE_ID=str(workspace.id),
     )
     assert detail.status_code == 200, detail.content
-    assert [
-        scenario["scenario_key"] for scenario in detail.json()["scenarios"]
-    ] == ["scenario-a", "scenario-b"]
+    assert [scenario["scenario_key"] for scenario in detail.json()["scenarios"]] == [
+        "scenario-a",
+        "scenario-b",
+    ]
     assert detail.json()["overview"]["runs_count"] == 2
     listing = client.get(
         "/simulate/api/harness-environments/",
@@ -300,10 +354,55 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
     assert response.json()["trials"] == 2
     assert response.json()["total_calls"] == 2
     start.assert_called_once()
+    duplicate = client.post(
+        f"/simulate/api/harness-environments/{environment.id}/run/",
+        {"scenario_ids": ["scenario-b"], "trials": 2},
+        format="json",
+        HTTP_IDEMPOTENCY_KEY="submission-three",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+    assert duplicate.status_code == 202
+    assert duplicate.json()["test_execution_id"] == response.json()["test_execution_id"]
+    for payload in (
+        {"scenario_ids": [], "trials": 1},
+        {"scenario_ids": ["not-from-this-environment"], "trials": 1},
+        {"scenario_ids": ["scenario-a"], "trials": 0},
+    ):
+        invalid = client.post(
+            f"/simulate/api/harness-environments/{environment.id}/run/",
+            payload,
+            format="json",
+            HTTP_IDEMPOTENCY_KEY=str(uuid4()),
+            HTTP_X_WORKSPACE_ID=str(workspace.id),
+        )
+        assert invalid.status_code == 400
+    assert environment.simulation_runs.count() == 3
 
     run_attempt = register_attempt(
         first.id, endpoint_base_url="https://harness.example.test"
     ).attempt
+    event_payload = {
+        "scenario_key": allocations[0].execution_key,
+        "world_index": 0,
+        "scenario_attempt": 1,
+    }
+    event = {
+        "event_id": str(uuid4()),
+        "job_id": str(first.id),
+        "attempt_id": str(run_attempt.id),
+        "attempt_number": run_attempt.attempt_number,
+        "sequence": 1,
+        "stage": "running",
+        "type": "scenario_started",
+        "payload": event_payload,
+        "digest": canonical_digest(event_payload),
+        "emitted_at": datetime.now(UTC),
+    }
+    assert ingest_event_batch(run_attempt, [event])["rejected"] == []
+    allocations[0].call_execution.refresh_from_db()
+    assert allocations[0].call_execution.status == CallExecution.CallStatus.ONGOING
+    allocations[1].call_execution.refresh_from_db()
+    assert allocations[1].call_execution.status == CallExecution.CallStatus.PENDING
     for allocation in allocations[:2]:
         body = {
             "schema_version": "futureagi.harness-result.v1",
@@ -323,9 +422,48 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
         body["digest"] = canonical_digest(body)
         ingest_result_receipt(run_attempt, body)
 
-    assert HostedHarnessReceipt.no_workspace_objects.filter(
-        job=first, execution__isnull=False
-    ).count() == 2
+    assert (
+        HostedHarnessReceipt.no_workspace_objects.filter(
+            job=first, execution__isnull=False
+        ).count()
+        == 2
+    )
+    history = client.get(
+        f"/simulate/run-tests/{environment.run_test_id}/executions/",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+    assert history.status_code == 200, history.content
+    first_run = next(
+        row
+        for row in history.json()["results"]
+        if row["id"] == str(first.test_execution_id)
+    )
+    assert first_run["outcome_passed"] == 0
+    assert first_run["outcome_failed"] == 0
+    assert first_run["outcome_skipped"] == 2
+    receipts = list(
+        HostedHarnessReceipt.no_workspace_objects.filter(job=first).order_by(
+            "execution__trial_index"
+        )
+    )
+    for receipt in receipts:
+        receipt.status = "passed"
+        receipt.body = {"call": {"duration_ms": 1000}}
+        receipt.save(update_fields=["status", "body"])
+    report = {
+        "records": [
+            {
+                "id": str(uuid4()),
+                "action": "text_call",
+                "scenario_key": allocation.execution_key,
+                "amount": 1,
+                "funding": "platform",
+                "occurred_at": datetime.now(UTC).isoformat(),
+            }
+            for allocation in allocations[:2]
+        ]
+    }
+    assert len(list(_billable_records(run_attempt, report))) == 2
 
 
 def test_customer_cannot_submit_platform_simulator_secret_purpose():
@@ -1020,9 +1158,7 @@ def test_daytona_saved_rerun_creates_new_run_and_preserves_prior_history(
     environment.payload = payload
     environment.state = environment.State.COMPLETED
     environment.current_stage = "completed"
-    environment.save(
-        update_fields=["payload", "state", "current_stage", "updated_at"]
-    )
+    environment.save(update_fields=["payload", "state", "current_stage", "updated_at"])
 
     with patch(
         "simulate.temporal.client.start_hosted_harness_gateway_workflow"

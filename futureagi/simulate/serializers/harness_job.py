@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from rest_framework import serializers
+
 from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
@@ -464,7 +465,6 @@ class HarnessJobActionSerializer(serializers.Serializer):
     )
 
 
-
 class HarnessRunCreateSerializer(serializers.Serializer):
     scenario_ids = serializers.ListField(
         child=serializers.CharField(max_length=255),
@@ -486,6 +486,7 @@ class HarnessRunCreateResponseSerializer(serializers.Serializer):
     state = serializers.CharField()
     stage = serializers.CharField()
 
+
 class HarnessPreflightSerializer(HarnessJobCreateSerializer):
     reject_missing_credentials = False
     # Raw target-provider values the form holds before Run stores them. Preflight exercises
@@ -496,6 +497,8 @@ class HarnessPreflightSerializer(HarnessJobCreateSerializer):
         write_only=True,
         help_text="Target-provider values to verify live; used for this check only.",
     )
+
+
 class HarnessJobAdjustmentSerializer(serializers.Serializer):
     instruction = serializers.CharField(
         min_length=1,
@@ -506,7 +509,6 @@ class HarnessJobAdjustmentSerializer(serializers.Serializer):
     client_request_id = serializers.CharField(
         max_length=128, required=False, allow_blank=False
     )
-
 
 
 class HarnessJobExtendSerializer(serializers.Serializer):

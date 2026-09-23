@@ -113,6 +113,33 @@ describe("buildRunStats", () => {
     expect(stats.failedCritical).toBe(0);
   });
 
+  it("shows hosted verdicts without replacing them with transport KPIs", () => {
+    const row = mapExecutions({
+      results: [{
+        id: "ex-hosted",
+        status: "Running",
+        total_calls: 6,
+        outcome_passed: 2,
+        outcome_failed: 1,
+        outcome_skipped: 0,
+      }],
+    })[0];
+    const stats = buildRunStats(
+      { total_calls: 6, failed_calls: 0 },
+      { test_run_performance_metrics: { pass_rate: 100 } },
+      row,
+    );
+
+    expect(stats).toMatchObject({
+      total: 6,
+      passed: 2,
+      failed: 1,
+      measured: 3,
+      unmeasured: 3,
+      passRate: 33,
+    });
+  });
+
   it("falls back to the executions row counts and derives the pass rate when kpis/perf are absent", () => {
     const rows = mapExecutions(executionsPayload());
     const row = rows.find((r) => r.executionId === "ex-old");

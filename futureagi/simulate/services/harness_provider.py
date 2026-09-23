@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import copy
 import logging
-import os
 import re
 from typing import Any
 
@@ -90,9 +89,7 @@ def _usage_limit_response(exc: Exception) -> Response | None:
 
 def _organization(request):
     user = getattr(request, "user", None)
-    return getattr(request, "organization", None) or getattr(
-        user, "organization", None
-    )
+    return getattr(request, "organization", None) or getattr(user, "organization", None)
 
 
 def _workspace(request):
@@ -526,7 +523,8 @@ def _preflight_credential_probe(payload) -> list[dict[str, Any]]:
     connector = str(agent.get("connector") or "").strip().lower()
     mode = str(agent.get("mode") or "").strip().lower()
     if connector in {"vapi", "retell", "retell_chat"} and mode in {
-        "connect_only", "provider_import"
+        "connect_only",
+        "provider_import",
     }:
         target_field = "assistant_id" if connector == "vapi" else "agent_id"
         target = probe_provider_target(
@@ -574,7 +572,6 @@ class HostedHarnessProvider:
             _validate_secret_refs_hosted(payload["agent"]["secret_refs"])
             _validate_phone_connectivity(payload)
             _validate_known_hosted_egress(payload, base_url)
-            _validate_required_credential_files(request, payload)
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
         from simulate.services.harness_usage import require_harness_run_usage
@@ -586,6 +583,10 @@ class HostedHarnessProvider:
             if response is not None:
                 return response
             raise
+        try:
+            _validate_required_credential_files(request, payload)
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
         try:
             job, _ = create_hosted_job(
                 organization,
@@ -756,8 +757,7 @@ class HostedHarnessProvider:
             (child.payload.get("metadata") or {}).get("execution_manifest") or []
         )
         selected = list(
-            (child.payload.get("metadata") or {}).get("selected_scenario_keys")
-            or []
+            (child.payload.get("metadata") or {}).get("selected_scenario_keys") or []
         )
         return Response(
             {
@@ -767,9 +767,7 @@ class HostedHarnessProvider:
                 "run_test_id": str(child.run_test_id),
                 "test_execution_id": str(child.test_execution_id),
                 "scenario_count": len(selected),
-                "trials": int(
-                    (child.payload.get("metadata") or {}).get("trials") or 1
-                ),
+                "trials": int((child.payload.get("metadata") or {}).get("trials") or 1),
                 "total_calls": len(manifest),
                 "state": child.state,
                 "stage": child.current_stage,

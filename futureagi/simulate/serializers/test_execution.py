@@ -533,7 +533,11 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         }
         for track, artifact_kind in hosted_track_kinds.items():
             artifact = hosted.get(artifact_kind)
-            if track not in recordings and isinstance(artifact, dict) and artifact.get("url"):
+            if (
+                track not in recordings
+                and isinstance(artifact, dict)
+                and artifact.get("url")
+            ):
                 recordings[track] = artifact["url"]
 
         # Fall back to the VoiceServiceManager resolution when no URLs are present.

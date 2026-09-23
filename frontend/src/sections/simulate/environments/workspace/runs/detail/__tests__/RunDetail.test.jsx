@@ -6,9 +6,6 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-// The run-level data hooks are mocked so the render tests assert the wiring
-// against fixed view-models rather than the network. `runSimulationTarget` is
-// kept real so the Run-again navigation target is genuine.
 const useRunDetail = vi.fn();
 const useOptimizationRuns = vi.fn();
 const useOptimizerAnalysis = vi.fn();

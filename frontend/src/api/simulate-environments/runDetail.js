@@ -106,17 +106,16 @@ export function buildRunIdentity(row, envName = null) {
  * @returns {RunStats}
  */
 export function buildRunStats(kpis, perf, row) {
-  const total = kpis?.total_calls ?? row?.total ?? 0;
-  const failed = kpis?.failed_calls ?? row?.failed ?? 0;
-  const passed = Math.max(total - failed, 0);
+  const total = row?.hasOutcomes ? row.total : kpis?.total_calls ?? row?.total ?? 0;
+  const failed = row?.hasOutcomes ? row.failed : kpis?.failed_calls ?? row?.failed ?? 0;
+  const passed = row?.hasOutcomes
+    ? row.passed
+    : Math.max(total - failed, 0);
 
   const perfRate = perf?.test_run_performance_metrics?.pass_rate;
-  const passRate =
-    typeof perfRate === "number"
-      ? Math.round(perfRate)
-      : total
-        ? Math.round((passed / total) * 100)
-        : 0;
+  const passRate = row?.hasOutcomes || typeof perfRate !== "number"
+    ? total ? Math.round((passed / total) * 100) : 0
+    : Math.round(perfRate);
 
   const durationS = kpis?.total_duration ?? null;
   const avgDurationMs =
@@ -144,8 +143,8 @@ export function buildRunStats(kpis, perf, row) {
     tokens: null,
     cost: null,
     scores: { ...evalMetrics },
-    measured: total,
-    unmeasured: 0,
+    measured: row?.hasOutcomes ? passed + failed : total,
+    unmeasured: row?.hasOutcomes ? Math.max(total - passed - failed, 0) : 0,
     flaky: 0,
     dropped: 0,
     failedCritical: 0,

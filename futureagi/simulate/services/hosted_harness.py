@@ -7,7 +7,6 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from django.conf import settings
 
 from django.conf import settings
 from django.db import transaction
@@ -18,8 +17,8 @@ from simulate.models import (
     HostedHarnessAttempt,
     HostedHarnessCleanupReceipt,
     HostedHarnessConversation,
-    HostedHarnessJob,
     HostedHarnessExecution,
+    HostedHarnessJob,
     HostedHarnessReceipt,
     HostedHarnessScenario,
     TestExecution,
@@ -224,9 +223,7 @@ def create_selected_harness_run(
             "trials must be between 1 and 20",
             status_code=400,
         )
-    max_executions = int(
-        getattr(settings, "HARNESS_MAX_EXECUTIONS_PER_RUN", 200)
-    )
+    max_executions = int(getattr(settings, "HARNESS_MAX_EXECUTIONS_PER_RUN", 200))
     if len(scenario_keys) * trials > max_executions:
         raise HostedHarnessError(
             "run_too_large",
@@ -238,6 +235,18 @@ def create_selected_harness_run(
         environment = HostedHarnessJob.no_workspace_objects.select_for_update().get(
             id=environment.id
         )
+        if (
+            environment.state != HostedHarnessJob.State.COMPLETED
+            or not environment.run_test_id
+            or not (environment.payload.get("metadata") or {}).get(
+                "authoring_object_key"
+            )
+        ):
+            raise HostedHarnessError(
+                "environment_not_ready",
+                "environment changed while submitting this Run",
+                status_code=409,
+            )
         registrations = list(
             HostedHarnessScenario.no_workspace_objects.filter(
                 job=environment, scenario_key__in=scenario_keys
@@ -245,7 +254,9 @@ def create_selected_harness_run(
             .select_related("scenario", "dataset_row")
             .order_by("created_at", "id")
         )
-        by_key = {registration.scenario_key: registration for registration in registrations}
+        by_key = {
+            registration.scenario_key: registration for registration in registrations
+        }
         missing = [key for key in scenario_keys if key not in by_key]
         if missing:
             raise HostedHarnessError(
@@ -283,6 +294,10 @@ def create_selected_harness_run(
 
         child_payload = json.loads(json.dumps(environment.payload))
         child_payload["scenario_count"] = len(manifest)
+        runtime = child_payload["runtime"]
+        runtime["max_duration_seconds"] = max(
+            runtime["max_duration_seconds"], len(manifest) * 360
+        )
         child_metadata = child_payload.setdefault("metadata", {})
         child_metadata.pop("scenario_extend", None)
         child_metadata.pop("usage_limit", None)
@@ -307,9 +322,7 @@ def create_selected_harness_run(
         if not created:
             return child, False
 
-        scenario_ids = list(
-            dict.fromkeys(entry["scenario_id"] for entry in manifest)
-        )
+        scenario_ids = list(dict.fromkeys(entry["scenario_id"] for entry in manifest))
         test_execution = TestExecution.no_workspace_objects.create(
             run_test=environment.run_test,
             status=TestExecution.ExecutionStatus.PENDING,
@@ -336,9 +349,7 @@ def create_selected_harness_run(
             (call.call_metadata or {}).get("harness_execution_key"): call
             for call in calls
         }
-        if set(calls_by_key) != {
-            entry["execution_key"] for entry in manifest
-        }:
+        if set(calls_by_key) != {entry["execution_key"] for entry in manifest}:
             raise HostedHarnessError(
                 "run_preallocation_incomplete",
                 "could not preallocate every selected scenario trial",
@@ -346,9 +357,7 @@ def create_selected_harness_run(
                 retryable=True,
             )
         for entry in manifest:
-            entry["call_execution_id"] = str(
-                calls_by_key[entry["execution_key"]].id
-            )
+            entry["call_execution_id"] = str(calls_by_key[entry["execution_key"]].id)
         child_payload = dict(child.payload)
         child_metadata = dict(child_payload.get("metadata") or {})
         child_metadata["execution_manifest"] = manifest
@@ -416,9 +425,7 @@ def register_attempt(
                     HostedHarnessAttempt.State.CLEANING_UP,
                 ),
             ).update(state=HostedHarnessAttempt.State.SUPERSEDED)
-        runnable_deadline = now + timedelta(
-            seconds=_active_attempt_budget_seconds(job)
-        )
+        runnable_deadline = now + timedelta(seconds=_active_attempt_budget_seconds(job))
         expires_at = runnable_deadline + timedelta(seconds=_TOKEN_TAIL_SECONDS)
         attempt = HostedHarnessAttempt.no_workspace_objects.create(
             job=job,
@@ -515,9 +522,7 @@ def activate_attempt_capability(capability: AttemptCapability) -> AttemptCapabil
         runnable_deadline = timezone.now() + timedelta(
             seconds=_active_attempt_budget_seconds(job)
         )
-        attempt.expires_at = runnable_deadline + timedelta(
-            seconds=_TOKEN_TAIL_SECONDS
-        )
+        attempt.expires_at = runnable_deadline + timedelta(seconds=_TOKEN_TAIL_SECONDS)
         attempt.save(update_fields=["expires_at", "updated_at"])
         job.deadline_at = runnable_deadline
         job.save(update_fields=["deadline_at", "updated_at"])
@@ -1026,7 +1031,20 @@ def record_cleanup(
             job.state = HostedHarnessJob.State.RETRY_WAIT
             job.save(update_fields=["state", "updated_at"])
             return job
-        if attempt.terminal_stage == "completed":
+        snapshot_missing = (
+            job.environment_id is None
+            and job.test_execution_id is None
+            and attempt.terminal_stage == "completed"
+            and (
+                not job.run_test_id
+                or not (job.payload.get("metadata") or {}).get("authoring_object_key")
+                or HostedHarnessScenario.no_workspace_objects.filter(job=job).count()
+                != job.scenario_count
+            )
+        )
+        if snapshot_missing:
+            job.state = HostedHarnessJob.State.FAILED
+        elif attempt.terminal_stage == "completed":
             job.state = HostedHarnessJob.State.COMPLETED
         elif attempt.terminal_stage == "canceled":
             job.state = HostedHarnessJob.State.CANCELED
@@ -1034,12 +1052,22 @@ def record_cleanup(
             job.state = HostedHarnessJob.State.FAILED
         # Cleanup is an intermediate lifecycle stage. Once absence has been verified, expose the
         # guest's terminal stage so a completed job cannot remain visually stuck on cleaning_up.
-        job.current_stage = attempt.terminal_stage or job.state
+        job.current_stage = (
+            HostedHarnessJob.State.FAILED
+            if snapshot_missing
+            else attempt.terminal_stage or job.state
+        )
         job.terminal_at = now
-        # Copy terminal stage/failure onto the job atomically so
-        # status.failure and status.stage are authoritative in the read DTO.
-        job.current_stage = attempt.terminal_stage or job.current_stage
-        job.failure = attempt.terminal_failure
+        job.failure = (
+            {
+                "domain": "platform_sync",
+                "stage": "validating_scenarios",
+                "code": "authoring_snapshot_missing",
+                "message": "Validated scenarios or their durable bundle are missing",
+            }
+            if snapshot_missing
+            else attempt.terminal_failure
+        )
         job.save(
             update_fields=[
                 "state",
@@ -1084,9 +1112,9 @@ def update_execution_counts(job: HostedHarnessJob) -> None:
     if not job.test_execution_id:
         return
     current_attempt_number = (
-        HostedHarnessJob.no_workspace_objects.filter(id=job.id).values_list(
-            "current_attempt_number", flat=True
-        ).get()
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id)
+        .values_list("current_attempt_number", flat=True)
+        .get()
     )
     # Reruns retain each not-yet-replaced prior receipt so the old result stays
     # visible while the fresh suite is executing.  Progress must nevertheless

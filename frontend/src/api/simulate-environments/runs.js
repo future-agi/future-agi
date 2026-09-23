@@ -30,13 +30,15 @@ export function listRunTestExecutions(runTestId) {
 export function executionToRun(raw) {
   const total =
     raw?.total_calls ?? raw?.total_chats ?? raw?.calls_attempted ?? raw?.calls ?? 0;
-  const completed = raw?.completed_calls;
-  const failedCount = raw?.failed_calls;
+  const hasOutcomes = raw?.outcome_passed != null;
   const rate = raw?.success_rate ?? 0;
-  const passed =
-    completed == null ? Math.round((total * rate) / 100) : completed;
-  const failed =
-    failedCount == null ? Math.max(total - passed, 0) : failedCount;
+  const passed = hasOutcomes
+    ? raw.outcome_passed
+    : raw?.completed_calls ?? Math.round((total * rate) / 100);
+  const skipped = hasOutcomes ? raw.outcome_skipped ?? 0 : 0;
+  const failed = hasOutcomes
+    ? (raw.outcome_failed ?? 0) + skipped
+    : raw?.failed_calls ?? Math.max(total - passed, 0);
 
   let status;
   if (!TERMINAL_STATUSES.includes(raw?.status)) {
@@ -56,7 +58,11 @@ export function executionToRun(raw) {
     total,
     passed,
     failed,
-    pending: raw?.pending_calls ?? Math.max(total - passed - failed, 0),
+    pending: hasOutcomes
+      ? Math.max(total - passed - failed, 0)
+      : raw?.pending_calls ?? Math.max(total - passed - failed, 0),
+    skipped,
+    hasOutcomes,
     scenarioCount: raw?.selected_scenarios ?? null,
     scenarioIds: raw?.scenario_keys ?? [],
     trials: raw?.trials ?? 1,

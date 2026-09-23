@@ -79,12 +79,18 @@ def _environment_status(job: HostedHarnessJob) -> str:
 def _agent_type(job: HostedHarnessJob, contract: dict | None = None) -> str:
     modality = str((contract or {}).get("modality") or "").lower()
     connector = str(((job.payload or {}).get("agent") or {}).get("connector") or "")
-    return "voice" if modality == "voice" or connector in {"livekit", "vapi", "retell"} else "chat"
+    return (
+        "voice"
+        if modality == "voice" or connector in {"livekit", "vapi", "retell"}
+        else "chat"
+    )
 
 
 def _list_row(job: HostedHarnessJob) -> dict:
     outputs = _outputs(job)
-    contract = outputs.get("contract") if isinstance(outputs.get("contract"), dict) else {}
+    contract = (
+        outputs.get("contract") if isinstance(outputs.get("contract"), dict) else {}
+    )
     return {
         "id": str(job.id),
         "name": _environment_name(job),
@@ -103,9 +109,17 @@ def _list_row(job: HostedHarnessJob) -> dict:
 
 def _detail(job: HostedHarnessJob) -> dict:
     outputs = _outputs(job)
-    contract = outputs.get("contract") if isinstance(outputs.get("contract"), dict) else None
-    world = outputs.get("environment") if isinstance(outputs.get("environment"), dict) else None
-    authored = outputs.get("scenarios") if isinstance(outputs.get("scenarios"), list) else []
+    contract = (
+        outputs.get("contract") if isinstance(outputs.get("contract"), dict) else None
+    )
+    world = (
+        outputs.get("environment")
+        if isinstance(outputs.get("environment"), dict)
+        else None
+    )
+    authored = (
+        outputs.get("scenarios") if isinstance(outputs.get("scenarios"), list) else []
+    )
     authored_by_key = {
         str(item.get("scenario_key")): item
         for item in authored
@@ -139,11 +153,13 @@ def _detail(job: HostedHarnessJob) -> dict:
                 "description": getattr(config.eval_template, "description", "") or "",
                 "runnable": True,
             }
-            for config in job.run_test.simulate_eval_configs.filter(deleted=False).select_related(
-                "eval_template"
-            )
+            for config in job.run_test.simulate_eval_configs.filter(
+                deleted=False
+            ).select_related("eval_template")
         ]
-    latest_run = job.simulation_runs.filter(deleted=False).order_by("-created_at").first()
+    latest_run = (
+        job.simulation_runs.filter(deleted=False).order_by("-created_at").first()
+    )
     overview = {
         "id": str(job.id),
         "name": _environment_name(job),
@@ -161,7 +177,9 @@ def _detail(job: HostedHarnessJob) -> dict:
         "run": {
             "run_test_id": str(job.run_test_id) if job.run_test_id else None,
             "test_execution_id": (
-                str(latest_run.test_execution_id) if latest_run and latest_run.test_execution_id else None
+                str(latest_run.test_execution_id)
+                if latest_run and latest_run.test_execution_id
+                else None
             ),
             "simulation_url": None,
         },
@@ -207,7 +225,9 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     def retrieve(self, request, pk=None):
         job = self._environment(request, pk)
         if job is None:
-            return Response({"detail": "Environment not found"}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"detail": "Environment not found"}, status=status.HTTP_404_NOT_FOUND
+            )
         return Response(_detail(job))
 
     @validated_request(
@@ -219,7 +239,10 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         with transaction.atomic():
             job = self._environment(request, pk)
             if job is None:
-                return Response({"detail": "Environment not found"}, status=status.HTTP_404_NOT_FOUND)
+                return Response(
+                    {"detail": "Environment not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
             payload = dict(job.payload or {})
             metadata = dict(payload.get("metadata") or {})
             metadata["name"] = request.validated_data["name"]
@@ -234,7 +257,24 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     def destroy(self, request, pk=None):
         job = self._environment(request, pk)
         if job is None:
-            return Response({"detail": "Environment not found"}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {"detail": "Environment not found"}, status=status.HTTP_404_NOT_FOUND
+            )
+        terminal = {
+            HostedHarnessJob.State.COMPLETED,
+            HostedHarnessJob.State.FAILED,
+            HostedHarnessJob.State.CANCELED,
+        }
+        if (
+            job.state not in terminal
+            or job.simulation_runs.exclude(state__in=terminal).exists()
+        ):
+            return Response(
+                {
+                    "detail": "Cancel active authoring and Runs before deleting the environment"
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         job.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 

@@ -43294,6 +43294,9 @@ export const SimulateRunTestsExecutionsListResponse = zod.object({
         failed_calls: zod.number().optional(),
         pending_calls: zod.number().optional(),
         completed_at: zod.string().min(1).optional(),
+        outcome_passed: zod.number().optional(),
+        outcome_failed: zod.number().optional(),
+        outcome_skipped: zod.number().optional(),
       }),
     )
     .optional(),

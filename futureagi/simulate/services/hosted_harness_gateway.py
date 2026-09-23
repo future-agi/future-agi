@@ -4348,9 +4348,7 @@ def store_authoring_archive(
 ) -> str:
     """Persist fresh authoring output and attach its opaque key to the hosted job."""
     digest = hashlib.sha256(body).hexdigest()
-    object_key = (
-        f"harness-authoring/{job.organization_id}/{job.id}/{digest}.tar.gz"
-    )
+    object_key = f"harness-authoring/{job.organization_id}/{job.id}/{digest}.tar.gz"
     client = get_storage_client()
     ensure_bucket(client, UPLOAD_BUCKET_NAME)
     client.put_object(

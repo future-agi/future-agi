@@ -153,9 +153,7 @@ class TestExecutionItemResponseSerializer(serializers.Serializer):
     agent_type = serializers.CharField(read_only=True)
     total_number_of_fagi_agent_turns = serializers.IntegerField(read_only=True)
     source_type = serializers.CharField(read_only=True)
-    scenario_keys = serializers.ListField(
-        child=serializers.CharField(), read_only=True
-    )
+    scenario_keys = serializers.ListField(child=serializers.CharField(), read_only=True)
     selected_scenarios = serializers.IntegerField(read_only=True)
     trials = serializers.IntegerField(read_only=True)
     total_calls = serializers.IntegerField(read_only=True)
@@ -163,6 +161,9 @@ class TestExecutionItemResponseSerializer(serializers.Serializer):
     failed_calls = serializers.IntegerField(read_only=True)
     pending_calls = serializers.IntegerField(read_only=True)
     completed_at = serializers.CharField(read_only=True, allow_null=True)
+    outcome_passed = serializers.IntegerField(read_only=True, allow_null=True)
+    outcome_failed = serializers.IntegerField(read_only=True, allow_null=True)
+    outcome_skipped = serializers.IntegerField(read_only=True, allow_null=True)
 
 
 class RunTestExecutionsResponseSerializer(serializers.Serializer):

@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { alpha } from "@mui/material/styles";
+import { enqueueSnackbar } from "notistack";
 import { Box, Button, Stack, Typography, IconButton } from "@mui/material";
 import {
   useNavigate,
@@ -10,6 +11,7 @@ import {
 } from "react-router-dom";
 
 import Iconify from "src/components/iconify";
+import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import CustomTooltip from "src/components/tooltip";
 import { paths } from "src/routes/paths";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -98,19 +100,28 @@ export default function EnvironmentWorkspace() {
   const registerFork = useEnvironmentsStore((s) => s.forkEnvironment);
   const selection = useScenarioSelection();
   const queryClient = useQueryClient();
+  const pendingSubmission = useRef(null);
   const runMutation = useMutation({
     mutationFn: ({ ids, trials }) => {
-      const scenarioIds = ids?.length
-        ? ids
-        : (envState?.scenarios || []).map((scenario) => scenario.id).filter(Boolean);
+      const scenarioIds = ids === undefined
+        ? (envState?.scenarios || []).map((scenario) => scenario.id).filter(Boolean)
+        : ids;
+      const selection = JSON.stringify([env.id, scenarioIds, trials || 1]);
+      if (pendingSubmission.current?.selection !== selection) {
+        pendingSubmission.current = {
+          selection,
+          key: harnessIdempotencyKey(),
+        };
+      }
       return runHarnessEnvironment(
         env.id,
         scenarioIds,
         trials || 1,
-        harnessIdempotencyKey(),
+        pendingSubmission.current.key,
       );
     },
     onSuccess: (run) => {
+      pendingSubmission.current = null;
       queryClient.invalidateQueries({
         queryKey: ["run-test-executions", run.run_test_id],
       });
@@ -121,6 +132,12 @@ export default function EnvironmentWorkspace() {
           run.test_execution_id,
         ),
       );
+    },
+    onError: (error) => {
+      if (error?.statusCode >= 400 && error.statusCode < 500) {
+        pendingSubmission.current = null;
+      }
+      enqueueSnackbar(errorMessage(error), { variant: "error" });
     },
   });
   const startRun = (ids, trials) => {

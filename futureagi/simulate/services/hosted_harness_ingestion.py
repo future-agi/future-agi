@@ -568,30 +568,32 @@ def _store_event(
         attempt.job.current_stage = event["payload"]["to"]
         attempt.job.save(update_fields=["current_stage", "updated_at"])
     if rejection is None and event["type"] == "scenario_started":
-        # Registrations and their CallExecution rows are allocated before the guest starts.
-        # Project the guest's lifecycle event into the existing platform row so the simulation
-        # UI shows an active call instead of leaving it PENDING until the terminal receipt.  The
-        # receipt remains authoritative for the provider's exact started_at/ended_at timestamps.
-        registration = (
-            HostedHarnessScenario.no_workspace_objects.select_related("call_execution")
-            .filter(
+        scenario_key = event["payload"]["scenario_key"]
+        execution = HostedHarnessExecution.no_workspace_objects.filter(
+            job=attempt.job, execution_key=scenario_key
+        ).first()
+        if execution is not None:
+            call_id = execution.call_execution_id
+            receipt_filter = {"execution": execution}
+        else:
+            registration = HostedHarnessScenario.no_workspace_objects.filter(
+                job=attempt.job, scenario_key=scenario_key
+            ).first()
+            call_id = registration.call_execution_id if registration else None
+            receipt_filter = {"scenario": registration, "execution__isnull": True}
+        if (
+            call_id
+            and not HostedHarnessReceipt.no_workspace_objects.filter(
                 job=attempt.job,
-                scenario_key=event["payload"]["scenario_key"],
-            )
-            .first()
-        )
-        if registration and registration.call_execution_id:
-            has_current_receipt = HostedHarnessReceipt.no_workspace_objects.filter(
-                job=attempt.job,
-                scenario=registration,
                 attempt_number=attempt.attempt_number,
+                **receipt_filter,
             ).exists()
-            if not has_current_receipt:
-                CallExecution.objects.filter(id=registration.call_execution_id).update(
-                    status=CallExecution.CallStatus.ONGOING,
-                    completed_at=None,
-                    error_message="",
-                )
+        ):
+            CallExecution.objects.filter(id=call_id).update(
+                status=CallExecution.CallStatus.ONGOING,
+                completed_at=None,
+                error_message="",
+            )
     if rejection is None and event["type"] == "terminal":
         payload = event["payload"]
         attempt.terminal_stage = payload["stage"]
@@ -756,9 +758,7 @@ def _apply_receipt_to_call(
             status_code=409,
         )
     job = allocation.job
-    scenario_key = (
-        getattr(allocation, "execution_key", None) or allocation.scenario_key
-    )
+    scenario_key = getattr(allocation, "execution_key", None) or allocation.scenario_key
     call.status = _call_lifecycle_status(body)
     call_data = body.get("call")
     resolved_modality = _resolve_scenario_modality(job, body)
@@ -1238,7 +1238,9 @@ def _backfill_missing_receipts(attempt: HostedHarnessAttempt) -> None:
                 job=attempt.job, execution__isnull=False
             ).values_list("execution_id", flat=True)
         )
-        allocations: list[tuple[Any, HostedHarnessScenario, HostedHarnessExecution | None]] = [
+        allocations: list[
+            tuple[Any, HostedHarnessScenario, HostedHarnessExecution | None]
+        ] = [
             (execution, execution.source_scenario, execution)
             for execution in executions
             if execution.id not in existing

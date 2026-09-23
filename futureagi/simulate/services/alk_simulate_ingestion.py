@@ -1074,7 +1074,6 @@ def _build_expected_call_executions(
     return expected_calls
 
 
-
 def _build_manifest_call_executions(
     test_execution: TestExecution,
     execution_manifest: list[dict[str, Any]],
@@ -1108,9 +1107,7 @@ def _build_manifest_call_executions(
     expected: list[CallExecution] = []
     for entry in execution_manifest:
         scenario = scenarios[str(entry["scenario_id"])]
-        simulator_agent = _resolve_simulator_agent(
-            scenario, run_test, selected_version
-        )
+        simulator_agent = _resolve_simulator_agent(scenario, run_test, selected_version)
         base_prompt = simulator_agent.prompt
         row_id = entry.get("dataset_row_id")
         row_data_info = (
@@ -1145,9 +1142,7 @@ def _build_manifest_call_executions(
 
 
 def _call_execution_key(call_execution: CallExecution) -> tuple[str, ...]:
-    execution_key = (call_execution.call_metadata or {}).get(
-        "harness_execution_key"
-    )
+    execution_key = (call_execution.call_metadata or {}).get("harness_execution_key")
     if execution_key:
         return ("harness", str(execution_key))
     return (
