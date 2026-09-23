@@ -518,26 +518,88 @@ def eval_modality(job: HostedHarnessJob) -> str:
 
 
 def _selected_evals(job: HostedHarnessJob) -> list[dict[str, Any]]:
-    """The platform evals bound to this environment's run test, in the order chosen."""
-    from simulate.models.eval_config import SimulateEvalConfig
+    """The platform evals bound to this environment's run test, in the order chosen.
 
-    if not job.run_test_id:
+    Only the rows that carry a mapping. A row with an empty mapping is one
+    ingestion made for one of the harness's own result columns: it is bound to
+    the run, but nobody selected it, it is not a "selected eval", and it does
+    not count toward the cap of 8 (frontend contract P16).
+
+    Each row is the same entry the picker shows, built from the mapping that is
+    actually stored — so what was shown when it was added is what runs — plus
+    its `id`, which is what remove addresses, and `runnable`, true by
+    construction here.
+    """
+    from simulate.services.harness_evals import (
+        _required_keys,
+        eval_entry,
+        selected_eval_configs,
+    )
+
+    run_test = job.run_test if job.run_test_id else None
+    if run_test is None:
         return []
-    return [
-        {
-            "id": str(config.id),
-            "name": config.name or getattr(config.eval_template, "name", "") or "",
-            "description": str(
-                getattr(config.eval_template, "description", "") or ""
-            )[:500],
-            "runnable": bool(config.mapping),
-        }
-        for config in SimulateEvalConfig.objects.filter(
-            run_test_id=job.run_test_id, deleted=False
+    modality = eval_modality(job)
+    rows: list[dict[str, Any]] = []
+    for config in selected_eval_configs(run_test, mapping_only=True):
+        # `eval_template` is a non-nullable FK (`SimulateEvalConfig.eval_template`
+        # is `null=False`) joined by `select_related`, which returns the row
+        # regardless of the template's own soft-delete state, so this is never
+        # `None` (L7: a prior `if template is None: continue` guard here was
+        # dead code, confirmed by the FK constraint and the join).
+        template = config.eval_template
+        # M1 (round 3): `inputs` is built from a mapping already narrowed to
+        # the template's *live* `required_keys`, the same set the
+        # `required_keys` line below intersects against — not from the raw
+        # stored mapping. Round 2's M4 fix intersected `required_keys`
+        # against the mapping's keys but left `eval_entry`'s `inputs` built
+        # from every key the stored mapping carries; when the template drops
+        # a required key after the bind, that intersect can only ever
+        # *shorten* `required_keys`, so an unnarrowed `inputs` ends up with
+        # more rows than `required_keys` has names — frontend contract P1
+        # ("`inputs` has exactly one row per name in `required_keys`")
+        # broken in the direction M4 left open. Narrowing the mapping before
+        # it reaches `eval_entry` keeps both promises at once: the stored
+        # order below, and exactly one `inputs` row per `required_keys` name.
+        required_keys = set(_required_keys(template))
+        entry = eval_entry(
+            template,
+            {
+                key: value
+                for key, value in (config.mapping or {}).items()
+                if key in required_keys
+            },
+            modality,
         )
-        .select_related("eval_template")
-        .order_by("created_at")
-    ]
+        # The name a person added is the config's own, which is what add and
+        # remove address; for a row this endpoint created the two are equal.
+        entry["name"] = str(config.name or entry["name"])
+        # `required_keys` is realigned to the *stored* mapping's own keys
+        # rather than left as `eval_entry`'s live-template value (L6): the
+        # entry's `required_keys` normally comes from the template's current
+        # `config.required_keys`, but a stored `mapping` is a snapshot taken
+        # when the eval was added. If the template's required keys change
+        # afterwards, the live value and the stored mapping's keys diverge,
+        # and frontend contract P1 ("`inputs` has exactly one row per name in
+        # `required_keys`") breaks for this row — `inputs` still reflects the
+        # stored mapping, but `required_keys` would not.
+        #
+        # Intersected against the template's own stored order rather than
+        # `sorted(config.mapping)` (M4, round 2): frontend contract P1's
+        # *second* sentence promises `required_keys` in the template's
+        # stored order, explicitly "not aligned with `inputs` (which is
+        # sorted)" — `available[]` honours that (`eval_entry`'s
+        # `_required_keys(template)`), and a sorted `required_keys` here put
+        # `selected[]` in breach of the very clause L6 was written to
+        # protect, and made it byte-identical to `inputs`'s own order, which
+        # P1 says must never happen. `_required_keys(template)` filtered to
+        # the keys the stored mapping actually has keeps both promises at
+        # once: stored order, and exactly one `inputs` row per name.
+        entry["required_keys"] = [
+            key for key in _required_keys(template) if key in (config.mapping or {})
+        ]
+        rows.append({**entry, "id": str(config.id), "runnable": True})
+    return rows
 
 
 def _results(receipts: dict[str, HostedHarnessReceipt]) -> list[dict[str, Any]]:

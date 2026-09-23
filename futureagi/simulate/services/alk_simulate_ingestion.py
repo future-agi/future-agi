@@ -519,6 +519,21 @@ def _build_persona_scenario_dataset(
         )
         for col_name, data_type in column_specs
     }
+    # The dotted-path walker's no-context branch reads `column_order` and
+    # nothing else (serializers/test_execution.py::get_scenario_columns, the
+    # fallback at lines 931-933), and both eval runners build their subject
+    # with a bare serializer, so they always take it. Without this line
+    # `scenario_columns.situation.value` resolves to an empty string on every
+    # harness call, silently — and no eval that asks for `input` could be
+    # offered (design §4). This runs at provisioning, not at receipt time.
+    dataset.column_order = [
+        str(columns[col_name].id) for col_name, _type in column_specs
+    ]
+    # `updated_at` alongside the field that actually changed (L11): the
+    # sibling write in `harness_evals.py::bind_eval_config` already includes
+    # it in the same diff, and a save that omits it leaves `updated_at`
+    # silently stale on a row that did change.
+    dataset.save(update_fields=["column_order", "updated_at"])
     rows = _append_persona_dataset_rows(dataset, personas, columns=columns)
     return dataset, rows
 

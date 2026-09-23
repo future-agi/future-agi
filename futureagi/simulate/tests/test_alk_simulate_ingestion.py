@@ -268,6 +268,68 @@ class TestProvisionRunTest:
             )
         ) == {row.id for row in rows}
 
+    def test_provision_records_the_scenario_dataset_column_order(self, auth_client):
+        """`scenario_columns.situation.value` resolves only through `column_order`.
+
+        The walker's no-context branch reads that list and nothing else
+        (serializers/test_execution.py::get_scenario_columns, the fallback at
+        lines 931-933), and both eval runners build their subject with a bare
+        serializer, so they always take it. Without this the situation resolves
+        to an empty string on every harness call, silently, and no eval that
+        asks for `input` could be offered (design §4).
+        """
+        from model_hub.models.develop_dataset import Column
+
+        resp = self._provision(
+            auth_client,
+            name="column-order",
+            personas=[
+                {
+                    "name": "Sam",
+                    "scenario_name": "Late refund",
+                    "situation": "My refund is late",
+                    "outcome": "Explain the status",
+                }
+            ],
+        )
+        assert resp.status_code == 200, resp.content
+        run_test = RunTest.objects.get(id=resp.json()["result"]["run_test_id"])
+        dataset = run_test.scenarios.get().dataset
+
+        ordered = list(
+            Column.objects.filter(id__in=dataset.column_order).values_list("id", "name")
+        )
+        by_id = dict(ordered)
+        assert [
+            by_id[column_id]
+            for column_id in map(__import__("uuid").UUID, dataset.column_order)
+        ] == [
+            "persona",
+            "situation",
+            "outcome",
+        ]
+
+        # And the path the mapping uses resolves to the situation text.
+        from simulate.serializers.test_execution import (
+            CallExecutionDetailSerializer,
+        )
+        from simulate.temporal.activities.xl import walk_subject_path
+
+        # `CallExecution` has no `run_test` field: the run test hangs off its
+        # `test_execution` (simulate/models/test_execution.py:40, :199), so the
+        # filter spans the relation or Django raises `FieldError`.
+        call = CallExecution.objects.filter(test_execution__run_test=run_test).first()
+        if call is None:
+            _execution_id, call_ids = _start_and_batch(auth_client, run_test)
+            call = CallExecution.objects.get(id=call_ids[0])
+        columns = CallExecutionDetailSerializer().get_scenario_columns(call) or {}
+        assert (
+            walk_subject_path(
+                {"scenario_columns": columns}, "scenario_columns.situation.value"
+            )
+            == "My refund is late"
+        )
+
     def test_provision_voice_preserves_voice_call_type(self, auth_client):
         resp = self._provision(
             auth_client,
