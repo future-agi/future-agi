@@ -1,10 +1,11 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Box, Stack, Typography, Button, IconButton, Tooltip } from "@mui/material";
+import { Box, Stack, Typography, Button, IconButton, Tooltip, Switch } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { getEval } from "src/api/simulate-environments/_fixtures/evalCatalog";
 import { useRemoveAppliedEvaluation } from "src/api/simulate-environments/environments";
 import { harnessEnvironmentQuery } from "src/api/simulate-environments/environment";
+import { useToolCallEval } from "src/api/simulate-environments/toolCallEval";
 import { BUILD_STATUS } from "../../myEnvironments.constants";
 import SectionCard from "../../components/SectionCard";
 import EmptyState from "../../components/EmptyState";
@@ -39,6 +40,9 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
   const needsScenarios = (envState?.scenarios?.length || 0) === 0;
 
   const store = useAppliedEvals(envState, patch);
+  // Env-level "enable tool call evaluation" — client state today, persisted
+  // through a mocked seam until the backend endpoint exists (useToolCallEval).
+  const toolCall = useToolCallEval();
 
   // A real backend-backed env drives its applied set from §6 detail
   // (evaluations.selected) — the authoritative list the add (§10) and remove
@@ -137,6 +141,39 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
             </span>
           </Tooltip>
         )}
+      </Stack>
+
+      {/* Tool-call evaluation. Client state for now; the value rides through the
+          mocked useToolCallEval seam until an env-level API lands. Gated on a
+          connected agent — tool calls are read from it during the run. */}
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={2}
+        sx={{ px: 2, py: 1.5, mb: 3, borderRadius: 1, border: "1px solid", borderColor: "divider" }}
+      >
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography sx={{ typography: "s1", fontWeight: "fontWeightSemiBold" }}>
+            {EVALS_COPY.toolCall.title}
+          </Typography>
+          <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}>
+            {envState?.agent ? EVALS_COPY.toolCall.on : EVALS_COPY.toolCall.off}
+          </Typography>
+        </Box>
+        <Tooltip arrow title={locked ? LOCK_TOOLTIP : !envState?.agent ? EVALS_COPY.toolCall.needsAgent : ""}>
+          <span>
+            <Switch
+              checked={!!envState?.toolCallEval && !!envState?.agent}
+              disabled={locked || !envState?.agent}
+              onChange={(e) => {
+                const enabled = e.target.checked;
+                patch({ toolCallEval: enabled });
+                toolCall.mutate({ envId: env.id, enabled });
+              }}
+              inputProps={{ "aria-label": EVALS_COPY.toolCall.title }}
+            />
+          </span>
+        </Tooltip>
       </Stack>
 
       <SectionCard

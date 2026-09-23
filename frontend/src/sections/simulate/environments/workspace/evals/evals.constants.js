@@ -11,6 +11,12 @@ export const EVALS_COPY = {
     "These decide whether each task passed. Pick them from the library and map their inputs onto what the run produces.",
   add: "Add evaluations",
   addScenarios: "Add scenarios",
+  toolCall: {
+    title: "Enable tool call evaluation",
+    on: "Tool calling that happens during the calls will be evaluated — the right tool, with the right arguments, at the right time.",
+    off: "Connect your agent first — tool calls are read from it during the run.",
+    needsAgent: "Connect an agent to evaluate its tool calls.",
+  },
   needsScenariosHint: "Add scenarios first",
   remove: "Remove evaluation",
   suggestedTitle: (n) => `Suggested evaluations (${n})`,

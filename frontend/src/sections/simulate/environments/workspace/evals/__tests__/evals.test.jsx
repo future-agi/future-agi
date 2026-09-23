@@ -72,6 +72,27 @@ beforeEach(() => {
   picker.calls.length = 0;
 });
 
+describe("EvalsStep — tool-call evaluation toggle", () => {
+  it("keeps the toggle disabled until an agent is connected", () => {
+    render(<Harness initial={{ scenarios: [{ id: "s1" }], evals: [{ id: "e1" }] }} />);
+    expect(screen.getByRole("checkbox", { name: EVALS_COPY.toolCall.title })).toBeDisabled();
+  });
+
+  it("enables it with an agent and patches toolCallEval on flip", () => {
+    const patchSpy = vi.fn();
+    render(
+      <Harness
+        initial={{ scenarios: [{ id: "s1" }], evals: [{ id: "e1" }], agent: { typeId: "voice" } }}
+        patchSpy={patchSpy}
+      />,
+    );
+    const toggle = screen.getByRole("checkbox", { name: EVALS_COPY.toolCall.title });
+    expect(toggle).toBeEnabled();
+    fireEvent.click(toggle);
+    expect(patchSpy).toHaveBeenCalledWith({ toolCallEval: true });
+  });
+});
+
 describe("EvalsStep — preset auto-seeds into Added (no Suggested card)", () => {
   it("seeds the whole preset into Added on first empty mount", () => {
     const patchSpy = vi.fn();
