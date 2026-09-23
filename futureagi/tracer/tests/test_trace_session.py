@@ -596,6 +596,11 @@ class TestTraceSessionGraphAPI:
                 "tracer.views.trace_session.fetch_session_graph_ch",
                 return_value=graph,
             ) as graph_read,
+            mock.patch(
+                "tracer.services.clickhouse.v2.trace_session_dict_reader."
+                "resolve_session_filter_values",
+                return_value={session_id: [session_id]},
+            ) as resolve_session,
             mock.patch.object(Trace, "objects") as pg_trace_manager,
         ):
             response = auth_client.post(
@@ -644,6 +649,7 @@ class TestTraceSessionGraphAPI:
         filters = graph_read.call_args.kwargs["filters"]
         assert filters[-1]["column_id"] == "session"
         assert filters[-1]["filter_config"]["filter_value"] == [session_id]
+        resolve_session.assert_called_once()
         pg_trace_manager.assert_not_called()
 
     def test_session_system_graph_dispatches_exact_snapshot(self):
@@ -2865,8 +2871,8 @@ class TestTraceSessionUserIdFilterValidation:
             ]
         )
         with mock.patch(
-            "tracer.views.trace_session._resolve_end_user_ids_for_user_id",
-            return_value=([], None),
+            "tracer.views.trace_session._resolve_end_user_ids_for_user_ids",
+            return_value=({"alice": []}, None),
         ):
             response = auth_client.get(
                 "/tracer/trace-session/list_sessions/",

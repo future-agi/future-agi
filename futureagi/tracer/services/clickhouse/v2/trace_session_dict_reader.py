@@ -81,6 +81,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Iterable
+from uuid import UUID
 
 import structlog
 
@@ -280,6 +281,91 @@ def resolve_external_session_ids(
         # to None — matches the old back-fill that read NULL straight off PG.
         out[row[0]] = row[1] or None
     return out
+
+
+def resolve_session_filter_values(
+    values: Iterable[object],
+    *,
+    project_ids: Iterable[object],
+    deadline: ReadDeadline | None = None,
+    settings: dict | None = None,
+) -> dict[str, list[str]]:
+    """Resolve session filter values to scoped, remap-survivor UUIDs.
+
+    A filter value may be either the internal ``trace_session_id`` returned as
+    an option value or the arbitrary ``external_session_id`` sent by the SDK.
+    UUID-shaped external IDs are checked through both lanes. Unknown values map
+    to an empty list; callers apply inclusive/negated empty-set semantics.
+    """
+    raw_values = tuple(dict.fromkeys(str(value) for value in values if value))
+    scoped_project_ids = tuple(
+        dict.fromkeys(str(project_id) for project_id in project_ids if project_id)
+    )
+    if not raw_values or not scoped_project_ids:
+        return {value: [] for value in raw_values}
+
+    uuid_values: list[str] = []
+    for value in raw_values:
+        try:
+            uuid_values.append(str(UUID(value)))
+        except ValueError:
+            continue
+
+    resolved_uuid_values = _resolve_existing_ids(uuid_values)
+    target_ids = tuple(dict.fromkeys(resolved_uuid_values.values()))
+    resolved = resolved_id_expr("ts.trace_session_id", "session_filter_remap")
+    remap_join = remap_left_join(
+        "ts.trace_session_id",
+        _SESSION_REMAP,
+        "session_filter_remap",
+    )
+    target_clause = f" OR {resolved} IN %(target_ids)s" if target_ids else ""
+    query_kwargs = {
+        "parameters": {
+            "project_ids": scoped_project_ids,
+            "external_ids": raw_values,
+            "target_ids": target_ids,
+        },
+        "settings": application_read_settings(
+            {**current_settings(), **(settings or {})},
+            timeout_ms=(deadline.remaining_ms() if deadline is not None else None),
+        ),
+    }
+
+    client = _get_client()
+    try:
+        result = client.query(
+            (
+                f"SELECT DISTINCT toString({resolved}), ts.external_session_id "
+                f"FROM {_SESSIONS_TABLE} AS ts FINAL "
+                f"{remap_join} "
+                f"WHERE ts.project_id IN %(project_ids)s "
+                f"AND ts.is_deleted = 0 "
+                f"AND (ts.external_session_id IN %(external_ids)s"
+                f"{target_clause})"
+            ),
+            **query_kwargs,
+        )
+    except Exception:
+        _reset_client()
+        raise
+
+    matches = {value: [] for value in raw_values}
+    inputs_by_target: dict[str, list[str]] = {}
+    for input_id, target_id in resolved_uuid_values.items():
+        inputs_by_target.setdefault(target_id, []).append(input_id)
+
+    for resolved_id, external_id in result.result_rows:
+        resolved_id = str(resolved_id)
+        external_id = str(external_id)
+        if external_id in matches:
+            matches[external_id].append(resolved_id)
+        for input_id in inputs_by_target.get(resolved_id, []):
+            matches[input_id].append(resolved_id)
+
+    for value, ids in matches.items():
+        matches[value] = list(dict.fromkeys(ids))
+    return matches
 
 
 def _resolve_existing_ids(trace_session_ids: Iterable[object]) -> dict[str, str]:

@@ -442,9 +442,7 @@ def test_raw_new_session_seed_classifier_expands_group_and_keeps_all_filters():
     assert "latest_attr_exists_1 AND" in match_sql
     assert "countIf(latest_attr_exists_0 AND" in match_sql
     assert "countIf(latest_attr_exists_1 AND" in match_sql
-    assert (
-        "AND countIf(is_root) > 0" in match_sql
-    )
+    assert "AND countIf(is_root) > 0" in match_sql
     assert match_params["candidate_filter_session_id_array"] == [new_session_id]
     assert match_params["latest_filter_param_0"] == "rejected"
     assert match_params["latest_filter_param_1"] == "us"
@@ -1061,6 +1059,261 @@ def test_session_has_annotation_uses_only_candidate_session_trace_ids():
         "GROUP BY session_id"
     )
     assert params["candidate_filter_session_ids"] == (candidate_session_id,)
+
+
+@pytest.mark.unit
+def test_session_user_id_type_uses_finite_end_user_relation():
+    now = datetime(2026, 7, 31, 12, 0)
+    candidate_session_id = str(uuid.uuid4())
+    builder = SessionListQueryBuilderV2(
+        project_id=str(uuid.uuid4()),
+        filters=[
+            *_window(now),
+            {
+                "column_id": "user_id_type",
+                "filter_config": {
+                    "col_type": "SYSTEM_METRIC",
+                    "filter_type": "text",
+                    "filter_op": "in",
+                    "filter_value": ["email"],
+                },
+            },
+        ],
+        bounded_internal_scan=True,
+    )
+
+    sql, params = builder.build_filter_match_query([candidate_session_id])
+
+    assert builder.supports_bounded_filter_scan() is True
+    assert builder.bounded_filter_degraded_error_code() is None
+    assert "candidate_relational_trace_ids AS" in sql
+    assert "FROM end_users AS eu FINAL" in sql
+    assert "SELECT trace_id FROM candidate_relational_trace_ids" in sql
+    assert "%(session_relational_trace_ids)s" not in sql
+    assert params["session_relational_0_col_1"] == ("email",)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("filter_op", "dimension_predicate", "includes_unassigned_users"),
+    [
+        ("is_null", "user_id_type IS NULL", True),
+        ("is_not_null", "user_id_type IS NOT NULL", False),
+    ],
+)
+def test_session_user_id_type_null_operators_use_end_user_dimension(
+    filter_op, dimension_predicate, includes_unassigned_users
+):
+    now = datetime(2026, 7, 31, 12, 0)
+    builder = SessionListQueryBuilderV2(
+        project_id=str(uuid.uuid4()),
+        filters=[
+            *_window(now),
+            {
+                "column_id": "user_id_type",
+                "filter_config": {
+                    "col_type": "SYSTEM_METRIC",
+                    "filter_type": "text",
+                    "filter_op": filter_op,
+                },
+            },
+        ],
+        bounded_internal_scan=True,
+    )
+
+    sql, _ = builder.build_filter_match_query([str(uuid.uuid4())])
+
+    assert builder.supports_bounded_filter_scan() is True
+    assert "FROM end_users AS eu FINAL" in sql
+    assert dimension_predicate in sql
+    nil_user_predicate = "end_user_id = toUUID('00000000-0000-0000-0000-000000000000')"
+    assert (nil_user_predicate in sql) is includes_unassigned_users
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "filter_op",
+    [
+        "equals",
+        "not_equals",
+        "in",
+        "not_in",
+        "contains",
+        "not_contains",
+        "starts_with",
+        "ends_with",
+        "is_null",
+        "is_not_null",
+    ],
+)
+def test_session_user_id_type_operator_matrix_uses_end_user_dimension(filter_op):
+    now = datetime(2026, 7, 31, 12, 0)
+    config = {
+        "col_type": "SYSTEM_METRIC",
+        "filter_type": "text",
+        "filter_op": filter_op,
+    }
+    if filter_op in {"in", "not_in"}:
+        config["filter_value"] = ["email", "phone"]
+    elif filter_op not in {"is_null", "is_not_null"}:
+        config["filter_value"] = "email"
+    builder = SessionListQueryBuilderV2(
+        project_id=str(uuid.uuid4()),
+        filters=[
+            *_window(now),
+            {
+                "column_id": "user_id_type",
+                "filter_config": config,
+            },
+        ],
+        bounded_internal_scan=True,
+    )
+
+    sql, _ = builder.build_filter_match_query([str(uuid.uuid4())])
+
+    assert builder.supports_bounded_filter_scan() is True
+    assert builder.bounded_filter_degraded_error_code() is None
+    assert "FROM end_users AS eu FINAL" in sql
+    assert "candidate_relational_trace_ids AS" in sql
+
+
+@pytest.mark.unit
+def test_session_filter_value_resolution_keeps_external_and_internal_matches(
+    monkeypatch,
+):
+    from tracer.services.clickhouse.v2 import trace_session_dict_reader as reader
+
+    project_id = str(uuid.uuid4())
+    external_id = "customer-session"
+    missing_id = "missing-session"
+    internal_id = str(uuid.uuid4())
+    survivor_id = str(uuid.uuid4())
+    client = mock.MagicMock()
+    client.query.return_value = SimpleNamespace(
+        result_rows=[(survivor_id, external_id)]
+    )
+    monkeypatch.setattr(reader, "_get_client", lambda: client)
+    monkeypatch.setattr(
+        reader,
+        "_resolve_existing_ids",
+        lambda values: {internal_id: survivor_id} if internal_id in values else {},
+    )
+
+    resolved = reader.resolve_session_filter_values(
+        [external_id, missing_id, internal_id],
+        project_ids=[project_id],
+    )
+
+    assert resolved == {
+        external_id: [survivor_id],
+        missing_id: [],
+        internal_id: [survivor_id],
+    }
+    params = client.query.call_args.kwargs["parameters"]
+    assert params["project_ids"] == (project_id,)
+    assert params["external_ids"] == (external_id, missing_id, internal_id)
+    assert params["target_ids"] == (survivor_id,)
+
+
+@pytest.mark.unit
+def test_uuid_shaped_session_value_is_checked_as_internal_and_external(monkeypatch):
+    from tracer.services.clickhouse.v2 import trace_session_dict_reader as reader
+
+    value = str(uuid.uuid4())
+    internal_survivor = str(uuid.uuid4())
+    external_survivor = str(uuid.uuid4())
+    project_id = str(uuid.uuid4())
+    client = mock.MagicMock()
+    client.query.return_value = SimpleNamespace(
+        result_rows=[
+            (internal_survivor, "different-external-id"),
+            (external_survivor, value),
+        ]
+    )
+    monkeypatch.setattr(reader, "_get_client", lambda: client)
+    monkeypatch.setattr(
+        reader,
+        "_resolve_existing_ids",
+        lambda values: {value: internal_survivor},
+    )
+
+    resolved = reader.resolve_session_filter_values(
+        [value],
+        project_ids=[project_id],
+    )
+
+    assert resolved == {value: [internal_survivor, external_survivor]}
+    params = client.query.call_args.kwargs["parameters"]
+    assert params["external_ids"] == (value,)
+    assert params["target_ids"] == (internal_survivor,)
+
+
+@pytest.mark.unit
+def test_multi_user_filter_resolution_uses_one_clickhouse_query(monkeypatch):
+    from tracer.services.clickhouse.v2 import end_user_dict_reader as reader
+
+    alice_id = str(uuid.uuid4())
+    bob_id = str(uuid.uuid4())
+    project_id = str(uuid.uuid4())
+    client = mock.MagicMock()
+    client.query.return_value = SimpleNamespace(
+        result_rows=[("alice", alice_id), ("bob", bob_id)]
+    )
+    monkeypatch.setattr(reader, "_get_client", lambda: client)
+
+    resolved = reader.resolve_end_user_ids_by_user_ids(
+        ["alice", "bob", "alice"],
+        project_id=project_id,
+    )
+
+    assert resolved == {"alice": [alice_id], "bob": [bob_id]}
+    client.query.assert_called_once()
+    params = client.query.call_args.kwargs["parameters"]
+    assert params["uids"] == ("alice", "bob")
+    assert params["pid"] == project_id
+
+
+@pytest.mark.unit
+def test_multi_user_filter_resolution_requires_tenant_scope():
+    from tracer.services.clickhouse.v2.end_user_dict_reader import (
+        resolve_end_user_ids_by_user_ids,
+    )
+
+    with pytest.raises(ValueError, match="unscoped reverse lookup"):
+        resolve_end_user_ids_by_user_ids(["alice"])
+
+
+@pytest.mark.unit
+def test_multi_user_filter_resolution_preserves_all_curated_ids(monkeypatch):
+    from tracer.services.clickhouse.v2 import end_user_dict_reader as reader
+
+    first_id = str(uuid.uuid4())
+    second_id = str(uuid.uuid4())
+    organization_id = str(uuid.uuid4())
+    client = mock.MagicMock()
+    client.query.return_value = SimpleNamespace(
+        result_rows=[
+            ("alice", first_id),
+            ("alice", first_id),
+            ("alice", second_id),
+            ("unrequested", str(uuid.uuid4())),
+        ]
+    )
+    monkeypatch.setattr(reader, "_get_client", lambda: client)
+
+    resolved = reader.resolve_end_user_ids_by_user_ids(
+        ["alice", "missing"],
+        organization_id=organization_id,
+    )
+
+    assert resolved == {
+        "alice": [first_id, second_id],
+        "missing": [],
+    }
+    params = client.query.call_args.kwargs["parameters"]
+    assert params["uids"] == ("alice", "missing")
+    assert params["oid"] == organization_id
+    assert "pid" not in params
 
 
 @pytest.mark.unit

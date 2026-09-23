@@ -451,7 +451,12 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         )
         self._bounded_has_eval_values(has_eval_filters)
 
-        allowed_keys = {"annotator", "has_annotation", "my_annotations"}
+        allowed_keys = {
+            "annotator",
+            "has_annotation",
+            "my_annotations",
+            "user_id_type",
+        }
         allowed_types = {"ANNOTATION", "EVAL_METRIC"}
         for item in generic_filters:
             column_id = item.get("column_id") or item.get("columnId")
@@ -3108,7 +3113,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
     # them here). These must NOT flow into `ClickHouseFilterBuilder.translate()`
     # — they are resolved through the id-remap on a wrapped layer instead (see
     # `_build_resolved_user_clause` / P3b step1.5), so a cross-cutover straddler
-    # unifies. `user` is the FilterBuilder alias for `end_user_id`.
+    # unifies. The request view translates the public `user` alias from a
+    # readable user_id into this builder's UUID membership contract.
     _ENDUSER_ID_FILTER_COLS = frozenset({"end_user_id", "user"})
     _SESSION_ID_FILTER_COLS = SESSION_ID_FILTER_COLS
 
