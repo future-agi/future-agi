@@ -40,6 +40,8 @@ from simulate.temporal.types.activities import (
     RunToolCallEvaluationOutput,
 )
 from simulate.utils.eval_summary import derive_kpi_output_type
+from simulate.utils.processing_outcomes import build_skipped_eval_output_payload
+from simulate.utils.verdicts import has_stored_verdict
 from tfc.utils.case import to_camel_case, to_snake_case
 
 from tfc.utils.storage_client import server_reachable_url
@@ -954,6 +956,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                     "timestamp": timezone.now().isoformat(),
                     "output": None,
                     "output_type": derive_kpi_output_type(eval_template),
+                    "status": StatusType.FAILED.value,
                 }
                 call_execution.eval_outputs[str(eval_config.id)] = error_result
                 call_execution.save(update_fields=["eval_outputs"])
@@ -1085,6 +1088,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             "timestamp": timezone.now().isoformat(),
             "output": None,
             "output_type": derive_kpi_output_type(eval_config.eval_template),
+            "status": StatusType.FAILED.value,
         }
         call_execution.eval_outputs[str(eval_config.id)] = error_result
         call_execution.save(update_fields=["eval_outputs"])
@@ -1204,6 +1208,14 @@ def _run_evaluations_standalone(
     Runs all configured SimulateEvalConfig evaluations for a call execution.
     Does NOT run tool evaluation (handled by separate activity).
     Does NOT update test_execution status (workflow/rerun handles that).
+    With ``skip_existing`` on, a config that already holds a sealed
+    verdict is neither re-graded nor rewritten, mirroring
+    ``TestExecutor._run_simulate_evaluations``'s guard (contract v1.6 P20/F2).
+    ``has_stored_verdict`` is imported at module scope from
+    ``simulate.utils.verdicts``, which imports nothing from
+    ``simulate.services.test_executor`` or from the model layer -- no
+    circular import to dodge, so no function-local import (whole-change
+    review round 2, L4; moved out of ``processing_outcomes`` in round 3, L2).
     """
     from simulate.models import SimulateEvalConfig, TestExecution
 
@@ -1250,12 +1262,28 @@ def _run_evaluations_standalone(
             if not call_execution.eval_outputs:
                 call_execution.eval_outputs = {}
             for eval_config in eval_configs:
-                call_execution.eval_outputs[str(eval_config.id)] = {
-                    "output": None,
-                    "reason": "No transcript data available",
-                    "output_type": derive_kpi_output_type(eval_config.eval_template),
-                    "name": eval_config.name,
-                }
+                # A stored verdict is sealed: with skip-existing on, write the
+                # "no transcript" payload only for a config whose row is
+                # still empty. Contract v1.4 F2.
+                if skip_existing and has_stored_verdict(call_execution, eval_config.id):
+                    logger.info(
+                        f"Keeping the stored verdict for {eval_config.id} on call "
+                        f"{call_execution.id} - no-transcript payload not written"
+                    )
+                    continue
+                # The skipped payload's output_type is None; restore the
+                # derived KPI output_type here (as the pre-ticket write did)
+                # so get_kpi_eval_metrics_query's `output_type IN (...)`
+                # filter still sees this row (whole-change review round 5,
+                # M1).
+                skipped_payload = build_skipped_eval_output_payload(
+                    eval_name=eval_config.name,
+                    reason="No transcript data available",
+                )
+                skipped_payload["output_type"] = derive_kpi_output_type(
+                    eval_config.eval_template
+                )
+                call_execution.eval_outputs[str(eval_config.id)] = skipped_payload
             if not call_execution.call_metadata:
                 call_execution.call_metadata = {}
             call_execution.call_metadata["eval_completed"] = True
@@ -1265,6 +1293,17 @@ def _run_evaluations_standalone(
         # Run each evaluation
         for eval_config in eval_configs:
             try:
+                # A stored verdict is sealed. With skip-existing on, this
+                # eval is not re-graded and nothing is written for it --
+                # keyed on the config id, so a sibling config on the same
+                # call is still graded. Contract v1.4 P20/F2.
+                if skip_existing and has_stored_verdict(call_execution, eval_config.id):
+                    logger.info(
+                        f"Skipping evaluation {eval_config.id} for call "
+                        f"{call_execution.id} - already exists"
+                    )
+                    continue
+
                 if (
                     call_execution.eval_outputs
                     and str(eval_config.id) in call_execution.eval_outputs
