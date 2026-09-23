@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
+import { enqueueSnackbar } from "notistack";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { alpha } from "@mui/material/styles";
@@ -13,11 +14,10 @@ import {
   useRunDetail,
   useOptimizationRuns,
 } from "src/api/simulate-environments/runDetail";
+import { exportRunResults } from "src/api/simulate-environments/runAnalytics";
 import { runSimulationTarget } from "src/api/simulate-environments/runs";
 
 import SectionCard from "../../../components/SectionCard";
-import EmptyState from "../../../components/EmptyState";
-import { BUILD_TONES } from "../../../buildEnvironment/buildTones";
 import StatusChip from "../StatusChip";
 import AddEvalsDrawer from "../../evals/AddEvalsDrawer";
 import RunTraceTable from "./trace/RunTraceTable";
@@ -25,6 +25,7 @@ import CallDrawer from "./CallDrawer";
 import FixMyAgentDrawer from "./fixmyagent/FixMyAgentDrawer";
 import OptimizationRunsList from "./fixmyagent/OptimizationRunsList";
 import LaunchOptimizationDrawer from "./fixmyagent/LaunchOptimizationDrawer";
+import RunAnalytics from "./RunAnalytics";
 
 // The header status is a verdict on the RUN, not on any one call in it. Every
 // call failing is a failed run; some passing and some failing is a completed
@@ -42,10 +43,8 @@ function headerStatus(identity, stats) {
  *
  * Replaces the reused product `TestRunDetailView` at
  * `environments/:envId/runs/:testId/:executionId`. Phase 1 ports the designer's
- * `RunResults` chrome — the identity header, the critical-failure banner and
- * the tab strip — over REAL run-level data (`useRunDetail`). The Test-runs body
- * is a placeholder until the per-call table lands (Phase 2); Analytics is a
- * deferred "coming soon"; Trials and the Debug-failures drawer are Phase 4.
+ * `RunResults` chrome — the identity header and tab strip — over real run-level
+ * data (`useRunDetail`).
  */
 export default function RunDetail({ env, envState, testId, executionId }) {
   const navigate = useNavigate();
@@ -54,10 +53,7 @@ export default function RunDetail({ env, envState, testId, executionId }) {
   const [openCall, setOpenCall] = useState(null);
   const [debugging, setDebugging] = useState(false);
   const [launching, setLaunching] = useState(false);
-  // Fed up from the per-call table once the calls load — the run-level kpis carry
-  // no per-task `critical` flag, so the banner reads this instead of stats.
-  const [failedCritical, setFailedCritical] = useState(0);
-
+  const [exporting, setExporting] = useState(false);
   const { identity, stats } = useRunDetail(testId, executionId, {
     envName: env?.name,
   });
@@ -71,7 +67,9 @@ export default function RunDetail({ env, envState, testId, executionId }) {
   const refetchOptimizations = useQueryClient().invalidateQueries;
 
   const openOptimization = (row) =>
-    navigate(`${paths.dashboard.simulate.test}/${testId}/${executionId}/${row.id}`);
+    navigate(
+      `${paths.dashboard.simulate.test}/${testId}/${executionId}/${row.id}`,
+    );
 
   const status = headerStatus(identity, stats);
   // finishedAt is a known gap (the executions row carries no end time), so the
@@ -79,18 +77,51 @@ export default function RunDetail({ env, envState, testId, executionId }) {
   const startedLabel = identity?.startedAt ? fToNow(identity.startedAt) : "";
 
   const back = () =>
-    navigate(paths.dashboard.simulate.environments.workspaceTab(env.id, "runs"));
+    navigate(
+      paths.dashboard.simulate.environments.workspaceTab(env.id, "runs"),
+    );
+
+  const exportResults = async () => {
+    setExporting(true);
+    try {
+      await exportRunResults(executionId);
+      enqueueSnackbar("Run export downloaded", { variant: "success" });
+    } catch {
+      enqueueSnackbar("Run export could not be generated", {
+        variant: "error",
+      });
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: 0,
+      }}
+    >
       <Stack
         direction="row"
         alignItems="center"
         spacing={2}
-        sx={{ px: 3, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+        sx={{
+          px: 3,
+          py: 2,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          flexShrink: 0,
+        }}
       >
         <IconButton size="small" onClick={back}>
-          <Iconify icon="solar:alt-arrow-left-linear" width={18} sx={{ color: "text.subtitle" }} />
+          <Iconify
+            icon="solar:alt-arrow-left-linear"
+            width={18}
+            sx={{ color: "text.subtitle" }}
+          />
         </IconButton>
 
         <Box flex={1} minWidth={0}>
@@ -107,7 +138,11 @@ export default function RunDetail({ env, envState, testId, executionId }) {
                   typography: "s3",
                   fontWeight: 700,
                   color: identity.color,
-                  bgcolor: (t) => alpha(identity.color, t.palette.mode === "dark" ? 0.22 : 0.14),
+                  bgcolor: (t) =>
+                    alpha(
+                      identity.color,
+                      t.palette.mode === "dark" ? 0.22 : 0.14,
+                    ),
                 }}
               >
                 {identity.letter}
@@ -131,24 +166,43 @@ export default function RunDetail({ env, envState, testId, executionId }) {
           size="small"
           onClick={() => setAddingEvals(true)}
           startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
-          sx={{ color: "text.primary", borderColor: "divider", typography: "s2", fontWeight: 600 }}
+          sx={{
+            color: "text.primary",
+            borderColor: "divider",
+            typography: "s2",
+            fontWeight: 600,
+          }}
         >
           Add evals
         </Button>
         <Button
           variant="outlined"
           size="small"
-          startIcon={<Iconify icon="solar:download-minimalistic-linear" width={15} />}
-          sx={{ color: "text.primary", borderColor: "divider", typography: "s2", fontWeight: 600 }}
+          onClick={exportResults}
+          disabled={exporting}
+          startIcon={
+            <Iconify icon="solar:download-minimalistic-linear" width={15} />
+          }
+          sx={{
+            color: "text.primary",
+            borderColor: "divider",
+            typography: "s2",
+            fontWeight: 600,
+          }}
         >
-          Export
+          {exporting ? "Exporting…" : "Export"}
         </Button>
         <Button
           variant="outlined"
           size="small"
           startIcon={<Iconify icon="solar:refresh-linear" width={15} />}
           onClick={() => navigate(runSimulationTarget(env))}
-          sx={{ color: "text.primary", borderColor: "divider", typography: "s2", fontWeight: 600 }}
+          sx={{
+            color: "text.primary",
+            borderColor: "divider",
+            typography: "s2",
+            fontWeight: 600,
+          }}
         >
           Run again
         </Button>
@@ -166,30 +220,6 @@ export default function RunDetail({ env, envState, testId, executionId }) {
 
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         <Box sx={{ p: 2 }}>
-          {failedCritical > 0 && (
-            <Box
-              sx={{
-                p: 2,
-                mb: 2,
-                borderRadius: 1.25,
-                border: "1px solid",
-                borderColor: alpha(BUILD_TONES.red, 0.35),
-                bgcolor: (t) => alpha(BUILD_TONES.red, t.palette.mode === "dark" ? 0.1 : 0.05),
-              }}
-            >
-              <Stack direction="row" alignItems="center" spacing={1.25}>
-                <Iconify icon="solar:danger-triangle-linear" width={18} sx={{ color: BUILD_TONES.red }} />
-                <Typography sx={{ typography: "s2", flex: 1 }}>
-                  <b>
-                    {failedCritical} critical{" "}
-                    {failedCritical === 1 ? "scenario" : "scenarios"} failed.
-                  </b>{" "}
-                  These are release blockers — the agent broke a rule the environment enforces.
-                </Typography>
-              </Stack>
-            </Box>
-          )}
-
           <CustomTabs
             value={tab}
             onChange={(_, v) => setTab(v)}
@@ -209,19 +239,23 @@ export default function RunDetail({ env, envState, testId, executionId }) {
               "& .MuiTab-root:not(:last-of-type)": { mr: 0 },
             }}
           >
-            <Tab value="tasks" label={`Test runs (${stats.total})`} sx={{ minHeight: 38 }} />
+            <Tab
+              value="tasks"
+              label={`Test runs (${stats.total})`}
+              sx={{ minHeight: 38 }}
+            />
             {hasTrials && (
-              <Tab value="trials" label={`Trials (${optimizationRuns.length})`} sx={{ minHeight: 38 }} />
+              <Tab
+                value="trials"
+                label={`Trials (${optimizationRuns.length})`}
+                sx={{ minHeight: 38 }}
+              />
             )}
             <Tab value="analytics" label="Analytics" sx={{ minHeight: 38 }} />
           </CustomTabs>
 
           {tab === "tasks" && (
-            <RunTraceTable
-              executionId={executionId}
-              onOpenCall={setOpenCall}
-              onFailedCriticalChange={setFailedCritical}
-            />
+            <RunTraceTable executionId={executionId} onOpenCall={setOpenCall} />
           )}
 
           {tab === "trials" && hasTrials && (
@@ -233,8 +267,15 @@ export default function RunDetail({ env, envState, testId, executionId }) {
                   variant="outlined"
                   size="small"
                   onClick={() => setLaunching(true)}
-                  startIcon={<Iconify icon="solar:magic-stick-3-linear" width={15} />}
-                  sx={{ color: "text.primary", borderColor: "divider", typography: "s2", fontWeight: 600 }}
+                  startIcon={
+                    <Iconify icon="solar:magic-stick-3-linear" width={15} />
+                  }
+                  sx={{
+                    color: "text.primary",
+                    borderColor: "divider",
+                    typography: "s2",
+                    fontWeight: 600,
+                  }}
                 >
                   Launch optimization
                 </Button>
@@ -249,15 +290,7 @@ export default function RunDetail({ env, envState, testId, executionId }) {
             </SectionCard>
           )}
 
-          {tab === "analytics" && (
-            <SectionCard title="Analytics">
-              <EmptyState
-                icon="solar:chart-2-linear"
-                title="Analytics coming soon"
-                body="Run analytics are deferred to a later phase."
-              />
-            </SectionCard>
-          )}
+          {tab === "analytics" && <RunAnalytics executionId={executionId} />}
         </Box>
       </Box>
 
@@ -266,7 +299,13 @@ export default function RunDetail({ env, envState, testId, executionId }) {
         onClose={() => setAddingEvals(false)}
         env={env}
         envState={envState}
-        existingIds={new Set((envState?.evals || []).map((e) => (typeof e === "string" ? e : e?.id)))}
+        existingIds={
+          new Set(
+            (envState?.evals || []).map((e) =>
+              typeof e === "string" ? e : e?.id,
+            ),
+          )
+        }
         onAdd={() => setAddingEvals(false)}
       />
 
@@ -291,7 +330,9 @@ export default function RunDetail({ env, envState, testId, executionId }) {
         open={launching}
         onClose={() => setLaunching(false)}
         onLaunched={() => {
-          refetchOptimizations({ queryKey: ["agent-optimization-runs", executionId] });
+          refetchOptimizations({
+            queryKey: ["agent-optimization-runs", executionId],
+          });
           // Land on the run just started — the tab appears once the list refetches.
           setTab("trials");
         }}

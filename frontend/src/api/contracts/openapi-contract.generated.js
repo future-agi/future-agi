@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1010,
+  endpointCount: 1014,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -18399,24 +18399,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
-          created_at: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          status: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          dataset_id: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
           ordering: {
             required: false,
             schema: {
@@ -18577,24 +18559,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
-          created_at: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          status: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          dataset_id: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
           search: {
             required: false,
             schema: {
@@ -21285,18 +21249,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
-          optimize_type: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          status: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
           search: {
             required: false,
             schema: {
@@ -22798,12 +22750,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
-          name: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
           search: {
             required: false,
             schema: {
@@ -23017,24 +22963,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
-          template_name: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          template_version: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          created_at: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
           search: {
             required: false,
             schema: {
@@ -23100,24 +23028,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
-          template_name: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          template_version: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          created_at: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
           search: {
             required: false,
             schema: {
@@ -23725,24 +23635,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
-          name: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          version: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          created_at: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
           search: {
             required: false,
             schema: {
@@ -23954,24 +23846,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
-          name: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          version: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
-          created_at: {
-            required: false,
-            schema: {
-              type: "string",
-            },
-          },
           search: {
             required: false,
             schema: {
@@ -27893,6 +27767,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/HarnessPreflightResponse",
           },
+          201: {
+            $ref: "#/definitions/HarnessPreflight",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -30954,6 +30831,146 @@ export const OPENAPI_CONTRACT = Object.freeze({
           500: {
             $ref: "#/definitions/ErrorResponse",
           },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/v3/call-executions/{call_execution_id}/": {
+      get: {
+        operationId: "simulate_v3_call_execution_detail",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/CallExecutionV3DetailResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/v3/test-executions/{test_execution_id}/analytics/": {
+      get: {
+        operationId: "simulate_v3_test_execution_analytics",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/RunAnalyticsV3Response",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/v3/test-executions/{test_execution_id}/calls/": {
+      get: {
+        operationId: "simulate_v3_test_execution_calls",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          search: {
+            required: false,
+            schema: {
+              type: "string",
+              default: "",
+            },
+          },
+          filters: {
+            required: false,
+            schema: {
+              type: "string",
+              default: {},
+            },
+          },
+          ordering: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: [
+                "started_at",
+                "-started_at",
+                "duration_seconds",
+                "-duration_seconds",
+                "latency_ms",
+                "-latency_ms",
+                "turn_count",
+                "-turn_count",
+                "tokens",
+                "-tokens",
+                "cost_cents",
+                "-cost_cents",
+                "scenario",
+                "-scenario",
+                "goal",
+                "-goal",
+                "outcome",
+                "-outcome",
+              ],
+              default: "-started_at",
+            },
+          },
+          page: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              default: 1,
+            },
+          },
+          page_size: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 500,
+              default: 50,
+            },
+          },
+          group_by: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["goal", "status"],
+              default: "",
+            },
+          },
+          group_key: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/RunCallsV3Response",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/v3/test-executions/{test_execution_id}/export/": {
+      post: {
+        operationId: "simulate_v3_test_execution_export",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/RunExportV3Request",
+        },
+        queryParameters: {},
+        responses: {
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -50429,6 +50446,462 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    CallExecutionV3DetailResponse: {
+      required: [
+        "goal",
+        "scenario_details",
+        "ideal_outcome",
+        "conversation_branch",
+        "persona",
+        "persona_details",
+        "sub_goals",
+        "outcome",
+        "cost_breakdown_cents",
+        "evaluations",
+        "function_calls",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        service_provider_call_id: {
+          title: "Service provider call id",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        session_id: {
+          title: "Session id",
+          type: "string",
+          readOnly: true,
+        },
+        timestamp: {
+          title: "Timestamp",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        call_type: {
+          title: "Call type",
+          type: "string",
+          readOnly: true,
+        },
+        status: {
+          title: "Status",
+          description: "Current status of the call",
+          type: "string",
+          enum: [
+            "pending",
+            "queued",
+            "ongoing",
+            "completed",
+            "failed",
+            "analyzing",
+            "cancelled",
+          ],
+        },
+        duration: {
+          title: "Duration",
+          type: "string",
+          readOnly: true,
+        },
+        duration_seconds: {
+          title: "Duration seconds",
+          description: "Duration of the call in seconds",
+          type: "integer",
+          maximum: 2147483647,
+          minimum: -2147483648,
+          "x-nullable": true,
+        },
+        start_time: {
+          title: "Start time",
+          type: "string",
+          readOnly: true,
+        },
+        transcript: {
+          title: "Transcript",
+          type: "string",
+          readOnly: true,
+        },
+        scenario: {
+          title: "Scenario",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        overall_score: {
+          title: "Overall score",
+          type: "string",
+          readOnly: true,
+        },
+        response_time: {
+          title: "Response time",
+          type: "string",
+          readOnly: true,
+        },
+        response_time_ms: {
+          title: "Response time ms",
+          description: "Average response time in milliseconds",
+          type: "integer",
+          maximum: 2147483647,
+          minimum: -2147483648,
+          "x-nullable": true,
+        },
+        audio_url: {
+          title: "Audio url",
+          type: "string",
+          format: "uri",
+          readOnly: true,
+          minLength: 1,
+        },
+        customer_name: {
+          title: "Customer name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        eval_outputs: {
+          title: "Eval outputs",
+          type: "string",
+          readOnly: true,
+        },
+        eval_metrics: {
+          title: "Eval metrics",
+          description: "Get evaluation metrics in a format suitable for the UI",
+          type: "object",
+          additionalProperties: {
+            $ref: "#/definitions/CallExecutionEvalMetric",
+          },
+          readOnly: true,
+        },
+        scenario_columns: {
+          title: "Scenario columns",
+          type: "string",
+          readOnly: true,
+        },
+        ended_reason: {
+          title: "Ended reason",
+          description: "Reason why the call ended",
+          type: "string",
+          maxLength: 10000,
+          "x-nullable": true,
+        },
+        simulator_agent_name: {
+          title: "Simulator agent name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        simulator_agent_id: {
+          title: "Simulator agent id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        agent_definition_used_name: {
+          title: "Agent definition used name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        agent_definition_used_id: {
+          title: "Agent definition used id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        call_summary: {
+          title: "Call summary",
+          description: "Call summary from the service",
+          type: "string",
+          "x-nullable": true,
+        },
+        recordings: {
+          title: "Recordings",
+          type: "string",
+          readOnly: true,
+        },
+        test_execution_id: {
+          title: "Test execution id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        scenario_id: {
+          title: "Scenario id",
+          type: "string",
+          readOnly: true,
+        },
+        scenario_graph: {
+          title: "Scenario graph",
+          type: "string",
+          readOnly: true,
+        },
+        scenario_graph_id: {
+          title: "Scenario graph id",
+          type: "string",
+          readOnly: true,
+        },
+        avg_agent_latency: {
+          title: "Avg agent latency",
+          type: "integer",
+          readOnly: true,
+        },
+        avg_agent_latency_ms: {
+          title: "Avg agent latency ms",
+          description:
+            "Average agent latency in milliseconds (time taken by agent to respond after user's pause)",
+          type: "integer",
+          maximum: 2147483647,
+          minimum: -2147483648,
+          "x-nullable": true,
+        },
+        user_interruption_count: {
+          title: "User interruption count",
+          description: "Number of times user interrupted the AI",
+          type: "integer",
+          maximum: 2147483647,
+          minimum: -2147483648,
+          "x-nullable": true,
+        },
+        user_interruption_rate: {
+          title: "User interruption rate",
+          description: "Rate of user interruptions (interruptions per minute)",
+          type: "number",
+          "x-nullable": true,
+        },
+        user_wpm: {
+          title: "User wpm",
+          description: "User's words per minute",
+          type: "number",
+          "x-nullable": true,
+        },
+        bot_wpm: {
+          title: "Bot wpm",
+          description: "Bot's words per minute",
+          type: "number",
+          "x-nullable": true,
+        },
+        talk_ratio: {
+          title: "Talk ratio",
+          description: "Ratio of bot speaking time to user speaking time",
+          type: "number",
+          "x-nullable": true,
+        },
+        ai_interruption_count: {
+          title: "Ai interruption count",
+          description: "Number of times AI interrupted the user",
+          type: "integer",
+          maximum: 2147483647,
+          minimum: -2147483648,
+          "x-nullable": true,
+        },
+        ai_interruption_rate: {
+          title: "Ai interruption rate",
+          description: "Rate of AI interruptions (interruptions per minute)",
+          type: "number",
+          "x-nullable": true,
+        },
+        avg_stop_time_after_interruption: {
+          title: "Avg stop time after interruption",
+          type: "integer",
+          readOnly: true,
+        },
+        total_tokens: {
+          title: "Total tokens",
+          type: "string",
+          readOnly: true,
+        },
+        input_tokens: {
+          title: "Input tokens",
+          type: "string",
+          readOnly: true,
+        },
+        output_tokens: {
+          title: "Output tokens",
+          type: "string",
+          readOnly: true,
+        },
+        avg_latency_ms: {
+          title: "Avg latency ms",
+          type: "string",
+          readOnly: true,
+        },
+        turn_count: {
+          title: "Turn count",
+          type: "string",
+          readOnly: true,
+        },
+        agent_talk_percentage: {
+          title: "Agent talk percentage",
+          type: "string",
+          readOnly: true,
+        },
+        csat_score: {
+          title: "Csat score",
+          type: "string",
+          readOnly: true,
+        },
+        processing_skipped: {
+          title: "Processing skipped",
+          type: "string",
+          readOnly: true,
+        },
+        processing_skip_reason: {
+          title: "Processing skip reason",
+          type: "string",
+          readOnly: true,
+        },
+        rerun_snapshots: {
+          title: "Rerun snapshots",
+          type: "string",
+          readOnly: true,
+        },
+        is_snapshot: {
+          title: "Is snapshot",
+          type: "string",
+          readOnly: true,
+        },
+        snapshot_timestamp: {
+          title: "Snapshot timestamp",
+          type: "string",
+          readOnly: true,
+        },
+        rerun_type: {
+          title: "Rerun type",
+          type: "string",
+          readOnly: true,
+        },
+        original_call_execution_id: {
+          title: "Original call execution id",
+          type: "string",
+          readOnly: true,
+        },
+        tool_outputs: {
+          title: "Tool outputs",
+          description:
+            "Tool evaluation output - separate from standard evaluations",
+          type: "object",
+          "x-nullable": true,
+        },
+        cost_cents: {
+          title: "Cost cents",
+          description: "Cost of the call in cents",
+          type: "integer",
+          maximum: 2147483647,
+          minimum: -2147483648,
+          "x-nullable": true,
+        },
+        customer_cost_cents: {
+          title: "Customer cost cents",
+          description: "Total customer-reported cost in cents",
+          type: "integer",
+          maximum: 2147483647,
+          minimum: -2147483648,
+          "x-nullable": true,
+        },
+        customer_cost_breakdown: {
+          title: "Customer cost breakdown",
+          description: "Detailed cost breakdown from customer call data",
+          type: "object",
+          "x-nullable": true,
+        },
+        customer_latency_metrics: {
+          title: "Customer latency metrics",
+          description: "Latency metrics from customer call data",
+          type: "object",
+          "x-nullable": true,
+        },
+        customer_call_id: {
+          title: "Customer call id",
+          description: "Customer call ID if available",
+          type: "string",
+          maxLength: 255,
+          "x-nullable": true,
+        },
+        simulation_call_type: {
+          title: "Simulation call type",
+          description: "Type of simulation call",
+          type: "string",
+          enum: ["voice", "text"],
+        },
+        provider: {
+          title: "Provider",
+          type: "string",
+          readOnly: true,
+        },
+        phone_number: {
+          title: "Phone number",
+          description: "Phone number called (null for TEXT/chat simulations)",
+          type: "string",
+          maxLength: 20,
+          "x-nullable": true,
+        },
+        goal: {
+          title: "Goal",
+          type: "string",
+          minLength: 1,
+        },
+        scenario_details: {
+          title: "Scenario details",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        ideal_outcome: {
+          title: "Ideal outcome",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        conversation_branch: {
+          title: "Conversation branch",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        persona: {
+          title: "Persona",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        persona_details: {
+          $ref: "#/definitions/PersonaDetails",
+        },
+        sub_goals: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          enum: ["passed", "failed", "error", "inconclusive"],
+        },
+        cost_breakdown_cents: {
+          $ref: "#/definitions/CostBreakdown",
+        },
+        evaluations: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SimulateRunV3EvaluationResult",
+          },
+        },
+        function_calls: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SimulateRunV3FunctionCall",
+          },
+        },
+      },
+    },
     CallTranscriptResponse: {
       type: "object",
       properties: {
@@ -68748,6 +69221,178 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    RunAnalyticsV3Response: {
+      required: [
+        "execution",
+        "summary",
+        "scenario_risk",
+        "turn_distribution",
+        "evaluations",
+        "failure_breakdown",
+        "distributions",
+        "cost_breakdown_cents",
+        "provider_breakdown",
+        "modality_breakdown",
+        "trends",
+      ],
+      type: "object",
+      properties: {
+        execution: {
+          $ref: "#/definitions/AnalyticsExecution",
+        },
+        summary: {
+          $ref: "#/definitions/AnalyticsSummary",
+        },
+        scenario_risk: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/Risk",
+          },
+        },
+        turn_distribution: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/TurnDistribution",
+          },
+        },
+        evaluations: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvaluationSummary",
+          },
+        },
+        failure_breakdown: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/FailureBreakdown",
+          },
+        },
+        distributions: {
+          $ref: "#/definitions/Distributions",
+        },
+        cost_breakdown_cents: {
+          $ref: "#/definitions/CostComponents",
+        },
+        provider_breakdown: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ProviderBreakdown",
+          },
+        },
+        modality_breakdown: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/ModalityBreakdown",
+          },
+        },
+        trends: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/Trend",
+          },
+        },
+      },
+    },
+    RunCallsV3Response: {
+      required: [
+        "execution",
+        "summary",
+        "count",
+        "page",
+        "page_size",
+        "total_pages",
+        "results",
+        "groups",
+        "facets",
+        "evaluation_columns",
+      ],
+      type: "object",
+      properties: {
+        execution: {
+          $ref: "#/definitions/RunExecution",
+        },
+        summary: {
+          $ref: "#/definitions/RunSummary",
+        },
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        page: {
+          title: "Page",
+          type: "integer",
+        },
+        page_size: {
+          title: "Page size",
+          type: "integer",
+        },
+        total_pages: {
+          title: "Total pages",
+          type: "integer",
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/RunCall",
+          },
+        },
+        groups: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/RunGroup",
+          },
+        },
+        facets: {
+          $ref: "#/definitions/RunFacets",
+        },
+        evaluation_columns: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/EvaluationColumn",
+          },
+        },
+      },
+    },
+    RunExportV3Request: {
+      type: "object",
+      properties: {
+        search: {
+          title: "Search",
+          type: "string",
+          default: "",
+        },
+        filters: {
+          title: "Filters",
+          type: "object",
+          default: {},
+        },
+        ordering: {
+          title: "Ordering",
+          type: "string",
+          enum: [
+            "started_at",
+            "-started_at",
+            "duration_seconds",
+            "-duration_seconds",
+            "latency_ms",
+            "-latency_ms",
+            "turn_count",
+            "-turn_count",
+            "tokens",
+            "-tokens",
+            "cost_cents",
+            "-cost_cents",
+            "scenario",
+            "-scenario",
+            "goal",
+            "-goal",
+            "outcome",
+            "-outcome",
+          ],
+          default: "-started_at",
+        },
+      },
+    },
     RunNewEvalsOnTestExecution: {
       required: ["eval_config_ids"],
       type: "object",
@@ -80606,6 +81251,154 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    CostBreakdown: {
+      required: ["stt", "llm", "tts", "storage", "customer"],
+      type: "object",
+      properties: {
+        stt: {
+          title: "Stt",
+          type: "number",
+          "x-nullable": true,
+        },
+        llm: {
+          title: "Llm",
+          type: "number",
+          "x-nullable": true,
+        },
+        tts: {
+          title: "Tts",
+          type: "number",
+          "x-nullable": true,
+        },
+        storage: {
+          title: "Storage",
+          type: "number",
+          "x-nullable": true,
+        },
+        customer: {
+          title: "Customer",
+          type: "number",
+          "x-nullable": true,
+        },
+      },
+    },
+    PersonaDetails: {
+      required: ["name", "voice", "age", "traits"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        voice: {
+          title: "Voice",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        age: {
+          title: "Age",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        traits: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+      "x-nullable": true,
+    },
+    SimulateRunV3EvaluationResult: {
+      required: [
+        "id",
+        "name",
+        "type",
+        "value",
+        "score",
+        "passed",
+        "reason",
+        "status",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          minLength: 1,
+        },
+        value: {
+          title: "Value",
+          type: "object",
+          "x-nullable": true,
+        },
+        score: {
+          title: "Score",
+          type: "number",
+          "x-nullable": true,
+        },
+        passed: {
+          title: "Passed",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    SimulateRunV3FunctionCall: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        arguments: {
+          title: "Arguments",
+          type: "object",
+        },
+        result: {
+          title: "Result",
+          type: "object",
+        },
+        output: {
+          title: "Output",
+          type: "object",
+        },
+        duration_ms: {
+          title: "Duration ms",
+          type: "number",
+        },
+      },
+    },
     CallTranscript: {
       required: ["content"],
       type: "object",
@@ -92379,6 +93172,803 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       default: {},
     },
+    AnalyticsExecution: {
+      required: ["id", "name", "started_at", "completed_at"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        completed_at: {
+          title: "Completed at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+      },
+    },
+    AnalyticsSummary: {
+      required: [
+        "total",
+        "outcomes",
+        "measured",
+        "pass_rate",
+        "duration",
+        "latency",
+        "tokens",
+        "cost_cents",
+        "evaluators",
+      ],
+      type: "object",
+      properties: {
+        total: {
+          title: "Total",
+          type: "integer",
+        },
+        outcomes: {
+          $ref: "#/definitions/OutcomeCounts",
+        },
+        measured: {
+          title: "Measured",
+          type: "integer",
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        duration: {
+          $ref: "#/definitions/MetricStats",
+        },
+        latency: {
+          $ref: "#/definitions/MetricStats",
+        },
+        tokens: {
+          $ref: "#/definitions/TotalMetricStats",
+        },
+        cost_cents: {
+          $ref: "#/definitions/TotalMetricStats",
+        },
+        evaluators: {
+          title: "Evaluators",
+          type: "integer",
+        },
+      },
+    },
+    CostComponents: {
+      required: ["stt", "llm", "tts", "storage", "customer"],
+      type: "object",
+      properties: {
+        stt: {
+          $ref: "#/definitions/CostComponent",
+        },
+        llm: {
+          $ref: "#/definitions/CostComponent",
+        },
+        tts: {
+          $ref: "#/definitions/CostComponent",
+        },
+        storage: {
+          $ref: "#/definitions/CostComponent",
+        },
+        customer: {
+          $ref: "#/definitions/CostComponent",
+        },
+      },
+    },
+    Distributions: {
+      required: ["duration_seconds", "latency_ms", "tokens", "cost_cents"],
+      type: "object",
+      properties: {
+        duration_seconds: {
+          $ref: "#/definitions/MetricStats",
+        },
+        latency_ms: {
+          $ref: "#/definitions/MetricStats",
+        },
+        tokens: {
+          $ref: "#/definitions/TotalMetricStats",
+        },
+        cost_cents: {
+          $ref: "#/definitions/TotalMetricStats",
+        },
+      },
+    },
+    EvaluationSummary: {
+      required: [
+        "id",
+        "name",
+        "passed",
+        "failed",
+        "measured",
+        "missing",
+        "pass_rate",
+        "average_score",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        passed: {
+          title: "Passed",
+          type: "integer",
+        },
+        failed: {
+          title: "Failed",
+          type: "integer",
+        },
+        measured: {
+          title: "Measured",
+          type: "integer",
+        },
+        missing: {
+          title: "Missing",
+          type: "integer",
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        average_score: {
+          title: "Average score",
+          type: "number",
+          "x-nullable": true,
+        },
+      },
+    },
+    FailureBreakdown: {
+      required: ["reason", "failures", "share"],
+      type: "object",
+      properties: {
+        reason: {
+          title: "Reason",
+          type: "string",
+          minLength: 1,
+        },
+        failures: {
+          title: "Failures",
+          type: "integer",
+        },
+        share: {
+          title: "Share",
+          type: "number",
+        },
+      },
+    },
+    ModalityBreakdown: {
+      required: [
+        "total",
+        "outcomes",
+        "measured",
+        "pass_rate",
+        "duration",
+        "latency",
+        "tokens",
+        "cost_cents",
+        "modality",
+      ],
+      type: "object",
+      properties: {
+        total: {
+          title: "Total",
+          type: "integer",
+        },
+        outcomes: {
+          $ref: "#/definitions/OutcomeCounts",
+        },
+        measured: {
+          title: "Measured",
+          type: "integer",
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        duration: {
+          $ref: "#/definitions/MetricStats",
+        },
+        latency: {
+          $ref: "#/definitions/MetricStats",
+        },
+        tokens: {
+          $ref: "#/definitions/TotalMetricStats",
+        },
+        cost_cents: {
+          $ref: "#/definitions/TotalMetricStats",
+        },
+        modality: {
+          title: "Modality",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    ProviderBreakdown: {
+      required: [
+        "total",
+        "outcomes",
+        "measured",
+        "pass_rate",
+        "duration",
+        "latency",
+        "tokens",
+        "cost_cents",
+        "provider",
+      ],
+      type: "object",
+      properties: {
+        total: {
+          title: "Total",
+          type: "integer",
+        },
+        outcomes: {
+          $ref: "#/definitions/OutcomeCounts",
+        },
+        measured: {
+          title: "Measured",
+          type: "integer",
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        duration: {
+          $ref: "#/definitions/MetricStats",
+        },
+        latency: {
+          $ref: "#/definitions/MetricStats",
+        },
+        tokens: {
+          $ref: "#/definitions/TotalMetricStats",
+        },
+        cost_cents: {
+          $ref: "#/definitions/TotalMetricStats",
+        },
+        provider: {
+          title: "Provider",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    Risk: {
+      required: [
+        "total",
+        "outcomes",
+        "measured",
+        "pass_rate",
+        "duration",
+        "latency",
+        "tokens",
+        "cost_cents",
+        "goal",
+      ],
+      type: "object",
+      properties: {
+        total: {
+          title: "Total",
+          type: "integer",
+        },
+        outcomes: {
+          $ref: "#/definitions/OutcomeCounts",
+        },
+        measured: {
+          title: "Measured",
+          type: "integer",
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        duration: {
+          $ref: "#/definitions/MetricStats",
+        },
+        latency: {
+          $ref: "#/definitions/MetricStats",
+        },
+        tokens: {
+          $ref: "#/definitions/TotalMetricStats",
+        },
+        cost_cents: {
+          $ref: "#/definitions/TotalMetricStats",
+        },
+        goal: {
+          title: "Goal",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    Trend: {
+      required: [
+        "total",
+        "outcomes",
+        "measured",
+        "pass_rate",
+        "duration",
+        "latency",
+        "tokens",
+        "cost_cents",
+        "execution_id",
+        "started_at",
+      ],
+      type: "object",
+      properties: {
+        total: {
+          title: "Total",
+          type: "integer",
+        },
+        outcomes: {
+          $ref: "#/definitions/OutcomeCounts",
+        },
+        measured: {
+          title: "Measured",
+          type: "integer",
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        duration: {
+          $ref: "#/definitions/MetricStats",
+        },
+        latency: {
+          $ref: "#/definitions/MetricStats",
+        },
+        tokens: {
+          $ref: "#/definitions/TotalMetricStats",
+        },
+        cost_cents: {
+          $ref: "#/definitions/TotalMetricStats",
+        },
+        execution_id: {
+          title: "Execution id",
+          type: "string",
+          format: "uuid",
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+      },
+    },
+    TurnDistribution: {
+      required: ["passed", "failed", "error", "inconclusive", "turn_count"],
+      type: "object",
+      properties: {
+        passed: {
+          title: "Passed",
+          type: "integer",
+        },
+        failed: {
+          title: "Failed",
+          type: "integer",
+        },
+        error: {
+          title: "Error",
+          type: "integer",
+        },
+        inconclusive: {
+          title: "Inconclusive",
+          type: "integer",
+        },
+        turn_count: {
+          title: "Turn count",
+          type: "integer",
+        },
+      },
+    },
+    EvaluationColumn: {
+      required: ["id", "name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    RunCall: {
+      required: [
+        "id",
+        "scenario",
+        "scenario_details",
+        "goal",
+        "ideal_outcome",
+        "conversation_branch",
+        "persona",
+        "persona_details",
+        "sub_goals",
+        "outcome",
+        "execution_status",
+        "modality",
+        "provider",
+        "started_at",
+        "completed_at",
+        "duration_seconds",
+        "latency_ms",
+        "turn_count",
+        "tokens",
+        "cost_cents",
+        "cost_breakdown_cents",
+        "csat",
+        "ended_reason",
+        "error_message",
+        "evaluations",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        scenario: {
+          title: "Scenario",
+          type: "string",
+          minLength: 1,
+        },
+        scenario_details: {
+          title: "Scenario details",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        goal: {
+          title: "Goal",
+          type: "string",
+          minLength: 1,
+        },
+        ideal_outcome: {
+          title: "Ideal outcome",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        conversation_branch: {
+          title: "Conversation branch",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        persona: {
+          title: "Persona",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        persona_details: {
+          $ref: "#/definitions/PersonaDetails",
+        },
+        sub_goals: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          enum: ["passed", "failed", "error", "inconclusive"],
+        },
+        execution_status: {
+          title: "Execution status",
+          type: "string",
+          minLength: 1,
+        },
+        modality: {
+          title: "Modality",
+          type: "string",
+          minLength: 1,
+        },
+        provider: {
+          title: "Provider",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        completed_at: {
+          title: "Completed at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        duration_seconds: {
+          title: "Duration seconds",
+          type: "number",
+          "x-nullable": true,
+        },
+        latency_ms: {
+          title: "Latency ms",
+          type: "number",
+          "x-nullable": true,
+        },
+        turn_count: {
+          title: "Turn count",
+          type: "integer",
+          "x-nullable": true,
+        },
+        tokens: {
+          title: "Tokens",
+          type: "integer",
+          "x-nullable": true,
+        },
+        cost_cents: {
+          title: "Cost cents",
+          type: "number",
+          "x-nullable": true,
+        },
+        cost_breakdown_cents: {
+          $ref: "#/definitions/CostBreakdown",
+        },
+        csat: {
+          title: "Csat",
+          type: "number",
+          "x-nullable": true,
+        },
+        ended_reason: {
+          title: "Ended reason",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        error_message: {
+          title: "Error message",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        evaluations: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SimulateRunV3EvaluationResult",
+          },
+        },
+      },
+    },
+    RunExecution: {
+      required: [
+        "id",
+        "run_test_id",
+        "name",
+        "status",
+        "started_at",
+        "completed_at",
+        "ordinal",
+        "agent_version",
+        "agent_type",
+        "summary",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        run_test_id: {
+          title: "Run test id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        completed_at: {
+          title: "Completed at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        ordinal: {
+          title: "Ordinal",
+          type: "integer",
+        },
+        agent_version: {
+          title: "Agent version",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        agent_type: {
+          title: "Agent type",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        summary: {
+          $ref: "#/definitions/RunSummary",
+        },
+      },
+    },
+    RunFacets: {
+      required: ["goal", "sub_goal", "status"],
+      type: "object",
+      properties: {
+        goal: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/FacetValue",
+          },
+        },
+        sub_goal: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/FacetValue",
+          },
+        },
+        status: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/FacetValue",
+          },
+        },
+      },
+    },
+    RunGroup: {
+      required: [
+        "total",
+        "outcomes",
+        "measured",
+        "pass_rate",
+        "duration",
+        "latency",
+        "tokens",
+        "cost_cents",
+        "key",
+        "label",
+        "result_ids",
+        "aggregates",
+      ],
+      type: "object",
+      properties: {
+        total: {
+          title: "Total",
+          type: "integer",
+        },
+        outcomes: {
+          $ref: "#/definitions/OutcomeCounts",
+        },
+        measured: {
+          title: "Measured",
+          type: "integer",
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        duration: {
+          $ref: "#/definitions/MetricStats",
+        },
+        latency: {
+          $ref: "#/definitions/MetricStats",
+        },
+        tokens: {
+          $ref: "#/definitions/TotalMetricStats",
+        },
+        cost_cents: {
+          $ref: "#/definitions/TotalMetricStats",
+        },
+        key: {
+          title: "Key",
+          type: "string",
+          minLength: 1,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+        result_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+        },
+        aggregates: {
+          $ref: "#/definitions/GroupAggregates",
+        },
+      },
+    },
+    RunSummary: {
+      required: [
+        "total",
+        "outcomes",
+        "measured",
+        "pass_rate",
+        "duration",
+        "latency",
+        "tokens",
+        "cost_cents",
+      ],
+      type: "object",
+      properties: {
+        total: {
+          title: "Total",
+          type: "integer",
+        },
+        outcomes: {
+          $ref: "#/definitions/OutcomeCounts",
+        },
+        measured: {
+          title: "Measured",
+          type: "integer",
+        },
+        pass_rate: {
+          title: "Pass rate",
+          type: "number",
+          "x-nullable": true,
+        },
+        duration: {
+          $ref: "#/definitions/MetricStats",
+        },
+        latency: {
+          $ref: "#/definitions/MetricStats",
+        },
+        tokens: {
+          $ref: "#/definitions/TotalMetricStats",
+        },
+        cost_cents: {
+          $ref: "#/definitions/TotalMetricStats",
+        },
+      },
+    },
     RunPromptColumnConfigResult: {
       required: ["config"],
       type: "object",
@@ -103960,6 +105550,204 @@ export const OPENAPI_CONTRACT = Object.freeze({
         progress_pct: {
           title: "Progress pct",
           type: "number",
+        },
+      },
+    },
+    MetricStats: {
+      required: [
+        "average",
+        "p50",
+        "p75",
+        "p90",
+        "p95",
+        "p99",
+        "measured",
+        "total",
+      ],
+      type: "object",
+      properties: {
+        average: {
+          title: "Average",
+          type: "number",
+          "x-nullable": true,
+        },
+        p50: {
+          title: "P50",
+          type: "number",
+          "x-nullable": true,
+        },
+        p75: {
+          title: "P75",
+          type: "number",
+          "x-nullable": true,
+        },
+        p90: {
+          title: "P90",
+          type: "number",
+          "x-nullable": true,
+        },
+        p95: {
+          title: "P95",
+          type: "number",
+          "x-nullable": true,
+        },
+        p99: {
+          title: "P99",
+          type: "number",
+          "x-nullable": true,
+        },
+        measured: {
+          title: "Measured",
+          type: "integer",
+        },
+        total: {
+          title: "Total",
+          type: "integer",
+        },
+      },
+    },
+    OutcomeCounts: {
+      required: ["passed", "failed", "error", "inconclusive"],
+      type: "object",
+      properties: {
+        passed: {
+          title: "Passed",
+          type: "integer",
+        },
+        failed: {
+          title: "Failed",
+          type: "integer",
+        },
+        error: {
+          title: "Error",
+          type: "integer",
+        },
+        inconclusive: {
+          title: "Inconclusive",
+          type: "integer",
+        },
+      },
+    },
+    TotalMetricStats: {
+      required: [
+        "average",
+        "p50",
+        "p75",
+        "p90",
+        "p95",
+        "p99",
+        "measured",
+        "total",
+        "total_value",
+      ],
+      type: "object",
+      properties: {
+        average: {
+          title: "Average",
+          type: "number",
+          "x-nullable": true,
+        },
+        p50: {
+          title: "P50",
+          type: "number",
+          "x-nullable": true,
+        },
+        p75: {
+          title: "P75",
+          type: "number",
+          "x-nullable": true,
+        },
+        p90: {
+          title: "P90",
+          type: "number",
+          "x-nullable": true,
+        },
+        p95: {
+          title: "P95",
+          type: "number",
+          "x-nullable": true,
+        },
+        p99: {
+          title: "P99",
+          type: "number",
+          "x-nullable": true,
+        },
+        measured: {
+          title: "Measured",
+          type: "integer",
+        },
+        total: {
+          title: "Total",
+          type: "integer",
+        },
+        total_value: {
+          title: "Total value",
+          type: "number",
+          "x-nullable": true,
+        },
+      },
+    },
+    CostComponent: {
+      required: ["total", "measured", "calls"],
+      type: "object",
+      properties: {
+        total: {
+          title: "Total",
+          type: "number",
+          "x-nullable": true,
+        },
+        measured: {
+          title: "Measured",
+          type: "integer",
+        },
+        calls: {
+          title: "Calls",
+          type: "integer",
+        },
+      },
+    },
+    FacetValue: {
+      required: ["value", "count"],
+      type: "object",
+      properties: {
+        value: {
+          title: "Value",
+          type: "string",
+          minLength: 1,
+        },
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+      },
+    },
+    GroupAggregates: {
+      required: ["csat", "turns", "latency_ms", "tokens", "evaluations"],
+      type: "object",
+      properties: {
+        csat: {
+          title: "Csat",
+          type: "number",
+          "x-nullable": true,
+        },
+        turns: {
+          title: "Turns",
+          type: "number",
+          "x-nullable": true,
+        },
+        latency_ms: {
+          title: "Latency ms",
+          type: "number",
+          "x-nullable": true,
+        },
+        tokens: {
+          title: "Tokens",
+          type: "number",
+          "x-nullable": true,
+        },
+        evaluations: {
+          title: "Evaluations",
+          type: "object",
         },
       },
     },

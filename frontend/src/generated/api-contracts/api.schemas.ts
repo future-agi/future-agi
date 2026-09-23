@@ -28430,6 +28430,603 @@ export interface ActivationResponseApi {
   scope: ActivationResponseApiScope;
 }
 
+/**
+ * Current status of the call
+ */
+export type CallExecutionV3DetailResponseApiStatus =
+  (typeof CallExecutionV3DetailResponseApiStatus)[keyof typeof CallExecutionV3DetailResponseApiStatus];
+
+export const CallExecutionV3DetailResponseApiStatus = {
+  pending: "pending",
+  queued: "queued",
+  ongoing: "ongoing",
+  completed: "completed",
+  failed: "failed",
+  analyzing: "analyzing",
+  cancelled: "cancelled",
+} as const;
+
+/**
+ * Get evaluation metrics in a format suitable for the UI
+ */
+export type CallExecutionV3DetailResponseApiEvalMetrics = {
+  [key: string]: CallExecutionEvalMetricApi;
+};
+
+/**
+ * Tool evaluation output - separate from standard evaluations
+ */
+export type CallExecutionV3DetailResponseApiToolOutputs = {
+  [key: string]: unknown;
+};
+
+/**
+ * Detailed cost breakdown from customer call data
+ */
+export type CallExecutionV3DetailResponseApiCustomerCostBreakdown = {
+  [key: string]: unknown;
+};
+
+/**
+ * Latency metrics from customer call data
+ */
+export type CallExecutionV3DetailResponseApiCustomerLatencyMetrics = {
+  [key: string]: unknown;
+};
+
+/**
+ * Type of simulation call
+ */
+export type CallExecutionV3DetailResponseApiSimulationCallType =
+  (typeof CallExecutionV3DetailResponseApiSimulationCallType)[keyof typeof CallExecutionV3DetailResponseApiSimulationCallType];
+
+export const CallExecutionV3DetailResponseApiSimulationCallType = {
+  voice: "voice",
+  text: "text",
+} as const;
+
+export type CallExecutionV3DetailResponseApiOutcome =
+  (typeof CallExecutionV3DetailResponseApiOutcome)[keyof typeof CallExecutionV3DetailResponseApiOutcome];
+
+export const CallExecutionV3DetailResponseApiOutcome = {
+  passed: "passed",
+  failed: "failed",
+  error: "error",
+  inconclusive: "inconclusive",
+} as const;
+
+export interface PersonaDetailsApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  voice: string;
+  /** @minLength 1 */
+  age: string;
+  traits: string[];
+}
+
+export interface CostBreakdownApi {
+  stt: number;
+  llm: number;
+  tts: number;
+  storage: number;
+  customer: number;
+}
+
+export type SimulateRunV3EvaluationResultApiValue = { [key: string]: unknown };
+
+export interface SimulateRunV3EvaluationResultApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  type: string;
+  value: SimulateRunV3EvaluationResultApiValue;
+  score: number;
+  passed: boolean;
+  reason: string;
+  /** @minLength 1 */
+  status: string;
+}
+
+export type SimulateRunV3FunctionCallApiArguments = { [key: string]: unknown };
+
+export type SimulateRunV3FunctionCallApiResult = { [key: string]: unknown };
+
+export type SimulateRunV3FunctionCallApiOutput = { [key: string]: unknown };
+
+export interface SimulateRunV3FunctionCallApi {
+  /** @minLength 1 */
+  id?: string;
+  /** @minLength 1 */
+  name?: string;
+  arguments?: SimulateRunV3FunctionCallApiArguments;
+  result?: SimulateRunV3FunctionCallApiResult;
+  output?: SimulateRunV3FunctionCallApiOutput;
+  duration_ms?: number;
+}
+
+export interface CallExecutionV3DetailResponseApi {
+  readonly id?: string;
+  /** @minLength 1 */
+  readonly service_provider_call_id?: string;
+  readonly session_id?: string;
+  readonly timestamp?: string;
+  readonly call_type?: string;
+  /** Current status of the call */
+  status?: CallExecutionV3DetailResponseApiStatus;
+  readonly duration?: string;
+  /**
+   * Duration of the call in seconds
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  duration_seconds?: number;
+  readonly start_time?: string;
+  readonly transcript?: string;
+  /** @minLength 1 */
+  readonly scenario?: string;
+  readonly overall_score?: string;
+  readonly response_time?: string;
+  /**
+   * Average response time in milliseconds
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  response_time_ms?: number;
+  /** @minLength 1 */
+  readonly audio_url?: string;
+  /** @minLength 1 */
+  readonly customer_name?: string;
+  readonly eval_outputs?: string;
+  /** Get evaluation metrics in a format suitable for the UI */
+  readonly eval_metrics?: CallExecutionV3DetailResponseApiEvalMetrics;
+  readonly scenario_columns?: string;
+  /**
+   * Reason why the call ended
+   * @maxLength 10000
+   */
+  ended_reason?: string;
+  /** @minLength 1 */
+  readonly simulator_agent_name?: string;
+  readonly simulator_agent_id?: string;
+  /** @minLength 1 */
+  readonly agent_definition_used_name?: string;
+  readonly agent_definition_used_id?: string;
+  /** Call summary from the service */
+  call_summary?: string;
+  readonly recordings?: string;
+  readonly test_execution_id?: string;
+  readonly scenario_id?: string;
+  readonly scenario_graph?: string;
+  readonly scenario_graph_id?: string;
+  readonly avg_agent_latency?: number;
+  /**
+   * Average agent latency in milliseconds (time taken by agent to respond after user's pause)
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  avg_agent_latency_ms?: number;
+  /**
+   * Number of times user interrupted the AI
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  user_interruption_count?: number;
+  /** Rate of user interruptions (interruptions per minute) */
+  user_interruption_rate?: number;
+  /** User's words per minute */
+  user_wpm?: number;
+  /** Bot's words per minute */
+  bot_wpm?: number;
+  /** Ratio of bot speaking time to user speaking time */
+  talk_ratio?: number;
+  /**
+   * Number of times AI interrupted the user
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  ai_interruption_count?: number;
+  /** Rate of AI interruptions (interruptions per minute) */
+  ai_interruption_rate?: number;
+  readonly avg_stop_time_after_interruption?: number;
+  readonly total_tokens?: string;
+  readonly input_tokens?: string;
+  readonly output_tokens?: string;
+  readonly avg_latency_ms?: string;
+  readonly turn_count?: string;
+  readonly agent_talk_percentage?: string;
+  readonly csat_score?: string;
+  readonly processing_skipped?: string;
+  readonly processing_skip_reason?: string;
+  readonly rerun_snapshots?: string;
+  readonly is_snapshot?: string;
+  readonly snapshot_timestamp?: string;
+  readonly rerun_type?: string;
+  readonly original_call_execution_id?: string;
+  /** Tool evaluation output - separate from standard evaluations */
+  tool_outputs?: CallExecutionV3DetailResponseApiToolOutputs;
+  /**
+   * Cost of the call in cents
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  cost_cents?: number;
+  /**
+   * Total customer-reported cost in cents
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  customer_cost_cents?: number;
+  /** Detailed cost breakdown from customer call data */
+  customer_cost_breakdown?: CallExecutionV3DetailResponseApiCustomerCostBreakdown;
+  /** Latency metrics from customer call data */
+  customer_latency_metrics?: CallExecutionV3DetailResponseApiCustomerLatencyMetrics;
+  /**
+   * Customer call ID if available
+   * @maxLength 255
+   */
+  customer_call_id?: string;
+  /** Type of simulation call */
+  simulation_call_type?: CallExecutionV3DetailResponseApiSimulationCallType;
+  readonly provider?: string;
+  /**
+   * Phone number called (null for TEXT/chat simulations)
+   * @maxLength 20
+   */
+  phone_number?: string;
+  /** @minLength 1 */
+  goal: string;
+  /** @minLength 1 */
+  scenario_details: string;
+  /** @minLength 1 */
+  ideal_outcome: string;
+  /** @minLength 1 */
+  conversation_branch: string;
+  /** @minLength 1 */
+  persona: string;
+  persona_details: PersonaDetailsApi;
+  sub_goals: string[];
+  outcome: CallExecutionV3DetailResponseApiOutcome;
+  cost_breakdown_cents: CostBreakdownApi;
+  evaluations: SimulateRunV3EvaluationResultApi[];
+  function_calls: SimulateRunV3FunctionCallApi[];
+}
+
+export interface AnalyticsExecutionApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  started_at: string;
+  completed_at: string;
+}
+
+export interface OutcomeCountsApi {
+  passed: number;
+  failed: number;
+  error: number;
+  inconclusive: number;
+}
+
+export interface MetricStatsApi {
+  average: number;
+  p50: number;
+  p75: number;
+  p90: number;
+  p95: number;
+  p99: number;
+  measured: number;
+  total: number;
+}
+
+export interface TotalMetricStatsApi {
+  average: number;
+  p50: number;
+  p75: number;
+  p90: number;
+  p95: number;
+  p99: number;
+  measured: number;
+  total: number;
+  total_value: number;
+}
+
+export interface AnalyticsSummaryApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  evaluators: number;
+}
+
+export interface RiskApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  /** @minLength 1 */
+  goal: string;
+}
+
+export interface TurnDistributionApi {
+  passed: number;
+  failed: number;
+  error: number;
+  inconclusive: number;
+  turn_count: number;
+}
+
+export interface EvaluationSummaryApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  passed: number;
+  failed: number;
+  measured: number;
+  missing: number;
+  pass_rate: number;
+  average_score: number;
+}
+
+export interface FailureBreakdownApi {
+  /** @minLength 1 */
+  reason: string;
+  failures: number;
+  share: number;
+}
+
+export interface DistributionsApi {
+  duration_seconds: MetricStatsApi;
+  latency_ms: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+}
+
+export interface CostComponentApi {
+  total: number;
+  measured: number;
+  calls: number;
+}
+
+export interface CostComponentsApi {
+  stt: CostComponentApi;
+  llm: CostComponentApi;
+  tts: CostComponentApi;
+  storage: CostComponentApi;
+  customer: CostComponentApi;
+}
+
+export interface ProviderBreakdownApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  /** @minLength 1 */
+  provider: string;
+}
+
+export interface ModalityBreakdownApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  /** @minLength 1 */
+  modality: string;
+}
+
+export interface TrendApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  execution_id: string;
+  started_at: string;
+}
+
+export interface RunAnalyticsV3ResponseApi {
+  execution: AnalyticsExecutionApi;
+  summary: AnalyticsSummaryApi;
+  scenario_risk: RiskApi[];
+  turn_distribution: TurnDistributionApi[];
+  evaluations: EvaluationSummaryApi[];
+  failure_breakdown: FailureBreakdownApi[];
+  distributions: DistributionsApi;
+  cost_breakdown_cents: CostComponentsApi;
+  provider_breakdown: ProviderBreakdownApi[];
+  modality_breakdown: ModalityBreakdownApi[];
+  trends: TrendApi[];
+}
+
+export interface RunSummaryApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+}
+
+export interface RunExecutionApi {
+  id: string;
+  run_test_id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  status: string;
+  started_at: string;
+  completed_at: string;
+  ordinal: number;
+  /** @minLength 1 */
+  agent_version: string;
+  /** @minLength 1 */
+  agent_type: string;
+  summary: RunSummaryApi;
+}
+
+export type RunCallApiOutcome =
+  (typeof RunCallApiOutcome)[keyof typeof RunCallApiOutcome];
+
+export const RunCallApiOutcome = {
+  passed: "passed",
+  failed: "failed",
+  error: "error",
+  inconclusive: "inconclusive",
+} as const;
+
+export interface RunCallApi {
+  id: string;
+  /** @minLength 1 */
+  scenario: string;
+  /** @minLength 1 */
+  scenario_details: string;
+  /** @minLength 1 */
+  goal: string;
+  /** @minLength 1 */
+  ideal_outcome: string;
+  /** @minLength 1 */
+  conversation_branch: string;
+  /** @minLength 1 */
+  persona: string;
+  persona_details: PersonaDetailsApi;
+  sub_goals: string[];
+  outcome: RunCallApiOutcome;
+  /** @minLength 1 */
+  execution_status: string;
+  /** @minLength 1 */
+  modality: string;
+  /** @minLength 1 */
+  provider: string;
+  started_at: string;
+  completed_at: string;
+  duration_seconds: number;
+  latency_ms: number;
+  turn_count: number;
+  tokens: number;
+  cost_cents: number;
+  cost_breakdown_cents: CostBreakdownApi;
+  csat: number;
+  /** @minLength 1 */
+  ended_reason: string;
+  /** @minLength 1 */
+  error_message: string;
+  evaluations: SimulateRunV3EvaluationResultApi[];
+}
+
+export type GroupAggregatesApiEvaluations = { [key: string]: unknown };
+
+export interface GroupAggregatesApi {
+  csat: number;
+  turns: number;
+  latency_ms: number;
+  tokens: number;
+  evaluations: GroupAggregatesApiEvaluations;
+}
+
+export interface RunGroupApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  label: string;
+  result_ids: string[];
+  aggregates: GroupAggregatesApi;
+}
+
+export interface FacetValueApi {
+  /** @minLength 1 */
+  value: string;
+  count: number;
+}
+
+export interface RunFacetsApi {
+  goal: FacetValueApi[];
+  sub_goal: FacetValueApi[];
+  status: FacetValueApi[];
+}
+
+export interface EvaluationColumnApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
+export interface RunCallsV3ResponseApi {
+  execution: RunExecutionApi;
+  summary: RunSummaryApi;
+  count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  results: RunCallApi[];
+  groups: RunGroupApi[];
+  facets: RunFacetsApi;
+  evaluation_columns: EvaluationColumnApi[];
+}
+
+export type RunExportV3RequestApiFilters = { [key: string]: unknown };
+
+export type RunExportV3RequestApiOrdering =
+  (typeof RunExportV3RequestApiOrdering)[keyof typeof RunExportV3RequestApiOrdering];
+
+export const RunExportV3RequestApiOrdering = {
+  started_at: "started_at",
+  "-started_at": "-started_at",
+  duration_seconds: "duration_seconds",
+  "-duration_seconds": "-duration_seconds",
+  latency_ms: "latency_ms",
+  "-latency_ms": "-latency_ms",
+  turn_count: "turn_count",
+  "-turn_count": "-turn_count",
+  tokens: "tokens",
+  "-tokens": "-tokens",
+  cost_cents: "cost_cents",
+  "-cost_cents": "-cost_cents",
+  scenario: "scenario",
+  "-scenario": "-scenario",
+  goal: "goal",
+  "-goal": "-goal",
+  outcome: "outcome",
+  "-outcome": "-outcome",
+} as const;
+
+export interface RunExportV3RequestApi {
+  search?: string;
+  filters?: RunExportV3RequestApiFilters;
+  ordering?: RunExportV3RequestApiOrdering;
+}
+
 export type AccountsAwsMarketplaceLaunchSoftwareCreateBody = {
   "x-amzn-marketplace-token": string;
   "x-amzn-marketplace-product-id"?: string;
@@ -29773,9 +30370,6 @@ export type ModelHubExperimentDetailList200 = {
 };
 
 export type ModelHubExperimentsDataListParams = {
-  created_at?: string;
-  status?: string;
-  dataset_id?: string;
   /**
    * Which field to use when ordering the results.
    */
@@ -29802,9 +30396,6 @@ export type ModelHubExperimentsDataList200 = {
 };
 
 export type ModelHubExperimentsV2ListListParams = {
-  created_at?: string;
-  status?: string;
-  dataset_id?: string;
   /**
    * A search term.
    */
@@ -30051,8 +30642,6 @@ export type ModelHubKbSupportedEmbeddingModelsParams = {
 };
 
 export type ModelHubOptimisationListParams = {
-  optimize_type?: string;
-  status?: string;
   /**
    * A search term.
    */
@@ -30230,7 +30819,6 @@ export type ModelHubPromptBaseTemplatesGetAllCategories200 = {
 };
 
 export type ModelHubPromptExecutionsListParams = {
-  name?: string;
   /**
    * A search term.
    */
@@ -30275,9 +30863,6 @@ export type ModelHubPromptFoldersList200 = {
 };
 
 export type ModelHubPromptHistoryExecutionsListParams = {
-  template_name?: string;
-  template_version?: string;
-  created_at?: string;
   /**
    * A search term.
    */
@@ -30304,9 +30889,6 @@ export type ModelHubPromptHistoryExecutionsList200 = {
 };
 
 export type ModelHubPromptHistoryExecutionsGetExecutionDetailsParams = {
-  template_name?: string;
-  template_version?: string;
-  created_at?: string;
   /**
    * A search term.
    */
@@ -30387,9 +30969,6 @@ export type ModelHubPromptLabelsTemplateLabels200 = {
 };
 
 export type ModelHubPromptTemplatesListParams = {
-  name?: string;
-  version?: string;
-  created_at?: string;
   /**
    * A search term.
    */
@@ -30416,9 +30995,6 @@ export type ModelHubPromptTemplatesList200 = {
 };
 
 export type ModelHubPromptTemplatesGetTemplateByNameParams = {
-  name?: string;
-  version?: string;
-  created_at?: string;
   /**
    * A search term.
    */
@@ -32995,3 +33571,52 @@ export type UsageWorkspaceUsageSummaryListParams = {
   month?: number;
   year?: number;
 };
+
+export type SimulateV3TestExecutionCallsParams = {
+  search?: string;
+  filters?: string;
+  ordering?: SimulateV3TestExecutionCallsOrdering;
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  page_size?: number;
+  group_by?: SimulateV3TestExecutionCallsGroupBy;
+  group_key?: string;
+};
+
+export type SimulateV3TestExecutionCallsOrdering =
+  (typeof SimulateV3TestExecutionCallsOrdering)[keyof typeof SimulateV3TestExecutionCallsOrdering];
+
+export const SimulateV3TestExecutionCallsOrdering = {
+  started_at: "started_at",
+  "-started_at": "-started_at",
+  duration_seconds: "duration_seconds",
+  "-duration_seconds": "-duration_seconds",
+  latency_ms: "latency_ms",
+  "-latency_ms": "-latency_ms",
+  turn_count: "turn_count",
+  "-turn_count": "-turn_count",
+  tokens: "tokens",
+  "-tokens": "-tokens",
+  cost_cents: "cost_cents",
+  "-cost_cents": "-cost_cents",
+  scenario: "scenario",
+  "-scenario": "-scenario",
+  goal: "goal",
+  "-goal": "-goal",
+  outcome: "outcome",
+  "-outcome": "-outcome",
+} as const;
+
+export type SimulateV3TestExecutionCallsGroupBy =
+  (typeof SimulateV3TestExecutionCallsGroupBy)[keyof typeof SimulateV3TestExecutionCallsGroupBy];
+
+export const SimulateV3TestExecutionCallsGroupBy = {
+  goal: "goal",
+  status: "status",
+} as const;
