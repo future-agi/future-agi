@@ -11,7 +11,7 @@ import Field from "../components/Field";
 import ContinueRow from "../components/ContinueRow";
 import EnvironmentValues from "./EnvironmentValues";
 import ScenarioCount from "./ScenarioCount";
-import { DEFAULT_SCENARIOS } from "./scenarioCountRules";
+import { DEFAULT_SCENARIOS, isValidScenarioCount } from "./scenarioCountRules";
 import RuntimePreflight from "./RuntimePreflight";
 import usePanelBuild from "../hooks/usePanelBuild";
 import { CODE_UPLOAD_COPY } from "../codeUpload.constants";
@@ -297,7 +297,7 @@ export default function PanelCodeUpload() {
         error={build.error}
       />
       <ContinueRow
-        disabled={!build.readyToSubmit}
+        disabled={!build.readyToSubmit || !isValidScenarioCount(scenarioCount)}
         busy={build.committing}
         hint={build.status === "done" ? "Resolve the checks above" : "Run preflight to continue"}
         onClick={build.commitBuild}
