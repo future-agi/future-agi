@@ -6,7 +6,7 @@ name: release-images
 
 on:
   push:
-    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
   workflow_dispatch:
     inputs:
       version:
@@ -50,12 +50,54 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: frontend,        image: futureagi/frontend,        context: ./frontend,                dockerfile: ./frontend/Dockerfile,                    free-disk: true,  platforms: 'linux/amd64,linux/arm64' }
-          - { name: backend,         image: futureagi/future-agi,      context: ./futureagi,               dockerfile: ./futureagi/Dockerfile.oss,               free-disk: false, platforms: linux/amd64 }
-          - { name: agentcc-gateway, image: futureagi/agentcc-gateway, context: ./agentcc-gateway,         dockerfile: ./agentcc-gateway/Dockerfile,             free-disk: false, platforms: 'linux/amd64,linux/arm64' }
-          - { name: serving,         image: futureagi/serving,         context: ./futureagi/model_serving, dockerfile: ./futureagi/model_serving/Dockerfile.oss, free-disk: false, platforms: 'linux/amd64,linux/arm64' }
-          - { name: code-executor,   image: futureagi/code-executor,   context: ./futureagi/code-executor, dockerfile: ./futureagi/code-executor/Dockerfile,     free-disk: false, platforms: 'linux/amd64,linux/arm64' }
-          - { name: fi-collector,    image: futureagi/fi-collector,    context: ./fi-collector,            dockerfile: ./fi-collector/Dockerfile,                free-disk: false, platforms: 'linux/amd64,linux/arm64' }
+          - {
+              name: frontend,
+              image: futureagi/frontend,
+              context: ./frontend,
+              dockerfile: ./frontend/Dockerfile,
+              free-disk: true,
+              platforms: "linux/amd64,linux/arm64",
+            }
+          - {
+              name: backend,
+              image: futureagi/future-agi,
+              context: ./futureagi,
+              dockerfile: ./futureagi/Dockerfile.oss,
+              free-disk: false,
+              platforms: linux/amd64,
+            }
+          - {
+              name: agentcc-gateway,
+              image: futureagi/agentcc-gateway,
+              context: ./agentcc-gateway,
+              dockerfile: ./agentcc-gateway/Dockerfile,
+              free-disk: false,
+              platforms: "linux/amd64,linux/arm64",
+            }
+          - {
+              name: serving,
+              image: futureagi/serving,
+              context: ./futureagi/model_serving,
+              dockerfile: ./futureagi/model_serving/Dockerfile.oss,
+              free-disk: false,
+              platforms: "linux/amd64,linux/arm64",
+            }
+          - {
+              name: code-executor,
+              image: futureagi/code-executor,
+              context: ./futureagi/code-executor,
+              dockerfile: ./futureagi/code-executor/Dockerfile,
+              free-disk: false,
+              platforms: "linux/amd64,linux/arm64",
+            }
+          - {
+              name: fi-collector,
+              image: futureagi/fi-collector,
+              context: ./fi-collector,
+              dockerfile: ./fi-collector/Dockerfile,
+              free-disk: false,
+              platforms: "linux/amd64,linux/arm64",
+            }
     uses: ./.github/workflows/build-image.yml
     with:
       image: ${{ matrix.image }}
@@ -147,6 +189,50 @@ jobs:
             -F 'client_payload[release_url]'="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${VERSION}" \
             -F 'client_payload[release_body_b64]'="${body_b64}"
 
+  release-worker:
+    needs: [guard, build]
+    if: >-
+      always() && needs.guard.result == 'success' &&
+      (github.event_name == 'workflow_dispatch' || needs.build.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: ${{ github.event_name == 'push' && 'production-auto' || 'production' }}
+    outputs:
+      digest: ${{ steps.worker.outputs.digest }}
+      source_sha: ${{ steps.worker.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: future-agi
+          repositories: omega-error-feed-worker
+          permission-contents: write
+          permission-actions: read
+      - name: Build worker and verify release receipt (retry only verifies)
+        id: worker
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ needs.guard.outputs.version }}
+          WORKER_RELEASE_REF: ${{ vars.OMEGA_WORKER_RELEASE_REF }}
+          RELEASE_REQUEST_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: python3 scripts/release-error-feed-worker.py
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Verify the registry still serves the tested digest
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+          EXPECTED_DIGEST: ${{ steps.worker.outputs.digest }}
+        run: |
+          set -eu
+          actual=$(docker buildx imagetools inspect "futureagi/omega-error-feed-worker:$VERSION" --format '{{json .Manifest}}' | jq -er '.digest')
+          test "$actual" = "$EXPECTED_DIGEST"
+
   dispatch-docs:
     needs: [guard, build]
     if: github.event_name == 'push'
@@ -175,10 +261,11 @@ jobs:
             -F 'client_payload[release_body_b64]'="${body_b64}"
 
   bump-deployment:
-    needs: [guard, dispatch-ee, resolve-sdk, simulation-runner]
+    needs: [guard, dispatch-ee, resolve-sdk, simulation-runner, release-worker]
     if: >-
       always() &&
       needs.guard.result == 'success' &&
+      needs.release-worker.result == 'success' &&
       (
         github.event_name == 'workflow_dispatch' ||
         (needs.dispatch-ee.result == 'success' && needs.simulation-runner.result == 'success')
@@ -188,6 +275,8 @@ jobs:
       VERSION: ${{ needs.guard.outputs.version }}
       SDK_VERSION: ${{ needs.resolve-sdk.outputs.sdk_version }}
       SDK_WHEEL_SHA256: ${{ needs.resolve-sdk.outputs.sdk_wheel_sha256 }}
+      WORKER_DIGEST: ${{ needs.release-worker.outputs.digest }}
+      WORKER_SOURCE_SHA: ${{ needs.release-worker.outputs.source_sha }}
       # yq paths of every platform-image tag per values file. If a path list
       # drifts from the values files, the sanity check below fails the job
       # rather than silently bumping a subset.
@@ -197,6 +286,7 @@ jobs:
         .temporal_worker_tasks_l.image.tag .temporal_worker_tasks_xl.image.tag
         .temporal_worker_agent_compass.image.tag .temporal_worker_simulation_runner.image.tag
         .agentcc_gateway.image.tag .codeExecutor.image.tag .embedding.image.tag
+        .errorFeed.image.tag
     steps:
       - uses: actions/create-github-app-token@v2
         id: app-token
@@ -236,6 +326,12 @@ jobs:
           bump eu/gcp/deployment/values.yaml  $COMMON_PATHS .fiCollector.image.tag
           # shellcheck disable=SC2086
           bump us/gcp/deployment/values.yaml  $COMMON_PATHS .fiCollector.image.tag
+          for region in eu us; do
+            file="$region/gcp/deployment/values.yaml"
+            test "$(yq '.errorFeed.image.repository' "$file")" = 'futureagi/omega-error-feed-worker'
+            test "$(yq '.errorFeed.image.digest' "$file")" != 'null'
+            yq -i '.errorFeed.image.digest = strenv(WORKER_DIGEST)' "$file"
+          done
       - name: Open bump PR
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -262,7 +358,7 @@ jobs:
             fi
             gh pr create --repo future-agi/deployment --base main --head "$branch" \
               --title "chore(release): bump platform to ${VERSION}" \
-              --body "Automated bump for [${VERSION}](https://github.com/future-agi/future-agi/releases/tag/${VERSION}). ${runner_line} Review release notes (check for the migrations callout) before deploying per the deployment guide."
+              --body "Automated bump for [${VERSION}](https://github.com/future-agi/future-agi/releases/tag/${VERSION}). ${runner_line} Error Feed worker: ${VERSION}, commit ${WORKER_SOURCE_SHA}, digest ${WORKER_DIGEST}. Review release notes (check for the migrations callout) before deploying per the deployment guide."
           else
             echo "bump PR already open"
           fi
