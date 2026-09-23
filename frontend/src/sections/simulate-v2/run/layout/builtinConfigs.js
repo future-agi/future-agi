@@ -44,7 +44,7 @@ const CFG = {
     info: "How each task actually ended. Big Timeout/Error slices are infra smells; big Escalated is an over-cautious agent; big Incomplete is one that gave up mid-task.",
   },
 
-  /* ── Trends ─────────────────────────────────────────────── */
+  /* ── Latency (section id: trends) ─────────────────────────── */
   dual_line_over_time: {
     source: "run_positions", chart: "line", metric: "avg_latency",
     groupBy: "run_position_bucket",
@@ -61,16 +61,6 @@ const CFG = {
     source: "tasks", chart: "percentile_tiles", metric: "p90",
     groupBy: "use_case", limit: 8,
     info: "Percentile shape per use case. A big gap between p50 and p99 means a few outliers are dragging the run and are worth investigating first.",
-  },
-  duration_by_bucket: {
-    source: "tasks", chart: "bar", metric: "avg_latency",
-    groupBy: "turn_bucket",
-    info: "Cross-checks whether long tasks are actually complex or just slow. A steep left-to-right rise = complexity; a flat line with a spike = specific edge cases.",
-  },
-  turn_bars: {
-    source: "tasks", chart: "stacked_bar", metric: "count",
-    groupBy: "turns", subGroupBy: "outcome_binary",
-    info: "Groups every task by turn count, stacked by pass/fail. Short-turn failures = agent gave up; long-turn failures = it lost the thread.",
   },
   attribution: {
     source: "attribution_layers", chart: "donut", metric: "count",

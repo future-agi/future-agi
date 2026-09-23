@@ -14,6 +14,8 @@ import { callDetail } from "../_mock/callDetail";
 import CallGraph from "./CallGraph";
 import TwinStateTimeline from "./TwinStateTimeline";
 import TwinRequestStream from "./TwinRequestStream";
+import EvalsTabView from "src/components/traceDetail/EvalsTabView";
+import { localizeEval } from "../_mock/errorLocalization";
 
 /**
  * One call, in full.
@@ -55,11 +57,33 @@ const SURFACE_COPY = {
   sim: { id: "Episode ID", analytics: "Episode analytics", log: "Tool calls" },
 };
 
-export default function CallDrawer({ task, env, envState, focus, onClose, onPrev, onNext }) {
+export default function CallDrawer({ task, env, envState, focus, focusEvalName, onClose, onPrev, onNext }) {
   /* Opened from a diagnosis that named a step, so open on the trajectory with
      that step lit rather than on the transcript with the reader hunting. */
   const [pane, setPane] = useState(focus ? "graph" : "transcript");
-  const [side, setSide] = useState("analytics");
+  const [side, setSide] = useState(focusEvalName ? "evals" : "analytics");
+  /* Same row shape the voice drawer feeds EvalsTabView, so both drawers show
+     the explanation + error localization identically. */
+  const evalRows = useMemo(() => (task.evalResults || []).map((r) => {
+    const loc = localizeEval(task, r);
+    return {
+      id: r.id,
+      eval_name: r.name,
+      score: Math.round((r.score ?? 0) * 100),
+      passed: !!r.passed,
+      explanation: r.reason,
+      ...(loc ? {
+        error_analysis: loc.error_analysis,
+        error_localizer_status: loc.error_localizer_status,
+        selected_input_key: loc.selected_input_key,
+        datapoint: {
+          selected_input_key: loc.selected_input_key,
+          input_data: loc.input_data,
+          input_types: loc.input_types,
+        },
+      } : {}),
+    };
+  }), [task]);
   const [roleFilter, setRoleFilter] = useState("all");
   const [query, setQuery] = useState("");
 
@@ -471,27 +495,12 @@ export default function CallDrawer({ task, env, envState, focus, onClose, onPrev
             )}
 
             {side === "evals" && (
-              <Stack>
-                {(task.evalResults || []).map((r) => (
-                  <Stack
-                    key={r.id} direction="row" spacing={1.5} alignItems="flex-start"
-                    sx={{ px: 2, py: 1.5, borderBottom: "1px solid", borderColor: "divider" }}
-                  >
-                    <Iconify
-                      icon={r.passed ? "solar:check-circle-bold" : "solar:close-circle-bold"}
-                      width={15}
-                      sx={{ color: r.passed ? "#16A34A" : "#DC2626", flexShrink: 0, mt: "1px" }}
-                    />
-                    <Box flex={1} minWidth={0}>
-                      <Typography sx={{ typography: "s2", fontWeight: 600 }}>{r.name}</Typography>
-                      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{r.reason}</Typography>
-                    </Box>
-                    <Typography sx={{ typography: "s2", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-                      {Math.round(r.score * 100)}
-                    </Typography>
-                  </Stack>
-                ))}
-              </Stack>
+              <EvalsTabView
+                evals={evalRows}
+                emptyMessage="No evaluations for this run"
+                showSpanColumn={false}
+                focusEvalName={focusEvalName}
+              />
             )}
 
             {side === "messages" && (
@@ -521,6 +530,7 @@ export default function CallDrawer({ task, env, envState, focus, onClose, onPrev
 
 CallDrawer.propTypes = {
   task: PropTypes.object, env: PropTypes.object, envState: PropTypes.object, focus: PropTypes.string,
+  focusEvalName: PropTypes.string,
   onClose: PropTypes.func, onPrev: PropTypes.func, onNext: PropTypes.func,
 };
 

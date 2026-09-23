@@ -52,8 +52,10 @@ const VoiceRightPanel = ({
   onAction,
   hiddenActionIds = [],
   hideAnnotationTab,
+  initialTab,
+  focusEvalName,
 }) => {
-  const [currentTab, setCurrentTab] = useState(TABS.ANALYTICS);
+  const [currentTab, setCurrentTab] = useState(initialTab || TABS.ANALYTICS);
   const isSimulate = data?.module === "simulate";
   // Prefer the conversation root span (where voice-call attributes/raw_log
   // live). `trace.observation_spans.all()` is returned without a guaranteed
@@ -261,6 +263,7 @@ const VoiceRightPanel = ({
         score_label: scoreLabel,
         score_items: scoreItems,
         explanation: e?.reason || e?.explanation || e?.skipped_reason,
+        ...(typeof e?.passed === "boolean" ? { passed: e.passed } : {}),
         error: e?.error === true,
         skipped: e?.skipped === true || e?.status === "skipped",
         // Lifecycle status (pending/running/skipped) so EvalsTabView renders a
@@ -413,6 +416,7 @@ const VoiceRightPanel = ({
               evals={normalizedEvals}
               emptyMessage="No evaluations for this call"
               showSpanColumn={false}
+              focusEvalName={focusEvalName}
               onFixWithFalcon={({ level, ev, failingEvals, allEvals }) => {
                 const projectId = data?.project_id;
                 const callId = data?.id;
@@ -519,6 +523,9 @@ const VoiceRightPanel = ({
 };
 
 VoiceRightPanel.propTypes = {
+  /* Tab to open on, e.g. "evaluations"; defaults to Analytics. */
+  initialTab: PropTypes.string,
+  focusEvalName: PropTypes.string,
   data: PropTypes.object.isRequired,
   onCompareBaseline: PropTypes.func,
   onAction: PropTypes.func,

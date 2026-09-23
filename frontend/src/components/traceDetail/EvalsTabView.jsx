@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Chip, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
@@ -81,6 +81,8 @@ export function collectAllEvalsFromEntry(entry) {
 // to the textual label so we still hide Fix on those. Anything else (null
 // score, arbitrary label) is treated as not-passed and keeps the button.
 const isPassedEval = (ev) => {
+  // An explicit verdict (e.g. a threshold-based eval) beats the 50% heuristic.
+  if (typeof ev?.passed === "boolean") return ev.passed;
   if (ev?.score != null) return ev.score >= 50;
   const rawLabel = (ev?.score_label || "").trim();
   const numericLabel = parseFloat(rawLabel.replace(/%$/, ""));
@@ -118,8 +120,13 @@ const EvalTableRow = ({
   onSelectSpan,
   showSpanColumn,
   onFixWithFalcon,
+  focused = false,
 }) => {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(focused);
+  const rowRef = useRef(null);
+  useEffect(() => {
+    if (focused) rowRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [focused]);
   const isSkipped = ev?.skipped === true;
   const hasError = ev?.error === true && !isSkipped;
   // Every non-score state (queued / evaluating / skipped / errored) renders
@@ -140,7 +147,9 @@ const EvalTableRow = ({
           bg: (theme) => alpha(theme.palette.error.main, 0.08),
           text: "error.main",
         }
-      : scoreColor(ev.score);
+      : ev?.passed === false
+        ? scoreColor(0)
+        : scoreColor(ev.score);
   const evalName = ev.eval_name || ev.eval_config_id || "Eval";
   const explanation = ev.explanation || ev.eval_explanation;
   // Pass/Fail evals
@@ -191,6 +200,7 @@ const EvalTableRow = ({
   return (
     <>
       <Box
+        ref={rowRef}
         sx={{
           display: "flex",
           alignItems: "center",
@@ -438,6 +448,7 @@ EvalTableRow.propTypes = {
   onSelectSpan: PropTypes.func,
   showSpanColumn: PropTypes.bool,
   onFixWithFalcon: PropTypes.func,
+  focused: PropTypes.bool,
 };
 
 /**
@@ -452,16 +463,17 @@ const EvalsTabView = ({
   emptyMessage,
   showSpanColumn = true,
   onFixWithFalcon,
+  focusEvalName,
 }) => {
   const [search, setSearch] = useState("");
   const list = useMemo(() => (Array.isArray(evals) ? evals : []), [evals]);
 
   const totalPass = useMemo(
-    () => list.filter((e) => e.score != null && e.score >= 50).length,
+    () => list.filter((e) => (typeof e.passed === "boolean" ? e.passed : e.score != null && e.score >= 50)).length,
     [list],
   );
   const totalFail = useMemo(
-    () => list.filter((e) => e.score != null && e.score < 50).length,
+    () => list.filter((e) => (typeof e.passed === "boolean" ? !e.passed : e.score != null && e.score < 50)).length,
     [list],
   );
   const passRate =
@@ -757,6 +769,7 @@ const EvalsTabView = ({
             onSelectSpan={onSelectSpan}
             showSpanColumn={showSpanColumn}
             onFixWithFalcon={onFixWithFalcon}
+            focused={!!focusEvalName && ev.eval_name === focusEvalName}
           />
         ))}
       </Box>
@@ -770,6 +783,8 @@ EvalsTabView.propTypes = {
   emptyMessage: PropTypes.string,
   showSpanColumn: PropTypes.bool,
   onFixWithFalcon: PropTypes.func,
+  /* Opens this eval's row expanded and scrolls to it. */
+  focusEvalName: PropTypes.string,
 };
 
 export default EvalsTabView;

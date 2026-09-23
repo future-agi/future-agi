@@ -71,6 +71,8 @@ const VoiceDetailDrawerV2 = ({
   embedded = false,
   hiddenActionIds = [],
   hideAnnotationTab = false,
+  initialTab,
+  focusEvalName,
 }) => {
   const queryClient = useQueryClient();
   const { observeId } = useParams();
@@ -503,6 +505,8 @@ const VoiceDetailDrawerV2 = ({
                 onAction={handleVoiceAction}
                 hiddenActionIds={hiddenActionIds}
                 hideAnnotationTab={hideAnnotationTab}
+                initialTab={initialTab}
+                focusEvalName={focusEvalName}
               />
             </Box>
           </>
@@ -625,6 +629,8 @@ VoiceDetailDrawerV2.propTypes = {
   embedded: PropTypes.bool,
   hiddenActionIds: PropTypes.arrayOf(PropTypes.string),
   hideAnnotationTab: PropTypes.bool,
+  initialTab: PropTypes.string,
+  focusEvalName: PropTypes.string,
 };
 
 export default VoiceDetailDrawerV2;

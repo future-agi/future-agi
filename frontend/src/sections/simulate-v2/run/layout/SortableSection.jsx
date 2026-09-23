@@ -12,7 +12,7 @@ import Iconify from "src/components/iconify";
  * the drag surface; the widgets inside stay their own drag sources
  * for within/across-section widget moves.
  */
-export default function SortableSection({ sectionId, label, children }) {
+export default function SortableSection({ sectionId, label, hint, children }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: `section:${sectionId}`,
     data: { kind: "section", sectionId },
@@ -62,6 +62,11 @@ export default function SortableSection({ sectionId, label, children }) {
             {label}
           </Typography>
         </Stack>
+        {hint && (
+          <Typography sx={{ typography: "s2", color: "text.subtitle", mt: 0.25, pl: "26px" }}>
+            {hint}
+          </Typography>
+        )}
       </Box>
       {children}
     </Box>
@@ -70,5 +75,6 @@ export default function SortableSection({ sectionId, label, children }) {
 SortableSection.propTypes = {
   sectionId: PropTypes.string.isRequired,
   label: PropTypes.node,
+  hint: PropTypes.node,
   children: PropTypes.node,
 };

@@ -22,8 +22,10 @@
 export const SECTIONS = [
   { id: "breakdowns",         label: "Breakdowns",        columns: 4 },
   { id: "evaluations",        label: "Evaluations",       columns: 2 },
+  { id: "csat",               label: "CSAT and provider scores", hint: "Scores the run already produced — no new cost.", columns: 2 },
   { id: "voice",              label: "Voice latency SLOs", columns: 2 },
-  { id: "trends",             label: "Trends",            columns: 2 },
+  /* id stays "trends" so saved layouts keep their placements. */
+  { id: "trends",             label: "Latency",           columns: 2 },
   { id: "distribution",       label: "Distribution",      columns: 2 },
   { id: "failure_analysis",   label: "Failure analysis",  columns: 2 },
   { id: "tools",              label: "Tools",             columns: 2 },
@@ -62,14 +64,16 @@ export const PANELS = [
   { id: "sentiment_donut",     section: "breakdowns", title: "User sentiment",               defaultShown: true, defaultSpan: 1, compatibleCharts: CHARTS.DONUT_LIKE },
   { id: "disconnection_donut", section: "breakdowns", title: "Disconnection reason",         defaultShown: true, defaultSpan: 1, compatibleCharts: CHARTS.DONUT_LIKE },
 
-  // ─── Trends ────────────────────────────────────────────────────
+  // ─── Latency (section id: trends) ──────────────────────────────
   { id: "dual_line_over_time", section: "trends", title: "Task latency",                      defaultShown: true, defaultSpan: 1, compatibleCharts: CHARTS.TREND },
   { id: "latency_percentiles", section: "trends", title: "Latency percentiles",               defaultShown: true, defaultSpan: 1, compatibleCharts: ["percentile_tiles", "bar", "bignumber"] },
+  { id: "agent_response_time", section: "trends", title: "Agent response time per call",      defaultShown: true, defaultSpan: 2, compatibleCharts: ["bar", "table"] },
+
+  // ─── CSAT and provider scores ──────────────────────────────────
+  { id: "csat_distribution",   section: "csat",   title: "CSAT distribution (0–10)",          defaultShown: true, defaultSpan: 2, compatibleCharts: ["bar", "table"] },
 
   // ─── Distribution ──────────────────────────────────────────────
   { id: "distribution_summary", section: "distribution", title: "Distribution summary",       defaultShown: true, defaultSpan: 2, compatibleCharts: ["percentile_tiles", "table", "bar"] },
-  { id: "duration_by_bucket",   section: "distribution", title: "Avg duration by complexity", defaultShown: true, defaultSpan: 1, compatibleCharts: CHARTS.DISTRIBUTION },
-  { id: "turn_bars",            section: "distribution", title: "Pass / fail by conversation length", defaultShown: true, defaultSpan: 1, compatibleCharts: ["stacked_bar", "bar", "line"] },
   { id: "attribution",          section: "distribution", title: "Failure attribution",        defaultShown: true, defaultSpan: 2, compatibleCharts: CHARTS.ATTRIBUTION },
 
   // ─── Failure analysis ──────────────────────────────────────────
@@ -173,10 +177,6 @@ export function snapshotAsCustom(id) {
       return { ...base, chart: "bignumber", metric: "avg_latency", groupBy: null };
     case "distribution_summary":
       return { ...base, chart: "table", metric: "avg_latency", groupBy: "use_case", limit: 10 };
-    case "duration_by_bucket":
-      return { ...base, chart: "bar", metric: "avg_latency", groupBy: "turn_bucket" };
-    case "turn_bars":
-      return { ...base, chart: "stacked_bar", metric: "count", groupBy: "turns", subGroupBy: "outcome_binary" };
     case "attribution":
       return { ...base, chart: "donut", metric: "count", groupBy: "attribution" };
     case "use_case_risk_list":

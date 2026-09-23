@@ -9,6 +9,7 @@ import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
 import AudioErrorCard from "src/components/custom-audio/AudioErrorCard";
+import ConversationErrorCard from "./ConversationErrorCard";
 import SkippedLocalizationBanner from "src/sections/common/SkippedLocalizationBanner";
 import { canonicalEntries } from "src/utils/utils";
 
@@ -214,6 +215,11 @@ const EvalErrorLocalization = ({
       const isAudioLocalization = entries.some(([, value]) =>
         (Array.isArray(value) ? value : []).some((e) => e?.orgSegment),
       );
+      // Conversation localization (segments carry the flagged `turn`) reads
+      // as exchanges, not clipped spans of one flattened text field.
+      const conversationSegments = entries.flatMap(([, value]) =>
+        (Array.isArray(value) ? value : []).filter((e) => e?.turn),
+      );
       return (
         <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
           <Typography
@@ -228,7 +234,9 @@ const EvalErrorLocalization = ({
           >
             Possible Error
           </Typography>
-          {isAudioLocalization ? (
+          {conversationSegments.length > 0 ? (
+            <ConversationErrorCard segments={conversationSegments} />
+          ) : isAudioLocalization ? (
             <AudioErrorCard
               valueInfos={{ errorAnalysis: analysis }}
               column={selectedInputKey || "input"}

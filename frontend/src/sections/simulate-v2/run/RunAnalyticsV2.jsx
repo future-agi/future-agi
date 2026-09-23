@@ -1297,6 +1297,146 @@ const LatencyPercentilesPanel = memo(function LatencyPercentilesPanel({ tasks })
 });
 LatencyPercentilesPanel.propTypes = { tasks: PropTypes.array };
 
+/* Shared by the two histogram panels below: small right-aligned source tag. */
+function SourceTag({ children }) {
+  return (
+    /* mr clears the widget's ⋯ menu, which sits over the panel's top-right corner. */
+    <Typography sx={{ typography: "s3", fontWeight: 600, color: "text.secondary", whiteSpace: "nowrap", pt: 0.25, mr: 4 }}>
+      {children}
+    </Typography>
+  );
+}
+SourceTag.propTypes = { children: PropTypes.node };
+
+const HIST_PURPLE = "#7857FC";
+const HIST_RED = "#DC2626";
+const fmtMs = (v) => (v >= 1000 ? `${(v / 1000).toFixed(2)}s` : `${Math.round(v)}ms`);
+
+function histogramOptions(theme, { categories, colors, xTitle, yTitle = "calls", tooltip, columnWidth = "92%" }) {
+  return {
+    chart: { toolbar: { show: false }, animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily },
+    theme: { mode: theme.palette.mode },
+    colors,
+    plotOptions: { bar: { distributed: true, columnWidth, borderRadius: 2, borderRadiusApplication: "end" } },
+    dataLabels: { enabled: false },
+    legend: { show: false },
+    xaxis: {
+      categories,
+      axisTicks: { show: true, color: theme.palette.divider },
+      axisBorder: { show: true, color: theme.palette.divider },
+      labels: { style: { colors: theme.palette.text.secondary, fontSize: "11px" } },
+      title: { text: xTitle, style: { color: theme.palette.text.secondary, fontSize: "12px", fontWeight: 500 } },
+    },
+    yaxis: {
+      forceNiceScale: true, min: 0,
+      labels: { style: { colors: theme.palette.text.secondary, fontSize: "11px" }, formatter: (v) => `${Math.round(v)}` },
+      title: { text: yTitle, style: { color: theme.palette.text.secondary, fontSize: "12px", fontWeight: 500 } },
+    },
+    grid: { borderColor: theme.palette.divider, strokeDashArray: 4, xaxis: { lines: { show: false } }, padding: { left: 8, right: 8 } },
+    tooltip: { theme: theme.palette.mode, y: { formatter: tooltip } },
+  };
+}
+
+/**
+ * Agent response time per call — histogram of each call's average agent
+ * response time (the same per-call figure as the KPI strip's Agent Latency
+ * and the Test runs Latency column). Buckets at/over the 550ms target — the
+ * table's own red threshold — are drawn red.
+ */
+const RESPONSE_TARGET_MS = 550;
+const RESPONSE_BUCKET_MS = 25;
+const AgentResponseTimePanel = memo(function AgentResponseTimePanel({ tasks }) {
+  const theme = useTheme();
+  const { buckets, overPct, p50, p95 } = useMemo(() => {
+    const values = (tasks || []).map((t) => agentLatencyOf(t)).filter((v) => v > 0);
+    if (!values.length) return { buckets: [], overPct: 0, p50: 0, p95: 0 };
+    const sorted = [...values].sort((a, b) => a - b);
+    const lo = Math.max(0, Math.floor(sorted[0] / RESPONSE_BUCKET_MS) * RESPONSE_BUCKET_MS - RESPONSE_BUCKET_MS);
+    const hi = Math.ceil((sorted[sorted.length - 1] + 1) / RESPONSE_BUCKET_MS) * RESPONSE_BUCKET_MS + RESPONSE_BUCKET_MS;
+    const list = [];
+    for (let at = lo; at < hi; at += RESPONSE_BUCKET_MS) {
+      list.push({ at, count: values.filter((v) => v >= at && v < at + RESPONSE_BUCKET_MS).length });
+    }
+    return {
+      buckets: list,
+      overPct: pct(values.filter((v) => v >= RESPONSE_TARGET_MS).length, values.length),
+      p50: percentile(sorted, 50),
+      p95: percentile(sorted, 95),
+    };
+  }, [tasks]);
+  if (!buckets.length) return null;
+  const exportRows = buckets.map((b) => ({ from_ms: b.at, to_ms: b.at + RESPONSE_BUCKET_MS, calls: b.count }));
+  return (
+    <Panel
+      title="Agent response time per call"
+      action={<SourceTag>Platform, transcript timing</SourceTag>}
+      exportRows={exportRows}
+      info={`Each call's average time for the agent to start replying after the caller stops. Red buckets are at or over the ${RESPONSE_TARGET_MS}ms target.`}
+      footer={`${overPct}% of calls were over the ${RESPONSE_TARGET_MS}ms target. p50 ${fmtMs(p50)}, p95 ${fmtMs(p95)}.`}
+    >
+      <Box sx={{ px: 1.5, pb: 1 }}>
+        <ReactApexChart
+          type="bar" height={260}
+          series={[{ name: "Calls", data: buckets.map((b) => b.count) }]}
+          options={histogramOptions(theme, {
+            categories: buckets.map((b) => fmtMs(b.at)),
+            colors: buckets.map((b) => (b.at >= RESPONSE_TARGET_MS ? HIST_RED : HIST_PURPLE)),
+            xTitle: "average response time per call",
+            columnWidth: "80%",
+            tooltip: (v) => `${v} call${v === 1 ? "" : "s"}`,
+          })}
+        />
+      </Box>
+    </Panel>
+  );
+});
+AgentResponseTimePanel.propTypes = { tasks: PropTypes.array };
+
+/**
+ * CSAT distribution — calls per CSAT score (the same per-call CSAT as the
+ * KPI strip and the Test runs CSAT column). Scores at or under 4, the
+ * table's own red threshold, are drawn red. The footer checks the provider's
+ * own success judgement (did the call end with the task complete) against
+ * whether every eval on the call passed.
+ */
+const CSAT_BAD_AT = 4;
+const CsatDistributionPanel = memo(function CsatDistributionPanel({ tasks }) {
+  const theme = useTheme();
+  const { counts, agreePct } = useMemo(() => {
+    const list = tasks || [];
+    const scores = list.map((t) => csatOf(t));
+    /* Always the full 0–10 scale, so empty high scores read as a gap. */
+    const byScore = Array.from({ length: 11 }, (_, s) => scores.filter((v) => v === s).length);
+    const judged = list.filter((t) => (t.evalResults || []).length > 0);
+    const agree = judged.filter((t) => (endReasonOf(t) === "complete") === t.evalResults.every((r) => r.passed)).length;
+    return { counts: byScore, agreePct: pct(agree, judged.length) };
+  }, [tasks]);
+  const exportRows = counts.map((c, s) => ({ csat: s, calls: c }));
+  return (
+    <Panel
+      title="CSAT distribution (0–10)"
+      action={<SourceTag>Existing score</SourceTag>}
+      exportRows={exportRows}
+      info={`How many calls landed on each CSAT score. Red scores are ${CSAT_BAD_AT} or below.`}
+      footer={`The provider's own success judgement (its analysis) agrees with your evals on ${agreePct}% of calls.`}
+    >
+      <Box sx={{ px: 1.5, pb: 1 }}>
+        <ReactApexChart
+          type="bar" height={260}
+          series={[{ name: "Calls", data: counts }]}
+          options={histogramOptions(theme, {
+            categories: counts.map((_, s) => String(s)),
+            colors: counts.map((_, s) => (s <= CSAT_BAD_AT ? HIST_RED : HIST_PURPLE)),
+            xTitle: "CSAT score",
+            tooltip: (v) => `${v} call${v === 1 ? "" : "s"}`,
+          })}
+        />
+      </Box>
+    </Panel>
+  );
+});
+CsatDistributionPanel.propTypes = { tasks: PropTypes.array };
+
 /**
  * Voice cost breakdown — LLM / STT / TTS / Transport split per Vapi's
  * dashboard shape. Voice envs have a real pipeline cost story; Vapi
@@ -1815,57 +1955,6 @@ const TaskVolumeChart = memo(function TaskVolumeChart({ tasks }) {
 });
 TaskVolumeChart.propTypes = { tasks: PropTypes.array };
 
-/* Avg duration per time bucket — mirrors Bland's "Avg Duration" bar
-   chart. Buckets tasks by turn count (proxy for complexity) with
-   average duration per bucket. */
-const DurationByBucketChart = memo(function DurationByBucketChart({ tasks }) {
-  const theme = useTheme();
-  const { categories, series } = useMemo(() => {
-    const buckets = new Map();
-    tasks.forEach((t) => {
-      const n = t.steps?.length || 0;
-      if (!n || !t.durationMs) return;
-      const row = buckets.get(n) || { sum: 0, count: 0 };
-      row.sum += t.durationMs; row.count += 1;
-      buckets.set(n, row);
-    });
-    const keys = [...buckets.keys()].sort((a, b) => a - b);
-    return {
-      categories: keys.map((k) => `${k}t`),
-      series: [{ name: "Avg duration", data: keys.map((k) => Math.round((buckets.get(k).sum / buckets.get(k).count) / 1000 * 10) / 10) }],
-    };
-  }, [tasks]);
-
-  return (
-    <Panel
-      title="Avg duration by complexity"
-      subtitle="Seconds per task, bucketed by turn count"
-      info="Cross-checks whether long tasks are actually complex or just slow. A steep left-to-right rise means each extra turn genuinely costs more thinking time; a flat line with a spike at the end means the agent hangs on specific edge cases regardless of complexity."
-    >
-      <Box sx={{ px: 1.5, py: 1.5 }}>
-        <ReactApexChart
-          type="bar" height={260}
-          series={series}
-          options={{
-            chart: { toolbar: { show: false }, animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily },
-            theme: { mode: theme.palette.mode },
-            plotOptions: { bar: { columnWidth: "56%", borderRadius: 2 } },
-            dataLabels: { enabled: false },
-            stroke: { show: false },
-            fill: { type: "solid", opacity: 0.9 },
-            colors: ["#7857FC"],
-            xaxis: { categories, axisBorder: { show: false }, axisTicks: { show: false }, labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" } } },
-            yaxis: { labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, formatter: (v) => `${v}s` } },
-            grid: { borderColor: theme.palette.divider, strokeDashArray: 4, padding: { left: 8, right: 8, top: -6, bottom: -6 } },
-            tooltip: { y: { formatter: (v) => `${v} seconds avg` } },
-          }}
-        />
-      </Box>
-    </Panel>
-  );
-});
-DurationByBucketChart.propTypes = { tasks: PropTypes.array };
-
 /**
  * Hero KPI row — Vercel Analytics / Datadog shape.
  *
@@ -2251,81 +2340,6 @@ HorizontalBarChart.propTypes = {
   emptyText: PropTypes.string, colorFn: PropTypes.func, height: PropTypes.number,
   valueFormatter: PropTypes.func,
 };
-
-/* ── turns × outcome bars ──────────────────────────────────────────── */
-
-/* A scatter over (turns, duration) collapses at the same x for every
-   task with the same turn count, so a dozen dots pile onto one column
-   and become unreadable. This replaces it with a bar chart per turn
-   bucket, stacked by outcome — same "does complexity correlate with
-   failure?" question, but every task is visible and countable. */
-const TurnBars = memo(function TurnBars({ tasks }) {
-  const theme = useTheme();
-  const { categories, series } = useMemo(() => {
-    if (!tasks?.length) return { categories: [], series: [] };
-    const counts = new Map(); // turnCount → { passed, failed }
-    tasks.forEach((t) => {
-      const n = t.steps?.length || 0;
-      if (!n) return;
-      const row = counts.get(n) || { passed: 0, failed: 0 };
-      if (t.status === "passed") row.passed += 1;
-      else row.failed += 1;
-      counts.set(n, row);
-    });
-    const turns = [...counts.keys()].sort((a, b) => a - b);
-    return {
-      categories: turns.map((n) => `${n}`),
-      series: [
-        { name: "Passed", data: turns.map((n) => counts.get(n).passed), color: CHART_GREEN },
-        { name: "Failed", data: turns.map((n) => counts.get(n).failed), color: CHART_RED },
-      ],
-    };
-  }, [tasks]);
-
-  return (
-    <PanelChart
-      title="Pass / fail by conversation length"
-      subtitle="Each bar groups tasks by how many turns they took — green passed, red failed. Growing red as you move right means the agent breaks down on longer conversations."
-      info="Groups every task by how many turns it took, then stacks the pass/fail split inside each bar. Short-turn failures usually mean the agent gave up too fast; long-turn failures usually mean it lost the thread. The shape of the red segment across bars tells you which pattern you've got."
-    >
-      <ReactApexChart
-        type="bar" height={260}
-        series={series}
-        options={{
-          chart: {
-            type: "bar", stacked: true, toolbar: { show: false },
-            animations: { enabled: false }, background: "transparent",
-            fontFamily: theme.typography.fontFamily,
-          },
-          theme: { mode: theme.palette.mode },
-          plotOptions: { bar: { columnWidth: "68%", borderRadius: 2 } },
-          dataLabels: { enabled: false },
-          legend: { show: false },
-          stroke: { show: false },
-          fill: { type: "solid", opacity: 0.9 },
-          xaxis: {
-            categories,
-            title: { text: "turns", style: { color: theme.palette.text.subtitle, fontSize: "10px", fontWeight: 400 } },
-            axisBorder: { show: false }, axisTicks: { show: false },
-            labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, rotate: 0 },
-          },
-          yaxis: {
-            title: { text: "tasks", style: { color: theme.palette.text.subtitle, fontSize: "10px", fontWeight: 400 } },
-            labels: { style: { colors: theme.palette.text.secondary, fontSize: "10px" }, formatter: (v) => `${Math.round(v)}` },
-          },
-          grid: { borderColor: theme.palette.divider, strokeDashArray: 4, padding: { left: 0, right: 0, top: -6, bottom: -6 } },
-          colors: [CHART_GREEN, CHART_RED],
-          tooltip: {
-            shared: true, intersect: false,
-            x: { formatter: (v) => `${v} turns` },
-            y: { formatter: (v) => `${v} tasks` },
-          },
-        }}
-      />
-    </PanelChart>
-  );
-});
-TurnBars.propTypes = { tasks: PropTypes.array };
 
 /* ── evaluations table ─────────────────────────────────────────────── */
 
@@ -3370,7 +3384,7 @@ RankedList.propTypes = { rows: PropTypes.array, emptyText: PropTypes.string };
    Just a clean surface with a plain title + subtitle header and lots
    of padding. Deliberately restrained to stop reading as "AI dashboard
    template". Rule from memory: never edge-stripe a rounded card. */
-function Panel({ title, subtitle, children, minHeight, action, exportRows, exportFilename, info }) {
+function Panel({ title, subtitle, children, minHeight, action, exportRows, exportFilename, info, footer }) {
   const hasExport = Array.isArray(exportRows) && exportRows.length > 0;
   const onExport = () => {
     const safe = (title || "panel").toString().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -3425,6 +3439,14 @@ function Panel({ title, subtitle, children, minHeight, action, exportRows, expor
       <Box sx={{ flex: 1, minHeight: 0 }}>
         {children}
       </Box>
+      {footer && (
+        <Box sx={{ px: 3, py: 1.5, borderTop: "1px solid", borderColor: "divider" }}>
+          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+            <Box component="span" sx={{ fontWeight: 700, color: "text.primary" }}>Read: </Box>
+            {footer}
+          </Typography>
+        </Box>
+      )}
     </Box>
   );
 }
@@ -3433,6 +3455,7 @@ Panel.propTypes = {
   action: PropTypes.node,
   exportRows: PropTypes.array, exportFilename: PropTypes.string,
   info: PropTypes.node,
+  footer: PropTypes.node,
 };
 
 /* Small info glyph rendered next to a Panel title. Hovering surfaces
@@ -4102,7 +4125,7 @@ function LayoutBody({ layout, renderPanel, renderCustomPanel, openEditor }) {
               const ids = bySection.get(section.id);
               if (!ids || ids.length === 0) return null;
               return (
-                <SortableSection key={section.id} sectionId={section.id} label={section.label}>
+                <SortableSection key={section.id} sectionId={section.id} label={section.label} hint={section.hint}>
                   <LayoutSection
                     section={section}
                     ids={ids}
@@ -4387,9 +4410,9 @@ function renderBuiltinPanel(id, ctx) {
     case "disconnection_donut":  return <DisconnectionDonut tasks={tasks} />;
     case "dual_line_over_time":  return <TaskLatencyOverTime tasks={tasks} />;
     case "latency_percentiles":  return <LatencyPercentilesPanel tasks={tasks} />;
+    case "agent_response_time":  return <AgentResponseTimePanel tasks={tasks} />;
+    case "csat_distribution":    return <CsatDistributionPanel tasks={tasks} />;
     case "distribution_summary": return <DistributionSummary tasks={tasks} env={env} />;
-    case "duration_by_bucket":   return <DurationByBucketChart tasks={tasks} />;
-    case "turn_bars":            return <TurnBars tasks={tasks} />;
     case "attribution":          return <AttributionTable tasks={tasks} />;
     case "use_case_risk_list":   return <UseCaseRiskList tasks={tasks} />;
     case "evals_table":          return <EvalsTable tasks={tasks} evals={evals} />;

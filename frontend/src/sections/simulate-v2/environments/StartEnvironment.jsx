@@ -490,6 +490,7 @@ function useBuildEnvironment() {
 
 function PanelSourceRepo() {
   const build = useBuildEnvironment();
+  const [scenarioCount, setScenarioCount] = useState(DEFAULT_SCENARIOS);
   const [provider, setProvider] = useState("github");
   const [repo, setRepo] = useState("");
   const [branch, setBranch] = useState("main");
@@ -528,11 +529,13 @@ function PanelSourceRepo() {
         />
       </Stack>
       <EnvironmentValues envText={envText} onEnvText={setEnvText} egress={egress} onEgress={setEgress} />
+      <ScenarioCountRow value={scenarioCount} onChange={setScenarioCount} />
       <ContinueRow
         disabled={!canGo}
         hint="Add a repository"
         onClick={() => build({
           kind: "repo",
+          scenarioCount: scenarioCountOf(scenarioCount),
           provider,
           value: repo.trim(),
           ref: branch.trim() || "main",
@@ -547,6 +550,7 @@ function PanelSourceRepo() {
 
 function PanelRunningAgent() {
   const build = useBuildEnvironment();
+  const [scenarioCount, setScenarioCount] = useState(DEFAULT_SCENARIOS);
   const [endpoint, setEndpoint] = useState("");
   const [token, setToken] = useState("");
   const [showToken, setShowToken] = useState(false);
@@ -641,11 +645,13 @@ function PanelRunningAgent() {
           </Stack>
         )}
       </Box>
+      <ScenarioCountRow value={scenarioCount} onChange={setScenarioCount} />
       <ContinueRow
         disabled={!canGo}
         hint="Add an endpoint"
         onClick={() => build({
           kind: "endpoint",
+          scenarioCount: scenarioCountOf(scenarioCount),
           value: endpoint.trim(),
           token: token.trim() || null,
           agentType,
@@ -659,6 +665,7 @@ function PanelRunningAgent() {
 
 function PanelHostedPlatform() {
   const build = useBuildEnvironment();
+  const [scenarioCount, setScenarioCount] = useState(DEFAULT_SCENARIOS);
   /* Type gate first — the platform roster only makes sense once we know
      what kind of agent is being connected. Default to voice because
      that's what the codebase actually integrates with today. */
@@ -802,6 +809,7 @@ function PanelHostedPlatform() {
           />
         </>
       )}
+      <ScenarioCountRow value={scenarioCount} onChange={setScenarioCount} />
       <ContinueRow
         disabled={!canGo}
         hint={
@@ -812,6 +820,7 @@ function PanelHostedPlatform() {
         }
         onClick={() => build({
           kind: "platform",
+          scenarioCount: scenarioCountOf(scenarioCount),
           agentType,
           provider: chosen?.id,
           ...(isOther
@@ -843,6 +852,7 @@ function PanelHostedPlatform() {
 
 function PanelMcpServer() {
   const build = useBuildEnvironment();
+  const [scenarioCount, setScenarioCount] = useState(DEFAULT_SCENARIOS);
   const [transport, setTransport] = useState("http");
   const [target, setTarget] = useState("");
   const [header, setHeader] = useState("");
@@ -870,11 +880,13 @@ function PanelMcpServer() {
           mono
         />
       )}
+      <ScenarioCountRow value={scenarioCount} onChange={setScenarioCount} />
       <ContinueRow
         disabled={!canGo}
         hint="Add the server"
         onClick={() => build({
           kind: "mcp",
+          scenarioCount: scenarioCountOf(scenarioCount),
           transport,
           value: target.trim(),
           header: header.trim() || null,
@@ -886,6 +898,7 @@ function PanelMcpServer() {
 
 function PanelCodeUpload() {
   const build = useBuildEnvironment();
+  const [scenarioCount, setScenarioCount] = useState(DEFAULT_SCENARIOS);
   const [files, setFiles] = useState([]);
   const [entry, setEntry] = useState("");
   const [envText, setEnvText] = useState("");
@@ -970,11 +983,13 @@ function PanelCodeUpload() {
         />
       )}
       <EnvironmentValues envText={envText} onEnvText={setEnvText} egress={egress} onEgress={setEgress} />
+      <ScenarioCountRow value={scenarioCount} onChange={setScenarioCount} />
       <ContinueRow
         disabled={!canGo}
         hint="Add at least one file"
         onClick={() => build({
           kind: "upload",
+          scenarioCount: scenarioCountOf(scenarioCount),
           entry: entry.trim(),
           files: files.map((f) => ({ name: f.name, size: f.size })),
           envText: envText.trim() || null,
@@ -1543,6 +1558,54 @@ ToggleRow.propTypes = {
   checked: PropTypes.bool, onChange: PropTypes.func,
   title: PropTypes.node, body: PropTypes.node,
 };
+
+/* How many scenarios the build generates — 10 unless changed; clearing the
+   field removes the cap. The body restates what will happen either way. */
+const MAX_SCENARIOS = 500;
+const DEFAULT_SCENARIOS = "10";
+
+function ScenarioCountRow({ value, onChange }) {
+  const n = Number(value) || 0;
+  const onInput = (raw) => {
+    const digits = raw.replace(/\D/g, "").replace(/^0+/, "").slice(0, 3);
+    onChange(digits && Number(digits) > MAX_SCENARIOS ? String(MAX_SCENARIOS) : digits);
+  };
+  return (
+    <Box sx={{ px: 1.75, py: 1.25, borderRadius: 1, border: "1px solid", borderColor: "divider" }}>
+      <Typography sx={{ typography: "s2", fontWeight: 700 }}>Scenarios to generate</Typography>
+      <Stack
+        direction={{ xs: "column", sm: "row" }}
+        alignItems={{ xs: "flex-start", sm: "center" }}
+        spacing={{ xs: 0.75, sm: 1.5 }}
+        sx={{ mt: 1 }}
+      >
+      <TextField
+        size="small"
+        value={value}
+        onChange={(e) => onInput(e.target.value)}
+        placeholder="e.g. 25"
+        inputProps={{ inputMode: "numeric", "aria-label": "Number of scenarios to generate" }}
+        InputProps={{
+          endAdornment: n ? (
+            <Typography sx={{ typography: "s3", color: "text.subtitle", ml: 0.5, whiteSpace: "nowrap" }}>
+              {n === 1 ? "scenario" : "scenarios"}
+            </Typography>
+          ) : null,
+        }}
+        sx={{ width: 150, flexShrink: 0, "& .MuiInputBase-input": { typography: "s2", fontVariantNumeric: "tabular-nums" } }}
+      />
+        <Typography sx={{ typography: "s3", color: "text.subtitle", minWidth: 0 }}>
+          {n
+            ? `We'll generate ${n} scenario${n === 1 ? "" : "s"}. Set any number up to ${MAX_SCENARIOS}, or clear it to generate as many as your agent needs.`
+            : `We'll generate as many as your agent's tools, rules and edge cases call for. Enter a number (up to ${MAX_SCENARIOS}) to cap it.`}
+        </Typography>
+      </Stack>
+    </Box>
+  );
+}
+ScenarioCountRow.propTypes = { value: PropTypes.string, onChange: PropTypes.func };
+
+const scenarioCountOf = (value) => (Number(value) > 0 ? Number(value) : null);
 
 /* Full country list from src/assets/data/countries. Ordering surfaces
    the `suggested` markets first (US, GB, IN, AU, DE, FR, …), then the

@@ -1,3 +1,5 @@
+import { localizeEval } from "./errorLocalization";
+
 /**
  * Shape a revamped-flow run task into the `data` object the real
  * observability voice drawer (`VoiceDetailDrawerV2`) reads.
@@ -223,7 +225,11 @@ export function taskToVoiceData(task, { env, voice = true } = {}) {
       name: r.name,
       score: r.score,
       value: r.passed ? "pass" : "fail",
+      passed: !!r.passed,
       reason: r.reason || "",
+      /* Failed evals carry their error localization, so the drawer's Evals
+         tab shows the same "Possible Error" card as datasets. */
+      ...(localizeEval(task, r) || {}),
     };
   });
 

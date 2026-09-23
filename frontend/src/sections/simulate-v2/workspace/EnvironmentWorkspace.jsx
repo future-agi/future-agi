@@ -420,6 +420,7 @@ export default function EnvironmentWorkspace() {
       patch: {
         scenarios: envState.scenarios || [],
         evals: envState.evals || [],
+        toolCallEval: envState.toolCallEval,
         scenarioSource: envState.scenarioSource,
         twinBacking: envState.twinBacking,
         agent: envState.agent,

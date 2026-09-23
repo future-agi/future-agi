@@ -46,6 +46,20 @@ import EnvVersionPin from "../workspace/EnvVersionPin";
  * out (this is a route, not a modal), and say what pointing at a source is
  * actually going to produce. Waiting is tolerable when you know what for.
  */
+/* Fit the derived pool to a requested count. Past the pool's size, the same
+   situations recur with a different caller persona, as a generator would. */
+function sizeToCount(pool, count) {
+  if (!count || !pool.length) return pool;
+  if (count <= pool.length) return pool.slice(0, count);
+  return Array.from({ length: count }, (_, i) => {
+    const base = pool[i % pool.length];
+    if (i < pool.length) return base;
+    const round = Math.floor(i / pool.length);
+    const persona = pool[(i * 7 + round) % pool.length]?.persona || base.persona;
+    return { ...base, id: `${base.id}~${round + 1}`, persona };
+  });
+}
+
 export default function BuildFromAgent() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -102,9 +116,11 @@ export default function BuildFromAgent() {
   /* Depth is a property of generation, so changing it regenerates the pool
      rather than just relabelling the environment. */
   const scenarios = useMemo(
-    // No cap: a fixed slice hid the very thing depth changes.
-    () => (env && done.includes("scenarios") ? generatedPool({ ...env, difficulty }) : []),
-    [env, done, difficulty],
+    // No cap unless the connect form asked for a count; then exactly that many.
+    () => (env && done.includes("scenarios")
+      ? sizeToCount(generatedPool({ ...env, difficulty }), source?.scenarioCount)
+      : []),
+    [env, done, difficulty, source?.scenarioCount],
   );
 
   useEffect(() => {
@@ -274,7 +290,11 @@ export default function BuildFromAgent() {
   };
 
   const runStage = (id) => {
-    const stage = builderRun(id, source);
+    /* The builder narrates the count this screen will actually produce. */
+    const draftCount = env
+      ? sizeToCount(generatedPool({ ...env, difficulty }), source?.scenarioCount).length
+      : undefined;
+    const stage = builderRun(id, { ...source, draftCount });
     play(stage.title, stage.steps, stage.chips, id);
   };
 

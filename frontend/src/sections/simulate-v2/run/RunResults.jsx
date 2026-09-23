@@ -129,6 +129,9 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
   });
   const [replaying, setReplaying] = useState(null);
   const [openTask, setOpenTask] = useState(null);
+  /* Eval the drawer opens on when a score cell was clicked — kept across
+     prev/next so stepping through calls stays on the same eval. */
+  const [evalFocus, setEvalFocus] = useState(null);
   /*
     Metric-driven drill-down filter set by clicking a bucket in the
     RunMetrics drill-down panel. Shape:
@@ -736,7 +739,8 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
                     setSelected((prev) =>
                       shown.every((t) => prev.has(t.id)) ? new Set() : new Set(shown.map((t) => t.id)))
                   }
-                  onOpen={setOpenTask}
+                  onOpen={(t) => { setEvalFocus(null); setOpenTask(t); }}
+                  onOpenEval={(t, r) => { setEvalFocus(r.name); setOpenTask(t); }}
                   onRerunEval={rerunEvalColumn}
                   onDeleteEval={deleteEvalColumn}
                   rescoringEvalId={rescoringEval}
@@ -823,7 +827,7 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
       />
 
       {(() => {
-        const closeTask = () => { setOpenTask(null); setFocusStep(null); };
+        const closeTask = () => { setOpenTask(null); setFocusStep(null); setEvalFocus(null); };
         const idx = openTask ? shown.findIndex((t) => t.id === openTask.id) : -1;
         const goPrev = idx > 0 ? () => setOpenTask(shown[idx - 1]) : undefined;
         const goNext = idx > -1 && idx < shown.length - 1 ? () => setOpenTask(shown[idx + 1]) : undefined;
@@ -853,8 +857,10 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
             >
               {openTask && (
                 <VoiceDetailDrawerV2
-                  key={openTask.id}
+                  key={`${openTask.id}-${evalFocus || ""}`}
                   data={taskToVoiceData(openTask, { env, voice: true })}
+                  initialTab={evalFocus ? "evaluations" : undefined}
+                  focusEvalName={evalFocus || undefined}
                   onClose={closeTask}
                   onPrev={goPrev}
                   onNext={goNext}
@@ -871,9 +877,10 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
           <SideDrawer open={!!openTask} onClose={closeTask} width={{ xs: "100%", md: 1080 }}>
             {openTask && (
               <CallDrawer
-                key={`${openTask.id}-${focusStep || ""}`}
+                key={`${openTask.id}-${focusStep || ""}-${evalFocus || ""}`}
                 task={openTask}
                 focus={focusStep || undefined}
+                focusEvalName={evalFocus || undefined}
                 env={env}
                 envState={envState}
                 patch={patch}

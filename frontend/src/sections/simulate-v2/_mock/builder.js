@@ -351,26 +351,33 @@ const STAGES = {
     chips: ["write the scenarios →", "what did you seed?"],
   }),
 
-  scenarios: () => ({
+  scenarios: (source) => {
+    /* A count set on the connect form is honoured exactly; with none the
+       builder drafts across the whole use-case range. */
+    const n = source?.scenarioCount || source?.draftCount || 8;
+    return ({
     title: "Proving scenarios",
     steps: [
-      think("One scenario per real use case, each with its own persona brief and sub-goals."),
-      tool("draft_scenarios", "8 drafted across the use-case range"),
+      think(source?.scenarioCount
+        ? `Drafting exactly ${n} — the number you asked for — spread across rules, traps, adversarial callers and edge cases.`
+        : "One scenario per real use case, each with its own persona brief and sub-goals."),
+      tool("draft_scenarios", `${n} drafted across the use-case range`),
       think("Three gates, all code, no model: ready, solvable, not vacuous."),
-      tool("gate · ready", "8 / 8 the world holds what the scenario presumes"),
-      tool("gate · solvable", "8 / 8 the reference solution passes the scenario's own checks"),
-      tool("gate · not vacuous", "7 / 8 running nothing must fail the checks"),
+      tool("gate · ready", `${n} / ${n} the world holds what the scenario presumes`),
+      tool("gate · solvable", `${n} / ${n} the reference solution passes the scenario's own checks`),
+      tool("gate · not vacuous", `${n - 1} / ${n} running nothing must fail the checks`),
       note(
         "One scenario failed the third gate and was rewritten, not kept: its identity check asserted " +
         "\"no modification happened before authentication\", which is trivially true when nothing happened. " +
         "A check that passes while the agent did nothing grades nothing while reporting a result.",
       ),
-      tool("gate · not vacuous", "8 / 8 after the rewrite"),
+      tool("gate · not vacuous", `${n} / ${n} after the rewrite`),
       file("scenarios/", "one folder each: scenario.json, setup.py, ready.py, checks/"),
-      note("8 of 8 kept. Only proved scenarios are ever run."),
+      note(`${n} of ${n} kept. Only proved scenarios are ever run.`),
     ],
     chips: ["use this environment →", "write 4 more edge cases"],
-  }),
+  });
+  },
 };
 
 const ASKS = [

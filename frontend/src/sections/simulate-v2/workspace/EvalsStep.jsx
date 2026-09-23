@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Box, Stack, Typography, Button, IconButton, Tooltip } from "@mui/material";
+import { Box, Stack, Typography, Button, IconButton, Tooltip, Switch } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import { SectionCard, EmptyState } from "../components/primitives";
@@ -139,6 +139,32 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
         )}
       </Stack>
 
+      {/* Tool-call evaluation — carried over from the legacy run setup. Tool
+          calls are read from the connected agent, so it needs one first. */}
+      <Stack
+        direction="row" alignItems="center" spacing={2}
+        sx={{ px: 2, py: 1.5, mb: 2, borderRadius: 1, border: "1px solid", borderColor: "divider" }}
+      >
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography sx={{ typography: "s1", fontWeight: 600 }}>Enable tool call evaluation</Typography>
+          <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}>
+            {envState?.agent
+              ? "Tool calling that happens during the calls will be evaluated — the right tool, with the right arguments, at the right time."
+              : "Connect your agent first — tool calls are read from it during the run."}
+          </Typography>
+        </Box>
+        <Tooltip arrow title={locked ? "Fork this environment to edit." : !envState?.agent ? "Connect an agent to evaluate its tool calls." : ""}>
+          <span>
+            <Switch
+              checked={!!envState?.toolCallEval && !!envState?.agent}
+              disabled={locked || !envState?.agent}
+              onChange={(e) => patch({ toolCallEval: e.target.checked })}
+              inputProps={{ "aria-label": "Enable tool call evaluation" }}
+            />
+          </span>
+        </Tooltip>
+      </Stack>
+
       {/* ── what will actually score the run ── */}
       <SectionCard
         title={`Added evaluations (${appliedEvals.length})`}
@@ -240,4 +266,6 @@ EvalsStep.propTypes = {
   envState: PropTypes.object.isRequired,
   patch: PropTypes.func.isRequired,
   onGo: PropTypes.func,
+  locked: PropTypes.bool,
+  onFork: PropTypes.func,
 };

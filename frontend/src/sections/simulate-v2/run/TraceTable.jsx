@@ -301,7 +301,7 @@ const GROUP_SORT_ORDER = {
 };
 
 export default function TraceTable({
-  tasks, evals, selected, onToggle, onToggleAll, onOpen,
+  tasks, evals, selected, onToggle, onToggleAll, onOpen, onOpenEval,
   groupBy = "useCase", columns, env, onRerunEval, onDeleteEval, rescoringEvalId,
 }) {
   /* Groups start collapsed. Lazy-primed with the group list once it resolves. */
@@ -551,7 +551,11 @@ export default function TraceTable({
         const r = t.evalResults?.find((x) => x.id === e.id);
         const rescoring = rescoringEvalId === e.id;
         return (
-          <TableCell key={e.id} sx={{ ...bodyCell, p: 0, position: "relative" }} onClick={() => onOpen(t)}>
+          <TableCell
+            key={e.id}
+            sx={{ ...bodyCell, p: 0, position: "relative" }}
+            onClick={() => (r && onOpenEval ? onOpenEval(t, r) : onOpen(t))}
+          >
             {rescoring ? (
               <Box sx={{ p: 2, display: "flex", justifyContent: "center" }}>
                 <Iconify icon="solar:refresh-linear" width={14} sx={{ color: "text.disabled", animation: "tt-spin 0.8s linear infinite", "@keyframes tt-spin": { to: { transform: "rotate(360deg)" } } }} />
@@ -680,6 +684,8 @@ TraceTable.propTypes = {
   onToggle: PropTypes.func,
   onToggleAll: PropTypes.func,
   onOpen: PropTypes.func,
+  /* Open the task focused on one eval's result (and its error localization). */
+  onOpenEval: PropTypes.func,
   groupBy: PropTypes.string,
   columns: PropTypes.instanceOf(Set),
   env: PropTypes.object,
@@ -1068,18 +1074,42 @@ Field.propTypes = { icon: PropTypes.string, label: PropTypes.string, value: Prop
 
 function Score({ result }) {
   const bgcolor = interpolateColorBasedOnScore(result.score, 1);
+  const failed = result.passed === false;
+  /* Any eval short of 100% carries error localization. */
+  const localized = (result.score ?? 0) < 1;
   return (
-    <Tooltip arrow title={result.reason || ""}>
+    <Tooltip
+      arrow
+      title={(
+        <Box>
+          {result.reason && <Box>{result.reason}</Box>}
+          <Box sx={{ mt: result.reason ? 0.75 : 0, fontWeight: 600 }}>
+            {failed
+              ? "Click to see where it failed"
+              : localized ? "Click to see where it lost points" : "Click to see the explanation"}
+          </Box>
+        </Box>
+      )}
+    >
       <Box
         sx={{
           position: "absolute", inset: 0,
-          display: "flex", alignItems: "center",
-          px: 2, py: 1.5, bgcolor, color: "text.primary",
+          display: "flex", alignItems: "center", gap: 0.75,
+          px: 2, py: 1.5, bgcolor, color: "text.primary", cursor: "pointer",
+          "&:hover .el-target": { opacity: 1 },
         }}
       >
         <Typography sx={{ typography: "s2", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
           {Math.round(result.score * 100)}%
         </Typography>
+        {localized && (
+          <Iconify
+            className="el-target"
+            icon="solar:target-linear"
+            width={13}
+            sx={{ opacity: 0.55, transition: "opacity 120ms", color: "text.primary" }}
+          />
+        )}
       </Box>
     </Tooltip>
   );
