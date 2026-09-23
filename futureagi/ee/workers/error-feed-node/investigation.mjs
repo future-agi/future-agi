@@ -52,6 +52,9 @@ export function failureDiagnostic(error, phase, attemptId) {
     ['Unsupported attributed span', 'unsupported_attribution'],
     ['Unsupported role explanation', 'unsupported_attribution'],
     ['Failure without an unmet requirement', 'missing_violated_requirement'],
+    ['Gateway request aborted', 'gateway_request_aborted'],
+    ['Gateway transport failed', 'gateway_transport_failed'],
+    ['Gateway response could not be processed', 'gateway_response_invalid'],
   ]);
   let reason = reasons.get(error?.message) ?? 'runtime_or_output_validation';
   // Omega's JSON parser includes model content in some exception messages.
@@ -60,6 +63,8 @@ export function failureDiagnostic(error, phase, attemptId) {
     ['Structured output failed validation:', 'structured_output_invalid'],
     ['Structured output expected JSON, but parsing failed:', 'structured_output_unparseable'],
     ['Structured output expected JSON, but the model returned empty content.', 'structured_output_empty'],
+    ['Gateway request failed with HTTP 429', 'gateway_rate_limited'],
+    ['Gateway request failed with HTTP 5', 'gateway_upstream_error'],
   ]) {
     if (typeof error?.message === 'string' && error.message.startsWith(prefix)) reason = code;
   }
@@ -260,7 +265,10 @@ export async function investigateTrace(claim, {gatewayConfig, clickhouse, scratc
     executionStatus = 'completed';
   } catch (error) {
     // Operational failure never becomes supported success or a guessed finding.
-    process.stderr.write(JSON.stringify({...failureDiagnostic(error, phase, claim.attempt_id),
+    const diagnostic = failureDiagnostic(error, phase, claim.attempt_id);
+    if (signal?.aborted) diagnostic.reason = signal.reason?.name === 'TimeoutError'
+      ? 'investigation_deadline' : 'investigation_cancelled';
+    process.stderr.write(JSON.stringify({...diagnostic,
       model_calls: gateway.accounting().model_calls, request_bytes: gateway.accounting().request_bytes,
       output_tokens: outputTokens}) + '\n');
     assessment = {outcome: 'unknown', findings: [], requirement_checks: []};

@@ -26,6 +26,9 @@ test('failure diagnostics classify host budget errors without exposing upstream 
     ['Structured output failed validation: private-key', 'structured_output_invalid'],
     ['Structured output expected JSON, but parsing failed: private-key', 'structured_output_unparseable'],
     ['Structured output expected JSON, but the model returned empty content.', 'structured_output_empty'],
+    ['Gateway request aborted', 'gateway_request_aborted'],
+    ['Gateway transport failed', 'gateway_transport_failed'],
+    ['Gateway response could not be processed', 'gateway_response_invalid'],
   ]) {
     const result = failureDiagnostic(new Error(message), 'verifier', 'attempt');
     assert.equal(result.reason, code);
