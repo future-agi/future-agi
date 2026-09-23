@@ -513,6 +513,9 @@ function FilterRow({
   takenSingleFields,
 }) {
   const fieldDef = fieldMap[filter.field] || filterFields[0];
+  // No field to bind to (empty catalogue) — render nothing rather than reading
+  // `.type` off undefined. The Basic tab shows an empty-state in this case.
+  if (!fieldDef) return null;
   const operators = getOperators(fieldDef);
 
   return (
@@ -2063,20 +2066,28 @@ const FilterPanel = ({
                 Basic Filter
               </Typography>
             )}
-            <Stack spacing={0.75}>
-              {rows.map((row, i) => (
-                <FilterRow
-                  key={i}
-                  filter={row}
-                  index={i}
-                  filterFields={filterFields}
-                  fieldMap={fieldMap}
-                  onChange={handleUpdateRow}
-                  onRemove={handleRemoveRow}
-                  takenSingleFields={takenSingleFields}
-                />
-              ))}
-            </Stack>
+            {filterFields.length === 0 ? (
+              <Typography
+                sx={{ color: "text.secondary", fontSize: 13, px: 0.5, py: 0.5 }}
+              >
+                No filters available for this view.
+              </Typography>
+            ) : (
+              <Stack spacing={0.75}>
+                {rows.map((row, i) => (
+                  <FilterRow
+                    key={i}
+                    filter={row}
+                    index={i}
+                    filterFields={filterFields}
+                    fieldMap={fieldMap}
+                    onChange={handleUpdateRow}
+                    onRemove={handleRemoveRow}
+                    takenSingleFields={takenSingleFields}
+                  />
+                ))}
+              </Stack>
+            )}
             <Stack
               direction="row"
               justifyContent="space-between"
