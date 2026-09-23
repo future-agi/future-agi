@@ -19,6 +19,7 @@ const REPORT_FIELDS = [
   'execution_status', 'outcome', 'coverage', 'usage', 'requirement_checks',
   'evidence_receipts', 'findings', 'verification_receipts', 'missing_fields',
 ];
+const SIMULATION_REPORT_FIELDS = [...REPORT_FIELDS, 'workload_type', 'test_execution_id'];
 const ATTRIBUTION_ROLES = ['origin', 'decisive', 'symptom'];
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 const UTC_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
@@ -102,12 +103,16 @@ function unique(values) {
   return [...new Set(values)].sort();
 }
 
-function validateCoverage(coverage) {
-  exactKeys(coverage, ['scope', 'observed_span_count', 'read_complete', 'future_arrivals_known'], 'report.coverage');
+function validateCoverage(coverage, simulation) {
+  const fields = simulation
+    ? ['scope', 'observed_call_count', 'read_complete']
+    : ['scope', 'observed_span_count', 'read_complete', 'future_arrivals_known'];
+  exactKeys(coverage, fields, 'report.coverage');
   text(coverage.scope, 'report.coverage.scope');
-  integer(coverage.observed_span_count, 'report.coverage.observed_span_count');
+  integer(coverage[simulation ? 'observed_call_count' : 'observed_span_count'],
+    `report.coverage.${simulation ? 'observed_call_count' : 'observed_span_count'}`);
   boolean(coverage.read_complete, 'report.coverage.read_complete');
-  boolean(coverage.future_arrivals_known, 'report.coverage.future_arrivals_known');
+  if (!simulation) boolean(coverage.future_arrivals_known, 'report.coverage.future_arrivals_known');
 }
 
 function validateUsage(usage) {
@@ -120,23 +125,48 @@ function validateUsage(usage) {
   text(usage.cost_status, 'report.usage.cost_status');
 }
 
-function validateAttribution(attribution, label) {
+function validateAttribution(attribution, label, simulation, receipts) {
   exactKeys(attribution, ATTRIBUTION_ROLES, label);
   for (const role of ATTRIBUTION_ROLES) {
     const item = attribution[role];
     if (item === null) continue;
-    exactKeys(item, ['status', 'span_id', 'evidence_ids'], `${label}.${role}`);
-    assert.ok(['supported', 'unsupported', 'unknown'].includes(item.status), `${label}.${role}.status is invalid`);
-    nullableText(item.span_id, `${label}.${role}.span_id`);
+    if (simulation) {
+      assert.ok(isObject(item), `${label}.${role} must be an object`);
+      const keys = Object.keys(item).sort();
+      assert.ok(JSON.stringify(keys) === JSON.stringify(['evidence_ids', 'span_id', 'status'])
+        || JSON.stringify(keys) === JSON.stringify(['call_execution_id', 'evidence_ids', 'span_id', 'status']),
+      `${label}.${role} has unexpected or missing fields`);
+      assert.ok(['supported', 'unsupported', 'unknown'].includes(item.status), `${label}.${role}.status is invalid`);
+      assert.equal(item.span_id, null, `${label}.${role}.span_id must be null for simulation`);
+      if (Object.hasOwn(item, 'call_execution_id')) nullableText(item.call_execution_id, `${label}.${role}.call_execution_id`);
+      if (item.status === 'supported') {
+        text(item.call_execution_id, `${label}.${role}.call_execution_id`);
+        assert.ok(item.evidence_ids.some(evidenceId =>
+          receipts.get(evidenceId)?.call_execution_id === item.call_execution_id),
+        `${label}.${role}.call_execution_id is not supported by its cited receipts`);
+      }
+    } else {
+      exactKeys(item, ['status', 'span_id', 'evidence_ids'], `${label}.${role}`);
+      assert.ok(['supported', 'unsupported', 'unknown'].includes(item.status), `${label}.${role}.status is invalid`);
+      nullableText(item.span_id, `${label}.${role}.span_id`);
+    }
     textList(item.evidence_ids, MAX.citations, `${label}.${role}.evidence_ids`);
   }
 }
 
 function validateReport(report) {
-  exactKeys(report, REPORT_FIELDS, 'report');
-  for (const field of ['id', 'organization_id', 'project_id', 'trace_id', 'job_id', 'attempt_id',
+  const simulation = report?.workload_type === 'simulation_test_execution';
+  exactKeys(report, simulation ? SIMULATION_REPORT_FIELDS : REPORT_FIELDS, 'report');
+  for (const field of ['id', 'organization_id', 'project_id', 'job_id', 'attempt_id',
     'engine_version', 'memory_snapshot_id', 'memory_digest', 'idempotency_key',
     'source_contract_version', 'result_digest', 'evidence_digest', 'outcome']) text(report[field], `report.${field}`);
+  if (simulation) {
+    text(report.workload_type, 'report.workload_type');
+    text(report.test_execution_id, 'report.test_execution_id');
+    assert.equal(report.trace_id, null, 'simulation report cannot carry a trace ID');
+  } else {
+    text(report.trace_id, 'report.trace_id');
+  }
   nullableText(report.workspace_id, 'report.workspace_id');
   nullableText(report.source_version, 'report.source_version');
   dateText(report.recorded_at, 'report.recorded_at');
@@ -150,7 +180,7 @@ function validateReport(report) {
   digestText(report.result_digest, 'report.result_digest');
   digestText(report.evidence_digest, 'report.evidence_digest');
   digestText(report.memory_digest, 'report.memory_digest');
-  validateCoverage(report.coverage);
+  validateCoverage(report.coverage, simulation);
   validateUsage(report.usage);
   textList(report.missing_fields, 100, 'report.missing_fields');
 
@@ -169,10 +199,18 @@ function validateReport(report) {
   const receipts = new Map();
   for (const [index, item] of list(report.evidence_receipts, MAX.evidence, 'report.evidence_receipts').entries()) {
     const label = `report.evidence_receipts[${index}]`;
-    exactKeys(item, ['evidence_id', 'span_id', 'parent_span_id', 'excerpt', 'end_time'], label);
+    exactKeys(item, simulation
+      ? ['evidence_id', 'span_id', 'parent_span_id', 'call_execution_id', 'excerpt', 'end_time']
+      : ['evidence_id', 'span_id', 'parent_span_id', 'excerpt', 'end_time'], label);
     text(item.evidence_id, `${label}.evidence_id`);
-    text(item.span_id, `${label}.span_id`);
-    nullableText(item.parent_span_id, `${label}.parent_span_id`);
+    if (simulation) {
+      assert.equal(item.span_id, null, `${label}.span_id must be null for simulation`);
+      assert.equal(item.parent_span_id, null, `${label}.parent_span_id must be null for simulation`);
+      text(item.call_execution_id, `${label}.call_execution_id`);
+    } else {
+      text(item.span_id, `${label}.span_id`);
+      nullableText(item.parent_span_id, `${label}.parent_span_id`);
+    }
     text(item.excerpt, `${label}.excerpt`);
     if (item.end_time !== null) dateText(item.end_time, `${label}.end_time`);
     assert.ok(!receipts.has(item.evidence_id), 'duplicate evidence_id');
@@ -189,7 +227,7 @@ function validateReport(report) {
     nullableText(item.requirement_id, `${label}.requirement_id`);
     nullableText(item.recovery, `${label}.recovery`);
     textList(item.evidence_ids, MAX.citations, `${label}.evidence_ids`);
-    validateAttribution(item.attribution, `${label}.attribution`);
+    validateAttribution(item.attribution, `${label}.attribution`, simulation, receipts);
     if (item.requirement_id !== null) assert.ok(requirements.has(item.requirement_id), 'unresolved requirement_id');
     assert.ok(!findings.has(item.finding_id), 'duplicate finding_id');
     findings.set(item.finding_id, item);
@@ -220,6 +258,7 @@ export function adaptGroupingSnapshot(snapshot) {
   assert.equal(suppliedDigest, canonicalSnapshotDigest(body), 'snapshot digest mismatch');
 
   const {findings, requirements, receipts} = validateReport(snapshot.report);
+  const simulation = snapshot.report.workload_type === 'simulation_test_execution';
   const occurrences = list(snapshot.occurrences, MAX.findings, 'snapshot.occurrences');
   assert.equal(occurrences.length, findings.size, 'findings/occurrences count mismatch');
   const occurrenceIds = new Set();
@@ -272,6 +311,7 @@ export function adaptGroupingSnapshot(snapshot) {
       organization_id: report.organization_id,
       workspace_id: report.workspace_id,
       project_id: report.project_id,
+      ...(simulation ? {workload_type: report.workload_type, test_execution_id: report.test_execution_id} : {}),
       trace_id: report.trace_id,
       engine_version: report.engine_version,
       scan_version: `${report.generation}:${report.attempt_id}`,

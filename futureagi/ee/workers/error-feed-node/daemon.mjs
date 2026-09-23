@@ -7,7 +7,7 @@ import SnappyCodec from 'kafkajs-snappy';
 import {gatewayConfig} from './gateway-provider.mjs';
 import {createControlClient} from './control-client.mjs';
 import {recordKafkaBatch, runCoordinator} from './coordinator.mjs';
-import {investigateTrace} from './investigation.mjs';
+import {investigateTrace, investigateSimulation} from './investigation.mjs';
 import {createStorageRecordingResolver} from './audio-inspection.mjs';
 
 const {Kafka, logLevel, CompressionTypes, CompressionCodecs} = kafkaModule;
@@ -57,8 +57,10 @@ export async function runDaemon(env = process.env, signal) {
       }});
     running = runCoordinator({control, spool: env.OMEGA_REPORT_SPOOL, workerId: env.OMEGA_WORKER_ID || hostname(),
       engineVersion: env.OMEGA_ENGINE_VERSION, concurrency, signal: combined,
-      investigate: (claim, {signal: runSignal}) => investigateTrace(claim, {gatewayConfig: config, clickhouse,
-        scratchRoot: env.OMEGA_SCRATCH_DIR || '/tmp', signal: runSignal, resolveRecording}),
+      investigate: (claim, {signal: runSignal}) => claim.workload_type === 'simulation_test_execution'
+        ? investigateSimulation(claim, {gatewayConfig: config, control, scratchRoot: env.OMEGA_SCRATCH_DIR || '/tmp', signal: runSignal})
+        : investigateTrace(claim, {gatewayConfig: config, clickhouse,
+          scratchRoot: env.OMEGA_SCRATCH_DIR || '/tmp', signal: runSignal, resolveRecording}),
       onError: (_error, attemptId) => process.stderr.write(JSON.stringify({event: 'omega_work_failed', attempt_id: attemptId ?? null}) + '\n')});
     await running;
     if (stop.signal.aborted && !signal?.aborted) throw new Error('Kafka consumer crashed');
