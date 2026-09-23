@@ -3,11 +3,9 @@ import { preflightHarnessJob } from "src/api/harness/harness";
 import { draftToPreflightPayload } from "src/api/simulate-environments/preflightPayload";
 
 /**
- * On-demand preflight for the inline panel flow. The user clicks "Run preflight";
- * this maps the redacted+exchanged draft to the preflight body and POSTs it,
- * returning the raw structured response:
- *   { ready_to_submit, state, checks: [{id,label,status,detail,missing,fix}],
- *     payload, credentials, effective_parallelism, snapshot }
+ * Submit the source and write-only credential values for hosted preflight.
+ * The response carries readiness and a credential report (requirements,
+ * alternatives, and live probes), not a checks/state array.
  *
  * `credentialValues` is the raw `{ ALIAS: value }` map (from prepareSourceForBuild)
  * for the write-only `credential_values` preflight field: it drives the live

@@ -35,10 +35,13 @@ const { useEnvironmentsStore, resetEnvironmentsStore } = await import(
 
 const PASS = {
   ready_to_submit: true,
-  state: "connected",
-  checks: [
-    { id: "source", label: "Source", status: "passed", detail: "Archive unpacked", missing: [], fix: null },
-  ],
+  credentials: {
+    scanned_files: 1,
+    detected_connectors: [],
+    requirements: [],
+    credential_choices: [],
+    probe: [],
+  },
 };
 
 const render = (ui) => {

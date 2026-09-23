@@ -30,27 +30,24 @@ const { useEnvironmentsStore, resetEnvironmentsStore } = await import(
 
 const PASS = {
   ready_to_submit: true,
-  state: "connected",
-  checks: [
-    { id: "source", label: "Source", status: "passed", detail: "Repo reachable", missing: [], fix: null },
-    { id: "credentials_present", label: "Credentials present", status: "passed", detail: "", missing: [], fix: null },
-  ],
+  credentials: {
+    scanned_files: 12,
+    detected_connectors: [],
+    requirements: [],
+    credential_choices: [],
+    probe: [],
+  },
 };
 
 const FAIL = {
   ready_to_submit: false,
-  state: "failed",
-  checks: [
-    { id: "source", label: "Source", status: "passed", detail: "Repo reachable", missing: [], fix: null },
-    {
-      id: "credentials_present",
-      label: "Credentials present",
-      status: "failed",
-      detail: "No secret refs found",
-      missing: ["VAPI_API_KEY"],
-      fix: "Add VAPI_API_KEY to the environment values.",
-    },
-  ],
+  credentials: {
+    scanned_files: 12,
+    detected_connectors: ["vapi"],
+    requirements: [{ environment_name: "VAPI_API_KEY", purpose: "target_provider", required: true, status: "missing" }],
+    credential_choices: [],
+    probe: [],
+  },
 };
 
 const renderPanel = () => {
@@ -126,29 +123,26 @@ describe("PanelSourceRepo", () => {
     expect(screen.getByRole("button", { name: "Run preflight" })).toBeDisabled();
   });
 
-  it("runs preflight, renders the passing checks, and enables Build", async () => {
+  it("renders hosted credential readiness and enables Build", async () => {
     preflightHarnessJob.mockResolvedValue(PASS);
     renderPanel();
     typeRepo("owner/repo");
     runPreflight();
 
     expect(await screen.findByText("Ready to build")).toBeInTheDocument();
-    // The check rows are rendered from the real response.
-    expect(screen.getByText("Credentials present")).toBeInTheDocument();
+    expect(screen.getByText("12 source files scanned")).toBeInTheDocument();
     await waitFor(() => expect(buildBtn()).toBeEnabled());
   });
 
-  it("renders a failing preflight with the fix block and keeps Build disabled", async () => {
+  it("shows missing credentials and keeps Build disabled", async () => {
     preflightHarnessJob.mockResolvedValue(FAIL);
     renderPanel();
     typeRepo("owner/repo");
     runPreflight();
 
-    expect(await screen.findByText("1 check to resolve")).toBeInTheDocument();
+    expect(await screen.findByText("Credentials need attention")).toBeInTheDocument();
     expect(screen.getByText("VAPI_API_KEY")).toBeInTheDocument();
-    expect(
-      screen.getByText(/Add VAPI_API_KEY to the environment values/),
-    ).toBeInTheDocument();
+    expect(screen.getByText("missing")).toBeInTheDocument();
     expect(buildBtn()).toBeDisabled();
   });
 

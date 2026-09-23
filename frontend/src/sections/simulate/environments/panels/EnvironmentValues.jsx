@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import { Box, Stack, Typography, Button, TextField, Alert } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useUploadSecretFile } from "src/api/simulate-environments/environments";
+import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import Label from "../components/Label";
 import Field from "../components/Field";
 
@@ -75,6 +76,10 @@ export default function EnvironmentValues({
           }}
         />
       </Stack>
+      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+        Google service-account JSON only (up to 5 MiB).
+      </Typography>
+      {upload.error && <Alert severity="error">{errorMessage(upload.error)}</Alert>}
 
       {/* Uploaded files echo here, always visible, so an upload made while the
           body is collapsed still confirms. */}

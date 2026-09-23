@@ -164,16 +164,12 @@ export function useBuildEnvironment() {
   });
 }
 
-// Upload a credential FILE to the vault (POST /secret-files/) and keep only the
-// returned reference — the file bytes never enter the draft, store or cache. The
-// panel default alias is the Google ADC JSON the credential_files check names.
-// NOTE: the returned ref is a `harness_environment_file` ref, which the create
-// schema does not yet accept, so this makes the ref real (vault-backed) but does
-// not by itself let credential_files pass — that stays a backend follow-up.
+// The upload endpoint accepts the Google ADC environment variable name and
+// returns its vault alias, GOOGLE_APPLICATION_CREDENTIALS_JSON, for secret_refs.
 export function useUploadSecretFile() {
   return useMutation({
     meta: { errorHandled: true },
-    mutationFn: async ({ file, environmentName = "GOOGLE_APPLICATION_CREDENTIALS_JSON" }) => {
+    mutationFn: async ({ file, environmentName = "GOOGLE_APPLICATION_CREDENTIALS" }) => {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("environment_name", environmentName);

@@ -113,9 +113,7 @@ function repoPayload(draft, name) {
     payload: {
       ...envelope(draft, name),
       source,
-      // `auto` still lets ALK detect the connector from the source; the exchanged
-      // credential refs (env values + secret files) ride along so a detected
-      // provider's `credentials_present` check can pass.
+      // Source detection uses these refs to report credential readiness.
       agent: {
         connector: PREFLIGHT_CONNECTOR.AUTO,
         config: {},
@@ -158,9 +156,7 @@ function uploadPayload(draft, name) {
     payload: {
       ...envelope(draft, name),
       source: { kind: "archive", archive_artifact_id: draft.archive_artifact_id },
-      // `auto` still lets ALK detect the connector from the source; the exchanged
-      // credential refs (env values + secret files) ride along so a detected
-      // provider's `credentials_present` check can pass.
+      // Source detection uses these refs to report credential readiness.
       agent: {
         connector: PREFLIGHT_CONNECTOR.AUTO,
         config: {},

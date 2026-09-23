@@ -119,6 +119,37 @@ describe("projectConversation", () => {
     expect(steps.find((s) => s.kind === "cancelled")).toBeTruthy();
   });
 
+  it("keeps background run activity out of a failed coordinator reply", () => {
+    const turns = projectConversation({
+      messages: [
+        msg({ message_id: "u1", role: "user", content: "Why did it restart?", created_at: "2026-09-22T10:00:00Z" }),
+        msg({ message_id: "a1", content: "I couldn't complete that turn: ResultError.", created_at: "2026-09-22T10:00:01Z" }),
+      ],
+      events: [
+        evt({ event_id: "failure", kind: "turn_completed", emitted_at: "2026-09-22T10:00:02Z", payload: { outcome: "failed" } }),
+        evt({ event_id: "build", kind: "authoring_activity", emitted_at: "2026-09-22T10:00:03Z", payload: { event: { text: "19 records put into places" } } }),
+      ],
+    });
+    const reply = turns.find((turn) => turn.steps?.some((step) => step.text?.includes("ResultError")));
+    const activity = turns.find((turn) => turn.title === "Background run activity");
+    expect(reply.steps.some((step) => step.kind === "group")).toBe(false);
+    expect(activity.steps[0]).toMatchObject({ kind: "group", lines: ["19 records put into places"] });
+  });
+
+  it("pairs chat tool results across independent background activity", () => {
+    const turns = projectConversation({
+      messages: [],
+      events: [
+        evt({ event_id: "start", kind: "tool_started", function_call_id: "call-1", emitted_at: "2026-09-22T10:00:00Z", payload: { label: "Read" } }),
+        evt({ event_id: "build", kind: "authoring_activity", emitted_at: "2026-09-22T10:00:01Z", payload: { event: { text: "Seeding places" } } }),
+        evt({ event_id: "result", kind: "tool_result", function_call_id: "call-1", emitted_at: "2026-09-22T10:00:02Z", payload: { text: "42 lines" } }),
+      ],
+    });
+    expect(turns).toHaveLength(2);
+    expect(turns[0].steps[0]).toMatchObject({ kind: "tool", state: "completed", result: "42 lines" });
+    expect(turns[1]).toMatchObject({ title: "Background run activity" });
+  });
+
   it("appends a heartbeat while the run is actively working and not blocked", () => {
     const turns = projectConversation({
       state: "responding",

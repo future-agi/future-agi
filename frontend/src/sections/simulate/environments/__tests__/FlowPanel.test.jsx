@@ -84,8 +84,7 @@ describe("FlowPanel", () => {
   it("runs preflight then stages the draft and navigates on Build", async () => {
     preflightHarnessJob.mockResolvedValue({
       ready_to_submit: true,
-      state: "connected",
-      checks: [],
+      credentials: { scanned_files: 1, detected_connectors: [], requirements: [], credential_choices: [], probe: [] },
     });
     const user = userEvent.setup();
     renderPanel("source");
