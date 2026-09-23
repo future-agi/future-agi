@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp, readdir, rm} from 'node:fs/promises';
+import {mkdtemp, readdir, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
@@ -55,6 +55,26 @@ test('revoked lease cancels model work and preserves failed report for accountin
     assert.equal((await readdir(spool)).length, 1);
   } finally { await rm(spool, {recursive: true, force: true}); }
 });
+test('transient renewal failure is retried before the lease expires', async () => {
+  const spool = await mkdtemp(join(tmpdir(), 'omega-spool-test-'));
+  try {
+    const c = claim();
+    c.lease_expires_at = new Date(Date.now() + 10000).toISOString();
+    let renewals = 0;
+    await processClaim(c, {spool, heartbeatMs: 1,
+      control: async (path) => {
+        if (path === '/reports/') return {status: 'accepted'};
+        if (++renewals === 1) throw Object.assign(new Error('temporarily unavailable'), {status: 503});
+        return {status: 'claimed', lease_expires_at: new Date(Date.now() + 10000).toISOString()};
+      },
+      investigate: async (_claim, {signal}) => {
+        await new Promise(resolve => setTimeout(resolve, 1200));
+        assert.equal(signal.aborted, false);
+        return {execution_status: 'completed', outcome: 'success'};
+      }});
+    assert.ok(renewals >= 2);
+  } finally { await rm(spool, {recursive: true, force: true}); }
+});
 test('coordinator never claims beyond available slots and drains on shutdown', async () => {
   const spool = await mkdtemp(join(tmpdir(), 'omega-spool-test-'));
   const stop = new AbortController(); let running = 0, peak = 0, claimed = false;
@@ -73,5 +93,73 @@ test('coordinator never claims beyond available slots and drains on shutdown', a
         running--; return {execution_status: 'failed'};
       }});
     assert.equal(peak, 2); assert.equal(running, 0);
+  } finally { await rm(spool, {recursive: true, force: true}); }
+});
+
+test('high concurrency remains bounded by the backend claim batch contract', async () => {
+  const spool = await mkdtemp(join(tmpdir(), 'omega-spool-test-'));
+  const stop = new AbortController();
+  try {
+    await runCoordinator({spool, signal: stop.signal, workerId: 'test', engineVersion: 'test',
+      concurrency: 256, pollMs: 1, control: async (path, payload) => {
+        assert.equal(path, '/claims/');
+        assert.equal(payload.limit, 50);
+        stop.abort();
+        return {claims: []};
+      }, investigate: async () => {throw new Error('Unexpected investigation');}});
+    await assert.rejects(runCoordinator({spool, signal: AbortSignal.abort(), workerId: 'test',
+      engineVersion: 'test', concurrency: 513, control: async () => ({claims: []}),
+      investigate: async () => {throw new Error('Unexpected investigation');}}), /Invalid worker concurrency/);
+  } finally {await rm(spool, {recursive: true, force: true});}
+});
+
+test('terminally rejected saved report is quarantined without blocking later reports or claims', async () => {
+  const spool = await mkdtemp(join(tmpdir(), 'omega-spool-test-'));
+  const stop = new AbortController();
+  const poisoned = '00000000-0000-4000-8000-000000000001';
+  const healthy = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+  const published = [];
+  let claims = 0;
+  try {
+    for (const attemptId of [poisoned, healthy]) {
+      await writeFile(join(spool, attemptId + '.json'), JSON.stringify({idempotency_key: attemptId}));
+    }
+    await runCoordinator({spool, signal: stop.signal, workerId: 'test', engineVersion: 'test', pollMs: 1,
+      control: async (path, payload) => {
+        if (path === '/reports/') {
+          published.push(payload.idempotency_key);
+          if (payload.idempotency_key === poisoned) {
+            const error = new Error('Control request failed');
+            error.status = 400;
+            throw error;
+          }
+          return {status: 'accepted'};
+        }
+        claims++;
+        stop.abort();
+        return {claims: []};
+      },
+      investigate: async () => { throw new Error('Unexpected investigation'); }});
+    assert.deepEqual(published, [poisoned, healthy]);
+    assert.equal(claims, 1);
+    assert.deepEqual(await readdir(join(spool, 'rejected')), [poisoned + '.json']);
+    assert.deepEqual((await readdir(spool)).filter(name => name.endsWith('.json')), []);
+  } finally { await rm(spool, {recursive: true, force: true}); }
+});
+
+test('corrupt saved report is quarantined without blocking claims', async () => {
+  const spool = await mkdtemp(join(tmpdir(), 'omega-spool-test-'));
+  const stop = new AbortController();
+  const attemptId = '00000000-0000-4000-8000-000000000002';
+  try {
+    await writeFile(join(spool, attemptId + '.json'), '{broken');
+    await runCoordinator({spool, signal: stop.signal, workerId: 'test', engineVersion: 'test', pollMs: 1,
+      control: async path => {
+        assert.equal(path, '/claims/');
+        stop.abort();
+        return {claims: []};
+      },
+      investigate: async () => { throw new Error('Unexpected investigation'); }});
+    assert.deepEqual(await readdir(join(spool, 'rejected')), [attemptId + '.json']);
   } finally { await rm(spool, {recursive: true, force: true}); }
 });

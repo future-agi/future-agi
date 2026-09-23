@@ -6,7 +6,7 @@ import {pipeline} from 'node:stream/promises';
 import {createWriteStream} from 'node:fs';
 import {Transform} from 'node:stream';
 import {pathToFileURL} from 'node:url';
-import {createOmega, agent, tool} from '@omega/core';
+import {createOmega, agent, tool} from '@future-agi/omega-runtime';
 import {createGatewayProvider, gatewayConfig} from './gateway-provider.mjs';
 
 export async function runJob(job, {config, evidenceRoot, scratchRoot = tmpdir(), signal, maxEvidenceBytes = 64 * 1024 * 1024} = {}) {

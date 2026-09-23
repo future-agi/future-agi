@@ -3,8 +3,23 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {copyFile, mkdir, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {join,dirname} from 'node:path';
+import {workerFiles} from './image-files.mjs';
 import {execFileSync, spawnSync} from 'node:child_process';
+
+test('deployment manifest includes every local runtime import and no test data',async()=>{
+  const allowed=new Set(workerFiles);
+  for(const name of workerFiles) {
+    assert.ok(!/test|fixture/.test(name));
+    const source=await readFile(new URL(name,import.meta.url),'utf8');
+    for(const match of source.matchAll(/(?:from\s*|import\s*\()['"](\.[^'"]+)['"]/g)) {
+      const target=new URL(match[1],new URL(name,import.meta.url));
+      const root=new URL('.',import.meta.url);
+      assert.ok(target.href.startsWith(root.href));
+      assert.ok(allowed.has(target.href.slice(root.href.length)),`${name} missing ${match[1]}`);
+    }
+  }
+});
 
 test('image preparation reuses verified Kafka and Snappy artifacts offline and rejects tampering', async () => {
   const root = await mkdtemp(join(tmpdir(), 'omega-image-test-'));
@@ -14,11 +29,17 @@ test('image preparation reuses verified Kafka and Snappy artifacts offline and r
     const source = join(root, 'fixture/package');
     for (const path of [worker, join(context, 'packages'), source]) await mkdir(path, {recursive: true});
     await copyFile(new URL('./prepare-image.mjs', import.meta.url), join(worker, 'prepare-image.mjs'));
-    for (const name of ['gateway-provider.mjs', 'worker.mjs', 'daemon.mjs', 'control-client.mjs',
-      'coordinator.mjs', 'evidence-store.mjs', 'investigation.mjs', 'Dockerfile']) {
+    await copyFile(new URL('./image-files.mjs', import.meta.url), join(worker, 'image-files.mjs'));
+    for (const name of [...workerFiles,'Dockerfile']) {
+      await mkdir(dirname(join(worker,name)),{recursive:true});
       await writeFile(join(worker, name), '// fixture\n');
     }
     const externalPackages = [];
+    await writeFile(join(source, 'package.json'), JSON.stringify({name: '@future-agi/omega-runtime', version: '0.0.1'}));
+    const omegaFile = 'packages/future-agi-omega-runtime-0.0.1.tgz';
+    execFileSync('tar', ['-czf', join(context, omegaFile), '-C', join(root, 'fixture'), 'package']);
+    const omegaPackage = {name: '@future-agi/omega-runtime', version: '0.0.1', file: omegaFile,
+      sha256: createHash('sha256').update(await readFile(join(context, omegaFile))).digest('hex')};
     for (const [name, version] of [['kafkajs', '2.2.4'], ['kafkajs-snappy', '1.1.0'], ['snappyjs', '0.6.1']]) {
       await writeFile(join(source, 'package.json'), JSON.stringify({name, version,
         ...(name === 'kafkajs-snappy' ? {dependencies: {snappyjs: '^0.6.0'}} : {})}));
@@ -27,14 +48,31 @@ test('image preparation reuses verified Kafka and Snappy artifacts offline and r
       const sha256 = createHash('sha256').update(await readFile(join(context, file))).digest('hex');
       externalPackages.push({name, version, file, sha256});
     }
-    await writeFile(join(context, 'manifest.json'), JSON.stringify({packages: [], externalPackages}));
+    await writeFile(join(context, 'manifest.json'), JSON.stringify({packages: [omegaPackage], externalPackages}));
     await writeFile(join(context, 'package.json'), JSON.stringify({name: 'fixture', version: '1.0.0',
-      private: true, dependencies: {}}));
+      private: true, dependencies: {'@future-agi/omega-runtime': 'file:' + omegaFile}}));
     const options = {env: {...process.env, npm_config_offline: 'true',
       npm_config_cache: join(root, 'empty-cache')}, encoding: 'utf8', timeout: 30000};
     const result = spawnSync(process.execPath, [join(worker, 'prepare-image.mjs')], options);
     assert.equal(result.status, 0, result.stderr);
     const lock = JSON.parse(await readFile(join(context, 'package-lock.json'), 'utf8'));
+    assert.equal(lock.packages['node_modules/@future-agi/omega-runtime'].version, '0.0.1');
+    const omegaArtifact = join(context, omegaFile);
+    const originalOmega = await readFile(omegaArtifact);
+    await writeFile(omegaArtifact, 'tampered Omega fixture');
+    const invalidOmega = spawnSync(process.execPath, [join(worker, 'prepare-image.mjs')], options);
+    assert.notEqual(invalidOmega.status, 0);
+    assert.match(invalidOmega.stderr, /Package checksum mismatch/);
+    await writeFile(omegaArtifact, originalOmega);
+    const oldIntegrity = lock.packages['node_modules/@future-agi/omega-runtime'].integrity;
+    await writeFile(join(source, 'runtime.js'), 'export const revision = 2;\n');
+    execFileSync('tar', ['-czf', omegaArtifact, '-C', join(root, 'fixture'), 'package']);
+    omegaPackage.sha256 = createHash('sha256').update(await readFile(omegaArtifact)).digest('hex');
+    await writeFile(join(context, 'manifest.json'), JSON.stringify({packages: [omegaPackage], externalPackages}));
+    const repacked = spawnSync(process.execPath, [join(worker, 'prepare-image.mjs')], options);
+    assert.equal(repacked.status, 0, repacked.stderr);
+    const refreshed = JSON.parse(await readFile(join(context, 'package-lock.json'), 'utf8'));
+    assert.notEqual(refreshed.packages['node_modules/@future-agi/omega-runtime'].integrity, oldIntegrity);
     for (const item of externalPackages) {
       assert.equal(lock.packages['node_modules/' + item.name].version, item.version);
       const artifact = join(context, item.file);
