@@ -154,13 +154,15 @@ def status_for(job: HostedHarnessJob) -> str:
     return STATUS_BUILDING
 
 
-def agent_type(job: HostedHarnessJob, contract: dict[str, Any] | None = None) -> str:
+def agent_type(
+    job: HostedHarnessJob, contract: dict[str, Any] | None = None
+) -> str | None:
     """Voice or chat, from the strongest evidence available.
 
     The user's explicit connector wins. Under ``auto`` it is genuinely unknown
-    until authoring reports a modality, and chat is the safe default: a chat run
-    rendered as chat merely looks plainer, whereas a voice run rendered as chat
-    loses its recordings.
+    until authoring reports a modality, so it stays ``None`` rather than
+    guessing: a repository or archive source only becomes chat or voice once
+    ALK has read it.
     """
     agent = (job.payload or {}).get("agent") or {}
     connector = str(agent.get("connector") or "").strip().lower()
@@ -171,7 +173,11 @@ def agent_type(job: HostedHarnessJob, contract: dict[str, Any] | None = None) ->
     if contract is None:
         contract = _contract_data(job)
     modality = str((contract or {}).get("modality") or "").strip().lower()
-    return AGENT_TYPE_VOICE if modality == "voice" else AGENT_TYPE_CHAT
+    if modality == "voice":
+        return AGENT_TYPE_VOICE
+    if modality in {"chat", "text"}:
+        return AGENT_TYPE_CHAT
+    return None
 
 
 def scenario_count(job: HostedHarnessJob) -> int:
@@ -441,6 +447,10 @@ def _status_of(reg, receipt: HostedHarnessReceipt | None) -> str:
     return receipt.status if receipt is not None else "running"
 
 
+def _scenario_slug(value: Any) -> str:
+    return str(value or "").strip().lower().replace("_", "-").replace(" ", "-")
+
+
 def _scenarios(
     registrations: list,
     docs: Any,
@@ -451,14 +461,18 @@ def _scenarios(
     by_key: dict[str, dict[str, Any]] = {}
     for doc in docs if isinstance(docs, list) else []:
         if isinstance(doc, dict):
-            key = str(doc.get("scenario_key") or doc.get("name") or "")
+            key = _scenario_slug(doc.get("scenario_key") or doc.get("name"))
             if key:
                 by_key[key] = doc
     goals = _catalogue_index(catalogue)
     scenarios: list[dict[str, Any]] = []
     for reg in registrations:
         platform_name = getattr(reg.scenario, "name", "") or ""
-        doc = by_key.get(reg.scenario_key) or by_key.get(platform_name) or {}
+        doc = (
+            by_key.get(_scenario_slug(reg.scenario_key))
+            or by_key.get(_scenario_slug(platform_name))
+            or {}
+        )
         cells = rows.get(str(reg.dataset_row_id), {}) if reg.dataset_row_id else {}
         fixture = doc.get("fixture")
         steps = doc.get("steps")

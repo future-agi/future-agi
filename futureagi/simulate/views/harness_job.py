@@ -35,8 +35,9 @@ from simulate.services.harness_credentials import (
     store_credential_file,
 )
 from simulate.services.harness_provider import get_harness_provider
-from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
+from simulate.services.hosted_harness_gateway import TARGET_GOOGLE_ADC_ALIAS
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 
 
 class HarnessJobViewSet(viewsets.ViewSet):
@@ -143,12 +144,16 @@ class HarnessJobViewSet(viewsets.ViewSet):
         # ``harness_environment_file`` manager. Google ADC crosses the hosted seam as encrypted
         # JSON; the guest recreates the 0600 file and exports GOOGLE_APPLICATION_CREDENTIALS.
         if get_harness_provider().name == "hosted":
-            if environment_name != "GOOGLE_APPLICATION_CREDENTIALS":
+            if environment_name not in {
+                "GOOGLE_APPLICATION_CREDENTIALS",
+                TARGET_GOOGLE_ADC_ALIAS,
+            }:
                 return Response(
                     {
                         "detail": (
-                            "Hosted credential uploads currently support only "
-                            "GOOGLE_APPLICATION_CREDENTIALS JSON files"
+                            "environment_name must be GOOGLE_APPLICATION_CREDENTIALS or "
+                            f"{TARGET_GOOGLE_ADC_ALIAS}; hosted credential uploads accept "
+                            "only a Google service-account JSON file"
                         )
                     },
                     status=status.HTTP_422_UNPROCESSABLE_ENTITY,

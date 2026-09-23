@@ -119598,7 +119598,8 @@
                     "enum": [
                         "voice",
                         "chat"
-                    ]
+                    ],
+                    "x-nullable": true
                 },
                 "status": {
                     "title": "Status",
@@ -119774,7 +119775,8 @@
                     "enum": [
                         "voice",
                         "chat"
-                    ]
+                    ],
+                    "x-nullable": true
                 },
                 "status": {
                     "title": "Status",
@@ -121562,10 +121564,6 @@
                 "config": {
                     "title": "Config",
                     "type": "object",
-                    "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
-                    },
                     "default": {}
                 },
                 "secret_refs": {

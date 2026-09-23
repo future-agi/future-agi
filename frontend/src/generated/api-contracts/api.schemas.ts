@@ -17610,7 +17610,7 @@ export interface SecretReferenceApi {
   purpose: SecretReferenceApiPurpose;
 }
 
-export type HarnessAgentApiConfig = { [key: string]: string };
+export type HarnessAgentApiConfig = { [key: string]: unknown };
 
 export type HarnessAgentApiSecretRefs = { [key: string]: SecretReferenceApi };
 

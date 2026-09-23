@@ -60,7 +60,9 @@ class HarnessEnvironmentSerializer(serializers.Serializer):
     description = serializers.CharField(allow_null=True)
     domain = serializers.CharField(allow_null=True)
     source_kind = serializers.CharField()
-    agent_type = serializers.ChoiceField(choices=(AGENT_TYPE_VOICE, AGENT_TYPE_CHAT))
+    agent_type = serializers.ChoiceField(
+        choices=(AGENT_TYPE_VOICE, AGENT_TYPE_CHAT), allow_null=True
+    )
     status = serializers.ChoiceField(
         choices=(STATUS_BUILDING, STATUS_RUNNING, STATUS_COMPLETED, STATUS_FAILED)
     )
