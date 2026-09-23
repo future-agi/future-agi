@@ -5,7 +5,20 @@ import { Box, Stack, Typography, Button, Tab, TextField, Popover, MenuItem } fro
 import Iconify from "src/components/iconify";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import { FilterPanel } from "src/components/filter-panel";
-import { SCENARIOS_COPY, SCENARIO_GROUPINGS } from "./scenarios.constants";
+import { SCENARIOS_COPY } from "./scenarios.constants";
+
+// Per-axis icon, keyed by the server grouping `value`. Falls back to a neutral
+// icon for any axis the backend adds later.
+const GROUPING_ICONS = {
+  goal: "solar:target-linear",
+  sub_goal: "solar:map-linear",
+  accent: "solar:soundwave-linear",
+  age: "solar:user-rounded-linear",
+  attack: "solar:shield-warning-linear",
+  task: "solar:checklist-minimalistic-linear",
+  "": "solar:list-linear",
+};
+const groupingIcon = (value) => GROUPING_ICONS[value] ?? "solar:list-linear";
 
 // Shared toolbar for both scenario views: search, the group-by axis, the
 // platform FilterPanel, an "N of M · N groups hidden" count with a Clear/Show
@@ -15,7 +28,7 @@ import { SCENARIOS_COPY, SCENARIO_GROUPINGS } from "./scenarios.constants";
 export default function ScenarioToolbar({
   query, onQueryChange,
   view, onViewChange,
-  groupBy, onGroupByChange,
+  groupBy, onGroupByChange, groupings = [],
   filterFields, filters, onApplyFilters, filterCount,
   shownCount, totalCount, hiddenCount = 0, onClear,
 }) {
@@ -25,7 +38,7 @@ export default function ScenarioToolbar({
   // "Show all" reads truer than "Clear" when the only thing set is a hidden
   // group; a search or filter present means the reset also drops those.
   const onlyGroupsHidden = hiddenCount > 0 && query.length === 0 && filterCount === 0;
-  const activeGrouping = SCENARIO_GROUPINGS.find((g) => g.id === groupBy) || SCENARIO_GROUPINGS[0];
+  const activeGrouping = groupings.find((g) => g.value === groupBy) || groupings[0] || { value: groupBy, label: "" };
   const hiddenSuffix = hiddenCount > 0
     ? ` · ${hiddenCount} group${hiddenCount === 1 ? "" : "s"} hidden`
     : "";
@@ -54,7 +67,7 @@ export default function ScenarioToolbar({
         <Button
           size="small" variant="outlined"
           onClick={(e) => setGroupByAnchor(e.currentTarget)}
-          startIcon={<Iconify icon={activeGrouping.icon} width={14} />}
+          startIcon={<Iconify icon={groupingIcon(activeGrouping.value)} width={14} />}
           endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={12} />}
           sx={{
             typography: "s2", fontWeight: "fontWeightBold", textTransform: "none",
@@ -71,16 +84,16 @@ export default function ScenarioToolbar({
           transformOrigin={{ vertical: "top", horizontal: "left" }}
           slotProps={{ paper: { sx: { minWidth: 200, p: 0.5, mt: 0.5 } } }}
         >
-          {SCENARIO_GROUPINGS.map((g) => {
-            const active = g.id === groupBy;
+          {groupings.map((g) => {
+            const active = g.value === groupBy;
             return (
               <MenuItem
-                key={g.id}
+                key={g.value}
                 selected={active}
-                onClick={() => { onGroupByChange(g.id); setGroupByAnchor(null); }}
+                onClick={() => { onGroupByChange(g.value); setGroupByAnchor(null); }}
                 sx={{ gap: 1, px: 1.25, py: 0.875, borderRadius: 0.75 }}
               >
-                <Iconify icon={g.icon} width={14} sx={{ color: active ? "primary.main" : "text.subtitle" }} />
+                <Iconify icon={groupingIcon(g.value)} width={14} sx={{ color: active ? "primary.main" : "text.subtitle" }} />
                 <Typography sx={{ typography: "s2", flex: 1, fontWeight: active ? "fontWeightBold" : "fontWeightMedium" }}>
                   {g.label}
                 </Typography>
@@ -130,8 +143,10 @@ export default function ScenarioToolbar({
         filterFields={filterFields}
         currentFilters={filters}
         onApply={onApplyFilters}
-        aiPlaceholder="Ask AI — e.g. 'show me scenarios with the impatient persona'"
         placement="bottom-start"
+        // The grounded AI filter has no `scenarios` source in model-hub yet
+        // (README §8), so hide the AI box here — Basic + Query still work.
+        showAiFilter={false}
       />
     </>
   );
@@ -144,6 +159,9 @@ ScenarioToolbar.propTypes = {
   onViewChange: PropTypes.func.isRequired,
   groupBy: PropTypes.string,
   onGroupByChange: PropTypes.func,
+  groupings: PropTypes.arrayOf(
+    PropTypes.shape({ value: PropTypes.string, label: PropTypes.string }),
+  ),
   filterFields: PropTypes.array,
   filters: PropTypes.object,
   onApplyFilters: PropTypes.func,

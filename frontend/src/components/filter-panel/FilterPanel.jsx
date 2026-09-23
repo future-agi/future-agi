@@ -529,6 +529,7 @@ function FilterRow({
           });
         }}
         sx={{ minWidth: 100, fontSize: 13, height: 30 }}
+        MenuProps={{ PaperProps: { sx: { maxHeight: 280 } } }}
       >
         {filterFields.map((f) => (
           <MenuItem
@@ -1723,6 +1724,10 @@ const FilterPanel = ({
   // Render the filter rows alone — no tabs, no AI box, no caption. The Query
   // tab and AI parsing are power-user surfaces that not every list needs.
   basicOnly = false,
+  // Hide just the AI filter box (keep Basic + Query) where the grounded AI
+  // backend isn't wired for this source — e.g. scenarios, until model-hub's
+  // ai-filter accepts a `scenarios` source.
+  showAiFilter = true,
   // "bottom-start" grows the popover rightwards from the trigger; use
   // "bottom-end" when the trigger sits near the right edge of the viewport.
   placement = "bottom-start",
@@ -1958,8 +1963,9 @@ const FilterPanel = ({
       }}
     >
       <Stack spacing={1}>
-        {/* AI filter input */}
-        {!basicOnly && (
+        {/* AI filter input — hidden where the grounded AI backend isn't wired
+            for this source (pass showAiFilter={false}); Basic/Query stay. */}
+        {!basicOnly && showAiFilter && (
           <TextField
             size="small"
             placeholder={aiLoading ? "Parsing with AI..." : aiPlaceholder}
@@ -2007,7 +2013,7 @@ const FilterPanel = ({
             fullWidth
           />
         )}
-        {!basicOnly && aiError && (
+        {!basicOnly && showAiFilter && aiError && (
           <Typography
             variant="caption"
             sx={{ fontSize: 11, color: "text.secondary", px: 0.5 }}
@@ -2154,6 +2160,7 @@ FilterPanel.propTypes = {
   currentFilters: PropTypes.oneOfType([PropTypes.object, PropTypes.array]),
   onApply: PropTypes.func.isRequired,
   aiPlaceholder: PropTypes.string,
+  showAiFilter: PropTypes.bool,
   width: PropTypes.number,
   projectId: PropTypes.string,
   source: PropTypes.string,

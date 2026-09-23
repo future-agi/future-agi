@@ -1,14 +1,13 @@
 // Options, derivations and copy for the single-scenario editor.
 //
-// The editor exposes the parts safe to edit directly on this environment's copy:
-// the scenario's own fields (name, use case, branch, task, passes-when,
-// sub-goals), the persona, and — on conversational surfaces — the caller's tone
-// and the call constraints. Everything is written straight back onto the row via
-// `onSave`; nothing round-trips a backend.
+// The editor exposes only the fields the server allows to change (its
+// `scenario_editing` block gates the rest read-only). A save sends an `amend`
+// to the harness scenarios endpoint; a behavioural or persona change re-proves
+// the scenario, and a refusal comes back with its reason.
 
 export const EDITOR_COPY = {
   title: "Edit scenario",
-  subtitle: "Changes apply to this environment's copy, not the pack it came from.",
+  subtitle: "Editable fields are saved to the suite; others are read-only because they're proved, not described.",
   cancel: "Cancel",
   save: "Save scenario",
   scenarioSection: "Scenario",
