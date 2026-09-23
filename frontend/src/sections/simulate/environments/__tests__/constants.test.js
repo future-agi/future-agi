@@ -27,8 +27,8 @@ describe("environmentOptions", () => {
     const coming = OPTIONS.filter(
       (o) => o.status === OPTION_STATUS.COMING_SOON,
     ).map((o) => o.id);
-    expect(live).toEqual(["templates", "source", "hosted", "upload"]);
-    expect(coming).toEqual(["web", "mcp", "local"]);
+    expect(live).toEqual(["source", "hosted", "upload"]);
+    expect(coming).toEqual(["templates", "web", "mcp", "local"]);
   });
 
   it("orders bring-your-agent options and every id exists in OPTIONS", () => {

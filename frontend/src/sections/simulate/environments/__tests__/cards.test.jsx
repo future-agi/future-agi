@@ -57,7 +57,7 @@ describe("OptionCard", () => {
 });
 
 describe("TemplateHeroCard", () => {
-  it("renders the prebuilt hero and fires on click", () => {
+  it("renders the coming-soon prebuilt hero and is inert", () => {
     const onClick = vi.fn();
     render(<TemplateHeroCard onClick={onClick} />);
 
@@ -68,19 +68,20 @@ describe("TemplateHeroCard", () => {
     expect(screen.getByText("Browser")).toBeInTheDocument();
     expect(screen.getByText("Airline Rebooking")).toBeInTheDocument();
     expect(screen.getByText("+ 10 more")).toBeInTheDocument();
+    expect(screen.getByLabelText("Coming soon")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button"));
-    expect(onClick).toHaveBeenCalledTimes(1);
+    expect(onClick).not.toHaveBeenCalled();
   });
 
-  it("fires on Enter (keyboard activation)", () => {
+  it("does not activate on Enter while coming soon", () => {
     const onClick = vi.fn();
     render(<TemplateHeroCard onClick={onClick} />);
 
     const btn = screen.getByRole("button");
-    expect(btn).toHaveAttribute("tabindex", "0");
+    expect(btn).toHaveAttribute("tabindex", "-1");
     fireEvent.keyDown(btn, { key: "Enter" });
-    expect(onClick).toHaveBeenCalledTimes(1);
+    expect(onClick).not.toHaveBeenCalled();
   });
 });
 

@@ -15,6 +15,7 @@ export default function TemplateHeroCard({ selected, onClick }) {
       moreLabel={copy.moreLabel}
       selected={selected}
       onClick={onClick}
+      comingSoon
     />
   );
 }
