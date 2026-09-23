@@ -1844,6 +1844,70 @@ func TestCreateResponse_ComputesCostFromResponsesUsage(t *testing.T) {
 	}
 }
 
+func TestAnthropicStreamReturnsWhenAllProviderChannelsClose(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `data: {"candidates":[{"content":{"role":"model","parts":[{"text":"done"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":1,"totalTokenCount":6}}`+"\n\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer mock.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = true
+	cfg.Auth.Keys = []config.AuthKeyConfig{{
+		Name:    "test-service",
+		Key:     "test-api-key",
+		Owner:   "test-org",
+		KeyType: "internal",
+	}}
+	cfg.Providers["vertex"] = config.ProviderConfig{
+		BaseURL:        mock.URL,
+		APIKey:         "unused",
+		APIFormat:      "gemini",
+		DefaultTimeout: time.Second,
+		Models:         []string{"gemini-3.7-flash"},
+	}
+	registry, err := providers.NewRegistry(cfg)
+	if err != nil {
+		t.Fatalf("creating registry: %v", err)
+	}
+	srv := New(
+		cfg,
+		"",
+		registry,
+		pipeline.NewEngine(),
+		nil,
+		nil,
+		nil,
+		nil,
+		testModelDBPtr(),
+		nil,
+		nil,
+	)
+	srv.ready.Store(true)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	reqBody := `{"model":"gemini-3.7-flash","max_tokens":32,"stream":true,"messages":[{"role":"user","content":"Say done"}]}`
+	req := httptest.NewRequest("POST", "/v1/messages", bytes.NewBufferString(reqBody)).WithContext(ctx)
+	req.Header.Set("x-api-key", "test-api-key")
+	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	started := time.Now()
+
+	srv.httpServer.Handler.ServeHTTP(recorder, req)
+
+	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
+		t.Fatalf("stream handler waited %v after all provider channels closed", elapsed)
+	}
+	if !strings.Contains(recorder.Body.String(), "message_stop") {
+		t.Fatalf("body = %s, want message_stop event", recorder.Body.String())
+	}
+}
+
 func TestAnthropicMessages_AcceptsXAPIKeyAuth(t *testing.T) {
 	mock := startMockAnthropicNative(t)
 	defer mock.Close()

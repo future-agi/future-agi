@@ -10,7 +10,8 @@ from django.test import override_settings
 from rest_framework.response import Response
 from rest_framework.test import APIClient
 
-from simulate.models import RunTest, TestExecution
+from simulate.models.run_test import RunTest
+from simulate.models.test_execution import TestExecution
 from simulate.serializers.harness_job import (
     HarnessJobCreateSerializer,
     HarnessPreflightSerializer,
@@ -100,7 +101,7 @@ def test_default_provider_is_hosted():
     assert isinstance(get_harness_provider(), HostedHarnessProvider)
 
 
-def test_e2b_health_exposes_public_ingress_limitation(settings):
+def test_e2b_health_exposes_relayed_public_ingress(settings):
     settings.HOSTED_SANDBOX_PROVIDER = "e2b"
     settings.E2B_API_KEY = "configured"
     settings.ALK_E2B_TEMPLATE_REFERENCE = "alk-hosted-e2b:build-123"
@@ -558,7 +559,7 @@ def test_repository_source_remains_required_for_environment_backed_provider():
     serializer = HarnessJobCreateSerializer(data=payload)
 
     assert not serializer.is_valid()
-    assert "existing provider agent ID" in str(serializer.errors)
+    assert "hosted agent ID or phone number" in str(serializer.errors)
 
 
 @pytest.mark.django_db

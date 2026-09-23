@@ -784,6 +784,80 @@ def test_attempt_can_mint_bounded_signed_ingress_url(organization, settings):
 
 
 @pytest.mark.django_db
+def test_e2b_ingress_relays_provider_traffic_without_exposing_access_header(
+    organization, settings
+):
+    settings.HARNESS_PUBLIC_BASE_URL = "https://platform.example"
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="e2b-relay-ingress-key"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    capability.attempt.provider_ref = "e2b-sandbox-id"
+    capability.attempt.save(update_fields=["provider_ref", "updated_at"])
+
+    provider = MagicMock()
+    provider.get.return_value = MagicMock()
+    provider.create_preview_url.return_value = SimpleNamespace(
+        url="https://8080-e2b-sandbox.e2b.app",
+        headers={"E2B-Traffic-Access-Token": "must-stay-server-side"},
+    )
+    upstream = SimpleNamespace(
+        status_code=201,
+        content=b'{"accepted":true}',
+        headers={"Content-Type": "application/json"},
+    )
+    client = APIClient()
+    headers = _headers(capability)
+
+    with (
+        patch(
+            "simulate.services.hosted_sandbox.get_sandbox_provider",
+            return_value=provider,
+        ),
+        patch(
+            "simulate.services.hosted_harness_ingress.get_sandbox_provider",
+            return_value=provider,
+        ),
+        patch(
+            "simulate.services.hosted_harness_ingress.requests.request",
+            return_value=upstream,
+        ) as relay,
+    ):
+        minted = client.post(
+            f"{BASE}/{capability.attempt.id}/ingress/",
+            {"port": 8080, "expires_in_seconds": 7200},
+            format="json",
+            **headers,
+        )
+        assert minted.status_code == 200, minted.content
+        callback_path = minted.json()["url"].removeprefix("https://platform.example")
+        response = client.post(
+            f"{callback_path}tool?source=retell",
+            {"name": "lookup_account"},
+            format="json",
+        )
+
+    assert response.status_code == 201, response.content
+    assert response.json() == {"accepted": True}
+    relay.assert_called_once()
+    method, target = relay.call_args.args[:2]
+    assert method == "POST"
+    assert target == ("https://8080-e2b-sandbox.e2b.app/tool?source=retell")
+    assert relay.call_args.kwargs["headers"]["E2B-Traffic-Access-Token"] == (
+        "must-stay-server-side"
+    )
+    assert relay.call_args.kwargs["headers"]["Content-Type"] == "application/json"
+    assert relay.call_args.kwargs["allow_redirects"] is False
+    assert provider.get.call_args.args == ("e2b-sandbox-id",)
+
+    capability.attempt.refresh_from_db()
+    capability.attempt.cleanup_verified_at = django_timezone.now()
+    capability.attempt.save(update_fields=["cleanup_verified_at", "updated_at"])
+    closed = client.get(callback_path)
+    assert closed.status_code == 410, closed.content
+
+
+@pytest.mark.django_db
 def test_ingress_without_selected_provider_sdk_is_a_typed_502(organization):
     job, _ = create_hosted_job(
         organization, _payload(), idempotency_key="attempt-ingress-no-sdk-key"

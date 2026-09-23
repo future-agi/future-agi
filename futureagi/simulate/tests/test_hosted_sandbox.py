@@ -209,7 +209,7 @@ class _E2BCommands:
 
 class _E2BSandbox:
     sandbox_id = "e2b-sandbox"
-    traffic_access_token = "private-e2b-traffic-token"
+    traffic_access_token = "traffic-token"
 
     def __init__(self):
         self.files = _E2BFiles()
@@ -299,8 +299,8 @@ def test_e2b_adapter_combines_domain_and_cidr_egress(settings, monkeypatch):
     )
     assert bootstrap_options["user"] == "root"
     preview = provider.create_preview_url(sandbox, 8080, expires_in_seconds=600)
-    assert preview.url.startswith("https://platform.example.com/simulate/api/harness-ingress/")
-    assert "private-e2b-traffic-token" not in preview.url
+    assert preview.url == "https://8080-e2b-sandbox.e2b.app"
+    assert preview.headers == {"E2B-Traffic-Access-Token": "traffic-token"}
 
     provider.renew_ttl(sandbox, 7200)
     assert _E2BSandboxClass.sandbox.renewed_timeout == 7200

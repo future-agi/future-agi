@@ -200,5 +200,15 @@ async def cancel_hosted_harness_attempt(
         job = HostedHarnessGateway().cancel(attempt.job, reason=reason)
         return job.state
 
-    state = await _run_db(_cancel)
+    try:
+        state = await _run_db(_cancel)
+    except Exception:
+        activity.logger.exception(
+            "hosted harness cancellation cleanup is still pending",
+            attempt_id=input.attempt_id,
+        )
+        return HostedHarnessPollOutput(
+            done=False,
+            state="cleaning_up",
+        )
     return HostedHarnessPollOutput(done=True, state=state)

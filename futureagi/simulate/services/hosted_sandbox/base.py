@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -51,6 +52,8 @@ class SandboxCommandLogs:
 @dataclass(frozen=True)
 class SandboxPreview:
     url: str
+    # Headers needed by a platform relay. These are never returned to the guest.
+    headers: Mapping[str, str] = field(default_factory=dict)
 
 
 class SandboxProviderError(RuntimeError):

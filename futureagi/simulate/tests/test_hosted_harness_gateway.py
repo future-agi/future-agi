@@ -84,6 +84,9 @@ def test_platform_simulator_material_uses_deployment_credentials_only(
     monkeypatch.setenv("SIMULATOR_LLM_MODEL", "gemini-3.7-flash")
     monkeypatch.delenv("ALK_HARNESS", raising=False)
     monkeypatch.delenv("ALK_HARNESS_MODEL", raising=False)
+    monkeypatch.setenv("ALK_HOSTED_AGENTCC_BASE_URL", "https://gateway.futureagi.test")
+    monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "internal-key")
+    monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "harness-key")
     monkeypatch.setenv("DEEPGRAM_API_KEY", "platform-deepgram-secret")
     monkeypatch.setenv("LIVEKIT_URL", "wss://platform-livekit.example")
     monkeypatch.setenv("LIVEKIT_API_KEY", "platform-livekit-key")
@@ -103,13 +106,23 @@ def test_platform_simulator_material_uses_deployment_credentials_only(
     assert values["LIVEKIT_API_SECRET"] == "platform-livekit-secret"
     assert values["SIP_OUTBOUND_TRUNK_ID"] == "ST_platform-outbound"
     assert values["SIP_OUTBOUND_FROM_NUMBER"] == "+14155550123"
-    assert values["ALK_HARNESS"] == "vertex-gemini"
+    assert values["ALK_HARNESS"] == "claude"
+    assert values["ALK_HARNESS_MODEL"] == "vertex_ai/gemini-3.7-flash"
+    assert values["ALK_CLAUDE_GATEWAY_URL"] == "https://gateway.futureagi.test"
+    assert values["ALK_CLAUDE_GATEWAY_API_KEY"] == "harness-key"
+    assert values["ANTHROPIC_VERTEX_PROJECT_ID"] == "platform-simulator-project"
     assert credential_bytes == credentials.read_bytes()
 
 
-def test_platform_simulator_defaults_to_approved_vertex_model(monkeypatch):
+def test_platform_simulator_defaults_to_claude_authoring_and_gemini_caller(
+    monkeypatch,
+):
     monkeypatch.delenv("SIMULATOR_LLM_PROVIDER", raising=False)
     monkeypatch.delenv("SIMULATOR_LLM_MODEL", raising=False)
+    monkeypatch.delenv("ALK_HOSTED_AGENTCC_BASE_URL", raising=False)
+    monkeypatch.delenv("AGENTCC_INTERNAL_API_KEY", raising=False)
+    monkeypatch.delenv("AGENTCC_HARNESS_API_KEY", raising=False)
+    monkeypatch.delenv("AGENTCC_BASE_URL", raising=False)
     monkeypatch.delenv("ALK_HARNESS", raising=False)
     monkeypatch.delenv("ALK_HARNESS_MODEL", raising=False)
     monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
@@ -118,8 +131,8 @@ def test_platform_simulator_defaults_to_approved_vertex_model(monkeypatch):
 
     assert values["SIMULATOR_LLM_PROVIDER"] == "vertex"
     assert values["SIMULATOR_LLM_MODEL"] == "gemini-3.7-flash"
-    assert values["ALK_HARNESS"] == "vertex-gemini"
-    assert values["ALK_HARNESS_MODEL"] == "gemini-3.7-flash"
+    assert values["ALK_HARNESS"] == "claude"
+    assert values["ALK_HARNESS_MODEL"] == "claude-sonnet-4-6"
     assert credential_bytes is None
 
 
@@ -188,16 +201,16 @@ def test_claude_authoring_requires_sandbox_reachable_gateway(monkeypatch):
     assert exc.value.code == "authoring_gateway_not_configured"
 
 
-def test_claude_authoring_does_not_fall_back_to_internal_key(monkeypatch):
+def test_claude_authoring_falls_back_to_internal_key(monkeypatch):
     monkeypatch.setenv("ALK_HARNESS", "claude")
     monkeypatch.delenv("AGENTCC_HARNESS_API_KEY", raising=False)
     monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "internal-evaluator-key")
     monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
 
-    with pytest.raises(HostedHarnessError) as exc:
-        _platform_simulator_material()
+    values, _ = _platform_simulator_material()
 
-    assert exc.value.code == "authoring_gateway_not_configured"
+    assert values["AGENTCC_API_KEY"] == "internal-evaluator-key"
+    assert values["ALK_CLAUDE_GATEWAY_API_KEY"] == "internal-evaluator-key"
 
 
 def test_provider_egress_includes_vertex_auth_and_both_model_regions():
@@ -214,6 +227,15 @@ def test_provider_egress_includes_vertex_auth_and_both_model_regions():
         "us-central1-aiplatform.googleapis.com",
         "us-east5-aiplatform.googleapis.com",
     }
+
+
+def test_provider_egress_includes_scoped_claude_gateway():
+    assert _provider_egress_domains(
+        {
+            "ALK_CLAUDE_GATEWAY_URL": "https://gateway.futureagi.com",
+            "ALK_CLAUDE_GATEWAY_API_KEY": "opaque",
+        }
+    ) == {"gateway.futureagi.com"}
 
 
 def test_provider_egress_includes_vapi_and_retell_call_hosts():
@@ -1318,6 +1340,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     assert "--adjustments /run/futureagi/adjustments.jsonl" in (
         client.sandbox.process.session_request.command
     )
+    assert "; fi &&" in client.sandbox.process.session_request.command
     # Authoring and call execution are distinct bounded phases. The sandbox must survive the
     # former rather than using only the 10-minute call-runtime budget plus two minutes.
     assert client.params.ttl_seconds == 7200
@@ -1707,6 +1730,39 @@ def test_cancel_signals_guest_before_provider_delete(organization, monkeypatch):
 
 
 @pytest.mark.django_db
+def test_cancel_deletes_when_guest_signal_fails(organization, monkeypatch):
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(
+        organization, payload, idempotency_key="cancel-signal-failure"
+    )
+    client = _Daytona()
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    with patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    ):
+        gateway.launch(job, endpoint_base_url="https://platform.example.com")
+
+    def fail_upload(_content, _path):
+        raise RuntimeError("guest control channel unavailable")
+
+    monkeypatch.setattr(client.sandbox.fs, "upload_file", fail_upload)
+
+    canceled = gateway.cancel(job, reason="user_canceled")
+
+    assert client.deleted is True
+    assert canceled.state == HostedHarnessJob.State.CANCELED
+
+
+@pytest.mark.django_db
 def test_cancel_immediately_projects_cleaning_up_stage(organization):
     job, _ = create_hosted_job(
         organization, _payload(), idempotency_key="cancel-visible-stage"
@@ -2051,3 +2107,93 @@ def test_reconcile_exit0_refreshes_terminal_delivery_flags(organization, monkeyp
     assert refreshed.manifest_acked is True
     assert refreshed.terminal_stage == "completed"
     assert refreshed.terminal_failure is None
+
+
+@pytest.mark.django_db(transaction=True)
+def test_fresh_lease_starts_chat_once_for_concurrent_messages(
+    organization, monkeypatch
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from django.db import close_old_connections
+
+    from simulate.services.hosted_harness_conversation import (
+        ensure_conversation,
+        issue_conversation_capability,
+    )
+    from simulate.services.hosted_harness_gateway import _CHAT_SESSION
+
+    job, _ = create_hosted_job(organization, _payload(), idempotency_key="fresh-chat")
+    attempt = register_attempt(
+        job.id, endpoint_base_url="https://platform.example"
+    ).attempt
+    attempt.provider_ref = "sandbox-1"
+    attempt.state = HostedHarnessAttempt.State.RUNNING
+    attempt.save()
+    job.refresh_from_db()
+    conversation = ensure_conversation(job)
+    issue_conversation_capability(
+        conversation,
+        endpoint_base_url="https://platform.example",
+        provider_ref=attempt.provider_ref,
+        attempt=attempt,
+        ttl_seconds=600,
+        control_only=True,
+    )
+    client = _Daytona()
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway._platform_simulator_material",
+        lambda: ({}, None),
+    )
+    barrier = Barrier(2)
+
+    def start():
+        close_old_connections()
+        try:
+            barrier.wait(timeout=10)
+            return gateway.ensure_conversation_runtime(
+                job,
+                conversation=conversation,
+                endpoint_base_url="https://platform.example",
+            ).state
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(start) for _ in range(2)]
+        assert [future.result(timeout=30) for future in futures] == ["active", "active"]
+    assert client.sandbox.process.sessions == [_CHAT_SESSION]
+    assert "hosted_chat_entrypoint" in client.sandbox.process.session_request.command
+    assert client.deleted is False
+
+
+@pytest.mark.django_db
+def test_hosted_execution_cancel_signals_workflow_without_deleting_sandbox(
+    organization, monkeypatch
+):
+    from simulate.models import RunTest, TestExecution
+    from simulate.views.run_test import TestExecutionCancelView
+
+    run = RunTest.objects.create(name="Cancel hosted run", organization=organization)
+    execution = TestExecution.objects.create(run_test=run)
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="cancel-workflow"
+    )
+    job.test_execution = execution
+    job.save(update_fields=["test_execution"])
+    signaled = []
+    monkeypatch.setattr(
+        "simulate.temporal.client.cancel_hosted_harness_gateway_workflow",
+        lambda job_id: signaled.append(job_id),
+    )
+    with patch.object(HostedHarnessGateway, "cancel") as delete_fallback:
+        result = TestExecutionCancelView()._cancel_with_temporal(execution)
+    assert result["success"] is True
+    assert signaled == [str(job.id)]
+    delete_fallback.assert_not_called()
+    job.refresh_from_db()
+    assert job.state == HostedHarnessJob.State.CLEANING_UP
+    assert job.cancel_reason == "user_canceled"
