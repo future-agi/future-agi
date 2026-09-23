@@ -281,7 +281,9 @@ export function adaptGroupingSnapshot(snapshot) {
       summary: finding.statement,
       recovery: finding.recovery,
       terminal_effect: 'unknown',
-      outcome: {success: 'satisfied', failure: 'violated', unknown: 'unknown'}[report.outcome] || 'unknown',
+      outcome: linkedRequirement?.status === 'violated' &&
+        ['unrecovered', 'not_recovered', 'not_observed', 'none'].includes(finding.recovery)
+        ? 'violated' : 'unknown',
       analysis_status: report.execution_status,
       control: false,
       impact: null,

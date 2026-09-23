@@ -55,6 +55,26 @@ test('revoked lease cancels model work and preserves failed report for accountin
     assert.equal((await readdir(spool)).length, 1);
   } finally { await rm(spool, {recursive: true, force: true}); }
 });
+test('transient renewal failure is retried before the lease expires', async () => {
+  const spool = await mkdtemp(join(tmpdir(), 'omega-spool-test-'));
+  try {
+    const c = claim();
+    c.lease_expires_at = new Date(Date.now() + 10000).toISOString();
+    let renewals = 0;
+    await processClaim(c, {spool, heartbeatMs: 1,
+      control: async (path) => {
+        if (path === '/reports/') return {status: 'accepted'};
+        if (++renewals === 1) throw Object.assign(new Error('temporarily unavailable'), {status: 503});
+        return {status: 'claimed', lease_expires_at: new Date(Date.now() + 10000).toISOString()};
+      },
+      investigate: async (_claim, {signal}) => {
+        await new Promise(resolve => setTimeout(resolve, 1200));
+        assert.equal(signal.aborted, false);
+        return {execution_status: 'completed', outcome: 'success'};
+      }});
+    assert.ok(renewals >= 2);
+  } finally { await rm(spool, {recursive: true, force: true}); }
+});
 test('coordinator never claims beyond available slots and drains on shutdown', async () => {
   const spool = await mkdtemp(join(tmpdir(), 'omega-spool-test-'));
   const stop = new AbortController(); let running = 0, peak = 0, claimed = false;

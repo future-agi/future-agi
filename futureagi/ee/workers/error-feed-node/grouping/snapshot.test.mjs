@@ -38,6 +38,13 @@ test('adapts normalized snapshot to deterministic F6 statement and task rows', (
   assert.deepEqual(adaptGroupingSnapshot(structuredClone(snapshot)), [row]);
 });
 
+test('a recovered finding never inherits a failing report outcome', () => {
+  const snapshot = makeGroupingSnapshotFixture();
+  snapshot.report.findings[0].recovery = 'recovered_via_fallback_model';
+  redigest(snapshot);
+  assert.equal(adaptGroupingSnapshot(snapshot)[0].outcome, 'unknown');
+});
+
 test('grouping status changes full envelope integrity but not accepted source identity', () => {
   const pending = makeGroupingSnapshotFixture();
   const completed = structuredClone(pending);
