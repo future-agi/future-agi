@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from tfc.utils.api_serializers import ManagementAPIErrorResponseSerializer
 from tracer.serializers.filters import StrictInputSerializer
 from tracer.services.trace_investigation import (
     InvestigationControlError,
@@ -265,6 +266,6 @@ class PublishInvestigationResponseSerializer(serializers.Serializer):
     grouping_status = serializers.CharField()
 
 
-class InvestigationControlErrorSerializer(serializers.Serializer):
+class InvestigationControlErrorSerializer(ManagementAPIErrorResponseSerializer):
     code = serializers.CharField()
     detail = serializers.CharField()
