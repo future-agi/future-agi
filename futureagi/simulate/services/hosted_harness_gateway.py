@@ -1694,11 +1694,9 @@ class HostedHarnessGateway:
                 )
             # Pack the authoring directory whole rather than an allow-list of file names: the
             # guest decides what a saved world consists of (world.sqlite today, world.py +
-            # state.json + manifest.json on newer guests), and an allow-list here silently
-            # drops the marker the next reuse needs. Only the sealed bundle is left out: it is
-            # large and bundle_author_v2 regenerates it from this directory on every launch.
-            # cost.json is this run's bill, not part of a saved world: left in, every reuse
-            # reads the first run's authoring cost back as its own.
+            # state.json + manifest.json on newer guests), and an allow-list here silently drops
+            # the marker the next reuse needs. Only the sealed bundle is left out: it is large and
+            # bundle_author_v2 regenerates it from this directory on every launch.
             packed = sandbox.process.exec(
                 "cd /work/authoring && tar -czf /tmp/authoring.tar.gz "
                 "--exclude=./environment-bundle --exclude=__pycache__ "
