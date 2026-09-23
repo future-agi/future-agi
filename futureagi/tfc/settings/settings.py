@@ -10,7 +10,6 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
-import json
 import os
 import re
 from datetime import datetime, timedelta
@@ -970,9 +969,6 @@ ALK_HOSTED_AUTHORING_TIMEOUT = int(
     os.getenv("ALK_HOSTED_AUTHORING_TIMEOUT", "")
     or ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS + 300
 )
-# How many scenarios one hosted job may ask for. The database allows up to MAX_SCENARIOS_PER_JOB;
-# this is the admission ceiling, which stays lower until a suite that size has been run end to end.
-ALK_MAX_SCENARIOS_PER_REQUEST = int(os.getenv("ALK_MAX_SCENARIOS_PER_REQUEST", "1000"))
 # Sandbox lifetime is a separate infrastructure envelope. A customer's call-runtime limit must
 # never shorten fresh authoring; two hours is the hosted default/minimum.
 ALK_HOSTED_SANDBOX_TTL_SECONDS = int(
@@ -1003,39 +999,6 @@ ALK_E2B_TEMPLATE_CPU_UNITS = int(os.getenv("ALK_E2B_TEMPLATE_CPU_UNITS", "4"))
 ALK_E2B_TEMPLATE_MEMORY_MB = int(os.getenv("ALK_E2B_TEMPLATE_MEMORY_MB", "8192"))
 ALK_E2B_TEMPLATE_DISK_GB = int(os.getenv("ALK_E2B_TEMPLATE_DISK_GB", "10"))
 ALK_E2B_MAX_TTL_SECONDS = int(os.getenv("ALK_E2B_MAX_TTL_SECONDS", "0"))
-
-# Scenario parallelism (W>1) admission belt (C4 §5, decisions D12/D23/D24).
-# W>1 is admitted only when this flag is truthy AND the selected guest runtime
-# digest (Daytona snapshot digest or E2B template build ID) is certified. Both
-# default to the fail-closed state (disabled / empty) so an unset digest never
-# admits W>1. Production keeps the flag OFF until the deployed snapshot carries
-# the world-unique preflight guard and C1 port model; dev/E2E sets it ON. In the
-# dockerfile-mode dev lane (ALK_DAYTONA_DOCKERFILE set) the guard is flag-only —
-# the digest half is skipped because that lane carries no meaningful digest.
-HARNESS_PARALLELISM_ENABLED = os.getenv("HARNESS_PARALLELISM_ENABLED", "").lower() in (
-    "1",
-    "true",
-    "yes",
-)
-HARNESS_MAX_WORLD_SLOTS = int(os.getenv("HARNESS_MAX_WORLD_SLOTS", "8"))
-HARNESS_EXPERIMENTAL_TWO_SLOTS_ON_2CPU = os.getenv(
-    "HARNESS_EXPERIMENTAL_TWO_SLOTS_ON_2CPU", "false"
-).lower() in ("1", "true", "yes")
-# Each profile is an operator-certified size/connector/snapshot combination.
-HARNESS_RESOURCE_PROFILES = json.loads(os.getenv("HARNESS_RESOURCE_PROFILES", "[]"))
-# Comma-separated provider-neutral allowlist of guest runtime digests certified
-# for W>1. Empty (the default) fails closed for pinned runtimes.
-HARNESS_PARALLEL_RUNTIME_DIGESTS = [
-    digest.strip()
-    for digest in os.getenv("HARNESS_PARALLEL_RUNTIME_DIGESTS", "").split(",")
-    if digest.strip()
-]
-# Legacy Daytona setting remains accepted during migration.
-HARNESS_PARALLEL_SNAPSHOT_DIGESTS = [
-    digest.strip()
-    for digest in os.getenv("HARNESS_PARALLEL_SNAPSHOT_DIGESTS", "").split(",")
-    if digest.strip()
-]
 
 # LiveKit credentials (used for webhook verification and API calls)
 LIVEKIT_URL = os.getenv("LIVEKIT_URL", "")

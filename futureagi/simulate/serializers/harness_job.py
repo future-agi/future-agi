@@ -16,7 +16,6 @@ from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 # Port-generic loopback pattern for the C4 §7 Channel-1 literal-endpoint scan.
 # The declared fixed port is unknowable platform-side (the bundle is authored
 # in-sandbox), so the match is any port on localhost / 127.0.0.1 / [::1].
-_LOOPBACK_ENDPOINT_RE = re.compile(r"(?:localhost|127\.0\.0\.1|\[::1\]):\d+")
 
 _E164_PHONE = re.compile(r"^\+[1-9]\d{1,14}$")
 
@@ -380,7 +379,6 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             runtime["max_duration_seconds"] = max(
                 runtime["max_duration_seconds"], attrs["scenario_count"] * 360
             )
-        self._apply_sandbox_runtime_limits(runtime)
         if agent["connector"] in {"livekit", "vapi", "retell", "phone", "auto"} and (
             runtime["parallelism"] > runtime["cpu_units"]
         ):
@@ -414,94 +412,9 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 "an environment variable cannot be both uploaded and a secret reference"
             )
-        self._apply_parallelism_belt(attrs, runtime)
         return attrs
 
-    @staticmethod
-    def _apply_sandbox_runtime_limits(runtime: dict[str, Any]) -> None:
-        """Resolve provider-owned limits before admission and persistence."""
-        from simulate.services.hosted_sandbox import sandbox_runtime_policy
 
-        policy = sandbox_runtime_policy()
-        if policy.fixed_resources:
-            cpu_units, memory_mb, _disk_gb = policy.fixed_resources
-            runtime["cpu_units"] = cpu_units
-            runtime["memory_mb"] = memory_mb
-        if policy.max_ttl_seconds is None:
-            return
-        if policy.max_ttl_seconds <= 0:
-            raise serializers.ValidationError(
-                {"runtime": "sandbox provider maximum lifetime is not configured"}
-            )
-        authoring_ttl = int(getattr(settings, "ALK_HOSTED_AUTHORING_TIMEOUT", 3900))
-        configured_ttl = int(getattr(settings, "ALK_HOSTED_SANDBOX_TTL_SECONDS", 7200))
-        if max(authoring_ttl, configured_ttl) > policy.max_ttl_seconds:
-            raise serializers.ValidationError(
-                {"runtime": "configured sandbox lifetime exceeds the provider limit"}
-            )
-        # The window is what the sandbox can actually run for. Reserving the authoring budget
-        # here charged every run for time it might not spend, and the capability grant is minted
-        # against this number, so a guest that authored quickly was still killed early.
-        execution_limit = policy.max_ttl_seconds - 120
-        if execution_limit < 60:
-            raise serializers.ValidationError(
-                {"runtime": "sandbox lifetime leaves no supported execution window"}
-            )
-        runtime["max_duration_seconds"] = min(
-            runtime["max_duration_seconds"], execution_limit
-        )
-
-    def _apply_parallelism_belt(self, attrs, runtime):
-        """Create-time W>1 admission belt (C4 §5 / §7 Channel 1, Track E).
-
-        This is the EARLY, FRIENDLY surface — ``register_attempt`` is the
-        authoritative enforcement. It runs the SAME shared guard at submit so a
-        fresh create gets immediate feedback: a W>1 request the guard denies is
-        CLAMPED (recorded on ``metadata.parallelism_clamped``), never rejected,
-        and the requested ``runtime.parallelism`` is preserved so a later rerun
-        re-evaluates honestly. It additionally scans the inline plaintext
-        ``source.environment_values`` for loopback literals and WARNS (never
-        rejects) at W>1 — the primary platform literal-endpoint channel.
-        """
-        requested = runtime.get("parallelism") or 1
-        if requested <= 1:
-            return
-        # Lazy import keeps the serializer module import-cycle-free.
-        from simulate.services.harness_capacity import configured_capacity
-        from simulate.services.hosted_harness import clamp_parallelism
-
-        metadata = dict(attrs.get("metadata") or {})
-        try:
-            capacity = configured_capacity(attrs)
-        except ValueError as exc:
-            raise serializers.ValidationError({"runtime": str(exc)}) from exc
-        from simulate.services.hosted_sandbox import sandbox_runtime_policy
-
-        digest = capacity.snapshot_digest or sandbox_runtime_policy().digest
-        admitted, _ = clamp_parallelism(requested, digest)
-        admitted = min(admitted, capacity.parallelism)
-        if admitted != requested:
-            metadata["parallelism_clamped"] = {
-                "requested": requested,
-                "admitted": admitted,
-            }
-        environment_values = attrs["source"].get("environment_values") or {}
-        flagged = sorted(
-            alias
-            for alias, value in environment_values.items()
-            if isinstance(value, str) and _LOOPBACK_ENDPOINT_RE.search(value)
-        )
-        if flagged:
-            warnings = list(metadata.get("parallelism_warnings") or [])
-            warnings.append(
-                {
-                    "code": "literal_local_endpoint",
-                    "channel": "environment_values",
-                    "aliases": flagged,
-                }
-            )
-            metadata["parallelism_warnings"] = warnings
-        attrs["metadata"] = metadata
 
 
 LIVEKIT_ALIASES = ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
@@ -759,11 +672,6 @@ class HarnessRuntimeReadSerializer(serializers.Serializer):
     diagnostics = HarnessDiagnosticsSerializer(required=False)
 
 
-class HarnessParallelismSerializer(serializers.Serializer):
-    requested = serializers.IntegerField()
-    admitted = serializers.IntegerField()
-    effective = serializers.IntegerField()
-    degrade_reasons = serializers.ListField(child=serializers.CharField())
 class HarnessConsumptionSerializer(serializers.Serializer):
     text_sim_tokens = serializers.IntegerField(min_value=0)
     voice_sim_minutes = serializers.FloatField(min_value=0)
@@ -782,7 +690,6 @@ class HarnessJobReadSerializer(serializers.Serializer):
     receipts = serializers.ListField(child=serializers.JSONField())
     platform = HarnessPlatformSerializer()
     runtime = HarnessRuntimeReadSerializer(required=False)
-    parallelism = HarnessParallelismSerializer(required=False)
     conversation = HarnessConversationReadSerializer(allow_null=True, required=False)
     consumption = HarnessConsumptionSerializer(required=False, allow_null=True)
     usage_limit = serializers.JSONField(required=False, allow_null=True)

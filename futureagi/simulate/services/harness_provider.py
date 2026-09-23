@@ -181,9 +181,13 @@ def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) ->
         SandboxProviderConfigurationError,
         sandbox_egress_domain_limit,
         sandbox_provider_name,
-        sandbox_runtime_policy,
         validate_sandbox_requirements,
     )
+
+    try:
+        from simulate.services.hosted_sandbox import sandbox_runtime_policy
+    except ImportError:  # the runtime policy arrives with the parallelism work
+        sandbox_runtime_policy = None
 
     security = payload.get("security") or {}
     customer_domains = security.get("allowed_egress_domains") or []
@@ -204,8 +208,8 @@ def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) ->
         domains, max_domains=sandbox_egress_domain_limit()
     )
     runtime = payload["runtime"]
-    policy = sandbox_runtime_policy()
-    disk_gb = policy.fixed_resources[2] if policy.fixed_resources else 10
+    policy = sandbox_runtime_policy() if sandbox_runtime_policy else None
+    disk_gb = policy.fixed_resources[2] if policy and policy.fixed_resources else 10
     provider_name = sandbox_provider_name()
     max_ttl_seconds = max(
         _authoring_ttl_seconds(provider_name),
