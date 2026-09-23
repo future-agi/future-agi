@@ -106,7 +106,7 @@ export function harnessDetailToEnvironment(detail) {
     name: overview.name || environmentName({ job_id: detail.id }),
     description,
     domain: overview.domain ?? null,
-    agentType: AGENT_TYPE[overview.agent_type] || overview.agent_type || "text",
+    agentType: AGENT_TYPE[overview.agent_type] || overview.agent_type || null,
     surface: contract?.modality || overview.agent_type || undefined,
     status: overview.status ? stageToStatus(overview.status) : undefined,
     buildStatus: overview.status ? buildStatusFor(overview.status) : BUILD_STATUS.BUILDING,
@@ -128,6 +128,10 @@ export function harnessDetailToEnvironment(detail) {
     personas: world?.personas || null,
     stores: world?.stores || null,
     callDirection: contract?.call_direction ?? null,
+    // Real per-table field types and per-tool callables, when ALK read them
+    // from source. Empty for provider agents, which have neither.
+    dataSchema: contract?.data_schema || null,
+    toolEntrypoints: contract?.tool_entrypoints || null,
     systemPromptExcerpt: contract?.system_prompt_excerpt || null,
     counts: {
       flows: overview.flows_count ?? null,

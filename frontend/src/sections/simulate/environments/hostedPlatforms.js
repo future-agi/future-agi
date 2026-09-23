@@ -28,6 +28,18 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       keyLabel: "Retell API key",
     },
     {
+      // "Others" — an agent that already answers a phone number. The platform
+      // dials it; the pasted system prompt only seeds scenarios. Backend
+      // connector `phone`. Rendered with a Solar icon, not a brand logo.
+      id: "other",
+      name: "Others",
+      isOther: true,
+      icon: "solar:dialog-2-linear",
+      idLabel: "Phone number",
+      idPlaceholder: "+1 415 555 1234",
+      keyLabel: "API key",
+    },
+    {
       id: "bland",
       name: "Bland.ai",
       icon: "solar:phone-linear",
@@ -57,18 +69,7 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       idLabel: "Agent name",
       idPlaceholder: "returns-line-agent",
       keyLabel: "LiveKit API key",
-    },
-    {
-      // "Others" — describe the agent by a system prompt and run it against the
-      // LLM directly (no endpoint/key). Rendered with a Solar icon, not a brand
-      // logo. NOTE: no backend connector exists for this path yet (see plan).
-      id: "other",
-      name: "Others",
-      isOther: true,
-      icon: "solar:dialog-2-linear",
-      idLabel: "Endpoint URL",
-      idPlaceholder: "https://your-agent.example.com",
-      keyLabel: "API key",
+      comingSoon: true,
     },
   ],
   [AGENT_TYPES.CHAT]: [
@@ -80,7 +81,7 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       name: "Retell AI",
       icon: "solar:chat-round-line-linear",
       brand: "#635BFF",
-      idLabel: "Agent ID",
+      idLabel: "Chat agent ID",
       idPlaceholder: "agent_9f2c…",
       keyLabel: "Retell API key",
     },

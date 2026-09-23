@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { Box, Stack, Typography, Grid } from "@mui/material";
-import { getSurface, getDomain } from "src/api/simulate-environments/_fixtures/surfaces";
+import { getSurface } from "src/api/simulate-environments/_fixtures/surfaces";
 import { contractFor } from "src/api/simulate-environments/_fixtures/contract";
 import { ENV_SHAPE, ENV_STATE_SHAPE, OVERVIEW_COPY } from "./overview.constants";
 // Manage-versions (the agent "test subject" card + its version drawer) is
@@ -13,7 +13,6 @@ import { ENV_SHAPE, ENV_STATE_SHAPE, OVERVIEW_COPY } from "./overview.constants"
 import { GroupHeading, Fact } from "./OverviewPrimitives";
 import AgentRefreshBanner from "./AgentRefreshBanner";
 import NextStepsChecklist from "./NextStepsChecklist";
-import SourceToSandboxMap from "./SourceToSandboxMap";
 import StateSummary from "./StateSummary";
 import { UseCasesCard, AmendmentsCard } from "./OverviewCards";
 import { DependsOnCard } from "./WorldCards";
@@ -62,7 +61,6 @@ export default function OverviewPanel({ env, envState, patch, onGo, agentConnect
   // const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
   // const [nestedAgentDrawer, setNestedAgentDrawer] = useState(false);
   const surface = getSurface(env.surface);
-  const domain = getDomain(env.domain);
   const contract = contractFor(env);
   // The real connector for a backed env (envState.agent.typeId = the job poll's
   // detected connector, e.g. "livekit"). No transports field is served, so this
@@ -73,7 +71,6 @@ export default function OverviewPanel({ env, envState, patch, onGo, agentConnect
   const hasDerivedWorld = (env.rules?.length || 0) > 0
     || (envState?.scenarios?.length || 0) > 0
     || (env.tools?.length || 0) > 0;
-  const showRichOverview = agentConnected || hasDerivedWorld;
 
   return (
     <Box sx={{ p: 2 }}>
@@ -91,7 +88,6 @@ export default function OverviewPanel({ env, envState, patch, onGo, agentConnect
         sx={{ my: 2, py: 1.25, px: 2, border: "1px solid", borderColor: "divider", borderRadius: 1.5, rowGap: 1 }}
       >
         <Fact label={OVERVIEW_COPY.facts.channel} value={surface.label} />
-        <Fact label={OVERVIEW_COPY.facts.domain} value={domain?.label || "—"} />
         <Fact label={OVERVIEW_COPY.facts.connector} value={connectorLabel} />
       </Stack>
 
@@ -124,12 +120,8 @@ export default function OverviewPanel({ env, envState, patch, onGo, agentConnect
           the environment belongs. Overview keeps the summary, not the definition. */}
       <GroupHeading>{OVERVIEW_COPY.capabilities}</GroupHeading>
 
-      {/* The reviewability record: every derived fact with its origin and its
-          sandbox target, side by side, with unresolved rows carrying an inline
-          resolve control. */}
-      {showRichOverview && (
-        <SourceToSandboxMap env={env} envState={envState} patch={patch} stores={backedWorld?.stores} />
-      )}
+      {/* The source-to-sandbox ledger was removed: its origin chips and sandbox
+          targets were derived by position and keyword, not reported by ALK. */}
 
       {/* Tools and Hard rules cards were here — removed as duplicates of the
           Contract tab, which owns the tool inventory and the hard-rule list. */}

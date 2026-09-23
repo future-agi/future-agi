@@ -1,6 +1,5 @@
 import PropTypes from "prop-types";
 import { getPacks, getRows } from "src/api/simulate-environments/_fixtures/scenarioPool";
-import { ORIGIN_ID } from "../../buildEnvironment/provenance.constants";
 
 // Every copy string the Overview surface renders.
 export const OVERVIEW_COPY = {
@@ -130,47 +129,10 @@ export const packStatsFor = (env) => {
   };
 };
 
-// Where each hard rule was found. The world carries rules as plain strings, so
-// the origin is derived the way the designer's provenance.js did: the first two
-// rules are enforced in code, the last of a reasonably sized set is prose-only
-// (the held case the mechanism exists for), the rest are prompt-only. Uses the
-// existing Phase-2 ORIGIN_KINDS ids — no new tones. A rule with no derivable
-// origin falls back to prompt (recorded but ungraded, the safe semantic).
-export const ruleOriginFor = (index, ruleCount) => {
-  if (index < 2) return ORIGIN_ID.CODE;
-  if (ruleCount >= 4 && index === ruleCount - 1) return ORIGIN_ID.DOC;
-  return ORIGIN_ID.PROMPT;
-};
-
-const ORIGIN_FILES = {
-  [ORIGIN_ID.CODE]: "agent/policy.py",
-  [ORIGIN_ID.PROMPT]: "prompts/system.md",
-  [ORIGIN_ID.DOC]: "vendor/support-kit/README.md",
-};
-
-const hashSeed = (s = "") => {
-  let h = 0;
-  for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return h;
-};
-
-const lineFor = (seed, i) => 12 + ((seed + i * 37) % 180);
-
-// The rule rows Overview renders: subject + origin + file:line for the chip.
-export const ruleRowsFor = (env) => {
-  const seed = hashSeed(env?.id || "env");
-  const rules = env?.rules || [];
-  return rules.map((subject, i) => {
-    const origin = ruleOriginFor(i, rules.length) || ORIGIN_ID.PROMPT;
-    return {
-      id: `rule-${i}`,
-      subject,
-      origin,
-      file: ORIGIN_FILES[origin] || ORIGIN_FILES[ORIGIN_ID.PROMPT],
-      line: lineFor(seed, i + 7),
-    };
-  });
-};
+// The rule rows Overview renders. ALK sends the rule text only; per-rule origin
+// is not reported yet, so nothing is derived.
+export const ruleRowsFor = (env) =>
+  (env?.rules || []).map((subject, i) => ({ id: `rule-${i}`, subject }));
 
 // The "agent moved ahead" refresh banner copy.
 export const REFRESH_COPY = {

@@ -143,9 +143,9 @@ export default function PanelHostedPlatform() {
                 logo={p.isOther ? undefined : <PlatformLogo id={p.id} name={p.name} brand={p.brand} />}
                 /* Wordmark logos already spell the name — don't repeat it. */
                 label={PLATFORM_LOGOS[p.id]?.type === "wordmark" ? null : p.name}
+                comingSoon={p.comingSoon}
                 on={platform === p.id}
                 onClick={() => set("platform")(p.id)}
-                comingSoon={p.comingSoon}
               />
             ))}
           </Box>
@@ -160,7 +160,7 @@ export default function PanelHostedPlatform() {
               placeholder="You are a friendly returns agent for Acme…"
               value={otherPrompt} onChange={set("otherPrompt")}
               multiline
-              helper="We seed matching scenarios from the prompt and run it against the LLM directly — no external endpoint or API key needed."
+              helper="The platform dials the number below with its own telephony. The prompt only seeds scenarios; it never changes the live agent."
             />
           ) : (
             <>

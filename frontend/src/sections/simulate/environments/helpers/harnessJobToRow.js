@@ -29,7 +29,7 @@ export const stageToStatus = (stage) => {
 // terminal-failed job as still building (the header stuck on "Building" with the
 // animation never stopping). A failed/canceled stage is now BUILD_STATUS.FAILED.
 export const buildStatusFor = (stage) => {
-  if (stage === HARNESS_STAGE.COMPLETED) return BUILD_STATUS.READY;
+  if (stage === HARNESS_STAGE.COMPLETED || stage === HARNESS_STAGE.RUNNING) return BUILD_STATUS.READY;
   if (stage === HARNESS_STAGE.FAILED || stage === HARNESS_STAGE.CANCELED) return BUILD_STATUS.FAILED;
   return BUILD_STATUS.BUILDING;
 };

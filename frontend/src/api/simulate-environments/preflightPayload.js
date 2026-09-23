@@ -4,7 +4,7 @@ import { parseGitHubInput, parseEgressDomains } from "src/pages/dashboard/harnes
  * Maps a redacted Phase-1 source draft to a schema-valid `HarnessPreflight`
  * body (or `{ skipped: reason }` when the draft cannot be preflighted for
  * real). Contract: `HarnessSource.kind ∈ {github, archive, remote, provider}`,
- * `HarnessAgent.connector ∈ {livekit, vapi, retell, retell_chat, auto}`
+ * `HarnessAgent.connector ∈ {livekit, vapi, retell, retell_chat, phone, auto}`
  * (openapi-contract.generated.js HarnessSource / HarnessAgent). The body is
  * runtime-validated client-side, so undefined keys are never emitted.
  *
@@ -32,16 +32,40 @@ export const PREFLIGHT_CONNECTOR = {
   RETELL: "retell",
   RETELL_CHAT: "retell_chat",
   LIVEKIT: "livekit",
+  PHONE: "phone",
 };
 
 // The roster providers that exist in the HarnessAgent.connector enum. `retell`
 // is the voice connector; `retell_chat` is the only real chat connector.
+// "Others" is an agent that answers a phone number: the platform dials it and
+// the pasted system prompt stands in for source code.
 export const PROVIDER_TO_CONNECTOR = {
   vapi: PREFLIGHT_CONNECTOR.VAPI,
   retell: PREFLIGHT_CONNECTOR.RETELL,
   retell_chat: PREFLIGHT_CONNECTOR.RETELL_CHAT,
   livekit: PREFLIGHT_CONNECTOR.LIVEKIT,
+  other: PREFLIGHT_CONNECTOR.PHONE,
 };
+
+// The contact panel keeps the dial code and the local number apart; the
+// backend wants one E.164 string. Empty when the draft has no usable number.
+function e164(contact) {
+  const dial = String(contact?.countryCode || "").replace(/\D/g, "");
+  const local = String(contact?.number || "").replace(/\D/g, "");
+  if (!local) return "";
+  return `+${local.startsWith(dial) && dial.length > 1 ? local : dial + local}`;
+}
+
+// Who calls whom and who opens, as the backend's two config booleans. Only
+// emitted when the panel collected them, so a draft without contact details
+// keeps the schema defaults.
+function callBehaviour(contact) {
+  if (!contact) return {};
+  return {
+    inbound: contact.inboundCalls !== false,
+    target_speaks_first: Boolean(contact.agentSpeaksFirst),
+  };
+}
 
 const lastSegment = (value) =>
   (value || "")
@@ -56,7 +80,9 @@ export function environmentNameFor(draft) {
     const repository = parseGitHubInput(draft.value)?.repository || draft.value;
     return lastSegment(repository) || "agent";
   }
-  if (draft.kind === "platform") return draft.agentId || "agent";
+  if (draft.kind === "platform") {
+    return draft.agentId || (draft.agentMode === "prompt" ? "phone-agent" : "agent");
+  }
   // An upload is a folder, so name it after the folder — not the entry path or
   // some file inside it (which produced names like "requirements.txt").
   if (draft.kind === "upload") {
@@ -130,21 +156,45 @@ function platformPayload(draft, name) {
   const connector = PROVIDER_TO_CONNECTOR[draft.provider];
   if (!connector) return { skipped: `\`${draft.provider}\` is not a preflight connector yet` };
 
-  const idKey = connector === PREFLIGHT_CONNECTOR.VAPI ? "assistant_id" : "agent_id";
+  const contact = draft.contact;
+  const usesPhone = connector === PREFLIGHT_CONNECTOR.PHONE || contact?.mode === "phone";
+  const phoneNumber = usesPhone ? e164(contact) : "";
+  if (usesPhone && !phoneNumber) {
+    return { skipped: "A phone call needs the agent's number" };
+  }
+
+  let config;
+  if (connector === PREFLIGHT_CONNECTOR.PHONE) {
+    const prompt = String(draft.prompt || "").trim();
+    if (!prompt) return { skipped: "Others needs the agent's system prompt" };
+    // The platform dials the number itself, so the caller can only be the
+    // simulator: inbound is fixed, only who opens is a choice.
+    config = {
+      phone_number: phoneNumber,
+      target_system_prompt: prompt,
+      ...(contact ? { inbound: true, target_speaks_first: Boolean(contact.agentSpeaksFirst) } : {}),
+    };
+  } else {
+    const idKey = connector === PREFLIGHT_CONNECTOR.VAPI ? "assistant_id" : "agent_id";
+    config = {
+      [idKey]: draft.agentId,
+      ...(phoneNumber ? { phone_number: phoneNumber } : {}),
+      ...callBehaviour(contact),
+    };
+  }
   return {
     payload: {
       ...envelope(draft, name),
       agent: {
         connector,
         mode: "connect_only",
-        config: { [idKey]: draft.agentId },
+        config,
         // The plaintext key never reaches here — the handoff exchanges it for an
         // opaque `{alias: reference}` map before the draft is persisted. Absent
         // (a provider with no single-key exchange), the schema default applies.
         secret_refs: draft.secret_refs || {},
-        // The panel collects call direction (Inbound Calls); send it so it is at
-        // least recorded. Backend accepts it but treats it as inert today (§4f) —
-        // do not present it as changing who speaks first until the backend honours it.
+        // The direction as the panel collected it. The backend honours
+        // `config.inbound` first and this second, before the authored guess.
         ...(draft.callDirection ? { call_direction: draft.callDirection } : {}),
       },
     },

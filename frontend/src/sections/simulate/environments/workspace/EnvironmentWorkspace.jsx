@@ -372,7 +372,7 @@ export default function EnvironmentWorkspace() {
         >
           <WorkspacePanels
             env={displayEnv}
-            envState={envState}
+            envState={badgeEnvState}
             patch={patch}
             tab={activeTab}
             onTabChange={onTabChange}

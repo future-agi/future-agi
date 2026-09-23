@@ -2,7 +2,7 @@ import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
-import { BUILD_STATUS, STATUS_META } from "../myEnvironments.constants";
+import { BUILD_STATUS, ENV_STATUS, STATUS_META } from "../myEnvironments.constants";
 import { WORKSPACE_COPY } from "./workspace.constants";
 
 // The status pill beside an environment's name. Three states keyed on the env's
@@ -17,21 +17,28 @@ import { WORKSPACE_COPY } from "./workspace.constants";
 export default function LivePill({ env, building }) {
   const isBuilding = building ?? env?.buildStatus === BUILD_STATUS.BUILDING;
   const isFailed = !isBuilding && env?.buildStatus === BUILD_STATUS.FAILED;
+  const isRunning = !isBuilding && !isFailed && env?.status === ENV_STATUS.RUNNING;
   const tone = isFailed
     ? STATUS_META.failed.color
     : isBuilding
       ? STATUS_META.building.color
-      : STATUS_META.passed.color;
+      : isRunning
+        ? STATUS_META.running.color
+        : STATUS_META.passed.color;
   const label = isFailed
     ? WORKSPACE_COPY.failedLabel
     : isBuilding
       ? WORKSPACE_COPY.buildingLabel
-      : WORKSPACE_COPY.live;
+      : isRunning
+        ? STATUS_META.running.label
+        : WORKSPACE_COPY.live;
   const tooltip = isFailed
     ? WORKSPACE_COPY.failedTooltip
     : isBuilding
       ? WORKSPACE_COPY.buildingTooltip
-      : WORKSPACE_COPY.liveTooltip;
+      : isRunning
+        ? WORKSPACE_COPY.runningTooltip
+        : WORKSPACE_COPY.liveTooltip;
 
   return (
     <CustomTooltip show title={tooltip} size="small" arrow>
@@ -71,6 +78,6 @@ export default function LivePill({ env, building }) {
 }
 
 LivePill.propTypes = {
-  env: PropTypes.shape({ buildStatus: PropTypes.string }),
+  env: PropTypes.shape({ buildStatus: PropTypes.string, status: PropTypes.string }),
   building: PropTypes.bool,
 };

@@ -79,10 +79,10 @@ describe("hostedPlatforms", () => {
     expect(HOSTED_PLATFORMS_BY_TYPE.voice.map((p) => p.id)).toEqual([
       "vapi",
       "retell",
+      "other",
       "bland",
       "elevenlabs",
       "livekit",
-      "other",
     ]);
     expect(HOSTED_PLATFORMS_BY_TYPE.text.map((p) => p.id)).toEqual([
       "retell_chat",

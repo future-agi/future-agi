@@ -36,20 +36,6 @@ export function buildEnvironmentColumns({ onRowActions }) {
       ),
     },
     {
-      id: "domain",
-      accessorKey: "domain",
-      header: "Domain",
-      size: 150,
-      enableSorting: false,
-      // §1 `domain` is verbatim from metadata.domain and is null whenever the
-      // submitter sent none — render the blank placeholder rather than a guess.
-      cell: ({ getValue }) => (
-        <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>
-          {getValue() || "—"}
-        </Typography>
-      ),
-    },
-    {
       id: "status",
       accessorKey: "status",
       header: "Status",
