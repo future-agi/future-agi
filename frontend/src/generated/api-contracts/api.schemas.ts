@@ -24001,6 +24001,8 @@ export interface FindingAttributionRoleApi {
   span_id?: string;
   /** @maxItems 100 */
   evidence_ids: string[];
+  /** @maxLength 600 */
+  explanation?: string;
 }
 
 export interface FindingAttributionApi {
