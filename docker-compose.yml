@@ -93,8 +93,10 @@ x-backend-env: &backend-env
   ALK_E2B_MAX_TTL_SECONDS: ${ALK_E2B_MAX_TTL_SECONDS:-0}
 
   # LLM gateway + code sandbox + embedding service
-  AGENTCC_INTERNAL_URL: ${AGENTCC_INTERNAL_URL:-http://agentcc-gateway:8080}
-  AGENTCC_GATEWAY_INTERNAL_URL: ${AGENTCC_GATEWAY_INTERNAL_URL:-http://agentcc-gateway:8080}
+  # Compose services must use the gateway's container port. Do not allow an
+  # exported host-facing :8090 URL to override this service-to-service route.
+  AGENTCC_INTERNAL_URL: http://agentcc-gateway:8080
+  AGENTCC_GATEWAY_INTERNAL_URL: http://agentcc-gateway:8080
   AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-local-dev-only-shared-secret-replace-me}
   AGENTCC_WEBHOOK_SECRET: ${AGENTCC_WEBHOOK_SECRET:-}
   # Platform-owned virtual key for hosted ALK authoring (not a customer secret).

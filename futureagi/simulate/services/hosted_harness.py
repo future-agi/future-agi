@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -31,6 +32,22 @@ from simulate.services.alk_simulate_ingestion import (
 _CAPABILITY_SCHEMA_VERSION = "futureagi.harness-capabilities.v1"
 _JOB_SCHEMA_VERSION = "futureagi.harness-job.v1"
 _TOKEN_TAIL_SECONDS = 120 + 300
+
+
+def _active_attempt_budget_seconds(job: HostedHarnessJob) -> int:
+    """Budget an active capability for authoring plus scenario execution."""
+
+    authoring_seconds = max(
+        0,
+        int(
+            getattr(
+                settings,
+                "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
+                3600,
+            )
+        ),
+    )
+    return authoring_seconds + int(job.payload["runtime"]["max_duration_seconds"])
 
 
 class HostedHarnessError(Exception):
@@ -179,7 +196,7 @@ def register_attempt(
                 ),
             ).update(state=HostedHarnessAttempt.State.SUPERSEDED)
         runnable_deadline = now + timedelta(
-            seconds=job.payload["runtime"]["max_duration_seconds"]
+            seconds=_active_attempt_budget_seconds(job)
         )
         expires_at = runnable_deadline + timedelta(seconds=_TOKEN_TAIL_SECONDS)
         attempt = HostedHarnessAttempt.no_workspace_objects.create(
@@ -269,7 +286,7 @@ def activate_attempt_capability(capability: AttemptCapability) -> AttemptCapabil
                 "Only the current, provisioned attempt can be activated",
             )
         runnable_deadline = timezone.now() + timedelta(
-            seconds=job.payload["runtime"]["max_duration_seconds"]
+            seconds=_active_attempt_budget_seconds(job)
         )
         attempt.expires_at = runnable_deadline + timedelta(
             seconds=_TOKEN_TAIL_SECONDS
@@ -839,7 +856,19 @@ def record_cleanup(
 def update_execution_counts(job: HostedHarnessJob) -> None:
     if not job.test_execution_id:
         return
-    receipts = HostedHarnessReceipt.no_workspace_objects.filter(job=job)
+    current_attempt_number = (
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id).values_list(
+            "current_attempt_number", flat=True
+        ).get()
+    )
+    # Reruns retain each not-yet-replaced prior receipt so the old result stays
+    # visible while the fresh suite is executing.  Progress must nevertheless
+    # describe only the current attempt; otherwise one new receipt plus four
+    # retained receipts incorrectly appears as a completed 5/5 rerun.
+    receipts = HostedHarnessReceipt.no_workspace_objects.filter(
+        job=job,
+        attempt_number=current_attempt_number,
+    )
     # Harness receipt outcomes answer "did the scenario satisfy its checks?";
     # TestExecution counters answer "did the call transport complete?".  Keep
     # those dimensions separate so a completed, playable call with a failed
@@ -847,7 +876,8 @@ def update_execution_counts(job: HostedHarnessJob) -> None:
     scenario_completed = receipts.filter(status="passed").count()
     scenario_failed = receipts.filter(status__in=("failed", "errored")).count()
     calls = CallExecution.no_workspace_objects.filter(
-        test_execution_id=job.test_execution_id
+        test_execution_id=job.test_execution_id,
+        hosted_registration__receipts__attempt_number=current_attempt_number,
     )
     calls_completed = calls.filter(status=CallExecution.CallStatus.COMPLETED).count()
     calls_failed = calls.filter(

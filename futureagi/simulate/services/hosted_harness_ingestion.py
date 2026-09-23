@@ -558,10 +558,17 @@ def _store_event(
             .first()
         )
         if registration and registration.call_execution_id:
-            CallExecution.objects.filter(
-                id=registration.call_execution_id,
-                status=CallExecution.CallStatus.PENDING,
-            ).update(status=CallExecution.CallStatus.ONGOING)
+            has_current_receipt = HostedHarnessReceipt.no_workspace_objects.filter(
+                job=attempt.job,
+                scenario=registration,
+                attempt_number=attempt.attempt_number,
+            ).exists()
+            if not has_current_receipt:
+                CallExecution.objects.filter(id=registration.call_execution_id).update(
+                    status=CallExecution.CallStatus.ONGOING,
+                    completed_at=None,
+                    error_message="",
+                )
     if rejection is None and event["type"] == "terminal":
         payload = event["payload"]
         attempt.terminal_stage = payload["stage"]

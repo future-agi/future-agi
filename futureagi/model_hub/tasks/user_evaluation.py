@@ -1188,7 +1188,10 @@ def trigger_error_localization_for_simulate(
         logger.error(f"Error in trigger_error_localization_for_simulate: {str(e)}")
 
 
-@temporal_activity(time_limit=3600, queue="tasks_s", rate_limit="100/s")
+# Error localization launches a Claude Agent SDK subprocess and can make several
+# model/tool turns.  Treat it as XL work so a burst of failed evals cannot launch
+# hundreds of SDK sessions on the high-concurrency ``tasks_s`` worker.
+@temporal_activity(time_limit=3600, queue="tasks_xl", rate_limit="100/s")
 def process_single_error_localization(task_id):
     """
     Process a single error localization task.

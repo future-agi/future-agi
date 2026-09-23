@@ -19,6 +19,7 @@ from simulate.services.hosted_harness import (
     create_hosted_job,
     record_cleanup,
     register_attempt,
+    update_execution_counts,
 )
 from simulate.services.hosted_harness_ingestion import (
     _apply_receipt_to_call,
@@ -676,7 +677,8 @@ def test_failed_scenario_is_completed_call_in_the_submitting_workspace(
 
 
 @pytest.mark.django_db
-def test_registering_attempt_supersedes_old_capability(organization):
+def test_registering_attempt_supersedes_old_capability(organization, settings):
+    settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
     job, _ = create_hosted_job(organization, _payload(), idempotency_key="attempt-key")
     first = register_attempt(job.id, endpoint_base_url="https://platform.example")
     job.current_stage = "failed"
@@ -698,7 +700,8 @@ def test_registering_attempt_supersedes_old_capability(organization):
 
 
 @pytest.mark.django_db
-def test_capability_budget_starts_after_sandbox_provisioning(organization):
+def test_capability_budget_starts_after_sandbox_provisioning(organization, settings):
+    settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
     job, _ = create_hosted_job(
         organization, _payload(), idempotency_key="late-sandbox-provisioning"
     )
@@ -724,9 +727,10 @@ def test_capability_budget_starts_after_sandbox_provisioning(organization):
     attempt.refresh_from_db()
     assert activated.token == capability.token
     assert activated.fence == capability.fence
-    assert job.deadline_at == activated_at + timedelta(
-        seconds=job.payload["runtime"]["max_duration_seconds"]
+    expected_active_budget = (
+        3600 + job.payload["runtime"]["max_duration_seconds"]
     )
+    assert job.deadline_at == activated_at + timedelta(seconds=expected_active_budget)
     assert attempt.expires_at == job.deadline_at + timedelta(seconds=420)
     assert activated.document["expires_at"] == attempt.expires_at.isoformat(
         timespec="milliseconds"
@@ -844,7 +848,7 @@ def test_new_attempt_atomically_replaces_prior_scenario_receipt(organization):
     )
     assert begin.status_code == 200
 
-    def receipt(capability, *, scenario_attempt):
+    def receipt(capability, *, scenario_attempt, status="skipped"):
         body = {
             "schema_version": "futureagi.harness-result.v1",
             "job_id": str(job.id),
@@ -854,7 +858,7 @@ def test_new_attempt_atomically_replaces_prior_scenario_receipt(organization):
             "scenario_id": scenario["scenario_id"],
             "scenario_attempt": scenario_attempt,
             "world_index": None,
-            "status": "skipped",
+            "status": status,
             "sub_goals": [],
             "evaluations": [],
             "call": None,
@@ -864,10 +868,16 @@ def test_new_attempt_atomically_replaces_prior_scenario_receipt(organization):
         return body
 
     original, created = ingest_result_receipt(
-        first.attempt, receipt(first, scenario_attempt=1)
+        first.attempt, receipt(first, scenario_attempt=1, status="passed")
     )
     assert created is True
+    job.refresh_from_db()
+    assert job.completed_count == 1
     second = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    update_execution_counts(job)
+    job.refresh_from_db()
+    assert job.completed_count == 0
+    assert job.failed_count == 0
 
     replacement, created = ingest_result_receipt(
         second.attempt, receipt(second, scenario_attempt=2)

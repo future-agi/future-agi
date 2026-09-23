@@ -44,7 +44,7 @@ class GatewayConfig:
                 or os.getenv("AGENTCC_BASE_URL")
                 or os.getenv("AGENTCC_INTERNAL_URL")
                 or os.getenv("AGENTCC_GATEWAY_URL")
-                or "http://agentcc-gateway:8090"
+                or "http://agentcc-gateway:8080"
             )
             .strip()
             .rstrip("/")

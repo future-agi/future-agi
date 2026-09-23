@@ -21,7 +21,7 @@ alias configuration. Direct Vertex/Bedrock/Foundry SDK transports are disabled.
 | Setting | Resolution / default |
 | --- | --- |
 | `ERROR_LOCALIZER_BACKEND` | `claude_agent_sdk`; rollback: `legacy` |
-| Gateway URL | `ERROR_LOCALIZER_AGENTCC_URL`, then `AGENTCC_BASE_URL`, `AGENTCC_INTERNAL_URL`, `AGENTCC_GATEWAY_URL`, then `http://agentcc-gateway:8090` |
+| Gateway URL | `ERROR_LOCALIZER_AGENTCC_URL`, then `AGENTCC_BASE_URL`, `AGENTCC_INTERNAL_URL`, `AGENTCC_GATEWAY_URL`, then `http://agentcc-gateway:8080` |
 | Gateway key | `ERROR_LOCALIZER_AGENTCC_API_KEY`, then `AGENTCC_HARNESS_API_KEY`, `AGENTCC_API_KEY`, `AGENTCC_INTERNAL_API_KEY` |
 | `ERROR_LOCALIZER_TIMEOUT_SECONDS` | `90`; covers the complete SDK session |
 | `ERROR_LOCALIZER_MAX_TURNS` | `10` |

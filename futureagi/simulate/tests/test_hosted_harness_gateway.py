@@ -126,8 +126,8 @@ def test_platform_simulator_defaults_to_approved_vertex_model(monkeypatch):
 def test_platform_authoring_backend_is_independent_from_simulated_caller(
     tmp_path, monkeypatch
 ):
-    monkeypatch.delenv("AGENTCC_HARNESS_API_KEY", raising=False)
     monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "platform-internal-key")
+    monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "platform-harness-key")
     monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
     credentials = tmp_path / "vertex.json"
     credentials.write_text('{"project_id":"platform-project"}', encoding="utf-8")
@@ -136,15 +136,13 @@ def test_platform_authoring_backend_is_independent_from_simulated_caller(
     monkeypatch.setenv("SIMULATOR_LLM_MODEL", "gemini-3.1-flash-lite")
     monkeypatch.setenv("ALK_HARNESS", "claude")
     monkeypatch.setenv("ALK_HARNESS_MODEL", "claude-sonnet-4-6")
-    monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "platform-gateway-key")
-    monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
-
     values, _credential_bytes = _platform_simulator_material()
 
     assert values["ALK_HARNESS"] == "claude"
     assert values["ALK_HARNESS_MODEL"] == "claude-sonnet-4-6"
     assert values["SIMULATOR_LLM_PROVIDER"] == "vertex"
     assert values["SIMULATOR_LLM_MODEL"] == "gemini-3.1-flash-lite"
+    assert values["AGENTCC_API_KEY"] == "platform-harness-key"
 
 
 def test_claude_authoring_prefers_platform_owned_harness_key(monkeypatch):
@@ -183,6 +181,18 @@ def test_claude_authoring_requires_sandbox_reachable_gateway(monkeypatch):
     monkeypatch.setenv("ALK_HARNESS", "claude")
     monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "harness-virtual-key")
     monkeypatch.delenv("AGENTCC_BASE_URL", raising=False)
+
+    with pytest.raises(HostedHarnessError) as exc:
+        _platform_simulator_material()
+
+    assert exc.value.code == "authoring_gateway_not_configured"
+
+
+def test_claude_authoring_does_not_fall_back_to_internal_key(monkeypatch):
+    monkeypatch.setenv("ALK_HARNESS", "claude")
+    monkeypatch.delenv("AGENTCC_HARNESS_API_KEY", raising=False)
+    monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "internal-evaluator-key")
+    monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
 
     with pytest.raises(HostedHarnessError) as exc:
         _platform_simulator_material()

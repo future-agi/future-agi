@@ -225,6 +225,25 @@ def test_gateway_credentials_match_alk_and_clear_direct_provider_routes(monkeypa
     assert env["ANTHROPIC_API_KEY"] == ""
 
 
+def test_gateway_defaults_to_agentcc_container_port(monkeypatch):
+    for name in (
+        "ERROR_LOCALIZER_AGENTCC_URL",
+        "AGENTCC_BASE_URL",
+        "AGENTCC_INTERNAL_URL",
+        "AGENTCC_GATEWAY_URL",
+        "ERROR_LOCALIZER_AGENTCC_API_KEY",
+        "AGENTCC_HARNESS_API_KEY",
+        "AGENTCC_API_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "internal-test-secret")
+
+    config = GatewayConfig.from_env()
+
+    assert config.url == "http://agentcc-gateway:8080"
+    assert config.key == "internal-test-secret"
+
+
 def test_factory_uses_sdk_by_default_and_supports_explicit_rollback(monkeypatch):
     kwargs = {
         "eval_name": "eval",
