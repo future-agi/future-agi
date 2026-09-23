@@ -15,6 +15,7 @@ from tracer.models.trace_investigation import (
     TraceInvestigationReport,
 )
 from tracer.models.trace_scan import TraceScanConfig, TraceScanResult
+from tracer.queries.grouping import export_grouping_snapshot
 from tracer.services.trace_investigation import (
     InvestigationConflict,
     InvestigationNotFound,
@@ -425,6 +426,59 @@ def test_unknown_investigation_is_not_recorded_as_passing(observe_project):
     )
     report = TraceInvestigationReport.no_workspace_objects.get(id=receipt["report_id"])
     assert report.has_issues is None
+
+
+@override_settings(ERROR_FEED_OMEGA_DELAY_SECONDS=0)
+def test_recovered_finding_is_retained_but_not_grouped(observe_project):
+    _configure(observe_project)
+    record_trace_notifications(deliveries=[_delivery(observe_project)])
+    claim = claim_due_investigations(
+        worker_id="node-1", engine_version="omega-v1", limit=1
+    )["claims"][0]
+    result = _result(claim)
+    result["findings"][0]["recovery"] = "recovered"
+    result["result_digest"] = canonical_wire_result_digest(result)
+
+    receipt = _publish(
+        idempotency_key="recovered-publication",
+        lease_token=claim["lease_token"],
+        result=result,
+    )
+
+    report = TraceInvestigationReport.no_workspace_objects.get(id=receipt["report_id"])
+    assert receipt["grouping_status"] == "not_required"
+    assert report.findings.count() == 1
+    assert export_grouping_snapshot(report=report)["occurrences"] == []
+
+
+@override_settings(ERROR_FEED_OMEGA_DELAY_SECONDS=0)
+def test_mixed_report_groups_only_unrecovered_finding(observe_project):
+    _configure(observe_project)
+    record_trace_notifications(deliveries=[_delivery(observe_project)])
+    claim = claim_due_investigations(
+        worker_id="node-1", engine_version="omega-v1", limit=1
+    )["claims"][0]
+    result = _result(claim)
+    recovered = deepcopy(result["findings"][0])
+    recovered["finding_id"] = "recovered-429"
+    recovered["recovery"] = "recovered"
+    result["findings"].append(recovered)
+    result["result_digest"] = canonical_wire_result_digest(result)
+
+    receipt = _publish(
+        idempotency_key="mixed-publication",
+        lease_token=claim["lease_token"],
+        result=result,
+    )
+
+    report = TraceInvestigationReport.no_workspace_objects.get(id=receipt["report_id"])
+    snapshot = export_grouping_snapshot(report=report)
+    assert receipt["grouping_status"] == "pending"
+    assert report.findings.count() == 2
+    assert [finding["finding_id"] for finding in snapshot["report"]["findings"]] == [
+        "finding-1"
+    ]
+    assert len(snapshot["occurrences"]) == 1
 
 
 @override_settings(

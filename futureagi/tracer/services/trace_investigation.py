@@ -34,6 +34,7 @@ from tracer.models.trace_investigation import (
     TraceInvestigationVerificationReceipt,
 )
 from tracer.models.trace_scan import TraceScanConfig
+from tracer.queries.grouping import groupable_findings
 from tracer.queries.trace_scanner import is_trace_sampled
 from tracer.services.grouping_features import enqueue_grouping_features
 from tracer.services.trace_investigation_billing import charge_trace_investigation
@@ -898,15 +899,10 @@ def publish_investigation(
             and attempt.status == TraceInvestigationAttemptStatus.CLAIMED
             and attempt.lease_expires_at > now
         )
-        findings = result["findings"]
         grouping_status = (
             TraceInvestigationGroupingStatus.STALE
             if not active
-            else (
-                TraceInvestigationGroupingStatus.PENDING
-                if findings
-                else TraceInvestigationGroupingStatus.NOT_REQUIRED
-            )
+            else TraceInvestigationGroupingStatus.NOT_REQUIRED
         )
         coverage = result["coverage"]
         usage = result["usage"]
@@ -914,7 +910,7 @@ def publish_investigation(
         if result["execution_status"] == "completed":
             if result["outcome"] == "failure":
                 has_issues = True
-            elif result["outcome"] == "success" and not findings:
+            elif result["outcome"] == "success" and not result["findings"]:
                 has_issues = False
         old_current_report_id = job.current_report_id if active else None
         if active:
@@ -953,6 +949,9 @@ def publish_investigation(
             grouping_status=grouping_status,
         )
         _persist_investigation_details(report, result)
+        if active and groupable_findings(report).exists():
+            report.grouping_status = TraceInvestigationGroupingStatus.PENDING
+            report.save(update_fields=["grouping_status", "updated_at"])
         enqueue_grouping_features(report=report)
         transaction.on_commit(lambda report=report: charge_trace_investigation(report))
         if active:

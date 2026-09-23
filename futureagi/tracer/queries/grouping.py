@@ -37,6 +37,7 @@ from tracer.types.grouping_types import (
 )
 
 MAX_FINDINGS = 100
+GROUPABLE_RECOVERY = ("unrecovered", "not_recovered", "not_observed", "none")
 MAX_REQUIREMENTS = 100
 MAX_EVIDENCE_RECEIPTS = 200
 MAX_VERIFICATION_RECEIPTS = 100
@@ -60,6 +61,16 @@ SHA256_DIGEST = re.compile(r"sha256:[a-f0-9]{64}")
 
 class GroupingSnapshotError(ValueError):
     """The selected report cannot safely cross the grouping boundary."""
+
+
+def groupable_findings(report: TraceInvestigationReport) -> QuerySet[TraceInvestigationFinding]:
+    """Only unresolved, evidenced task failures become Feed occurrences."""
+    findings = TraceInvestigationFinding.no_workspace_objects.filter(report=report)
+    if report.execution_status != "completed" or report.outcome != "failure":
+        return findings.none()
+    return findings.filter(
+        recovery__in=GROUPABLE_RECOVERY, requirement__status="violated"
+    )
 
 
 def canonical_snapshot_digest(value: Mapping[str, object]) -> str:
@@ -237,9 +248,7 @@ def export_grouping_snapshot(*, report: TraceInvestigationReport) -> GroupingSna
         label="evidence receipts",
     )
     findings = _bounded(
-        TraceInvestigationFinding.no_workspace_objects.filter(report_id=report.id)
-        .select_related("requirement")
-        .order_by("ordinal", "id"),
+        groupable_findings(report).select_related("requirement").order_by("ordinal", "id"),
         limit=MAX_FINDINGS,
         label="findings",
     )

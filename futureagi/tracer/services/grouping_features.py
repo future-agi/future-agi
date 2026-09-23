@@ -16,10 +16,10 @@ from tracer.models.trace_grouping import (
     TraceGroupingScope,
 )
 from tracer.models.trace_investigation import (
-    TraceInvestigationFinding,
     TraceInvestigationReport,
     TraceInvestigationSource,
 )
+from tracer.queries.grouping import groupable_findings
 from tracer.services.grouping.control import _eligible_project
 
 
@@ -56,9 +56,7 @@ def enqueue_grouping_features(
         )
         if current.execution_status != "completed":
             return None
-        if not TraceInvestigationFinding.no_workspace_objects.filter(
-            report=current
-        ).exists():
+        if not groupable_findings(current).exists():
             return None
         job, _ = TraceGroupingFeatureJob.no_workspace_objects.get_or_create(
             report=current,
