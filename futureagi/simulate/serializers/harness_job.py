@@ -17,6 +17,7 @@ from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 # The declared fixed port is unknowable platform-side (the bundle is authored
 # in-sandbox), so the match is any port on localhost / 127.0.0.1 / [::1].
 
+_LOOPBACK_ENDPOINT_RE = re.compile(r"(?:localhost|127\.0\.0\.1|\[::1\]):\d+")
 _E164_PHONE = re.compile(r"^\+[1-9]\d{1,14}$")
 
 RUNNER_RESERVED_ENVIRONMENT = {
@@ -106,6 +107,9 @@ class HarnessAgentSerializer(serializers.Serializer):
     def validate_config(self, value):
         if not isinstance(value, dict):
             raise serializers.ValidationError("config must be an object")
+        for name in ("inbound", "target_speaks_first"):
+            if name in value and not isinstance(value[name], bool):
+                raise serializers.ValidationError(f"{name} must be a boolean")
         secret_names = ("token", "secret", "password", "api_key", "private_key")
         invalid = []
         for key, item in value.items():
@@ -152,6 +156,35 @@ class HarnessAgentSerializer(serializers.Serializer):
         mode = attrs.get("mode")
         config = attrs.get("config") or {}
         provider_connector = "retell" if connector == "retell_chat" else connector
+        if "phone_number" in config and connector != "phone":
+            if connector not in {"vapi", "retell"} or mode != "connect_only":
+                raise serializers.ValidationError(
+                    {
+                        "config": "phone_number is supported only for connect-only Vapi or Retell voice agents"
+                    }
+                )
+            if not _E164_PHONE.fullmatch(str(config.get("phone_number") or "").strip()):
+                raise serializers.ValidationError(
+                    {"config": "phone_number must be in E.164 format"}
+                )
+            if any(
+                str(name).lower().startswith(("sip_", "livekit_")) for name in config
+            ):
+                raise serializers.ValidationError(
+                    {"config": "phone dialer and LiveKit settings are platform-owned"}
+                )
+            target_key = "assistant_id" if connector == "vapi" else "agent_id"
+            key_alias = "VAPI_API_KEY" if connector == "vapi" else "RETELL_API_KEY"
+            has_id = bool(str(config.get(target_key) or "").strip())
+            has_key = bool((attrs.get("secret_refs") or {}).get(key_alias))
+            if has_id != has_key:
+                raise serializers.ValidationError(
+                    {
+                        "config": "Supply both provider API key and agent ID, or neither and paste the system prompt"
+                    }
+                )
+            if not has_id:
+                attrs["connector"] = connector = provider_connector = "phone"
         if mode and provider_connector not in {"vapi", "retell", "phone"}:
             raise serializers.ValidationError(
                 {"mode": "provider mode is supported only for Vapi, Retell, and phone"}
@@ -379,7 +412,9 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             runtime["max_duration_seconds"] = max(
                 runtime["max_duration_seconds"], attrs["scenario_count"] * 360
             )
-        if agent["connector"] in {"livekit", "vapi", "retell", "phone", "auto"} and (
+        self._apply_sandbox_runtime_limits(runtime)
+        connector = agent["connector"]
+        if connector in {"livekit", "vapi", "retell", "phone", "auto"} and (
             runtime["parallelism"] > runtime["cpu_units"]
         ):
             raise serializers.ValidationError(
@@ -412,7 +447,101 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 "an environment variable cannot be both uploaded and a secret reference"
             )
+        self._apply_parallelism_belt(attrs, runtime)
         return attrs
+
+    @staticmethod
+    def _apply_sandbox_runtime_limits(runtime: dict[str, Any]) -> None:
+        """Resolve provider-owned limits before admission and persistence."""
+        from simulate.services.hosted_sandbox import sandbox_runtime_policy
+
+        policy = sandbox_runtime_policy()
+        if policy.fixed_resources:
+            cpu_units, memory_mb, _disk_gb = policy.fixed_resources
+            runtime["cpu_units"] = cpu_units
+            runtime["memory_mb"] = memory_mb
+        if policy.max_ttl_seconds is None:
+            return
+        if policy.max_ttl_seconds <= 0:
+            raise serializers.ValidationError(
+                {"runtime": "sandbox provider maximum lifetime is not configured"}
+            )
+        authoring_ttl = int(getattr(settings, "ALK_HOSTED_AUTHORING_TIMEOUT", 3900))
+        configured_ttl = int(getattr(settings, "ALK_HOSTED_SANDBOX_TTL_SECONDS", 7200))
+        if max(authoring_ttl, configured_ttl) > policy.max_ttl_seconds:
+            raise serializers.ValidationError(
+                {"runtime": "configured sandbox lifetime exceeds the provider limit"}
+            )
+        authoring_seconds = max(
+            0,
+            int(
+                getattr(
+                    settings,
+                    "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
+                    3600,
+                )
+            ),
+        )
+        execution_limit = policy.max_ttl_seconds - authoring_seconds - 120
+        if execution_limit < 60:
+            raise serializers.ValidationError(
+                {"runtime": "sandbox lifetime leaves no supported execution window"}
+            )
+        runtime["max_duration_seconds"] = min(
+            runtime["max_duration_seconds"], execution_limit
+        )
+
+    def _apply_parallelism_belt(self, attrs, runtime):
+        """Create-time W>1 admission belt (C4 §5 / §7 Channel 1, Track E).
+
+        This is the EARLY, FRIENDLY surface — ``register_attempt`` is the
+        authoritative enforcement. It runs the SAME shared guard at submit so a
+        fresh create gets immediate feedback: a W>1 request the guard denies is
+        CLAMPED (recorded on ``metadata.parallelism_clamped``), never rejected,
+        and the requested ``runtime.parallelism`` is preserved so a later rerun
+        re-evaluates honestly. It additionally scans the inline plaintext
+        ``source.environment_values`` for loopback literals and WARNS (never
+        rejects) at W>1 — the primary platform literal-endpoint channel.
+        """
+        requested = runtime.get("parallelism") or 1
+        if requested <= 1:
+            return
+        # Lazy import keeps the serializer module import-cycle-free.
+        from simulate.services.harness_capacity import configured_capacity
+        from simulate.services.hosted_harness import clamp_parallelism
+
+        metadata = dict(attrs.get("metadata") or {})
+        try:
+            capacity = configured_capacity(attrs)
+        except ValueError as exc:
+            raise serializers.ValidationError({"runtime": str(exc)}) from exc
+        from simulate.services.hosted_sandbox import sandbox_runtime_policy
+
+        digest = capacity.snapshot_digest or sandbox_runtime_policy().digest
+        admitted, _ = clamp_parallelism(requested, digest)
+        admitted = min(admitted, capacity.parallelism)
+        if admitted != requested:
+            metadata["parallelism_clamped"] = {
+                "requested": requested,
+                "admitted": admitted,
+            }
+        environment_values = attrs["source"].get("environment_values") or {}
+        flagged = sorted(
+            alias
+            for alias, value in environment_values.items()
+            if isinstance(value, str) and _LOOPBACK_ENDPOINT_RE.search(value)
+        )
+        if flagged:
+            warnings = list(metadata.get("parallelism_warnings") or [])
+            warnings.append(
+                {
+                    "code": "literal_local_endpoint",
+                    "channel": "environment_values",
+                    "aliases": flagged,
+                }
+            )
+            metadata["parallelism_warnings"] = warnings
+        attrs["metadata"] = metadata
 
 
 
@@ -488,6 +617,8 @@ class HarnessPreflightSerializer(HarnessJobCreateSerializer):
         write_only=True,
         help_text="Target-provider values to verify live; used for this check only.",
     )
+
+
 class HarnessJobAdjustmentSerializer(serializers.Serializer):
     instruction = serializers.CharField(
         min_length=1,
@@ -498,7 +629,6 @@ class HarnessJobAdjustmentSerializer(serializers.Serializer):
     client_request_id = serializers.CharField(
         max_length=128, required=False, allow_blank=False
     )
-
 
 
 class HarnessJobExtendSerializer(serializers.Serializer):
@@ -672,6 +802,13 @@ class HarnessRuntimeReadSerializer(serializers.Serializer):
     diagnostics = HarnessDiagnosticsSerializer(required=False)
 
 
+class HarnessParallelismSerializer(serializers.Serializer):
+    requested = serializers.IntegerField()
+    admitted = serializers.IntegerField()
+    effective = serializers.IntegerField()
+    degrade_reasons = serializers.ListField(child=serializers.CharField())
+
+
 class HarnessConsumptionSerializer(serializers.Serializer):
     text_sim_tokens = serializers.IntegerField(min_value=0)
     voice_sim_minutes = serializers.FloatField(min_value=0)
@@ -690,6 +827,7 @@ class HarnessJobReadSerializer(serializers.Serializer):
     receipts = serializers.ListField(child=serializers.JSONField())
     platform = HarnessPlatformSerializer()
     runtime = HarnessRuntimeReadSerializer(required=False)
+    parallelism = HarnessParallelismSerializer(required=False)
     conversation = HarnessConversationReadSerializer(allow_null=True, required=False)
     consumption = HarnessConsumptionSerializer(required=False, allow_null=True)
     usage_limit = serializers.JSONField(required=False, allow_null=True)

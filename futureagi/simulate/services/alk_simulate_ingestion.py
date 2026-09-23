@@ -1216,9 +1216,8 @@ def _apply_payload(call_execution: CallExecution, payload: dict[str, Any]) -> No
         merged.update(incoming)
         call_execution.call_metadata = merged
 
-    _apply_harness_evaluation_outputs(call_execution)
-
     segments = payload.get("transcript") or []
+    _apply_harness_evaluation_outputs(call_execution, transcript_segments=segments)
     is_text = (
         call_execution.simulation_call_type == CallExecution.SimulationCallType.TEXT
     )
@@ -1592,7 +1591,25 @@ def _coerce_token(value) -> int | None:
         return None
 
 
-def _apply_harness_evaluation_outputs(call_execution: CallExecution) -> None:
+def _render_harness_transcript(segments: list[dict[str, Any]]) -> str:
+    """Render the submitted conversation as stable localizer input."""
+    lines = []
+    for segment in segments:
+        if not isinstance(segment, dict):
+            continue
+        content = str(segment.get("content") or "").strip()
+        if not content:
+            continue
+        speaker = str(segment.get("speaker_role") or "unknown").strip().lower()
+        lines.append(f"{speaker}: {content}")
+    return "\n".join(lines)
+
+
+def _apply_harness_evaluation_outputs(
+    call_execution: CallExecution,
+    *,
+    transcript_segments: list[dict[str, Any]] | None = None,
+) -> None:
     """Normalize execution-backed harness checks into the platform eval shape.
 
     The harness has already run these checks; executing the platform evaluator a
@@ -1617,6 +1634,7 @@ def _apply_harness_evaluation_outputs(call_execution: CallExecution) -> None:
             continue
         kind = str(evaluation.get("kind") or "checkpoint").strip()[:50]
         template = _resolve_harness_eval_template(run_test, evaluation, name)
+        config = None
         if template is not None:
             config = _get_or_create_harness_eval_config(run_test, template, name)
             output_id = str(config.id)
@@ -1648,6 +1666,27 @@ def _apply_harness_evaluation_outputs(call_execution: CallExecution) -> None:
             "kind": kind,
             "platform_template": str(evaluation.get("platform_template") or "")[:2000],
         }
+        # Harness judgements are already computed and therefore bypass the
+        # platform evaluator. Explicitly create the same durable localizer task
+        # that the native evaluator would create; merely setting
+        # SimulateEvalConfig.error_localizer does not dispatch one. The task's
+        # deterministic (call, config) source ID keeps result retries idempotent.
+        if config is not None and config.error_localizer:
+            transcript = _render_harness_transcript(transcript_segments or [])
+            if transcript:
+                from model_hub.tasks.user_evaluation import (
+                    trigger_error_localization_for_simulate,
+                )
+
+                trigger_error_localization_for_simulate(
+                    eval_template=template,
+                    call_execution=call_execution,
+                    eval_config=config,
+                    value=output,
+                    mapping={"transcript": transcript},
+                    eval_explanation=str(evaluation.get("reason") or "")[:10000],
+                    log_id=None,
+                )
     call_execution.eval_outputs = outputs
 
 
@@ -1703,6 +1742,7 @@ def _get_or_create_harness_eval_config(
             "run_test": run_test,
             "filters": {},
             "model": template.model,
+            "error_localizer": True,
         },
     )
     return config

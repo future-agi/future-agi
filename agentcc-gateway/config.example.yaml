@@ -4,7 +4,8 @@
 server:
   port: 8080
   host: "0.0.0.0"
-  read_timeout: 5s
+  read_header_timeout: 5s
+  read_timeout: 60s
   write_timeout: 300s
   idle_timeout: 120s
   shutdown_timeout: 30s

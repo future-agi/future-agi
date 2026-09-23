@@ -36,6 +36,7 @@ from simulate.models import (
 )
 from simulate.services.hosted_harness import (
     HostedHarnessError,
+    activate_attempt_capability,
     record_cleanup,
     register_attempt,
     request_cancellation,
@@ -212,6 +213,8 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         or os.environ.get("AGENTCC_BASE_URL")
         or ""
     ).strip()
+    # Prefer a separately scoped authoring key, while preserving compatibility
+    # with deployments that use the platform-owned internal key for both lanes.
     agentcc_key = str(
         os.environ.get("AGENTCC_HARNESS_API_KEY")
         or os.environ.get("AGENTCC_INTERNAL_API_KEY")
@@ -265,14 +268,11 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         values["ALK_CLAUDE_GATEWAY_API_KEY"] = agentcc_key
         values["AGENTCC_BASE_URL"] = agentcc_url.rstrip("/")
         values["AGENTCC_API_KEY"] = agentcc_key
-    try:
-        from simulate.services.phone_telephony import platform_phone_telephony
-    except ImportError:  # platform telephony arrives with the phone-connector work
-        platform_phone_telephony = None
-    if platform_phone_telephony is not None:
-        values.update(
-            {name: value for name, value in platform_phone_telephony().items() if value}
-        )
+    from simulate.services.phone_telephony import platform_phone_telephony
+
+    values.update(
+        {name: value for name, value in platform_phone_telephony().items() if value}
+    )
     for name in (
         "CARTESIA_API_KEY",
         "DEEPGRAM_API_KEY",
@@ -1772,13 +1772,47 @@ class HostedHarnessGateway:
         _validate_resolved_egress_domains(
             allowed_domains, max_domains=self.client.max_egress_domains
         )
+        from simulate.services.harness_capacity import configured_capacity
+
+        try:
+            capacity = configured_capacity(payload)
+        except ValueError as exc:
+            raise HostedHarnessError(
+                "sandbox_capacity_unavailable",
+                str(exc),
+                status_code=503,
+            ) from exc
+        selected_snapshot = capacity.snapshot_name or self.client.runtime_name
+        registered_snapshot_digest = (
+            capacity.snapshot_digest or self.client.runtime_digest
+        )
+        if self.client.name != "daytona" and (
+            (
+                capacity.snapshot_name
+                and capacity.snapshot_name != self.client.runtime_name
+            )
+            or (
+                capacity.snapshot_digest
+                and capacity.snapshot_digest != self.client.runtime_digest
+            )
+        ):
+            raise HostedHarnessError(
+                "sandbox_capacity_unavailable",
+                "configured resource profile does not match the selected sandbox runtime",
+                status_code=503,
+            )
         capability = register_attempt(
             job.id,
             endpoint_base_url=endpoint_base_url,
-            snapshot_name=self.client.runtime_name,
-            snapshot_digest=self.client.runtime_digest or None,
+            snapshot_name=selected_snapshot,
+            snapshot_digest=registered_snapshot_digest,
         )
         attempt = capability.attempt
+        dispatch_runtime = dict(dispatch_payload["runtime"])
+        dispatch_runtime["parallelism"] = capability.admitted_parallelism
+        dispatch_runtime["cpu_units"] = capacity.cpu_units
+        dispatch_runtime["memory_mb"] = capacity.memory_mb
+        dispatch_payload["runtime"] = dispatch_runtime
         cache_attempt_redaction_values(
             attempt.id,
             redaction_values(
@@ -1802,9 +1836,9 @@ class HostedHarnessGateway:
         sandbox = None
         try:
             launch_spec = SandboxLaunchSpec(
-                cpu_units=payload["runtime"]["cpu_units"],
-                memory_mb=payload["runtime"]["memory_mb"],
-                disk_gb=10,
+                cpu_units=capacity.cpu_units,
+                memory_mb=capacity.memory_mb,
+                disk_gb=capacity.disk_gb,
                 ttl_seconds=ttl_seconds,
                 os_user=getattr(settings, "ALK_HOSTED_SANDBOX_OS_USER", "svc-control"),
                 labels={
@@ -1814,6 +1848,7 @@ class HostedHarnessGateway:
                 allowed_domains=tuple(sorted(allowed_domains)),
                 allowed_cidrs=allowed_cidrs,
                 unrestricted_egress=unrestricted,
+                runtime_name=selected_snapshot,
             )
             sandbox = self.client.create(
                 launch_spec, timeout=self.client.create_timeout_seconds
@@ -1883,6 +1918,13 @@ class HostedHarnessGateway:
                     simulator_vertex_credentials,
                     _SIMULATOR_VERTEX_CREDENTIALS_PATH,
                 )
+            # Provider creation and uploads can consume much of the initial lease. Re-arm
+            # providers with mutable leases before exposing a full-duration capability.
+            self.client.renew_ttl(sandbox, ttl_seconds)
+            # The guest has not received its token yet. Start the runnable deadline here,
+            # after E2B/Daytona creation and source/secret uploads, which can consume many
+            # minutes without any guest work. Never refresh it after the guest starts.
+            capability = activate_attempt_capability(capability)
             sandbox.fs.upload_file(
                 json.dumps(
                     capability.document, sort_keys=True, separators=(",", ":")
@@ -2621,7 +2663,7 @@ class HostedHarnessGateway:
             command_id,
             request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
         )
-        pass
+        self._sync_offline_control(attempt, sandbox)
         # Probe the primary command before best-effort progress enrichment. If the provider
         # toolbox is unavailable, fail this poll promptly instead of multiplying the outage by
         # every optional artifact read below. Reconciliation applies a short grace period and
@@ -2655,6 +2697,93 @@ class HostedHarnessGateway:
             )
         return observation
 
+    @staticmethod
+    def _sync_offline_control(attempt: HostedHarnessAttempt, sandbox) -> None:
+        """Serve control requests through the provider filesystem when HTTPS is blocked.
+
+        Scenario registration is required before calls can begin, so terminal artifact recovery
+        is too late for it.  This mailbox keeps the operation provider-neutral and routes the
+        request through the same platform service functions as the HTTP endpoint.
+        """
+
+        listing = sandbox.process.exec(
+            "find /work/outbound-spool/control -maxdepth 1 -type f "
+            "-name '*.request.json' -print 2>/dev/null | sort",
+            timeout=_PROGRESS_FILE_TIMEOUT_SECONDS,
+        )
+        if listing.exit_code:
+            return
+        from simulate.services.hosted_harness import (
+            begin_scenarios,
+            provision_scenarios,
+        )
+
+        for request_path in str(listing.result or "").splitlines():
+            request_path = request_path.strip()
+            if not request_path:
+                continue
+            response_path = (
+                request_path.removesuffix(".request.json") + ".response.json"
+            )
+            try:
+                sandbox.fs.download_file(response_path, _PROGRESS_FILE_TIMEOUT_SECONDS)
+                continue
+            except Exception:  # noqa: BLE001 - absence means the request is pending
+                pass
+            try:
+                request = json.loads(
+                    sandbox.fs.download_file(
+                        request_path, _PROGRESS_FILE_TIMEOUT_SECONDS
+                    ).decode("utf-8")
+                )
+                if (
+                    str(request.get("job_id")) != str(attempt.job_id)
+                    or str(request.get("attempt_id")) != str(attempt.id)
+                    or int(request.get("attempt_number", -1)) != attempt.attempt_number
+                ):
+                    raise HostedHarnessError(
+                        "offline_control_binding_mismatch",
+                        "sandbox control request does not belong to this attempt",
+                        status_code=403,
+                    )
+                payload = request.get("payload")
+                if not isinstance(payload, dict):
+                    raise HostedHarnessError(
+                        "offline_control_payload_invalid",
+                        "sandbox control request payload must be an object",
+                        status_code=400,
+                    )
+                if payload.get("operation") == "provision":
+                    result = provision_scenarios(attempt, payload)
+                elif payload.get("operation") == "begin":
+                    result = begin_scenarios(attempt, payload)
+                else:
+                    raise HostedHarnessError(
+                        "offline_control_operation_unknown",
+                        "sandbox control operation is not supported",
+                        status_code=400,
+                    )
+                response = result
+            except HostedHarnessError as exc:
+                response = {
+                    "error": {"code": exc.code, "message": exc.message},
+                }
+            except Exception as exc:  # noqa: BLE001 - return a bounded typed response to guest
+                logger.exception(
+                    "offline hosted control failed attempt=%s request=%s",
+                    attempt.id,
+                    request_path,
+                )
+                response = {
+                    "error": {
+                        "code": "offline_control_failed",
+                        "message": str(exc)[:1000],
+                    }
+                }
+            sandbox.fs.upload_file(
+                json.dumps(response, separators=(",", ":")).encode("utf-8"),
+                response_path,
+            )
 
     def adjust(
         self, job: HostedHarnessJob, request: dict[str, Any]
@@ -2998,6 +3127,136 @@ class HostedHarnessGateway:
         job.payload = payload
         job.save(update_fields=["payload", "updated_at"])
 
+    def _recover_offline_delivery(self, attempt: HostedHarnessAttempt) -> bool:
+        """Replay the guest's durable outbound mirror through normal ingestion.
+
+        Some Daytona organizations enforce their own outbound allow-list and reject a
+        per-sandbox callback allow-list.  Provider/model traffic may still work while the guest
+        cannot POST results to the platform.  Because the control plane owns the sandbox, recover
+        the signed, redacted wire records before cleanup instead of converting a completed run
+        into ``evidence_undeliverable``.
+        """
+
+        from simulate.services.hosted_harness_ingestion import (
+            ingest_artifact,
+            ingest_event_batch,
+            ingest_manifest,
+            ingest_result_receipt,
+        )
+
+        sandbox = self.client.get(
+            str(attempt.provider_ref), request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
+        )
+        packed = sandbox.process.exec(
+            "test -d /work/outbound-spool && "
+            "tar -czf /tmp/offline-outbound.tar.gz -C /work outbound-spool",
+            timeout=120,
+        )
+        if packed.exit_code:
+            return False
+        body = sandbox.fs.download_file("/tmp/offline-outbound.tar.gz", 180)
+        max_bytes = int(attempt.job.max_artifact_bytes * 1.1) + 16 * 1024 * 1024
+        if len(body) > max_bytes:
+            raise HostedHarnessError(
+                "offline_delivery_too_large",
+                "offline outbound archive exceeds the job artifact budget",
+                status_code=413,
+                retryable=False,
+            )
+
+        files: dict[str, bytes] = {}
+        expanded = 0
+        with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
+            for member in archive.getmembers():
+                path = Path(member.name)
+                if (
+                    not member.isfile()
+                    or path.is_absolute()
+                    or ".." in path.parts
+                    or not path.parts
+                    or path.parts[0] != "outbound-spool"
+                ):
+                    continue
+                expanded += member.size
+                if expanded > max_bytes:
+                    raise HostedHarnessError(
+                        "offline_delivery_too_large",
+                        "expanded offline outbound archive exceeds the job artifact budget",
+                        status_code=413,
+                        retryable=False,
+                    )
+                stream = archive.extractfile(member)
+                if stream is not None:
+                    files[path.as_posix()] = stream.read()
+
+        def json_file(name: str) -> dict[str, Any]:
+            value = json.loads(files[name].decode("utf-8"))
+            if not isinstance(value, dict):
+                raise ValueError(f"{name} must contain an object")
+            return value
+
+        artifact_prefix = "outbound-spool/artifacts/"
+        recovered_by_scenario: dict[str, list[str]] = {}
+        for name in sorted(files):
+            if not name.startswith(artifact_prefix) or not name.endswith(".json"):
+                continue
+            metadata = json_file(name)
+            digest = str(metadata["digest"])
+            artifact_body = files[f"{artifact_prefix}{digest}.bin"]
+            ingest_artifact(
+                attempt,
+                digest=digest,
+                kind=str(metadata["kind"]),
+                size=int(metadata["size"]),
+                content_type=str(metadata["content_type"]),
+                scenario_key=metadata.get("scenario_key"),
+                stream=io.BytesIO(artifact_body),
+            )
+            recovered_by_scenario.setdefault(metadata.get("scenario_key"), []).append(
+                digest
+            )
+
+        events_body = files.get("outbound-spool/events.spool.jsonl", b"")
+        events = [
+            json.loads(line)
+            for line in events_body.decode("utf-8").splitlines()
+            if line.strip()
+        ]
+        for offset in range(0, len(events), 100):
+            ingest_event_batch(attempt, events[offset : offset + 100])
+
+        receipt_prefix = "outbound-spool/receipts/"
+        for name in sorted(files):
+            if name.startswith(receipt_prefix) and name.endswith(".json"):
+                receipt = json_file(name)
+                ingest_result_receipt(
+                    attempt,
+                    receipt,
+                    digest_body=receipt,
+                    recovered_artifact_ids=recovered_by_scenario.get(
+                        receipt.get("scenario_key"), []
+                    ),
+                )
+
+        manifest_name = "outbound-spool/manifest.json"
+        if manifest_name not in files:
+            return False
+        manifest = json_file(manifest_name)
+        ingest_manifest(attempt, manifest, digest_body=manifest)
+        logger.info(
+            "recovered offline hosted delivery attempt=%s events=%s receipts=%s artifacts=%s",
+            attempt.id,
+            len(events),
+            sum(
+                name.startswith(receipt_prefix) and name.endswith(".json")
+                for name in files
+            ),
+            sum(
+                name.startswith(artifact_prefix) and name.endswith(".json")
+                for name in files
+            ),
+        )
+        return True
 
     def cancel(self, job: HostedHarnessJob, *, reason: str) -> HostedHarnessJob:
 
@@ -3074,9 +3333,9 @@ class HostedHarnessGateway:
                     "/run/futureagi/cancel.json",
                 )
                 sandbox.process.exec(
-                    # The bracketed first character still matches the guest entrypoint, but not
-                    # this shell's own command line. An unbracketed `pkill -f` terminates its
-                    # invoking shell and E2B reports exit -1, stranding cancellation.
+                    # The bracketed first character still matches the guest entrypoint,
+                    # but not this shell's own command line. An unbracketed `pkill -f`
+                    # can terminate its invoking shell before cleanup reaches deletion.
                     "pkill -TERM -f '[f]i.alk.harness.hosted_entrypoint' || true",
                     timeout=30,
                 )
@@ -3252,7 +3511,7 @@ class HostedHarnessGateway:
             not attempt.terminal_event_received or not attempt.manifest_acked
         ):
             try:
-                pass
+                self._recover_offline_delivery(attempt)
             except Exception:  # noqa: BLE001 - preserve the typed delivery failure below
                 logger.exception(
                     "offline hosted delivery recovery failed attempt=%s provider_ref=%s",
@@ -3814,6 +4073,9 @@ def prepare_dispatch_payload(
     )
     if (
         connector in {"livekit", "vapi", "retell"}
+        # Phone targets read the platform URL from simulator secrets. Mirroring
+        # it into target config would violate ALK's platform-owned dialer guard.
+        and not (connector in {"vapi", "retell"} and config.get("phone_number"))
         and not config.get("livekit_url")
         and livekit_url
     ):

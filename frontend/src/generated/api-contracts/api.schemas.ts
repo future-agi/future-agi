@@ -16961,6 +16961,13 @@ export interface HarnessRuntimeReadApi {
   diagnostics?: HarnessDiagnosticsApi;
 }
 
+export interface HarnessParallelismApi {
+  requested: number;
+  admitted: number;
+  effective: number;
+  degrade_reasons: string[];
+}
+
 export type HarnessConversationMessageApiRole =
   (typeof HarnessConversationMessageApiRole)[keyof typeof HarnessConversationMessageApiRole];
 
@@ -17079,6 +17086,7 @@ export interface HarnessJobReadApi {
   receipts: HarnessJobReadApiReceiptsItem[];
   platform: HarnessPlatformApi;
   runtime?: HarnessRuntimeReadApi;
+  parallelism?: HarnessParallelismApi;
   conversation?: HarnessConversationReadApi;
   consumption?: HarnessConsumptionApi;
   usage_limit?: HarnessJobReadApiUsageLimit;

@@ -119686,6 +119686,36 @@
                 }
             }
         },
+        "HarnessParallelism": {
+            "required": [
+                "requested",
+                "admitted",
+                "effective",
+                "degrade_reasons"
+            ],
+            "type": "object",
+            "properties": {
+                "requested": {
+                    "title": "Requested",
+                    "type": "integer"
+                },
+                "admitted": {
+                    "title": "Admitted",
+                    "type": "integer"
+                },
+                "effective": {
+                    "title": "Effective",
+                    "type": "integer"
+                },
+                "degrade_reasons": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
         "HarnessConversationMessage": {
             "required": [
                 "message_id",
@@ -120015,6 +120045,9 @@
                 },
                 "runtime": {
                     "$ref": "#/definitions/HarnessRuntimeRead"
+                },
+                "parallelism": {
+                    "$ref": "#/definitions/HarnessParallelism"
                 },
                 "conversation": {
                     "$ref": "#/definitions/HarnessConversationRead"

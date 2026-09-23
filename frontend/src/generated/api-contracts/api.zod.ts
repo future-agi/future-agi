@@ -35023,6 +35023,14 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
         .optional(),
     })
     .optional(),
+  parallelism: zod
+    .object({
+      requested: zod.number(),
+      admitted: zod.number(),
+      effective: zod.number(),
+      degrade_reasons: zod.array(zod.string().min(1)),
+    })
+    .optional(),
   conversation: zod
     .object({
       conversation_id: zod.string().uuid(),
@@ -35912,6 +35920,14 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
         .optional(),
     })
     .optional(),
+  parallelism: zod
+    .object({
+      requested: zod.number(),
+      admitted: zod.number(),
+      effective: zod.number(),
+      degrade_reasons: zod.array(zod.string().min(1)),
+    })
+    .optional(),
   conversation: zod
     .object({
       conversation_id: zod.string().uuid(),
@@ -36114,6 +36130,14 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
           error: zod.string(),
         })
         .optional(),
+    })
+    .optional(),
+  parallelism: zod
+    .object({
+      requested: zod.number(),
+      admitted: zod.number(),
+      effective: zod.number(),
+      degrade_reasons: zod.array(zod.string().min(1)),
     })
     .optional(),
   conversation: zod

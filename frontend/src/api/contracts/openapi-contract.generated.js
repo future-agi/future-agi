@@ -60219,6 +60219,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtime: {
           $ref: "#/definitions/HarnessRuntimeRead",
         },
+        parallelism: {
+          $ref: "#/definitions/HarnessParallelism",
+        },
         conversation: {
           $ref: "#/definitions/HarnessConversationRead",
         },
@@ -87636,6 +87639,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Failure",
           type: "object",
           "x-nullable": true,
+        },
+      },
+    },
+    HarnessParallelism: {
+      required: ["requested", "admitted", "effective", "degrade_reasons"],
+      type: "object",
+      properties: {
+        requested: {
+          title: "Requested",
+          type: "integer",
+        },
+        admitted: {
+          title: "Admitted",
+          type: "integer",
+        },
+        effective: {
+          title: "Effective",
+          type: "integer",
+        },
+        degrade_reasons: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },

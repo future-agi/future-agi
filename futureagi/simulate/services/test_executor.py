@@ -4617,9 +4617,23 @@ class TestExecutor:
                     ):
                         transcript_data[transcript_key] = normalized_recording[key]
 
-            recording_urls = self.voice_service_manager.get_recording_urls(
-                provider_payload
-            )
+            # Hosted/ALK ingestion persists recording URLs directly on the call
+            # row (and may also provide normalized recording entries above).
+            # Evaluation must not require a provider client merely to consume
+            # those already-persisted artifacts.  Provider lookup is only an
+            # optional enrichment path for legacy calls that still carry a
+            # provider payload.
+            recording_urls = {}
+            if self.voice_service_manager is not None and provider_payload:
+                recording_urls = self.voice_service_manager.get_recording_urls(
+                    provider_payload
+                )
+            elif provider_payload:
+                logger.info(
+                    "Skipping provider recording lookup for call %s because "
+                    "the voice service manager is not initialized",
+                    call_execution.id,
+                )
             if recording_urls:
                 recording_object = {}
 
@@ -5643,7 +5657,11 @@ def _run_simulate_evaluations_task(
             "test_execution__run_test",
         ).get(id=call_execution_id)
 
-        test_executor = TestExecutor()
+        # Evaluation only needs transcript/eval helpers. Initializing the
+        # configured voice provider here makes otherwise provider-neutral
+        # evaluations fail when, for example, Vapi credentials are absent for
+        # a LiveKit, Retell, chat, or connect-only run.
+        test_executor = TestExecutor(initialize_voice_service=False)
         test_executor._run_simulate_evaluations(
             call_execution, eval_config_ids=eval_config_ids, skip_existing=skip_existing
         )
