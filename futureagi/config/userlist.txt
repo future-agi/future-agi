@@ -1,1 +1,9 @@
-"user" "password"
+; PgBouncer user authentication file
+; SECURITY: Replace these placeholder credentials before deploying!
+; This file should contain SCRAM-SHA-256 hashed passwords, not plaintext.
+; Generate a hash: echo -n "md5$(echo -n 'password''username' | md5sum | cut -d' ' -f1)"
+; Or use SCRAM-SHA-256: SELECT 'SCRAM-SHA-256$' || ... from pg_authid
+;
+; NEVER commit real credentials to version control.
+; Override this file at deployment time via a volume mount or init script.
+"user" "CHANGE_ME_BEFORE_DEPLOYMENT"

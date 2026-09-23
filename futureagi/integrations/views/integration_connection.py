@@ -205,6 +205,16 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             ca_cert = data.get("ca_certificate") or None
             host_url = data.get("host_url") or ""
 
+            # Security: validate host_url to prevent SSRF attacks
+            if host_url:
+                from integrations.utils.url_validation import validate_external_url
+
+                url_error = validate_external_url(host_url)
+                if url_error:
+                    return _error_response(
+                        f"Invalid host URL: {url_error}"
+                    )
+
             validation = service.validate_credentials(
                 host_url=host_url,
                 credentials=credentials,

@@ -241,8 +241,44 @@ def main():
     # User code
     # Pre-import common modules so user code can reference them
     import typing, math, re, collections, datetime, itertools, functools
+    import builtins as _builtins
+
+    # Security: build restricted builtins — block dangerous operations
+    _BLOCKED = frozenset({{
+        'exec', 'eval', 'compile',          # code execution
+        'open',                              # filesystem access
+        '__import__',                        # unrestricted imports
+        'globals', 'locals',                 # namespace inspection
+        'getattr', 'setattr', 'delattr',     # attribute manipulation
+        'breakpoint', 'input',               # interactive
+        'exit', 'quit',                      # process control
+        'memoryview',                        # low-level memory
+        'vars', 'dir',                       # introspection
+    }})
+    _safe_builtins = {{k: getattr(_builtins, k) for k in dir(_builtins)
+                      if not k.startswith('_') and k not in _BLOCKED}}
+
+    # Safe import: only allow whitelisted modules
+    _SAFE_MODULES = {{
+        'json': json, 're': re, 'math': math, 'collections': collections,
+        'itertools': itertools, 'functools': functools, 'datetime': datetime,
+        'typing': typing, 'string': __import__('string'),
+        'decimal': __import__('decimal'), 'statistics': __import__('statistics'),
+        'copy': __import__('copy'), 'difflib': __import__('difflib'),
+        'textwrap': __import__('textwrap'), 'hashlib': __import__('hashlib'),
+        'base64': __import__('base64'), 'uuid': __import__('uuid'),
+        'enum': __import__('enum'), 'dataclasses': __import__('dataclasses'),
+        'operator': __import__('operator'), 'numbers': __import__('numbers'),
+    }}
+    def _safe_import(name, *args, **kwargs):
+        if name in _SAFE_MODULES:
+            return _SAFE_MODULES[name]
+        raise ImportError(f"Import of '{{name}}' is blocked. Allowed: {{', '.join(sorted(_SAFE_MODULES))}}")
+
+    _safe_builtins['__import__'] = _safe_import
+
     exec_globals = {{
-        "__builtins__": __builtins__,
+        "__builtins__": _safe_builtins,
         **vars(typing),
         "math": math,
         "re": re,
@@ -301,25 +337,64 @@ if __name__ == "__main__":
 
 
 def _build_js_script(code: str, input_data: dict) -> str:
-    """Build JS eval script."""
+    """Build JS eval script.
+
+    Security: User code is loaded via new Function() to isolate it
+    from the top-level scope and prevent early process.exit() or
+    require() calls from bypassing the try/catch error handling.
+    """
     input_json = json.dumps(input_data, default=str)
+    # Escape user code for safe embedding in a JS string literal
     escaped = (
         code.replace("\\", "\\\\")
         .replace("'", "\\'")
         .replace("\n", "\\n")
         .replace("\r", "\\r")
+        .replace("`", "\\`")
+        .replace("$", "\\$")
     )
 
     return f"""'use strict';
 const inputData = {input_json};
 
-{code}
-
 try {{
+    // Load user code via new Function() to prevent top-level execution
+    // before the try/catch block. The code is embedded as an escaped string.
+    const _userCode = '{escaped}';
+    const _fn = new Function('module', 'exports', 'require', _userCode);
+    const _module = {{ exports: {{}} }};
+    // Block dangerous require() calls
+    const _safeRequire = (name) => {{
+        const blocked = ['child_process', 'fs', 'net', 'http', 'https',
+            'dgram', 'tls', 'cluster', 'worker_threads', 'os', 'vm',
+            'v8', 'dns', 'readline', 'repl', 'inspector', 'crypto',
+            'module', 'fs/promises', 'path'];
+        if (blocked.includes(name)) throw new Error(`require('${{name}}') is blocked for security`);
+        throw new Error(`require('${{name}}') is not available in sandbox`);
+    }};
+    _fn(_module, _module.exports, _safeRequire);
+
+    const evaluate = _module.exports.evaluate || (typeof globalThis.evaluate === 'function' ? globalThis.evaluate : undefined);
+    const main = _module.exports.main || (typeof globalThis.main === 'function' ? globalThis.main : undefined);
+    const userFn = evaluate || main;
+
+    // Also check if functions were defined in the Function scope
     let result;
-    if (typeof evaluate === 'function') result = evaluate(inputData);
-    else if (typeof main === 'function') result = main(inputData);
-    else {{ console.log(JSON.stringify({{status: "error", data: "Must define evaluate() or main()"}})); process.exit(0); }}
+    if (typeof userFn === 'function') {{
+        result = userFn(inputData);
+    }} else {{
+        // Fallback: try evaluating as a script that defines evaluate/main globally
+        const vm = require('vm');
+        const ctx = {{ inputData, console, JSON, Math, String, Number, Array, Object, Date, RegExp, Boolean, Set, Map, Error, parseInt, parseFloat, isNaN, isFinite, undefined, null: null }};
+        vm.createContext(ctx);
+        vm.runInContext(_userCode, ctx);
+        const fn = ctx.evaluate || ctx.main;
+        if (typeof fn !== 'function') {{
+            console.log(JSON.stringify({{status: "error", data: "Must define evaluate() or main()"}}));
+            process.exit(0);
+        }}
+        result = fn(inputData);
+    }}
 
     if (result !== undefined && result !== null) {{
         if (typeof result === 'object' && 'score' in result) {{ result.result = result.score; delete result.score; }}

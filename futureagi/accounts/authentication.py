@@ -629,58 +629,68 @@ def get_client_ip(request):
     """
     Get client IP address from request object.
     Returns tuple of (ip_address, is_routable).
+
+    Security: Only trusts X-Forwarded-For when the immediate upstream
+    (REMOTE_ADDR) is a known trusted proxy. This prevents attackers from
+    spoofing their IP to bypass rate limiting. When no trusted proxy is
+    configured, falls back to REMOTE_ADDR which cannot be spoofed.
     """
-    # Try to get IP from X-Forwarded-For header first
-    x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+    import ipaddress
 
-    if x_forwarded_for:
-        # X-Forwarded-For header can contain multiple IPs
-        # First IP is the client's, followed by proxy IPs
-        ip = x_forwarded_for.split(",")[0].strip()
-    else:
-        # If no X-Forwarded-For header, use REMOTE_ADDR
-        ip = request.META.get("REMOTE_ADDR")
+    remote_addr = request.META.get("REMOTE_ADDR", "127.0.0.1")
 
-    # Check if IP is private/routable
+    # Trusted proxy CIDRs — configure via TRUSTED_PROXY_CIDRS setting.
+    # Default includes common Docker/Kubernetes internal ranges.
+    trusted_cidrs_raw = getattr(settings, "TRUSTED_PROXY_CIDRS", [
+        "127.0.0.0/8",       # loopback
+        "10.0.0.0/8",        # Docker default
+        "172.16.0.0/12",     # Docker bridge
+        "192.168.0.0/16",    # local networks
+    ])
+    trusted_networks = []
+    for cidr in trusted_cidrs_raw:
+        try:
+            trusted_networks.append(ipaddress.ip_network(cidr, strict=False))
+        except ValueError:
+            pass
+
+    ip = remote_addr  # default: trust the TCP peer
+
+    # Only read X-Forwarded-For if the immediate connection is from a
+    # trusted proxy. This prevents external attackers from injecting
+    # arbitrary IPs via the header.
+    try:
+        remote_ip = ipaddress.ip_address(remote_addr)
+        is_trusted_proxy = any(remote_ip in net for net in trusted_networks)
+    except ValueError:
+        is_trusted_proxy = False
+
+    if is_trusted_proxy:
+        x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+        if x_forwarded_for:
+            # Walk the chain from right to left, skipping trusted proxies,
+            # to find the rightmost non-trusted IP (the real client).
+            parts = [p.strip() for p in x_forwarded_for.split(",")]
+            for candidate in reversed(parts):
+                try:
+                    candidate_ip = ipaddress.ip_address(candidate)
+                    if not any(candidate_ip in net for net in trusted_networks):
+                        ip = candidate
+                        break
+                except ValueError:
+                    continue
+            else:
+                # All IPs in the chain are trusted; use the leftmost
+                ip = parts[0] if parts else remote_addr
+
+    # Determine routability with proper error handling
     is_routable = True
-
-    # Private IP ranges
-    private_ips = [
-        ("10.0.0.0", "10.255.255.255"),
-        ("172.16.0.0", "172.31.255.255"),
-        ("192.168.0.0", "192.168.255.255"),
-    ]
-
-    # Convert IP string to integer for range comparison
-    ip_parts = ip.split(".")
-    if len(ip_parts) == 4:
-        ip_int = (
-            (int(ip_parts[0]) << 24)
-            + (int(ip_parts[1]) << 16)
-            + (int(ip_parts[2]) << 8)
-            + int(ip_parts[3])
-        )
-
-        for start, end in private_ips:
-            start_parts = start.split(".")
-            end_parts = end.split(".")
-
-            start_int = (
-                (int(start_parts[0]) << 24)
-                + (int(start_parts[1]) << 16)
-                + (int(start_parts[2]) << 8)
-                + int(start_parts[3])
-            )
-            end_int = (
-                (int(end_parts[0]) << 24)
-                + (int(end_parts[1]) << 16)
-                + (int(end_parts[2]) << 8)
-                + int(end_parts[3])
-            )
-
-            if start_int <= ip_int <= end_int:
-                is_routable = False
-                break
+    try:
+        ip_obj = ipaddress.ip_address(ip)
+        is_routable = ip_obj.is_global
+    except ValueError:
+        # Malformed IP — treat as non-routable to be safe
+        is_routable = False
 
     return ip, is_routable
 
