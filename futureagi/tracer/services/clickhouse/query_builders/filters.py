@@ -26,7 +26,12 @@ from tracer.utils.constants import (
 
 _SAFE_ATTR_KEY_RE = re.compile(r"^[a-zA-Z0-9._\-]+$")
 
-_LEGACY_OP_ALIAS = {"is": "equals", "is_not": "not_equals"}
+_LEGACY_OP_ALIAS = {
+    "is": "equals",
+    "is_not": "not_equals",
+    "equal_to": "equals",
+    "not_equal_to": "not_equals",
+}
 
 _LITERAL_TEXT_MATCH_OPS = frozenset(
     {"contains", "not_contains", "starts_with", "ends_with"}
@@ -102,6 +107,38 @@ def normalize_filter_op(op: str | None) -> str | None:
     if op is None:
         return None
     return _LEGACY_OP_ALIAS.get(op, op)
+
+
+def parse_boolean_meta_filter(
+    column_id: str,
+    filter_value: Any,
+    filter_op: str | None = "equals",
+) -> bool | None:
+    """Parse one boolean presence filter according to the published contract.
+
+    Supports ``equals``, ``not_equals``, ``is_null``, and ``is_not_null``.
+    ``is_not_null`` acts as an unfiltered control returning ``None``.
+    """
+
+    op = normalize_filter_op(filter_op) or "equals"
+    if op == "is_not_null":
+        return None
+    if op == "is_null":
+        return False
+    if op not in {"equals", "not_equals"}:
+        raise ValueError(f"{column_id} does not support {filter_op} operation")
+
+    if isinstance(filter_value, bool):
+        val = filter_value
+    elif isinstance(filter_value, str) and filter_value.strip().lower() in {
+        "true",
+        "false",
+    }:
+        val = filter_value.strip().lower() == "true"
+    else:
+        raise ValueError(f"{column_id} requires a boolean value")
+
+    return val if op == "equals" else not val
 
 
 def build_literal_text_predicate(
@@ -2771,19 +2808,11 @@ class ClickHouseFilterBuilder:
     def _parse_boolean_meta_filter(
         column_id: str,
         filter_value: Any,
-        filter_op: str | None,
-    ) -> bool:
+        filter_op: str | None = "equals",
+    ) -> bool | None:
         """Parse one boolean meta-filter without implicit operator inversion."""
 
-        if normalize_filter_op(filter_op) != "equals":
-            raise ValueError(f"{column_id} supports only the equals operation")
-        if isinstance(filter_value, bool):
-            return filter_value
-        if isinstance(filter_value, str):
-            normalized_value = filter_value.strip().lower()
-            if normalized_value in {"true", "false"}:
-                return normalized_value == "true"
-        raise ValueError(f"{column_id} requires a boolean value")
+        return parse_boolean_meta_filter(column_id, filter_value, filter_op)
 
     def _build_has_eval_condition(
         self,
@@ -2798,6 +2827,8 @@ class ClickHouseFilterBuilder:
         wants_eval = self._parse_boolean_meta_filter(
             "has_eval", filter_value, filter_op
         )
+        if wants_eval is None:
+            return None
         if (
             not wants_eval
             and self.candidate_ids_param is None
@@ -2924,6 +2955,8 @@ class ClickHouseFilterBuilder:
         wants_annotation = self._parse_boolean_meta_filter(
             "has_annotation", filter_value, filter_op
         )
+        if wants_annotation is None:
+            return None
 
         label_ids = self.annotation_label_ids
         if not label_ids:
@@ -2953,6 +2986,8 @@ class ClickHouseFilterBuilder:
         wants_my_annotations = self._parse_boolean_meta_filter(
             "my_annotations", filter_value, filter_op
         )
+        if wants_my_annotations is None:
+            return None
         user_id = config.get("user_id")
         if not user_id:
             # ``my_annotations`` is user-relative.  A missing server-bound

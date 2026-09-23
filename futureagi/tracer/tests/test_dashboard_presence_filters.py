@@ -182,9 +182,40 @@ def test_f7_conjoins_custom_eval_annotation_values_and_both_presence_filters():
 
 
 @pytest.mark.parametrize("name", ["has_eval", "has_annotation"])
-def test_presence_filter_rejects_non_boolean_or_non_equals_without_fallback(name):
+def test_presence_filter_rejects_unsupported_operator(name):
+    config = _validated_query([_presence_filter(name, True)])
+    config["filters"][0]["operator"] = "greater_than"
+
+    with pytest.raises(InvalidMetricCombinationError, match="does not support"):
+        DashboardQueryBuilder(config).build_all_queries()
+
+
+@pytest.mark.parametrize("name", ["has_eval", "has_annotation"])
+def test_presence_filter_compiles_not_equal_to(name):
     config = _validated_query([_presence_filter(name, True)])
     config["filters"][0]["operator"] = "not_equal_to"
 
-    with pytest.raises(InvalidMetricCombinationError, match="only the equals"):
-        DashboardQueryBuilder(config).build_all_queries()
+    sql, _params, _metric = DashboardQueryBuilderV2(config).build_all_queries()[0]
+    assert " NOT IN " in sql
+
+
+@pytest.mark.parametrize("name", ["has_eval", "has_annotation"])
+def test_presence_filter_compiles_is_null_and_is_not_null(name):
+    # is_null compiles to absence (NOT IN)
+    config_null = _validated_query([_presence_filter(name, True)])
+    config_null["filters"][0]["operator"] = "is_null"
+    config_null["filters"][0]["value"] = None
+
+    sql_null, _, _ = DashboardQueryBuilderV2(config_null).build_all_queries()[0]
+    assert " NOT IN " in sql_null
+
+    # is_not_null compiles as unfiltered control (no presence subquery in sql)
+    config_not_null = _validated_query([_presence_filter(name, True)])
+    config_not_null["filters"][0]["operator"] = "is_not_null"
+    config_not_null["filters"][0]["value"] = None
+
+    sql_not_null, _, _ = DashboardQueryBuilderV2(config_not_null).build_all_queries()[0]
+    presence_subquery = (
+        "tracer_eval_logger" if name == "has_eval" else "model_hub_score"
+    )
+    assert presence_subquery not in sql_not_null

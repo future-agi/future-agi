@@ -35,6 +35,9 @@ from tracer.services.clickhouse.eval_logger_table import (
 from tracer.services.clickhouse.query_builders.expressions import (
     annotation_numeric_value_expr,
 )
+from tracer.services.clickhouse.query_builders.filters import (
+    parse_boolean_meta_filter,
+)
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     compile_span_attribute_row_predicate,
 )
@@ -886,18 +889,15 @@ class DashboardQueryBuilder:
         return cls._presence_filter_name(payload) in PRESENCE_SYSTEM_METRIC_FILTERS
 
     @staticmethod
-    def _presence_filter_value(payload: dict, metric_name: str) -> bool:
-        operation = str(payload.get("operator") or "")
-        if operation not in {"equal_to", "equals"}:
-            raise InvalidMetricCombinationError(
-                f"{metric_name} supports only the equals operation"
+    def _presence_filter_value(payload: dict, metric_name: str) -> bool | None:
+        try:
+            return parse_boolean_meta_filter(
+                metric_name,
+                payload.get("value"),
+                payload.get("operator"),
             )
-        value = payload.get("value")
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
-            return value.strip().lower() == "true"
-        raise InvalidMetricCombinationError(f"{metric_name} requires a boolean value")
+        except ValueError as exc:
+            raise InvalidMetricCombinationError(str(exc)) from exc
 
     def _eval_presence_relation(self) -> str:
         """Return exact project+trace identities with a latest-live eval row."""
@@ -1103,6 +1103,8 @@ class DashboardQueryBuilder:
             if metric_name not in PRESENCE_SYSTEM_METRIC_FILTERS:
                 continue
             required = self._presence_filter_value(payload, metric_name)
+            if required is None:
+                continue
             relation = (
                 self._eval_presence_relation()
                 if metric_name == "has_eval"
