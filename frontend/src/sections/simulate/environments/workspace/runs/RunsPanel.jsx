@@ -24,7 +24,6 @@ export default function RunsPanel({ env, envState, runs, onStart, onOpenRun, onG
       <RunsSummary
         env={env}
         envState={envState}
-        onStart={onStart}
         onOpenRun={onOpenRun}
         onGo={onGo}
       />

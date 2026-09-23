@@ -13,10 +13,10 @@ import SummaryTable from "./SummaryTable";
 
 // The populated Runs tab: every run of the environment as one summary — the
 // eval-score trend graph over a comparison table. Replaces the pre-flight card
-// once at least one run exists (matching the designer, where pre-flight moves
-// into "Add more runs"). Comparing/winner/trials are later phases, surfaced as
-// "coming soon" so the shell matches the design without faking the behaviour.
-export default function RunsSummary({ env, envState, onStart, onOpenRun, onGo }) {
+// once at least one run exists. Comparing/winner/trials are later phases,
+// surfaced as "coming soon" so the shell matches the design without faking the
+// behaviour.
+export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
   const { rows, rowsChrono, evals, series } = useRunsSummary(env, envState);
   const scenarioCount = envState.scenarios?.length ?? 0;
 
@@ -48,13 +48,6 @@ export default function RunsSummary({ env, envState, onStart, onOpenRun, onGo })
           </Typography>
         </Box>
         <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
-          <Button
-            variant="outlined" size="small" onClick={onStart}
-            startIcon={<Iconify icon="solar:play-linear" width={15} />}
-            sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
-          >
-            Add more runs
-          </Button>
           <Button
             variant="outlined" size="small" onClick={() => onGo?.("evals")}
             startIcon={<Iconify icon="solar:add-circle-linear" width={15} />}
@@ -135,7 +128,6 @@ export default function RunsSummary({ env, envState, onStart, onOpenRun, onGo })
 RunsSummary.propTypes = {
   env: PropTypes.shape({ id: PropTypes.string, name: PropTypes.string }).isRequired,
   envState: PropTypes.shape({ scenarios: PropTypes.array }).isRequired,
-  onStart: PropTypes.func,
   onOpenRun: PropTypes.func,
   onGo: PropTypes.func,
 };
