@@ -8,6 +8,7 @@ import { DrilldownContext } from "../drilldownContext";
 import { deriveGoalOutcome, GOAL_OUTCOME_LABELS } from "../goalOutcome";
 import { deriveToolCalls } from "../toolCalls.js";
 import { readPersonaDimensions } from "../personaDimensions.js";
+import { OUTCOME_LABELS, attributionOf, endReasonOf, outcomeOf, passRateOf, sentimentOf } from "../taskOutcome";
 
 /**
  * The unified widget renderer.
@@ -127,17 +128,23 @@ function runPositionRows(tasks) {
   return out;
 }
 
-function groupKey(row, groupBy) {
+export function groupKey(row, groupBy) {
   if (!row) return "—";
   switch (groupBy) {
     case "persona":              return row.persona?.name || row.persona?.slug || "—";
     case "use_case":             return row.useCase || row.task || "—";
-    case "status":               return row.status || "—";
-    case "outcome_binary":       return row.status === "passed" ? "Successful" : "Unsuccessful";
+    /* Task rows use the shared outcome definition (passed / flaky / failed /
+       not measured); derived rows (grader results) carry their own status. */
+    case "status":               return row.__derived || !row.steps ? (row.status || "—") : OUTCOME_LABELS[outcomeOf(row)];
+    case "outcome_binary": {
+      if (row.__derived || !row.steps) return row.status === "passed" ? "Successful" : "Unsuccessful";
+      const o = outcomeOf(row);
+      return o === "unmeasured" ? "Not measured" : o === "passed" ? "Successful" : "Unsuccessful";
+    }
     case "goal_outcome":         return GOAL_OUTCOME_LABELS[deriveGoalOutcome(row)] || "N/A";
-    case "sentiment":            return sentimentGuess(row);
-    case "disconnection":        return endReasonGuess(row);
-    case "attribution":          return attributionGuess(row);
+    case "sentiment":            return sentimentOf(row) || "—";
+    case "disconnection":        return endReasonOf(row);
+    case "attribution":          return attributionOf(row)?.label || "—";
     case "attribution_layer":    return row.attributionLayer || "—";
     case "pipeline_stage":       return row.pipelineStage || "—";
     case "voice_segment":        return row.voiceSegment || "—";
@@ -165,28 +172,6 @@ function turnBucket(n) {
   if (n <= 6) return "4–6";
   if (n <= 10) return "7–10";
   return "11+";
-}
-
-function sentimentGuess(t) {
-  const raw = t?.callSummary?.sentiment || t?.sentiment;
-  if (raw === "positive" || raw === "neutral" || raw === "negative") return raw;
-  const failed = t?.status && t.status !== "passed";
-  return failed ? "negative" : "neutral";
-}
-function endReasonGuess(t) {
-  if (t?.status === "error") return "error";
-  if (t?.escalated) return "escalated";
-  if (t?.status === "passed") return "complete";
-  const turns = t?.steps?.length || 0;
-  if (turns >= 12) return "timeout";
-  return "incomplete";
-}
-function attributionGuess(t) {
-  if (!t) return "—";
-  if (t.status === "error") return "environment";
-  if (t.escalated) return "simulated caller";
-  if (t.status === "passed") return "—";
-  return "agent";
 }
 
 /** ── filter application ─────────────────────────────────────── */
@@ -258,6 +243,9 @@ function reduce(rows, metric) {
   switch (metric) {
     case "count":      return rows.length;
     case "pass_rate": {
+      /* Task rows: the runs-table rate — mean passShare over measured
+         tasks. Grader rows: share of checks that passed. */
+      if (rows[0]?.steps) return passRateOf(rows) ?? 0;
       const total = rows.length;
       const passed = rows.filter((r) => r.status === "passed" || r.passed === true).length;
       return total ? (passed / total) * 100 : 0;
@@ -270,15 +258,17 @@ function reduce(rows, metric) {
       const achieved = rows.filter((r) => deriveGoalOutcome(r) === "achieved").length;
       return (achieved / total) * 100;
     }
+    /* Over calls the agent actually made — a required tool it never
+       called is the agent's miss, not a tool success or failure. */
     case "tool_success_rate": {
-      const total = rows.length;
-      const ok = rows.filter((r) => r.toolStatus === "success").length;
-      return total ? (ok / total) * 100 : 0;
+      const made = rows.filter((r) => r.toolStatus !== "not_called");
+      const ok = made.filter((r) => r.toolStatus === "success").length;
+      return made.length ? (ok / made.length) * 100 : 0;
     }
     case "tool_fail_rate": {
-      const total = rows.length;
-      const bad = rows.filter((r) => r.toolStatus === "failed" || r.toolStatus === "error").length;
-      return total ? (bad / total) * 100 : 0;
+      const made = rows.filter((r) => r.toolStatus !== "not_called");
+      const bad = made.filter((r) => r.toolStatus === "failed" || r.toolStatus === "error" || r.toolStatus === "timeout").length;
+      return made.length ? (bad / made.length) * 100 : 0;
     }
     case "avg_latency": {
       const vals = nums((r) => r.durationMs || r.latencyMs || 0);

@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { memo, useContext, useEffect, useMemo, useState } from "react";
+import { memo, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { DrilldownContext } from "./drilldownContext";
 import { useTheme, alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, Table, TableHead, TableRow, TableCell, TableBody, Tooltip, Popover, Dialog, IconButton } from "@mui/material";
@@ -7,8 +7,14 @@ import Iconify from "src/components/iconify";
 import ReactApexChart from "../components/SafeApexChart";
 import { attribute, isMeasured, DOMAINS } from "../_mock/failures";
 import { deriveUseCaseLabel, csatOf, latencyOf as agentLatencyOf } from "./TraceTable";
+import {
+  OUTCOME_LABELS, attributionOf, endReasonOf, measuredOnly, outcomeOf, outcomeTally, passRateOf, passShareOf,
+  samplesOf, sentimentOf,
+} from "./taskOutcome";
 import { attachPersonaDims } from "./personaDimensions";
-import { deriveToolCalls } from "./toolCalls.js";
+import { deriveToolCalls, isToolFailure } from "./toolCalls.js";
+import { costSplitOf } from "./costSplit";
+import { voiceSegmentsOf } from "./voiceSegments";
 import { CustomWidgetBody } from "./layout/customWidgetRenderer";
 import { GoldenSetManager, DropoffFunnel, DivergenceTimeline, PitchBreakThemes, useGoldenSet } from "./goldenSet.jsx";
 import { useRunLayout, readViewFromUrl, writeViewToUrl } from "./layout/useRunLayout";
@@ -18,6 +24,13 @@ import ViewTabBar from "./layout/ViewTabBar";
 import SortablePanel from "./layout/SortablePanel";
 import SortableSection from "./layout/SortableSection";
 import WidgetEditor from "./layout/WidgetEditor";
+import { WidgetOpenContext, SimWidgetsContext } from "./layout/widgetOpenContext";
+import SimWidgetChart from "./widgets/SimWidgetChart";
+import { builtinQuery, hasBuiltinQuery } from "./widgets/builtinQueries";
+import { runSimQuery, simMetricCatalog, simRunsWithTasks, RUN_RANGE_PRESETS, X_AXIS_OPTIONS } from "./widgets/simWidgetQuery";
+import { useNavigate } from "react-router-dom";
+import { paths } from "src/routes/paths";
+import { useEnvState } from "../store";
 import {
   DndContext, DragOverlay, closestCenter, PointerSensor, KeyboardSensor,
   useSensor, useSensors,
@@ -89,25 +102,6 @@ const latencyOf = (t) => Number(t?.latencyMs || t?.durationMs || 0);
   status so donuts stay legible across renders. Matches the shape
   competitors (Retell, Cekura) put on their dashboards.
 */
-function sentimentOf(t) {
-  if (t?.sentiment) return t.sentiment;
-  if (t?.status === "passed") {
-    return hashId(t.id || "") % 5 === 0 ? "neutral" : "positive";
-  }
-  if (t?.status === "error") return "negative";
-  return hashId(t.id || "") % 3 === 0 ? "negative" : "neutral";
-}
-function endReasonOf(t) {
-  if (t?.endReason) return t.endReason;
-  if (t?.status === "passed")  return "complete";
-  if (t?.status === "error")   return "error";
-  if (t?.escalated)            return "escalated";
-  const h = hashId(t.id || "") % 4;
-  if (h === 0) return "timeout";
-  if (h === 1) return "escalated";
-  return "incomplete";
-}
-
 /* ── derivations ───────────────────────────────────────────────────── */
 
 /* Deterministic pseudo-random per task id so mock voice metrics stay
@@ -133,6 +127,17 @@ function percentile(arr, p) {
   return arr[idx];
 }
 const sortedNums = (tasks, sel) => tasks.map(sel).filter((v) => v > 0).sort((a, b) => a - b);
+
+/* A tail percentile needs enough samples to be anything but the maximum:
+   with fewer than 10 values p90 is the single worst one, with fewer than 100
+   p99 is. Below that the value is withheld rather than shown as if it were a
+   tail. */
+const MIN_N_FOR_PERCENTILE = { 90: 10, 95: 20, 99: 100 };
+const percentileOrNull = (arr, p) => (arr.length >= (MIN_N_FOR_PERCENTILE[p] || 1) ? percentile(arr, p) : null);
+const msOrDash = (v) => (v == null ? "—" : `${Math.round(v)}ms`);
+
+const passedCalls = (tasks) => measuredOnly(tasks)
+  .reduce((a, t) => a + (passShareOf(t) ?? 0) * samplesOf(t), 0);
 
 /* Business outcomes the CEO reads, not the QA lens. */
 function deriveBusiness(tasks) {
@@ -165,12 +170,15 @@ function deriveBusiness(tasks) {
     passed: passedCount,
     failed: failed.length,
     escalated,
-    resolutionRate: pct(passedCount, measured.length),
+    /* Same rate as the runs table: mean passShare over measured scenarios. */
+    resolutionRate: Math.round(passRateOf(tasks) ?? 0),
     escalationRate: pct(escalated, tasks.length),
     containmentRate: 100 - pct(escalated, tasks.length),
     complianceRate: pct(compliancePassed, measured.length),
     totalCost,
-    costPerPass: passedCount ? totalCost / passedCount : 0,
+    /* Everything the run spent, divided by the calls that passed (a flaky
+       scenario passed on some of its attempts, not none). */
+    costPerPass: passedCalls(tasks) ? totalCost / passedCalls(tasks) : 0,
     costPerResolution: passedCount ? totalCost / passedCount : 0,
     medHandleTimeS: percentile(durations, 50) / 1000,
   };
@@ -180,17 +188,17 @@ function deriveBusiness(tasks) {
    use that; otherwise we derive a deterministic split from latencyMs
    so the panel demos cleanly. */
 function deriveVoiceLatency(tasks) {
-  const withLat = tasks.filter((t) => latencyOf(t) > 0);
+  const withLat = measuredOnly(tasks).filter((t) => latencyOf(t) > 0);
   if (withLat.length === 0) return null;
   const ttfw = [], llm = [], tts = [], asr = [];
   const interrupts = []; const wer = [];
   withLat.forEach((t) => {
-    const total = latencyOf(t);
-    const b = t.latencyBreakdown || {};
-    ttfw.push(b.ttfw || Math.round(total * 0.35 + jitter(t.id, "ttfw", 0, 120)));
-    llm.push(b.llm || Math.round(total * 0.45 + jitter(t.id, "llm", 0, 180)));
-    tts.push(b.tts || Math.round(total * 0.15 + jitter(t.id, "tts", 0, 60)));
-    asr.push(b.asr || Math.round(total * 0.05 + jitter(t.id, "asr", 0, 40)));
+    /* Shared with the widget editor's segment metrics. */
+    const seg = voiceSegmentsOf(t);
+    ttfw.push(seg.ttfw);
+    llm.push(seg.llm);
+    tts.push(seg.tts);
+    asr.push(seg.asr);
     interrupts.push(jitter(t.id, "int", 0, 4));
     wer.push(jitter(t.id, "wer", 3, 9) / 100);
   });
@@ -199,10 +207,10 @@ function deriveVoiceLatency(tasks) {
   const avgWer = wer.reduce((a, x) => a + x, 0) / wer.length;
   const totalInterrupts = interrupts.reduce((a, x) => a + x, 0);
   return {
-    ttfw: { p50: percentile(s, 50), p90: percentile(s, 90), p99: percentile(s, 99) },
-    llm:  { p50: percentile(sl, 50), p90: percentile(sl, 90), p99: percentile(sl, 99) },
-    tts:  { p50: percentile(st, 50), p90: percentile(st, 90), p99: percentile(st, 99) },
-    asr:  { p50: percentile(sa, 50), p90: percentile(sa, 90), p99: percentile(sa, 99) },
+    ttfw: { p50: percentile(s, 50), p90: percentileOrNull(s, 90), p99: percentileOrNull(s, 99) },
+    llm:  { p50: percentile(sl, 50), p90: percentileOrNull(sl, 90), p99: percentileOrNull(sl, 99) },
+    tts:  { p50: percentile(st, 50), p90: percentileOrNull(st, 90), p99: percentileOrNull(st, 99) },
+    asr:  { p50: percentile(sa, 50), p90: percentileOrNull(sa, 90), p99: percentileOrNull(sa, 99) },
     werPct: avgWer * 100,
     interrupts: totalInterrupts,
     interruptsPerTask: totalInterrupts / withLat.length,
@@ -215,8 +223,8 @@ function deriveVoiceLatency(tasks) {
 function deriveFailureClusters(tasks, limit = 4) {
   const buckets = new Map();
   tasks.forEach((t) => {
-    if (t.status === "passed" || !isMeasured(t)) return;
-    const dom = attribute(t)?.domain || "agent";
+    if (outcomeOf(t) === "passed" || !isMeasured(t)) return;
+    const dom = attributionOf(t)?.id || "agent";
     const uc = deriveUseCaseLabel(t) || "Uncategorised";
     const key = `${dom}::${uc}`;
     const cur = buckets.get(key) || { domain: dom, useCase: uc, count: 0, tasks: [] };
@@ -260,14 +268,17 @@ const FILTER_TABS = [
     id: "base", label: "Base",
     fields: [
       { key: "Successful",           values: ["Yes", "No"],
-        test: (t, v) => (v === "Yes" ? t.status === "passed" : t.status !== "passed") },
-      { key: "Status",               values: ["Passed", "Failed", "Errored", "Escalated"],
-        test: (t, v) => (v === "Escalated" ? !!t.escalated : t.status === v.toLowerCase()) },
+        test: (t, v) => {
+          const o = outcomeOf(t);
+          return v === "Yes" ? o === "passed" : o === "failed" || o === "flaky";
+        } },
+      { key: "Status",               values: ["Passed", "Flaky", "Failed", "Not measured"],
+        test: (t, v) => OUTCOME_LABELS[outcomeOf(t)] === v },
       { key: "User sentiment",       values: ["Positive", "Neutral", "Negative"],
         test: (t, v) => sentimentOf(t) === v.toLowerCase() },
-      { key: "Disconnection reason", values: ["Task complete", "Escalated", "Incomplete", "Timeout", "Error"],
+      { key: "Disconnection reason", values: ["Task complete", "Escalated", "Incomplete", "Timeout", "Dropped", "Error"],
         test: (t, v) => {
-          const map = { "Task complete": "complete", Escalated: "escalated", Incomplete: "incomplete", Timeout: "timeout", Error: "error" };
+          const map = { "Task complete": "complete", Escalated: "escalated", Incomplete: "incomplete", Timeout: "timeout", Dropped: "dropped", Error: "error" };
           return endReasonOf(t) === map[v];
         } },
       { key: "Duration",             values: ["< 5s", "5–15s", "> 15s"],
@@ -918,7 +929,7 @@ VolumeAreaChart.propTypes = { tasks: PropTypes.array };
 const TaskLatencyOverTime = memo(function TaskLatencyOverTime({ tasks }) {
   const theme = useTheme();
   const { categories, latSeries } = useMemo(() => {
-    const ordered = [...(tasks || [])];
+    const ordered = measuredOnly(tasks || []);
     return {
       categories: ordered.map((_, i) => `T${i + 1}`),
       latSeries: ordered.map((t) => Math.round(latencyOf(t))),
@@ -927,14 +938,14 @@ const TaskLatencyOverTime = memo(function TaskLatencyOverTime({ tasks }) {
 
   return (
     <Panel
-      title="Task latency"
-      subtitle="Per-task wall clock"
-      info="Latency for each task in the order it ran. Random spikes = flaky infra; a steady climb = something the agent is doing more of over time (retries, context growth); a step change = usually a new tool or model kicking in mid-run."
+      title="Call duration"
+      subtitle="Wall-clock length of each measured scenario's call"
+      info="How long each measured call lasted, start to hang-up, one point per scenario. This is the length of the whole conversation — it mostly follows how many turns the scenario took, so a tall point is usually a long conversation rather than a slow agent. For how long callers wait on the agent, read Agent response time."
     >
       <Box sx={{ px: 1.5, py: 1.5 }}>
         <ReactApexChart
           type="line" height={220}
-          series={[{ name: "Task latency", data: latSeries }]}
+          series={[{ name: "Call duration", data: latSeries }]}
           options={{
             chart: { toolbar: { show: false }, animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily },
             theme: { mode: theme.palette.mode },
@@ -965,36 +976,28 @@ TaskLatencyOverTime.propTypes = { tasks: PropTypes.array };
 /* Outcome breakdown donut — passed / failed / errored / escalated,
    with a legend on the right showing counts + share %. Cekura and
    Bland both surface this shape front-and-centre. */
-const OutcomeDonutChart = memo(function OutcomeDonutChart({ tasks, biz }) {
+const OutcomeDonutChart = memo(function OutcomeDonutChart({ tasks }) {
   const drill = useDrilldown();
-  const measured = tasks.filter(isMeasured);
-  const passed = measured.filter((t) => t.status === "passed");
-  const failed = measured.filter((t) => t.status !== "passed" && t.status !== "error");
-  const errored = tasks.filter((t) => t.status === "error");
-  const escalatedTasks = tasks.filter((t) => t.escalated);
-  const bucketSets = [passed, failed, errored, escalatedTasks];
-  const labels = ["Passed", "Failed", "Errored", "Escalated"];
+  /* One slice per outcome from the shared definition — no slice overlaps
+     another, and every slice's drill-down lists exactly the tasks it counts. */
+  const order = ["passed", "flaky", "failed", "unmeasured"];
+  const bucketSets = order.map((o) => tasks.filter((t) => outcomeOf(t) === o));
   const onSliceClick = (i) => {
     const list = bucketSets[i] || [];
-    drill({ title: `Outcome — ${labels[i]}`, subtitle: `${list.length} tasks`, tasks: list });
+    drill({ title: `Outcome — ${OUTCOME_LABELS[order[i]]}`, subtitle: `${list.length} tasks`, tasks: list });
   };
   return (
     <DonutBreakdown
-      title="Goal outcome breakdown"
-      subtitle={`${tasks.length} tasks classified · what share hit the business goal vs stalled`}
-      buckets={[
-        { label: "Passed",    value: passed.length },
-        { label: "Failed",    value: failed.length },
-        { label: "Errored",   value: errored.length },
-        { label: "Escalated", value: biz.escalated },
-      ]}
-      colors={[CHART_GREEN, CHART_RED, "#F59E0B", "#7857FC"]}
+      title="Outcome breakdown"
+      subtitle={`${tasks.length} scenarios · passed, flaky, failed, or never measured`}
+      buckets={order.map((o, i) => ({ label: OUTCOME_LABELS[o], value: bucketSets[i].length }))}
+      colors={[CHART_GREEN, "#F59E0B", CHART_RED, "#94A3B8"]}
       onSliceClick={onSliceClick}
-      info="Splits the run four ways: passed, failed on evaluator, hard-errored (crash / timeout), or escalated to a human. A big amber wedge points at infra / tool problems; a big purple wedge means the agent bailed instead of trying — both are different fixes than a normal failure."
+      info="Splits the run's scenarios four ways: passed on every attempt, flaky (passed on some attempts), failed on every attempt, or not measured because the environment, connection, simulated caller or grader broke first. A big grey wedge is an infrastructure problem, not an agent one; a big amber wedge means the agent is inconsistent on the same scenario."
     />
   );
 });
-OutcomeDonutChart.propTypes = { tasks: PropTypes.array, biz: PropTypes.object };
+OutcomeDonutChart.propTypes = { tasks: PropTypes.array };
 
 /**
  * Reusable small donut with a legend on the right — the exact shape
@@ -1120,28 +1123,44 @@ DonutBreakdown.propTypes = {
    elsewhere on the page. */
 const SuccessDonut = memo(function SuccessDonut({ tasks }) {
   const drill = useDrilldown();
+  /* Counted in calls: each measured scenario ran `repeats` times, and a
+     flaky one succeeded on some of them. Unmeasured scenarios (the
+     environment, connection or grader broke) have no verdict and are left
+     out — they are not unsuccessful calls of the agent. */
+  const { buckets, measured, unmeasured } = useMemo(() => {
+    const m = measuredOnly(tasks);
+    let ok = 0;
+    let bad = 0;
+    m.forEach((t) => {
+      const n = samplesOf(t);
+      const good = Math.round((passShareOf(t) ?? 0) * n);
+      ok += good;
+      bad += n - good;
+    });
+    return {
+      buckets: [
+        { label: "Successful", value: ok },
+        { label: "Unsuccessful", value: bad },
+      ],
+      measured: m,
+      unmeasured: tasks.length - m.length,
+    };
+  }, [tasks]);
   const onSliceClick = (i) => {
     const label = i === 0 ? "Successful" : "Unsuccessful";
     const filtered = i === 0
-      ? tasks.filter((t) => t.status === "passed")
-      : tasks.filter((t) => t.status !== "passed");
-    drill({ title: `Call successful — ${label}`, subtitle: `${filtered.length} tasks`, tasks: filtered });
+      ? measured.filter((t) => (passShareOf(t) ?? 0) > 0)
+      : measured.filter((t) => (passShareOf(t) ?? 0) < 1);
+    drill({ title: `Call successful — ${label}`, subtitle: `${filtered.length} scenarios`, tasks: filtered });
   };
-  const buckets = useMemo(() => {
-    const passed = tasks.filter((t) => t.status === "passed").length;
-    return [
-      { label: "Successful",  value: passed },
-      { label: "Unsuccessful", value: tasks.length - passed },
-    ];
-  }, [tasks]);
   return (
     <DonutBreakdown
       title="Call successful"
-      subtitle="Successful vs unsuccessful — the top-level verdict"
+      subtitle={`Calls across ${measured.length} measured scenarios${unmeasured ? ` · ${unmeasured} not measured` : ""}`}
       buckets={buckets}
       colors={SUCCESS_COLORS}
       onSliceClick={onSliceClick}
-      info="The single-line answer: what share of tasks the agent actually completed. Everything else on this page tries to explain the delta between this number and 100%. Click either slice to jump straight to the passing or failing tasks."
+      info="The single-line answer: what share of calls the agent actually completed, counted over every attempt of every scenario that produced a verdict. Scenarios where the environment, connection or grader broke are left out — they say nothing about the agent. Click either slice to jump to those scenarios."
     />
   );
 });
@@ -1152,7 +1171,7 @@ const SentimentDonut = memo(function SentimentDonut({ tasks }) {
   const drill = useDrilldown();
   const buckets = useMemo(() => {
     const bucket = { positive: 0, neutral: 0, negative: 0 };
-    tasks.forEach((t) => { const k = sentimentOf(t); bucket[k] = (bucket[k] || 0) + 1; });
+    tasks.forEach((t) => { const k = sentimentOf(t); if (k) bucket[k] = (bucket[k] || 0) + 1; });
     return [
       { label: "Positive", value: bucket.positive || 0 },
       { label: "Neutral",  value: bucket.neutral  || 0 },
@@ -1167,7 +1186,7 @@ const SentimentDonut = memo(function SentimentDonut({ tasks }) {
   return (
     <DonutBreakdown
       title="User sentiment"
-      subtitle="How the counterparty came across during the task"
+      subtitle="How the counterparty came across · measured scenarios only"
       buckets={buckets}
       colors={SENTIMENT_COLORS}
       onSliceClick={onSliceClick}
@@ -1182,12 +1201,12 @@ const DisconnectionDonut = memo(function DisconnectionDonut({ tasks }) {
   const drill = useDrilldown();
   const labelMap = {
     complete: "Task complete", escalated: "Escalated",
-    incomplete: "Incomplete", timeout: "Timeout", error: "Error",
+    incomplete: "Incomplete", timeout: "Timeout", dropped: "Dropped", error: "Error",
   };
   const buckets = useMemo(() => {
     const bucket = {};
     tasks.forEach((t) => { const k = endReasonOf(t); bucket[k] = (bucket[k] || 0) + 1; });
-    const order = ["complete", "escalated", "incomplete", "timeout", "error"];
+    const order = ["complete", "escalated", "incomplete", "timeout", "dropped", "error"];
     return order.filter((k) => bucket[k]).map((k) => ({ label: labelMap[k], value: bucket[k], _key: k }));
   }, [tasks]);
   const onSliceClick = (i) => {
@@ -1203,12 +1222,12 @@ const DisconnectionDonut = memo(function DisconnectionDonut({ tasks }) {
       buckets={buckets}
       colors={DISCONNECT_COLORS}
       onSliceClick={onSliceClick}
-      info="How each task actually ended — completed, escalated to a human, ran out of turns, timed out, or errored. Big Timeout / Error slices are infrastructure smells; big Escalated is an over-cautious agent; big Incomplete is one that gave up mid-task."
+      info="How each task actually ended — completed, escalated to a human, ran out of turns, timed out, the connection dropped, or the environment errored. Dropped and Error slices are infrastructure, not the agent; big Escalated is an over-cautious agent; big Incomplete is one that gave up mid-task."
     />
   );
 });
 DisconnectionDonut.propTypes = { tasks: PropTypes.array };
-const DISCONNECT_COLORS = ["#7857FC", "#F59E0B", "#94A3B8", "#DB2777", "#DC2626"];
+const DISCONNECT_COLORS = ["#7857FC", "#F59E0B", "#94A3B8", "#DB2777", "#0EA5E9", "#DC2626"];
 
 /**
  * Phone Inbound / Outbound — voice-agent split. Only really
@@ -1223,31 +1242,31 @@ const DISCONNECT_COLORS = ["#7857FC", "#F59E0B", "#94A3B8", "#DB2777", "#DC2626"
  */
 const LatencyPercentilesPanel = memo(function LatencyPercentilesPanel({ tasks }) {
   const theme = useTheme();
-  const latencies = useMemo(() => sortedNums(tasks, (t) => latencyOf(t)), [tasks]);
+  const latencies = useMemo(() => sortedNums(measuredOnly(tasks), (t) => latencyOf(t)), [tasks]);
   const p50 = percentile(latencies, 50);
-  const p90 = percentile(latencies, 90);
-  const p99 = percentile(latencies, 99);
+  const p90 = percentileOrNull(latencies, 90);
+  const p99 = percentileOrNull(latencies, 99);
   const curve = useMemo(
     () => (latencies.length ? Array.from({ length: 101 }, (_, p) => [p, Math.round(percentile(latencies, p))]) : []),
     [latencies],
   );
   const exportRows = [
-    { percentile: "p50", latency_ms: Math.round(p50) },
-    { percentile: "p90", latency_ms: Math.round(p90) },
-    { percentile: "p99", latency_ms: Math.round(p99) },
+    { percentile: "p50", duration_ms: Math.round(p50), n: latencies.length },
+    { percentile: "p90", duration_ms: p90 == null ? "" : Math.round(p90), n: latencies.length },
+    { percentile: "p99", duration_ms: p99 == null ? "" : Math.round(p99), n: latencies.length },
   ];
   const color = "#0EA5E9";
   const marks = [
     { p: 50, v: p50, label: "p50" },
     { p: 90, v: p90, label: "p90" },
     { p: 99, v: p99, label: "p99" },
-  ];
+  ].filter((m) => m.v != null);
   return (
     <Panel
-      title="Latency percentiles"
-      subtitle={`p50 ${Math.round(p50)}ms · p90 ${Math.round(p90)}ms · p99 ${Math.round(p99)}ms`}
+      title="Call duration percentiles"
+      subtitle={`p50 ${msOrDash(p50)} · p90 ${msOrDash(p90)} · p99 ${msOrDash(p99)} · n = ${latencies.length}`}
       exportRows={exportRows}
-      info="Every task's end-to-end latency, sorted: read across to a percentile, up to the latency. p50 = typical; p90 = the slower 10% of tasks (the ones your SLO is really written for); p99 = your worst tail. A curve that bends sharply upward near the right edge means a small set of tasks is dragging the tail."
+      info="Every measured call's duration, sorted: read across to a percentile, up to the duration. p50 = typical; p90 = the longest 10%; p99 = the worst tail. A tail percentile needs enough calls to mean anything — p90 is shown from 10 calls and p99 from 100; below that it would just be the single longest call. A curve that bends sharply upward near the right edge means a few long conversations are dragging the tail."
     >
       <Box sx={{ px: 1.5, py: 1.5 }}>
         <ReactApexChart
@@ -1395,20 +1414,21 @@ AgentResponseTimePanel.propTypes = { tasks: PropTypes.array };
 /**
  * CSAT distribution — calls per CSAT score (the same per-call CSAT as the
  * KPI strip and the Test runs CSAT column). Scores at or under 4, the
- * table's own red threshold, are drawn red. The footer checks the provider's
- * own success judgement (did the call end with the task complete) against
- * whether every eval on the call passed.
+ * table's own red threshold, are drawn red. The footer checks the run's own
+ * verdict (every attempt passed) against whether every eval on the call
+ * passed. Unmeasured calls have no verdict and are left out.
  */
 const CSAT_BAD_AT = 4;
 const CsatDistributionPanel = memo(function CsatDistributionPanel({ tasks }) {
   const theme = useTheme();
   const { counts, agreePct } = useMemo(() => {
-    const list = tasks || [];
+    /* Only calls that produced a verdict have a score to read. */
+    const list = measuredOnly(tasks || []);
     const scores = list.map((t) => csatOf(t));
     /* Always the full 0–10 scale, so empty high scores read as a gap. */
     const byScore = Array.from({ length: 11 }, (_, s) => scores.filter((v) => v === s).length);
     const judged = list.filter((t) => (t.evalResults || []).length > 0);
-    const agree = judged.filter((t) => (endReasonOf(t) === "complete") === t.evalResults.every((r) => r.passed)).length;
+    const agree = judged.filter((t) => (outcomeOf(t) === "passed") === t.evalResults.every((r) => r.passed)).length;
     return { counts: byScore, agreePct: pct(agree, judged.length) };
   }, [tasks]);
   const exportRows = counts.map((c, s) => ({ csat: s, calls: c }));
@@ -1417,8 +1437,8 @@ const CsatDistributionPanel = memo(function CsatDistributionPanel({ tasks }) {
       title="CSAT distribution (0–10)"
       action={<SourceTag>Existing score</SourceTag>}
       exportRows={exportRows}
-      info={`How many calls landed on each CSAT score from 0 to 10 — the same per-call score as the Avg CSAT tile. Red scores (${CSAT_BAD_AT} and below) are unhappy callers; a lump on the left means the agent is solving problems in a way callers don't like. The footer checks the provider's own success judgement against your evals, so you know how far to trust it.`}
-      footer={`The provider's own success judgement (its analysis) agrees with your evals on ${agreePct}% of calls.`}
+      info={`How many calls landed on each CSAT score from 0 to 10 — the same per-call score as the Avg CSAT tile. Red scores (${CSAT_BAD_AT} and below) are unhappy callers; a lump on the left means the agent is solving problems in a way callers don't like. The footer checks how often the run's verdict (every attempt passed) agrees with every eval on the call passing — where they split, the task verdict and the graders are measuring different things.`}
+      footer={`The run verdict agrees with "every eval passed" on ${agreePct}% of measured calls.`}
     >
       <Box sx={{ px: 1.5, pb: 1 }}>
         <ReactApexChart
@@ -1455,17 +1475,12 @@ const VoiceCostBreakdownPanel = memo(function VoiceCostBreakdownPanel({ tasks })
     const llm = [], stt = [], tts = [], transport = [];
     let sumLlm = 0, sumStt = 0, sumTts = 0, sumTrans = 0;
     costed.forEach((t) => {
-      const c = t.cost || 0;
-      // Deterministic per-task jitter around the baseline split so it isn't a flat stripe.
-      const jitter = ((hashId(t.id || "") % 100) - 50) / 1000; // ±5%
-      const llmShare = Math.max(0.35, Math.min(0.7, 0.55 + jitter));
-      const ttsShare = Math.max(0.15, Math.min(0.35, 0.25 - jitter / 2));
-      const sttShare = Math.max(0.08, Math.min(0.25, 0.15 + jitter / 3));
-      const transShare = Math.max(0.02, 1 - llmShare - ttsShare - sttShare);
-      const l = Number((c * llmShare).toFixed(4));
-      const s = Number((c * sttShare).toFixed(4));
-      const tt = Number((c * ttsShare).toFixed(4));
-      const tr = Number((c * transShare).toFixed(4));
+      /* Shared with the widget editor's per-stage cost metrics. */
+      const split = costSplitOf(t);
+      const l = split.llm;
+      const s = split.stt;
+      const tt = split.tts;
+      const tr = split.transport;
       llm.push(l); stt.push(s); tts.push(tt); transport.push(tr);
       sumLlm += l; sumStt += s; sumTts += tt; sumTrans += tr;
     });
@@ -1638,21 +1653,24 @@ MetricDistribution.propTypes = {
  */
 const DistributionSummary = memo(function DistributionSummary({ tasks }) {
   const metrics = useMemo(() => {
+    /* Duration and turns only mean something for calls that produced a
+       verdict; cost and tokens were spent either way, so they count every
+       scenario. (End-to-end latency used to sit here too — it read the same
+       field as duration, so it was the same distribution twice.) */
+    const measured = measuredOnly(tasks);
     const defs = [
-      { key: "latency",  label: "End-to-end latency", fmt: (v) => `${Math.round(v)}ms`,       accessor: (t) => latencyOf(t) },
-      { key: "duration", label: "Task duration",       fmt: (v) => `${v.toFixed(1)}s`,          accessor: (t) => (t.durationMs || 0) / 1000 },
-      { key: "cost",     label: "Cost per task",       fmt: (v) => `$${v.toFixed(3)}`,          accessor: (t) => t.cost || 0 },
-      { key: "tokens",   label: "Tokens per task",     fmt: (v) => numFmt.format(Math.round(v)), accessor: (t) => t.tokens || 0 },
-      { key: "turns",    label: "Turns per task",      fmt: (v) => `${Math.round(v)}`,          accessor: (t) => t.steps?.length || 0 },
+      { key: "duration", label: "Call duration",     fmt: (v) => `${v.toFixed(1)}s`,          accessor: (t) => (t.durationMs || 0) / 1000, population: measured },
+      { key: "cost",     label: "Cost per scenario", fmt: (v) => `$${v.toFixed(3)}`,          accessor: (t) => t.cost || 0, population: tasks },
+      { key: "tokens",   label: "Tokens per scenario", fmt: (v) => numFmt.format(Math.round(v)), accessor: (t) => t.tokens || 0, population: tasks },
+      { key: "turns",    label: "Turns per call",    fmt: (v) => `${Math.round(v)}`,          accessor: (t) => t.steps?.length || 0, population: measured },
     ];
     return defs.map((d) => {
-      const values = tasks.map(d.accessor).filter((v) => Number.isFinite(v) && v > 0);
+      const values = d.population.map(d.accessor).filter((v) => Number.isFinite(v) && v > 0);
       if (!values.length) return { ...d, empty: true };
       const sorted = [...values].sort((a, b) => a - b);
-      const pct = (p) => sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))];
       return {
         ...d, count: values.length,
-        p50: pct(50), p90: pct(90), p99: pct(99),
+        p50: percentile(sorted, 50), p90: percentileOrNull(sorted, 90), p99: percentileOrNull(sorted, 99),
         min: sorted[0], max: sorted[sorted.length - 1],
       };
     });
@@ -1661,21 +1679,21 @@ const DistributionSummary = memo(function DistributionSummary({ tasks }) {
   const exportRows = metrics.filter((m) => !m.empty).map((m) => ({
     metric: m.label, samples: m.count,
     p50: Number(m.p50.toFixed(4)),
-    p90: Number(m.p90.toFixed(4)),
-    p99: Number(m.p99.toFixed(4)),
+    p90: m.p90 == null ? "" : Number(m.p90.toFixed(4)),
+    p99: m.p99 == null ? "" : Number(m.p99.toFixed(4)),
     max: Number(m.max.toFixed(4)),
   }));
 
   return (
     <Panel
       title="Distribution summary"
-      subtitle="p50 · p90 · p99 · max for every task-level metric"
+      subtitle="p50 · p90 · p99 · max for every per-call metric"
       exportRows={exportRows}
-      info="One row per metric with the four numbers that describe its shape. p90 is the number to defend in a review; the max tells you how bad your worst tail actually got. A big gap between p50 and p99 means a few outliers are dragging the run and are worth investigating first."
+      info="One tile per metric with the numbers that describe its shape, and n — how many values it is built from. Duration and turns count measured calls only; cost and tokens count every scenario, since they were spent either way. p90 is shown from 10 values and p99 from 100 — below that they would just be the maximum. A big gap between p50 and the tail means a few outliers are dragging the run. Turns count every message from either side."
     >
       <Box sx={{
         display: "grid",
-        gridTemplateColumns: { xs: "1fr 1fr", sm: "repeat(3, 1fr)", md: "repeat(5, 1fr)" },
+        gridTemplateColumns: { xs: "1fr 1fr", sm: "repeat(2, 1fr)", md: "repeat(4, 1fr)" },
         bgcolor: "divider", gap: "1px",
         "& > *": { bgcolor: "background.paper" },
       }}>
@@ -1705,10 +1723,10 @@ const DistributionSummary = memo(function DistributionSummary({ tasks }) {
                     fontVariantNumeric: "tabular-nums", letterSpacing: -0.3,
                     color: "text.primary",
                   }}>
-                    {m.fmt(m.p90)}
+                    {m.p90 == null ? "—" : m.fmt(m.p90)}
                   </Typography>
                   <Typography sx={{ fontSize: 10.5, color: "text.subtitle", fontWeight: 600 }}>
-                    p90
+                    p90 · n = {m.count}
                   </Typography>
                 </Stack>
 
@@ -1716,7 +1734,7 @@ const DistributionSummary = memo(function DistributionSummary({ tasks }) {
                 <Stack sx={{ mt: "auto", pt: 1.5 }} spacing={0.375}>
                   {[
                     ["p50", m.fmt(m.p50)],
-                    ["p99", m.fmt(m.p99)],
+                    ["p99", m.p99 == null ? "—" : m.fmt(m.p99)],
                     ["max", m.fmt(m.max)],
                   ].map(([k, v]) => (
                     <Stack key={k} direction="row" justifyContent="space-between" alignItems="baseline">
@@ -1970,12 +1988,15 @@ TaskVolumeChart.propTypes = { tasks: PropTypes.array };
  * chip is hidden — the value alone still reads.
  */
 function KpiStrip({ tasks, biz, trend, env }) {
-  const latencies = sortedNums(tasks, (t) => latencyOf(t));
+  /* Durations, turns and scores only mean something for calls that produced
+     a verdict — an environment that never came up still has step timings. */
+  const measured = measuredOnly(tasks);
+  const latencies = sortedNums(measured, (t) => latencyOf(t));
   const p90Lat = percentile(latencies, 90);
   const avgDurationS = latencies.length
     ? latencies.reduce((a, v) => a + v, 0) / latencies.length / 1000
     : 0;
-  const turnCounts = tasks
+  const turnCounts = measured
     .map((t) => t.steps?.length || 0)
     .filter((n) => n > 0);
   const avgTurns = turnCounts.length
@@ -1987,21 +2008,34 @@ function KpiStrip({ tasks, biz, trend, env }) {
   };
 
   const isVoice = env?.surface === "voice";
-  const n = tasks.length;
-  const avgOf = (sel) => (n ? tasks.reduce((a, t) => a + sel(t), 0) / n : 0);
-  const connected = tasks.filter((t) => t.status !== "error").length;
-  const agentTalkPct = Math.round(avgOf((t) => {
-    const steps = t.steps || [];
-    return steps.length ? (steps.filter((s) => s.role === "agent").length / steps.length) * 100 : 50;
-  }));
+  /* Calls, not scenarios: each scenario was placed `repeats` times. A call
+     connected unless the connection dropped or the environment never came
+     up — the two faults that stop a conversation from starting. */
+  const n = tasks.reduce((a, t) => a + samplesOf(t), 0);
+  const connected = tasks
+    .filter((t) => !t.fault?.transport && !t.fault?.environment)
+    .reduce((a, t) => a + samplesOf(t), 0);
+  const mN = measured.length;
+  const avgOf = (sel) => (mN ? measured.reduce((a, t) => a + sel(t), 0) / mN : 0);
+  /* Talk ratio is speaking time, not message count. */
+  const talk = measured.reduce((acc, t) => {
+    (t.steps || []).forEach((st) => {
+      const d = Number(st.duration) || 0;
+      if (st.role === "agent") acc.agent += d; else if (st.role === "customer") acc.customer += d;
+    });
+    return acc;
+  }, { agent: 0, customer: 0 });
+  const agentTalkPct = talk.agent + talk.customer
+    ? Math.round((talk.agent / (talk.agent + talk.customer)) * 100)
+    : 50;
 
   /* Legacy test-run KPIs (Call details + System metrics), in the
      legacy order. WPM, stop latency and talk ratio are voice-only. */
   const legacyCards = [
-    { label: isVoice ? "Total Calls" : "Total Chats", value: numFmt.format(n) },
+    { label: isVoice ? "Total Calls" : "Total Chats", value: numFmt.format(n), sub: `${tasks.length} scenarios` },
     { label: isVoice ? "Connected" : "Completed", value: numFmt.format(connected), sub: `of ${n}` },
     { label: isVoice ? "Calls Connected(%)" : "Completion(%)", value: `${pct(connected, n)}%` },
-    { label: "Avg CSAT Score", value: n ? avgOf(csatOf).toFixed(1) : "—" },
+    { label: "Avg CSAT Score", value: mN ? avgOf(csatOf).toFixed(1) : "—" },
     { label: "Agent Latency", value: `${Math.round(avgOf(agentLatencyOf))}ms` },
     isVoice && { label: "Agent WPM", value: Math.round(avgOf((t) => jitter(t.id, "wpm", 150, 40))), sub: "words/min" },
     isVoice && { label: "Agent Stop Latency", value: `${Math.round(avgOf((t) => jitter(t.id, "stop", 180, 240)))}ms` },
@@ -2017,20 +2051,15 @@ function KpiStrip({ tasks, biz, trend, env }) {
       sub: `${latencies.length} timed tasks`,
     },
     {
-      label: "Avg turns",
-      value: avgTurns ? avgTurns.toFixed(1) : "—",
-      sub: turnCounts.length ? `${turnCounts.length} tasks` : "no traces",
-    },
-    {
-      label: "Latency p90",
-      value: `${Math.round(p90Lat)}ms`,
-      sub: `median ${Math.round(percentile(latencies, 50))}ms`,
+      label: "Duration p90",
+      value: `${(p90Lat / 1000).toFixed(1)}s`,
+      sub: `median ${(percentile(latencies, 50) / 1000).toFixed(1)}s`,
     },
     {
       label: "Cost / pass",
       value: biz.costPerPass ? `$${biz.costPerPass.toFixed(3)}` : "—",
-      sub: `per successful task`,
-      delta: deltaPct(Math.round(biz.costPerPass * 1000), trend?.prevCostPerPassMs),
+      sub: `per passed call`,
+      delta: deltaPct(biz.costPerPass, trend?.prevCostPerPass),
       goodUp: false,
     },
     {
@@ -2139,17 +2168,33 @@ const UseCaseRiskList = memo(function UseCaseRiskList({ tasks }) {
       measured += 1;
       const label = deriveUseCaseLabel(t) || "Uncategorised";
       const row = groups.get(label) || { passed: 0, failed: 0, total: 0 };
-      row.total += 1;
-      if (t.status === "passed") row.passed += 1;
-      else row.failed += 1;
+      /* Counted in calls: a flaky scenario passed on some of its attempts. */
+      const calls = samplesOf(t);
+      const ok = Math.round((passShareOf(t) ?? 0) * calls);
+      row.total += calls;
+      row.passed += ok;
+      row.failed += calls - ok;
       groups.set(label, row);
     });
+    /* Rank by how confidently a use case is weak, not by the raw rate: a
+       use case at 0/1 is one data point, one at 5/20 is a pattern. The upper
+       bound of the Wilson interval is the best pass rate the data allows. */
+    const upper = (passed, total) => {
+      if (!total) return 1;
+      const z = 1.96;
+      const p = passed / total;
+      const denom = 1 + (z * z) / total;
+      const centre = p + (z * z) / (2 * total);
+      const margin = z * Math.sqrt((p * (1 - p) + (z * z) / (4 * total)) / total);
+      return (centre + margin) / denom;
+    };
     const all = [...groups.entries()]
       .map(([label, { passed, failed, total }]) => ({
         label, passed, failed, total,
         rate: total ? Math.round((passed / total) * 100) : 0,
+        risk: upper(passed, total),
       }))
-      .sort((a, b) => a.rate - b.rate || b.total - a.total)
+      .sort((a, b) => a.risk - b.risk || b.total - a.total)
       .slice(0, TOP_N);
     return { rows: all, totalGroups: groups.size, totalRuns: measured };
   }, [tasks]);
@@ -2163,7 +2208,7 @@ const UseCaseRiskList = memo(function UseCaseRiskList({ tasks }) {
       title="Use case risk"
       subtitle={`Weakest ${rows.length} of ${totalGroups} · red segment = failed, purple = passed`}
       exportRows={exportRows}
-      info="Ranks the tasks by the use case they exercise (refund, escalation, tool call, etc.) and shows the pass/fail split for each. The use case at the top is the one the agent struggles with most — usually a better fix target than picking off individual failing tasks."
+      info="Groups calls by the use case they exercise (refund, escalation, tool call, etc.) and shows the pass/fail split for each, counting every attempt of every measured scenario. Ranked by how confidently the use case is weak — a use case that failed once in one call ranks below one that fails steadily across many — so the top of the list is a pattern worth fixing, not noise."
     >
       <UseCaseRiskStacked rows={rows} />
     </Panel>
@@ -2347,7 +2392,10 @@ const EvalsTable = memo(function EvalsTable({ tasks, evals }) {
   const rows = useMemo(() => {
     if (!evals?.length) return [];
     return evals.map((e) => {
-      const results = tasks.map((t) => t.evalResults?.find((r) => r.id === e.id)).filter(Boolean);
+      /* A grader's verdict only counts where the call produced one — an
+         unmeasured task (environment, connection or grader broke) is not a
+         failed check. */
+      const results = measuredOnly(tasks).map((t) => t.evalResults?.find((r) => r.id === e.id)).filter(Boolean);
       const passed = results.filter((r) => r.passed).length;
       const total = results.length;
       const passRate = total ? Math.round((passed / total) * 100) : 0;
@@ -2370,7 +2418,7 @@ const EvalsTable = memo(function EvalsTable({ tasks, evals }) {
         ? `${rows.length} grader${rows.length === 1 ? "" : "s"} · ${overall.passed} of ${overall.total} checks passed (${overall.rate}%)`
         : "Grader pass rates"}
       exportRows={rows.map((r) => ({ grader: r.name, category: r.category, pass_rate: r.passRate, passed: r.passed, total: r.total }))}
-      info="One row per evaluator with its own pass rate. The task's overall pass/fail is an AND across every grader — so a single grader in the red is often the actual bottleneck. Sort your fix work by the grader that's failing hardest."
+      info="One row per evaluator with its own pass rate over the measured calls. A task passes only when its attempts pass, and a grader failing on many calls is usually why — so the grader in the red is often the actual bottleneck. Sort your fix work by the grader that's failing hardest."
     >
       <EvalGraderTable rows={rows} />
     </Panel>
@@ -2546,8 +2594,10 @@ function AttributionTable({ tasks }) {
   const rows = useMemo(() => {
     const held = {};
     tasks.forEach((t) => {
-      if (t.status === "passed") return;
-      const d = attribute(t);
+      /* Shared attribution: unmeasured tasks carry their fault domain, a
+         flaky task whose caller drifted is the simulator's, the rest are
+         the agent's. */
+      const d = attributionOf(t);
       if (!d) return;
       (held[d.id] = held[d.id] || 0), held[d.id]++;
     });
@@ -2568,7 +2618,7 @@ function AttributionTable({ tasks }) {
     <Panel
       title="Failure attribution"
       subtitle="Which layer to blame first — read counter-clockwise from Agent."
-      info="Groups every failure by the layer that owns the fix: agent behaviour, transport, environment / tooling, simulated caller, or grader. Before you assign an engineer, this tells you whether it's an agent-code bug, an infra flake, or a bad evaluator. Skips passing tasks entirely."
+      info="Groups every non-passing scenario — failed, flaky, or never measured — by the layer that owns the fix: agent behaviour, transport, environment / tooling, simulated caller, or grader. A flaky scenario whose simulated caller drifted is the simulator's, not the agent's. Before you assign an engineer, this tells you whether it's an agent-code bug, an infra flake, or a bad evaluator. Skips passing scenarios entirely."
     >
       <AttributionDonut rows={rows} />
     </Panel>
@@ -2613,7 +2663,7 @@ function AttributionDonut({ rows }) {
             donut: { size: "70%", labels: { show: true,
               name: { fontSize: "10px", color: theme.palette.text.subtitle },
               value: { fontSize: "22px", fontWeight: 700, color: theme.palette.text.primary, formatter: (v) => `${v}` },
-              total: { show: true, label: "Failures", fontSize: "10px", color: theme.palette.text.subtitle, formatter: () => `${total}` },
+              total: { show: true, label: "Non-passing", fontSize: "10px", color: theme.palette.text.subtitle, formatter: () => `${total}` },
             } },
           } },
           tooltip: {
@@ -2661,7 +2711,9 @@ const DOMAIN_LABEL = {
 
 const SlowestTable = memo(function SlowestTable({ tasks }) {
   const rows = useMemo(() => (
-    [...tasks]
+    /* Measured calls only — a scenario whose environment never came up
+       still has step timings, but it is not a slow call. */
+    measuredOnly(tasks)
       .filter((t) => t.durationMs != null)
       .sort((a, b) => b.durationMs - a.durationMs)
       .slice(0, 8)
@@ -2680,7 +2732,7 @@ const SlowestTable = memo(function SlowestTable({ tasks }) {
       title="Slowest tasks"
       subtitle="Ranked by wall-clock duration — hover to see the task"
       exportRows={exportRows}
-      info="The eight worst offenders on latency. These are the ones driving your p90 and p99 up — fix one of these and the Latency percentiles curve visibly improves. If the top ones share a persona or use case, you've found a pattern, not a one-off."
+      info="The eight longest measured calls. Call length mostly follows how many turns a conversation took, so check the turn count before blaming speed — a long call with few turns is the slow one. These drive the tail of Call duration percentiles. If the top ones share a persona or use case, you've found a pattern, not a one-off."
     >
       <RankedColumnChart
         rows={rows.map((t) => ({
@@ -2718,7 +2770,7 @@ const ExpensiveTable = memo(function ExpensiveTable({ tasks }) {
       title="Most expensive tasks"
       subtitle="Ranked by cost — hover to see the task"
       exportRows={exportRows}
-      info="The eight tasks that ate the most dollars this run. A handful of expensive tasks usually dominate the total — a shorter prompt on these often saves more than optimising every task. Cross-check with tokens: high cost + high tokens is prompt bloat, high cost + low tokens is a pricey model."
+      info="The eight scenarios that cost the most this run, counting every scenario that ran — money spent on a call is spent whether or not it produced a verdict. A handful of expensive scenarios usually dominate the total — a shorter prompt or fewer turns on these often saves more than optimising every scenario. Cross-check with tokens: high cost with high tokens is prompt or conversation bloat."
     >
       <RankedColumnChart
         rows={rows.map((t) => ({
@@ -2757,7 +2809,8 @@ function colorForTool(name, allNames) {
 const ToolCallVolumePanel = memo(function ToolCallVolumePanel({ tasks }) {
   const theme = useTheme();
   const rows = useMemo(() => {
-    const calls = deriveToolCalls(tasks);
+    /* Calls the agent actually made — a required tool it skipped is not a call. */
+    const calls = deriveToolCalls(tasks).filter((c) => c.toolStatus !== "not_called");
     const byName = new Map();
     calls.forEach((c) => byName.set(c.toolName, (byName.get(c.toolName) || 0) + 1));
     return [...byName.entries()]
@@ -2771,7 +2824,7 @@ const ToolCallVolumePanel = memo(function ToolCallVolumePanel({ tasks }) {
     <Panel
       title="Tool call volume"
       subtitle={`${total} invocations · ${rows.length} tools`}
-      info="How many times the agent called each tool across the run. It shows which tools carry the conversation: a rarely-called tool may be one the agent doesn't know when to use, and a heavily-used one is where a single failure hurts most. Fixes here usually belong to the infra team, not the prompt team."
+      info="How many times the agent called each tool across the measured calls, read from each call's own tool log. It shows which tools carry the conversation: a rarely-called tool may be one the agent doesn't know when to use, and a heavily-used one is where a single failure hurts most."
       exportRows={exportRows}
     >
       <Box sx={{ px: 1.5, pt: 0.5, pb: 1 }}>
@@ -2811,53 +2864,59 @@ ToolCallVolumePanel.propTypes = { tasks: PropTypes.array };
 const ToolFailureRatePanel = memo(function ToolFailureRatePanel({ tasks }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
+  /* Two different failures, owned by two different teams, kept apart:
+     the tool broke (the call errored — infra), or the agent never called a
+     tool the scenario required (a prompt / agent fix). The denominator is
+     every time the tool was needed or used. */
   const rows = useMemo(() => {
-    const calls = deriveToolCalls(tasks);
     const byName = new Map();
-    calls.forEach((c) => {
-      const rec = byName.get(c.toolName) || { total: 0, fails: 0 };
+    deriveToolCalls(tasks).forEach((c) => {
+      const rec = byName.get(c.toolName) || { total: 0, fails: 0, skipped: 0 };
       rec.total += 1;
-      if (c.toolStatus === "failed" || c.toolStatus === "error" || c.toolStatus === "timeout") rec.fails += 1;
+      if (isToolFailure(c)) rec.fails += 1;
+      if (c.toolStatus === "not_called") rec.skipped += 1;
       byName.set(c.toolName, rec);
     });
+    const r1 = (v) => Math.round(v * 10) / 10;
     return [...byName.entries()]
       .map(([name, r]) => ({
         name,
-        rate: r.total ? Math.round((r.fails / r.total) * 100) : 0,
-        fails: r.fails,
         total: r.total,
+        fails: r.fails,
+        skipped: r.skipped,
+        failRate: r.total ? r1((r.fails / r.total) * 100) : 0,
+        skipRate: r.total ? r1((r.skipped / r.total) * 100) : 0,
       }))
-      .sort((a, b) => b.rate - a.rate);
+      .sort((a, b) => (b.failRate + b.skipRate) - (a.failRate + a.skipRate) || b.total - a.total);
   }, [tasks]);
-  const allNames = rows.map((r) => r.name);
-  const exportRows = rows.map((r, i) => ({ rank: i + 1, tool: r.name, failure_rate_pct: r.rate, failed: r.fails, total: r.total }));
+  const exportRows = rows.map((r, i) => ({
+    rank: i + 1, tool: r.name, needed_or_called: r.total,
+    tool_failed: r.fails, tool_failed_pct: r.failRate,
+    not_called: r.skipped, not_called_pct: r.skipRate,
+  }));
   return (
     <Panel
       title="Tool failure rate"
-      subtitle="Fail % per tool — sorted, danger threshold at 40%"
-      info="The share of each tool's calls that failed, worst first, with failed / total calls on each bar. Anything past the 40% danger line is breaking the agent's flow — the agent can't reason its way around a broken tool, so route these to infra, not the prompt team."
+      subtitle="Per tool: the tool failed (infra) vs the agent never called it (prompt)"
+      info="For each tool, how often it went wrong out of every time it was needed or used. Red is the tool itself failing — the call errored or timed out, and the agent can't reason its way around a broken tool, so route these to infra. Amber is the agent not calling a tool the scenario required — that is an agent / prompt fix, not an infra one."
       exportRows={exportRows}
     >
       <Box sx={{ px: 1.5, pt: 0.5, pb: 1 }}>
         <ReactApexChart
           type="bar" height={320}
-          series={[{ name: "Failure rate", data: rows.map((r) => r.rate) }]}
+          series={[
+            { name: "Tool failed", data: rows.map((r) => r.failRate) },
+            { name: "Not called when required", data: rows.map((r) => r.skipRate) },
+          ]}
           options={{
-            chart: { toolbar: { show: false }, animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily },
+            chart: { stacked: true, toolbar: { show: false }, animations: { enabled: false }, background: "transparent", fontFamily: theme.typography.fontFamily },
             theme: { mode: theme.palette.mode },
-            colors: rows.map((r) => colorForTool(r.name, allNames)),
-            plotOptions: { bar: { horizontal: true, barHeight: "62%", borderRadius: 3, borderRadiusApplication: "end", distributed: true, dataLabels: { position: "top" } } },
-            dataLabels: {
-              enabled: true,
-              formatter: (v, opts) => {
-                const r = rows[opts.dataPointIndex];
-                return r ? `${Math.round(v)}%  ·  ${r.fails}/${r.total}` : `${Math.round(v)}%`;
-              },
-              style: { fontSize: "10.5px", fontWeight: 700, colors: [theme.palette.text.primary] },
-              offsetX: 56,
-            },
+            colors: [HIST_RED, "#F59E0B"],
+            plotOptions: { bar: { horizontal: true, barHeight: "62%", borderRadius: 3, borderRadiusApplication: "end" } },
+            dataLabels: { enabled: false },
             xaxis: {
               categories: rows.map((r) => r.name),
+              max: 100,
               axisBorder: { show: false }, axisTicks: { show: false },
               labels: { style: { fontSize: "10px", colors: theme.palette.text.secondary }, formatter: (v) => `${Math.round(v)}%` },
             },
@@ -2867,15 +2926,20 @@ const ToolFailureRatePanel = memo(function ToolFailureRatePanel({ tasks }) {
               strokeDashArray: 3,
               xaxis: { lines: { show: true } },
               yaxis: { lines: { show: false } },
-              padding: { right: 70, left: 4, top: 8, bottom: 8 },
+              padding: { right: 16, left: 4, top: 8, bottom: 8 },
             },
-            legend: { show: false },
+            legend: { show: true, position: "top", horizontalAlign: "left", fontSize: "11px", labels: { colors: theme.palette.text.secondary } },
             tooltip: {
               theme: theme.palette.mode,
+              shared: true,
+              intersect: false,
               y: {
                 formatter: (v, opts) => {
                   const r = rows[opts.dataPointIndex];
-                  return r ? `${r.fails} of ${r.total} failed (${r.rate}%)` : `${v}%`;
+                  if (!r) return `${v}%`;
+                  return opts.seriesIndex === 0
+                    ? `${r.fails} of ${r.total} (${r.failRate}%)`
+                    : `${r.skipped} of ${r.total} (${r.skipRate}%)`;
                 },
               },
             },
@@ -3385,6 +3449,7 @@ RankedList.propTypes = { rows: PropTypes.array, emptyText: PropTypes.string };
    of padding. Deliberately restrained to stop reading as "AI dashboard
    template". Rule from memory: never edge-stripe a rounded card. */
 function Panel({ title, subtitle, children, minHeight, action, exportRows, exportFilename, info, footer }) {
+  const onOpen = useContext(WidgetOpenContext);
   const hasExport = Array.isArray(exportRows) && exportRows.length > 0;
   const onExport = () => {
     const safe = (title || "panel").toString().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -3402,10 +3467,15 @@ function Panel({ title, subtitle, children, minHeight, action, exportRows, expor
       }}>
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
-            <Typography sx={{
-              typography: "s1", color: "text.primary", fontWeight: 700,
-              fontSize: 15, letterSpacing: -0.1, lineHeight: 1.3,
-            }}>
+            <Typography
+              onClick={onOpen || undefined}
+              role={onOpen ? "button" : undefined}
+              sx={{
+                typography: "s1", color: "text.primary", fontWeight: 700,
+                fontSize: 15, letterSpacing: -0.1, lineHeight: 1.3,
+                ...(onOpen && { cursor: "pointer", "&:hover": { color: "primary.main" } }),
+              }}
+            >
               {title}
             </Typography>
             {info && <PanelInfoIcon info={info} title={title} />}
@@ -3562,14 +3632,15 @@ function RegressionBanner({ delta }) {
       <Iconify icon={good ? "solar:arrow-up-linear" : "solar:arrow-down-linear"} width={16} sx={{ color: good ? GREEN : RED }} />
       <Box sx={{ flex: 1, minWidth: 0 }}>
         <Typography sx={{ typography: "s2", fontWeight: 700 }}>
-          {good ? "Improvement" : "Regression"} vs previous run
+          {good ? "Improvement" : "Regression"} vs {delta.prevLabel}
           <Box component="span" sx={{ color: good ? GREEN : RED, ml: 1, fontWeight: 800 }}>
             {passDelta >= 0 ? "+" : ""}{passDelta}pp pass rate
           </Box>
         </Typography>
         <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 11.5, mt: 0.25 }}>
           {delta.newlyPassing} scenarios newly passing · {delta.regressions} regressed
-          {delta.costDeltaPct !== null ? ` · cost ${delta.costDeltaPct > 0 ? "+" : ""}${delta.costDeltaPct}%` : ""}
+          {delta.costDeltaPct !== null ? ` · cost per call ${delta.costDeltaPct > 0 ? "+" : ""}${delta.costDeltaPct}%` : ""}
+          {` · compared on ${delta.shared} scenario${delta.shared === 1 ? "" : "s"} both runs measured`}
         </Typography>
       </Box>
     </Stack>
@@ -3651,9 +3722,9 @@ function VoiceLatencyPanel({ voice }) {
       <TableCell align="right" sx={{ fontVariantNumeric: "tabular-nums" }}>{Math.round(m.p50)}{unit}</TableCell>
       <TableCell align="right" sx={{
         fontVariantNumeric: "tabular-nums", fontWeight: 700,
-        color: m.p90 > warn ? RED : m.p90 > warn * 0.7 ? AMBER : "text.primary",
-      }}>{Math.round(m.p90)}{unit}</TableCell>
-      <TableCell align="right" sx={{ fontVariantNumeric: "tabular-nums", color: m.p99 > warn ? RED : "text.subtitle" }}>{Math.round(m.p99)}{unit}</TableCell>
+        color: m.p90 == null ? "text.disabled" : m.p90 > warn ? RED : m.p90 > warn * 0.7 ? AMBER : "text.primary",
+      }}>{m.p90 == null ? "—" : `${Math.round(m.p90)}${unit}`}</TableCell>
+      <TableCell align="right" sx={{ fontVariantNumeric: "tabular-nums", color: m.p99 == null ? "text.disabled" : m.p99 > warn ? RED : "text.subtitle" }}>{m.p99 == null ? "—" : `${Math.round(m.p99)}${unit}`}</TableCell>
     </TableRow>
   );
   return (
@@ -3825,6 +3896,30 @@ LatencyHistogramPanel.propTypes = { tasks: PropTypes.array, slaMs: PropTypes.num
 
 export default function RunAnalyticsV2({ tasks, evals, env, runHistory, currentRunId }) {
   const layout = useRunLayout({ surface: env?.surface || "generic" });
+  const navigate = useNavigate();
+  const { envState } = useEnvState(env?.id);
+  /* Widget queries read every run of the environment (runs are their
+     x-axis) — manual runs and improvement trials, numbered like the runs
+     table. */
+  const simRuns = useMemo(() => simRunsWithTasks(env, envState), [env, envState]);
+  const simCatalog = useMemo(() => simMetricCatalog(simRuns), [simRuns]);
+  /* The layout object is rebuilt every render; read it through a ref so the
+     context value only changes when the data does, not on every render. */
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  const simWidgets = useMemo(() => ({
+    runs: simRuns,
+    catalog: simCatalog,
+    currentRunId,
+    open: (widgetId) => navigate(paths.dashboard.simulate.runWidget(env?.id, currentRunId, widgetId)),
+    duplicateBuiltin: (panelId) => {
+      const built = builtinQuery(panelId, simCatalog);
+      if (!built) return;
+      const { approx, ...q } = built; // eslint-disable-line no-unused-vars
+      const title = `${getPanelMeta(panelId)?.title || "Widget"} (copy)`;
+      layoutRef.current.addCustomWidget({ id: `sim-${Math.random().toString(36).slice(2, 10)}`, kind: "sim_query", title, ...q });
+    },
+  }), [simRuns, simCatalog, currentRunId, env?.id, navigate]);
   const [hiddenAnchor, setHiddenAnchor] = useState(null);
   const [editorState, setEditorState] = useState({ open: false, target: null, opts: null });
   const [renameTarget, setRenameTarget] = useState(null); // custom widget id
@@ -3867,31 +3962,63 @@ export default function RunAnalyticsV2({ tasks, evals, env, runHistory, currentR
   /* Trend context: pull the previous run's aggregates so the KPI
      strip can render deltas and the regression banner can name the
      newly-passing / regressed count. */
-  const { prev, delta, trend } = useMemo(() => {
-    if (!runHistory || runHistory.length === 0) return { prev: null, delta: null, trend: null };
+  const { delta, trend } = useMemo(() => {
+    if (!runHistory || runHistory.length === 0) return { delta: null, trend: null };
+    /* Only compare when the run on screen is in the history — a trial or a
+       live run has no "previous run" in that list, and falling back to the
+       latest pair compared two runs unrelated to this page. */
     const idx = runHistory.findIndex((r) => r.id === currentRunId);
-    const curr = idx >= 0 ? runHistory[idx] : runHistory[runHistory.length - 1];
-    const prevRun = idx > 0 ? runHistory[idx - 1] : (idx === -1 && runHistory.length > 1 ? runHistory[runHistory.length - 2] : null);
-    if (!prevRun) return { prev: null, delta: null, trend: null };
-    const passDelta = (curr?.passRate ?? 0) - (prevRun.passRate ?? 0);
-    const currCost = curr?.cost ?? 0;
-    const prevCost = prevRun.cost ?? 0;
+    const prevRun = idx > 0 ? runHistory[idx - 1] : null;
+    if (!prevRun) return { delta: null, trend: null };
+    /* Like for like: diff scenario by scenario, over the scenarios both runs
+       measured. A re-run of four blockers compared with a full sweep would
+       otherwise read as a huge swing that no scenario actually made. */
+    const byId = (list) => new Map((list || []).map((t) => [t.id, t]));
+    const currById = byId(tasks);
+    const prevById = byId(prevRun.tasks);
+    const shared = [...currById.keys()].filter((id) => {
+      const c = currById.get(id);
+      const p = prevById.get(id);
+      return p && outcomeOf(c) !== "unmeasured" && outcomeOf(p) !== "unmeasured";
+    });
+    const sharedCurr = shared.map((id) => currById.get(id));
+    const sharedPrev = shared.map((id) => prevById.get(id));
+    let newlyPassing = 0;
+    let regressions = 0;
+    shared.forEach((id) => {
+      const was = outcomeOf(prevById.get(id)) === "passed";
+      const now = outcomeOf(currById.get(id)) === "passed";
+      if (!was && now) newlyPassing += 1;
+      if (was && !now) regressions += 1;
+    });
+    const passDelta = (passRateOf(sharedCurr) ?? 0) - (passRateOf(sharedPrev) ?? 0);
+    /* Cost per call, so different scenario counts / repeats still compare. */
+    const perCall = (list) => {
+      const calls = (list || []).reduce((a, t) => a + samplesOf(t), 0);
+      return calls ? (list || []).reduce((a, t) => a + (t.cost || 0), 0) / calls : 0;
+    };
+    const currCost = perCall(tasks);
+    const prevCost = perCall(prevRun.tasks);
     const costDeltaPct = prevCost > 0 ? Math.round(((currCost - prevCost) / prevCost) * 100) : null;
+    const prevPassed = passedCalls(prevRun.tasks || []);
+    const prevTotal = (prevRun.tasks || []).reduce((a, t) => a + (t.cost || 0), 0);
     return {
-      prev: prevRun,
       delta: {
         passRate: Math.round(passDelta),
-        newlyPassing: Math.max(0, Math.round(passDelta * (curr?.scenarios || 0) / 100)),
-        regressions: Math.max(0, Math.round(-passDelta * (curr?.scenarios || 0) / 100)),
+        newlyPassing,
+        regressions,
         costDeltaPct,
+        shared: shared.length,
+        partial: shared.length < Math.max(currById.size, prevById.size),
+        prevLabel: `Run ${prevRun.ordinal ?? idx} · agent ${prevRun.agentVersion || "—"}`,
       },
       trend: {
-        prevPassRate: prevRun.passRate,
+        prevPassRate: passRateOf(prevRun.tasks || []),
         prevEscalationRate: prevRun.escalationRate,
-        prevCostPerPassMs: prevRun.costPerPass ? prevRun.costPerPass * 1000 : null,
+        prevCostPerPass: prevPassed ? prevTotal / prevPassed : null,
       },
     };
-  }, [runHistory, currentRunId]);
+  }, [runHistory, currentRunId, tasks]);
 
   return (
     <DrilldownContext.Provider value={openDrilldown}>
@@ -3955,7 +4082,7 @@ export default function RunAnalyticsV2({ tasks, evals, env, runHistory, currentR
         <ToolbarButton
           icon="solar:add-circle-linear"
           label="Add widget"
-          onClick={() => setEditorState({ open: true, target: null })}
+          onClick={() => simWidgets.open("new")}
         />
         <ToolbarButton
           icon="solar:eye-closed-linear"
@@ -3982,12 +4109,14 @@ export default function RunAnalyticsV2({ tasks, evals, env, runHistory, currentR
           layout hook, and we render them in sections in the order the
           user has arranged. This is what makes reorder, hide/show,
           named views and custom widgets all work with one code path. */}
-      <LayoutBody
-        layout={layout}
-        renderPanel={(id) => renderBuiltinPanel(id, { tasks, evals, biz, voice, env })}
-        renderCustomPanel={(widget) => renderCustomPanel(widget, { tasks, evals, biz, voice, env }, layout.getOverride(widget.id))}
-        openEditor={(widget) => setEditorState({ open: true, target: widget, opts: null })}
-      />
+      <SimWidgetsContext.Provider value={simWidgets}>
+        <LayoutBody
+          layout={layout}
+          renderPanel={(id) => renderBuiltinPanel(id, { tasks, evals, biz, voice, env, override: layout.getOverride(id) })}
+          renderCustomPanel={(widget) => renderCustomPanel(widget, { tasks, evals, biz, voice, env }, layout.getOverride(widget.id))}
+          openEditor={(widget) => setEditorState({ open: true, target: widget, opts: null })}
+        />
+      </SimWidgetsContext.Provider>
     </Stack>
     <HiddenWidgetsPopover
       anchorEl={hiddenAnchor}
@@ -4244,6 +4373,7 @@ function sectionForId(id, layout, customById) {
  */
 function LayoutSection({ section, ids, layout, customById, renderPanel, renderCustomPanel, openEditor, activeId }) {
   const cols = section.columns || 2;
+  const simWidgets = useContext(SimWidgetsContext);
 
   return (
     /* Section header is rendered by SortableSection wrapping this
@@ -4267,6 +4397,7 @@ function LayoutSection({ section, ids, layout, customById, renderPanel, renderCu
           const span = Math.min(overrideSpan || defaultSpan, cols);
 
           const actions = buildPanelActions({
+            simWidgets,
             id, index, ids, layout, isCustom, customWidget,
             cols, currentSpan: span,
             openEditor,
@@ -4302,7 +4433,7 @@ function LayoutSection({ section, ids, layout, customById, renderPanel, renderCu
                    the export, so the built-in + custom paths share
                    one affordance. */
                 hasExport
-                hasOverrides={isCustom && layout.hasOverrides(id)}
+                hasOverrides={layout.hasOverrides(id)}
                 {...actions}
               >
                 {isCustom ? renderCustomPanel(customWidget) : renderPanel(id)}
@@ -4319,6 +4450,7 @@ LayoutSection.propTypes = {
   layout: PropTypes.object.isRequired, customById: PropTypes.instanceOf(Map).isRequired,
   renderPanel: PropTypes.func.isRequired, renderCustomPanel: PropTypes.func.isRequired,
   openEditor: PropTypes.func.isRequired,
+  activeId: PropTypes.string,
 };
 
 /**
@@ -4326,7 +4458,14 @@ LayoutSection.propTypes = {
  * mutations to the layout hook (single source of truth) and packages
  * the callbacks in the shape SortablePanel expects.
  */
-function buildPanelActions({ id, index, ids, layout, isCustom, customWidget, cols, currentSpan, openEditor, openRename, openCustomizeCopy }) {
+function buildPanelActions({ simWidgets, id, index, ids, layout, isCustom, customWidget, cols, currentSpan, openEditor, openRename, openCustomizeCopy }) {
+  /* Widgets built on a query (saved sim widgets, and every built-in that has
+     a query form) open in the full-page editor. Legacy custom widgets keep
+     their dialog. */
+  const opensInEditor = isCustom ? customWidget?.kind === "sim_query" : hasBuiltinQuery(id);
+  const editAction = opensInEditor
+    ? () => simWidgets?.open(id)
+    : isCustom ? () => openEditor(customWidget) : null;
   const positionInGlobal = layout.visibleIds.indexOf(id);
   const sectionIndices = ids.map((sid) => layout.visibleIds.indexOf(sid));
   const firstGlobal = Math.min(...sectionIndices);
@@ -4339,8 +4478,10 @@ function buildPanelActions({ id, index, ids, layout, isCustom, customWidget, col
     onSetSpan:    (span) => layout.setSpan(id, Math.min(span, cols)),
     onResetSpan:  () => layout.resetSpan(id),
     onHide:       () => layout.hide(id),
-    onDuplicate:  isCustom ? () => layout.duplicateCustomWidget(id) : null,
-    onEdit:       isCustom ? () => openEditor(customWidget) : null,
+    onDuplicate:  isCustom
+      ? () => layout.duplicateCustomWidget(id)
+      : hasBuiltinQuery(id) ? () => simWidgets?.duplicateBuiltin(id) : null,
+    onEdit:       editAction,
     onRename:     isCustom ? () => openRename?.(id, customWidget?.title || "") : null,
     onCustomizeCopy: isCustom ? null : () => openCustomizeCopy?.(id),
     onDelete:     isCustom ? () => layout.removeCustomWidget(id) : null,
@@ -4402,10 +4543,13 @@ function printOnly(id) {
    Tool + Golden-set widgets are unified-renderer configs since
    they're new and don't need bespoke hand-coded components. */
 function renderBuiltinPanel(id, ctx) {
-  const { tasks, evals, biz, voice, env } = ctx;
+  const { tasks, evals, biz, voice, env, override } = ctx;
+  if (override?.simQuery) {
+    return <SimWidgetPanel config={{ ...override.simQuery, title: override.title || override.simQuery.title }} />;
+  }
   switch (id) {
     case "success_donut":        return <SuccessDonut tasks={tasks} />;
-    case "outcome_donut":        return <OutcomeDonutChart tasks={tasks} biz={biz} />;
+    case "outcome_donut":        return <OutcomeDonutChart tasks={tasks} />;
     case "sentiment_donut":      return <SentimentDonut tasks={tasks} />;
     case "disconnection_donut":  return <DisconnectionDonut tasks={tasks} />;
     case "dual_line_over_time":  return <TaskLatencyOverTime tasks={tasks} />;
@@ -4445,12 +4589,44 @@ function ctxWithDerived(ctx) {
   return { ...ctx, graderResults: deriveGraderResults(ctx.tasks, ctx.evals) };
 }
 
+/* A widget built on a query — a saved sim widget or an edited built-in.
+   Same card as every other panel; the body is the shared chart renderer, so
+   what the editor previewed is exactly what lands here. */
+function SimWidgetPanel({ config }) {
+  const sim = useContext(SimWidgetsContext);
+  const result = useMemo(
+    () => (sim ? runSimQuery(config.query, sim.runs, sim.currentRunId, sim.catalog) : { series: [], buckets: [] }),
+    [config.query, sim],
+  );
+  const visible = Array.isArray(config.visible_series) ? new Set(config.visible_series) : null;
+  const range = RUN_RANGE_PRESETS.find((p) => p.value === config.query?.range)?.label;
+  const axis = X_AXIS_OPTIONS.find((o) => o.value === config.query?.xAxis)?.label;
+  const subtitle = [range, config.query?.range !== "this" && axis].filter(Boolean).join(" · ");
+  return (
+    <Panel title={config.title || "Untitled widget"} subtitle={subtitle} info={config.description || undefined}>
+      <Box sx={{ height: config.chart_type === "metric" ? 180 : 300, px: 2, pb: 2 }}>
+        <SimWidgetChart
+          series={result.series}
+          buckets={result.buckets}
+          chartType={config.chart_type || "line"}
+          axisConfig={config.axis_config}
+          visible={visible}
+          display={config.display || undefined}
+          compact
+        />
+      </Box>
+    </Panel>
+  );
+}
+SimWidgetPanel.propTypes = { config: PropTypes.object.isRequired };
+
 function renderCustomPanel(widget, ctx, override) {
   /* Merge the override map on top of the base config so the
      rendered widget reflects any user tweaks (title, chart type,
      etc.) without mutating the "last-save" config underneath.
      Reset clears the override and the widget snaps back. */
   const config = override ? { ...widget, ...override } : widget;
+  if (config.kind === "sim_query") return <SimWidgetPanel config={config} />;
   return (
     <Panel title={config.title} subtitle="Custom widget" info={config.info}>
       <CustomWidgetBody

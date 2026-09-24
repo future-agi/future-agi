@@ -1,3 +1,5 @@
+import { isMeasured } from "../_mock/failures";
+
 /**
  * Tool-call analytics data source.
  *
@@ -12,7 +14,7 @@
  *   {
  *     __derived: true,
  *     toolName: "check_order_status",
- *     toolStatus: "success" | "failed" | "error" | "timeout",
+ *     toolStatus: "success" | "failed" | "error" | "timeout" | "not_called",
  *     durationMs: number,
  *     taskId: string,
  *     useCase: string,
@@ -32,47 +34,56 @@ const KNOWN_TOOLS = [
 ];
 
 /**
- * Derive tool-call rows from task steps. In production the runtime
- * would emit these directly; here we approximate from the steps
- * array + status so every panel has data to render.
+ * Tool-call rows for a set of tasks.
+ *
+ * Read from each task's own call log when it has one: every call the agent
+ * made (status from the call itself — a tool that errored is the tool's
+ * failure, an infra matter), plus every tool the scenario required that the
+ * agent never called ("not_called" — the agent skipped it, a prompt matter).
+ * A task's verdict is never turned into a tool failure.
+ *
+ * Unmeasured tasks (environment, connection, simulator or grader broke) are
+ * left out: whatever tool traffic they have says nothing about the tools.
+ *
+ * Tasks without a call log fall back to one inferred call from the steps.
  */
 export function deriveToolCalls(tasks) {
   const out = [];
   (tasks || []).forEach((task) => {
-    const steps = task.steps || [];
-    /* Fallback: infer a synthetic tool call per task if steps don't
-       carry tool metadata. The task's useCase + status usually maps
-       to one primary tool. */
-    const primaryTool = pickPrimaryTool(task.useCase);
-    let synthesised = false;
-    steps.forEach((step, i) => {
-      if (step?.kind === "tool" || step?.tool || step?.toolName) {
+    if (!isMeasured(task)) return;
+    const base = { __derived: true, taskId: task.id, useCase: task.useCase, persona: task.persona };
+    const log = task.callLog;
+    if (log && Array.isArray(log.calls)) {
+      log.calls.forEach((call) => {
         out.push({
-          __derived: true,
-          taskId: task.id,
-          useCase: task.useCase,
-          persona: task.persona,
-          toolName: step.toolName || step.tool || step.label || primaryTool,
-          toolStatus: toolStatusOf(step, task, i, steps.length),
-          durationMs: step.durationMs || Math.round((task.durationMs || 0) / Math.max(1, steps.length)),
+          ...base,
+          toolName: call.name,
+          toolStatus: call.status === "ok" || call.status === "success" ? "success"
+            : call.status === "timeout" ? "timeout" : "failed",
+          durationMs: Number(call.ms) || null,
         });
-        synthesised = true;
-      }
-    });
-    if (!synthesised && primaryTool) {
-      out.push({
-        __derived: true,
-        taskId: task.id,
-        useCase: task.useCase,
-        persona: task.persona,
-        toolName: primaryTool,
-        toolStatus: task.status === "passed" ? "success" : (task.status === "error" ? "error" : "failed"),
-        durationMs: Math.round((task.durationMs || 0) * 0.4),
       });
+      (log.missing || []).forEach((name) => {
+        out.push({ ...base, toolName: name, toolStatus: "not_called", durationMs: null });
+      });
+      return;
     }
+    const steps = task.steps || [];
+    const toolSteps = steps.filter((step) => step?.kind === "tool" || step?.tool || step?.toolName);
+    toolSteps.forEach((step) => {
+      out.push({
+        ...base,
+        toolName: step.toolName || step.tool || step.label || pickPrimaryTool(task.useCase),
+        toolStatus: toolStatusOf(step),
+        durationMs: step.durationMs || null,
+      });
+    });
   });
   return out;
 }
+
+/** Whether a tool-call row is the tool breaking (as opposed to the agent skipping it). */
+export const isToolFailure = (row) => row.toolStatus === "failed" || row.toolStatus === "error" || row.toolStatus === "timeout";
 
 function pickPrimaryTool(useCase) {
   if (!useCase) return KNOWN_TOOLS[0];
@@ -91,14 +102,9 @@ function pickPrimaryTool(useCase) {
   return KNOWN_TOOLS[h % KNOWN_TOOLS.length];
 }
 
-function toolStatusOf(step, task, i, total) {
+function toolStatusOf(step) {
   if (step?.error || step?.status === "error") return "error";
   if (step?.status === "failed") return "failed";
-  if (step?.status === "success" || step?.status === "passed") return "success";
-  /* Heuristic when the step doesn't carry an explicit status: if the
-     task overall errored on the last tool step, that step is the
-     one that broke; earlier steps succeeded. */
-  if (task.status === "error" && i === total - 1) return "error";
-  if (task.status !== "passed" && i === total - 1) return "failed";
+  if (step?.status === "timeout") return "timeout";
   return "success";
 }

@@ -8,6 +8,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
+import { WidgetOpenContext } from "./widgetOpenContext";
 
 /**
  * Wraps every rendered analytics panel so it can be dragged in place
@@ -32,7 +33,9 @@ export default function SortablePanel({
   sectionColumns, currentSpan,
   onSetSpan,
   onHide, onDuplicate, onDelete, onExport,
-  onEdit, onRename, onCustomizeCopy,
+  onEdit,
+  // eslint-disable-next-line no-unused-vars
+  onRename, onCustomizeCopy,
   onResetOverride, hasOverrides,
   isCustom, hasExport,
   /* Retained on the props signature so the shell doesn't need to
@@ -149,43 +152,30 @@ export default function SortablePanel({
         anchorEl={menuAnchor}
         open={!!menuAnchor}
         onClose={closeMenu}
+        /* The analytics page is dozens of live charts. Locking scroll pads the
+           body and hides every sibling from assistive tech, which re-lays out
+           the whole page and redraws every chart on open and again on close. */
+        disableScrollLock
         anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
         transformOrigin={{ vertical: "top", horizontal: "right" }}
         slotProps={{ paper: { sx: { minWidth: 220 } } }}
       >
-        {/* Edit — custom widgets only. Built-ins stay curated;
-            users reshape them via "Customize a copy" below. */}
-        {isCustom && (
+        {/* Edit — opens the widget in the full-page editor, the same
+            menu order as a dashboard widget: Edit · Duplicate · Resize ·
+            Delete. Built-ins open with their equivalent query. */}
+        {onEdit && (
           <MenuItem onClick={call(onEdit)}>
             <ListItemIcon><Iconify icon="solar:pen-2-linear" width={16} /></ListItemIcon>
             <ListItemText>Edit</ListItemText>
           </MenuItem>
         )}
 
-        {/* Rename — custom widgets only, for the same reason. */}
-        {isCustom && (
-          <MenuItem onClick={call(onRename)}>
-            <ListItemIcon><Iconify icon="solar:tag-linear" width={16} /></ListItemIcon>
-            <ListItemText>Rename</ListItemText>
-          </MenuItem>
-        )}
-
         {/* Duplicate — copies a custom widget's config as a new
             widget right after it. */}
-        {isCustom && (
+        {onDuplicate && (
           <MenuItem onClick={call(onDuplicate)}>
             <ListItemIcon><Iconify icon="solar:copy-linear" width={16} /></ListItemIcon>
             <ListItemText>Duplicate</ListItemText>
-          </MenuItem>
-        )}
-
-        {/* Customize a copy — the built-in stays curated; the user
-            gets a fully editable snapshot of it in the custom-widget
-            editor to reshape however they want. */}
-        {!isCustom && (
-          <MenuItem onClick={call(onCustomizeCopy)}>
-            <ListItemIcon><Iconify icon="solar:widget-add-linear" width={16} /></ListItemIcon>
-            <ListItemText>Customize a copy</ListItemText>
           </MenuItem>
         )}
 
@@ -237,8 +227,10 @@ export default function SortablePanel({
         </MenuItem>
       </Menu>
 
-      {/* Panel body */}
-      {children}
+      {/* Panel body — its title opens the editor, like a dashboard widget. */}
+      <WidgetOpenContext.Provider value={onEdit || null}>
+        {children}
+      </WidgetOpenContext.Provider>
     </Box>
   );
 }
@@ -250,6 +242,7 @@ SortablePanel.propTypes = {
   onSetSpan: PropTypes.func, onResetSpan: PropTypes.func,
   onHide: PropTypes.func, onDuplicate: PropTypes.func, onEdit: PropTypes.func, onDelete: PropTypes.func,
   onRename: PropTypes.func, onCustomizeCopy: PropTypes.func,
+  onResetOverride: PropTypes.func, hasOverrides: PropTypes.bool,
   onExport: PropTypes.func, onCopyLink: PropTypes.func, onPrintOnly: PropTypes.func,
   isCustom: PropTypes.bool, hasEdit: PropTypes.bool, hasExport: PropTypes.bool,
 };

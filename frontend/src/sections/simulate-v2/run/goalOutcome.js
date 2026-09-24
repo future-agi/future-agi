@@ -1,3 +1,4 @@
+import { isMeasured } from "../_mock/failures";
 /**
  * Goal outcome — the business-level "did this call achieve its
  * purpose?" signal. Sits above pass/fail: an eval that passes on a
@@ -60,6 +61,9 @@ export function goalName(env) {
 export function deriveGoalOutcome(task) {
   if (!task) return "n/a";
   if (task.goalOutcome && GOAL_OUTCOMES.includes(task.goalOutcome)) return task.goalOutcome;
+  /* No verdict — the environment, connection, simulated caller or grader
+     broke before the agent could be judged. Not a declined pitch. */
+  if (!isMeasured(task)) return "n/a";
   if (task.status === "passed" && !task.escalated) return "achieved";
   if (task.status === "error") return "abandoned";
   const turns = task.steps?.length || 0;

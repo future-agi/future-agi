@@ -124,6 +124,8 @@ export const paths = {
       environmentTwinReview: (envId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}/twin-review`,
       environmentStep: (envId, step) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}/${step}`,
       simulationRun: (envId, runId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}/runs/${runId}`,
+      // A run-analytics widget opened full page (the dashboards widget editor, on sim data).
+      runWidget: (envId, runId, widgetId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}/runs/${runId}/widgets/${widgetId}`,
       // Two or more runs of the same scenarios, read as one screen. The runs
       // travel in the query string so a comparison is a link someone can send.
       simulationCompare: (envId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}/compare`,

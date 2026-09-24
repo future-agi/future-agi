@@ -328,6 +328,9 @@ const SimEnvironmentWorkspace = lazyWithRetry(
 const SimRunView = lazyWithRetry(
   () => import("src/pages/dashboard/simulate-v2/RunViewPage"),
 );
+const SimRunWidgetEditor = lazyWithRetry(
+  () => import("src/pages/dashboard/simulate-v2/RunWidgetEditorPage"),
+);
 const SimRunCompare = lazyWithRetry(
   () => import("src/pages/dashboard/simulate-v2/RunComparePage"),
 );
@@ -1491,6 +1494,10 @@ export const dashboardRoutes = (
             {
               path: "environments/:envId/runs/:runId",
               element: <SimRunView />,
+            },
+            {
+              path: "environments/:envId/runs/:runId/widgets/:widgetId",
+              element: <SimRunWidgetEditor />,
             },
           ],
         },

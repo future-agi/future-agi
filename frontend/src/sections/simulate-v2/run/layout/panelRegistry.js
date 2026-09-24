@@ -60,13 +60,13 @@ const CHARTS = {
 export const PANELS = [
   // ─── Breakdowns ────────────────────────────────────────────────
   { id: "success_donut",       section: "breakdowns", title: "Call successful",              defaultShown: true, defaultSpan: 1, compatibleCharts: CHARTS.DONUT_LIKE },
-  { id: "outcome_donut",       section: "breakdowns", title: "Goal outcome breakdown",       defaultShown: true, defaultSpan: 1, compatibleCharts: CHARTS.DONUT_LIKE },
+  { id: "outcome_donut",       section: "breakdowns", title: "Outcome breakdown",            defaultShown: true, defaultSpan: 1, compatibleCharts: CHARTS.DONUT_LIKE },
   { id: "sentiment_donut",     section: "breakdowns", title: "User sentiment",               defaultShown: true, defaultSpan: 1, compatibleCharts: CHARTS.DONUT_LIKE },
   { id: "disconnection_donut", section: "breakdowns", title: "Disconnection reason",         defaultShown: true, defaultSpan: 1, compatibleCharts: CHARTS.DONUT_LIKE },
 
   // ─── Latency (section id: trends) ──────────────────────────────
-  { id: "dual_line_over_time", section: "trends", title: "Task latency",                      defaultShown: true, defaultSpan: 1, compatibleCharts: CHARTS.TREND },
-  { id: "latency_percentiles", section: "trends", title: "Latency percentiles",               defaultShown: true, defaultSpan: 1, compatibleCharts: ["percentile_tiles", "bar", "bignumber"] },
+  { id: "dual_line_over_time", section: "trends", title: "Call duration",                     defaultShown: true, defaultSpan: 1, compatibleCharts: CHARTS.TREND },
+  { id: "latency_percentiles", section: "trends", title: "Call duration percentiles",         defaultShown: true, defaultSpan: 1, compatibleCharts: ["percentile_tiles", "bar", "bignumber"] },
   { id: "agent_response_time", section: "trends", title: "Agent response time per call",      defaultShown: true, defaultSpan: 2, compatibleCharts: ["bar", "table"] },
 
   // ─── CSAT and provider scores ──────────────────────────────────

@@ -57,9 +57,12 @@ export default function useRunPlayer({ seed, scenarios, stage, evals, tools = []
     setLastEventAt(Date.now());
   }, []);
 
-  /* One ticker for the whole view; the heartbeat is derived from it. */
+  /* One ticker for the whole view; the heartbeat is derived from it. Only
+     while a run is actually running — a run opened from history never leaves
+     "booting", and ticking there re-rendered the whole run page (Analytics
+     and all) every second for as long as it was open. */
   useEffect(() => {
-    if (phase === "done") return undefined;
+    if (phase !== "running") return undefined;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, [phase]);
