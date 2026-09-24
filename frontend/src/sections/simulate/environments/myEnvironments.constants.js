@@ -46,7 +46,7 @@ export const BUILDING_TOOLTIP = "Wait for setup to finish";
 
 export const DELETE_DIALOG_COPY = {
   title: "Delete environment?",
-  body: "and everything derived from it — scenarios, personas, evals and run history — will be removed from this workspace. This cannot be undone.",
+  body: "and everything derived from it (scenarios, personas, evals, and run history) will be removed from this workspace. This cannot be undone.",
   cancel: "Cancel",
   confirm: "Delete",
 };
