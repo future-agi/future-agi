@@ -17582,7 +17582,6 @@ export const HarnessAgentApiConnector = {
   vapi: "vapi",
   retell: "retell",
   retell_chat: "retell_chat",
-  phone: "phone",
   auto: "auto",
 } as const;
 
@@ -17593,17 +17592,6 @@ export const HarnessAgentApiMode = {
   connect_only: "connect_only",
   environment_backed: "environment_backed",
   provider_import: "provider_import",
-} as const;
-
-/**
- * inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.
- */
-export type HarnessAgentApiCallDirection =
-  (typeof HarnessAgentApiCallDirection)[keyof typeof HarnessAgentApiCallDirection];
-
-export const HarnessAgentApiCallDirection = {
-  inbound: "inbound",
-  outbound: "outbound",
 } as const;
 
 export type SecretReferenceApiManager =
@@ -17638,15 +17626,13 @@ export interface SecretReferenceApi {
   purpose: SecretReferenceApiPurpose;
 }
 
-export type HarnessAgentApiConfig = { [key: string]: string };
+export type HarnessAgentApiConfig = { [key: string]: unknown };
 
 export type HarnessAgentApiSecretRefs = { [key: string]: SecretReferenceApi };
 
 export interface HarnessAgentApi {
   connector: HarnessAgentApiConnector;
   mode?: HarnessAgentApiMode;
-  /** inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only. */
-  call_direction?: HarnessAgentApiCallDirection;
   config?: HarnessAgentApiConfig;
   secret_refs?: HarnessAgentApiSecretRefs;
 }

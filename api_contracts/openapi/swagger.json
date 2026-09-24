@@ -121955,7 +121955,6 @@
                         "vapi",
                         "retell",
                         "retell_chat",
-                        "phone",
                         "auto"
                     ]
                 },
@@ -121969,23 +121968,9 @@
                     ],
                     "x-nullable": true
                 },
-                "call_direction": {
-                    "title": "Call direction",
-                    "description": "inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.",
-                    "type": "string",
-                    "enum": [
-                        "inbound",
-                        "outbound"
-                    ],
-                    "x-nullable": true
-                },
                 "config": {
                     "title": "Config",
                     "type": "object",
-                    "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
-                    },
                     "default": {}
                 },
                 "secret_refs": {

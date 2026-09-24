@@ -89049,7 +89049,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         connector: {
           title: "Connector",
           type: "string",
-          enum: ["livekit", "vapi", "retell", "retell_chat", "phone", "auto"],
+          enum: ["livekit", "vapi", "retell", "retell_chat", "auto"],
         },
         mode: {
           title: "Mode",
@@ -89057,21 +89057,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           enum: ["connect_only", "environment_backed", "provider_import"],
           "x-nullable": true,
         },
-        call_direction: {
-          title: "Call direction",
-          description:
-            "inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.",
-          type: "string",
-          enum: ["inbound", "outbound"],
-          "x-nullable": true,
-        },
         config: {
           title: "Config",
           type: "object",
-          additionalProperties: {
-            type: "string",
-            "x-nullable": true,
-          },
           default: {},
         },
         secret_refs: {
