@@ -375,6 +375,11 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
+				if err := pendingStreamError(errCh); err != nil {
+					writeStreamError(sseWriter, rc, err)
+					finalizeStream(false)
+					return
+				}
 				sseWriter.WriteDone()
 				finalizeStream(false)
 				return
@@ -408,11 +413,7 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 
 		case err, ok := <-errCh:
 			if ok && err != nil {
-				if apiErr, isAPI := err.(*models.APIError); isAPI {
-					sseWriter.WriteError(apiErr)
-				} else {
-					sseWriter.WriteError(models.ErrInternal(err.Error()))
-				}
+				writeStreamError(sseWriter, rc, err)
 				finalizeStream(false)
 				return
 			}

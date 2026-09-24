@@ -1656,6 +1656,11 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
+				if err := pendingStreamError(errCh); err != nil {
+					writeStreamError(sseWriter, rc, err)
+					finalizeStream(false)
+					return
+				}
 				// Stream complete — run final guardrail check.
 				if streamChecker != nil {
 					if res := streamChecker.Finish(streamCtx); res.Blocked {
@@ -1717,11 +1722,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 
 		case err, ok := <-errCh:
 			if ok && err != nil {
-				if apiErr, isAPI := err.(*models.APIError); isAPI {
-					sseWriter.WriteError(apiErr)
-				} else {
-					sseWriter.WriteError(models.ErrInternal(err.Error()))
-				}
+				writeStreamError(sseWriter, rc, err)
 				finalizeStream(false)
 				return
 			}
@@ -1782,6 +1783,9 @@ func waitForFirstStreamChunk(ctx context.Context, chunks <-chan models.StreamChu
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
+				if err := pendingStreamError(errCh); err != nil {
+					return nil, err
+				}
 				return nil, models.ErrUpstreamProvider(http.StatusBadGateway, "upstream stream closed before sending any chunks")
 			}
 			return &chunk, nil
@@ -1797,6 +1801,31 @@ func waitForFirstStreamChunk(ctx context.Context, chunks <-chan models.StreamChu
 			return nil, ctx.Err()
 		}
 	}
+}
+
+// pendingStreamError returns the error a provider sent before closing its
+// chunk channel, if any. Providers send the failure on errCh and then close
+// both channels, so once chunks is closed the error is already buffered — but
+// a select over both may take the closed chunks first and miss it.
+func pendingStreamError(errCh <-chan error) error {
+	select {
+	case err := <-errCh:
+		return err
+	default:
+		return nil
+	}
+}
+
+// writeStreamError writes err as the final event of an SSE stream that has
+// already started, and records it on rc so post-plugins and the health monitor
+// count the request as failed rather than complete.
+func writeStreamError(sseWriter *streaming.SSEWriter, rc *models.RequestContext, err error) {
+	rc.AddError(err)
+	if apiErr, ok := err.(*models.APIError); ok {
+		sseWriter.WriteError(apiErr)
+		return
+	}
+	sseWriter.WriteError(models.ErrInternal(err.Error()))
 }
 
 func cancelAndDrainStream(cancel context.CancelFunc, chunks <-chan models.StreamChunk) {
