@@ -7,6 +7,7 @@ list answers ``is_null`` with a full page and every other operator with zero
 rows while the users graph answers the identical leaf.
 """
 
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -177,3 +178,41 @@ def test_the_page_read_caches_only_the_page_and_replaces_absence():
         service.return_value.execute_ch_query.return_value = SimpleNamespace(data=[])
         manager._read_native_span_dimensions([row], builder, ReadDeadline.start(10_000))
         assert manager._row_matches_filters(row) is False
+
+
+WINDOW = {
+    "window_start": datetime(2026, 9, 1),
+    "window_end": datetime(2026, 9, 8),
+}
+
+
+@pytest.mark.parametrize("column_id", sorted(USER_NATIVE_SPAN_DIMENSIONS))
+@pytest.mark.parametrize(
+    ("operation", "value"), [("equals", "OK"), ("in", ["OK", "ERROR"])]
+)
+def test_native_leaf_never_narrows_acquisition_on_the_attribute_maps(
+    column_id, operation, value
+):
+    # The native value lives in a spans column, not in the attribute maps: an
+    # attribute-map witness would acquire only users carrying a same-named raw
+    # attribute (nobody), so the page must be acquired without one.
+    item = leaf(column_id, operation, value)
+    builder = UserListQueryBuilderV2(
+        organization_id=ORG, project_ids=[PROJECT], filters=[item]
+    )
+    assert builder.matching_activity_witness() is None
+    assert manager_for(item).matching_activity_walk_applies(builder) is False
+    query, _params = builder.build_dimension_candidate_query(limit=26, **WINDOW)
+    assert "span_attr_" not in query
+    assert "attrs_" not in query
+
+
+def test_a_raw_attribute_of_a_native_name_still_narrows_acquisition():
+    item = leaf("status", "equals", "OK", col_type="SPAN_ATTRIBUTE")
+    builder = UserListQueryBuilderV2(
+        organization_id=ORG, project_ids=[PROJECT], filters=[item]
+    )
+    witness = builder.matching_activity_witness()
+    assert witness is not None and witness[0] == "status"
+    query, _params = builder.build_dimension_candidate_query(limit=26, **WINDOW)
+    assert "mapContains(attrs_string" in query

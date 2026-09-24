@@ -535,6 +535,10 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 self._is_date_filter(item)
                 or self._is_relation_filter(item)
                 or self._is_output_filter(item)
+                # A native span column has no attribute-map witness: seeding
+                # it as one acquires only users carrying a same-named raw
+                # attribute, which is nobody.
+                or self.native_span_dimension(item)
                 or (
                     item.get("column_id") == "eval_score"
                     and self._filter_col_type(item) != "SPAN_ATTRIBUTE"
