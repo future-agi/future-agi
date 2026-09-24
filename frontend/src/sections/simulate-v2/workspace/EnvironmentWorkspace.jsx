@@ -2,7 +2,9 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { alpha } from "@mui/material/styles";
 import PropTypes from "prop-types";
-import { Box, Stack, Typography, Button, Tooltip, Tab, IconButton, Menu, MenuItem } from "@mui/material";
+import {
+  Box, Stack, Typography, Button, Tooltip, Tab, IconButton, Menu, MenuItem,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
 import { paths } from "src/routes/paths";
@@ -13,8 +15,8 @@ import { getEnvironment } from "../_mock/environments";
 import { getSurface } from "../_mock/surfaces";
 import { BOOT_STEPS } from "../_mock/runStream";
 import { useSimStore, useEnvState } from "../store";
+import DeleteEnvironmentDialog from "../environments/DeleteEnvironmentDialog";
 import TrialsPicker from "./scenarios/TrialsPicker";
-import RunConfigDialog from "./scenarios/RunConfigDialog";
 import { setupGaps } from "../_mock/setupGaps";
 import { subscribeBuilderPrompt } from "../_mock/builderPromptBus";
 import { subscribeScenarioSelection, clearScenarioSelection, getScenarioSelection } from "../_mock/scenarioSelectionBus";
@@ -143,9 +145,6 @@ export default function EnvironmentWorkspace() {
   // is a delay the user did not ask for. The sequence is kept for "Reset state",
   // where re-provisioning is the whole point of pressing the button.
   const [booting, setBooting] = useState(false);
-  /* Secondary header actions (Fork, …) live in an overflow menu so the header
-     keeps its focus on the primary action, Run simulation. */
-  const [actionsAnchor, setActionsAnchor] = useState(null);
 
   /* The builder console, unified with the build/review screen. A prototype
      chat: mock replies, seeded greeting once the env resolves. */
@@ -169,11 +168,11 @@ export default function EnvironmentWorkspace() {
   /* Header trials picker — how many times each scenario runs when the
      user clicks the top-of-page "Run simulation" button (no selection).
      Same PRD AC-10.7 dial as the SelectionBar's picker, but scoped to
-     "run all". Default 3 mirrors LiveRunView's historical default.
-     `runConfigOpen` opens the mandatory confirmation dialog so the
-     trials choice is unmissable — the header pill is the shortcut. */
+     "run all". Run simulation starts straight away with this value. */
   const [headerTrials, setHeaderTrials] = useState(1);
-  const [runConfigOpen, setRunConfigOpen] = useState(false);
+  /* Header overflow menu (Delete environment) and its confirm step. */
+  const [actionsAnchor, setActionsAnchor] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
   /*
     Builder mode — Auto (default) or Guided. In Guided, the builder
     pauses at decisions and asks Claude-style AskUserQuestion cards
@@ -395,8 +394,15 @@ export default function EnvironmentWorkspace() {
      lands on the new workspace. For duplicating the world for a different agent
      or team; demoted to the overflow menu since in-place agent-swap covers the
      everyday case. */
+  /* Leave first, then drop it: while this page is mounted, the adopt-on-open
+     effect would put a missing environment straight back. */
+  const deleteEnvironment = (target) => {
+    setConfirmDelete(null);
+    navigate(paths.dashboard.simulate.environments, { replace: true });
+    dispatch({ type: "removeEnvironment", envId: target.id });
+  };
+
   const forkEnvironment = () => {
-    setActionsAnchor(null);
     const suffix = Math.random().toString(36).slice(2, 8);
     const forkedId = `${env.id}-fork-${suffix}`;
     const now = new Date().toISOString();
@@ -747,8 +753,8 @@ export default function EnvironmentWorkspace() {
         {/* Header-anchored primary actions. Stay in the top-right in
             BOTH the empty-selection state (runs every scenario) and
             the active-selection state (runs the selected subset) so
-            the button never jumps as the user checks boxes. Label +
-            RunConfigDialog scope switch automatically. */}
+            the button never jumps as the user checks boxes. The label
+            switches scope automatically; repeats come from the pill. */}
         {(() => {
           const selectedCount = scenarioSelection?.ids?.length || 0;
           const runCount = selectedCount > 0 ? selectedCount : (envState?.scenarios?.length || 0);
@@ -762,14 +768,17 @@ export default function EnvironmentWorkspace() {
                 onChange={setHeaderTrials}
                 scenarioCount={runCount}
               />
-              <Tooltip title={canRun ? "Configure and start the run" : runBlockedReason} arrow>
+              <Tooltip title={canRun ? "" : runBlockedReason} arrow>
                 <span>
                   <Button
                     variant="contained"
                     color="primary"
                     size="small"
                     disabled={!canRun}
-                    onClick={() => setRunConfigOpen(true)}
+                    onClick={() => {
+                      const sel = scenarioSelection?.ids || [];
+                      startRun(sel.length > 0 ? sel : undefined, headerTrials);
+                    }}
                     startIcon={<Iconify icon="solar:play-bold" width={15} />}
                     sx={{ typography: "s2", fontWeight: 700, whiteSpace: "nowrap" }}
                   >
@@ -781,33 +790,14 @@ export default function EnvironmentWorkspace() {
           );
         })()}
 
-        {/* Mandatory config step. Scopes to the current selection when
-            one exists, otherwise runs everything. */}
-        <RunConfigDialog
-          open={runConfigOpen}
-          onClose={() => setRunConfigOpen(false)}
-          scenarioCount={(scenarioSelection?.ids?.length || 0) > 0
-            ? scenarioSelection.ids.length
-            : (envState?.scenarios?.length || 0)}
-          defaultTrials={headerTrials}
-          onConfirm={(k) => {
-            setHeaderTrials(k);
-            const sel = scenarioSelection?.ids || [];
-            startRun(sel.length > 0 ? sel : undefined, k);
-          }}
-        />
-
-        {/*
-          Template-seeded envs surface Fork inside the Test-subject card on
-          Overview (the primary way out of the locked template), so the
-          header overflow is suppressed for them. Regular envs keep the
-          overflow menu with Fork tucked inside.
-        */}
+        {/* Template-seeded envs are catalogue items, not the user's to
+            delete — their way out is Fork, surfaced on Overview. */}
         {!isSeededTemplate && (
           <>
             <Tooltip arrow title="More actions">
               <IconButton
                 size="small"
+                aria-label="More actions"
                 onClick={(e) => setActionsAnchor(e.currentTarget)}
                 sx={{ color: "text.subtitle" }}
               >
@@ -820,20 +810,25 @@ export default function EnvironmentWorkspace() {
               onClose={() => setActionsAnchor(null)}
               anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
               transformOrigin={{ vertical: "top", horizontal: "right" }}
-              slotProps={{ paper: { sx: { minWidth: 260, mt: 0.5 } } }}
+              slotProps={{ paper: { sx: { minWidth: 180, mt: 0.5 } } }}
             >
-              <MenuItem onClick={forkEnvironment} sx={{ alignItems: "flex-start", gap: 1.25, py: 1 }}>
-                <Iconify icon="solar:copy-linear" width={16} sx={{ color: "text.subtitle", mt: "2px", flexShrink: 0 }} />
-                <Box minWidth={0}>
-                  <Typography sx={{ typography: "s2", fontWeight: 600 }}>Fork environment</Typography>
-                  <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "normal" }}>
-                    Duplicate the world for a different agent or team. Agent + runs reset.
-                  </Typography>
-                </Box>
+              <MenuItem
+                onClick={() => { setConfirmDelete(env); setActionsAnchor(null); }}
+                sx={{ gap: 1, py: 1, color: "#DC2626" }}
+              >
+                <Iconify icon="solar:trash-bin-trash-linear" width={16} sx={{ flexShrink: 0 }} />
+                <Typography sx={{ typography: "s2", fontWeight: 600, color: "inherit" }}>
+                  Delete environment
+                </Typography>
               </MenuItem>
             </Menu>
           </>
         )}
+        <DeleteEnvironmentDialog
+          env={confirmDelete}
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={deleteEnvironment}
+        />
       </Stack>
 
       {/*
@@ -1000,7 +995,7 @@ export default function EnvironmentWorkspace() {
             ) : panel === "contract" ? (
               <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} locked={isSeededTemplate} onFork={forkEnvironment} />
             ) : panel === "settings" ? (
-              <SettingsPanel env={env} envState={envState} patch={patch} locked={isSeededTemplate} onFork={forkEnvironment} />
+              <SettingsPanel env={env} envState={envState} patch={patch} locked={isSeededTemplate} onFork={forkEnvironment} onDelete={isSeededTemplate ? undefined : () => setConfirmDelete(env)} />
             ) : panel === "build" ? (
               <BuildRecordPanel env={env} envState={envState} patch={patch} />
             ) : (

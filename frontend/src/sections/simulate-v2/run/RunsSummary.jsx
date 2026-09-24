@@ -5,9 +5,10 @@ import { alpha, useTheme } from "@mui/material/styles";
 import ReactApexChart from "../components/SafeApexChart";
 import {
   Box, Stack, Typography, Button, Checkbox, Popover, Tooltip, IconButton,
-  TextField, MenuItem, ListItemText,
+  TextField, MenuItem, ListItemText, Chip,
 } from "@mui/material";
 import { ConfirmDialog } from "src/components/custom-dialog";
+import { statusStyles } from "src/sections/common/simulation";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { runSummaries, evalSeries, trialSummaries, RUN_COLORS } from "../_mock/comparison";
@@ -135,6 +136,24 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
 
   /* Newest first for display — the run someone just finished is the top row. */
   const rows = useMemo(() => [...mergedRaw].reverse(), [mergedRaw]);
+
+  /* Demo only: one run waiting in the queue on top, so the Queued status is
+     visible. It has no results yet, is not selectable, and stays out of the
+     chart / compare / winner, which all read `rows` / `allSummaries`. */
+  const tableRows = useMemo(() => {
+    if (!DEMO_QUEUED_ROW || !rows.length) return rows;
+    const next = Math.max(...rows.map((r) => r.ordinal || 0)) + 1;
+    return [{
+      id: "demo-queued",
+      kind: "queued-demo",
+      status: "queued",
+      ordinal: next,
+      letter: String(next),
+      color: RUN_COLORS[(next - 1) % RUN_COLORS.length],
+      agentVersion: currentAgentVersion(envState).label,
+      envVersion: currentEnvVersion(env, envState).label,
+    }, ...rows];
+  }, [rows, env, envState]);
 
   /* Chart, compare, baseline lookups all read from the same merged list. */
   const allSummaries = mergedRaw;
@@ -296,20 +315,23 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
        a dead spacer: the spacer put a hand's width of nothing between a run's
        name and its numbers on a wide screen, which is a long way for an eye to
        travel to read one row. */
-    const num = baseline ? 104 : 76;
+    /* Sized to each header so every label sits on one line — a header
+       row wrapping to three lines read as clutter. With a baseline each
+       column also carries a delta, so they share one wider size. */
+    const nums = baseline ? [100, 100, 100, 100, 100, 100] : [56, 72, 60, 60, 108, 60];
     /* Graders get less room once there are several: four at full width push the
        last one past the card, and a clipped column reads as a broken table
        rather than as more table. */
     const score = evals.length >= 4
-      ? (baseline ? 108 : 100)
-      : (baseline ? 132 : 108);
-    const columns = [num, num, num, num, num, num, ...evals.map(() => score)];
+      ? (baseline ? 108 : 96)
+      : (baseline ? 132 : 100);
+    const columns = [...nums, ...evals.map(() => score)];
     return {
-      template: `26px minmax(280px, 380px) ${columns.map((c) => `minmax(${c}px, 1fr)`).join(" ")}`,
+      template: `26px minmax(224px, 360px) ${STATUS_COL}px ${columns.map((c) => `minmax(${c}px, 1fr)`).join(" ")}`,
       /* Below this the table scrolls rather than crushing the run names. */
       /* Plus the width of the fade, so the rightmost grader is never underneath
          it at the end of a scroll. */
-      min: 26 + 280 + columns.reduce((a, c) => a + c, 0) + 12 * (columns.length + 1) + 28,
+      min: 26 + 224 + STATUS_COL + columns.reduce((a, c) => a + c, 0) + 12 * (columns.length + 1) + 28,
       deltaWidth: baseline ? 52 : 0,
       /* Where the system numbers end and the graders begin. */
       firstEval: 6,
@@ -594,7 +616,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
           sx={{ px: 2.5, py: 1.25, borderTop: "1px solid", borderColor: "divider" }}
         >
           <Box flex={1} minWidth={0}>
-            <Typography sx={{ typography: "s1", fontWeight: 600 }}>Runs ({rows.length})</Typography>
+            <Typography sx={{ typography: "s1", fontWeight: 600 }}>Runs ({tableRows.length})</Typography>
             <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
               {baseline ? (
                 <>
@@ -699,23 +721,79 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
             >
               <Box />
               <Head>Run</Head>
+              <Head>Status</Head>
               <Head right>Pass</Head>
-              <Head right>Avg duration</Head>
+              <Head right title="Average duration per task">Duration</Head>
               <Head right>Tokens</Head>
               <Head right>Cost</Head>
-              <Head right>Said, not done</Head>
-              <Head right>Mean return</Head>
+              <Head right title="Tasks where the agent said it was done but the world shows it wasn't">Said, not done</Head>
+              <Head right title="Mean return — the environment's reward, averaged over tasks">Return</Head>
               {evals.map((e, i) => (
-                <Head key={e.id} right divider={i === 0} last={i === evals.length - 1}>
+                <Head key={e.id} right divider={i === 0} last={i === evals.length - 1} title={e.name} wrap>
                   {e.name}
                 </Head>
               ))}
             </Box>
 
             <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
-              {rows.map((r, i) => {
+              {tableRows.map((r, i) => {
                 const picked = selected.includes(r.id);
                 const won = winner?.runId === r.id;
+
+                if (r.kind === "queued-demo") {
+                  return (
+                    <Box
+                      key={r.id}
+                      sx={{
+                        display: "grid", gridTemplateColumns: grid.template,
+                        alignItems: "stretch", columnGap: 0,
+                        pl: 2.5, pr: 0, py: 0, minHeight: 40,
+                        borderLeft: "2px solid", borderColor: "transparent",
+                      }}
+                    >
+                      <Box sx={{ display: "flex", alignItems: "center" }}>
+                        <Checkbox size="small" disabled checked={false} tabIndex={-1} sx={{ p: 0.5, ...neutralCheckboxSx }} />
+                      </Box>
+                      <Stack direction="row" alignItems="center" spacing={1.25} sx={{ minWidth: 0, py: 0.875, pr: 1.5, overflow: "hidden" }}>
+                        <Box
+                          sx={{
+                            minWidth: 26, height: 22, px: 0.75, borderRadius: 0.75, flexShrink: 0,
+                            display: "grid", placeItems: "center",
+                            typography: "s3", fontWeight: 700, fontVariantNumeric: "tabular-nums",
+                            color: r.color,
+                            bgcolor: (t) => alpha(r.color, t.palette.mode === "dark" ? 0.22 : 0.14),
+                          }}
+                        >
+                          {r.letter}
+                        </Box>
+                        <Stack direction="row" alignItems="baseline" spacing={0.75} sx={{ minWidth: 0, overflow: "hidden" }}>
+                          <Typography noWrap sx={{ typography: "s2", fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+                            Run {r.ordinal} · agent {r.agentVersion}
+                            <Box component="span" sx={{ color: "text.subtitle", fontWeight: 500 }}>
+                              {" "}× env {r.envVersion}
+                            </Box>
+                          </Typography>
+                          <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>
+                            waiting to start
+                          </Typography>
+                        </Stack>
+                      </Stack>
+                      <StatusCell status="Queued" />
+                      {Array.from({ length: 6 }).map((_, k) => (
+                        <MetricCell key={k} quiet deltaWidth={grid.deltaWidth} text="—" />
+                      ))}
+                      {evals.map((e, ei) => (
+                        <ScoreCell
+                          key={e.id}
+                          value={null}
+                          divider={ei === 0}
+                          last={ei === evals.length - 1}
+                          deltaWidth={grid.deltaWidth}
+                        />
+                      ))}
+                    </Box>
+                  );
+                }
 
                 /* Trial rows share the same table shape but carry different
                    identity (parent search, winner-of-search rather than
@@ -798,6 +876,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                         </Stack>
                       </Stack>
 
+                      <StatusCell status={runStatus(r)} />
                       <MetricCell
                         anchor deltaWidth={grid.deltaWidth} text={`${r.passRate}%`}
                         delta={deltaAgainst(metrics.passRate, r, baseline)}
@@ -807,7 +886,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                         delta={deltaAgainst(metrics.duration, r, baseline)}
                       />
                       <MetricCell
-                        quiet deltaWidth={grid.deltaWidth} text={r.tokens.toLocaleString()}
+                        quiet deltaWidth={grid.deltaWidth} text={compactTokens(r.tokens)}
                         delta={deltaAgainst(metrics.tokens, r, baseline)}
                       />
                       <MetricCell
@@ -1002,6 +1081,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                       />
                     </Stack>
 
+                    <StatusCell status={runStatus(r)} />
                     <MetricCell
                       anchor deltaWidth={grid.deltaWidth} text={`${r.passRate}%`}
                       delta={deltaAgainst(metrics.passRate, r, baseline)}
@@ -1011,7 +1091,7 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                       delta={deltaAgainst(metrics.duration, r, baseline)}
                     />
                     <MetricCell
-                      quiet deltaWidth={grid.deltaWidth} text={r.tokens.toLocaleString()}
+                      quiet deltaWidth={grid.deltaWidth} text={compactTokens(r.tokens)}
                       delta={deltaAgainst(metrics.tokens, r, baseline)}
                     />
                     <MetricCell
@@ -1194,9 +1274,70 @@ RunsSummary.propTypes = {
  * whose title is a few pixels off centre. Wrapping over aligning, for the same
  * reason.
  */
-function Head({ children, right, divider, last }) {
+/* ── run status ─────────────────────────────────────────────────────────
+   Where the run is in its life, not how it scored — Pass and the graders
+   already say that. Same soft chip and colours as the legacy runs table
+   (BaseStatusCellRenderer + shared statusStyles), so status reads the same
+   everywhere in the product. */
+const STATUS_COL = 104;
+
+/* Prototype: show one queued run on top of the table so the status is demoable. */
+const DEMO_QUEUED_ROW = true;
+
+/* Recorded runs carry status "running" until they finish, then "passed" /
+   "failed" — which is the verdict, not the state. Trials are always done. */
+const runStatus = (r) => {
+  const raw = String(r?.status || "").toLowerCase();
+  if (r?.kind === "trial") return "Completed";
+  if (raw === "queued") return "Queued";
+  if (raw === "pending") return "Pending";
+  if (raw === "running" && !r.finishedAt) return "Running";
+  if (["cancelled", "canceled", "stopped", "aborted"].includes(raw)) return "Cancelled";
+  if (["error", "errored", "crashed"].includes(raw)) return "Failed";
+  return "Completed";
+};
+
+/* Running reads blue here; the neutral chip the legacy table uses for
+   Running is kept for Queued — waiting, not yet doing anything. */
+const RUN_CHIP_STYLES = {
+  ...statusStyles,
+  Running: statusStyles.Pending,
+  Queued: statusStyles.Running,
+};
+
+function StatusCell({ status }) {
+  return (
+    <Box sx={{ display: "flex", alignItems: "center", minWidth: 0, pr: 1 }}>
+      <Chip
+        variant="soft"
+        label={status}
+        size="small"
+        sx={{
+          typography: "s3",
+          fontWeight: "fontWeightRegular",
+          pointerEvents: "none",
+          ...RUN_CHIP_STYLES[status],
+        }}
+      />
+    </Box>
+  );
+}
+StatusCell.propTypes = { status: PropTypes.string };
+
+/* 294,000 → 294K: the column is read for magnitude, and the full figure
+   was the widest thing in the row. */
+const compactTokens = (n) => {
+  if (n == null || Number.isNaN(Number(n))) return "—";
+  const v = Number(n);
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(v >= 10_000_000 ? 0 : 1)}M`;
+  if (v >= 1_000) return `${Math.round(v / 1_000)}K`;
+  return String(v);
+};
+
+function Head({ children, right, divider, last, title, wrap }) {
   return (
     <Typography
+      title={title}
       sx={{
         /* Sentence case, not shouted uppercase — the ALL-CAPS pass on
            long labels ("PROFESSION | ALISM") broke mid-word and read
@@ -1208,13 +1349,12 @@ function Head({ children, right, divider, last }) {
         textAlign: right ? "right" : "left", minWidth: 0,
         px: right ? 1.25 : 0,
         ...(last && { pr: 2.5 }),
-        /* Only wrap on natural word boundaries — never mid-word.
-           A too-narrow column with a long single word would rather
-           truncate than break the word. */
+        /* Metric headers stay on one line (their columns are sized to fit);
+           grader names may wrap on word boundaries, never mid-word. */
         overflow: "hidden",
-        whiteSpace: "normal",
-        overflowWrap: "normal",
-        wordBreak: "normal",
+        ...(wrap
+          ? { whiteSpace: "normal", overflowWrap: "normal", wordBreak: "normal" }
+          : { whiteSpace: "nowrap", textOverflow: "ellipsis" }),
         /* The graders are a different kind of number from the system ones, and
            a single hairline says so more quietly than a second header row. */
         ...(divider && { borderLeft: "1px solid", borderColor: "divider" }),
@@ -1227,6 +1367,7 @@ function Head({ children, right, divider, last }) {
 Head.propTypes = {
   children: PropTypes.node, right: PropTypes.bool,
   divider: PropTypes.bool, last: PropTypes.bool,
+  title: PropTypes.string, wrap: PropTypes.bool,
 };
 
 function Num({ children, sx, strong, tone }) {

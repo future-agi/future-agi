@@ -2,7 +2,7 @@ import PropTypes from "prop-types";
 import { useState } from "react";
 import { alpha } from "@mui/material/styles";
 import {
-  Box, Stack, Typography, Button, TextField, IconButton, Switch, Slider, Chip,
+  Box, Stack, Typography, Button, TextField, IconButton, Switch, Slider, Chip, Tooltip,
   Dialog, DialogTitle, DialogContent, DialogActions,
 } from "@mui/material";
 import { useSnackbar } from "notistack";
@@ -27,7 +27,7 @@ const TWIN_TINT = "#7857FC";
  * anything, and burying them in code means nobody checks them before pressing
  * Run. The pre-flight quotes its estimate from these numbers.
  */
-export default function SettingsPanel({ env, envState, patch }) {
+export default function SettingsPanel({ env, envState, patch, onDelete }) {
   const [changing, setChanging] = useState(null);
   /* The version pending a Restore confirmation. Null when the dialog is
      closed. Holds the actual version object so the preflight can read
@@ -465,14 +465,20 @@ export default function SettingsPanel({ env, envState, patch }) {
                 Removes the environment, its scenarios and every run against it. Cannot be undone.
               </Typography>
             </Box>
-            <Button
-              variant="outlined"
-              size="small"
-              color="error"
-              sx={{ flexShrink: 0, typography: "s2", fontWeight: 600 }}
-            >
-              Delete environment
-            </Button>
+            <Tooltip arrow title={onDelete ? "" : "Built-in templates can't be deleted."}>
+              <span>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  color="error"
+                  disabled={!onDelete}
+                  onClick={onDelete}
+                  sx={{ flexShrink: 0, typography: "s2", fontWeight: 600 }}
+                >
+                  Delete environment
+                </Button>
+              </span>
+            </Tooltip>
           </Stack>
         </SectionCard>
       </Stack>
@@ -510,7 +516,12 @@ export default function SettingsPanel({ env, envState, patch }) {
   );
 }
 
-SettingsPanel.propTypes = { envState: PropTypes.object, patch: PropTypes.func, env: PropTypes.object.isRequired };
+SettingsPanel.propTypes = {
+  envState: PropTypes.object,
+  patch: PropTypes.func,
+  env: PropTypes.object.isRequired,
+  onDelete: PropTypes.func,
+};
 
 /**
  * Restore preflight dialog.

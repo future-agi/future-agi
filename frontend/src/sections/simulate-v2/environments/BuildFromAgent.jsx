@@ -12,7 +12,6 @@ import { paths } from "src/routes/paths";
 import { pipelineStatus, pipelineSummary } from "../_mock/buildPipeline";
 import { subscribeScenarioSelection, getScenarioSelection } from "../_mock/scenarioSelectionBus";
 import TrialsPicker from "../workspace/scenarios/TrialsPicker";
-import RunConfigDialog from "../workspace/scenarios/RunConfigDialog";
 import { setupGaps, gapCounts } from "../_mock/setupGaps";
 import { useSimStore, useEnvState } from "../store";
 import { SectionCard } from "../components/primitives";
@@ -802,12 +801,9 @@ function Header({
      duplicates the affordance in two places. */
   const scenarioSelection = useSyncExternalStore(subscribeScenarioSelection, getScenarioSelection, getScenarioSelection);
   const selectionCount = scenarioSelection?.ids?.length || 0;
-  /* Repeats picker + config dialog — same PRD AC-10.7 dial as the
-     workspace header. Clicking Run simulation opens the config
-     dialog first so the choice is unmissable; the pill next to
-     the button is the shortcut for power users. */
+  /* Repeats picker — same PRD AC-10.7 dial as the workspace header.
+     Run simulation starts straight away with this value. */
   const [headerTrials, setHeaderTrials] = useState(1);
-  const [runConfigOpen, setRunConfigOpen] = useState(false);
   /*
     The environment stage builds three things — tool handlers, a seeded world
     and coded checks — none of which are "sub-goals" as this product uses the
@@ -1025,7 +1021,10 @@ function Header({
             />
             <RunButton
               label={runLabel}
-              onRun={() => setRunConfigOpen(true)}
+              onRun={() => {
+                const sel = scenarioSelection?.ids || [];
+                onRun(sel.length > 0 ? sel : undefined, headerTrials);
+              }}
               canGo={canGo}
               blockedReason={blockedReason}
             />
@@ -1033,17 +1032,6 @@ function Header({
         );
       })()}
 
-      <RunConfigDialog
-        open={runConfigOpen}
-        onClose={() => setRunConfigOpen(false)}
-        scenarioCount={selectionCount > 0 ? selectionCount : (scenarioCount || envState?.scenarios?.length || 0)}
-        defaultTrials={headerTrials}
-        onConfirm={(k) => {
-          setHeaderTrials(k);
-          const sel = scenarioSelection?.ids || [];
-          onRun(sel.length > 0 ? sel : undefined, k);
-        }}
-      />
     </Stack>
   );
 }

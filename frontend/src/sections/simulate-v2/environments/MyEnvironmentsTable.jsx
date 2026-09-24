@@ -4,7 +4,6 @@ import { useNavigate } from "react-router-dom";
 import { alpha, keyframes } from "@mui/material/styles";
 import {
   Box, Stack, Typography, Tooltip, IconButton, Menu, MenuItem, ListItemIcon, ListItemText,
-  Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions, Button,
 } from "@mui/material";
 import { paths } from "src/routes/paths";
 import { DataTable } from "src/components/data-table";
@@ -12,6 +11,7 @@ import DataTablePagination from "src/components/data-table/DataTablePagination";
 import Iconify from "src/components/iconify";
 import { subTasksFor } from "../_mock/contract";
 import { useSimStore } from "../store";
+import DeleteEnvironmentDialog from "./DeleteEnvironmentDialog";
 
 /*
   The old table read the raw `agentType` id off each env and looked it
@@ -410,42 +410,11 @@ export default function MyEnvironmentsTable({ envs, onOpen, hideStatus = false }
         </MenuItem>
       </Menu>
 
-      {/*
-        Confirmation before dropping — a delete strips the env AND its
-        scenarios / evals / runs from the store (the reducer's own doing),
-        so a misclick would silently lose the derivation work.
-      */}
-      <Dialog open={!!confirmDelete} onClose={() => setConfirmDelete(null)} maxWidth="xs" fullWidth>
-        <DialogTitle sx={{ typography: "m2", fontWeight: 700 }}>
-          Delete environment?
-        </DialogTitle>
-        <DialogContent>
-          <DialogContentText sx={{ typography: "s2" }}>
-            <b>{confirmDelete?.name}</b> and everything derived from it —
-            scenarios, personas, evals and run history — will be removed
-            from this workspace. This cannot be undone.
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button
-            onClick={() => setConfirmDelete(null)}
-            sx={{ typography: "s2", fontWeight: 600, color: "text.secondary" }}
-          >
-            Cancel
-          </Button>
-          <Button
-            variant="contained"
-            onClick={() => deleteEnv(confirmDelete)}
-            sx={{
-              typography: "s2", fontWeight: 700,
-              bgcolor: "#DC2626", color: "#fff",
-              "&:hover": { bgcolor: "#B91C1C", color: "#fff" },
-            }}
-          >
-            Delete
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <DeleteEnvironmentDialog
+        env={confirmDelete}
+        onCancel={() => setConfirmDelete(null)}
+        onConfirm={deleteEnv}
+      />
     </>
   );
 }

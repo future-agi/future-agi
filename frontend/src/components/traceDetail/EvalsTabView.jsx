@@ -351,7 +351,8 @@ const EvalTableRow = ({
         <Box
           sx={{
             px: 1.5,
-            py: 0.75,
+            pt: 0.75,
+            pb: 1.5,
             bgcolor: "background.default",
             borderBottom: "1px solid",
             borderColor: "divider",
