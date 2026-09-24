@@ -52623,8 +52623,10 @@ export const TracerInternalErrorFeedV2ClaimsCreateResponse = zod.object({
   claims: zod.array(
     zod.object({
       organization_id: zod.string().uuid(),
+      organization_name: zod.string().min(1).optional(),
       workspace_id: zod.string().uuid(),
       project_id: zod.string().uuid(),
+      project_name: zod.string().min(1).optional(),
       job_id: zod.string().uuid(),
       trace_id: zod.string().uuid(),
       generation: zod.number().min(1),

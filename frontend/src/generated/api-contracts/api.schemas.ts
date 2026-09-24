@@ -23899,8 +23899,12 @@ export interface InvestigationLimitsApi {
 
 export interface InvestigationClaimApi {
   organization_id: string;
+  /** @minLength 1 */
+  organization_name?: string;
   workspace_id: string;
   project_id: string;
+  /** @minLength 1 */
+  project_name?: string;
   job_id: string;
   trace_id: string;
   /** @minimum 1 */

@@ -83366,6 +83366,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "uuid",
         },
+        organization_name: {
+          title: "Organization name",
+          type: "string",
+          minLength: 1,
+        },
         workspace_id: {
           title: "Workspace id",
           type: "string",
@@ -83376,6 +83381,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Project id",
           type: "string",
           format: "uuid",
+        },
+        project_name: {
+          title: "Project name",
+          type: "string",
+          minLength: 1,
         },
         job_id: {
           title: "Job id",
