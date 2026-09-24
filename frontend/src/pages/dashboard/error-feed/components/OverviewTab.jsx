@@ -17,6 +17,7 @@ import AgentGraph from "src/sections/projects/LLMTracing/GraphSection/AgentGraph
 import AgentPath from "src/sections/projects/LLMTracing/GraphSection/AgentPath";
 import GraphSkeleton from "src/sections/projects/LLMTracing/GraphSection/GraphSkeleton";
 import { buildTraceGraph } from "src/components/traceDetail/buildTraceGraph";
+import { formatLatency } from "src/sections/projects/LLMTracing/formatters";
 import { error as errorPalette, success } from "src/theme/palette";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
 import { useErrorFeedOverview } from "src/api/errorFeed/error-feed";
@@ -664,7 +665,7 @@ function TraceList({ traces, selectedIndex, onSelect, loading = false }) {
                   sx={{ color: "text.disabled" }}
                 />
                 <Typography fontSize="10px" color="text.disabled">
-                  {t.summary.latency_ms}ms
+                  {formatLatency(t.summary.latency_ms)}
                 </Typography>
               </Stack>
               <Stack direction="row" alignItems="center" gap={0.3}>
@@ -1806,7 +1807,7 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
     shortId && { icon: "mdi:sitemap-outline", text: shortId, mono: true },
     summary.latency_ms != null && {
       icon: "mdi:timer-outline",
-      text: `${summary.latency_ms}ms`,
+      text: formatLatency(summary.latency_ms),
     },
     tokens != null && { icon: "mdi:text-box-outline", text: `${tokens} tok` },
     cost != null && { icon: "mdi:currency-usd", text: cost.toFixed(4) },
