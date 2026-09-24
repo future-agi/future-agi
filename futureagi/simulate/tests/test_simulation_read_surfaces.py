@@ -1,6 +1,7 @@
 import copy
 import csv
 import io
+import json
 import uuid
 from unittest.mock import patch
 
@@ -875,40 +876,357 @@ def test_mark_removed_evals_does_not_mutate_input(simulation_tree, eval_configs)
     assert eval_outputs[str(live.id)]["details"]["choices"] == ["a", "b"]
 
 
-@pytest.mark.django_db
-def test_column_order_drops_deleted_eval_columns(
-    auth_client, simulation_tree, eval_configs
-):
-    live, deleted = eval_configs["live"], eval_configs["deleted"]
-    test_execution = simulation_tree["test_execution"]
+def _seed_run_detail_columns(test_execution, live, deleted):
+    """Plant a column order holding one live and one removed eval column.
+
+    No scenario column: this tree's scenarios carry no dataset columns, so the
+    scenario reconciler would drop one and dirty the persistence assertions
+    for reasons that have nothing to do with evals.
+    """
     test_execution.execution_metadata = {
         "Provider": True,
         "column_order": [
             {
-                "type": "scenario_dataset_column",
-                "id": "scenario_col",
-                "column_name": "Scenario",
+                "type": "evaluation",
+                "id": str(live.id),
+                "column_name": "Live Eval",
+                "eval_config": {},
+                "visible": True,
             },
-            {"type": "evaluation", "id": str(live.id), "column_name": "Live Eval"},
             {
                 "type": "evaluation",
                 "id": str(deleted.id),
                 "column_name": "Deleted Eval",
+                "eval_config": {},
+                "visible": True,
             },
         ],
     }
     test_execution.save(update_fields=["execution_metadata"])
 
+
+def _eval_column_ids(column_order):
+    return [
+        str(col.get("id"))
+        for col in column_order
+        if col.get("type") == "evaluation"
+    ]
+
+
+@pytest.mark.django_db
+def test_run_detail_marks_removed_evals_and_keeps_their_column(
+    auth_client, simulation_tree, eval_configs
+):
+    """The run detail returns a removed eval's stored verdict marked
+    ``removed: true`` in both projections and keeps its evaluation column, in
+    the response and in what it persists, so the run table can draw the marked
+    column. Mirrors ``test_call_details_marks_removed``. This surface used to
+    hide the verdict and prune the column away for good on the first read.
+    """
+    live, deleted = eval_configs["live"], eval_configs["deleted"]
+    test_execution = simulation_tree["test_execution"]
+    call_execution = simulation_tree["call_execution"]
+    # An independent copy, so the final `== stored` assertion is a real guard
+    # against an in-place rewrite of the row the read path was handed.
+    stored = copy.deepcopy(_eval_outputs_for(live, deleted))
+    call_execution.eval_outputs = copy.deepcopy(stored)
+    call_execution.save(update_fields=["eval_outputs"])
+    _seed_run_detail_columns(test_execution, live, deleted)
+
     response = auth_client.get(f"/simulate/test-executions/{test_execution.id}/")
 
-    assert response.status_code == 200
-    eval_col_ids = {
-        str(col.get("id"))
+    assert response.status_code == status.HTTP_200_OK
+    assert _eval_column_ids(response.data["column_order"]) == [
+        str(live.id),
+        str(deleted.id),
+    ]
+
+    row = next(
+        r for r in response.data["results"] if str(r["id"]) == str(call_execution.id)
+    )
+    outputs = row["eval_outputs"]
+    metrics = row["eval_metrics"]
+
+    # The removed eval's verdict is present and marked, in both places...
+    assert outputs[str(deleted.id)]["removed"] is True
+    assert metrics[str(deleted.id)]["removed"] is True
+    # ...and still carries its real value, not a blanked one.
+    assert outputs[str(deleted.id)]["value"] == "Passed"
+    assert metrics[str(deleted.id)]["value"] == "Passed"
+
+    # The column survives in what is persisted, not just in this response.
+    test_execution.refresh_from_db()
+    assert _eval_column_ids(test_execution.execution_metadata["column_order"]) == [
+        str(live.id),
+        str(deleted.id),
+    ]
+    # Reading never rewrites what is stored.
+    call_execution.refresh_from_db()
+    assert call_execution.eval_outputs == stored
+
+
+@pytest.mark.django_db
+def test_run_detail_leaves_a_live_eval_untouched(
+    auth_client, simulation_tree, eval_configs
+):
+    """On the same run that holds a removed eval, the live eval's verdict
+    carries no ``removed`` key at all -- not ``false`` -- and its column comes
+    back with the name and flags it was stored with.
+    """
+    live, deleted = eval_configs["live"], eval_configs["deleted"]
+    test_execution = simulation_tree["test_execution"]
+    call_execution = simulation_tree["call_execution"]
+    call_execution.eval_outputs = _eval_outputs_for(live, deleted)
+    call_execution.save(update_fields=["eval_outputs"])
+    _seed_run_detail_columns(test_execution, live, deleted)
+
+    response = auth_client.get(f"/simulate/test-executions/{test_execution.id}/")
+
+    assert response.status_code == status.HTTP_200_OK
+    live_column = next(
+        col
         for col in response.data["column_order"]
-        if col.get("type") == "evaluation"
+        if str(col.get("id")) == str(live.id)
+    )
+    assert live_column == {
+        "type": "evaluation",
+        "id": str(live.id),
+        "column_name": "Live Eval",
+        "eval_config": {},
+        "visible": True,
     }
-    assert str(live.id) in eval_col_ids
-    assert str(deleted.id) not in eval_col_ids
+
+    row = next(
+        r for r in response.data["results"] if str(r["id"]) == str(call_execution.id)
+    )
+    assert "removed" not in row["eval_outputs"][str(live.id)]
+    assert "removed" not in row["eval_metrics"][str(live.id)]
+    assert row["eval_outputs"][str(live.id)]["value"] == "Passed"
+    assert row["eval_metrics"][str(live.id)]["value"] == "Passed"
+
+
+@pytest.mark.django_db
+def test_run_detail_adds_nothing_for_a_removed_eval_with_no_verdict(
+    auth_client, simulation_tree, eval_configs
+):
+    """A removed eval contributes to a call only what that call actually
+    stores. A call with no row for it gets no entry at all -- the config map is
+    never used to synthesise one -- and a call holding a value-less placeholder
+    gets the same empty projection a live eval's placeholder gets, with no
+    marker on it. The marker is for verdicts; the column stands on its own, so
+    the grid still draws an empty cell.
+    """
+    live, deleted = eval_configs["live"], eval_configs["deleted"]
+    test_execution = simulation_tree["test_execution"]
+    without_row = simulation_tree["call_execution"]
+    without_row.eval_outputs = {
+        str(live.id): {
+            "name": "Live Eval",
+            "output": "Passed",
+            "output_type": "Pass/Fail",
+            "status": "completed",
+        }
+    }
+    without_row.save(update_fields=["eval_outputs"])
+    with_placeholder = CallExecution.objects.create(
+        test_execution=test_execution,
+        scenario=without_row.scenario,
+        phone_number="+15559990101",
+        status=CallExecution.CallStatus.COMPLETED,
+        simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        call_metadata={},
+        eval_outputs={str(deleted.id): {"status": "pending"}},
+    )
+    _seed_run_detail_columns(test_execution, live, deleted)
+
+    response = auth_client.get(f"/simulate/test-executions/{test_execution.id}/")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert str(deleted.id) in _eval_column_ids(response.data["column_order"])
+
+    no_row = next(
+        r for r in response.data["results"] if str(r["id"]) == str(without_row.id)
+    )
+    assert str(deleted.id) not in no_row["eval_outputs"]
+    assert str(deleted.id) not in no_row["eval_metrics"]
+
+    placeholder = next(
+        r for r in response.data["results"] if str(r["id"]) == str(with_placeholder.id)
+    )
+    assert placeholder["eval_outputs"][str(deleted.id)] == {}
+    assert placeholder["eval_metrics"][str(deleted.id)] == {}
+
+
+@pytest.mark.django_db
+def test_run_detail_shape_is_unchanged_with_no_removed_evals(
+    auth_client, simulation_tree, eval_configs
+):
+    """A run holding a removed eval that has no stored verdict and no column
+    must come back exactly as it did before the marker reached this surface: the
+    same top-level keys, the same per-eval
+    keys with no ``removed`` among them, a ``column_order`` identical to the
+    stored one, and no re-save. ``template_type`` and ``error_localizer`` are
+    the real regression risk -- both resolve from the config here, and a
+    marker-only context would blank them the way it does on the run's call
+    list.
+    """
+    live = eval_configs["live"]
+    live.error_localizer = True
+    live.save(update_fields=["error_localizer"])
+    test_execution = simulation_tree["test_execution"]
+    call_execution = simulation_tree["call_execution"]
+    call_execution.eval_outputs = {
+        str(live.id): {
+            "name": "Live Eval",
+            "output": "Passed",
+            "output_type": "Pass/Fail",
+            "status": "completed",
+        }
+    }
+    call_execution.save(update_fields=["eval_outputs"])
+    stored_columns = [
+        {
+            "type": "evaluation",
+            "id": str(live.id),
+            "column_name": "Live Eval",
+            "eval_config": {},
+            "visible": True,
+        },
+    ]
+    test_execution.execution_metadata = {
+        "Provider": True,
+        "column_order": copy.deepcopy(stored_columns),
+    }
+    test_execution.save(update_fields=["execution_metadata"])
+    # Read the clock back from the database: a save with update_fields does not
+    # necessarily write the column this instance already carries in memory.
+    test_execution.refresh_from_db()
+    updated_at_before = test_execution.updated_at
+
+    response = auth_client.get(f"/simulate/test-executions/{test_execution.id}/")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert set(response.data) == {
+        "count",
+        "next",
+        "previous",
+        "results",
+        "total_pages",
+        "current_page",
+        "column_order",
+        "error_messages",
+        "status",
+        "provider",
+        "agent_type",
+    }
+    assert response.data["column_order"] == stored_columns
+
+    row = next(
+        r for r in response.data["results"] if str(r["id"]) == str(call_execution.id)
+    )
+    assert set(row["eval_outputs"][str(live.id)]) == {
+        "value",
+        "reason",
+        "type",
+        "name",
+        "error",
+        "status",
+        "skipped",
+    }
+    metric = row["eval_metrics"][str(live.id)]
+    assert set(metric) == {
+        "id",
+        "name",
+        "value",
+        "reason",
+        "type",
+        "template_type",
+        "visible",
+        "error",
+        "status",
+        "skipped",
+        "error_localizer",
+    }
+    # Resolved from the config, not blanked.
+    assert metric["template_type"] == "single"
+    assert metric["error_localizer"] is True
+
+    # Nothing to reconcile means nothing to write.
+    test_execution.refresh_from_db()
+    assert test_execution.updated_at == updated_at_before
+    assert test_execution.execution_metadata["column_order"] == stored_columns
+
+
+@pytest.mark.django_db
+def test_run_detail_filters_on_a_removed_evals_column(
+    auth_client, simulation_tree, eval_configs
+):
+    """A removed eval's column is now drawn, so the grid can offer a filter on
+    it, and that filter must do what a live eval's does: return exactly the
+    calls holding a verdict for it, and report no error. Resolving a filter
+    against live configs only would have matched nothing at all, silently --
+    the filter loop has no branch for an unrecognised column id, so it would
+    not even have said so in ``error_messages``.
+    """
+    live, deleted = eval_configs["live"], eval_configs["deleted"]
+    test_execution = simulation_tree["test_execution"]
+    graded_one = simulation_tree["call_execution"]
+    graded_one.eval_outputs = _eval_outputs_for(live, deleted)
+    graded_one.save(update_fields=["eval_outputs"])
+    graded_two = CallExecution.objects.create(
+        test_execution=test_execution,
+        scenario=graded_one.scenario,
+        phone_number="+15559990201",
+        status=CallExecution.CallStatus.COMPLETED,
+        simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        call_metadata={},
+        eval_outputs=_eval_outputs_for(live, deleted),
+    )
+    ungraded = CallExecution.objects.create(
+        test_execution=test_execution,
+        scenario=graded_one.scenario,
+        phone_number="+15559990202",
+        status=CallExecution.CallStatus.COMPLETED,
+        simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        call_metadata={},
+        eval_outputs={
+            str(live.id): {
+                "name": "Live Eval",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+                "status": "completed",
+            }
+        },
+    )
+    _seed_run_detail_columns(test_execution, live, deleted)
+    filters = [
+        {
+            "column_id": str(deleted.id),
+            "filter_config": {
+                "filter_type": "text",
+                "filter_op": "equals",
+                "filter_value": "Passed",
+            },
+        }
+    ]
+
+    response = auth_client.get(
+        f"/simulate/test-executions/{test_execution.id}/",
+        {"filters": json.dumps(filters)},
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.data["error_messages"] == []
+    # The column the filter names is the one the response still draws.
+    assert str(deleted.id) in _eval_column_ids(response.data["column_order"])
+    assert {str(row["id"]) for row in response.data["results"]} == {
+        str(graded_one.id),
+        str(graded_two.id),
+    }
+    assert str(ungraded.id) not in {
+        str(row["id"]) for row in response.data["results"]
+    }
+    assert response.data["count"] == 2
 
 
 @pytest.fixture
