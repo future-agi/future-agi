@@ -197,6 +197,17 @@ def _background_noise_catalogue() -> str:
     return json.dumps(clips, separators=(",", ":")) if clips else ""
 
 
+def _noise_catalogue_setting() -> str:
+    """The catalogue a hosted run is given: the deployment's, inlined when it is a file, else ours."""
+    configured = str(os.environ.get("ALK_BACKGROUND_NOISE_CATALOG") or "").strip()
+    if configured and not configured.startswith("["):
+        try:
+            configured = Path(configured).read_text(encoding="utf-8").strip()
+        except OSError:
+            configured = ""
+    return configured or _background_noise_catalogue()
+
+
 def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
     """Return control-process-only simulator config and optional Vertex ADC bytes.
 
@@ -307,7 +318,6 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         # The caller's surroundings. Without these a hosted call is always heard in the clear,
         # whatever the scenario asked for, because the simulator reads them from its environment.
         "ALK_BACKGROUND_NOISE",
-        "ALK_BACKGROUND_NOISE_CATALOG",
         "HARNESS_BACKGROUND_NOISE_VOLUME",
         # Off has to travel: decided here, enforced inside the sandbox.
         "ALK_VOICEMAIL_SCENARIOS",
@@ -317,10 +327,9 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         value = str(os.environ.get(name) or "").strip()
         if value:
             values[name] = value
-    if "ALK_BACKGROUND_NOISE_CATALOG" not in values:
-        catalogue = _background_noise_catalogue()
-        if catalogue:
-            values["ALK_BACKGROUND_NOISE_CATALOG"] = catalogue
+    catalogue = _noise_catalogue_setting()
+    if catalogue:
+        values["ALK_BACKGROUND_NOISE_CATALOG"] = catalogue
     # The sandbox resolves nothing on our network, so the guest's collector is configured
     # separately and only falls back to ours when they are the same host.
     collector = str(
@@ -1351,6 +1360,9 @@ def _known_simulator_egress_inputs() -> dict[str, str]:
         value = str(os.getenv(name) or "").strip()
         if value:
             values[name] = value
+    catalogue = _noise_catalogue_setting()
+    if catalogue:
+        values["ALK_BACKGROUND_NOISE_CATALOG"] = catalogue
     return values
 
 

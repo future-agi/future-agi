@@ -161,7 +161,7 @@ LEVEL_LABELS: dict[str, str] = {
 # What each background a caller can be heard over sounds like, for the noise column only.
 NOISE_LABELS: dict[str, str] = {
     "quiet line": "Quiet line",
-    "present": "Unnamed place",
+    "present": "Background noise",
     "street": "Street",
     "vehicle": "In a car",
     "transit": "Airport / station",
