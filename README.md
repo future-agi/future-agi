@@ -129,13 +129,17 @@ pip install ai-evaluation
 
 **One command, full stack. Published images, no source build.**
 
+macOS / Linux / WSL
+
 ```bash
-# macOS / Linux / WSL
 git clone https://github.com/future-agi/future-agi.git
 cd future-agi
 ./bin/install
+```
 
-# Windows (PowerShell)
+Windows (PowerShell)
+
+```bash
 git clone https://github.com/future-agi/future-agi.git
 cd future-agi
 .\bin\install.ps1
@@ -147,11 +151,15 @@ Open [http://localhost:3000](http://localhost:3000).
 When upgrading an installation that already contains traces, initialize any
 inactive unified property catalogs explicitly after the new stack is healthy:
 
-```bash
-# macOS / Linux / WSL
-./bin/property-catalog-backfill --execute
+macOS / Linux / WSL
 
-# Windows PowerShell
+```bash
+./bin/property-catalog-backfill --execute
+```
+
+Windows (PowerShell)
+
+```bash
 .\bin\property-catalog-backfill.ps1 -Execute
 ```
 
