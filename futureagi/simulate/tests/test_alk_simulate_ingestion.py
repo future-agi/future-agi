@@ -269,15 +269,7 @@ class TestProvisionRunTest:
         ) == {row.id for row in rows}
 
     def test_provision_records_the_scenario_dataset_column_order(self, auth_client):
-        """`scenario_columns.situation.value` resolves only through `column_order`.
-
-        The walker's no-context branch reads that list and nothing else
-        (serializers/test_execution.py::get_scenario_columns, the fallback at
-        lines 931-933), and both eval runners build their subject with a bare
-        serializer, so they always take it. Without this the situation resolves
-        to an empty string on every harness call, silently, and no eval that
-        asks for `input` could be offered (design §4).
-        """
+        """`scenario_columns.situation.value` resolves only through `column_order`."""
         from model_hub.models.develop_dataset import Column
 
         resp = self._provision(
@@ -316,8 +308,7 @@ class TestProvisionRunTest:
         from simulate.temporal.activities.xl import walk_subject_path
 
         # `CallExecution` has no `run_test` field: the run test hangs off its
-        # `test_execution` (simulate/models/test_execution.py:40, :199), so the
-        # filter spans the relation or Django raises `FieldError`.
+        # `test_execution`, so the filter spans the relation.
         call = CallExecution.objects.filter(test_execution__run_test=run_test).first()
         if call is None:
             _execution_id, call_ids = _start_and_batch(auth_client, run_test)

@@ -1,11 +1,4 @@
-"""The environment's eval endpoints, over HTTP.
-
-Contract: api_contracts/harness/eval-offer-backend-frontend.md v1.7 — §1 (entry
-shape only), §2 P6, P6a, P7, §3 P8-P12 (fix round 1: `add_selected_eval`'s
-three-way gate change is now covered here — M2), §5 P16, P17. The remove
-refusals (P13-P15) and the run-level add (§6) belong to TH-8045 / TH-8046 and
-are not asserted here.
-"""
+"""The environment's eval endpoints, over HTTP."""
 
 from __future__ import annotations
 
@@ -43,12 +36,11 @@ def _template(name, required_keys, *, tags=("Conversation",), **extra):
 def _assert_catalog_key(name: str, *, listed: bool) -> None:
     """Fail loudly if a catalog edit changes whether ``name`` is a listed key.
 
-    These tests hard-code names against the pinned catalog lists (catalog
-    contract P11): some must clear the first offer gate and some must not.
-    ``offerable_eval_names()`` is the exact lookup the offer rule itself uses
-    (``harness_evals.py::_is_listed_or_owned``), so a catalog edit that adds or
-    drops one of these names breaks this guard loudly instead of leaving the
-    test passing for a different reason than its name claims.
+    These tests hard-code names against the pinned catalog lists.
+    ``offerable_eval_names()`` is the exact lookup the offer rule itself uses,
+    so a catalog edit that adds or drops one of these names breaks this guard
+    loudly instead of leaving the test passing for a different reason than
+    its name claims.
     """
     is_listed = name in offerable_eval_names()
     assert is_listed is listed, (
@@ -129,10 +121,10 @@ def _file_receipt(job, *, scenario_key="refund-request"):
     ``evaluations.results`` is built only from accepted receipts
     (services/harness_environment.py::_results); a test that wants to prove it
     is unchanged needs one filed first, or "unchanged" holds trivially of an
-    empty list either way (frontend contract P17). Registers a fresh attempt
-    (superseding the one the ``environment`` fixture used), begins the sealed
-    scenario set, then files a minimal ``skipped`` receipt — the cheapest
-    status the serializer accepts, needing no call or evaluation payload.
+    empty list either way. Registers a fresh attempt (superseding the one the
+    ``environment`` fixture used), begins the sealed scenario set, then files
+    a minimal ``skipped`` receipt — the cheapest status the serializer
+    accepts, needing no call or evaluation payload.
     """
     capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
     headers = _headers(capability)
@@ -178,13 +170,8 @@ def _file_receipt(job, *, scenario_key="refund-request"):
 
 @pytest.mark.django_db
 def test_available_sorted_and_excludes_selected(env_client, environment, workspace):
-    """P2, P3, P6: one shape, one agent kind, sorted by name, every entry
-    addable as it stands.
-
-    P6's other half — that a bound eval is excluded — is proved by
-    `test_available_subtracts_a_row_bound_under_the_harness_own_column_name`
-    below, which subtracts under the harder of the two names a row can carry.
-    """
+    """`available` returns one shape, one agent kind, sorted by name, every
+    entry addable as it stands."""
     # Created in alphabetical (not pinned) order so EvalTemplate's default
     # `-created_at` ordering would return the reverse list, proving the
     # `.order_by("name")` sort guard below actually bites.
@@ -231,19 +218,10 @@ def test_available_sorted_and_excludes_selected(env_client, environment, workspa
 def test_available_subtracts_a_row_bound_under_the_harness_own_column_name(
     env_client, environment, workspace
 ):
-    """P6a: the row ingestion makes for a harness result column is named after
-    that column, not after the template, so both names must be subtracted —
-    otherwise the eval is offered a second time under a second id.
-
-    Two rows are planted, one exercising each half of the subtraction:
-    ``no_misselling`` is bound under a column name that is neither offered
-    template's own name, and ``audio_quality`` is bound under the column name
-    ``conversation_coherence`` — a *different* template's own name (the
-    template-name half is proved by the first row, the config-name half by
-    this second one). Deleting either
-    ``names.add(...)`` line from ``_bound_eval_names`` puts one name back in
-    the offer and turns this red.
-    """
+    """A row ingestion makes for a harness result column is named after that
+    column, not after the template, so both names must be subtracted from
+    `available` — otherwise the eval is offered a second time under a second
+    id."""
     from simulate.services.alk_simulate_ingestion import (
         _get_or_create_harness_eval_config,
     )
@@ -274,7 +252,7 @@ def test_available_subtracts_a_row_bound_under_the_harness_own_column_name(
 
 @pytest.mark.django_db
 def test_selected_excludes_empty_mapping_rows(env_client, environment, workspace):
-    """P16: an empty-mapping row is bound but was never selected, so it is not
+    """An empty-mapping row is bound but was never selected, so it is not
     listed and does not count."""
     from simulate.services.alk_simulate_ingestion import (
         _get_or_create_harness_eval_config,
@@ -306,25 +284,14 @@ def test_selected_excludes_empty_mapping_rows(env_client, environment, workspace
     assert row["charges_judge_tokens"] is True
 
 
-# --- Adding an eval by hand (frontend §3 P8-P12; M2) --------------------------
-# `add_selected_eval` changed in three ways in this diff: the refusal gate
-# gained `_is_listed_or_owned`/`_has_relevant_tag`, the idempotency check now
-# matches the template's name as well as the config's, and the cap counts
-# mapping-bearing rows only (owner decision Q1). None of the three had a test
-# anywhere in the repo before this round; these four are the contract's own
-# names for this block (§11 P8-P12).
+# --- Adding an eval by hand ----------------------------------------------------
 
 
 @pytest.mark.django_db
 def test_add_idempotent(env_client, environment, workspace):
-    """P8: adding the same name twice returns 201 and leaves one config row.
-
-    Also proves the idempotency check's second half (M2 change 2): a name
-    already bound under a harness result-column name is not re-bound under
-    the template's own name either — `add_selected_eval` matches a pick
-    against both the config's stored name and its template's name, the same
-    two names `available` already subtracts on (P6a).
-    """
+    """Adding the same name twice returns 201 and leaves one config row; a
+    name already bound under a harness result-column name is not re-bound
+    under the template's own name either."""
     from simulate.services.alk_simulate_ingestion import (
         _get_or_create_harness_eval_config,
     )
@@ -365,17 +332,14 @@ def test_add_idempotent(env_client, environment, workspace):
 
 @pytest.mark.django_db
 def test_add_refusals(env_client, environment, workspace):
-    """P9, P12: the listed/tag gate, the unmappable-input gate (M2 change 1),
-    and an unknown body field.
+    """The listed/tag gate, the unmappable-input gate, and an unknown body
+    field.
 
-    The 256-character `too_long` case below 400s, but through
-    `HarnessEnvironmentSelectedEvalSerializer.name`'s `max_length=255`
-    (`views/harness_environment.py`'s `@validated_request` decorator runs the
-    serializer before the view body, let alone `add_selected_eval`, ever
-    sees the request) — **not** through `add_selected_eval`'s own
-    255-character gate (L1). Round 2, M2: that gate's own coverage is
-    `test_add_refuses_a_name_too_long_for_the_bound_row`, below, which calls
-    the service directly and cannot pass for this reason.
+    The 256-character `too_long` case below 400s through
+    `HarnessEnvironmentSelectedEvalSerializer.name`'s `max_length=255`, not
+    through `add_selected_eval`'s own 255-character gate — that gate's own
+    coverage is `test_add_refuses_a_name_too_long_for_the_bound_row` below,
+    which calls the service directly.
     """
     _assert_catalog_key("toxicity", listed=True)
     # chat-only tags; this environment's modality is voice
@@ -411,16 +375,11 @@ def test_add_refusals(env_client, environment, workspace):
 
 @pytest.mark.django_db
 def test_add_refuses_a_name_too_long_for_the_bound_row(environment, user, workspace):
-    """Round 2, M2: `add_selected_eval`'s own 255-character gate (L1),
-    exercised with no HTTP serializer in the way to answer for it. Delete
-    the `len(wanted) <= _MOST_NAME_CHARACTERS` guard in `add_selected_eval`
-    and this test fails; `test_add_refusals`'s HTTP-level 256-character case
-    would still pass either way, because the serializer refuses the request
-    before the service is ever called — which is exactly the gap this test
-    closes.
-
-    A template is planted under the over-long name first: without one, the
-    test would pass for the wrong reason (name simply not found).
+    """`add_selected_eval`'s own 255-character gate, exercised with no HTTP
+    serializer in the way to answer for it — the serializer would refuse the
+    request before the service is ever called, which is the gap this test
+    closes. A template is planted under the over-long name first, so the
+    test cannot pass merely because the name was never found.
     """
     from simulate.services.harness_evals import (
         _MOST_NAME_CHARACTERS,
@@ -443,15 +402,8 @@ def test_add_refuses_a_name_too_long_for_the_bound_row(environment, user, worksp
 
 @pytest.mark.django_db
 def test_add_cap_counts_mapping_rows_only(env_client, environment, workspace):
-    """M2 change 3 (owner decision Q1, frontend P10/P16): the cap of 8 counts
-    mapping-bearing rows only. Five empty-mapping harness-column rows are
-    bound first and must not eat into the cap; revert the cap line in
-    `add_selected_eval` to count every bound row instead
-    (`len(current) >= MOST_SELECTED_EVALS`) and the counter starts at the
-    five already-bound rows, so the **fourth** `cap_fillers` add below 409s,
-    not the eighth (L9: an earlier version of this docstring named the wrong
-    one — the test itself was always failing at the right place).
-    """
+    """The cap of 8 counts mapping-bearing rows only: five empty-mapping
+    harness-column rows are bound first and must not eat into the cap."""
     from simulate.services.alk_simulate_ingestion import (
         _get_or_create_harness_eval_config,
     )
@@ -503,12 +455,8 @@ def test_add_cap_counts_mapping_rows_only(env_client, environment, workspace):
 
 @pytest.mark.django_db
 def test_add_never_grades_finished_calls(env_client, environment, workspace):
-    """P11: adding an eval from here never grades a call that already
-    completed. The add endpoint binds a config and touches nothing else —
-    grading a finished call is the run-level add's job (§6, TH-8046), not
-    this one's. Planted as a dispatch spy: if `add_evaluation` ever started
-    dispatching the per-call grading task itself, this would catch it.
-    """
+    """Adding an eval from here never grades a call that already completed —
+    the add endpoint binds a config and touches nothing else."""
     from unittest.mock import patch
 
     _assert_catalog_key("no_misselling", listed=True)
@@ -525,7 +473,7 @@ def test_add_never_grades_finished_calls(env_client, environment, workspace):
 
 @pytest.mark.django_db
 def test_available_refusals(env_client, user, workspace):
-    """P7: the check is 'no run test yet', not a build state."""
+    """The check is 'no run test yet', not a build state."""
     job, _ = create_hosted_job(
         user.organization,
         _payload(),
@@ -541,14 +489,8 @@ def test_available_refusals(env_client, user, workspace):
 
 @pytest.mark.django_db
 def test_available_refusals_404(env_client, workspace):
-    """P7, the other half: an environment the caller cannot see is a 404, and a
-    hand-edited id that is not a UUID must be a miss, not a 500.
-
-    Neither id below belongs to a real environment, so this needs no
-    `environment` fixture (Minor #22, round 2) — the fixture used to be
-    requested and never used, costing a whole provision cycle per run for
-    nothing.
-    """
+    """An environment the caller cannot see is a 404, and a hand-edited id
+    that is not a UUID must be a miss, not a 500."""
     import uuid
 
     missing = env_client.get(
@@ -567,14 +509,8 @@ def test_available_refusals_404(env_client, workspace):
 
 @pytest.mark.django_db
 def test_results_unchanged(env_client, environment, workspace):
-    """P17: `evaluations.results[]` is the receipt-based list and adding a
-    platform eval leaves it byte-identical.
-
-    Task 7 rewrites the function that builds `selected[]`, the sibling key in
-    the same block, so this pins the one that must not move. Platform verdicts
-    are read from call details (§7), never from here. A receipt is filed
-    before the snapshot, so the comparison below is not `"[]" == "[]"`.
-    """
+    """`evaluations.results[]` is the receipt-based list; adding a platform
+    eval leaves it byte-identical."""
     from simulate.services.harness_evals import add_selected_eval
 
     _assert_catalog_key("no_misselling", listed=True)
@@ -599,21 +535,11 @@ def test_results_unchanged(env_client, environment, workspace):
     ], "the add must have landed, or the comparison above proves nothing"
 
 
-# --- Reviewer findings -------------------------------------------------------
-# Every reviewer finding that survives verification becomes a test here, named
-# after the finding (design §11). Do not delete this header; add below it.
-
-
 @pytest.mark.django_db
 def test_available_not_visible_across_workspaces(env_client, user, workspace):
-    """P7: an environment that exists, but in a workspace the caller did not
-    ask for, is a 404 — not a 403 and not a 200 leaking another tenant's data.
-
-    Failing scenario this catches: drop the `scope_jobs(...)` wrapper around
-    `_queryset` (views/harness_environment.py), and every other test in the
-    repo still passes while one workspace could read another workspace's
-    environment evals.
-    """
+    """An environment that exists, but in a workspace the caller did not ask
+    for, is a 404 — not a 403 and not a 200 leaking another tenant's
+    data."""
     from accounts.models.workspace import Workspace
 
     other_workspace = Workspace.objects.create(
@@ -638,13 +564,9 @@ def test_available_not_visible_across_workspaces(env_client, user, workspace):
 def test_selected_required_keys_stays_aligned_with_the_stored_mapping(
     env_client, environment, workspace
 ):
-    """L6: `selected[]`'s `required_keys` must keep frontend P1's invariant —
-    exactly one `inputs` row per name in `required_keys` — even after the
-    template is edited post-bind. Before the fix, `required_keys` came from
-    the *live* template while `inputs` came from the *stored* mapping: adding
-    a required key to the template after the eval was already selected would
-    return two `required_keys` and one `inputs` row for the same entry.
-    """
+    """`selected[]`'s `required_keys` must keep exactly one `inputs` row per
+    name, even after the template is edited post-bind — not two
+    `required_keys` and one `inputs` row for the same entry."""
     from simulate.services.harness_evals import add_selected_eval
 
     _assert_catalog_key("no_misselling", listed=True)
@@ -662,32 +584,17 @@ def test_selected_required_keys_stays_aligned_with_the_stored_mapping(
     assert len(row["inputs"]) == len(row["required_keys"])
 
 
-# --- Round 2 findings (M1, M2, M4, Lows, carried Minors) ---------------------
-
-
 @pytest.mark.django_db
 def test_a_custom_eval_may_not_shadow_a_catalog_name(
     env_client, environment, workspace, user
 ):
-    """M1: `EvalTemplate.name` has no uniqueness constraint (`model_hub/models/evals_metric.py`
-    declares no `Meta`/`UniqueConstraint` on it), and the product can end up
-    with a tenant's custom eval sharing a name with a catalog eval — the
-    catalog is periodically re-seeded (`seed_system_evals.py`, via
-    `bulk_create`/`bulk_update`, which run no `clean()`/`full_clean()` at
-    all), so a system eval can be added or renamed to a name a tenant already
-    uses for their own custom eval without either side ever checking the
-    other. (`EvalTemplate.clean()` *does* block a **custom** row from being
-    saved under a name an **existing** system row already has — which is why
-    this test plants the custom row first, then the system row: the
-    model-level check only runs for `owner == "user"` saves and only looks
-    backwards, so it cannot stop a system row arriving second under a name
-    already in use.) Before the fix, `available` could list the name twice,
-    `add` bound whichever row `.filter(name=wanted).first()`'s `-created_at`
-    ordering returned, and provisioning's name-keyed `found` dict kept
-    whichever row a `.filter(name__in=...)` queryset happened to return
-    last — three different, uncoordinated answers. By owner decision, the
-    tenant's own row wins; this test plants both, so ``system`` alone would
-    fail every assertion below.
+    """`EvalTemplate.name` has no uniqueness constraint, so a tenant's custom
+    eval can share a name with a catalog eval. The tenant's own row must win
+    in every path — `available`, `add`, and provisioning.
+
+    The custom row is planted before the system row: `EvalTemplate.clean()`
+    blocks a custom row from being saved under a name an existing system row
+    already has, so this is the only order that can exist.
     """
     _assert_catalog_key("conversation_coherence", listed=True)
     mine = _template(
@@ -724,14 +631,8 @@ def test_a_custom_eval_may_not_shadow_a_catalog_name(
 
 @pytest.mark.django_db
 def test_add_a_custom_eval_by_hand(env_client, environment, workspace, user):
-    """L10: the whole point of replacing the old `wanted not in
-    offerable_eval_names()` gate with `_is_listed_or_owned` is that a
-    tenant's own custom eval — never a catalog key — can now be added by
-    hand. Nothing exercised the ownership half of that gate on its own
-    before this test: `test_add_refusals` only proves the tag half
-    (`toxicity` is refused by its tags whether or not `_is_listed_or_owned`
-    runs at all).
-    """
+    """A tenant's own custom eval — never a catalog key — can be added by
+    hand."""
     mine = _template(
         "my_custom_conversation_check",
         ["conversation"],
@@ -750,8 +651,8 @@ def test_add_a_custom_eval_by_hand(env_client, environment, workspace, user):
 
 @pytest.mark.django_db
 def test_add_refuses_another_organizations_template(env_client, environment, workspace):
-    """L10: another tenant's custom template must be refused at the add
-    endpoint, not just silently absent from `available`."""
+    """Another tenant's custom template must be refused at the add endpoint,
+    not just silently absent from `available`."""
     from accounts.models.organization import Organization
 
     other_org = Organization.objects.create(name="A different organisation")
@@ -776,15 +677,9 @@ def test_add_refuses_another_organizations_template(env_client, environment, wor
 def test_selected_and_available_agree_on_required_keys_order(
     env_client, environment, workspace
 ):
-    """M4: `selected[]`'s `required_keys` must keep the template's *stored*
-    order, the same order `available[]` reports — not `sorted(mapping)`.
-    Frontend contract P1 promises `required_keys` in stored order and
-    explicitly *not* aligned with `inputs` (which is sorted); a sorted
-    `required_keys` on `selected[]` breaks both halves of that promise at
-    once and makes the two lists byte-identical in order, which P1 forbids.
-    Two required keys, so the order is actually observable — a one-key
-    template (as `test_selected_required_keys_stays_aligned_with_the_stored_mapping`
-    uses) cannot see this.
+    """`selected[]`'s `required_keys` must keep the template's stored order,
+    the same order `available[]` reports — not `sorted(mapping)`. Two
+    required keys, so the order is actually observable.
     """
     _assert_catalog_key("conversation_hallucination", listed=True)
     _template(
@@ -819,10 +714,8 @@ def test_selected_and_available_agree_on_required_keys_order(
 
 @pytest.mark.django_db
 def test_available_not_visible_across_organizations(env_client, workspace, user):
-    """Carried Minor #20: only cross-workspace visibility had a test; an
-    environment belonging to an entirely different organisation must 404
-    too, not merely be excluded by the workspace check.
-    """
+    """An environment belonging to an entirely different organisation must
+    404 too, not merely be excluded by the workspace check."""
     from accounts.models.organization import Organization
     from accounts.models.workspace import Workspace
 
@@ -845,26 +738,12 @@ def test_available_not_visible_across_organizations(env_client, workspace, user)
     assert response.json()["detail"] == "Environment not found"
 
 
-# --- Round 3 findings (M1, L2) ------------------------------------------------
-
-
 @pytest.mark.django_db
 def test_selected_inputs_never_outnumber_required_keys(
     env_client, environment, workspace
 ):
-    """M1: P1 in the direction round 2's M4 fix left open — the template
-    drops a required key after the bind. Round 2's intersect
-    (`entry["required_keys"] = [... if key in (config.mapping or {})]`) can
-    only ever *shorten* `required_keys` relative to the template's live
-    keys; `inputs` was still built from the whole stored mapping, so a
-    template that drops a key it used to require left `inputs` with *more*
-    rows than `required_keys` had names — the mirror image of L6's
-    "template gains a key" case above. Narrowing the mapping `eval_entry`
-    builds `inputs` from to the same live `required_keys` set (`services/
-    harness_environment.py::_selected_evals`) closes it: revert that
-    narrowing back to `dict(config.mapping or {})` and this fails with two
-    `inputs` rows for one `required_keys` entry.
-    """
+    """`selected[]`'s `inputs` must never outnumber `required_keys`, even
+    when the template drops a required key after the bind."""
     from simulate.services.harness_evals import add_selected_eval
 
     _assert_catalog_key("conversation_hallucination", listed=True)
@@ -888,16 +767,9 @@ def test_selected_inputs_never_outnumber_required_keys(
 
 @pytest.mark.django_db
 def test_add_refuses_a_too_long_name_with_its_own_reason(environment, user, workspace):
-    """L2: the 255-character gate must report its own reason rather than
-    reusing "not an eval this environment can be graded by" — the same
-    sentence `add_selected_eval` also raises for "another tenant's" and
-    "wrong tag" (`test_add_refuses_another_organizations_template` above,
-    `test_add_refusals`'s tag case). A direct service caller — the only
-    caller this gate exists for (round 1's L1) — cannot otherwise tell a
-    length problem from an eligibility one. A template is planted under the
-    over-long name first, the same way
-    `test_add_refuses_a_name_too_long_for_the_bound_row` does, so the test
-    cannot pass merely because the name was never found.
+    """The 255-character gate must report its own reason rather than reusing
+    "not an eval this environment can be graded by", the same sentence
+    `add_selected_eval` also raises for "another tenant's" and "wrong tag".
     """
     from simulate.services.harness_evals import (
         _MOST_NAME_CHARACTERS,
