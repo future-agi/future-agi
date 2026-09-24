@@ -63,10 +63,10 @@ export default function useScenarioPage({
       const name = row.group ?? "";
       const last = out[out.length - 1];
       if (last && last.name === name) last.rows.push(row);
-      else out.push({ id: `${appliedGroupBy}:${name}`, name, label: name, rows: [row] });
+      else out.push({ id: `${appliedGroupBy}:${name}`, name, label: levelLabels[name] ?? name, rows: [row] });
     }
     return out.map((g) => ({ ...g, totalInGroup: groupCounts[g.name] ?? g.rows.length }));
-  }, [rows, appliedGroupBy, groupCounts]);
+  }, [rows, appliedGroupBy, groupCounts, levelLabels]);
 
   const pageIds = useMemo(() => rows.map((r) => r.id).filter(Boolean), [rows]);
 

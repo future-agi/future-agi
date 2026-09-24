@@ -379,7 +379,7 @@ export default function ScenarioEditForm({
           variant="contained"
           size="small"
           disabled={busy || !dirty}
-          onClick={() => onSave(form)}
+          onClick={() => onSave(form, initial)}
           sx={{ typography: "s2", fontWeight: 700 }}
         >
           Save scenario

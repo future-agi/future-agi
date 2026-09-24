@@ -286,48 +286,52 @@ export default function ScenarioSuite({
 
   // One edit, two kinds of change. The descriptive fields are written straight to the scenario;
   // the persona may still turn out to matter for this agent, and the harness decides that, not us.
-  const saveScenario = (form) => {
+  const saveScenario = (form, before = {}) => {
     // One scenario at a time. Each scenario's checks are its own, so there is nothing sensible
     // to apply across a selection: a shared "passes when" would erase what makes each a test.
     const naming = { scenario: editing.name };
     const offered = (field) => (editableFields || []).includes(field);
+    const changed = (key) => JSON.stringify(form[key]) !== JSON.stringify(before[key]);
     const changes = [
-      { op: "set_field", ...naming, field: "tests", value: form.tests },
-      { op: "set_field", ...naming, field: "keywords", value: form.keywords },
+      changed("tests") && { op: "set_field", ...naming, field: "tests", value: form.tests },
+      changed("keywords") && { op: "set_field", ...naming, field: "keywords", value: form.keywords },
       offered("max_turns") &&
+        changed("max_turns") &&
         form.max_turns != null && {
           op: "set_field",
           ...naming,
           field: "max_turns",
           value: form.max_turns,
         },
-      offered("background_noise") && {
-        op: "set_field",
-        ...naming,
-        field: "background_noise",
-        value: noiseValue(form.background_noise),
-      },
+      offered("background_noise") &&
+        changed("background_noise") && {
+          op: "set_field",
+          ...naming,
+          field: "background_noise",
+          value: noiseValue(form.background_noise),
+        },
     ].filter(Boolean);
     if (editing.persona) {
-      const persona = {
-        personality: form.personality,
-        communication_style: form.communication_style,
-        accent: form.accent,
-        languages: form.languages,
-        occupation: form.occupation,
-        location: form.location,
-      };
-      changes.push({
-        op: "set_persona",
-        ...naming,
-        persona: personaFields
-          ? Object.fromEntries(
-              Object.entries(persona).filter(([key]) =>
-                personaFields.includes(key),
-              ),
-            )
-          : persona,
-      });
+      const persona = Object.fromEntries(
+        [
+          "personality",
+          "communication_style",
+          "accent",
+          "languages",
+          "occupation",
+          "location",
+        ]
+          .filter((key) => !personaFields || personaFields.includes(key))
+          .filter(changed)
+          .map((key) => [key, form[key]]),
+      );
+      if (Object.keys(persona).length) {
+        changes.push({ op: "set_persona", ...naming, persona });
+      }
+    }
+    if (!changes.length) {
+      setEditing(null);
+      return;
     }
     send(changes, { rework: true });
   };
