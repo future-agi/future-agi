@@ -31,14 +31,26 @@ const EditEvaluation = ({
     data: evalConfig,
     isError,
   } = useQuery({
-    queryKey: ["develop", "eval-template-config", configureEval?.id],
+    queryKey: [
+      "develop",
+      "eval-template-config",
+      configureEval?.id,
+      isExperimentPage ? experimentId : null,
+    ],
     queryFn: () =>
       axios.get(
         endpoints.develop.eval.getPreviouslyConfiguredEvalTemplateConfig(
           dataset,
           configureEval?.id,
         ),
-        { params: { eval_type: "user" } },
+        {
+          params: {
+            eval_type: "user",
+            ...(isExperimentPage && experimentId
+              ? { experiment_id: experimentId }
+              : {}),
+          },
+        },
       ),
     select: (d) => {
       if (d.data?.status === false) return null;

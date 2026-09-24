@@ -21124,6 +21124,7 @@ export const ModelHubDevelopsGetEvalStructureReadParams = zod.object({
 
 export const ModelHubDevelopsGetEvalStructureReadQueryParams = zod.object({
   eval_type: zod.enum(["preset", "user", "previously_configured"]),
+  experiment_id: zod.string().uuid().optional(),
 });
 
 export const ModelHubDevelopsGetEvalStructureReadResponse = zod.object({

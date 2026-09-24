@@ -37,6 +37,7 @@ from model_hub.models.evals_metric import (
     EvalTemplate,
     UserEvalMetric,
 )
+from model_hub.models.experiments import ExperimentsTable
 from tfc.middleware.workspace_context import set_workspace_context
 
 
@@ -2593,3 +2594,176 @@ class TestEvaluationOrganizationIsolation:
             status.HTTP_403_FORBIDDEN,
             status.HTTP_500_INTERNAL_SERVER_ERROR,
         ]
+
+
+@pytest.fixture
+def experiment_eval_scope(
+    db, dataset, organization, workspace, eval_template, output_column
+):
+    """An experiment whose evals live on its snapshot dataset, as the create flow writes them."""
+    snapshot = Dataset.objects.create(
+        name="[Snapshot] Test Dataset",
+        organization=organization,
+        workspace=workspace,
+        source=DatasetSourceChoices.EXPERIMENT_SNAPSHOT.value,
+    )
+    experiment = ExperimentsTable.objects.create(
+        name="Test Experiment",
+        dataset=dataset,
+        column=output_column,
+        status=StatusType.COMPLETED.value,
+        snapshot_dataset=snapshot,
+    )
+
+    def add_eval(name):
+        metric = UserEvalMetric.objects.create(
+            name=name,
+            dataset=snapshot,
+            organization=organization,
+            workspace=workspace,
+            template=eval_template,
+            status=StatusType.EXPERIMENT_EVALUATION.value,
+            source_id=str(experiment.id),
+            config={},
+        )
+        experiment.user_eval_template_ids.add(metric)
+        return metric
+
+    return SimpleNamespace(
+        dataset=dataset,
+        snapshot=snapshot,
+        experiment=experiment,
+        add_eval=add_eval,
+    )
+
+
+@pytest.mark.django_db
+class TestExperimentScopedEvalLookup:
+    """Experiment evals are reachable from the dataset id the experiment page carries."""
+
+    def test_configure_eval_opens_for_an_experiment_eval(
+        self, auth_client, experiment_eval_scope
+    ):
+        scope = experiment_eval_scope
+        metric = scope.add_eval("Experiment Eval")
+
+        response = auth_client.get(
+            f"/model-hub/develops/{scope.dataset.id}/get_eval_structure/{metric.id}/"
+            f"?eval_type=user&experiment_id={scope.experiment.id}"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["eval"]["id"] == str(metric.id)
+
+    def test_configure_eval_still_opens_for_a_dataset_eval(
+        self, auth_client, dataset, user_eval_metric
+    ):
+        response = auth_client.get(
+            f"/model-hub/develops/{dataset.id}/get_eval_structure/{user_eval_metric.id}/"
+            f"?eval_type=user"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["eval"]["id"] == str(user_eval_metric.id)
+
+    def test_configure_eval_refuses_an_experiment_on_another_dataset(
+        self, auth_client, experiment_eval_scope, organization, workspace, output_column
+    ):
+        scope = experiment_eval_scope
+        metric = scope.add_eval("Experiment Eval")
+        unrelated_dataset = Dataset.objects.create(
+            name="Unrelated Dataset",
+            organization=organization,
+            workspace=workspace,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        unrelated_experiment = ExperimentsTable.objects.create(
+            name="Unrelated Experiment",
+            dataset=unrelated_dataset,
+            status=StatusType.COMPLETED.value,
+        )
+
+        response = auth_client.get(
+            f"/model-hub/develops/{scope.dataset.id}/get_eval_structure/{metric.id}/"
+            f"?eval_type=user&experiment_id={unrelated_experiment.id}"
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_configure_eval_refuses_an_eval_from_a_different_experiment(
+        self, auth_client, experiment_eval_scope, output_column
+    ):
+        scope = experiment_eval_scope
+        metric = scope.add_eval("Experiment Eval")
+        sibling_experiment = ExperimentsTable.objects.create(
+            name="Sibling Experiment",
+            dataset=scope.dataset,
+            column=output_column,
+            status=StatusType.COMPLETED.value,
+        )
+
+        response = auth_client.get(
+            f"/model-hub/develops/{scope.dataset.id}/get_eval_structure/{metric.id}/"
+            f"?eval_type=user&experiment_id={sibling_experiment.id}"
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_a_malformed_experiment_id_is_not_found_rather_than_an_error(
+        self, auth_client, experiment_eval_scope
+    ):
+        scope = experiment_eval_scope
+        metric = scope.add_eval("Experiment Eval")
+
+        response = auth_client.delete(
+            f"/model-hub/develops/{scope.dataset.id}/delete_user_eval/{metric.id}/",
+            {"delete_column": False, "experiment_id": "not-a-uuid"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_stopping_an_experiment_eval_finds_it(
+        self, auth_client, experiment_eval_scope
+    ):
+        scope = experiment_eval_scope
+        metric = scope.add_eval("Experiment Eval")
+
+        response = auth_client.post(
+            f"/model-hub/develops/{scope.dataset.id}/stop_user_eval/{metric.id}/",
+            {"experiment_id": str(scope.experiment.id)},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+
+    def test_editing_an_experiment_eval_finds_it(
+        self, auth_client, experiment_eval_scope
+    ):
+        scope = experiment_eval_scope
+        metric = scope.add_eval("Experiment Eval")
+
+        response = auth_client.post(
+            f"/model-hub/develops/{scope.dataset.id}/edit_and_run_user_eval/{metric.id}/",
+            {"config": {}, "experiment_id": str(scope.experiment.id)},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+
+    def test_deleting_an_experiment_eval_finds_it(
+        self, auth_client, experiment_eval_scope
+    ):
+        scope = experiment_eval_scope
+        metric = scope.add_eval("Experiment Eval")
+        scope.add_eval("Second Experiment Eval")
+
+        response = auth_client.delete(
+            f"/model-hub/develops/{scope.dataset.id}/delete_user_eval/{metric.id}/",
+            {"delete_column": True, "experiment_id": str(scope.experiment.id)},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        metric.refresh_from_db()
+        assert metric.deleted is True

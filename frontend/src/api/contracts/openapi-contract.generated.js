@@ -16730,6 +16730,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
               enum: ["preset", "user", "previously_configured"],
             },
           },
+          experiment_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
         },
         responses: {
           200: {
