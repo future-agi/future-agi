@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
 import {
   Box, Stack, Typography, Button, TextField, Slider,
@@ -27,7 +27,34 @@ const selectedToggleSx = (t) => ({
 // the ones safe to change directly — name, use case, branch, task, passes-when,
 // sub-goals, the persona, and (on conversational / voice surfaces) the caller
 // and call constraints. Saving writes the whole draft back through `onSave`.
+// The drawer shell. The editor body is keyed by the row's id, so opening a
+// different scenario mounts a fresh draft while a poll that hands down an
+// equal-but-new `row` object leaves the one being edited alone. The body used to
+// sync its draft from `row` through an effect, which wiped a half-typed edit
+// every time the parent re-rendered.
 export default function ScenarioEditor({ open, onClose, row, env, onSave }) {
+  if (!row) return null;
+  return (
+    <ScenarioEditorBody
+      key={row.id}
+      open={open}
+      onClose={onClose}
+      row={row}
+      env={env}
+      onSave={onSave}
+    />
+  );
+}
+
+ScenarioEditor.propTypes = {
+  open: PropTypes.bool,
+  onClose: PropTypes.func,
+  row: SCENARIO_SHAPE,
+  env: ENV_SHAPE,
+  onSave: PropTypes.func,
+};
+
+function ScenarioEditorBody({ open, onClose, row, env, onSave }) {
   // The normalised opening state, once per row. Caller / noise / sub-goals are
   // filled from the row's own data (sub-goals through the same derivation the
   // table renders), so the drawer opens populated and `dirty` compares against
@@ -44,9 +71,6 @@ export default function ScenarioEditor({ open, onClose, row, env, onSave }) {
   }, [row, env]);
 
   const [draft, setDraft] = useState(base || {});
-  useEffect(() => { if (base) setDraft(base); }, [base]);
-
-  if (!row) return null;
 
   const set = (k) => (v) => setDraft((d) => ({ ...d, [k]: v }));
   const setCaller = (k) => (v) => setDraft((d) => ({ ...d, caller: { ...(d.caller || {}), [k]: v } }));
@@ -218,7 +242,7 @@ export default function ScenarioEditor({ open, onClose, row, env, onSave }) {
   );
 }
 
-ScenarioEditor.propTypes = {
+ScenarioEditorBody.propTypes = {
   open: PropTypes.bool,
   onClose: PropTypes.func,
   row: SCENARIO_SHAPE,

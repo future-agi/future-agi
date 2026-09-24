@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { alpha } from "@mui/material/styles";
 import {
   Box, Stack, Typography, Table, TableBody, TableCell, TableHead, TableRow,
@@ -40,16 +40,24 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove }) {
   );
   const [selected, setSelected] = useState(() => new Set(allIds));
 
-  // When the ids in the table change (row added / removed), grow the selection
-  // to include newly-visible rows and drop ones that no longer exist. Preserves
-  // user opt-outs on rows that survived the change.
+  // When the ids in the table change (row added / removed), select the newly
+  // visible rows and drop ones that no longer exist. `allIds` gets a new
+  // identity whenever the parent rebuilds its rows array — on every poll, say —
+  // so "new" has to be measured against the ids this effect last saw, not
+  // against the current selection: comparing with the selection made every
+  // unchecked row look new and silently re-checked it.
+  const knownIdsRef = useRef(allIds);
   useEffect(() => {
+    const known = knownIdsRef.current;
+    const added = allIds.filter((id) => !known.includes(id));
+    const removed = known.filter((id) => !allIds.includes(id));
+    knownIdsRef.current = allIds;
+    if (!added.length && !removed.length) return;
     setSelected((prev) => {
       const next = new Set(prev);
-      let dirty = false;
-      allIds.forEach((id) => { if (!next.has(id) && !prev.has(id)) { next.add(id); dirty = true; } });
-      Array.from(next).forEach((id) => { if (!allIds.includes(id)) { next.delete(id); dirty = true; } });
-      return dirty ? next : prev;
+      added.forEach((id) => next.add(id));
+      removed.forEach((id) => next.delete(id));
+      return next;
     });
   }, [allIds]);
 
@@ -98,6 +106,7 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove }) {
                   {isSelect ? (
                     <Checkbox
                       size="small"
+                      inputProps={{ "aria-label": SCENARIOS_COPY.selectAll }}
                       checked={allChecked}
                       indeterminate={someChecked}
                       onChange={toggleAll}
@@ -154,6 +163,9 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove }) {
                     <TableCell padding="checkbox" sx={{ pl: 1.5, verticalAlign: "top" }}>
                       <Checkbox
                         size="small"
+                        inputProps={{
+                          "aria-label": SCENARIOS_COPY.selectRow(row.name || row.title || row.id),
+                        }}
                         checked={selected.has(row.id)}
                         onChange={() => toggle(row.id)}
                         sx={selectableCheckboxSx}

@@ -22,6 +22,8 @@ export const SCENARIOS_COPY = {
   emptyBody:
     "Scenarios are normally derived from your agent when the environment is built.",
   critical: "Critical — a failure here is a release blocker",
+  selectAll: "Select all scenarios",
+  selectRow: (name) => `Select ${name}`,
 };
 
 const humanize = (s = "") =>

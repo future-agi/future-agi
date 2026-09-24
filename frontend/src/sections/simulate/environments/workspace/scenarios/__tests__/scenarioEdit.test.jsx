@@ -4,6 +4,7 @@ import { render, screen, fireEvent } from "src/utils/test-utils";
 import { MOCK_WORLD } from "src/api/simulate-environments/_fixtures/world";
 import { generatedPool } from "src/api/simulate-environments/_fixtures/scenarioPool";
 import ScenariosStep from "../ScenariosStep";
+import ScenarioEditor from "../ScenarioEditor";
 import AddScenariosDrawer from "../AddScenariosDrawer";
 
 const env = MOCK_WORLD;
@@ -75,5 +76,67 @@ describe("ScenariosStep — edit", () => {
     expect(next).toHaveLength(12);
     const edited = next.find((s) => s.id === rows[0].id);
     expect(edited.name).toBe("renamed-scenario");
+  });
+});
+
+describe("ScenarioEditor draft", () => {
+  const row = {
+    id: "s1",
+    name: "original-name",
+    useCase: "Refunds",
+    situation: "A caller wants a refund.",
+    expected: "Agent refuses.",
+  };
+
+  const renderEditor = (r) =>
+    render(
+      <ScenarioEditor open row={r} env={env} onClose={vi.fn()} onSave={vi.fn()} />,
+    );
+
+  it("keeps an in-progress edit when the same row arrives as a new object", () => {
+    const { rerender } = renderEditor(row);
+    const nameField = screen.getAllByLabelText("Name", { selector: "input" })[0];
+
+    fireEvent.change(nameField, { target: { value: "half-typed" } });
+    expect(screen.getAllByLabelText("Name", { selector: "input" })[0]).toHaveValue(
+      "half-typed",
+    );
+
+    // A poll re-renders the parent, handing down an equal-but-new row object.
+    rerender(
+      <ScenarioEditor
+        open
+        row={{ ...row }}
+        env={env}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByLabelText("Name", { selector: "input" })[0]).toHaveValue(
+      "half-typed",
+    );
+  });
+
+  it("re-opens on a different row with that row's values", () => {
+    const { rerender } = renderEditor(row);
+    fireEvent.change(
+      screen.getAllByLabelText("Name", { selector: "input" })[0],
+      { target: { value: "half-typed" } },
+    );
+
+    rerender(
+      <ScenarioEditor
+        open
+        row={{ ...row, id: "s2", name: "second-name" }}
+        env={env}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByLabelText("Name", { selector: "input" })[0]).toHaveValue(
+      "second-name",
+    );
   });
 });
