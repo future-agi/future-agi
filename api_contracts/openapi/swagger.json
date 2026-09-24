@@ -122117,10 +122117,6 @@
                 "config": {
                     "title": "Config",
                     "type": "object",
-                    "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
-                    },
                     "default": {}
                 },
                 "secret_refs": {
@@ -125917,6 +125913,11 @@
                 },
                 "skipped": {
                     "title": "Skipped",
+                    "type": "boolean"
+                },
+                "removed": {
+                    "title": "Removed",
+                    "description": "Present and true only when the eval was removed from the environment; a live eval's verdict omits the key entirely.",
                     "type": "boolean"
                 },
                 "error_localizer": {

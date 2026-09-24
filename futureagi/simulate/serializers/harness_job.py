@@ -123,7 +123,13 @@ class HarnessAgentSerializer(serializers.Serializer):
             "dials the simulated caller. Voice connectors only."
         ),
     )
-    config = serializers.DictField(default=dict)
+    # A JSONField, not a DictField: the OpenAPI generator renders an untyped
+    # DictField as a map of strings, and the frontend's generated request
+    # validator then rejects the booleans the preflight and build forms
+    # send here (`inbound`, `target_speaks_first`), which the backend reads
+    # as booleans. A JSONField renders as a plain object; `validate_config`
+    # still requires an object and rejects secrets.
+    config = serializers.JSONField(default=dict)
     secret_refs = serializers.DictField(
         child=SecretReferenceSerializer(), required=False, default=dict
     )

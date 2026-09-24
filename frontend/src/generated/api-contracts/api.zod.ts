@@ -35125,9 +35125,28 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
   evaluations: zod.object({
     selected: zod.array(
       zod.object({
-        id: zod.string().uuid(),
-        name: zod.string(),
+        name: zod.string().min(1),
         description: zod.string(),
+        source: zod.enum(["system", "custom"]),
+        tags: zod.array(zod.string().min(1)),
+        required_keys: zod.array(zod.string().min(1)),
+        agent_type: zod.enum(["voice", "chat"]),
+        modality: zod.enum(["voice", "text", "any"]),
+        credits_per_run: zod.number(),
+        charges_judge_tokens: zod.boolean(),
+        inputs: zod.array(
+          zod.object({
+            key: zod.string().min(1),
+            source: zod.enum([
+              "voice_recording",
+              "transcript",
+              "agent_prompt",
+              "scenario_columns.situation.value",
+            ]),
+            label: zod.string().min(1),
+          }),
+        ),
+        id: zod.string().uuid(),
         runnable: zod.boolean(),
       }),
     ),
@@ -35318,9 +35337,28 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
   evaluations: zod.object({
     selected: zod.array(
       zod.object({
-        id: zod.string().uuid(),
-        name: zod.string(),
+        name: zod.string().min(1),
         description: zod.string(),
+        source: zod.enum(["system", "custom"]),
+        tags: zod.array(zod.string().min(1)),
+        required_keys: zod.array(zod.string().min(1)),
+        agent_type: zod.enum(["voice", "chat"]),
+        modality: zod.enum(["voice", "text", "any"]),
+        credits_per_run: zod.number(),
+        charges_judge_tokens: zod.boolean(),
+        inputs: zod.array(
+          zod.object({
+            key: zod.string().min(1),
+            source: zod.enum([
+              "voice_recording",
+              "transcript",
+              "agent_prompt",
+              "scenario_columns.situation.value",
+            ]),
+            label: zod.string().min(1),
+          }),
+        ),
+        id: zod.string().uuid(),
         runnable: zod.boolean(),
       }),
     ),
@@ -35408,8 +35446,25 @@ export const SimulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsRespon
       zod.object({
         name: zod.string().min(1),
         description: zod.string(),
+        source: zod.enum(["system", "custom"]),
+        tags: zod.array(zod.string().min(1)),
         required_keys: zod.array(zod.string().min(1)),
+        agent_type: zod.enum(["voice", "chat"]),
         modality: zod.enum(["voice", "text", "any"]),
+        credits_per_run: zod.number(),
+        charges_judge_tokens: zod.boolean(),
+        inputs: zod.array(
+          zod.object({
+            key: zod.string().min(1),
+            source: zod.enum([
+              "voice_recording",
+              "transcript",
+              "agent_prompt",
+              "scenario_columns.situation.value",
+            ]),
+            label: zod.string().min(1),
+          }),
+        ),
       }),
     ),
   });
@@ -35785,7 +35840,8 @@ export const SimulateApiHarnessJobsCreateBody = zod.object({
         "inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.",
       ),
     config: zod
-      .record(zod.string(), zod.string())
+      .object({})
+      .passthrough()
       .default(simulateApiHarnessJobsCreateBodyAgentConfigDefault),
     secret_refs: zod
       .record(
@@ -36119,7 +36175,8 @@ export const SimulateApiHarnessJobsPreflightBody = zod.object({
         "inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.",
       ),
     config: zod
-      .record(zod.string(), zod.string())
+      .object({})
+      .passthrough()
       .default(simulateApiHarnessJobsPreflightBodyAgentConfigDefault),
     secret_refs: zod
       .record(
@@ -40106,6 +40163,12 @@ export const SimulateCallExecutionsReadResponse = zod.object({
         error: zod.boolean().optional(),
         status: zod.string().optional(),
         skipped: zod.boolean().optional(),
+        removed: zod
+          .boolean()
+          .optional()
+          .describe(
+            "Present and true only when the eval was removed from the environment; a live eval's verdict omits the key entirely.",
+          ),
         error_localizer: zod.boolean().optional(),
         error_analysis: zod.object({}).passthrough().optional(),
         error_localizer_status: zod.string().optional(),
@@ -45795,6 +45858,12 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
         error: zod.boolean().optional(),
         status: zod.string().optional(),
         skipped: zod.boolean().optional(),
+        removed: zod
+          .boolean()
+          .optional()
+          .describe(
+            "Present and true only when the eval was removed from the environment; a live eval's verdict omits the key entirely.",
+          ),
         error_localizer: zod.boolean().optional(),
         error_analysis: zod.object({}).passthrough().optional(),
         error_localizer_status: zod.string().optional(),
