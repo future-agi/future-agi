@@ -95,6 +95,17 @@ describe("SystemBanners", () => {
     expect(screen.getByText(/5 of 7 steps done/)).toBeInTheDocument();
   });
 
+  it("renders no building banner for a terminally failed build", () => {
+    const { container } = render(
+      <SystemBanners
+        env={{ ...ENV, buildStatus: "failed", buildProgress: { done: 3, total: 7 } }}
+        envState={{ scenarios: [1, 2, 3] }}
+        patch={vi.fn()}
+      />
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
   it("renders nothing on a latest, ready environment", () => {
     const { container } = render(
       <SystemBanners env={ENV} envState={{ scenarios: [1, 2, 3] }} patch={vi.fn()} />
@@ -112,6 +123,23 @@ describe("WorkspaceHeader", () => {
     runBlockedReason: "",
     onFork: vi.fn(),
   };
+
+  it("shows Live only for a ready environment", () => {
+    render(withRouter(<WorkspaceHeader {...baseProps} />));
+    expect(screen.getByText("Live")).toBeInTheDocument();
+  });
+
+  it("shows Building, not Live, while the environment is still deriving", () => {
+    render(withRouter(<WorkspaceHeader {...baseProps} env={{ ...ENV, buildStatus: "building" }} />));
+    expect(screen.getByText("Building")).toBeInTheDocument();
+    expect(screen.queryByText("Live")).toBeNull();
+  });
+
+  it("shows Failed, not Live, once the build has terminally failed", () => {
+    render(withRouter(<WorkspaceHeader {...baseProps} env={{ ...ENV, buildStatus: "failed" }} />));
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(screen.queryByText("Live")).toBeNull();
+  });
 
   it("hides the overflow menu when locked", () => {
     render(withRouter(<WorkspaceHeader {...baseProps} locked />));

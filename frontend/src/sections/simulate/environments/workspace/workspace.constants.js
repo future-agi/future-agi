@@ -62,6 +62,8 @@ export const GAP_AREA_TO_TAB = {
 export const WORKSPACE_COPY = {
   back: "All environments",
   live: "Live",
+  buildingLabel: "Building",
+  failedLabel: "Failed",
   run: "Run simulation",
   moreActions: "More actions",
   fork: "Fork environment",

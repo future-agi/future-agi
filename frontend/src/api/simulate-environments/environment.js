@@ -11,6 +11,7 @@ import { useEnvironmentsStore } from "src/sections/simulate/environments/store/u
 import {
   VOICE_CONNECTORS,
   stageToStatus,
+  buildStatusFor,
 } from "src/sections/simulate/environments/helpers/harnessJobToRow";
 import { generatedPool } from "./_fixtures/scenarioPool";
 import { MOCK_WORLD } from "./_fixtures/world";
@@ -24,8 +25,23 @@ export const MOCK_WORLD_OVERLAY = true;
 // The harness detail poll cadence, matching HarnessDetail's own 2s tick.
 const REFETCH_MS = 2000;
 
-const jobRefetchInterval = (data) =>
-  terminalStages.has(data?.status?.stage) ? false : REFETCH_MS;
+// The app's axios interceptor rejects with a customError carrying the HTTP
+// status at `statusCode` (see utils/axios.js) — NOT at `response.status`, which
+// is undefined on the rejected value. Read `statusCode` first, tolerating a raw
+// axios error too.
+export const errorStatus = (error) => error?.statusCode ?? error?.response?.status;
+
+// A 404 (unknown / purged job id) is what puts the workspace into its not-found
+// state, so it must never be retried.
+const isJobNotFound = (error) => errorStatus(error) === 404;
+
+// Poll until the job reaches a terminal stage — and stop dead on any error. A
+// failed or unknown query has no stage to inspect, so without this guard the
+// cadence stayed at 2s and a broken job hammered the endpoint forever.
+export const jobRefetchInterval = (query) => {
+  if (query?.state?.error) return false;
+  return terminalStages.has(query?.state?.data?.status?.stage) ? false : REFETCH_MS;
+};
 
 // A voice transport in the detected connectors wins, same rule as the My
 // Environments row mapping.
@@ -130,7 +146,7 @@ export function harnessJobToEnvironment(item) {
     name: environmentName(job),
     agentType: agentTypeFor(item?.credentials?.detected_connectors),
     status: stageToStatus(status.stage),
-    buildStatus: status.stage === "completed" ? "ready" : "building",
+    buildStatus: buildStatusFor(status.stage),
     buildProgress: {
       done: completedStageCount(status, item?.events),
       total: stages.length,
@@ -166,7 +182,8 @@ export function useEnvironment(envId) {
     queryKey: ["harness-job", envId],
     queryFn: () => getHarnessJob(envId),
     enabled: Boolean(envId) && !clientEnv,
-    refetchInterval: (query) => jobRefetchInterval(query.state.data),
+    retry: (failureCount, error) => !isJobNotFound(error) && failureCount < 3,
+    refetchInterval: jobRefetchInterval,
   });
 
   const harness = useMemo(
@@ -209,10 +226,7 @@ export function useEnvironment(envId) {
     };
   }
 
-  const notFound =
-    jobQuery.error?.response?.status === 404 &&
-    prebuilt.isSuccess &&
-    !templateEnv;
+  const notFound = isJobNotFound(jobQuery.error) && prebuilt.isSuccess && !templateEnv;
 
   return {
     env: null,

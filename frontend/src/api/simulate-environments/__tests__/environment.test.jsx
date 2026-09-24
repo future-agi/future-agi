@@ -14,6 +14,7 @@ const {
   stageOutputsToWorld,
   harnessEnvState,
   canRunHeader,
+  jobRefetchInterval,
 } = await import("../environment");
 const { MOCK_WORLD } = await import("../_fixtures/world");
 const { useEnvironmentsStore, resetEnvironmentsStore } = await import(
@@ -59,9 +60,19 @@ const RUNNING_JOB = {
   stage_outputs: [],
 };
 
+// The app's axios interceptor rejects with a customError carrying the HTTP
+// status at `statusCode` (utils/axios.js) — `response` is not present on the
+// rejected value, so a mock that sets `response.status` tests a shape production
+// never produces.
 const notFoundError = () => {
   const err = new Error("Not found");
-  err.response = { status: 404 };
+  err.statusCode = 404;
+  return err;
+};
+
+const serverError = () => {
+  const err = new Error("Boom");
+  err.statusCode = 500;
   return err;
 };
 
@@ -265,6 +276,19 @@ describe("harnessJobToEnvironment", () => {
     expect(env.status).toBe(ENV_STATUS.COMPLETED);
   });
 
+  it("marks a terminally failed job as failed, not still building", () => {
+    const failed = {
+      ...RUNNING_JOB,
+      status: { ...RUNNING_JOB.status, stage: "failed" },
+    };
+    expect(harnessJobToEnvironment(failed).env.buildStatus).toBe("failed");
+    const canceled = {
+      ...RUNNING_JOB,
+      status: { ...RUNNING_JOB.status, stage: "canceled" },
+    };
+    expect(harnessJobToEnvironment(canceled).env.buildStatus).toBe("failed");
+  });
+
   it("exposes buildProgress as { done, total } so the building banner can count", () => {
     const { env } = harnessJobToEnvironment(RUNNING_JOB);
     expect(env.buildStatus).toBe("building");
@@ -286,5 +310,20 @@ describe("canRunHeader", () => {
   it("falls back to canRun for non-harness sources", () => {
     expect(canRunHeader("client", {}, true)).toBe(true);
     expect(canRunHeader("client", { platform: { runTestId: "rt1" } }, false)).toBe(false);
+  });
+});
+
+describe("jobRefetchInterval", () => {
+  it("keeps polling a job that has not reached a terminal stage", () => {
+    expect(jobRefetchInterval({ state: { data: { status: { stage: "running" } } } })).toBe(2000);
+  });
+
+  it("stops polling once the job reaches a terminal stage", () => {
+    expect(jobRefetchInterval({ state: { data: { status: { stage: "completed" } } } })).toBe(false);
+  });
+
+  it("stops polling once the query has errored", () => {
+    expect(jobRefetchInterval({ state: { data: undefined, error: notFoundError() } })).toBe(false);
+    expect(jobRefetchInterval({ state: { data: undefined, error: serverError() } })).toBe(false);
   });
 });

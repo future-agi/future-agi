@@ -24,6 +24,18 @@ export const stageToStatus = (stage) => {
   return ENV_STATUS.BUILDING;
 };
 
+// The workspace's three-way build state. A terminally failed or canceled job is
+// neither ready nor still building; mapping it to "building" left the header
+// pill reading "Live" while the banner promised the environment was still being
+// built, for a job that had already stopped.
+export const BUILD_STATUS = { READY: "ready", BUILDING: "building", FAILED: "failed" };
+
+export const buildStatusFor = (stage) => {
+  if (stage === "completed") return BUILD_STATUS.READY;
+  if (stage === "failed" || stage === "canceled") return BUILD_STATUS.FAILED;
+  return BUILD_STATUS.BUILDING;
+};
+
 const agentTypeFor = (connectors = []) =>
   connectors.some((name) => VOICE_CONNECTORS.includes(name))
     ? AGENT_TYPES.VOICE

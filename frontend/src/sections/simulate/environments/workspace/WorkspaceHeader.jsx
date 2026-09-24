@@ -52,7 +52,7 @@ export default function WorkspaceHeader({
           <Typography noWrap sx={{ typography: "s1_2", fontWeight: "fontWeightBold" }}>
             {env.name}
           </Typography>
-          <LivePill />
+          <LivePill env={env} />
           <EnvVersionPin env={env} envState={envState} patch={patch} readOnly={locked} />
         </Stack>
         <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
