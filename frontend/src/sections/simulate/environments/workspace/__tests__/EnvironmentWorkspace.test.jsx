@@ -25,7 +25,9 @@ vi.mock("src/utils/axios", async (importOriginal) => {
 });
 
 const { getHarnessJob } = await import("src/api/harness/harness");
-const axios = (await import("src/utils/axios")).default;
+const axiosMod = await import("src/utils/axios");
+const axios = axiosMod.default;
+const { endpoints } = axiosMod;
 const { default: EnvironmentWorkspace } = await import("../EnvironmentWorkspace");
 const { default: WorkspaceExecutionDetail } = await import(
   "../runs/WorkspaceExecutionDetail"
@@ -96,6 +98,29 @@ const EXECUTIONS = {
   count: 1,
 };
 
+// The run DETAIL now reads the v3 run-results contract (`runResultsV3.calls`
+// returns `{ execution: {...} }`), not the executions list `EXECUTIONS` feeds
+// the Runs-tab summary from. The `execution` carries its own server-stamped
+// ordinal + agent version — the identity the full-page RunDetail header shows.
+const RUN_DETAIL_V3 = {
+  execution: {
+    id: "ex1",
+    ordinal: 1,
+    agent_version: "v1",
+    agent_type: "VOICE",
+    status: "completed",
+    started_at: "2026-01-14T09:12:00.000Z",
+    completed_at: "2026-01-14T09:22:00.000Z",
+    summary: {
+      total: 12,
+      measured: 12,
+      pass_rate: 100,
+      outcomes: { passed: 12, failed: 0, error: 0, inconclusive: 0 },
+      duration: { average: 50 },
+    },
+  },
+};
+
 function LocationProbe() {
   const { pathname, search } = useLocation();
   return <div data-testid="location">{`${pathname}${search}`}</div>;
@@ -147,7 +172,17 @@ describe("EnvironmentWorkspace route shell", () => {
     clearScenarioSelection();
     getHarnessJob.mockReset();
     axios.get.mockReset();
-    axios.get.mockResolvedValue({ data: EXECUTIONS });
+    // The Runs-tab summary reads the executions list; the run DETAIL reads the
+    // v3 run-results contract. Route each to its own shape so the full-page
+    // RunDetail can resolve its identity header.
+    axios.get.mockImplementation((url) =>
+      Promise.resolve({
+        data:
+          url === endpoints.runResultsV3.calls("ex1")
+            ? RUN_DETAIL_V3
+            : EXECUTIONS,
+      }),
+    );
   });
 
   it("renders a seeded client env: name, Live pill and the five tabs", async () => {
