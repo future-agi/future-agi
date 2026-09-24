@@ -72,7 +72,7 @@ const theme = createTheme({
 const repoDraft = { kind: "repo", value: "acme/support-bot", ref: "main" };
 const uploadDraft = { kind: "upload", entry: "src/agent.py", files: [] };
 
-// A plain happy preflight — the mock overlay fills reading / questions / gaps.
+// A plain happy preflight: every check passed, nothing to flag.
 const HAPPY = {
   ready_to_submit: true,
   credentials: {
@@ -113,17 +113,16 @@ function renderPage(route = "/dashboard/simulate/environments/build") {
   );
 }
 
-// The full happy path up to the building stage: preflight → answer both
-// questions → Build the environment.
+// The full happy path up to the building stage: preflight → Build the
+// environment. The real response carries no open questions, so the audit's own
+// build CTA is the only step between the read-audit and the build.
 async function drivePreflightToBuild(user) {
   useEnvironmentsStore.setState({ draft: repoDraft });
   preflightHarnessJob.mockResolvedValue(HAPPY);
   renderPage();
 
   await screen.findByText(READ_AUDIT_COPY.title);
-  await user.click(screen.getByRole("button", { name: /Read-only/ }));
-  await user.click(screen.getByRole("button", { name: /Yes/ }));
-  await user.click(screen.getByRole("button", { name: /Build the environment/ }));
+  await user.click(screen.getByRole("button", { name: READ_AUDIT_COPY.build }));
 
   await waitFor(() =>
     expect(useEnvironmentsStore.getState().buildStage).toBe("building"),
@@ -177,7 +176,8 @@ describe("BuildEnvironment", () => {
 
     // Read-audit takes over, header pill reads "Setup being built", no Run yet.
     expect(await screen.findByText(READ_AUDIT_COPY.title)).toBeInTheDocument();
-    expect(screen.getByText(/Reader completed with 2 gaps/)).toBeInTheDocument();
+    // A clean preflight reports no gaps — nothing invented on the user's behalf.
+    expect(screen.queryByText(/Reader completed with/)).not.toBeInTheDocument();
     expect(screen.getByText(BUILD_HEADER_COPY.setupBuilding)).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: BUILD_HEADER_COPY.run }),
@@ -190,9 +190,7 @@ describe("BuildEnvironment", () => {
 
     const state = useEnvironmentsStore.getState();
     expect(state.envId).toMatch(/^env-/);
-    expect(Object.keys(state.readerAnswers)).toEqual(
-      expect.arrayContaining(["tool-side-effects", "policy-enforcement"]),
-    );
+    expect(state.readerAnswers).toEqual({});
 
     // The building stage renders the console and the muted tab rail.
     expect(screen.getByPlaceholderText("Reply to the builder…")).toBeInTheDocument();

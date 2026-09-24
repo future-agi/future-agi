@@ -42,7 +42,7 @@ beforeEach(() => {
 });
 
 describe("usePreflight", () => {
-  it("calls preflightHarnessJob once with the T5 payload and overlays a warning audit", async () => {
+  it("calls preflightHarnessJob once with the T5 payload and derives the audit", async () => {
     const { Wrapper } = makeWrapper();
     const { result } = renderHook(() => usePreflight(repoDraft), {
       wrapper: Wrapper,
@@ -57,24 +57,41 @@ describe("usePreflight", () => {
     expect(preflightHarnessJob).toHaveBeenCalledWith(
       draftToPreflightPayload(repoDraft).payload
     );
-    expect(result.current.audit.status).toBe("warning");
+    // A clean backend response is a clean audit — no invented gaps or facts.
+    expect(result.current.audit.status).toBe("healthy");
+    expect(result.current.audit.sectionIssues).toEqual({});
+    expect(result.current.audit.reading.tools).toEqual([]);
+    expect(result.current.audit.questions).toEqual([]);
     expect(result.current.audit.stats.scannedFiles).toBe(42);
   });
 
-  it("retriedSections clears the mock gaps → healthy audit", async () => {
+  it("a failing backend check → warning audit carrying that check", async () => {
+    preflightHarnessJob.mockResolvedValue({
+      ...happyResponse(),
+      checks: [
+        {
+          id: "credentials_present",
+          label: "Credentials present",
+          status: "failed",
+          detail: "No value supplied",
+          missing: ["VAPI_API_KEY"],
+          fix: "Add the key",
+        },
+      ],
+    });
     const { Wrapper } = makeWrapper();
-    const { result } = renderHook(
-      () => usePreflight(repoDraft, { retriedSections: ["rules", "data"] }),
-      { wrapper: Wrapper }
-    );
+    const { result } = renderHook(() => usePreflight(repoDraft), {
+      wrapper: Wrapper,
+    });
 
     await waitFor(() => expect(result.current.isFetching).toBe(false));
 
-    expect(result.current.audit.sectionIssues).toEqual({});
-    expect(result.current.audit.status).toBe("healthy");
+    expect(result.current.audit.status).toBe("warning");
+    expect(result.current.audit.checks).toHaveLength(1);
+    expect(result.current.audit.checks[0].fix).toBe("Add the key");
   });
 
-  it("a skipped draft resolves synchronously to a mock-only audit — no call", async () => {
+  it("a skipped draft resolves synchronously — no call", async () => {
     const { Wrapper } = makeWrapper();
     const { result } = renderHook(() => usePreflight(uploadDraft), {
       wrapper: Wrapper,

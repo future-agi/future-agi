@@ -1,12 +1,13 @@
 // The one module the backend swap touches. It turns a preflight outcome
 // ({ response | error | skipped }) into the ReadAudit view model the UI renders.
-// The real-derived rules run first; a mock overlay then fills the
-// reading/questions/section-gaps the happy-path backend does not carry yet.
+// Everything the product shows is derived from the response: the packaging /
+// credential gaps as section issues, and the backend's own `checks[]` verbatim.
 //
-// TODO: the backend preflight returns happy-path only today. MOCK_PREFLIGHT_FAILS
-// overlays the designer's failing-check fixtures so the read-audit has content.
-// Flip to false (then delete the overlay + the fixtures import) once the real
-// response carries reading / questions / section issues.
+// MOCK_PREFLIGHT_FAILS is OFF: the designer's failing-check fixtures are a demo
+// aid only, opted into per call with `{ mock: true }`. Real users must never see
+// invented tools, fixtures or questions presented as facts read from their agent.
+// TODO(TH-7962): delete the overlay and the fixtures import once the response
+// carries reading / questions of its own.
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import {
   READER_STATUS,
@@ -21,7 +22,7 @@ import {
   MOCK_SECTION_ISSUES,
 } from "./_fixtures/preflightFails";
 
-export const MOCK_PREFLIGHT_FAILS = true;
+export const MOCK_PREFLIGHT_FAILS = false;
 
 // Icons for the real-derived section gaps. Inlined here per plan §5.2 — this is
 // the single derivation site, so they do not belong in a shared constants file.
@@ -92,6 +93,23 @@ function realSectionIssues({ response, skipped }) {
   return issues;
 }
 
+// The backend's own verdicts (HarnessPreflightResponse.checks), kept as a LIST:
+// several can fail at once (credentials_present AND credentials_valid), so
+// folding them into the one-per-section `sectionIssues` map would drop all but
+// the last. `detail`, `missing` and `fix` are what tell the user what to do.
+function checksFrom(response) {
+  return (Array.isArray(response?.checks) ? response.checks : [])
+    .filter((check) => check && check.id)
+    .map((check) => ({
+      id: check.id,
+      label: check.label || check.id,
+      status: check.status || "skipped",
+      detail: check.detail || "",
+      missing: Array.isArray(check.missing) ? check.missing : [],
+      fix: check.fix || null,
+    }));
+}
+
 function statsFrom(response) {
   const credentials = response?.credentials || {};
   const packaging = response?.packaging || {};
@@ -119,6 +137,7 @@ export function preflightToReadAudit(
     reading: emptyReading(),
     questions: [],
     sectionIssues: {},
+    checks: [],
     stats: statsFrom(response),
   };
 
@@ -140,8 +159,9 @@ export function preflightToReadAudit(
     };
   }
 
-  // 3. Real-derived section gaps.
+  // 3. Real-derived section gaps and the backend's own checks.
   const realIssues = realSectionIssues({ response, skipped });
+  const checks = checksFrom(response);
   const notReady = response?.ready_to_submit === false;
 
   let sectionIssues = { ...realIssues };
@@ -157,7 +177,9 @@ export function preflightToReadAudit(
   }
 
   const hasIssue = Object.keys(sectionIssues).length > 0;
-  const status = hasIssue || notReady ? READER_STATUS.WARNING : READER_STATUS.HEALTHY;
+  const checkFailed = checks.some((check) => check.status !== "passed");
+  const status =
+    hasIssue || notReady || checkFailed ? READER_STATUS.WARNING : READER_STATUS.HEALTHY;
 
-  return { ...base, status, reading, questions, sectionIssues };
+  return { ...base, status, reading, questions, sectionIssues, checks };
 }

@@ -28,11 +28,106 @@ const happyResponse = (over = {}) => ({
     ...(over.packaging || {}),
   },
   ...("ready_to_submit" in over ? { ready_to_submit: over.ready_to_submit } : {}),
+  ...(over.checks ? { checks: over.checks } : {}),
 });
 
-describe("MOCK_PREFLIGHT_FAILS", () => {
-  it("defaults on so the read-audit has content", () => {
-    expect(MOCK_PREFLIGHT_FAILS).toBe(true);
+describe("the default (product) mapping", () => {
+  it("is off — a real preflight never shows the designer fixtures", () => {
+    expect(MOCK_PREFLIGHT_FAILS).toBe(false);
+  });
+
+  it("maps a happy response with no overlay option to empty reading/questions", () => {
+    const audit = preflightToReadAudit({ response: happyResponse(), draft: repoDraft });
+    expect(audit.reading).toEqual({ tools: [], rules: [], data: [], behavior: [] });
+    expect(audit.reading).not.toEqual(MOCK_READING);
+    expect(audit.questions).toEqual([]);
+    expect(audit.questions).not.toEqual(MOCK_QUESTIONS);
+    expect(audit.sectionIssues).toEqual({});
+    expect(audit.status).toBe("healthy");
+  });
+});
+
+describe("preflightToReadAudit — backend checks[]", () => {
+  it("carries every non-passing check, with its detail, missing and fix", () => {
+    const response = happyResponse({
+      checks: [
+        { id: "source", label: "Source", status: "passed", detail: "Cloned", missing: [], fix: null },
+        {
+          id: "credentials_present",
+          label: "Credentials present",
+          status: "failed",
+          detail: "VAPI_API_KEY was not supplied",
+          missing: ["VAPI_API_KEY"],
+          fix: "Add the key on the hosted-platform form",
+        },
+        {
+          id: "provider_target",
+          label: "Provider target",
+          status: "skipped",
+          detail: "Not probed without a key",
+          missing: [],
+          fix: null,
+        },
+      ],
+    });
+    const audit = preflightToReadAudit({ response, draft: repoDraft });
+
+    expect(audit.checks.map((c) => c.id)).toEqual([
+      "source",
+      "credentials_present",
+      "provider_target",
+    ]);
+    const failed = audit.checks.find((c) => c.id === "credentials_present");
+    expect(failed.label).toBe("Credentials present");
+    expect(failed.detail).toBe("VAPI_API_KEY was not supplied");
+    expect(failed.missing).toEqual(["VAPI_API_KEY"]);
+    expect(failed.fix).toBe("Add the key on the hosted-platform form");
+  });
+
+  it("two failing checks are both kept — neither collapses into the other", () => {
+    const response = happyResponse({
+      checks: [
+        { id: "credentials_present", label: "Credentials present", status: "failed", detail: "a", missing: [], fix: null },
+        { id: "credentials_valid", label: "Credentials valid", status: "failed", detail: "b", missing: [], fix: null },
+      ],
+    });
+    const audit = preflightToReadAudit({ response, draft: repoDraft });
+    expect(audit.checks.filter((c) => c.status === "failed")).toHaveLength(2);
+  });
+
+  it("a failing check flips a would-be-healthy audit to warning", () => {
+    const response = happyResponse({
+      checks: [
+        { id: "credentials_valid", label: "Credentials valid", status: "failed", detail: "Rejected", missing: [], fix: null },
+      ],
+    });
+    const audit = preflightToReadAudit({ response, draft: repoDraft });
+    expect(audit.status).toBe("warning");
+  });
+
+  it("all-passed checks stay healthy", () => {
+    const response = happyResponse({
+      checks: [
+        { id: "source", label: "Source", status: "passed", detail: "Cloned", missing: [], fix: null },
+      ],
+    });
+    const audit = preflightToReadAudit({ response, draft: repoDraft });
+    expect(audit.status).toBe("healthy");
+    expect(audit.checks).toHaveLength(1);
+  });
+
+  it("a response with no checks yields an empty array, never undefined", () => {
+    const audit = preflightToReadAudit({ response: happyResponse(), draft: repoDraft });
+    expect(audit.checks).toEqual([]);
+  });
+
+  it("a hardfail carries no checks", () => {
+    const audit = preflightToReadAudit({
+      error: { response: { data: { detail: "Bad ref" } } },
+      draft: repoDraft,
+    });
+    expect(audit.status).toBe("hardfail");
+    expect(audit.checks).toEqual([]);
   });
 });
 

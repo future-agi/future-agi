@@ -60,13 +60,19 @@ const HARDFAIL = {
 // Recomputes the audit from the live `retriedSections`, exactly as the page's
 // usePreflight does, so per-section / retry-all store writes flow through the
 // mapper and back into <ReadAudit> on the next render.
-function Harness({ response, onBuild, onBack, onRetryRead }) {
+//
+// `mock` opts into the designer fixtures. The product mapping carries no
+// reading and no questions yet (the backend does not return them), so the
+// fixtures are the only way to exercise the fact sections and the question
+// stepper — they are test data here, never the default a user would see.
+function Harness({ response, mock, onBuild, onBack, onRetryRead }) {
   const retriedSections = useEnvironmentsStore((s) => s.retriedSections);
-  const audit = preflightToReadAudit({ response, draft: DRAFT, retriedSections });
+  const audit = preflightToReadAudit({ response, draft: DRAFT, retriedSections }, { mock });
   return <ReadAudit audit={audit} onBuild={onBuild} onBack={onBack} onRetryRead={onRetryRead} />;
 }
 Harness.propTypes = {
   response: PropTypes.shape({ ready_to_submit: PropTypes.bool }),
+  mock: PropTypes.bool,
   onBuild: PropTypes.func,
   onBack: PropTypes.func,
   onRetryRead: PropTypes.func,
@@ -83,16 +89,19 @@ function renderAt(ui, route = "/") {
   );
 }
 
-function renderHarness({ response = HAPPY, route = "/", ...handlers } = {}) {
+function renderHarness({ response = HAPPY, route = "/", mock = false, ...handlers } = {}) {
   const props = {
     onBuild: vi.fn(),
     onBack: vi.fn(),
     onRetryRead: vi.fn(),
     ...handlers,
   };
-  renderAt(<Harness response={response} {...props} />, route);
+  renderAt(<Harness response={response} mock={mock} {...props} />, route);
   return props;
 }
+
+// The fixture-driven variant: an audit that carries reading + questions.
+const renderWithFixtures = (opts = {}) => renderHarness({ ...opts, mock: true });
 
 // The StatChip renders <value/><label/> as adjacent Typography with no divider,
 // so the value is the label's immediate previous sibling.
@@ -113,7 +122,7 @@ describe("ReadAudit", () => {
   });
 
   it("renders the title, the warning band and the stat bar", () => {
-    renderHarness();
+    renderWithFixtures();
     expect(screen.getByText(READ_AUDIT_COPY.title)).toBeInTheDocument();
     expect(screen.getByText(/Reader completed with 2 gaps/)).toBeInTheDocument();
     expect(screen.getByText(/rules, data could not be read completely/)).toBeInTheDocument();
@@ -127,7 +136,7 @@ describe("ReadAudit", () => {
   });
 
   it("renders the four section cards and the rules gap", () => {
-    renderHarness();
+    renderWithFixtures();
     expect(screen.getByText("Tools it can call")).toBeInTheDocument();
     expect(screen.getByText("Rules it must hold")).toBeInTheDocument();
     expect(screen.getByText("Data it starts with")).toBeInTheDocument();
@@ -137,7 +146,7 @@ describe("ReadAudit", () => {
 
   it("per-section retry pokes the store AND re-reads, dropping just that gap", async () => {
     const user = userEvent.setup();
-    const { onRetryRead } = renderHarness();
+    const { onRetryRead } = renderWithFixtures();
     await user.click(sectionRetry(MOCK_SECTION_ISSUES.rules.message));
 
     expect(useEnvironmentsStore.getState().retriedSections).toEqual(["rules"]);
@@ -152,7 +161,7 @@ describe("ReadAudit", () => {
   it("hides the band Retry when the draft is skipped (no re-read possible)", () => {
     // No onRetryRead = a skipped draft whose query is disabled; the band must not
     // offer a retry that would POST a bodyless request.
-    renderHarness({ onRetryRead: undefined });
+    renderWithFixtures({ onRetryRead: undefined });
     expect(screen.getByText(/Reader completed with 2 gaps/)).toBeInTheDocument();
     // Only the two section-card retries remain — the band's is gone.
     expect(screen.getAllByRole("button", { name: READ_AUDIT_COPY.retry })).toHaveLength(2);
@@ -160,7 +169,7 @@ describe("ReadAudit", () => {
 
   it("retry-all clears the band, refetches once and fills the counts", async () => {
     const user = userEvent.setup();
-    const { onRetryRead } = renderHarness();
+    const { onRetryRead } = renderWithFixtures();
     await user.click(bandRetry());
 
     expect(screen.queryByText(/Reader completed with/)).not.toBeInTheDocument();
@@ -171,7 +180,7 @@ describe("ReadAudit", () => {
 
   it("keeps a real tools gap through both retries", async () => {
     const user = userEvent.setup();
-    renderHarness({ response: RESPONSE_WITH_FINDING });
+    renderWithFixtures({ response: RESPONSE_WITH_FINDING });
     expect(screen.getByText(/Reader completed with 3 gaps/)).toBeInTheDocument();
 
     // Per-section retry on the tools card writes to the store, but the real gap
@@ -189,7 +198,7 @@ describe("ReadAudit", () => {
 
   it("auto-advances on a choice, gates the build on the last answer, then builds", async () => {
     const user = userEvent.setup();
-    const { onBuild } = renderHarness();
+    const { onBuild } = renderWithFixtures();
 
     expect(screen.getByText("1/2")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Read-only/ }));
@@ -209,7 +218,7 @@ describe("ReadAudit", () => {
 
   it("skipping keeps the build open until every question is resolved", async () => {
     const user = userEvent.setup();
-    renderHarness();
+    renderWithFixtures();
 
     await user.click(screen.getByRole("button", { name: READ_AUDIT_COPY.skip }));
     expect(statValue("Open")).toBe("1");
@@ -233,7 +242,7 @@ describe("ReadAudit", () => {
 
   it("?readerStatus=hardfail forces the demo hard-fail, retry cycles to the band", async () => {
     const user = userEvent.setup();
-    const { onRetryRead } = renderHarness({ route: "/?readerStatus=hardfail" });
+    const { onRetryRead } = renderWithFixtures({ route: "/?readerStatus=hardfail" });
 
     expect(screen.getByText(READ_AUDIT_COPY.hardfailTitle)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: READ_AUDIT_COPY.retry }));
@@ -247,5 +256,87 @@ describe("ReadAudit", () => {
     renderAt(<ReadAudit audit={audit} onBuild={vi.fn()} onBack={vi.fn()} onRetryRead={vi.fn()} />);
     expect(screen.queryByText(READ_AUDIT_COPY.questionsTitle)).not.toBeInTheDocument();
     expect(screen.getByText(READ_AUDIT_COPY.title)).toBeInTheDocument();
+  });
+
+  it("still offers Build when there are no questions to answer", async () => {
+    const user = userEvent.setup();
+    const onBuild = vi.fn();
+    const audit = { ...preflightToReadAudit({ response: HAPPY, draft: DRAFT }), questions: [] };
+    renderAt(<ReadAudit audit={audit} onBuild={onBuild} onBack={vi.fn()} onRetryRead={vi.fn()} />);
+
+    const build = screen.getByRole("button", { name: READ_AUDIT_COPY.build });
+    expect(build).toBeEnabled();
+    await user.click(build);
+    expect(onBuild).toHaveBeenCalledWith({});
+  });
+
+  it("shows exactly one Build affordance when questions exist", async () => {
+    const user = userEvent.setup();
+    renderWithFixtures();
+    // The questions column owns the CTA; the no-questions footer must not
+    // double it up once the stepper reaches its last question.
+    expect(screen.queryByRole("button", { name: /Build the environment/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: /Read-only/ }));
+    expect(screen.getAllByRole("button", { name: /Build the environment/ })).toHaveLength(1);
+  });
+
+  it("a real happy preflight shows no invented facts, gaps or questions", () => {
+    renderHarness();
+    // Fixture content from the designer overlay must not reach a real user.
+    expect(screen.queryByText("verify_identity")).not.toBeInTheDocument();
+    expect(screen.queryByText("customers.csv")).not.toBeInTheDocument();
+    expect(screen.queryByText(MOCK_SECTION_ISSUES.rules.message)).not.toBeInTheDocument();
+    expect(screen.queryByText(READ_AUDIT_COPY.questionsTitle)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Reader completed with/)).not.toBeInTheDocument();
+    expect(statValue("Tools")).toBe("0");
+  });
+
+  it("renders the backend's failing checks with their detail, missing keys and fix", () => {
+    renderHarness({
+      response: {
+        ...HAPPY,
+        checks: [
+          { id: "source", label: "Source", status: "passed", detail: "Cloned acme/support-bot", missing: [], fix: null },
+          {
+            id: "credentials_present",
+            label: "Credentials present",
+            status: "failed",
+            detail: "No value supplied for the target provider",
+            missing: ["VAPI_API_KEY"],
+            fix: "Add the key on the hosted-platform form",
+          },
+          {
+            id: "credentials_valid",
+            label: "Credentials valid",
+            status: "failed",
+            detail: "Not probed",
+            missing: [],
+            fix: null,
+          },
+        ],
+      },
+    });
+
+    expect(screen.getByText(READ_AUDIT_COPY.checksTitle)).toBeInTheDocument();
+    // Both failures stand on their own — neither collapses into the other.
+    expect(screen.getByText("Credentials present")).toBeInTheDocument();
+    expect(screen.getByText("Credentials valid")).toBeInTheDocument();
+    expect(screen.getByText(/No value supplied for the target provider/)).toBeInTheDocument();
+    expect(screen.getByText(/VAPI_API_KEY/)).toBeInTheDocument();
+    expect(screen.getByText(/Add the key on the hosted-platform form/)).toBeInTheDocument();
+    // A passed check is not a gap — it is not listed.
+    expect(screen.queryByText("Source")).not.toBeInTheDocument();
+  });
+
+  it("lists no checks section when every check passed", () => {
+    renderHarness({
+      response: {
+        ...HAPPY,
+        checks: [
+          { id: "source", label: "Source", status: "passed", detail: "Cloned", missing: [], fix: null },
+        ],
+      },
+    });
+    expect(screen.queryByText(READ_AUDIT_COPY.checksTitle)).not.toBeInTheDocument();
   });
 });

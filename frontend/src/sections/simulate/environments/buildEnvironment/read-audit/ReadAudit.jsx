@@ -1,7 +1,9 @@
 import PropTypes from "prop-types";
 import { useEffect, useReducer } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Box, Grid, Stack, Typography } from "@mui/material";
+import { Box, Button, Grid, Stack, Typography } from "@mui/material";
+
+import Iconify from "src/components/iconify";
 
 import { useEnvironmentsStore } from "../../store/useEnvironmentsStore";
 import {
@@ -15,6 +17,7 @@ import FactSection from "./FactSection";
 import ReaderStatusBand from "./ReaderStatusBand";
 import HardFailPage from "./HardFailPage";
 import OpenQuestionsColumn from "./OpenQuestionsColumn";
+import PreflightChecks from "./PreflightChecks";
 import {
   initialReadAuditState,
   readAuditReducer,
@@ -125,6 +128,8 @@ export default function ReadAudit({ audit, onBuild, onBack, onRetryRead }) {
             {openCount > 0 && <StatChip label="Open" value={openCount} tone="red" />}
           </Stack>
 
+          <PreflightChecks checks={audit.checks} />
+
           {/* Fact sections — 2×2 grid keeps everything above the fold on a laptop. */}
           <Grid container spacing={2}>
             {READ_SECTIONS.map((s) => (
@@ -146,6 +151,21 @@ export default function ReadAudit({ audit, onBuild, onBack, onRetryRead }) {
               </Grid>
             ))}
           </Grid>
+
+          {/* With no questions there is no right-hand column, and the build CTA
+              lives in it — so the audit would be a dead end. Offer it here. */}
+          {!hasQuestions && (
+            <Stack direction="row" justifyContent="flex-end" sx={{ mt: 2.5 }}>
+              <Button
+                variant="contained"
+                onClick={() => onBuild?.({})}
+                startIcon={<Iconify icon="solar:magic-stick-3-linear" width={15} />}
+                sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
+              >
+                {READ_AUDIT_COPY.build}
+              </Button>
+            </Stack>
+          )}
         </Box>
 
         {hasQuestions && (
@@ -177,6 +197,7 @@ ReadAudit.propTypes = {
       behavior: PropTypes.array,
     }),
     questions: PropTypes.array,
+    checks: PropTypes.array,
     sectionIssues: PropTypes.objectOf(PropTypes.shape({
       severity: PropTypes.string,
       icon: PropTypes.string,
