@@ -573,6 +573,8 @@ import type {
   HarnessEnvironmentDetailApi,
   HarnessEnvironmentListResponseApi,
   HarnessEnvironmentRenameApi,
+  HarnessEnvironmentRunEvaluationQueuedApi,
+  HarnessEnvironmentToolCallEvaluationApi,
   HarnessEventBatchApi,
   HarnessEventBatchResponseApi,
   HarnessIngressProxyRequestApi,
@@ -58499,6 +58501,57 @@ export const simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluations =
     );
   };
 
+export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponse200 =
+  {
+    data: HarnessEnvironmentDetailApi;
+    status: 200;
+  };
+
+export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200>;
+  };
+
+export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseSuccess =
+  simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseError =
+  simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponse =
+
+    | simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseSuccess
+    | simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseError;
+
+export const getSimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationUrl =
+  (id: string) => {
+    return `/simulate/api/harness-environments/${id}/evaluations/tool-call/`;
+  };
+
+/**
+ * Turn the tool-call judge on or off for this environment. Returns the full environment detail. Turning it on is refused for a hosted voice environment with no agent version yet.
+ */
+export const simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluation =
+  async (
+    id: string,
+    harnessEnvironmentToolCallEvaluationApi: HarnessEnvironmentToolCallEvaluationApi,
+    options?: RequestInit,
+  ): Promise<simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponse> => {
+    return apiMutator<simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponse>(
+      getSimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationUrl(id),
+      {
+        ...options,
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(harnessEnvironmentToolCallEvaluationApi),
+      },
+    );
+  };
+
 export type simulateApiHarnessEnvironmentsRemoveEvaluationResponse204 = {
   data: void;
   status: 204;
@@ -58593,6 +58646,57 @@ export const simulateApiHarnessEnvironmentsRun = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(harnessRunCreateApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse202 = {
+  data: HarnessEnvironmentRunEvaluationQueuedApi;
+  status: 202;
+};
+
+export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 202>;
+  };
+
+export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseSuccess =
+  simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseError =
+  simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse =
+  | simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseSuccess
+  | simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseError;
+
+export const getSimulateApiHarnessEnvironmentsRunsAddRunEvaluationUrl = (
+  id: string,
+  executionId: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/runs/${executionId}/evaluations/`;
+};
+
+/**
+ * Add an eval to the environment and grade this run's already-finished calls with it.
+ */
+export const simulateApiHarnessEnvironmentsRunsAddRunEvaluation = async (
+  id: string,
+  executionId: string,
+  harnessEnvironmentAddEvaluationApi: HarnessEnvironmentAddEvaluationApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse>(
+    getSimulateApiHarnessEnvironmentsRunsAddRunEvaluationUrl(id, executionId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessEnvironmentAddEvaluationApi),
     },
   );
 };

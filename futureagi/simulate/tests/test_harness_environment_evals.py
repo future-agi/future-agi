@@ -1,15 +1,27 @@
-"""The environment's eval endpoints, over HTTP."""
+"""The environment's eval endpoints, over HTTP: adding an eval by hand, and
+adding one from inside a run (which also grades that run's already-finished
+calls). The remove refusals live in a sibling test module and are not
+asserted here.
+"""
 
 from __future__ import annotations
 
 import json
+import uuid
+from datetime import timedelta
 
 import pytest
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from model_hub.models.evals_metric import EvalTemplate
-from simulate.models import SimulateEvalConfig
+from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
 from simulate.services.harness_evals import EVAL_RUN_CREDITS, offerable_eval_names
+from simulate.services.harness_run_evals import (
+    EVAL_QUEUE_STAMP_WINDOW,
+    EVAL_QUEUED_KEY,
+    _queued_within_window,
+)
 from simulate.services.hosted_harness import (
     canonical_digest,
     create_hosted_job,
@@ -113,6 +125,49 @@ def _add(client, job, workspace, name):
         format="json",
         HTTP_X_WORKSPACE_ID=str(workspace.id),
     )
+
+
+def _set_tool_call(client, job, workspace, enabled):
+    return client.put(
+        f"{ENVIRONMENTS}/{job.id}/evaluations/tool-call/",
+        {"enable_tool_evaluation": enabled},
+        format="json",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+
+
+def _text_environment(user, workspace):
+    """A built, TEXT-modality environment the switch can be turned on for.
+    `environment` above is voice with no `AgentVersion`, which the switch's
+    409 check refuses."""
+    job, _ = create_hosted_job(
+        user.organization,
+        _payload(),
+        idempotency_key="env-evals-tool-call-text",
+        workspace=workspace,
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    response = APIClient().post(
+        f"{ATTEMPTS}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Refunds (text)",
+            "modality": "text",
+            "personas": [
+                {
+                    "scenario_key": "refund-request",
+                    "name": "Customer",
+                    "situation": "Asks for a refund",
+                    "outcome": "Agent follows policy",
+                }
+            ],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    assert response.status_code == 200, response.content
+    job.refresh_from_db()
+    return job
 
 
 def _file_receipt(job, *, scenario_key="refund-request"):
@@ -535,6 +590,1248 @@ def test_results_unchanged(env_client, environment, workspace):
     ], "the add must have landed, or the comparison above proves nothing"
 
 
+# --- Add an eval from inside a run ------------------------------------------
+#
+# Every test that posts to this endpoint must take the `dispatch` fixture, or
+# a real `apply_async` escapes into Temporal.
+#
+# Every test that posts and then expects a dispatch outcome -- a stamp being
+# queued, `dispatch` being called, or `dispatch.assert_not_called()` -- must
+# run that POST inside `django_capture_on_commit_callbacks(execute=True)`.
+# Every grading job this endpoint queues is scheduled with
+# `transaction.on_commit`, which Django only runs once the outermost
+# transaction commits; pytest-django's `db` fixture wraps each test in a
+# transaction that is rolled back, never committed, so a plain
+# `@pytest.mark.django_db` HTTP test here would see zero dispatch calls
+# regardless of what the endpoint actually did.
+# `test_nothing_is_dispatched_before_the_stamp_is_committed` below uses
+# `execute=False` instead, to prove the ordering itself.
+
+
+def _run_add(client, job, execution, workspace, name):
+    return client.post(
+        f"{ENVIRONMENTS}/{job.id}/runs/{execution.id}/evaluations/",
+        {"name": name},
+        format="json",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+
+
+@pytest.fixture
+def dispatch():
+    """Spy on the one grading job this endpoint can start.
+
+    Patches the attribute on the task object itself, so the service's
+    function-local import sees the patch.
+    """
+    from unittest.mock import patch
+
+    with patch(
+        "simulate.services.test_executor._run_simulate_evaluations_task.apply_async"
+    ) as spy:
+        yield spy
+
+
+@pytest.fixture
+def finished_run(environment):
+    """One finished run of this environment, with no calls yet.
+
+    Built directly rather than through the attempt's `scenarios/` endpoint,
+    because the point of these tests is to put each call in exactly one of
+    the states this endpoint distinguishes, which a real `begin` cannot do.
+    """
+    run_test = environment.run_test
+    scenario = run_test.scenarios.first()
+    assert scenario is not None, "the provision fixture must leave a scenario"
+    return TestExecution.objects.create(
+        run_test=run_test,
+        status=TestExecution.ExecutionStatus.COMPLETED,
+        total_scenarios=1,
+        scenario_ids=[str(scenario.id)],
+    )
+
+
+def _call(execution, *, status="completed", metadata=None, eval_outputs=None):
+    """One call on a run, in a state this endpoint has an opinion about."""
+    return CallExecution.objects.create(
+        test_execution=execution,
+        scenario=execution.run_test.scenarios.first(),
+        status=status,
+        call_metadata=metadata if metadata is not None else {},
+        eval_outputs=eval_outputs if eval_outputs is not None else {},
+    )
+
+
+def _graded():
+    """The call-level metadata of a call whose evaluations have finished."""
+    return {"eval_started": True, "eval_completed": True}
+
+
+def _verdict(name="no_misselling"):
+    """One stored verdict, in the shape the judge path writes."""
+    return {
+        "name": name,
+        "output": "Passed",
+        "output_type": "Pass/Fail",
+        "reason": "the agent stayed inside its mandate",
+        "status": "completed",
+    }
+
+
+def _bound_config(job, name="no_misselling"):
+    return SimulateEvalConfig.objects.get(run_test_id=job.run_test_id, name=name)
+
+
+@pytest.mark.django_db
+def test_run_add_counts(
+    env_client,
+    environment,
+    finished_run,
+    workspace,
+    dispatch,
+    django_capture_on_commit_callbacks,
+):
+    """The five counts partition the run's finished calls; a failed call is
+    not a finished call and is not counted."""
+    template = _template("no_misselling", ["conversation"], tags=("Conversation",))
+    already_graded = _call(finished_run, metadata=_graded())
+    pending = _call(finished_run, metadata={"eval_started": True})
+    in_flight = _call(finished_run, metadata=_graded())
+    eligible = _call(finished_run, metadata=_graded())
+    _call(finished_run, status="failed", metadata=_graded())
+
+    # The bound config does not exist until the add runs, so the two states
+    # that name it are planted after a first add that binds nothing else.
+    with django_capture_on_commit_callbacks(execute=True):
+        first = _run_add(
+            env_client, environment, finished_run, workspace, template.name
+        )
+    assert first.status_code == 202, first.content
+    config = _bound_config(environment)
+    dispatch.reset_mock()
+
+    already_graded.eval_outputs = {str(config.id): _verdict()}
+    already_graded.save(update_fields=["eval_outputs"])
+    for call_execution in (in_flight, eligible, pending):
+        call_execution.refresh_from_db()
+    # `eligible` was stamped by the first add; clear it so it is eligible again,
+    # and leave `in_flight`'s stamp in place.
+    eligible.call_metadata = _graded()
+    eligible.save(update_fields=["call_metadata"])
+
+    with django_capture_on_commit_callbacks(execute=True):
+        response = _run_add(
+            env_client, environment, finished_run, workspace, template.name
+        )
+
+    assert response.status_code == 202, response.content
+    body = response.json()
+    assert body == {
+        "queued": 1,
+        "skipped_existing": 1,
+        "skipped_in_flight": 1,
+        "skipped_pending": 1,
+        "completed_calls": 4,
+    }
+    assert (
+        sum(
+            body[k]
+            for k in (
+                "queued",
+                "skipped_existing",
+                "skipped_pending",
+                "skipped_in_flight",
+            )
+        )
+        == body["completed_calls"]
+    ), "P19: the four counts partition completed_calls exactly, no shortfall"
+    assert dispatch.call_count == 1
+    assert dispatch.call_args.kwargs["args"] == (str(eligible.id),)
+
+
+@pytest.mark.django_db
+def test_run_add_touches_only_the_run_it_was_posted_to(
+    env_client,
+    environment,
+    finished_run,
+    workspace,
+    dispatch,
+    django_capture_on_commit_callbacks,
+):
+    """`completed_calls` and the dispatch are scoped to this run, not to every
+    execution of the environment's run test."""
+    template = _template("no_misselling", ["conversation"], tags=("Conversation",))
+    mine = _call(finished_run, metadata=_graded())
+    sibling_run = TestExecution.objects.create(
+        run_test=environment.run_test,
+        status=TestExecution.ExecutionStatus.COMPLETED,
+        total_scenarios=1,
+        scenario_ids=[str(environment.run_test.scenarios.first().id)],
+    )
+    theirs = _call(sibling_run, metadata=_graded())
+
+    with django_capture_on_commit_callbacks(execute=True):
+        response = _run_add(
+            env_client, environment, finished_run, workspace, template.name
+        )
+
+    assert response.status_code == 202, response.content
+    assert response.json() == {
+        "queued": 1,
+        "skipped_existing": 0,
+        "skipped_in_flight": 0,
+        "skipped_pending": 0,
+        "completed_calls": 1,
+    }, "the sibling run's completed call is not this run's"
+    assert dispatch.call_count == 1
+    assert dispatch.call_args.kwargs["args"] == (str(mine.id),)
+    theirs.refresh_from_db()
+    assert (
+        "eval_queued" not in theirs.call_metadata
+    ), "a sibling run's call is never stamped by another run's add"
+
+
+@pytest.mark.django_db
+def test_run_add_dispatches_per_call_with_skip_existing(
+    env_client,
+    environment,
+    finished_run,
+    workspace,
+    dispatch,
+    django_capture_on_commit_callbacks,
+):
+    """One grading task per eligible call, in the exact argument shape
+    `skip_existing=True` requires."""
+    template = _template("no_misselling", ["conversation"], tags=("Conversation",))
+    first_call = _call(finished_run, metadata=_graded())
+    second_call = _call(finished_run, metadata=_graded())
+
+    with django_capture_on_commit_callbacks(execute=True):
+        response = _run_add(
+            env_client, environment, finished_run, workspace, template.name
+        )
+
+    assert response.status_code == 202, response.content
+    assert response.json()["queued"] == 2
+    config = _bound_config(environment)
+    dispatched = {
+        call.kwargs["args"][0]: call.kwargs for call in dispatch.call_args_list
+    }
+    assert set(dispatched) == {str(first_call.id), str(second_call.id)}
+    for call_execution_id, kwargs in dispatched.items():
+        assert kwargs == {
+            "args": (call_execution_id,),
+            "kwargs": {
+                "eval_config_ids": [str(config.id)],
+                "skip_existing": True,
+            },
+        }
+    assert all(call.args == () for call in dispatch.call_args_list)
+
+
+@pytest.mark.django_db
+def test_run_add_stamps_every_call_it_queues(
+    env_client,
+    environment,
+    finished_run,
+    workspace,
+    dispatch,
+    django_capture_on_commit_callbacks,
+):
+    """Every queued call is stamped with an aware ISO-8601 timestamp inside
+    the window, keyed by config id."""
+    template = _template("no_misselling", ["conversation"], tags=("Conversation",))
+    call_execution = _call(finished_run, metadata=_graded())
+
+    before = timezone.now()
+    with django_capture_on_commit_callbacks(execute=True):
+        response = _run_add(
+            env_client, environment, finished_run, workspace, template.name
+        )
+    after = timezone.now()
+
+    assert response.status_code == 202, response.content
+    config = _bound_config(environment)
+    call_execution.refresh_from_db()
+    stamps = call_execution.call_metadata["eval_queued"]
+    assert set(stamps) == {str(config.id)}
+    stamped = timezone.datetime.fromisoformat(stamps[str(config.id)])
+    assert before <= stamped <= after
+    assert after - stamped < EVAL_QUEUE_STAMP_WINDOW
+    # The flags the eval pipeline owns are untouched.
+    assert call_execution.call_metadata["eval_completed"] is True
+    assert call_execution.call_metadata["eval_started"] is True
+
+
+@pytest.mark.django_db
+def test_nothing_is_dispatched_before_the_stamp_is_committed(
+    env_client,
+    environment,
+    finished_run,
+    workspace,
+    dispatch,
+    django_capture_on_commit_callbacks,
+):
+    """The stamp commits inside the request's own transaction, before the
+    deferred `on_commit` callback that would call `apply_async` has run at
+    all."""
+    template = _template("no_misselling", ["conversation"], tags=("Conversation",))
+    call_execution = _call(finished_run, metadata=_graded())
+
+    before = timezone.now()
+    with django_capture_on_commit_callbacks(execute=False) as callbacks:
+        response = _run_add(
+            env_client, environment, finished_run, workspace, template.name
+        )
+
+    assert response.status_code == 202, response.content
+    assert len(callbacks) == 1, "one on_commit callback for the whole batch"
+    # The captured on_commit callback must be nameable by Django's robust
+    # handler, which formats its log line with `func.__qualname__` -- a
+    # `functools.partial` does not have one, a closure does.
+    assert hasattr(callbacks[0], "__qualname__")
+    dispatch.assert_not_called()
+    config = _bound_config(environment)
+    call_execution.refresh_from_db()
+    assert set(call_execution.call_metadata["eval_queued"]) == {str(config.id)}, (
+        "the stamp commits inside the request's own transaction, before the "
+        "deferred callback that would dispatch anything has even run"
+    )
+    # The touch (`_touch_content`) already ran, inside the view, while
+    # dispatch -- deferred to the on_commit callback above -- has not.
+    environment.refresh_from_db()
+    assert environment.content_updated_at >= before, (
+        "the environment's clock is bumped during this request, while "
+        "dispatch, which fires from a still-uncalled on_commit callback, "
+        "has not run"
+    )
+
+
+@pytest.mark.django_db
+def test_a_broker_failure_stops_further_dispatch_and_clears_the_remaining_stamps(
+    env_client,
+    environment,
+    finished_run,
+    workspace,
+    dispatch,
+    django_capture_on_commit_callbacks,
+    django_assert_num_queries,
+):
+    """The first hand-off failure in a batch stops the rest, and every
+    not-yet-dispatched stamp, the failed call's own included, is cleared in
+    one transaction rather than one per call."""
+    template = _template("no_misselling", ["conversation"], tags=("Conversation",))
+    calls = sorted(
+        (_call(finished_run, metadata=_graded()) for _ in range(3)),
+        key=lambda call_execution: call_execution.id,
+    )
+    first_call, second_call, third_call = calls
+
+    def _side_effect(*args, **kwargs):
+        if kwargs["args"] == (str(second_call.id),):
+            raise RuntimeError("broker unreachable")
+
+    dispatch.side_effect = _side_effect
+
+    with django_capture_on_commit_callbacks(execute=False) as callbacks:
+        response = _run_add(
+            env_client, environment, finished_run, workspace, template.name
+        )
+    assert response.status_code == 202, response.content
+    assert len(callbacks) == 1, "one on_commit callback for the whole batch"
+    # Four statements for the whole batch, not one quartet per call:
+    # `_clear_queued_stamps`'s own `transaction.atomic()` is a SAVEPOINT and
+    # a RELEASE SAVEPOINT, plus one `SELECT ... FOR UPDATE` and one bulk
+    # `UPDATE`.
+    with django_assert_num_queries(4) as captured:
+        callbacks[0]()
+    # The unstamp path must not fetch the wide row for every locked call.
+    select_sql = next(
+        q["sql"] for q in captured.captured_queries if "FOR UPDATE" in q["sql"]
+    )
+    assert "analysis_data" not in select_sql, (
+        "the unstamp path must not fetch the wide row for every call in a "
+        "failed batch"
+    )
+
+    assert response.json()["queued"] == 3, (
+        "the count is fixed when the stamp commits, not when dispatch "
+        "reaches the broker -- a later failure cannot correct it"
+    )
+    dispatched_ids = {call.kwargs["args"][0] for call in dispatch.call_args_list}
+    assert dispatched_ids == {str(first_call.id), str(second_call.id)}, (
+        "the batch stops at the first failure -- the third call's job is "
+        "never attempted"
+    )
+    config = _bound_config(environment)
+    first_call.refresh_from_db()
+    second_call.refresh_from_db()
+    third_call.refresh_from_db()
+    assert set(first_call.call_metadata.get("eval_queued", {})) == {
+        str(config.id)
+    }, "the one call whose job actually reached the broker keeps its stamp"
+    for call_execution in (second_call, third_call):
+        assert str(config.id) not in call_execution.call_metadata.get(
+            "eval_queued", {}
+        ), (
+            "the failed call's own stamp, and every call the batch never "
+            "attempted because it stopped, are cleared together in one "
+            "transaction"
+        )
+
+
+# --- Run-level add, continued: skip reasons, refusals, the 404 -------------
+# Same `django_capture_on_commit_callbacks(execute=True)` rule as above
+# applies to every test below that posts and expects a dispatch outcome.
+
+# The nine names the two cap tests bind. They are real catalog names, not
+# invented ones: `add_selected_eval` refuses any name that is not a key of
+# `evaluations/catalog/system_evals.yaml`, so a made-up placeholder name
+# would come back 400 instead of filling the cap. All nine are offered for
+# voice, and `_template`'s default `("Conversation",)` is a voice-relevant
+# tag, so each one binds. `no_misselling` is deliberately not among them --
+# the other tests in this section add that one.
+CAP_FILLERS = [
+    "advice_authority_boundary",
+    "audio_quality",
+    "claim_intake_accuracy",
+    "conversation_coherence",
+    "conversation_hallucination",
+    "conversation_resolution",
+    "customer_agent_clarification_seeking",
+    "customer_agent_context_retention",
+]
+ONE_TOO_MANY = "customer_agent_human_escalation"
+
+
+@pytest.mark.django_db
+def test_run_add_skips_existing_pending_in_flight(
+    env_client,
+    environment,
+    finished_run,
+    workspace,
+    dispatch,
+    django_capture_on_commit_callbacks,
+):
+    """The three reasons a finished call is passed over, each on its own,
+    plus a fourth arm proving what does NOT pass it over: a
+    `{"status": "pending"}` row is a stored row, not a verdict, so it must
+    still be queued rather than counted `skipped_existing`."""
+    template = _template("no_misselling", ["conversation"], tags=("Conversation",))
+    graded = _call(finished_run, metadata=_graded())
+    pending = _call(finished_run, metadata={"eval_started": True})
+    in_flight = _call(finished_run, metadata=_graded())
+    placeholder = _call(finished_run, metadata=_graded())
+
+    # Bind the eval without queueing anything: every call is ineligible on the
+    # first pass except `in_flight`, which is what stamps it.
+    graded.call_metadata = {"eval_started": True}
+    graded.save(update_fields=["call_metadata"])
+    with django_capture_on_commit_callbacks(execute=True):
+        first = _run_add(
+            env_client, environment, finished_run, workspace, template.name
+        )
+    assert first.status_code == 202, first.content
+    config = _bound_config(environment)
+    graded.call_metadata = _graded()
+    graded.eval_outputs = {str(config.id): _verdict()}
+    graded.save(update_fields=["call_metadata", "eval_outputs"])
+    # A `{"status": "pending"}` row is a stored row, not a verdict
+    # (`utils/verdicts.py::has_stored_verdict`): this call must be queued,
+    # not counted `skipped_existing`. A bare truthy `eval_outputs` read here
+    # instead of the shared predicate would count it as already graded.
+    placeholder.eval_outputs = {str(config.id): {"status": "pending"}}
+    placeholder.call_metadata = _graded()
+    placeholder.save(update_fields=["eval_outputs", "call_metadata"])
+    dispatch.reset_mock()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        response = _run_add(
+            env_client, environment, finished_run, workspace, template.name
+        )
+
+    assert response.json() == {
+        "queued": 1,
+        "skipped_existing": 1,
+        "skipped_in_flight": 1,
+        "skipped_pending": 1,
+        "completed_calls": 4,
+    }
+    assert dispatch.call_count == 1
+    assert dispatch.call_args.kwargs["args"] == (str(placeholder.id),)
+    pending.refresh_from_db()
+    assert (
+        "eval_queued" not in pending.call_metadata
+    ), "F3: a call whose evaluations have not finished is never stamped either"
+    graded.refresh_from_db()
+    assert graded.eval_outputs == {
+        str(config.id): _verdict()
+    }, "P20/F1: the stored verdict is untouched"
+    in_flight.refresh_from_db()
+    assert set(in_flight.call_metadata["eval_queued"]) == {str(config.id)}
+
+
+@pytest.mark.django_db
+def test_run_add_never_dispatches_a_call_whose_evaluations_have_not_finished(
+    env_client,
+    environment,
+    finished_run,
+    workspace,
+    dispatch,
+    django_capture_on_commit_callbacks,
+):
+    """No grading starts for a call whose evaluations have not finished;
+    `eval_completed` absent and `eval_completed: False` are the same
+    answer."""
+    template = _template("no_misselling", ["conversation"], tags=("Conversation",))
+    absent = _call(finished_run, metadata={"eval_started": True})
+    explicit_false = _call(
+        finished_run, metadata={"eval_started": True, "eval_completed": False}
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        response = _run_add(
+            env_client, environment, finished_run, workspace, template.name
+        )
+
+    assert response.json() == {
+        "queued": 0,
+        "skipped_existing": 0,
+        "skipped_in_flight": 0,
+        "skipped_pending": 2,
+        "completed_calls": 2,
+    }
+    dispatch.assert_not_called()
+    for call_execution in (absent, explicit_false):
+        call_execution.refresh_from_db()
+        assert "eval_queued" not in call_execution.call_metadata
+
+
+@pytest.mark.django_db
+def test_run_add_repeated_within_ten_minutes_queues_nothing_new(
+    env_client,
+    environment,
+    finished_run,
+    workspace,
+    dispatch,
+    django_capture_on_commit_callbacks,
+):
+    """Repeating the call within ten minutes queues nothing new; once the
+    window lapses the same calls are eligible again."""
+    template = _template("no_misselling", ["conversation"], tags=("Conversation",))
+    call_execution = _call(finished_run, metadata=_graded())
+
+    with django_capture_on_commit_callbacks(execute=True):
+        first = _run_add(
+            env_client, environment, finished_run, workspace, template.name
+        )
+    assert first.json()["queued"] == 1
+    assert dispatch.call_count == 1
+
+    with django_capture_on_commit_callbacks(execute=True):
+        second = _run_add(
+            env_client, environment, finished_run, workspace, template.name
+        )
+    assert second.status_code == 202, second.content
+    assert second.json() == {
+        "queued": 0,
+        "skipped_existing": 0,
+        "skipped_in_flight": 1,
+        "skipped_pending": 0,
+        "completed_calls": 1,
+    }
+    assert dispatch.call_count == 1, "the second add dispatched nothing"
+
+    # Age the stamp past the window; the call becomes eligible again, which is
+    # what makes a genuinely lost job recoverable.
+    config = _bound_config(environment)
+    call_execution.refresh_from_db()
+    stale = timezone.now() - EVAL_QUEUE_STAMP_WINDOW - timedelta(seconds=1)
+    call_execution.call_metadata["eval_queued"][str(config.id)] = stale.isoformat()
+    call_execution.save(update_fields=["call_metadata"])
+
+    with django_capture_on_commit_callbacks(execute=True):
+        third = _run_add(
+            env_client, environment, finished_run, workspace, template.name
+        )
+    assert third.json()["queued"] == 1
+    assert dispatch.call_count == 2
+
+
+@pytest.mark.django_db
+def test_run_add_returns_the_environment_refusal_and_queues_nothing(
+    env_client,
+    environment,
+    finished_run,
+    workspace,
+    dispatch,
+    django_capture_on_commit_callbacks,
+):
+    """Both bind refusals -- an ungradeable name (400) and a full
+    environment (409) -- are returned unchanged, and neither stamps or
+    dispatches anything."""
+    from simulate.services.harness_evals import MOST_SELECTED_EVALS
+
+    call_execution = _call(finished_run, metadata=_graded())
+
+    with django_capture_on_commit_callbacks(execute=True):
+        unknown = _run_add(
+            env_client, environment, finished_run, workspace, "no_such_eval"
+        )
+    assert unknown.status_code == 400, unknown.content
+    assert unknown.json()["detail"] == (
+        "no_such_eval: not an eval this environment can be graded by"
+    )
+
+    assert (
+        len(CAP_FILLERS) == MOST_SELECTED_EVALS
+    ), "the cap must be filled exactly, so the next name is the one too many"
+    for index, name in enumerate(CAP_FILLERS):
+        _assert_catalog_key(name, listed=True)
+        _template(name, ["conversation"], tags=("Conversation",), eval_id=index + 1)
+        with django_capture_on_commit_callbacks(execute=True):
+            filled = _run_add(env_client, environment, finished_run, workspace, name)
+        assert filled.status_code == 202, (name, filled.content)
+    dispatch.reset_mock()
+    _assert_catalog_key(ONE_TOO_MANY, listed=True)
+    _template(ONE_TOO_MANY, ["conversation"], tags=("Conversation",), eval_id=99)
+    call_execution.refresh_from_db()
+    before_stamps = dict(call_execution.call_metadata.get("eval_queued", {}))
+
+    with django_capture_on_commit_callbacks(execute=True):
+        full = _run_add(env_client, environment, finished_run, workspace, ONE_TOO_MANY)
+
+    assert full.status_code == 409, full.content
+    assert full.json()["detail"] == (
+        f"{ONE_TOO_MANY}: an environment runs at most {MOST_SELECTED_EVALS} evals; "
+        "remove one before adding another"
+    )
+    dispatch.assert_not_called()
+    assert not SimulateEvalConfig.objects.filter(
+        run_test_id=environment.run_test_id, name=ONE_TOO_MANY
+    ).exists()
+    call_execution.refresh_from_db()
+    assert call_execution.call_metadata.get("eval_queued", {}) == before_stamps, (
+        "a refused add stamps nothing: the stamps are keyed by config id, so "
+        "comparing them before and after is the only way to see that"
+    )
+
+
+@pytest.mark.django_db
+def test_run_add_refuses_a_bound_result_column_row(
+    env_client,
+    environment,
+    finished_run,
+    workspace,
+    dispatch,
+    django_capture_on_commit_callbacks,
+):
+    """A name already bound as one of the harness's own result columns
+    (empty ``mapping``) is refused with its own reason, and nothing is
+    stamped or dispatched."""
+    from simulate.services.alk_simulate_ingestion import (
+        _get_or_create_harness_eval_config,
+    )
+
+    template = _template("no_misselling", ["conversation"], tags=("Conversation",))
+    _call(finished_run, metadata=_graded())
+    _get_or_create_harness_eval_config(finished_run.run_test, template, template.name)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        response = _run_add(
+            env_client, environment, finished_run, workspace, template.name
+        )
+
+    assert response.status_code == 400, response.content
+    assert response.json()["detail"] == (
+        f"{template.name} is bound as a result column and has nothing to grade"
+    )
+    dispatch.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_run_add_at_the_cap_still_grades_an_eval_already_bound(
+    env_client,
+    environment,
+    finished_run,
+    workspace,
+    dispatch,
+    django_capture_on_commit_callbacks,
+):
+    """Adding a name that is already bound is idempotent, and the
+    idempotency scan runs before the cap check -- so a full environment can
+    still have one of its own evals graded over a finished run."""
+    from simulate.services.harness_evals import MOST_SELECTED_EVALS
+
+    call_execution = _call(finished_run, metadata=_graded())
+    assert len(CAP_FILLERS) == MOST_SELECTED_EVALS, "the cap must be filled exactly"
+    for index, name in enumerate(CAP_FILLERS):
+        _assert_catalog_key(name, listed=True)
+        _template(name, ["conversation"], tags=("Conversation",), eval_id=index + 1)
+        with django_capture_on_commit_callbacks(execute=True):
+            filled = _run_add(env_client, environment, finished_run, workspace, name)
+        assert filled.status_code == 202, (name, filled.content)
+    call_execution.refresh_from_db()
+    # Clear the stamps the eight adds left, so the re-add's own call is
+    # eligible again rather than in flight.
+    call_execution.call_metadata = _graded()
+    call_execution.save(update_fields=["call_metadata"])
+    dispatch.reset_mock()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        again = _run_add(
+            env_client, environment, finished_run, workspace, CAP_FILLERS[0]
+        )
+
+    assert again.status_code == 202, again.content
+    assert again.json()["queued"] == 1
+    assert dispatch.call_count == 1
+
+
+@pytest.mark.django_db
+def test_run_add_foreign_run_404(
+    env_client,
+    user,
+    environment,
+    workspace,
+    dispatch,
+    django_capture_on_commit_callbacks,
+):
+    """404 when `execution_id` is not a run of this environment, and the eval
+    is not bound, because the run is resolved before anything is bound."""
+    template = _template("no_misselling", ["conversation"], tags=("Conversation",))
+
+    other_job, _ = create_hosted_job(
+        user.organization,
+        _payload(),
+        idempotency_key="env-evals-other-run",
+        workspace=workspace,
+    )
+    capability = register_attempt(
+        other_job.id, endpoint_base_url="https://platform.example"
+    )
+    provisioned = APIClient().post(
+        f"{ATTEMPTS}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Other",
+            "modality": "voice",
+            "personas": [
+                {
+                    "scenario_key": "other-one",
+                    "name": "Customer",
+                    "situation": "Asks something else",
+                    "outcome": "Agent answers",
+                }
+            ],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    assert provisioned.status_code == 200, provisioned.content
+    other_job.refresh_from_db()
+    foreign = TestExecution.objects.create(
+        run_test=other_job.run_test,
+        status=TestExecution.ExecutionStatus.COMPLETED,
+        total_scenarios=1,
+        scenario_ids=[str(other_job.run_test.scenarios.first().id)],
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        stranger = env_client.post(
+            f"{ENVIRONMENTS}/{environment.id}/runs/{foreign.id}/evaluations/",
+            {"name": template.name},
+            format="json",
+            HTTP_X_WORKSPACE_ID=str(workspace.id),
+        )
+    with django_capture_on_commit_callbacks(execute=True):
+        missing = env_client.post(
+            f"{ENVIRONMENTS}/{environment.id}/runs/{uuid.uuid4()}/evaluations/",
+            {"name": template.name},
+            format="json",
+            HTTP_X_WORKSPACE_ID=str(workspace.id),
+        )
+
+    assert stranger.status_code == 404, stranger.content
+    assert stranger.json()["detail"] == "Run not found"
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "Run not found"
+    dispatch.assert_not_called()
+    assert not SimulateEvalConfig.objects.filter(
+        run_test_id=environment.run_test_id
+    ).exists(), "a bad run id must leave nothing bound"
+
+
+@pytest.mark.django_db
+def test_run_add_refuses_an_environment_with_no_run_test(
+    env_client, user, workspace, dispatch, django_capture_on_commit_callbacks
+):
+    """The "no run test yet" 409 reaches this route too, because it shares
+    `_run_test_job`: an environment with no run test has no runs to
+    grade."""
+    job, _ = create_hosted_job(
+        user.organization,
+        _payload(),
+        idempotency_key="env-evals-run-add-unbuilt",
+        workspace=workspace,
+    )
+    with django_capture_on_commit_callbacks(execute=True):
+        response = env_client.post(
+            f"{ENVIRONMENTS}/{job.id}/runs/{uuid.uuid4()}/evaluations/",
+            {"name": "no_misselling"},
+            format="json",
+            HTTP_X_WORKSPACE_ID=str(workspace.id),
+        )
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "Environment has no evaluations until it finishes building"
+    )
+    dispatch.assert_not_called()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "run_status",
+    [
+        TestExecution.ExecutionStatus.CANCELLED,
+        TestExecution.ExecutionStatus.CANCELLING,
+    ],
+)
+def test_run_add_refuses_a_cancelled_run_before_binding_or_stamping(
+    env_client,
+    environment,
+    workspace,
+    dispatch,
+    django_capture_on_commit_callbacks,
+    run_status,
+):
+    """A cancelled (or cancelling) run with finished calls is refused 409:
+    the eval worker never grades a cancelled run, so a 202 here would count
+    work that does not happen. Nothing is bound and no call is stamped, so
+    the next click after the run is no longer cancelled is not hidden by the
+    ten-minute stamp."""
+    # A bindable eval, so that without the refusal this request would bind
+    # and stamp -- which is what makes the "nothing left behind" assertions
+    # below able to fail.
+    template = _template("no_misselling", ["conversation"], tags=("Conversation",))
+    run_test = environment.run_test
+    scenario = run_test.scenarios.first()
+    execution = TestExecution.objects.create(
+        run_test=run_test,
+        status=run_status,
+        total_scenarios=1,
+        scenario_ids=[str(scenario.id)],
+    )
+    call = _call(execution, metadata=_graded())
+    bound_before = set(
+        SimulateEvalConfig.objects.filter(run_test=run_test).values_list(
+            "id", flat=True
+        )
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        response = _run_add(
+            env_client, environment, execution, workspace, template.name
+        )
+
+    assert response.status_code == 409, response.content
+    assert response.json()["detail"] == "Run is cancelled; nothing will be graded"
+    dispatch.assert_not_called()
+    assert (
+        set(
+            SimulateEvalConfig.objects.filter(run_test=run_test).values_list(
+                "id", flat=True
+            )
+        )
+        == bound_before
+    ), "the refusal must come before the bind"
+    call.refresh_from_db()
+    assert (
+        "eval_queued" not in call.call_metadata
+    ), "the refusal must come before the stamp"
+
+
+@pytest.mark.django_db
+def test_queue_eval_for_finished_calls_refuses_a_cancelled_run(environment):
+    """The service backstop: no caller can stamp a cancelled run's calls."""
+    from simulate.services.harness_evals import add_selected_eval
+    from simulate.services.harness_run_evals import queue_eval_for_finished_calls
+
+    run_test = environment.run_test
+    scenario = run_test.scenarios.first()
+    execution = TestExecution.objects.create(
+        run_test=run_test,
+        status=TestExecution.ExecutionStatus.CANCELLED,
+        total_scenarios=1,
+        scenario_ids=[str(scenario.id)],
+    )
+    call = _call(execution, metadata=_graded())
+    # `add_selected_eval` needs a real catalog template to bind against, the
+    # same convention `test_run_add_counts` above uses.
+    _template("no_misselling", ["conversation"], tags=("Conversation",))
+    eval_config = add_selected_eval(run_test, "no_misselling", "voice")
+
+    with pytest.raises(ValueError, match="does not grade a cancelled run"):
+        queue_eval_for_finished_calls(execution, eval_config)
+
+    call.refresh_from_db()
+    assert "eval_queued" not in call.call_metadata
+
+
+@pytest.mark.django_db
+def test_run_add_moves_the_environment_clock_only_when_something_changed(
+    env_client,
+    environment,
+    finished_run,
+    workspace,
+    dispatch,
+    django_capture_on_commit_callbacks,
+):
+    """Moves the environment's clock on a fresh bind (a), leaves it alone on
+    a genuinely no-op repeat (b), and moves it again when a removed eval is
+    revived, even though nothing new is queued (c) -- the regression guard:
+    comparing `created_at` instead of `updated_at` misses this arm."""
+    template = _template("no_misselling", ["conversation"], tags=("Conversation",))
+    # Never eligible, so across every arm below only the bind itself -- not
+    # a queued call -- can be what moves the clock.
+    _call(finished_run, metadata={"eval_started": True})
+
+    # The clock is never empty: `create_hosted_job` stamps it at creation and
+    # registering scenarios bumps it (`services/hosted_harness.py:148,449`).
+    # Take the fixture's value as the baseline every arm below is measured
+    # against.
+    environment.refresh_from_db()
+    baseline = environment.content_updated_at
+    assert baseline is not None
+
+    # (a) fresh bind, `queued == 0` -- the clock must still move.
+    before_a = timezone.now()
+    assert baseline < before_a
+    with django_capture_on_commit_callbacks(execute=True):
+        first = _run_add(
+            env_client, environment, finished_run, workspace, template.name
+        )
+    after_a = timezone.now()
+    assert first.status_code == 202, first.content
+    assert first.json() == {
+        "queued": 0,
+        "skipped_existing": 0,
+        "skipped_in_flight": 0,
+        "skipped_pending": 1,
+        "completed_calls": 1,
+    }
+    config = _bound_config(environment, template.name)
+    environment.refresh_from_db()
+    assert environment.content_updated_at is not None
+    assert before_a <= environment.content_updated_at <= after_a
+
+    # (b) an immediate repeat of the same name, still `queued == 0` -- a
+    # genuinely no-op click -- the clock must NOT move.
+    after_first_add = environment.content_updated_at
+    with django_capture_on_commit_callbacks(execute=True):
+        second = _run_add(
+            env_client, environment, finished_run, workspace, template.name
+        )
+    assert second.status_code == 202, second.content
+    assert second.json() == first.json()
+    environment.refresh_from_db()
+    assert (
+        environment.content_updated_at == after_first_add
+    ), "a bind that saved nothing and queued nothing must not bump the clock"
+
+    # (c) remove the eval, then re-add it from this run with its only
+    # completed call already holding the verdict: `bind_eval_config` revives
+    # the soft-deleted row under the SAME uuid5 id, so the old verdict still
+    # matches and `queued` stays 0 -- but the revive DID save something, so
+    # the clock must move.
+    _call(
+        finished_run,
+        metadata=_graded(),
+        eval_outputs={str(config.id): _verdict(template.name)},
+    )
+    remove = env_client.delete(
+        f"{ENVIRONMENTS}/{environment.id}/evaluations/{config.id}/",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+    assert remove.status_code == 204, remove.content
+    environment.refresh_from_db()
+    after_remove = environment.content_updated_at
+    assert after_remove is not None and after_remove > after_first_add
+
+    before_c = timezone.now()
+    with django_capture_on_commit_callbacks(execute=True):
+        third = _run_add(
+            env_client, environment, finished_run, workspace, template.name
+        )
+    after_c = timezone.now()
+    assert third.status_code == 202, third.content
+    assert third.json() == {
+        "queued": 0,
+        "skipped_existing": 1,
+        "skipped_in_flight": 0,
+        "skipped_pending": 1,
+        "completed_calls": 2,
+    }
+    environment.refresh_from_db()
+    assert environment.content_updated_at is not None
+    assert before_c <= environment.content_updated_at <= after_c
+    assert environment.content_updated_at > after_remove, (
+        "reviving a removed eval from inside a run is real content movement, "
+        "even though it queues nothing new"
+    )
+
+    # (d) a repeat that binds nothing but queues a call that became eligible
+    # since the last click -- the clock must move on the queueing alone.
+    newly_eligible = _call(finished_run, metadata=_graded())
+    environment.refresh_from_db()
+    after_c_clock = environment.content_updated_at
+    before_d = timezone.now()
+    with django_capture_on_commit_callbacks(execute=True):
+        fourth = _run_add(
+            env_client, environment, finished_run, workspace, template.name
+        )
+    assert fourth.status_code == 202, fourth.content
+    assert fourth.json()["queued"] == 1
+    environment.refresh_from_db()
+    assert (
+        environment.content_updated_at > after_c_clock
+    ), "an idempotent bind that queues a call is still content movement"
+    assert environment.content_updated_at >= before_d
+    newly_eligible.refresh_from_db()
+    assert "eval_queued" in newly_eligible.call_metadata
+
+    assert dispatch.call_count == 1
+
+
+# --- TH-8055: the tool-call evaluation switch --------------------------------
+
+
+@pytest.mark.django_db
+def test_tool_call_switch_is_read_from_the_detail(env_client, environment, workspace):
+    """`settings.enable_tool_evaluation` is a boolean on every detail, off by
+    default, and reports the run test's column rather than a constant."""
+    first = _detail(env_client, environment, workspace)
+    assert first.status_code == 200, first.content
+    assert first.json()["settings"]["enable_tool_evaluation"] is False
+
+    run_test = environment.run_test
+    run_test.enable_tool_evaluation = True
+    run_test.save(update_fields=["enable_tool_evaluation", "updated_at"])
+
+    second = _detail(env_client, environment, workspace)
+    assert second.status_code == 200, second.content
+    assert second.json()["settings"]["enable_tool_evaluation"] is True
+
+
+@pytest.mark.django_db
+def test_tool_call_switch_reads_false_before_the_environment_is_built(
+    env_client, user, workspace
+):
+    """Never null and never absent — an environment with no run test yet
+    reads `false`, not `null`."""
+    unbuilt, _ = create_hosted_job(
+        user.organization,
+        _payload(),
+        idempotency_key="env-evals-tool-call-unbuilt-detail",
+        workspace=workspace,
+    )
+    body = _detail(env_client, unbuilt, workspace)
+    assert body.status_code == 200, body.content
+    assert body.json()["settings"]["enable_tool_evaluation"] is False
+
+
+@pytest.mark.django_db
+def test_tool_call_switch_toggles(env_client, user, workspace):
+    """PUT sets the column and answers with the whole environment detail,
+    already showing the new value, in both directions."""
+    environment = _text_environment(user, workspace)
+    on = _set_tool_call(env_client, environment, workspace, True)
+    assert on.status_code == 200, on.content
+    body = on.json()
+    assert body["settings"]["enable_tool_evaluation"] is True
+    # The 200 is the same body as GET {id}/, not a fragment: the client must
+    # not have to refetch to learn anything else about the environment.
+    assert set(body) == {
+        "id",
+        "overview",
+        "contract",
+        "world",
+        "scenarios",
+        "evaluations",
+        "settings",
+    }
+    environment.run_test.refresh_from_db()
+    assert environment.run_test.enable_tool_evaluation is True
+
+    off = _set_tool_call(env_client, environment, workspace, False)
+    assert off.status_code == 200, off.content
+    assert off.json()["settings"]["enable_tool_evaluation"] is False
+    environment.run_test.refresh_from_db()
+    assert environment.run_test.enable_tool_evaluation is False
+
+    # Turning it on and off again binds no eval and leaves the catalogue
+    # lists alone: this is a switch, not an entry.
+    assert off.json()["evaluations"]["selected"] == []
+
+
+@pytest.mark.django_db
+def test_tool_call_switch_is_idempotent(env_client, user, workspace):
+    """Setting the value it already has is a 200, not an error, and moves
+    only the environment's content clock."""
+    environment = _text_environment(user, workspace)
+    first = _set_tool_call(env_client, environment, workspace, True)
+    assert first.status_code == 200, first.content
+    environment.refresh_from_db()
+    after_first = environment.content_updated_at
+
+    second = _set_tool_call(env_client, environment, workspace, True)
+    assert second.status_code == 200, second.content
+    assert second.json()["settings"]["enable_tool_evaluation"] is True
+    environment.run_test.refresh_from_db()
+    assert environment.run_test.enable_tool_evaluation is True
+
+    environment.refresh_from_db()
+    assert environment.content_updated_at > after_first, (
+        "_touch_content must fire on every accepted call, as the add and the "
+        "remove do -- one rule for the list's clock"
+    )
+
+
+@pytest.mark.django_db
+def test_tool_call_switch_refusals(env_client, environment, user, workspace):
+    """The same 404 and 409 as this endpoint's three siblings, and a 400 for
+    a body this switch cannot read."""
+    import uuid
+
+    missing = _set_tool_call(
+        env_client, type("J", (), {"id": uuid.uuid4()})(), workspace, True
+    )
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "Environment not found"
+
+    nonsense = env_client.put(
+        f"{ENVIRONMENTS}/not-a-uuid/evaluations/tool-call/",
+        {"enable_tool_evaluation": True},
+        format="json",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+    assert nonsense.status_code == 404
+    assert nonsense.json()["detail"] == "Environment not found"
+
+    unbuilt, _ = create_hosted_job(
+        user.organization,
+        _payload(),
+        idempotency_key="env-evals-tool-call-unbuilt",
+        workspace=workspace,
+    )
+    no_run_test = _set_tool_call(env_client, unbuilt, workspace, True)
+    assert no_run_test.status_code == 409
+    assert no_run_test.json()["detail"] == (
+        "Environment has no evaluations until it finishes building"
+    )
+
+    empty = env_client.put(
+        f"{ENVIRONMENTS}/{environment.id}/evaluations/tool-call/",
+        {},
+        format="json",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+    assert empty.status_code == 400, empty.content
+
+    not_a_boolean = _set_tool_call(env_client, environment, workspace, "maybe")
+    assert not_a_boolean.status_code == 400, not_a_boolean.content
+
+    unknown_field = env_client.put(
+        f"{ENVIRONMENTS}/{environment.id}/evaluations/tool-call/",
+        {"enable_tool_evaluation": True, "unexpected": "field"},
+        format="json",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+    assert unknown_field.status_code == 400, unknown_field.content
+
+    null_value = env_client.put(
+        f"{ENVIRONMENTS}/{environment.id}/evaluations/tool-call/",
+        {"enable_tool_evaluation": None},
+        format="json",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+    assert null_value.status_code == 400, null_value.content
+
+    # A malformed body 400s even against an environment the caller cannot
+    # see -- request validation runs before the environment lookup.
+    invisible_malformed = env_client.put(
+        f"{ENVIRONMENTS}/{uuid.uuid4()}/evaluations/tool-call/",
+        {"enable_tool_evaluation": "maybe"},
+        format="json",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+    assert invisible_malformed.status_code == 400, invisible_malformed.content
+
+    # None of the refusals wrote anything.
+    environment.run_test.refresh_from_db()
+    assert environment.run_test.enable_tool_evaluation is False
+
+
+@pytest.mark.django_db
+def test_tool_call_switch_not_visible_across_workspaces(env_client, user, workspace):
+    """An environment that exists, but in a workspace the caller did not ask
+    for, is a 404 -- and the write must not land."""
+    from accounts.models.workspace import Workspace
+
+    other_workspace = Workspace.objects.create(
+        name="Other workspace",
+        organization=user.organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+    foreign, _ = create_hosted_job(
+        user.organization,
+        _payload(),
+        idempotency_key="env-evals-tool-call-other-workspace",
+        workspace=other_workspace,
+    )
+    response = _set_tool_call(env_client, foreign, workspace, True)
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Environment not found"
+    # `foreign` has no run test, so there is no column for a leaked write to
+    # land in -- the refusal itself, 404 rather than 409, is what's under test.
+
+
+def test_tool_call_switch_does_not_publish_its_internals_to_swagger():
+    """`operation_description` on the PUT's `@validated_request` must exist,
+    or drf-yasg falls back to the action's internal docstring as the
+    published `swagger.json` description."""
+    from simulate.views.harness_environment import HarnessEnvironmentViewSet
+
+    overrides = HarnessEnvironmentViewSet.set_tool_call_evaluation._swagger_auto_schema
+    # drf-yasg keys the overrides by HTTP method for a viewset action.
+    overrides = overrides.get("put", overrides)
+    description = overrides["operation_description"]
+    assert "test_executor.py" not in description
+    assert "eval-offer-backend-frontend" not in description
+
+
+@pytest.mark.django_db
+def test_tool_call_switch_refuses_on_for_a_versionless_voice_environment(
+    env_client, environment, workspace
+):
+    """A hosted voice environment's agent definition has no `AgentVersion`,
+    so the judge would silently never run. Turning the switch on for that
+    shape is refused, 409; turning it off is always allowed."""
+    on = _set_tool_call(env_client, environment, workspace, True)
+    assert on.status_code == 409, on.content
+    assert on.json()["detail"] == (
+        "Tool-call evaluation is not available for a voice environment yet"
+    )
+    environment.run_test.refresh_from_db()
+    assert environment.run_test.enable_tool_evaluation is False
+
+    off = _set_tool_call(env_client, environment, workspace, False)
+    assert off.status_code == 200, off.content
+    assert off.json()["settings"]["enable_tool_evaluation"] is False
+
+
 @pytest.mark.django_db
 def test_available_not_visible_across_workspaces(env_client, user, workspace):
     """An environment that exists, but in a workspace the caller did not ask
@@ -558,6 +1855,38 @@ def test_available_not_visible_across_workspaces(env_client, user, workspace):
     response = _available(env_client, foreign, workspace)
     assert response.status_code == 404
     assert response.json()["detail"] == "Environment not found"
+
+
+@pytest.mark.django_db
+def test_run_add_not_visible_across_workspaces(
+    env_client,
+    user,
+    environment,
+    finished_run,
+    workspace,
+    dispatch,
+    django_capture_on_commit_callbacks,
+):
+    """`runs/{id}/evaluations/` has the same workspace isolation as
+    `evaluations/available/`: a caller in another workspace gets a 404, not
+    a leak of this workspace's run."""
+    from accounts.models.workspace import Workspace
+
+    other_workspace = Workspace.objects.create(
+        name="Other workspace",
+        organization=user.organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+    template = _template("no_misselling", ["conversation"], tags=("Conversation",))
+    with django_capture_on_commit_callbacks(execute=True):
+        response = _run_add(
+            env_client, environment, finished_run, other_workspace, template.name
+        )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Environment not found"
+    dispatch.assert_not_called()
 
 
 @pytest.mark.django_db
@@ -789,3 +2118,95 @@ def test_add_refuses_a_too_long_name_with_its_own_reason(environment, user, work
     with pytest.raises(EvalSelectionRefused) as excinfo:
         add_selected_eval(environment.run_test, over, "voice")
     assert excinfo.value.reason == "name is longer than 255 characters"
+
+
+# Pure-function tests on the stamp helpers: no HTTP, no fixture, no DB.
+
+
+def test_a_corrupt_stamp_reads_as_not_queued_instead_of_raising():
+    """A well-formed-but-invalid stamp (``"2026-02-30T00:00:00"``, a real
+    ISO-8601 shape naming a day that does not exist) reads as "not queued"
+    rather than raising."""
+    now = timezone.now()
+    metadata = {EVAL_QUEUED_KEY: {"cfg": "2026-02-30T00:00:00"}}
+    assert _queued_within_window(metadata, "cfg", now=now) is False
+
+
+def test_the_window_guard_does_not_care_whether_the_config_id_is_a_uuid():
+    """The stamp key is `str(config_id)` on read, matching write and clear,
+    so a caller that passes a raw `UUID` still finds the stamp."""
+    now, config_id = timezone.now(), uuid.uuid4()
+    metadata = {EVAL_QUEUED_KEY: {str(config_id): now.isoformat()}}
+    assert _queued_within_window(metadata, config_id, now=now) is True
+
+
+def test_a_stamp_a_few_seconds_ahead_still_reads_as_queued():
+    """A stamp a little *ahead* of `now`, well inside `EVAL_QUEUE_STAMP_SKEW`,
+    still reads as queued -- clock skew between two web workers, not
+    corruption."""
+    now = timezone.now()
+    ahead = (now + timedelta(seconds=2)).isoformat()
+    metadata = {EVAL_QUEUED_KEY: {"cfg": ahead}}
+    assert _queued_within_window(metadata, "cfg", now=now) is True
+
+
+def test_a_stamp_far_in_the_future_does_not_lock_the_call_out_forever():
+    """A garbage stamp like `"2999-01-01T00:00:00+00:00"` is far outside the
+    skew band, so it reads as not queued rather than locking the call out
+    for roughly 973 years."""
+    now = timezone.now()
+    metadata = {EVAL_QUEUED_KEY: {"cfg": "2999-01-01T00:00:00+00:00"}}
+    assert _queued_within_window(metadata, "cfg", now=now) is False
+
+
+def test_metadata_hands_back_a_writable_stamps_dict_even_when_the_column_is_corrupt():
+    """`_metadata` coerces a non-dict `eval_queued` to `{}` rather than
+    passing it through, so the recommended `setdefault` write pattern never
+    raises."""
+    from simulate.services.harness_run_evals import EVAL_QUEUED_KEY as _KEY
+    from simulate.services.harness_run_evals import _metadata
+
+    class _Call:
+        call_metadata = {_KEY: "corrupt"}
+
+    metadata = _metadata(_Call())
+    # This line raised `TypeError` before the fix.
+    metadata.setdefault(_KEY, {})["cfg"] = "2026-01-01T00:00:00+00:00"
+    assert metadata[_KEY] == {"cfg": "2026-01-01T00:00:00+00:00"}
+
+
+@pytest.mark.django_db
+def test_clear_queued_stamps_finds_the_stamp_when_the_config_id_is_a_uuid(environment):
+    """`_clear_queued_stamps` finds and clears a `UUID` config id's stamp,
+    and removes only that config's key."""
+    from simulate.models import CallExecution, TestExecution
+    from simulate.services.harness_run_evals import _clear_queued_stamps
+
+    run_test = environment.run_test
+    scenario = run_test.scenarios.first()
+    assert scenario is not None, "the provision fixture must leave a scenario"
+    execution = TestExecution.objects.create(
+        run_test=run_test,
+        status=TestExecution.ExecutionStatus.COMPLETED,
+        total_scenarios=1,
+        scenario_ids=[str(scenario.id)],
+    )
+    config_id = uuid.uuid4()
+    call_execution = CallExecution.objects.create(
+        test_execution=execution,
+        scenario=scenario,
+        status=CallExecution.CallStatus.COMPLETED,
+        call_metadata={
+            EVAL_QUEUED_KEY: {
+                str(config_id): "2026-01-01T00:00:00+00:00",
+                "other": "2026-01-01T00:00:00+00:00",
+            }
+        },
+    )
+
+    _clear_queued_stamps([call_execution.id], config_id)  # raw UUID, not str()
+
+    call_execution.refresh_from_db()
+    assert call_execution.call_metadata[EVAL_QUEUED_KEY] == {
+        "other": "2026-01-01T00:00:00+00:00"
+    }

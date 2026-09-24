@@ -844,3 +844,26 @@ def runnable_eval_config_ids(run_test_id) -> list[str]:
         ).values_list("id", "mapping")
         if mapping
     ]
+
+
+def _tool_evaluation_on(run_test_id) -> bool:
+    """Whether ``run_test_id``'s tool-call judge switch is on.
+
+    Callers OR this in with their own catalogue-eval check so the switch
+    alone can still trigger dispatch when zero evals are selected.
+
+    Read through the manager that does not scope by workspace. Every caller
+    is on an ingestion path, where the thread carries whatever workspace it
+    was last left with -- often none at all -- while the environment detail
+    reads the same column straight off the run test it already holds. The
+    default manager would therefore let the detail report the switch on while
+    this read reports it off, and the run would quietly skip the judge the
+    user just turned on. Soft-deleted rows stay excluded either way.
+    """
+    if not run_test_id:
+        return False
+    return bool(
+        RunTest.no_workspace_objects.filter(id=run_test_id)
+        .values_list("enable_tool_evaluation", flat=True)
+        .first()
+    )

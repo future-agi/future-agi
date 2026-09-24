@@ -111,6 +111,38 @@ class HarnessEnvironmentAddEvaluationSerializer(serializers.Serializer):
     )
 
 
+class HarnessEnvironmentRunEvaluationQueuedSerializer(serializers.Serializer):
+    """What adding an eval from inside a run reports back.
+
+    Not the environment detail -- the client refetches that itself.
+    ``completed_calls`` is the finished calls the endpoint looked at, and the
+    four others always partition it exactly.
+    """
+
+    queued = serializers.IntegerField(
+        help_text=(
+            "Stamped and scheduled for dispatch -- not yet dispatched. A "
+            "call whose stamp committed but whose grading job then failed "
+            "to queue is still counted here, not subtracted."
+        )
+    )
+    skipped_existing = serializers.IntegerField()
+    skipped_in_flight = serializers.IntegerField()
+    skipped_pending = serializers.IntegerField()
+    completed_calls = serializers.IntegerField()
+
+
+class HarnessEnvironmentToolCallEvaluationSerializer(serializers.Serializer):
+    """The tool-call judge's switch, sent as a whole state rather than a patch.
+
+    Required, not defaulted: a body that forgets the key is a client bug, and
+    silently reading it as ``false`` would turn "I meant to switch this on"
+    into "I switched it off".
+    """
+
+    enable_tool_evaluation = serializers.BooleanField()
+
+
 class HarnessEnvironmentEvalInputSerializer(serializers.Serializer):
     """Which stored piece of a call fills one of an eval's required keys.
 
@@ -375,7 +407,14 @@ class HarnessEnvironmentAgentSettingsSerializer(serializers.Serializer):
 
 
 class HarnessEnvironmentSettingsSerializer(serializers.Serializer):
-    """The request the environment was built from. Read-only; secrets are names only."""
+    """How this environment runs: the request it was built from, plus one switch.
+
+    Everything but ``enable_tool_evaluation`` is a record of how the
+    environment was built and cannot be edited; secrets are names only.
+    ``enable_tool_evaluation`` is the tool-call judge's switch, written by
+    ``PUT evaluations/tool-call/``. Never null: an environment with no run
+    test reads ``false``.
+    """
 
     schema_version = serializers.CharField(allow_null=True)
     source = serializers.DictField()
@@ -385,6 +424,7 @@ class HarnessEnvironmentSettingsSerializer(serializers.Serializer):
     artifacts = serializers.DictField(allow_null=True)
     scenario_count = serializers.IntegerField(allow_null=True)
     seed = serializers.IntegerField(allow_null=True)
+    enable_tool_evaluation = serializers.BooleanField()
 
 
 class HarnessEnvironmentDetailSerializer(serializers.Serializer):

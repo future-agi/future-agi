@@ -50321,6 +50321,49 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/evaluations/tool-call/": {
+            "put": {
+                "operationId": "simulate_api_harness-environments_evaluations_set_tool_call_evaluation",
+                "description": "Turn the tool-call judge on or off for this environment. Returns the full environment detail. Turning it on is refused for a hosted voice environment with no agent version yet.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentToolCallEvaluation"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentDetail"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/": {
             "delete": {
                 "operationId": "simulate_api_harness-environments_remove_evaluation",
@@ -50394,6 +50437,55 @@
             "parameters": [
                 {
                     "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_runs_add_run_evaluation",
+                "description": "Add an eval to the environment and grade this run's already-finished calls with it.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentAddEvaluation"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentRunEvaluationQueued"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "execution_id",
                     "in": "path",
                     "required": true,
                     "type": "string"
@@ -119646,6 +119738,11 @@
                     "title": "Agent name",
                     "type": "string",
                     "maxLength": 255
+                },
+                "enable_tool_evaluation": {
+                    "title": "Enable tool evaluation",
+                    "type": "boolean",
+                    "default": false
                 }
             }
         },
@@ -121040,7 +121137,8 @@
                 "security",
                 "artifacts",
                 "scenario_count",
-                "seed"
+                "seed",
+                "enable_tool_evaluation"
             ],
             "type": "object",
             "properties": {
@@ -121097,6 +121195,10 @@
                     "title": "Seed",
                     "type": "integer",
                     "x-nullable": true
+                },
+                "enable_tool_evaluation": {
+                    "title": "Enable tool evaluation",
+                    "type": "boolean"
                 }
             }
         },
@@ -121261,6 +121363,18 @@
                 }
             }
         },
+        "HarnessEnvironmentToolCallEvaluation": {
+            "required": [
+                "enable_tool_evaluation"
+            ],
+            "type": "object",
+            "properties": {
+                "enable_tool_evaluation": {
+                    "title": "Enable tool evaluation",
+                    "type": "boolean"
+                }
+            }
+        },
         "HarnessRunCreate": {
             "required": [
                 "scenario_ids"
@@ -121350,6 +121464,39 @@
                     "title": "Stage",
                     "type": "string",
                     "minLength": 1
+                }
+            }
+        },
+        "HarnessEnvironmentRunEvaluationQueued": {
+            "required": [
+                "queued",
+                "skipped_existing",
+                "skipped_in_flight",
+                "skipped_pending",
+                "completed_calls"
+            ],
+            "type": "object",
+            "properties": {
+                "queued": {
+                    "title": "Queued",
+                    "description": "Stamped and scheduled for dispatch -- not yet dispatched. A call whose stamp committed but whose grading job then failed to queue is still counted here, not subtracted.",
+                    "type": "integer"
+                },
+                "skipped_existing": {
+                    "title": "Skipped existing",
+                    "type": "integer"
+                },
+                "skipped_in_flight": {
+                    "title": "Skipped in flight",
+                    "type": "integer"
+                },
+                "skipped_pending": {
+                    "title": "Skipped pending",
+                    "type": "integer"
+                },
+                "completed_calls": {
+                    "title": "Completed calls",
+                    "type": "integer"
                 }
             }
         },
@@ -126012,6 +126159,11 @@
                 },
                 "skipped": {
                     "title": "Skipped",
+                    "type": "boolean"
+                },
+                "removed": {
+                    "title": "Removed",
+                    "description": "Present and true only when the eval was removed from the environment; a live eval's verdict omits the key entirely.",
                     "type": "boolean"
                 },
                 "error_localizer": {
@@ -130789,6 +130941,12 @@
             "properties": {
                 "total_calls": {
                     "title": "Total calls",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "completed_calls": {
+                    "title": "Completed calls",
+                    "description": "Calls with status completed, counted like every other KPI here: soft-deleted calls included. The run-level add's 202 counts live calls only, so the two can differ for a run with a deleted call (TH-8057).",
                     "type": "integer",
                     "readOnly": true
                 },

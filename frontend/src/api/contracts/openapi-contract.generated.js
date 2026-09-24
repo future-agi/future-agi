@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1031,
+  endpointCount: 1033,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -27816,6 +27816,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-environments/{id}/evaluations/tool-call/": {
+      put: {
+        operationId:
+          "simulate_api_harness-environments_evaluations_set_tool_call_evaluation",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessEnvironmentToolCallEvaluation",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessEnvironmentDetail",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/": {
       delete: {
         operationId: "simulate_api_harness-environments_remove_evaluation",
@@ -27849,6 +27869,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/":
+      {
+        post: {
+          operationId:
+            "simulate_api_harness-environments_runs_add_run_evaluation",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/HarnessEnvironmentAddEvaluation",
+          },
+          queryParameters: {},
+          responses: {
+            202: {
+              $ref: "#/definitions/HarnessEnvironmentRunEvaluationQueued",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/simulate/api/harness-jobs/": {
       get: {
         operationId: "simulate_api_harness-jobs_list",
@@ -44252,6 +44293,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Agent name",
           type: "string",
           maxLength: 255,
+        },
+        enable_tool_evaluation: {
+          title: "Enable tool evaluation",
+          type: "boolean",
+          default: false,
         },
       },
     },
@@ -60884,6 +60930,50 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentRunEvaluationQueued: {
+      required: [
+        "queued",
+        "skipped_existing",
+        "skipped_in_flight",
+        "skipped_pending",
+        "completed_calls",
+      ],
+      type: "object",
+      properties: {
+        queued: {
+          title: "Queued",
+          description:
+            "Stamped and scheduled for dispatch -- not yet dispatched. A call whose stamp committed but whose grading job then failed to queue is still counted here, not subtracted.",
+          type: "integer",
+        },
+        skipped_existing: {
+          title: "Skipped existing",
+          type: "integer",
+        },
+        skipped_in_flight: {
+          title: "Skipped in flight",
+          type: "integer",
+        },
+        skipped_pending: {
+          title: "Skipped pending",
+          type: "integer",
+        },
+        completed_calls: {
+          title: "Completed calls",
+          type: "integer",
+        },
+      },
+    },
+    HarnessEnvironmentToolCallEvaluation: {
+      required: ["enable_tool_evaluation"],
+      type: "object",
+      properties: {
+        enable_tool_evaluation: {
+          title: "Enable tool evaluation",
+          type: "boolean",
+        },
+      },
+    },
     HarnessEventBatch: {
       required: ["schema_version", "events"],
       type: "object",
@@ -70976,6 +71066,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
       properties: {
         total_calls: {
           title: "Total calls",
+          type: "integer",
+          readOnly: true,
+        },
+        completed_calls: {
+          title: "Completed calls",
+          description:
+            "Calls with status completed, counted like every other KPI here: soft-deleted calls included. The run-level add's 202 counts live calls only, so the two can differ for a run with a deleted call (TH-8057).",
           type: "integer",
           readOnly: true,
         },
@@ -82222,6 +82319,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Skipped",
           type: "boolean",
         },
+        removed: {
+          title: "Removed",
+          description:
+            "Present and true only when the eval was removed from the environment; a live eval's verdict omits the key entirely.",
+          type: "boolean",
+        },
         error_localizer: {
           title: "Error localizer",
           type: "boolean",
@@ -88915,6 +89018,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "artifacts",
         "scenario_count",
         "seed",
+        "enable_tool_evaluation",
       ],
       type: "object",
       properties: {
@@ -88971,6 +89075,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Seed",
           type: "integer",
           "x-nullable": true,
+        },
+        enable_tool_evaluation: {
+          title: "Enable tool evaluation",
+          type: "boolean",
         },
       },
     },

@@ -1012,7 +1012,10 @@ def _apply_receipt_to_call(
         _dispatch_csat_once,
         _dispatch_evaluations_once,
     )
-    from simulate.services.harness_evals import runnable_eval_config_ids
+    from simulate.services.harness_evals import (
+        _tool_evaluation_on,
+        runnable_eval_config_ids,
+    )
 
     _apply_harness_evaluation_outputs(call)
     update_fields.append("eval_outputs")
@@ -1065,20 +1068,21 @@ def _apply_receipt_to_call(
         )
         # A hosted receipt never travels the SDK result path, so dispatch here, after commit.
         try:
-            selected = (
-                runnable_eval_config_ids(run_test_id)
-                if isinstance(run_test_id, (str, UUID))
-                else []
-            )
-        except Exception:  # noqa: BLE001 - a receipt is never lost over what it schedules next
+            known = isinstance(run_test_id, (str, UUID))
+            selected = runnable_eval_config_ids(run_test_id) if known else []
+            tool_on = _tool_evaluation_on(run_test_id) if known else False
+        except Exception:  # noqa: BLE001 - a receipt is never lost over scheduling
             logger.exception(
-                "harness_eval_selection_lookup_failed", call_id=str(call_id)
+                "harness_eval_selection_lookup_failed for call %s", call_id
             )
-            selected = []
-        if selected:
+            selected, tool_on = [], False
+        # The tool-call judge switch is independent of the eval catalogue, so
+        # it must still dispatch when this environment has no runnable eval selected.
+        if selected or tool_on:
             transaction.on_commit(
                 lambda: _dispatch_evaluations_once(
-                    CallExecution.objects.get(id=call_id), eval_config_ids=selected
+                    CallExecution.objects.get(id=call_id),
+                    eval_config_ids=selected,  # [] stays [], never None
                 )
             )
 

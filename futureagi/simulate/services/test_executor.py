@@ -3939,8 +3939,10 @@ class TestExecutor:
             if not run_test:
                 run_test = call_execution.test_execution.run_test
 
-            # Get expected eval configs - either specific ones or all for the run test
-            if eval_config_ids:
+            # Get expected eval configs - either specific ones or all for the run test.
+            # `is not None`: an explicitly-empty `eval_config_ids=[]` must not
+            # widen to "every config on the run test".
+            if eval_config_ids is not None:
                 expected_eval_configs = SimulateEvalConfig.objects.filter(
                     id__in=eval_config_ids, deleted=False
                 )
@@ -4205,8 +4207,10 @@ class TestExecutor:
             call_execution.save(update_fields=["call_metadata"])
             logger.info(f"Starting evaluations for call {call_execution.id}")
 
-            # Get eval configs - either specific ones or all for the run test
-            if eval_config_ids:
+            # Get eval configs - either specific ones or all for the run test.
+            # An explicitly-empty selection must stay empty, never widen to
+            # "every config".
+            if eval_config_ids is not None:
                 eval_configs = SimulateEvalConfig.objects.filter(
                     id__in=eval_config_ids, deleted=False
                 )
@@ -4217,6 +4221,21 @@ class TestExecutor:
 
             if not eval_configs.exists():
                 logger.info(f"No evaluation configs found for run test {run_test.id}")
+                # The tool-call judge switch is independent of the eval
+                # catalogue, so zero SimulateEvalConfig rows must still reach
+                # the judge when enable_tool_evaluation is on -- but only for
+                # an explicit (harness) dispatch, not a native run test's
+                # undispatched call.
+                if run_test.enable_tool_evaluation and eval_config_ids is not None:
+                    try:
+                        self._run_tool_evaluation(
+                            call_execution, call_execution.test_execution
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"Error running tool evaluation for call {call_execution.id}: {str(e)}"
+                        )
+                        traceback.print_exc()
                 if not call_execution.call_metadata:
                     call_execution.call_metadata = {}
                 call_execution.call_metadata["eval_completed"] = True
@@ -5340,7 +5359,10 @@ class TestExecutor:
             else:
                 agent_version = agent_definition.get_version(selected_version.id)
 
-            snapshot = agent_version.configuration_snapshot
+            # A harness `AgentDefinition` has no `AgentVersion`, so
+            # `latest_version` is None. Only the voice branch reads
+            # `snapshot`, and it already treats `{}` as absent.
+            snapshot = agent_version.configuration_snapshot if agent_version else {}
             # Check if this is a TEXT (chat) agent
             agent_type = agent_definition.agent_type
             is_text_agent = agent_type == AgentDefinition.AgentTypeChoices.TEXT
@@ -5359,6 +5381,13 @@ class TestExecutor:
                 # Extract tool calls from chat messages
                 tool_calls_data = agent._extract_tool_calls(call_data)
             else:
+                if not snapshot:
+                    logger.info(
+                        f"Skipping tool evaluation for voice call {call_execution.id} - "
+                        "agent definition has no version snapshot"
+                    )
+                    return
+
                 customer_api_key = (
                     snapshot.get("api_key")
                     if snapshot and snapshot.get("api_key")
