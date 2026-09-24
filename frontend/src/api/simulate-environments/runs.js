@@ -24,8 +24,9 @@ export function listRunTestExecutions(runTestId) {
 // `success_rate` is a 0–100 percentage; `total_chats` (chat/prompt) falls back
 // to `calls_attempted` (voice). `passed`/`failed` are derived from the success
 // rate since the payload carries no per-outcome counts, and there is no run
-// name field, so `label` is assigned by the hook after sorting (kept out of
-// this pure mapper). `executionId` mirrors `id` so a row click routes into the
+// name field, so `label` is assigned by `mapExecutions` from the server count
+// and order (kept out of this pure mapper). `executionId` mirrors `id` so a row
+// click routes into the
 // reused product execution detail.
 export function executionToRun(raw) {
   const total = raw?.total_chats ?? raw?.calls_attempted ?? 0;
