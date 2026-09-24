@@ -24,7 +24,6 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import Iconify from "src/components/iconify";
 
 export const COLORS = [
   "#7954f8",
@@ -62,15 +61,7 @@ export const format = (value, unit = "number") => {
   return `${number(value)}${{ ms: "ms", seconds: "s", percent: "%" }[unit] || ""}`;
 };
 
-export function Widget({
-  id,
-  title,
-  subtitle,
-  help,
-  onHide,
-  children,
-  wide = false,
-}) {
+export function Widget({ id, title, subtitle, help, children, wide = false }) {
   return (
     <Box
       component="section"
@@ -114,16 +105,6 @@ export function Widget({
             </Typography>
           )}
         </Box>
-        <Help title="Hide widget">
-          <IconButton
-            className="analytics-no-print"
-            aria-label={`Hide ${title}`}
-            size="small"
-            onClick={() => onHide(id)}
-          >
-            <Iconify icon="solar:eye-closed-linear" width={16} />
-          </IconButton>
-        </Help>
       </Stack>
       {children}
     </Box>
@@ -134,7 +115,6 @@ Widget.propTypes = {
   title: PropTypes.string,
   subtitle: PropTypes.string,
   help: PropTypes.string,
-  onHide: PropTypes.func,
   children: PropTypes.node,
   wide: PropTypes.bool,
 };

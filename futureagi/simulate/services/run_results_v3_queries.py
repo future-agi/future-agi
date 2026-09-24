@@ -13,6 +13,7 @@ from django.db.models import (
     Count,
     F,
     FloatField,
+    Func,
     JSONField,
     OuterRef,
     Q,
@@ -24,7 +25,8 @@ from django.db.models import (
     When,
 )
 from django.db.models.fields.json import KeyTransform
-from django.db.models.functions import Cast, Coalesce, NullIf
+from django.db.models.functions import Cast, Coalesce, Lower, NullIf, Trim
+from django.db.models.lookups import Exact, GreaterThan, In
 
 from model_hub.models.develop_dataset import Cell
 from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
@@ -50,12 +52,57 @@ def _json_value(field: str, *keys: str):
 def _eval_verdict_q(eval_ids: set[str], values: list[Any]) -> Q:
     verdict = Q(pk__in=[])
     for eval_id in eval_ids:
-        output_key = f"eval_outputs__{eval_id}__output__in"
-        status_key = f"eval_outputs__{eval_id}__status__in"
-        verdict |= Q(**{output_key: values}) & ~Q(
-            **{status_key: ["pending", "skipped", "error"]}
-        )
+        output = Lower(Trim(_json_text("eval_outputs", eval_id, "output")))
+        verdict |= Q(
+            In(output, [str(value).lower() for value in values])
+        ) & _eval_measured_q(eval_id)
     return verdict
+
+
+def _eval_measured_q(eval_id: str) -> Q:
+    status = Coalesce(
+        _json_text("eval_outputs", eval_id, "status"),
+        Value(""),
+        output_field=TextField(),
+    )
+    return ~Q(In(Lower(Trim(status)), ["pending", "skipped", "error"]))
+
+
+def _eval_score(eval_id: str):
+    numeric = _safe_json_float("eval_outputs", eval_id, "output")
+    numeric_type = Exact(
+        Func(
+            _json_value("eval_outputs", eval_id, "output"),
+            function="jsonb_typeof",
+            output_field=TextField(),
+        ),
+        Value("number"),
+    )
+    return Case(
+        When(~_eval_measured_q(eval_id), then=Value(None, output_field=FloatField())),
+        When(
+            _eval_verdict_q(
+                {eval_id}, [True, "true", "pass", "passed", "success", "successful"]
+            ),
+            then=Value(1.0),
+        ),
+        When(
+            _eval_verdict_q(
+                {eval_id}, [False, "false", "fail", "failed", "failure", "unsuccessful"]
+            ),
+            then=Value(0.0),
+        ),
+        When(
+            numeric_type,
+            then=Case(
+                When(GreaterThan(numeric, Value(1.0)), then=numeric / Value(100.0)),
+                default=numeric,
+                output_field=FloatField(),
+            ),
+        ),
+        default=None,
+        output_field=FloatField(),
+    )
 
 
 def run_calls_queryset(
@@ -361,27 +408,10 @@ def group_run_calls(
         return []
     field = GROUP_FIELDS[group_by]
     expressions = _aggregate_expressions(include_percentiles=False)
+
     for index, column in enumerate(columns):
         eval_id = str(column["id"])
-        passed_q = _eval_verdict_q(
-            {eval_id}, [True, "true", "pass", "passed", "success", "successful"]
-        )
-        failed_q = _eval_verdict_q(
-            {eval_id},
-            [False, "false", "fail", "failed", "failure", "unsuccessful"],
-        )
-        score = Case(
-            When(passed_q, then=Value(1.0)),
-            When(failed_q, then=Value(0.0)),
-            When(
-                **{
-                    f"eval_outputs__{eval_id}__output_type": "score",
-                    "then": _safe_json_float("eval_outputs", eval_id, "output"),
-                }
-            ),
-            default=None,
-            output_field=FloatField(),
-        )
+        score = _eval_score(eval_id)
         expressions[f"eval_{index}_average"] = Avg(score)
         expressions[f"eval_{index}_scored"] = Count(score)
     summaries = queryset.order_by().values(field).annotate(**expressions)

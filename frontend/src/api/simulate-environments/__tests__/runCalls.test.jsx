@@ -39,7 +39,7 @@ const payload = () => ({
         turns: 9.5,
         latency_ms: 465,
         tokens: 450,
-        evaluations: {},
+        evaluations: { "eval-1": { scored: 8, score_sum: 6 } },
       },
     },
   ],
@@ -231,6 +231,9 @@ describe("useRunCalls", () => {
     ).toHaveLength(2);
     expect(result.current.groups).toHaveLength(1);
     expect(result.current.groups[0].label).toBe("Server-computed group");
+    expect(result.current.groups[0].agg).toMatchObject({
+      evals: { "eval-1": { scored: 8, scoreSum: 6 } },
+    });
     expect(result.current.groups[0].rows.map((row) => row.id)).toEqual([
       "c2",
       "c1",

@@ -269,35 +269,6 @@ describe("RunAnalytics", () => {
     expect(open).toHaveBeenLastCalledWith({ status: ["passed"] });
   });
 
-  it("hides and restores widgets and saves the selected layout", async () => {
-    render(<RunAnalytics executionId="execution-1" />);
-    fireEvent.click(
-      screen.getByRole("button", { name: "Hide Tool failure rate" }),
-    );
-    expect(
-      screen.queryByRole("region", { name: "Tool failure rate" }),
-    ).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Save view/ }));
-    fireEvent.change(screen.getByLabelText("View name"), {
-      target: { value: "Support review" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
-    const saved = JSON.parse(
-      localStorage.getItem("simulation-analytics-layout-v1:execution-1"),
-    );
-    expect(saved.views).toEqual([
-      { name: "Support review", hidden: ["tools_failure"] },
-    ]);
-    fireEvent.click(await screen.findByRole("button", { name: "Hidden (1)" }));
-    fireEvent.click(
-      screen.getByRole("menuitem", { name: "Tool failure rate" }),
-    );
-    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
-    expect(
-      await screen.findByRole("region", { name: "Tool failure rate" }),
-    ).toBeInTheDocument();
-  });
-
   it("opens the actual call from a performance-tail widget", () => {
     const open = vi.fn();
     render(<RunAnalytics executionId="execution-1" onOpenCall={open} />);
@@ -315,7 +286,7 @@ describe("RunAnalytics", () => {
     });
   });
 
-  it("does not reuse another run's saved layout", () => {
+  it("shows all widgets even when an older saved layout hides them", () => {
     localStorage.setItem(
       "simulation-analytics-layout-v1:execution-1",
       JSON.stringify({
@@ -327,7 +298,7 @@ describe("RunAnalytics", () => {
     const { rerender } = render(<RunAnalytics executionId="execution-1" />);
     expect(
       screen.queryByRole("region", { name: "Tool failure rate" }),
-    ).not.toBeInTheDocument();
+    ).toBeInTheDocument();
     rerender(<RunAnalytics executionId="execution-2" />);
     expect(
       screen.getByRole("region", { name: "Tool failure rate" }),
