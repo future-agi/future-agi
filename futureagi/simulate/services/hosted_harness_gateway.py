@@ -750,6 +750,17 @@ class HostedSourceAcquirer:
                     detail = completed.stderr or completed.stdout or "git failed"
                     if token:
                         detail = detail.replace(token, "[REDACTED]")
+                    lowered = detail.lower()
+                    if (
+                        "repository not found" in lowered
+                        or "could not read username" in lowered
+                    ):
+                        raise HostedHarnessError(
+                            "github_repository_not_found",
+                            f"repository {source.get('repository')} was not found, or it is "
+                            "private and the GitHub App is not installed on it",
+                            status_code=422,
+                        )
                     raise HostedHarnessError(
                         "github_clone_failed",
                         detail.strip()[:500],
@@ -850,30 +861,17 @@ def resolve_platform_simulator_secrets() -> dict[str, str]:
     return resolved
 
 
-SIMULATOR_DIALER_ALIASES = (
-    "SIMULATOR_LIVEKIT_URL",
-    "SIMULATOR_LIVEKIT_API_KEY",
-    "SIMULATOR_LIVEKIT_API_SECRET",
-)
-
-
 def platform_dialer_status() -> dict[str, Any]:
     """Whether the platform can place an outbound PSTN call, and what is absent if not.
 
     A phone target is reached by dialling it over the platform's own LiveKit SIP trunk, so
     every input here is platform configuration the customer cannot supply or observe. Resolved
-    through the same settings map the launch reads, so readiness cannot claim a dialer the run
-    will not find. The simulator resolver itself is not called: its Google credential branch can
-    raise over a file that has nothing to do with dialling.
+    through the same telephony map the launch sends to the guest, so readiness cannot claim a
+    dialer the run will not find, nor deny one it will.
     """
-    configured = getattr(settings, "ALK_HOSTED_SIMULATOR_SECRET_ENV", {}) or {}
-    missing = [
-        alias
-        for alias in SIMULATOR_DIALER_ALIASES
-        if not str(os.getenv(str(configured.get(alias) or ""), "") or "").strip()
-    ]
-    if not str(getattr(settings, "ALK_HOSTED_SIP_OUTBOUND_TRUNK_ID", "") or "").strip():
-        missing.append("ALK_HOSTED_SIP_OUTBOUND_TRUNK_ID")
+    from simulate.services.phone_telephony import platform_phone_telephony
+
+    missing = [name for name, value in platform_phone_telephony().items() if not value]
     return {"available": not missing, "missing": missing}
 
 

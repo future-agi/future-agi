@@ -50,7 +50,7 @@ def _rejected_archive_upload(files) -> Response | None:
     return None
 
 
-_E164_PHONE = re.compile(r"^\+[1-9]\d{1,14}$")
+_E164_PHONE = re.compile(r"^\+[1-9]\d{6,14}$")
 
 
 def _validate_phone_connectivity(payload) -> None:
@@ -632,6 +632,10 @@ _SOURCE_FIX_HINTS = {
         "Use the owner/repository form, for example acme/support-agent"
     ),
     "github_ref_invalid": "Use a branch, tag or commit SHA for ref",
+    "github_repository_not_found": (
+        "Check the owner/repository spelling; for a private repository, choose "
+        "Private and install the GitHub App on it"
+    ),
     "github_clone_failed": (
         "Check the repository exists and, for a private repository, that the "
         "GitHub App is installed on it"

@@ -14,7 +14,6 @@ from simulate.serializers.hosted_harness_conversation import (
 # The declared fixed port is unknowable platform-side (the bundle is authored
 # in-sandbox), so the match is any port on localhost / 127.0.0.1 / [::1].
 _LOOPBACK_ENDPOINT_RE = re.compile(r"(?:localhost|127\.0\.0\.1|\[::1\]):\d+")
-_E164_PHONE = re.compile(r"^\+[1-9]\d{1,14}$")
 
 RUNNER_RESERVED_ENVIRONMENT = {
     "DOCKER_HOST",
@@ -199,7 +198,7 @@ class HarnessAgentSerializer(serializers.Serializer):
                         "config": "phone_number is supported only for connect-only Vapi or Retell voice agents"
                     }
                 )
-            if not _E164_PHONE.fullmatch(str(config.get("phone_number") or "").strip()):
+            if not _E164.fullmatch(str(config.get("phone_number") or "").strip()):
                 raise serializers.ValidationError(
                     {"config": "phone_number must be in E.164 format"}
                 )
@@ -239,7 +238,7 @@ class HarnessAgentSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     {"config": "phone dialer and LiveKit settings are platform-owned"}
                 )
-            if not _E164_PHONE.fullmatch(str(config.get("phone_number") or "").strip()):
+            if not _E164.fullmatch(str(config.get("phone_number") or "").strip()):
                 raise serializers.ValidationError(
                     {
                         "config": "phone_number must be in E.164 format, e.g. +14155551234"
