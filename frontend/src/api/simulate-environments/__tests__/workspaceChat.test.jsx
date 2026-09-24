@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { REPLY_MS, mockWorkspaceReply, useWorkspaceChat } from "../workspaceChat";
+import { REPLY_MS, NOT_CONNECTED_REPLY, useWorkspaceChat } from "../workspaceChat";
 
 const ENV = { id: "env-1", name: "Support triage" };
 
@@ -38,7 +38,7 @@ describe("useWorkspaceChat", () => {
     expect(result.current.running).toBe(true);
   });
 
-  it("appends the mock reply and clears running after the delay", () => {
+  it("answers that it is not connected instead of claiming an edit it never made", () => {
     const { result } = renderHook(() => useWorkspaceChat(ENV));
 
     act(() => result.current.send("drop that scenario"));
@@ -48,8 +48,36 @@ describe("useWorkspaceChat", () => {
     const reply = result.current.turns[2];
     expect(reply.role).toBe("builder");
     expect(reply.steps[0].kind).toBe("note");
-    expect(reply.steps[0].text).toBe(mockWorkspaceReply("drop that scenario"));
+    expect(reply.steps[0].text).toBe(NOT_CONNECTED_REPLY);
     expect(result.current.running).toBe(false);
+  });
+
+  it("never claims to have changed the environment, whatever it is asked", () => {
+    const { result } = renderHook(() => useWorkspaceChat(ENV));
+
+    [
+      "drop the refund scenarios",
+      "add a scenario for a rushed caller",
+      "tighten the escalation rule",
+      "add an eval for tone",
+      "why did the last run fail?",
+      "make it better",
+    ].forEach((text, i) => {
+      act(() => result.current.send(text));
+      advance(REPLY_MS);
+      const reply = result.current.turns[2 + i * 2];
+      expect(reply.steps[0].text).not.toMatch(
+        /Dropped|Added|Updated|Applied|Pulled that/,
+      );
+    });
+  });
+
+  it("does not invite edits it cannot make in the greeting", () => {
+    const { result } = renderHook(() => useWorkspaceChat(ENV));
+
+    expect(result.current.turns[0].steps[0].text).not.toMatch(
+      /Ask me to|tweak|tighten|add an eval/i,
+    );
   });
 
   it("ignores blank sends", () => {

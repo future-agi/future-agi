@@ -1,36 +1,24 @@
 // TODO: real builder chat
-// Prototype console for the environment workspace: a seeded greeting plus mock
-// replies on a fixed delay, in the Phase-2 BuilderConsole turn shape (role
-// "builder"/"user", steps of { kind: "note", text }). To go live, replace the
-// timer + mockWorkspaceReply with the builder chat backend; the return shape
+// The environment workspace's builder console, still unwired. It holds the
+// Phase-2 BuilderConsole turn shape (role "builder"/"user", steps of
+// { kind: "note", text }) and the send/running plumbing, so going live is a
+// matter of replacing the timer with the builder chat backend; the return shape
 // { turns, running, send } is what the console consumes, so keep it.
+//
+// Until then it must not pretend to act. The replies it used to give were keyed
+// off the user's phrasing and claimed edits it had never made — "Dropped the
+// matching scenarios", "Added that grader" — while nothing in the environment
+// changed. There is exactly one reply now, and it says the console is not
+// connected.
 import { useEffect, useRef, useState } from "react";
 
 export const REPLY_MS = 900;
 
-// Prototype builder replies keyed off the user's phrasing.
-export function mockWorkspaceReply(userText) {
-  const t = (userText || "").toLowerCase();
-  if (/drop|remove|cut/.test(t) && /scenario/.test(t)) {
-    return "Dropped the matching scenarios — the Scenarios tab on the right is updated.";
-  }
-  if (/add/.test(t) && /scenario/.test(t)) {
-    return "Added a scenario. You'll see it in the Scenarios tab on the right.";
-  }
-  if (/rule|refund|escalat/.test(t)) {
-    return "Updated the rule. The grader will enforce the new wording on the next run.";
-  }
-  if (/eval|grader|grade/.test(t)) {
-    return "Added that grader on the Evaluations tab — it'll score every scenario on the next run.";
-  }
-  if (/run|fail|last/.test(t)) {
-    return "Pulled that from the latest run — open the Runs tab on the right for the full breakdown.";
-  }
-  return "Applied that to the environment — the panels on the right reflect the change.";
-}
+export const NOT_CONNECTED_REPLY =
+  "The builder chat isn't connected yet, so I can't change anything here. Edit scenarios, rules and evaluations directly in the panels on the right.";
 
 const greetingText = (env) =>
-  `${env.name} is live. Ask me to tweak scenarios, tighten a rule, or add an eval — or edit directly on the right.`;
+  `${env.name} is ready. The builder chat isn't connected yet — make changes in the panels on the right.`;
 
 export function useWorkspaceChat(env) {
   const [turns, setTurns] = useState([]);
@@ -76,7 +64,7 @@ export function useWorkspaceChat(env) {
         setRunning(false);
         setTurns((prev) => [
           ...prev,
-          { id: nextId("a"), role: "builder", steps: [{ kind: "note", text: mockWorkspaceReply(trimmed) }] },
+          { id: nextId("a"), role: "builder", steps: [{ kind: "note", text: NOT_CONNECTED_REPLY }] },
         ]);
       }, REPLY_MS),
     );
