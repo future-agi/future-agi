@@ -25,6 +25,9 @@ export default function RenameEnvironmentDialog({ open, env, onClose }) {
   }, [open, env?.name]);
 
   const submit = () => {
+    // Enter bypasses the disabled Save button, so guard the in-flight case here
+    // too — otherwise a second Enter double-submits the rename.
+    if (rename.isPending) return;
     const check = validateEnvName(name);
     if (!check.ok) {
       setError(check.error);
