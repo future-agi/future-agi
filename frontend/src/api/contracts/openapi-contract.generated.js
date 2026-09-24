@@ -60656,6 +60656,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         resource_profile: {
           title: "Resource profile",
           type: "object",
+          "x-nullable": true,
         },
         snapshot: {
           title: "Snapshot",

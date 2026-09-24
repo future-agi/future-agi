@@ -1197,7 +1197,7 @@ def test_daytona_preflight_source_failure_keeps_status_and_reports_check(setting
     assert "GitHub App" in source["fix"]
 
 
-def test_daytona_preflight_lists_five_checks_in_order(settings):
+def test_daytona_preflight_lists_six_checks_in_order(settings):
     settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
     settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
     payload = _v1_payload()
@@ -1221,6 +1221,7 @@ def test_daytona_preflight_lists_five_checks_in_order(settings):
         "credential_files",
         "credentials_valid",
         "provider_target",
+        "platform_dialer",
     ]
     by_id = {item["id"]: item for item in response.data["checks"]}
     assert by_id["source"]["status"] == "passed"

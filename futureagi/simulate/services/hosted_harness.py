@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import structlog
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
@@ -33,6 +34,8 @@ from simulate.services.alk_simulate_ingestion import (
 _CAPABILITY_SCHEMA_VERSION = "futureagi.harness-capabilities.v1"
 _JOB_SCHEMA_VERSION = "futureagi.harness-job.v1"
 _TOKEN_TAIL_SECONDS = 120 + 300
+
+logger = structlog.get_logger(__name__)
 
 
 def _active_attempt_budget_seconds(job: HostedHarnessJob) -> int:
@@ -410,6 +413,40 @@ def activate_attempt_capability(capability: AttemptCapability) -> AttemptCapabil
         },
         admitted_parallelism=capability.admitted_parallelism,
     )
+
+
+_TERMINAL_STATES = frozenset(
+    {
+        HostedHarnessJob.State.COMPLETED,
+        HostedHarnessJob.State.FAILED,
+        HostedHarnessJob.State.CANCELED,
+    }
+)
+
+
+def delete_environment(job: HostedHarnessJob) -> None:
+    """Soft-delete an environment, cancelling its run first if one is live.
+
+    Deleting while a sandbox is running would leave that sandbox billing against
+    a row nobody can see, so cancellation is requested before the row disappears.
+    The authoring archive and the organization's secrets are left in place:
+    neither is owned by this row, and other environments may reference the same
+    credentials.
+    """
+    from simulate.temporal.client import cancel_hosted_harness_gateway_workflow
+
+    if job.state not in _TERMINAL_STATES:
+        request_cancellation(job, "user_canceled")
+        try:
+            cancel_hosted_harness_gateway_workflow(str(job.id))
+        except Exception:
+            # Fail open: a scheduler that cannot be reached must not strand the
+            # user with an environment they cannot remove. The workflow is bounded
+            # by the job deadline and its sandbox by its own TTL.
+            logger.exception("hosted_harness_delete_cancel_failed", job_id=str(job.id))
+    job.deleted = True
+    job.deleted_at = timezone.now()
+    job.save(update_fields=["deleted", "deleted_at", "updated_at"])
 
 
 def request_cancellation(job: HostedHarnessJob, reason: str) -> HostedHarnessJob:

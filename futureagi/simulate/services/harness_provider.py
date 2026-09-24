@@ -901,7 +901,9 @@ def _sandbox_preflight_body(payload, report):
         "state": "connected" if ready else "failed",
         "checks": checks,
         "credentials": credentials,
+        "parallelism_enabled": False,
         "effective_parallelism": payload["runtime"]["parallelism"],
+        "resource_profile": None,
         "snapshot": {
             "name": None,
             "digest": None,

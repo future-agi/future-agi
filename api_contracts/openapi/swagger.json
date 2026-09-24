@@ -122149,7 +122149,8 @@
                 },
                 "resource_profile": {
                     "title": "Resource profile",
-                    "type": "object"
+                    "type": "object",
+                    "x-nullable": true
                 },
                 "snapshot": {
                     "title": "Snapshot",

@@ -673,7 +673,7 @@ class HarnessPreflightResponseSerializer(serializers.Serializer):
     credentials = HarnessPreflightCredentialsSerializer()
     parallelism_enabled = serializers.BooleanField()
     effective_parallelism = serializers.IntegerField()
-    resource_profile = serializers.JSONField()
+    resource_profile = serializers.JSONField(allow_null=True)
     snapshot = serializers.JSONField()
 
 

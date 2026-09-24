@@ -528,9 +528,9 @@ def _selected_evals(job: HostedHarnessJob) -> list[dict[str, Any]]:
         {
             "id": str(config.id),
             "name": config.name or getattr(config.eval_template, "name", "") or "",
-            "description": str(
-                getattr(config.eval_template, "description", "") or ""
-            )[:500],
+            "description": str(getattr(config.eval_template, "description", "") or "")[
+                :500
+            ],
             "runnable": bool(config.mapping),
         }
         for config in SimulateEvalConfig.objects.filter(
