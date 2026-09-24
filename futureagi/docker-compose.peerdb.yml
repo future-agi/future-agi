@@ -139,7 +139,7 @@ services:
   # PeerDB MinIO (staging area for CH ingestion)
   peerdb-minio:
     # Maintained MinIO fork (see docker-compose.yml); its server binary is `silo`.
-    image: pgsty/silo:RELEASE.2026-09-03T13-18-01Z
+    image: pgsty/silo:RELEASE.2026-09-16T00-00-00Z@sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46
     restart: unless-stopped
     volumes:
       - peerdb-minio-data:/data

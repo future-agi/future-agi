@@ -888,7 +888,7 @@ services:
     # refuses anonymous pulls). pgsty/silo is the maintained AGPL fork: same
     # server flags, env vars, on-disk format and bundled mc, so existing volumes
     # keep working. Its entrypoint maps `server ...` to the renamed `silo` binary.
-    image: pgsty/silo:RELEASE.2026-09-03T13-18-01Z
+    image: pgsty/silo:RELEASE.2026-09-16T00-00-00Z@sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-futureagi}
@@ -1008,7 +1008,7 @@ services:
 
   peerdb-minio:
     # Same image as minio; the fork's server binary is `silo`.
-    image: pgsty/silo:RELEASE.2026-09-03T13-18-01Z
+    image: pgsty/silo:RELEASE.2026-09-16T00-00-00Z@sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46
     environment:
       MINIO_ROOT_USER: _peerdb_minioadmin
       MINIO_ROOT_PASSWORD: _peerdb_minioadmin
