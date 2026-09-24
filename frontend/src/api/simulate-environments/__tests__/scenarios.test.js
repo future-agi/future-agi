@@ -13,7 +13,15 @@ import {
   listScenarios,
   scenarioCoverage,
   amendScenarios,
+  scenariosCoveragePath,
+  scenariosAmendPath,
 } from "../scenarios";
+import {
+  isContractedApiPath,
+  getContractedApiMethods,
+} from "src/api/contracts/api-surface";
+import { OPENAPI_CONTRACT } from "src/api/contracts/openapi-contract.generated";
+import { MAX_SCENARIOS } from "src/sections/simulate/environments/panels/scenarioCountRules";
 import { isScenarioSampleMode } from "../scenariosSampleMode";
 import {
   queryScenarioFixture,
@@ -376,5 +384,37 @@ describe("coverageScenarioFixture", () => {
     amendScenarioFixture({ changes: [{ op: "drop", scenario: "1-5" }] });
     const after = coverageScenarioFixture({}).per_axis.find((a) => a.axis === "task").scenarios;
     expect(after).toBe(before - 5);
+  });
+});
+
+describe("scenarios.js — live routes are in the generated contract", () => {
+  // The three routes ship on the backend's feat/environment-v3 schema. Before
+  // that schema was adopted apiPath() threw for all three, so the live Scenarios
+  // tab could not issue a single request. These assert the surface carries them.
+  it.each([
+    ["/simulate/api/harness-jobs/{id}/scenarios/", "get"],
+    ["/simulate/api/harness-jobs/{id}/scenarios/coverage/", "get"],
+    ["/simulate/api/harness-jobs/{id}/scenarios/amend/", "post"],
+  ])("registers %s (%s)", (template, method) => {
+    expect(isContractedApiPath(template)).toBe(true);
+    expect(getContractedApiMethods(template)).toContain(method);
+  });
+
+  it("resolves the coverage and amend path helpers without throwing", () => {
+    expect(scenariosCoveragePath("job-1")).toBe(
+      "/simulate/api/harness-jobs/job-1/scenarios/coverage/",
+    );
+    expect(scenariosAmendPath("job-1")).toBe(
+      "/simulate/api/harness-jobs/job-1/scenarios/amend/",
+    );
+  });
+
+  it("caps the request contract's scenario_count at the UI's MAX_SCENARIOS", () => {
+    expect(
+      OPENAPI_CONTRACT.definitions.HarnessJobCreate.properties.scenario_count.maximum,
+    ).toBe(MAX_SCENARIOS);
+    expect(
+      OPENAPI_CONTRACT.definitions.HarnessPreflight.properties.scenario_count.maximum,
+    ).toBe(MAX_SCENARIOS);
   });
 });

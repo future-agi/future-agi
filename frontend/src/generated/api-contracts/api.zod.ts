@@ -28,57 +28,6 @@ const jsonValueSchema: zod.ZodType<JsonValue> = zod.lazy(() =>
 );
 
 /**
- * Validates the v1.6 request contract and delegates execution to the public backend selected by
-``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
-selects its managed sandbox runtime.
- * @summary Provider-neutral control plane for hosted ALK harness jobs.
- */
-export const SimulateApiHarnessJobsConversationConversationMessageParams =
-  zod.object({
-    id: zod.string(),
-  });
-
-export const simulateApiHarnessJobsConversationConversationMessageBodyContentMax = 20000;
-
-export const simulateApiHarnessJobsConversationConversationMessageBodyClientRequestIdRegExp =
-  new RegExp("^[A-Za-z0-9_-]{1,128}$");
-export const simulateApiHarnessJobsConversationConversationMessageBodyKindDefault = `user_message`;
-export const simulateApiHarnessJobsConversationConversationMessageBodyPayloadDefault =
-  {};
-
-export const SimulateApiHarnessJobsConversationConversationMessageBody =
-  zod.object({
-    content: zod
-      .string()
-      .min(1)
-      .max(simulateApiHarnessJobsConversationConversationMessageBodyContentMax),
-    client_request_id: zod
-      .string()
-      .min(1)
-      .regex(
-        simulateApiHarnessJobsConversationConversationMessageBodyClientRequestIdRegExp,
-      ),
-    kind: zod
-      .enum([
-        "user_message",
-        "user_response",
-        "approval",
-        "interrupt",
-        "cancel_operation",
-      ])
-      .default(
-        simulateApiHarnessJobsConversationConversationMessageBodyKindDefault,
-      ),
-    reply_to: zod.string().uuid().optional(),
-    payload: zod
-      .object({})
-      .passthrough()
-      .default(
-        simulateApiHarnessJobsConversationConversationMessageBodyPayloadDefault,
-      ),
-  });
-
-/**
  * GET /accounts/2fa/recovery-codes/ - Get remaining count.
  */
 export const Accounts2faRecoveryCodesListResponse = zod.object({
@@ -7558,6 +7507,21 @@ export const AgentccRequestLogsExportResponse = zod.object({
       created_at: zod.string().datetime({ offset: true }).optional(),
     }),
   ),
+});
+
+/**
+ * Application, service and custom tag values seen in recent requests.
+ */
+
+export const AgentccRequestLogsMetadataValuesResponse = zod.object({
+  status: zod.boolean(),
+  result: zod.object({
+    application: zod.array(zod.string().min(1)),
+    service: zod.array(zod.string().min(1)),
+    tags: zod
+      .array(zod.string().min(1))
+      .describe("key:value pairs, for keys declared as custom properties."),
+  }),
 });
 
 /**
@@ -35053,6 +35017,13 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
       test_execution_id: zod.string().uuid(),
       simulation_url: zod.string().min(1),
     }),
+    agent: zod.object({
+      id: zod.string().uuid(),
+      name: zod.string().min(1),
+      provider: zod.string().min(1),
+      versions_count: zod.number(),
+      active_version: zod.string().min(1),
+    }),
   }),
   contract: zod.object({
     agent: zod.string().optional(),
@@ -35238,6 +35209,13 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
       run_test_id: zod.string().uuid(),
       test_execution_id: zod.string().uuid(),
       simulation_url: zod.string().min(1),
+    }),
+    agent: zod.object({
+      id: zod.string().uuid(),
+      name: zod.string().min(1),
+      provider: zod.string().min(1),
+      versions_count: zod.number(),
+      active_version: zod.string().min(1),
     }),
   }),
   contract: zod.object({
@@ -35463,11 +35441,21 @@ export const SimulateApiHarnessEnvironmentsRunBody = zod
   .passthrough();
 
 /**
- * Validates the v1.6 request contract and delegates execution to the backend
-selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
-``sandbox``). See ``simulate.services.harness_provider``.
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
+
+export const simulateApiHarnessJobsListResponseConversationEventWatermarkMin = 0;
+
+export const simulateApiHarnessJobsListResponseConsumptionTextSimTokensMin = 0;
+
+export const simulateApiHarnessJobsListResponseConsumptionVoiceSimMinutesMin = 0;
+
+export const simulateApiHarnessJobsListResponseConsumptionAiCreditsMin = 0;
+
+export const simulateApiHarnessJobsListResponseConsumptionSandboxSecondsMin = 0;
 
 export const SimulateApiHarnessJobsListResponseItem = zod.object({
   job: zod.object({
@@ -35475,6 +35463,7 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
     run_id: zod.string().uuid(),
     source: zod.record(zod.string(), zod.string()),
     metadata: zod.record(zod.string(), zod.string()),
+    runtime: zod.record(zod.string(), zod.string()).optional(),
     run_test_id: zod.string().uuid(),
     test_execution_id: zod.string().uuid(),
   }),
@@ -35485,6 +35474,8 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
     attempt: zod.number(),
     completed_scenarios: zod.number(),
     failed_scenarios: zod.number(),
+    active_scenarios: zod.number().optional(),
+    queued_scenarios: zod.number().optional(),
     total_scenarios: zod.number(),
     deadline_at: zod.string().min(1),
     failure: zod.object({}).passthrough(),
@@ -35540,15 +35531,94 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
         .optional(),
     })
     .optional(),
+  parallelism: zod
+    .object({
+      requested: zod.number(),
+      admitted: zod.number(),
+      effective: zod.number(),
+      degrade_reasons: zod.array(zod.string().min(1)),
+    })
+    .optional(),
+  conversation: zod
+    .object({
+      conversation_id: zod.string().uuid(),
+      job_id: zod.string().uuid(),
+      state: zod.string().min(1),
+      stage: zod.string().min(1),
+      active_invocation_id: zod.string().min(1),
+      blocking_input: zod.object({}).passthrough(),
+      messages: zod.array(
+        zod.object({
+          message_id: zod.string().uuid(),
+          sequence: zod.number().min(1),
+          role: zod.enum(["user", "assistant", "system"]),
+          kind: zod.enum(["message", "question", "confirmation", "status"]),
+          state: zod.enum([
+            "queued",
+            "delivered",
+            "streaming",
+            "completed",
+            "failed",
+          ]),
+          stage: zod.string(),
+          content: zod.string(),
+          payload: zod.object({}).passthrough(),
+          invocation_id: zod.string().min(1).optional(),
+          function_call_id: zod.string().min(1).optional(),
+          reply_to: zod.string().uuid().optional(),
+          created_at: zod.string().datetime({ offset: true }),
+        }),
+      ),
+      events: zod.array(
+        zod.object({
+          event_id: zod.string().min(1),
+          sequence: zod.number().min(1),
+          kind: zod.string().min(1),
+          message_id: zod.string().uuid().optional(),
+          stage: zod.string(),
+          invocation_id: zod.string().min(1).optional(),
+          function_call_id: zod.string().min(1).optional(),
+          payload: zod.object({}).passthrough(),
+          emitted_at: zod.string().datetime({ offset: true }),
+        }),
+      ),
+      event_watermark: zod
+        .number()
+        .min(simulateApiHarnessJobsListResponseConversationEventWatermarkMin),
+      runtime: zod.object({
+        state: zod.string().min(1),
+        warm_until: zod.string().datetime({ offset: true }),
+        degraded: zod.boolean(),
+        available: zod.boolean(),
+      }),
+    })
+    .optional(),
+  consumption: zod
+    .object({
+      text_sim_tokens: zod
+        .number()
+        .min(simulateApiHarnessJobsListResponseConsumptionTextSimTokensMin),
+      voice_sim_minutes: zod
+        .number()
+        .min(simulateApiHarnessJobsListResponseConsumptionVoiceSimMinutesMin),
+      ai_credits: zod
+        .number()
+        .min(simulateApiHarnessJobsListResponseConsumptionAiCreditsMin),
+      sandbox_seconds: zod
+        .number()
+        .min(simulateApiHarnessJobsListResponseConsumptionSandboxSecondsMin),
+    })
+    .optional(),
+  usage_limit: zod.object({}).passthrough().optional(),
 });
 export const SimulateApiHarnessJobsListResponse = zod.array(
   SimulateApiHarnessJobsListResponseItem,
 );
 
 /**
- * Validates the v1.6 request contract and delegates execution to the backend
-selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
-``sandbox``). See ``simulate.services.harness_provider``.
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
 export const simulateApiHarnessJobsCreateBodySchemaVersionDefault = `futureagi.harness-job.v1`;
@@ -35566,6 +35636,8 @@ export const simulateApiHarnessJobsCreateBodySourceCommitShaRegExp = new RegExp(
 export const simulateApiHarnessJobsCreateBodySourceInstallationIdMax = 255;
 
 export const simulateApiHarnessJobsCreateBodySourceVisibilityDefault = `public`;
+export const simulateApiHarnessJobsCreateBodySourceEnvironmentValuesMaxOne = 65536;
+
 export const simulateApiHarnessJobsCreateBodyAgentConfigDefault = {};
 export const simulateApiHarnessJobsCreateBodyAgentSecretRefsKeyMax = 255;
 
@@ -35573,7 +35645,7 @@ export const simulateApiHarnessJobsCreateBodyAgentSecretRefsVersionMax = 255;
 
 export const simulateApiHarnessJobsCreateBodyAgentSecretRefsDefault = {};
 export const simulateApiHarnessJobsCreateBodyScenarioCountDefault = 10;
-export const simulateApiHarnessJobsCreateBodyScenarioCountMax = 200;
+export const simulateApiHarnessJobsCreateBodyScenarioCountMax = 1000;
 
 export const simulateApiHarnessJobsCreateBodyRuntimeIsolationDefault = `dedicated_vm`;
 export const simulateApiHarnessJobsCreateBodyRuntimeCpuUnitsDefault = 4;
@@ -35683,10 +35755,26 @@ export const SimulateApiHarnessJobsCreateBody = zod.object({
       visibility: zod
         .enum(["public", "private"])
         .default(simulateApiHarnessJobsCreateBodySourceVisibilityDefault),
+      environment_values: zod
+        .record(
+          zod.string(),
+          zod
+            .string()
+            .min(1)
+            .max(simulateApiHarnessJobsCreateBodySourceEnvironmentValuesMaxOne),
+        )
+        .optional(),
     })
     .optional(),
   agent: zod.object({
-    connector: zod.enum(["livekit", "vapi", "retell", "retell_chat", "auto"]),
+    connector: zod.enum([
+      "livekit",
+      "vapi",
+      "retell",
+      "retell_chat",
+      "phone",
+      "auto",
+    ]),
     mode: zod
       .enum(["connect_only", "environment_backed", "provider_import"])
       .optional(),
@@ -35860,9 +35948,9 @@ export const SimulateApiHarnessJobsCreateBody = zod.object({
 });
 
 /**
- * Validates the v1.6 request contract and delegates execution to the backend
-selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
-``sandbox``). See ``simulate.services.harness_provider``.
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
 export const simulateApiHarnessJobsPreflightBodySchemaVersionDefault = `futureagi.harness-job.v1`;
@@ -35879,6 +35967,8 @@ export const simulateApiHarnessJobsPreflightBodySourceCommitShaRegExp =
 export const simulateApiHarnessJobsPreflightBodySourceInstallationIdMax = 255;
 
 export const simulateApiHarnessJobsPreflightBodySourceVisibilityDefault = `public`;
+export const simulateApiHarnessJobsPreflightBodySourceEnvironmentValuesMaxOne = 65536;
+
 export const simulateApiHarnessJobsPreflightBodyAgentConfigDefault = {};
 export const simulateApiHarnessJobsPreflightBodyAgentSecretRefsKeyMax = 255;
 
@@ -35886,7 +35976,7 @@ export const simulateApiHarnessJobsPreflightBodyAgentSecretRefsVersionMax = 255;
 
 export const simulateApiHarnessJobsPreflightBodyAgentSecretRefsDefault = {};
 export const simulateApiHarnessJobsPreflightBodyScenarioCountDefault = 10;
-export const simulateApiHarnessJobsPreflightBodyScenarioCountMax = 200;
+export const simulateApiHarnessJobsPreflightBodyScenarioCountMax = 1000;
 
 export const simulateApiHarnessJobsPreflightBodyRuntimeIsolationDefault = `dedicated_vm`;
 export const simulateApiHarnessJobsPreflightBodyRuntimeCpuUnitsDefault = 4;
@@ -35997,10 +36087,28 @@ export const SimulateApiHarnessJobsPreflightBody = zod.object({
       visibility: zod
         .enum(["public", "private"])
         .default(simulateApiHarnessJobsPreflightBodySourceVisibilityDefault),
+      environment_values: zod
+        .record(
+          zod.string(),
+          zod
+            .string()
+            .min(1)
+            .max(
+              simulateApiHarnessJobsPreflightBodySourceEnvironmentValuesMaxOne,
+            ),
+        )
+        .optional(),
     })
     .optional(),
   agent: zod.object({
-    connector: zod.enum(["livekit", "vapi", "retell", "retell_chat", "auto"]),
+    connector: zod.enum([
+      "livekit",
+      "vapi",
+      "retell",
+      "retell_chat",
+      "phone",
+      "auto",
+    ]),
     mode: zod
       .enum(["connect_only", "environment_backed", "provider_import"])
       .optional(),
@@ -36214,14 +36322,16 @@ export const SimulateApiHarnessJobsPreflightResponse = zod.object({
     credential_choices: zod.array(zod.object({}).passthrough()),
     probe: zod.array(zod.object({}).passthrough()),
   }),
+  parallelism_enabled: zod.boolean(),
   effective_parallelism: zod.number(),
+  resource_profile: zod.object({}).passthrough(),
   snapshot: zod.object({}).passthrough(),
 });
 
 /**
- * Validates the v1.6 request contract and delegates execution to the backend
-selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
-``sandbox``). See ``simulate.services.harness_provider``.
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
 export const SimulateApiHarnessJobsSecretFileUploadBody = zod.object({
@@ -36249,9 +36359,9 @@ export const SimulateApiHarnessJobsSecretValuesBody = zod.object({
 });
 
 /**
- * Validates the v1.6 request contract and delegates execution to the backend
-selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
-``sandbox``). See ``simulate.services.harness_provider``.
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
 export const SimulateApiHarnessJobsSourceUploadBody = zod.object({
@@ -36263,14 +36373,24 @@ export const SimulateApiHarnessJobsSourceUploadBody = zod.object({
 });
 
 /**
- * Validates the v1.6 request contract and delegates execution to the backend
-selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
-``sandbox``). See ``simulate.services.harness_provider``.
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
 export const SimulateApiHarnessJobsReadParams = zod.object({
   id: zod.string(),
 });
+
+export const simulateApiHarnessJobsReadResponseConversationEventWatermarkMin = 0;
+
+export const simulateApiHarnessJobsReadResponseConsumptionTextSimTokensMin = 0;
+
+export const simulateApiHarnessJobsReadResponseConsumptionVoiceSimMinutesMin = 0;
+
+export const simulateApiHarnessJobsReadResponseConsumptionAiCreditsMin = 0;
+
+export const simulateApiHarnessJobsReadResponseConsumptionSandboxSecondsMin = 0;
 
 export const SimulateApiHarnessJobsReadResponse = zod.object({
   job: zod.object({
@@ -36278,6 +36398,7 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
     run_id: zod.string().uuid(),
     source: zod.record(zod.string(), zod.string()),
     metadata: zod.record(zod.string(), zod.string()),
+    runtime: zod.record(zod.string(), zod.string()).optional(),
     run_test_id: zod.string().uuid(),
     test_execution_id: zod.string().uuid(),
   }),
@@ -36288,6 +36409,8 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
     attempt: zod.number(),
     completed_scenarios: zod.number(),
     failed_scenarios: zod.number(),
+    active_scenarios: zod.number().optional(),
+    queued_scenarios: zod.number().optional(),
     total_scenarios: zod.number(),
     deadline_at: zod.string().min(1),
     failure: zod.object({}).passthrough(),
@@ -36343,12 +36466,91 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
         .optional(),
     })
     .optional(),
+  parallelism: zod
+    .object({
+      requested: zod.number(),
+      admitted: zod.number(),
+      effective: zod.number(),
+      degrade_reasons: zod.array(zod.string().min(1)),
+    })
+    .optional(),
+  conversation: zod
+    .object({
+      conversation_id: zod.string().uuid(),
+      job_id: zod.string().uuid(),
+      state: zod.string().min(1),
+      stage: zod.string().min(1),
+      active_invocation_id: zod.string().min(1),
+      blocking_input: zod.object({}).passthrough(),
+      messages: zod.array(
+        zod.object({
+          message_id: zod.string().uuid(),
+          sequence: zod.number().min(1),
+          role: zod.enum(["user", "assistant", "system"]),
+          kind: zod.enum(["message", "question", "confirmation", "status"]),
+          state: zod.enum([
+            "queued",
+            "delivered",
+            "streaming",
+            "completed",
+            "failed",
+          ]),
+          stage: zod.string(),
+          content: zod.string(),
+          payload: zod.object({}).passthrough(),
+          invocation_id: zod.string().min(1).optional(),
+          function_call_id: zod.string().min(1).optional(),
+          reply_to: zod.string().uuid().optional(),
+          created_at: zod.string().datetime({ offset: true }),
+        }),
+      ),
+      events: zod.array(
+        zod.object({
+          event_id: zod.string().min(1),
+          sequence: zod.number().min(1),
+          kind: zod.string().min(1),
+          message_id: zod.string().uuid().optional(),
+          stage: zod.string(),
+          invocation_id: zod.string().min(1).optional(),
+          function_call_id: zod.string().min(1).optional(),
+          payload: zod.object({}).passthrough(),
+          emitted_at: zod.string().datetime({ offset: true }),
+        }),
+      ),
+      event_watermark: zod
+        .number()
+        .min(simulateApiHarnessJobsReadResponseConversationEventWatermarkMin),
+      runtime: zod.object({
+        state: zod.string().min(1),
+        warm_until: zod.string().datetime({ offset: true }),
+        degraded: zod.boolean(),
+        available: zod.boolean(),
+      }),
+    })
+    .optional(),
+  consumption: zod
+    .object({
+      text_sim_tokens: zod
+        .number()
+        .min(simulateApiHarnessJobsReadResponseConsumptionTextSimTokensMin),
+      voice_sim_minutes: zod
+        .number()
+        .min(simulateApiHarnessJobsReadResponseConsumptionVoiceSimMinutesMin),
+      ai_credits: zod
+        .number()
+        .min(simulateApiHarnessJobsReadResponseConsumptionAiCreditsMin),
+      sandbox_seconds: zod
+        .number()
+        .min(simulateApiHarnessJobsReadResponseConsumptionSandboxSecondsMin),
+    })
+    .optional(),
+  usage_limit: zod.object({}).passthrough().optional(),
 });
 
 /**
- * Validates the v1.6 request contract and delegates execution to the backend
-selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
-``sandbox``). See ``simulate.services.harness_provider``.
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
 export const SimulateApiHarnessJobsAdjustParams = zod.object({
@@ -36375,9 +36577,9 @@ export const SimulateApiHarnessJobsAdjustBody = zod.object({
 });
 
 /**
- * Validates the v1.6 request contract and delegates execution to the backend
-selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
-``sandbox``). See ``simulate.services.harness_provider``.
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
 export const SimulateApiHarnessJobsCancelParams = zod.object({
@@ -36392,12 +36594,23 @@ export const SimulateApiHarnessJobsCancelBody = zod.object({
     .default(simulateApiHarnessJobsCancelBodyReasonDefault),
 });
 
+export const simulateApiHarnessJobsCancelResponseConversationEventWatermarkMin = 0;
+
+export const simulateApiHarnessJobsCancelResponseConsumptionTextSimTokensMin = 0;
+
+export const simulateApiHarnessJobsCancelResponseConsumptionVoiceSimMinutesMin = 0;
+
+export const simulateApiHarnessJobsCancelResponseConsumptionAiCreditsMin = 0;
+
+export const simulateApiHarnessJobsCancelResponseConsumptionSandboxSecondsMin = 0;
+
 export const SimulateApiHarnessJobsCancelResponse = zod.object({
   job: zod.object({
     job_id: zod.string().uuid(),
     run_id: zod.string().uuid(),
     source: zod.record(zod.string(), zod.string()),
     metadata: zod.record(zod.string(), zod.string()),
+    runtime: zod.record(zod.string(), zod.string()).optional(),
     run_test_id: zod.string().uuid(),
     test_execution_id: zod.string().uuid(),
   }),
@@ -36408,6 +36621,8 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
     attempt: zod.number(),
     completed_scenarios: zod.number(),
     failed_scenarios: zod.number(),
+    active_scenarios: zod.number().optional(),
+    queued_scenarios: zod.number().optional(),
     total_scenarios: zod.number(),
     deadline_at: zod.string().min(1),
     failure: zod.object({}).passthrough(),
@@ -36463,12 +36678,142 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
         .optional(),
     })
     .optional(),
+  parallelism: zod
+    .object({
+      requested: zod.number(),
+      admitted: zod.number(),
+      effective: zod.number(),
+      degrade_reasons: zod.array(zod.string().min(1)),
+    })
+    .optional(),
+  conversation: zod
+    .object({
+      conversation_id: zod.string().uuid(),
+      job_id: zod.string().uuid(),
+      state: zod.string().min(1),
+      stage: zod.string().min(1),
+      active_invocation_id: zod.string().min(1),
+      blocking_input: zod.object({}).passthrough(),
+      messages: zod.array(
+        zod.object({
+          message_id: zod.string().uuid(),
+          sequence: zod.number().min(1),
+          role: zod.enum(["user", "assistant", "system"]),
+          kind: zod.enum(["message", "question", "confirmation", "status"]),
+          state: zod.enum([
+            "queued",
+            "delivered",
+            "streaming",
+            "completed",
+            "failed",
+          ]),
+          stage: zod.string(),
+          content: zod.string(),
+          payload: zod.object({}).passthrough(),
+          invocation_id: zod.string().min(1).optional(),
+          function_call_id: zod.string().min(1).optional(),
+          reply_to: zod.string().uuid().optional(),
+          created_at: zod.string().datetime({ offset: true }),
+        }),
+      ),
+      events: zod.array(
+        zod.object({
+          event_id: zod.string().min(1),
+          sequence: zod.number().min(1),
+          kind: zod.string().min(1),
+          message_id: zod.string().uuid().optional(),
+          stage: zod.string(),
+          invocation_id: zod.string().min(1).optional(),
+          function_call_id: zod.string().min(1).optional(),
+          payload: zod.object({}).passthrough(),
+          emitted_at: zod.string().datetime({ offset: true }),
+        }),
+      ),
+      event_watermark: zod
+        .number()
+        .min(simulateApiHarnessJobsCancelResponseConversationEventWatermarkMin),
+      runtime: zod.object({
+        state: zod.string().min(1),
+        warm_until: zod.string().datetime({ offset: true }),
+        degraded: zod.boolean(),
+        available: zod.boolean(),
+      }),
+    })
+    .optional(),
+  consumption: zod
+    .object({
+      text_sim_tokens: zod
+        .number()
+        .min(simulateApiHarnessJobsCancelResponseConsumptionTextSimTokensMin),
+      voice_sim_minutes: zod
+        .number()
+        .min(simulateApiHarnessJobsCancelResponseConsumptionVoiceSimMinutesMin),
+      ai_credits: zod
+        .number()
+        .min(simulateApiHarnessJobsCancelResponseConsumptionAiCreditsMin),
+      sandbox_seconds: zod
+        .number()
+        .min(simulateApiHarnessJobsCancelResponseConsumptionSandboxSecondsMin),
+    })
+    .optional(),
+  usage_limit: zod.object({}).passthrough().optional(),
 });
 
 /**
- * Validates the v1.6 request contract and delegates execution to the backend
-selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
-``sandbox``). See ``simulate.services.harness_provider``.
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const SimulateApiHarnessJobsConversationConversationMessageParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const simulateApiHarnessJobsConversationConversationMessageBodyContentMax = 20000;
+
+export const simulateApiHarnessJobsConversationConversationMessageBodyClientRequestIdRegExp =
+  new RegExp("^[A-Za-z0-9_-]{1,128}$");
+export const simulateApiHarnessJobsConversationConversationMessageBodyKindDefault = `user_message`;
+export const simulateApiHarnessJobsConversationConversationMessageBodyPayloadDefault =
+  {};
+
+export const SimulateApiHarnessJobsConversationConversationMessageBody =
+  zod.object({
+    content: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessJobsConversationConversationMessageBodyContentMax),
+    client_request_id: zod
+      .string()
+      .min(1)
+      .regex(
+        simulateApiHarnessJobsConversationConversationMessageBodyClientRequestIdRegExp,
+      ),
+    kind: zod
+      .enum([
+        "user_message",
+        "user_response",
+        "approval",
+        "interrupt",
+        "cancel_operation",
+      ])
+      .default(
+        simulateApiHarnessJobsConversationConversationMessageBodyKindDefault,
+      ),
+    reply_to: zod.string().uuid().optional(),
+    payload: zod
+      .object({})
+      .passthrough()
+      .default(
+        simulateApiHarnessJobsConversationConversationMessageBodyPayloadDefault,
+      ),
+  });
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
 export const SimulateApiHarnessJobsExtendParams = zod.object({
@@ -36501,6 +36846,66 @@ export const SimulateApiHarnessJobsExtendBody = zod.object({
     .max(simulateApiHarnessJobsExtendBodyClientRequestIdMax)
     .optional(),
 });
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const SimulateApiHarnessJobsScenariosParams = zod.object({
+  id: zod.string(),
+});
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const SimulateApiHarnessJobsScenariosAmendScenariosParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessJobsScenariosAmendScenariosBodyReworkDefault =
+  true;
+
+export const SimulateApiHarnessJobsScenariosAmendScenariosBody = zod.object({
+  changes: zod.array(
+    zod.object({
+      op: zod.enum(["drop", "set_field", "set_persona"]),
+      scenario: zod.string().optional(),
+      scenarios: zod.array(zod.string().min(1)).optional(),
+      field: zod.string().optional(),
+      value: zod
+        .object({})
+        .passthrough()
+        .optional()
+        .describe("Any valid JSON value."),
+      persona: zod
+        .record(
+          zod.string(),
+          zod.object({}).passthrough().describe("Any valid JSON value."),
+        )
+        .optional(),
+    }),
+  ),
+  rework: zod
+    .boolean()
+    .default(simulateApiHarnessJobsScenariosAmendScenariosBodyReworkDefault),
+});
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const SimulateApiHarnessJobsScenariosScenarioCoverageParams = zod.object(
+  {
+    id: zod.string(),
+  },
+);
 
 export const SimulateApiHarnessAttemptsArtifactsArtifactManifestParams =
   zod.object({
@@ -36639,7 +37044,7 @@ export const SimulateApiHarnessAttemptsEventsResponse = zod.object({
 /**
  * The attempt capability authenticates the trusted ALK guest. Customer processes never
 receive that bearer and therefore cannot expose arbitrary sandbox ports themselves.
- * @summary Mint a short-lived, no-header Daytona URL for one guest-selected HTTP port.
+ * @summary Mint a short-lived, no-header URL for one guest-selected HTTP port.
  */
 export const SimulateApiHarnessAttemptsIngressParams = zod.object({
   id: zod.string(),
@@ -36889,6 +37294,388 @@ export const SimulateApiHarnessAttemptsScenariosResponse = zod.object({
       }),
     ),
   }),
+});
+
+export const SimulateApiHarnessAttemptsUsageParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessAttemptsUsageBodyRecordsItemScenarioKeyMax = 255;
+
+export const simulateApiHarnessAttemptsUsageBodyRecordsItemAmountMin = 0;
+
+export const simulateApiHarnessAttemptsUsageBodyRecordsItemOutcomeDefault = `completed`;
+
+export const SimulateApiHarnessAttemptsUsageBody = zod.object({
+  operation: zod.enum(["check", "report"]),
+  action: zod.enum(["text_call", "voice_call"]).optional(),
+  schema_version: zod.enum(["futureagi.harness-usage.v1"]).optional(),
+  records: zod
+    .array(
+      zod.object({
+        id: zod.string().uuid(),
+        action: zod.enum(["text_call", "voice_call"]),
+        scenario_key: zod
+          .string()
+          .min(1)
+          .max(simulateApiHarnessAttemptsUsageBodyRecordsItemScenarioKeyMax),
+        amount: zod
+          .number()
+          .min(simulateApiHarnessAttemptsUsageBodyRecordsItemAmountMin),
+        occurred_at: zod.string().datetime({ offset: true }),
+        funding: zod.enum(["platform", "customer"]),
+        outcome: zod
+          .enum(["completed", "failed"])
+          .default(
+            simulateApiHarnessAttemptsUsageBodyRecordsItemOutcomeDefault,
+          ),
+        failure_domain: zod
+          .enum([
+            "agent",
+            "simulator",
+            "environment",
+            "connectivity",
+            "infrastructure",
+            "grading",
+            "artifact",
+            "platform_sync",
+          ])
+          .optional(),
+      }),
+    )
+    .optional(),
+});
+
+export const SimulateApiHarnessAttemptsUsageResponse = zod.object({
+  allowed: zod.boolean().optional(),
+  accepted: zod.boolean().optional(),
+  reason: zod.string().optional(),
+  error_code: zod.string().optional(),
+  dimension: zod.string().optional(),
+  current_usage: zod.number().optional(),
+  limit: zod.number().optional(),
+  upgrade_cta: zod.object({}).passthrough().optional(),
+});
+
+export const SimulateApiHarnessConversationsAdjustParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessConversationsAdjustBodyInstructionMax = 2000;
+
+export const simulateApiHarnessConversationsAdjustBodyClientRequestIdMax = 128;
+
+export const SimulateApiHarnessConversationsAdjustBody = zod.object({
+  instruction: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessConversationsAdjustBodyInstructionMax),
+  client_request_id: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessConversationsAdjustBodyClientRequestIdMax)
+    .optional(),
+});
+
+export const SimulateApiHarnessConversationsAdjustResponse = zod.object({
+  adjustment_id: zod.string().uuid(),
+  client_request_id: zod.string().min(1).optional(),
+  instruction: zod.string().min(1),
+  target_stage: zod.string().min(1),
+  scenario_delta: zod.number(),
+  status: zod.string().min(1),
+  created_at: zod.string().datetime({ offset: true }),
+});
+
+export const SimulateApiHarnessConversationsCommandsParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessConversationsCommandsQueryAfterDefault = 0;
+export const simulateApiHarnessConversationsCommandsQueryAfterMin = 0;
+
+export const SimulateApiHarnessConversationsCommandsQueryParams = zod.object({
+  after: zod
+    .number()
+    .min(simulateApiHarnessConversationsCommandsQueryAfterMin)
+    .default(simulateApiHarnessConversationsCommandsQueryAfterDefault),
+});
+
+export const SimulateApiHarnessConversationsEventsParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessConversationsEventsBodyAcknowledgedThroughMin = 0;
+
+export const simulateApiHarnessConversationsEventsBodyEventsItemEventIdRegExp =
+  new RegExp("^[A-Za-z0-9_-]{1,128}$");
+
+export const simulateApiHarnessConversationsEventsBodyEventsItemStageMax = 32;
+
+export const simulateApiHarnessConversationsEventsBodyEventsItemInvocationIdMax = 255;
+
+export const simulateApiHarnessConversationsEventsBodyEventsItemFunctionCallIdMax = 255;
+
+export const simulateApiHarnessConversationsEventsBodyEventsItemDigestRegExp =
+  new RegExp("^sha256:[0-9a-f]{64}$");
+
+export const SimulateApiHarnessConversationsEventsBody = zod.object({
+  schema_version: zod.enum(["futureagi.harness-conversation-event.v1"]),
+  acknowledged_through: zod
+    .number()
+    .min(simulateApiHarnessConversationsEventsBodyAcknowledgedThroughMin),
+  events: zod.array(
+    zod.object({
+      schema_version: zod.enum(["futureagi.harness-conversation-event.v1"]),
+      event_id: zod
+        .string()
+        .min(1)
+        .regex(
+          simulateApiHarnessConversationsEventsBodyEventsItemEventIdRegExp,
+        ),
+      conversation_id: zod.string().uuid(),
+      sequence: zod.number().min(1),
+      kind: zod.enum([
+        "turn_started",
+        "assistant_delta",
+        "assistant_message",
+        "stage_changed",
+        "authoring_activity",
+        "tool_started",
+        "tool_result",
+        "question_requested",
+        "confirmation_requested",
+        "turn_interrupted",
+        "turn_completed",
+        "checkpoint_committed",
+        "capability_changed",
+      ]),
+      message_id: zod.string().uuid().optional(),
+      stage: zod
+        .string()
+        .max(simulateApiHarnessConversationsEventsBodyEventsItemStageMax)
+        .optional(),
+      invocation_id: zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessConversationsEventsBodyEventsItemInvocationIdMax)
+        .optional(),
+      function_call_id: zod
+        .string()
+        .min(1)
+        .max(
+          simulateApiHarnessConversationsEventsBodyEventsItemFunctionCallIdMax,
+        )
+        .optional(),
+      emitted_at: zod.string().datetime({ offset: true }),
+      payload: zod.object({}).passthrough(),
+      digest: zod
+        .string()
+        .min(1)
+        .regex(simulateApiHarnessConversationsEventsBodyEventsItemDigestRegExp),
+    }),
+  ),
+});
+
+export const simulateApiHarnessConversationsEventsResponseAckedThroughSequenceMin = 0;
+
+export const SimulateApiHarnessConversationsEventsResponse = zod.object({
+  acked_through_sequence: zod
+    .number()
+    .min(simulateApiHarnessConversationsEventsResponseAckedThroughSequenceMin),
+});
+
+export const SimulateApiHarnessConversationsRerunParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiHarnessConversationsRerunBody = zod
+  .object({})
+  .passthrough();
+
+export const SimulateApiHarnessConversationsRunStatusParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessConversationsRunStatusResponseCompletedScenariosMin = 0;
+
+export const simulateApiHarnessConversationsRunStatusResponseFailedScenariosMin = 0;
+
+export const simulateApiHarnessConversationsRunStatusResponseTotalScenariosMin = 0;
+
+export const SimulateApiHarnessConversationsRunStatusResponse = zod.object({
+  job_id: zod.string().uuid(),
+  state: zod.string().min(1),
+  stage: zod.string().min(1),
+  completed_scenarios: zod
+    .number()
+    .min(simulateApiHarnessConversationsRunStatusResponseCompletedScenariosMin),
+  failed_scenarios: zod
+    .number()
+    .min(simulateApiHarnessConversationsRunStatusResponseFailedScenariosMin),
+  total_scenarios: zod
+    .number()
+    .min(simulateApiHarnessConversationsRunStatusResponseTotalScenariosMin),
+  receipts: zod.object({}).passthrough(),
+});
+
+export const SimulateApiHarnessConversationsSessionStoreParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessConversationsSessionStoreQueryProjectKeyMax = 255;
+
+export const simulateApiHarnessConversationsSessionStoreQuerySessionIdMax = 255;
+
+export const simulateApiHarnessConversationsSessionStoreQuerySubpathDefault = ``;
+export const simulateApiHarnessConversationsSessionStoreQuerySubpathMax = 512;
+
+export const SimulateApiHarnessConversationsSessionStoreQueryParams =
+  zod.object({
+    project_key: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessConversationsSessionStoreQueryProjectKeyMax),
+    session_id: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessConversationsSessionStoreQuerySessionIdMax),
+    subpath: zod
+      .string()
+      .max(simulateApiHarnessConversationsSessionStoreQuerySubpathMax)
+      .default(simulateApiHarnessConversationsSessionStoreQuerySubpathDefault),
+  });
+
+export const SimulateApiHarnessConversationsSessionStoreAppendSessionStoreParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const simulateApiHarnessConversationsSessionStoreAppendSessionStoreBodyProjectKeyMax = 255;
+
+export const simulateApiHarnessConversationsSessionStoreAppendSessionStoreBodySessionIdMax = 255;
+
+export const simulateApiHarnessConversationsSessionStoreAppendSessionStoreBodySubpathDefault = ``;
+export const simulateApiHarnessConversationsSessionStoreAppendSessionStoreBodySubpathMax = 512;
+
+export const simulateApiHarnessConversationsSessionStoreAppendSessionStoreBodyEntriesMax = 500;
+
+export const SimulateApiHarnessConversationsSessionStoreAppendSessionStoreBody =
+  zod.object({
+    project_key: zod
+      .string()
+      .min(1)
+      .max(
+        simulateApiHarnessConversationsSessionStoreAppendSessionStoreBodyProjectKeyMax,
+      ),
+    session_id: zod
+      .string()
+      .min(1)
+      .max(
+        simulateApiHarnessConversationsSessionStoreAppendSessionStoreBodySessionIdMax,
+      ),
+    subpath: zod
+      .string()
+      .max(
+        simulateApiHarnessConversationsSessionStoreAppendSessionStoreBodySubpathMax,
+      )
+      .default(
+        simulateApiHarnessConversationsSessionStoreAppendSessionStoreBodySubpathDefault,
+      ),
+    entries: zod
+      .array(zod.object({}).passthrough())
+      .min(1)
+      .max(
+        simulateApiHarnessConversationsSessionStoreAppendSessionStoreBodyEntriesMax,
+      ),
+  });
+
+export const simulateApiHarnessConversationsSessionStoreAppendSessionStoreResponseAppendedMin = 0;
+
+export const SimulateApiHarnessConversationsSessionStoreAppendSessionStoreResponse =
+  zod.object({
+    appended: zod
+      .number()
+      .min(
+        simulateApiHarnessConversationsSessionStoreAppendSessionStoreResponseAppendedMin,
+      ),
+  });
+
+export const SimulateApiHarnessConversationsWorkspaceParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessConversationsWorkspaceResponseDigestRegExp =
+  new RegExp("^sha256:[0-9a-f]{64}$");
+export const simulateApiHarnessConversationsWorkspaceResponseSizeMin = 0;
+
+export const SimulateApiHarnessConversationsWorkspaceResponse = zod.object({
+  digest: zod
+    .string()
+    .min(1)
+    .regex(simulateApiHarnessConversationsWorkspaceResponseDigestRegExp),
+  size: zod
+    .number()
+    .min(simulateApiHarnessConversationsWorkspaceResponseSizeMin),
+});
+
+/**
+ * Relay a signed callback URL to the active sandbox without exposing provider headers.
+ */
+export const SimulateApiHarnessIngressReadParams = zod.object({
+  token: zod.string(),
+  target_path: zod.string(),
+});
+
+/**
+ * Relay a signed callback URL to the active sandbox without exposing provider headers.
+ */
+export const SimulateApiHarnessIngressCreateParams = zod.object({
+  token: zod.string(),
+  target_path: zod.string(),
+});
+
+export const SimulateApiHarnessIngressCreateBody = zod.object({
+  payload: zod.object({}).passthrough().optional(),
+});
+
+export const SimulateApiHarnessIngressCreateResponse = zod.instanceof(File);
+
+/**
+ * Relay a signed callback URL to the active sandbox without exposing provider headers.
+ */
+export const SimulateApiHarnessIngressUpdateParams = zod.object({
+  token: zod.string(),
+  target_path: zod.string(),
+});
+
+export const SimulateApiHarnessIngressUpdateBody = zod.object({
+  payload: zod.object({}).passthrough().optional(),
+});
+
+export const SimulateApiHarnessIngressUpdateResponse = zod.instanceof(File);
+
+/**
+ * Relay a signed callback URL to the active sandbox without exposing provider headers.
+ */
+export const SimulateApiHarnessIngressPartialUpdateParams = zod.object({
+  token: zod.string(),
+  target_path: zod.string(),
+});
+
+export const SimulateApiHarnessIngressPartialUpdateBody = zod.object({
+  payload: zod.object({}).passthrough().optional(),
+});
+
+export const SimulateApiHarnessIngressPartialUpdateResponse =
+  zod.instanceof(File);
+
+/**
+ * Relay a signed callback URL to the active sandbox without exposing provider headers.
+ */
+export const SimulateApiHarnessIngressDeleteParams = zod.object({
+  token: zod.string(),
+  target_path: zod.string(),
 });
 
 /**
@@ -44912,6 +45699,1218 @@ export const SimulateTestExecutionsTranscriptsListResponse = zod.object({
     .optional(),
   total_calls: zod.number().optional(),
   total_transcripts: zod.number().optional(),
+});
+
+export const SimulateV3CallExecutionDetailParams = zod.object({
+  call_execution_id: zod.string(),
+});
+
+export const simulateV3CallExecutionDetailResponseDurationSecondsMin =
+  -2147483648;
+export const simulateV3CallExecutionDetailResponseDurationSecondsMax = 2147483647;
+
+export const simulateV3CallExecutionDetailResponseResponseTimeMsMin =
+  -2147483648;
+export const simulateV3CallExecutionDetailResponseResponseTimeMsMax = 2147483647;
+
+export const simulateV3CallExecutionDetailResponseEndedReasonMax = 10000;
+
+export const simulateV3CallExecutionDetailResponseAvgAgentLatencyMsMin =
+  -2147483648;
+export const simulateV3CallExecutionDetailResponseAvgAgentLatencyMsMax = 2147483647;
+
+export const simulateV3CallExecutionDetailResponseUserInterruptionCountMin =
+  -2147483648;
+export const simulateV3CallExecutionDetailResponseUserInterruptionCountMax = 2147483647;
+
+export const simulateV3CallExecutionDetailResponseAiInterruptionCountMin =
+  -2147483648;
+export const simulateV3CallExecutionDetailResponseAiInterruptionCountMax = 2147483647;
+
+export const simulateV3CallExecutionDetailResponseCostCentsMin = -2147483648;
+export const simulateV3CallExecutionDetailResponseCostCentsMax = 2147483647;
+
+export const simulateV3CallExecutionDetailResponseCustomerCostCentsMin =
+  -2147483648;
+export const simulateV3CallExecutionDetailResponseCustomerCostCentsMax = 2147483647;
+
+export const simulateV3CallExecutionDetailResponseCustomerCallIdMax = 255;
+
+export const simulateV3CallExecutionDetailResponsePhoneNumberMax = 20;
+
+export const SimulateV3CallExecutionDetailResponse = zod.object({
+  id: zod.string().uuid().optional(),
+  service_provider_call_id: zod.string().min(1).optional(),
+  session_id: zod.string().optional(),
+  timestamp: zod.string().datetime({ offset: true }).optional(),
+  call_type: zod.string().optional(),
+  status: zod
+    .enum([
+      "pending",
+      "queued",
+      "ongoing",
+      "completed",
+      "failed",
+      "analyzing",
+      "cancelled",
+    ])
+    .optional()
+    .describe("Current status of the call"),
+  duration: zod.string().optional(),
+  duration_seconds: zod
+    .number()
+    .min(simulateV3CallExecutionDetailResponseDurationSecondsMin)
+    .max(simulateV3CallExecutionDetailResponseDurationSecondsMax)
+    .optional()
+    .describe("Duration of the call in seconds"),
+  start_time: zod.string().optional(),
+  transcript: zod.string().optional(),
+  scenario: zod.string().min(1).optional(),
+  overall_score: zod.string().optional(),
+  response_time: zod.string().optional(),
+  response_time_ms: zod
+    .number()
+    .min(simulateV3CallExecutionDetailResponseResponseTimeMsMin)
+    .max(simulateV3CallExecutionDetailResponseResponseTimeMsMax)
+    .optional()
+    .describe("Average response time in milliseconds"),
+  audio_url: zod.string().url().min(1).optional(),
+  customer_name: zod.string().min(1).optional(),
+  eval_outputs: zod.string().optional(),
+  eval_metrics: zod
+    .record(
+      zod.string(),
+      zod.object({
+        id: zod.string().optional(),
+        name: zod.string().optional(),
+        value: zod
+          .object({})
+          .passthrough()
+          .optional()
+          .describe("number | bool | string | list[string] | null"),
+        reason: zod.string().optional(),
+        type: zod.string().optional(),
+        template_type: zod.string().optional(),
+        visible: zod.boolean().optional(),
+        error: zod.boolean().optional(),
+        status: zod.string().optional(),
+        skipped: zod.boolean().optional(),
+        error_localizer: zod.boolean().optional(),
+        error_analysis: zod.object({}).passthrough().optional(),
+        error_localizer_status: zod.string().optional(),
+        error_localizer_message: zod.string().optional(),
+        selected_input_key: zod.string().optional(),
+        input_data: zod.object({}).passthrough().optional(),
+        input_types: zod.object({}).passthrough().optional(),
+      }),
+    )
+    .optional()
+    .describe("Get evaluation metrics in a format suitable for the UI"),
+  scenario_columns: zod.string().optional(),
+  ended_reason: zod
+    .string()
+    .max(simulateV3CallExecutionDetailResponseEndedReasonMax)
+    .optional()
+    .describe("Reason why the call ended"),
+  simulator_agent_name: zod.string().min(1).optional(),
+  simulator_agent_id: zod.string().uuid().optional(),
+  agent_definition_used_name: zod.string().min(1).optional(),
+  agent_definition_used_id: zod.string().uuid().optional(),
+  call_summary: zod
+    .string()
+    .optional()
+    .describe("Call summary from the service"),
+  recordings: zod.string().optional(),
+  test_execution_id: zod.string().uuid().optional(),
+  scenario_id: zod.string().optional(),
+  scenario_graph: zod.string().optional(),
+  scenario_graph_id: zod.string().optional(),
+  avg_agent_latency: zod.number().optional(),
+  avg_agent_latency_ms: zod
+    .number()
+    .min(simulateV3CallExecutionDetailResponseAvgAgentLatencyMsMin)
+    .max(simulateV3CallExecutionDetailResponseAvgAgentLatencyMsMax)
+    .optional()
+    .describe(
+      "Average agent latency in milliseconds (time taken by agent to respond after user's pause)",
+    ),
+  user_interruption_count: zod
+    .number()
+    .min(simulateV3CallExecutionDetailResponseUserInterruptionCountMin)
+    .max(simulateV3CallExecutionDetailResponseUserInterruptionCountMax)
+    .optional()
+    .describe("Number of times user interrupted the AI"),
+  user_interruption_rate: zod
+    .number()
+    .optional()
+    .describe("Rate of user interruptions (interruptions per minute)"),
+  user_wpm: zod.number().optional().describe("User's words per minute"),
+  bot_wpm: zod.number().optional().describe("Bot's words per minute"),
+  talk_ratio: zod
+    .number()
+    .optional()
+    .describe("Ratio of bot speaking time to user speaking time"),
+  ai_interruption_count: zod
+    .number()
+    .min(simulateV3CallExecutionDetailResponseAiInterruptionCountMin)
+    .max(simulateV3CallExecutionDetailResponseAiInterruptionCountMax)
+    .optional()
+    .describe("Number of times AI interrupted the user"),
+  ai_interruption_rate: zod
+    .number()
+    .optional()
+    .describe("Rate of AI interruptions (interruptions per minute)"),
+  avg_stop_time_after_interruption: zod.number().optional(),
+  total_tokens: zod.string().optional(),
+  input_tokens: zod.string().optional(),
+  output_tokens: zod.string().optional(),
+  avg_latency_ms: zod.string().optional(),
+  turn_count: zod.string().optional(),
+  agent_talk_percentage: zod.string().optional(),
+  csat_score: zod.string().optional(),
+  processing_skipped: zod.string().optional(),
+  processing_skip_reason: zod.string().optional(),
+  rerun_snapshots: zod.string().optional(),
+  is_snapshot: zod.string().optional(),
+  snapshot_timestamp: zod.string().optional(),
+  rerun_type: zod.string().optional(),
+  original_call_execution_id: zod.string().optional(),
+  tool_outputs: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe("Tool evaluation output - separate from standard evaluations"),
+  cost_cents: zod
+    .number()
+    .min(simulateV3CallExecutionDetailResponseCostCentsMin)
+    .max(simulateV3CallExecutionDetailResponseCostCentsMax)
+    .optional()
+    .describe("Cost of the call in cents"),
+  customer_cost_cents: zod
+    .number()
+    .min(simulateV3CallExecutionDetailResponseCustomerCostCentsMin)
+    .max(simulateV3CallExecutionDetailResponseCustomerCostCentsMax)
+    .optional()
+    .describe("Total customer-reported cost in cents"),
+  customer_cost_breakdown: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe("Detailed cost breakdown from customer call data"),
+  customer_latency_metrics: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe("Latency metrics from customer call data"),
+  customer_call_id: zod
+    .string()
+    .max(simulateV3CallExecutionDetailResponseCustomerCallIdMax)
+    .optional()
+    .describe("Customer call ID if available"),
+  simulation_call_type: zod
+    .enum(["voice", "text"])
+    .optional()
+    .describe("Type of simulation call"),
+  provider: zod.string().optional(),
+  phone_number: zod
+    .string()
+    .max(simulateV3CallExecutionDetailResponsePhoneNumberMax)
+    .optional()
+    .describe("Phone number called (null for TEXT/chat simulations)"),
+  goal: zod.string().min(1),
+  scenario_details: zod.string().min(1),
+  ideal_outcome: zod.string().min(1),
+  conversation_branch: zod.string().min(1),
+  persona: zod.string().min(1),
+  persona_details: zod.object({
+    name: zod.string().min(1),
+    voice: zod.string().min(1),
+    age: zod.string().min(1),
+    traits: zod.array(zod.string().min(1)),
+  }),
+  sub_goals: zod.array(zod.string().min(1)),
+  outcome: zod.enum(["passed", "failed", "error", "inconclusive"]),
+  cost_breakdown_cents: zod.object({
+    stt: zod.number(),
+    llm: zod.number(),
+    tts: zod.number(),
+    storage: zod.number(),
+    customer: zod.number(),
+  }),
+  evaluations: zod.array(
+    zod.object({
+      id: zod.string().min(1),
+      name: zod.string().min(1),
+      type: zod.string().min(1),
+      value: zod.object({}).passthrough(),
+      score: zod.number(),
+      passed: zod.boolean(),
+      reason: zod.string(),
+      status: zod.string().min(1),
+    }),
+  ),
+  function_calls: zod.array(
+    zod.object({
+      id: zod.string().min(1).optional(),
+      name: zod.string().min(1).optional(),
+      arguments: zod.object({}).passthrough().optional(),
+      result: zod.object({}).passthrough().optional(),
+      output: zod.object({}).passthrough().optional(),
+      duration_ms: zod.number().optional(),
+    }),
+  ),
+});
+
+export const SimulateV3TestExecutionAnalyticsParams = zod.object({
+  test_execution_id: zod.string(),
+});
+
+export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
+  dashboard: zod.object({
+    metrics: zod.array(
+      zod.object({
+        key: zod.string().min(1),
+        label: zod.string().min(1),
+        value: zod.number(),
+        unit: zod.enum([
+          "number",
+          "percent",
+          "ms",
+          "seconds",
+          "ratio",
+          "cents",
+        ]),
+        measured: zod.number(),
+        total: zod.number(),
+        note: zod.string(),
+      }),
+    ),
+    breakdowns: zod.array(
+      zod.object({
+        key: zod.string().min(1),
+        label: zod.string().min(1),
+        total: zod.number(),
+        segments: zod.array(
+          zod.object({
+            label: zod.string().min(1),
+            count: zod.number(),
+            share: zod.number(),
+            statuses: zod.array(zod.string().min(1)).optional(),
+          }),
+        ),
+        headline: zod.object({
+          label: zod.string().min(1),
+          count: zod.number(),
+          share: zod.number(),
+          statuses: zod.array(zod.string().min(1)).optional(),
+        }),
+      }),
+    ),
+    voice_slos: zod.array(
+      zod.object({
+        key: zod.string().min(1),
+        average: zod.number(),
+        measured: zod.number(),
+        max: zod.number(),
+        p50: zod.number(),
+        p90: zod.number(),
+        p99: zod.number(),
+        label: zod.string().min(1),
+      }),
+    ),
+    interruptions: zod.object({
+      total: zod.number(),
+      measured: zod.number(),
+      average: zod.number(),
+    }),
+    series: zod.array(
+      zod.object({
+        label: zod.string().min(1),
+        started_at: zod.string().datetime({ offset: true }),
+        calls: zod.number(),
+        duration_ms: zod.number(),
+        llm_cents: zod.number(),
+        tts_cents: zod.number(),
+        stt_cents: zod.number(),
+        storage_cents: zod.number(),
+      }),
+    ),
+    series_limit: zod.number(),
+    series_mode: zod.enum(["calls", "time_buckets"]),
+    latency_percentiles: zod.array(
+      zod.object({
+        percentile: zod.number(),
+        value: zod.number(),
+      }),
+    ),
+    distributions: zod.array(
+      zod.object({
+        key: zod.string().min(1),
+        average: zod.number(),
+        measured: zod.number(),
+        max: zod.number(),
+        p50: zod.number(),
+        p90: zod.number(),
+        p99: zod.number(),
+      }),
+    ),
+    csat: zod.object({
+      bins: zod.array(
+        zod.object({
+          label: zod.string().min(1),
+          lower: zod.number(),
+          upper: zod.number(),
+          count: zod.number(),
+          danger: zod.boolean(),
+        }),
+      ),
+      measured: zod.number(),
+      total: zod.number(),
+      agreement: zod.object({
+        compared: zod.number(),
+        agreed: zod.number(),
+        percent: zod.number(),
+      }),
+    }),
+    agent_response_time: zod.object({
+      bins: zod.array(
+        zod.object({
+          label: zod.string().min(1),
+          lower: zod.number(),
+          upper: zod.number(),
+          count: zod.number(),
+          danger: zod.boolean(),
+        }),
+      ),
+      measured: zod.number(),
+      total: zod.number(),
+      target_ms: zod.number(),
+      p50: zod.number(),
+      p95: zod.number(),
+      at_or_above_target: zod.number(),
+      at_or_above_target_percent: zod.number(),
+    }),
+    pipeline_cost: zod.array(
+      zod.object({
+        key: zod.string().min(1),
+        label: zod.string().min(1),
+        total_cents: zod.number(),
+        share: zod.number(),
+      }),
+    ),
+    tools: zod.object({
+      total_invocations: zod.number(),
+      total_tools: zod.number(),
+      volume: zod.array(
+        zod.object({
+          name: zod.string().min(1),
+          invocations: zod.number(),
+          measured: zod.number(),
+          failures: zod.number(),
+          failure_rate: zod.number(),
+          failure_label: zod.string().min(1),
+        }),
+      ),
+      failures: zod.array(
+        zod.object({
+          name: zod.string().min(1),
+          invocations: zod.number(),
+          measured: zod.number(),
+          failures: zod.number(),
+          failure_rate: zod.number(),
+          failure_label: zod.string().min(1),
+        }),
+      ),
+    }),
+    slowest_tasks: zod.array(
+      zod.object({
+        rank: zod.number(),
+        id: zod.string().uuid(),
+        label: zod.string().min(1),
+        axis_label: zod.string().min(1),
+        value: zod.number(),
+        modality: zod.string().min(1),
+        provider: zod.string().min(1),
+      }),
+    ),
+    most_expensive_tasks: zod.array(
+      zod.object({
+        rank: zod.number(),
+        id: zod.string().uuid(),
+        label: zod.string().min(1),
+        axis_label: zod.string().min(1),
+        value: zod.number(),
+        modality: zod.string().min(1),
+        provider: zod.string().min(1),
+      }),
+    ),
+    unavailable_features: zod.array(
+      zod.object({
+        key: zod.string().min(1),
+        reason: zod.string().min(1),
+      }),
+    ),
+    evaluation_summary: zod.object({
+      graders: zod.number(),
+      passed: zod.number(),
+      measured: zod.number(),
+      pass_rate: zod.number(),
+    }),
+    use_case_risk: zod.array(
+      zod.object({
+        goal: zod.string().min(1),
+        passed: zod.number(),
+        failed: zod.number(),
+        error: zod.number(),
+        inconclusive: zod.number(),
+      }),
+    ),
+    goal_count: zod.number(),
+  }),
+  execution: zod.object({
+    id: zod.string().uuid(),
+    name: zod.string().min(1),
+    started_at: zod.string().datetime({ offset: true }),
+    completed_at: zod.string().datetime({ offset: true }),
+  }),
+  summary: zod.object({
+    total: zod.number(),
+    outcomes: zod.object({
+      passed: zod.number(),
+      failed: zod.number(),
+      error: zod.number(),
+      inconclusive: zod.number(),
+    }),
+    measured: zod.number(),
+    pass_rate: zod.number(),
+    duration: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+    }),
+    latency: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+    }),
+    tokens: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+      total_value: zod.number(),
+    }),
+    cost_cents: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+      total_value: zod.number(),
+    }),
+    evaluators: zod.number(),
+  }),
+  scenario_risk: zod.array(
+    zod.object({
+      total: zod.number(),
+      outcomes: zod.object({
+        passed: zod.number(),
+        failed: zod.number(),
+        error: zod.number(),
+        inconclusive: zod.number(),
+      }),
+      measured: zod.number(),
+      pass_rate: zod.number(),
+      duration: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      latency: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      tokens: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+      cost_cents: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+      goal: zod.string().min(1),
+    }),
+  ),
+  turn_distribution: zod.array(
+    zod.object({
+      passed: zod.number(),
+      failed: zod.number(),
+      error: zod.number(),
+      inconclusive: zod.number(),
+      turn_count: zod.number(),
+    }),
+  ),
+  evaluations: zod.array(
+    zod.object({
+      id: zod.string().min(1),
+      name: zod.string().min(1),
+      passed: zod.number(),
+      failed: zod.number(),
+      measured: zod.number(),
+      missing: zod.number(),
+      pass_rate: zod.number(),
+      average_score: zod.number(),
+    }),
+  ),
+  failure_breakdown: zod.array(
+    zod.object({
+      reason: zod.string().min(1),
+      failures: zod.number(),
+      share: zod.number(),
+    }),
+  ),
+  distributions: zod.object({
+    duration_seconds: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+    }),
+    latency_ms: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+    }),
+    tokens: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+      total_value: zod.number(),
+    }),
+    cost_cents: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+      total_value: zod.number(),
+    }),
+  }),
+  cost_breakdown_cents: zod.object({
+    stt: zod.object({
+      total: zod.number(),
+      measured: zod.number(),
+      calls: zod.number(),
+    }),
+    llm: zod.object({
+      total: zod.number(),
+      measured: zod.number(),
+      calls: zod.number(),
+    }),
+    tts: zod.object({
+      total: zod.number(),
+      measured: zod.number(),
+      calls: zod.number(),
+    }),
+    storage: zod.object({
+      total: zod.number(),
+      measured: zod.number(),
+      calls: zod.number(),
+    }),
+    customer: zod.object({
+      total: zod.number(),
+      measured: zod.number(),
+      calls: zod.number(),
+    }),
+  }),
+  provider_breakdown: zod.array(
+    zod.object({
+      total: zod.number(),
+      outcomes: zod.object({
+        passed: zod.number(),
+        failed: zod.number(),
+        error: zod.number(),
+        inconclusive: zod.number(),
+      }),
+      measured: zod.number(),
+      pass_rate: zod.number(),
+      duration: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      latency: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      tokens: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+      cost_cents: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+      provider: zod.string().min(1),
+    }),
+  ),
+  modality_breakdown: zod.array(
+    zod.object({
+      total: zod.number(),
+      outcomes: zod.object({
+        passed: zod.number(),
+        failed: zod.number(),
+        error: zod.number(),
+        inconclusive: zod.number(),
+      }),
+      measured: zod.number(),
+      pass_rate: zod.number(),
+      duration: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      latency: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      tokens: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+      cost_cents: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+      modality: zod.string().min(1),
+    }),
+  ),
+  trends: zod.array(
+    zod.object({
+      total: zod.number(),
+      outcomes: zod.object({
+        passed: zod.number(),
+        failed: zod.number(),
+        error: zod.number(),
+        inconclusive: zod.number(),
+      }),
+      measured: zod.number(),
+      pass_rate: zod.number(),
+      duration: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      latency: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      tokens: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+      cost_cents: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+      execution_id: zod.string().uuid(),
+      started_at: zod.string().datetime({ offset: true }),
+    }),
+  ),
+});
+
+export const SimulateV3TestExecutionCallsParams = zod.object({
+  test_execution_id: zod.string(),
+});
+
+export const simulateV3TestExecutionCallsQuerySearchDefault = ``;
+export const simulateV3TestExecutionCallsQueryFiltersDefault = {};
+export const simulateV3TestExecutionCallsQueryOrderingDefault = `-started_at`;
+export const simulateV3TestExecutionCallsQueryPageDefault = 1;
+
+export const simulateV3TestExecutionCallsQueryPageSizeDefault = 50;
+export const simulateV3TestExecutionCallsQueryPageSizeMax = 500;
+
+export const simulateV3TestExecutionCallsQueryGroupByDefault = ``;
+
+export const SimulateV3TestExecutionCallsQueryParams = zod.object({
+  search: zod.string().default(simulateV3TestExecutionCallsQuerySearchDefault),
+  filters: zod
+    .string()
+    .default(simulateV3TestExecutionCallsQueryFiltersDefault),
+  ordering: zod
+    .enum([
+      "started_at",
+      "-started_at",
+      "duration_seconds",
+      "-duration_seconds",
+      "latency_ms",
+      "-latency_ms",
+      "turn_count",
+      "-turn_count",
+      "tokens",
+      "-tokens",
+      "cost_cents",
+      "-cost_cents",
+      "scenario",
+      "-scenario",
+      "goal",
+      "-goal",
+      "outcome",
+      "-outcome",
+    ])
+    .default(simulateV3TestExecutionCallsQueryOrderingDefault),
+  page: zod
+    .number()
+    .min(1)
+    .default(simulateV3TestExecutionCallsQueryPageDefault),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(simulateV3TestExecutionCallsQueryPageSizeMax)
+    .default(simulateV3TestExecutionCallsQueryPageSizeDefault),
+  group_by: zod
+    .enum(["goal", "status"])
+    .default(simulateV3TestExecutionCallsQueryGroupByDefault),
+  group_key: zod.string().optional(),
+});
+
+export const SimulateV3TestExecutionCallsResponse = zod.object({
+  execution: zod.object({
+    id: zod.string().uuid(),
+    run_test_id: zod.string().uuid(),
+    name: zod.string().min(1),
+    status: zod.string().min(1),
+    started_at: zod.string().datetime({ offset: true }),
+    completed_at: zod.string().datetime({ offset: true }),
+    ordinal: zod.number(),
+    agent_version: zod.string().min(1),
+    agent_type: zod.string().min(1),
+    summary: zod.object({
+      total: zod.number(),
+      outcomes: zod.object({
+        passed: zod.number(),
+        failed: zod.number(),
+        error: zod.number(),
+        inconclusive: zod.number(),
+      }),
+      measured: zod.number(),
+      pass_rate: zod.number(),
+      duration: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      latency: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      tokens: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+      cost_cents: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+    }),
+  }),
+  summary: zod.object({
+    total: zod.number(),
+    outcomes: zod.object({
+      passed: zod.number(),
+      failed: zod.number(),
+      error: zod.number(),
+      inconclusive: zod.number(),
+    }),
+    measured: zod.number(),
+    pass_rate: zod.number(),
+    duration: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+    }),
+    latency: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+    }),
+    tokens: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+      total_value: zod.number(),
+    }),
+    cost_cents: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+      total_value: zod.number(),
+    }),
+  }),
+  count: zod.number(),
+  page: zod.number(),
+  page_size: zod.number(),
+  total_pages: zod.number(),
+  results: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      scenario: zod.string().min(1),
+      scenario_details: zod.string().min(1),
+      goal: zod.string().min(1),
+      ideal_outcome: zod.string().min(1),
+      conversation_branch: zod.string().min(1),
+      persona: zod.string().min(1),
+      persona_details: zod.object({
+        name: zod.string().min(1),
+        voice: zod.string().min(1),
+        age: zod.string().min(1),
+        traits: zod.array(zod.string().min(1)),
+      }),
+      sub_goals: zod.array(zod.string().min(1)),
+      outcome: zod.enum(["passed", "failed", "error", "inconclusive"]),
+      execution_status: zod.string().min(1),
+      modality: zod.string().min(1),
+      provider: zod.string().min(1),
+      started_at: zod.string().datetime({ offset: true }),
+      completed_at: zod.string().datetime({ offset: true }),
+      duration_seconds: zod.number(),
+      latency_ms: zod.number(),
+      turn_count: zod.number(),
+      tokens: zod.number(),
+      cost_cents: zod.number(),
+      cost_breakdown_cents: zod.object({
+        stt: zod.number(),
+        llm: zod.number(),
+        tts: zod.number(),
+        storage: zod.number(),
+        customer: zod.number(),
+      }),
+      csat: zod.number(),
+      ended_reason: zod.string().min(1),
+      error_message: zod.string().min(1),
+      evaluations: zod.array(
+        zod.object({
+          id: zod.string().min(1),
+          name: zod.string().min(1),
+          type: zod.string().min(1),
+          value: zod.object({}).passthrough(),
+          score: zod.number(),
+          passed: zod.boolean(),
+          reason: zod.string(),
+          status: zod.string().min(1),
+        }),
+      ),
+    }),
+  ),
+  groups: zod.array(
+    zod.object({
+      total: zod.number(),
+      outcomes: zod.object({
+        passed: zod.number(),
+        failed: zod.number(),
+        error: zod.number(),
+        inconclusive: zod.number(),
+      }),
+      measured: zod.number(),
+      pass_rate: zod.number(),
+      duration: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      latency: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      tokens: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+      cost_cents: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+      key: zod.string().min(1),
+      label: zod.string().min(1),
+      result_ids: zod.array(zod.string().uuid()),
+      aggregates: zod.object({
+        csat: zod.number(),
+        turns: zod.number(),
+        latency_ms: zod.number(),
+        tokens: zod.number(),
+        evaluations: zod.object({}).passthrough(),
+      }),
+    }),
+  ),
+  facets: zod.object({
+    goal: zod.array(
+      zod.object({
+        value: zod.string().min(1),
+        count: zod.number(),
+      }),
+    ),
+    sub_goal: zod.array(
+      zod.object({
+        value: zod.string().min(1),
+        count: zod.number(),
+      }),
+    ),
+    status: zod.array(
+      zod.object({
+        value: zod.string().min(1),
+        count: zod.number(),
+      }),
+    ),
+  }),
+  evaluation_columns: zod.array(
+    zod.object({
+      id: zod.string().min(1),
+      name: zod.string().min(1),
+    }),
+  ),
+});
+
+export const SimulateV3TestExecutionExportParams = zod.object({
+  test_execution_id: zod.string(),
+});
+
+export const simulateV3TestExecutionExportBodySearchDefault = ``;
+export const simulateV3TestExecutionExportBodyFiltersDefault = {};
+export const simulateV3TestExecutionExportBodyOrderingDefault = `-started_at`;
+
+export const SimulateV3TestExecutionExportBody = zod.object({
+  search: zod.string().default(simulateV3TestExecutionExportBodySearchDefault),
+  filters: zod
+    .object({})
+    .passthrough()
+    .default(simulateV3TestExecutionExportBodyFiltersDefault),
+  ordering: zod
+    .enum([
+      "started_at",
+      "-started_at",
+      "duration_seconds",
+      "-duration_seconds",
+      "latency_ms",
+      "-latency_ms",
+      "turn_count",
+      "-turn_count",
+      "tokens",
+      "-tokens",
+      "cost_cents",
+      "-cost_cents",
+      "scenario",
+      "-scenario",
+      "goal",
+      "-goal",
+      "outcome",
+      "-outcome",
+    ])
+    .default(simulateV3TestExecutionExportBodyOrderingDefault),
 });
 
 export const telemetryHeartbeatCreateBodySchemaVersionDefault = 1;
