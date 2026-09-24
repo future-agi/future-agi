@@ -11,14 +11,24 @@ vi.mock("src/api/harness/harness", () => ({
 vi.mock("src/api/simulate-environments/harnessEnvironments", () => ({
   listHarnessEnvironments: vi.fn(),
   deleteHarnessEnvironment: vi.fn(),
+  renameHarnessEnvironment: vi.fn(),
+  getHarnessEnvironment: vi.fn(),
+  deleteAppliedEvaluation: vi.fn(),
+  getAvailableEvaluations: vi.fn(),
+  addEvaluation: vi.fn(),
+  addRunEvaluation: vi.fn(),
 }));
 
 const { createHarnessJob, uploadHarnessSecretFile } = await import(
   "src/api/harness/harness"
 );
-const { listHarnessEnvironments, deleteHarnessEnvironment } = await import(
-  "src/api/simulate-environments/harnessEnvironments"
-);
+const {
+  listHarnessEnvironments,
+  deleteHarnessEnvironment,
+  deleteAppliedEvaluation,
+  addEvaluation,
+  addRunEvaluation,
+} = await import("src/api/simulate-environments/harnessEnvironments");
 const {
   useMyEnvironments,
   useDeleteEnvironment,
@@ -26,7 +36,11 @@ const {
   useUploadSecretFile,
   useRunSimulation,
   useAdoptTemplate,
+  useAddEvaluation,
+  useAddRunEvaluation,
+  useRemoveAppliedEvaluation,
   SIMULATE_ENVIRONMENTS_KEY,
+  availableEvaluationsKey,
 } = await import("../environments");
 
 // The paginated harness-environments payload the hook maps into table rows.
@@ -292,5 +306,148 @@ describe("useAdoptTemplate", () => {
     const out = await result.current.mutateAsync("env-voice-support");
     expect(out.envId).toMatch(/^env-/);
     expect(out.templateId).toBeUndefined();
+  });
+});
+
+describe("useAddEvaluation", () => {
+  it("seeds the detail from the 201 body and does NOT invalidate it in the same tick", async () => {
+    const detail = { evaluations: { selected: [{ id: "cfg-1", name: "no_misselling" }] } };
+    addEvaluation.mockResolvedValue(detail);
+    const { queryClient, Wrapper } = makeWrapper();
+    const setData = vi.spyOn(queryClient, "setQueryData");
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useAddEvaluation(), { wrapper: Wrapper });
+
+    result.current.mutate({ id: "env-1", name: "no_misselling" });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(setData).toHaveBeenCalledWith(["harness-environment", "env-1"], detail);
+    // A refetch here races the write it is meant to confirm and can flip the
+    // row back from "Added"; the drawer refetches on close instead.
+    expect(invalidate).not.toHaveBeenCalledWith({
+      queryKey: ["harness-environment", "env-1"],
+    });
+  });
+
+  // `available` is the drawer's only active observer of this query, so
+  // invalidating it here would refetch it in the same tick and drop the
+  // just-added row off the offer. `boundEntries`'s filter in
+  // `AddEvaluationDrawer.jsx` already prevents the duplicate without this.
+  it("does NOT invalidate the available list on add — the offer stays in place, marked Added", async () => {
+    const detail = { evaluations: { selected: [{ id: "cfg-1", name: "no_misselling" }] } };
+    addEvaluation.mockResolvedValue(detail);
+    const { queryClient, Wrapper } = makeWrapper();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useAddEvaluation(), { wrapper: Wrapper });
+
+    result.current.mutate({ id: "env-1", name: "no_misselling" });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(invalidate).not.toHaveBeenCalledWith({
+      queryKey: availableEvaluationsKey("env-1"),
+    });
+  });
+});
+
+describe("useAddRunEvaluation", () => {
+  it("posts the name on the run and returns the five counts", async () => {
+    addRunEvaluation.mockResolvedValue({
+      queued: 12,
+      skipped_existing: 3,
+      skipped_in_flight: 0,
+      skipped_pending: 1,
+      completed_calls: 16,
+    });
+    const { Wrapper } = makeWrapper();
+    const { result } = renderHook(() => useAddRunEvaluation(), { wrapper: Wrapper });
+
+    result.current.mutate({ id: "env-1", executionId: "ex-1", name: "no_misselling" });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(addRunEvaluation).toHaveBeenCalledWith("env-1", "ex-1", "no_misselling");
+    expect(result.current.data).toMatchObject({ queued: 12, completed_calls: 16 });
+  });
+
+  // The same rule the environment-level add follows, for the same reason:
+  // both adds are pressed from the picker, so neither refetches anything the
+  // open picker is observing. The run path has no body to seed from either —
+  // its receipt is the click's confirmation, and the drawer's close is what
+  // refetches the detail.
+  it("refetches neither list while the picker that triggered it can still be open", async () => {
+    addRunEvaluation.mockResolvedValue({
+      queued: 1,
+      skipped_existing: 0,
+      skipped_in_flight: 0,
+      skipped_pending: 0,
+      completed_calls: 1,
+    });
+    const { queryClient, Wrapper } = makeWrapper();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useAddRunEvaluation(), { wrapper: Wrapper });
+
+    result.current.mutate({ id: "env-1", executionId: "ex-1", name: "no_misselling" });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(invalidate).not.toHaveBeenCalledWith({
+      queryKey: ["harness-environment", "env-1"],
+    });
+    expect(invalidate).not.toHaveBeenCalledWith({
+      queryKey: availableEvaluationsKey("env-1"),
+    });
+  });
+
+  // The 202 carries counts, not the detail — so nothing may be written into
+  // the detail cache from it either.
+  it("never patches the detail cache from the 202 counts", async () => {
+    addRunEvaluation.mockResolvedValue({
+      queued: 1,
+      skipped_existing: 0,
+      skipped_in_flight: 0,
+      skipped_pending: 0,
+      completed_calls: 1,
+    });
+    const { queryClient, Wrapper } = makeWrapper();
+    const setData = vi.spyOn(queryClient, "setQueryData");
+    const { result } = renderHook(() => useAddRunEvaluation(), { wrapper: Wrapper });
+
+    result.current.mutate({ id: "env-1", executionId: "ex-1", name: "no_misselling" });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(setData).not.toHaveBeenCalled();
+  });
+});
+
+describe("useRemoveAppliedEvaluation", () => {
+  const KEYS = (id) => [["harness-environment", id], availableEvaluationsKey(id)];
+
+  it("refetches the applied list and stales the offer list after a remove", async () => {
+    deleteAppliedEvaluation.mockResolvedValue(undefined);
+    const { queryClient, Wrapper } = makeWrapper();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useRemoveAppliedEvaluation(), { wrapper: Wrapper });
+
+    result.current.mutate({ id: "env-1", evalConfigId: "cfg-1" });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(deleteAppliedEvaluation).toHaveBeenCalledWith("env-1", "cfg-1");
+    // The removed eval can be added again, so the offer list is stale too.
+    // Nothing observes it here (remove is pressed with the picker closed), so
+    // this only marks it.
+    KEYS("env-1").forEach((queryKey) => expect(invalidate).toHaveBeenCalledWith({ queryKey }));
+  });
+
+  // A 404 means the row is already gone server-side, so the list on screen is
+  // the stale one — refetching is exactly what reconciles it. Invalidating
+  // only on success left the row there, refusing every retry the same way.
+  it("still reconciles the list when the remove 404s because the row is already gone", async () => {
+    deleteAppliedEvaluation.mockRejectedValue({ detail: "Not found", statusCode: 404 });
+    const { queryClient, Wrapper } = makeWrapper();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useRemoveAppliedEvaluation(), { wrapper: Wrapper });
+
+    result.current.mutate({ id: "env-1", evalConfigId: "cfg-1" });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    KEYS("env-1").forEach((queryKey) => expect(invalidate).toHaveBeenCalledWith({ queryKey }));
   });
 });

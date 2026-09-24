@@ -4,6 +4,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { extractKpis } from "src/sections/test-detail/common";
 import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 import { runColor } from "src/sections/simulate/environments/workspace/runs/runs.constants";
+import useKpis from "src/hooks/useKpis";
 
 /**
  * The run/execution DETAIL data source.
@@ -33,6 +34,9 @@ import { runColor } from "src/sections/simulate/environments/workspace/runs/runs
  * @property {number} total         Calls/chats run (`kpis.total_calls`).
  * @property {number} passed        `total - failed`.
  * @property {number} failed        `kpis.failed_calls`.
+ * @property {?number} completed    `kpis.completed_calls`, both modalities;
+ *                                  null while the KPIs haven't loaded or the
+ *                                  field is absent — never 0, never `total`.
  * @property {number} passRate      0–100; `performance-summary.pass_rate` when
  *                                  present, else derived `passed/total`.
  * @property {?number} durationS    Total wall-clock seconds (`total_duration`).
@@ -99,6 +103,14 @@ export function buildRunStats(kpis, perf, row) {
         ? Math.round((passed / total) * 100)
         : 0;
 
+  // `completed_calls` is its own KPI field for both modalities — not the chat
+  // branch's `connected_calls` (voice's `connected_voice_calls` uses a
+  // different filter, `duration_seconds > 0`), and not `total`, which counts
+  // every status. Stays `null` — never `0`, never `total` — until the KPIs
+  // load or on an older backend where the field is absent: "not known yet"
+  // must never look like a real number.
+  const completed = kpis?.completed_calls ?? null;
+
   const durationS = kpis?.total_duration ?? null;
   const avgDurationMs =
     durationS != null && total ? Math.round((durationS * 1000) / total) : null;
@@ -114,6 +126,7 @@ export function buildRunStats(kpis, perf, row) {
     total,
     passed,
     failed,
+    completed,
     passRate,
     durationS,
     avgDurationMs,
@@ -152,6 +165,11 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
     enabled: !!executionId,
     staleTime: 1000 * 60 * 5,
   });
+  // `completed` is its own KPI field, cached under the key `useRunsSummary`
+  // primes (`useKpis`), so reading it here shares that entry rather than
+  // refetching. Stays null — never 0 — until the KPIs load, per the RunStats
+  // contract. Everything else on `stats` comes from the run-results summary.
+  const kpisQuery = useKpis(executionId);
   const execution = query.data?.execution;
   const summary = execution?.summary;
   const identity = useMemo(() => {
@@ -180,6 +198,7 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
       passed: summary?.outcomes?.passed ?? 0,
       failed:
         (summary?.outcomes?.failed ?? 0) + (summary?.outcomes?.error ?? 0),
+      completed: kpisQuery.data?.completed_calls ?? null,
       passRate: summary?.pass_rate ?? 0,
       durationS: summary?.duration?.average ?? null,
       avgDurationMs:
@@ -203,7 +222,7 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
       dropped: 0,
       failedCritical: 0,
     }),
-    [execution, summary],
+    [execution, summary, kpisQuery.data],
   );
 
   const isLoading = !!executionId && query.isPending;
@@ -281,7 +300,8 @@ export {
  * @property {?string} summary       `call_summary`.
  * @property {Object<string,string>} recordings  `recordings` map (voice audio).
  * @property {Array<{ id: string, name: string, score: ?number,
- *   passed: ?boolean, reason: string }>} evalResults  From `eval_metrics`.
+ *   passed: ?boolean, reason: string, removed: boolean }>} evalResults  From
+ *   `eval_metrics`; `removed` is true for a verdict whose eval was removed.
  */
 
 // Normalise a transcript/chat role to the two the drawer paints. Voice
@@ -357,6 +377,9 @@ function callEvalResult(evalId, data) {
     score,
     passed,
     reason: data.reason || "",
+    // A removed eval's verdict is still returned, carrying `removed: true` —
+    // never hidden or rewritten; the drawer marks it.
+    removed: data.removed === true,
   };
 }
 

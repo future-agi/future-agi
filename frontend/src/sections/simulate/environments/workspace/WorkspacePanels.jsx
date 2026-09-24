@@ -27,7 +27,16 @@ import { WORKSPACE_TABS } from "./workspace.constants";
 // panels never host the run detail themselves.
 export default function WorkspacePanels({
   env,
+  // The client store as the workspace holds it — what every panel reads.
   envState,
+  // The same state with a backed environment's real applied evals
+  // (`evaluations.selected` off the environment detail) overlaid, exactly as
+  // EnvironmentWorkspace already computes it for the tab badges and the setup
+  // gaps. Every panel that counts or names applied evals reads this one, so
+  // the tab badge, the Overview checklist and the Runs pre-flight tile all
+  // agree with the Evaluations tab. It defaults to `envState` for the build
+  // page, which has no backend detail to overlay yet.
+  serverEnvState = envState,
   patch,
   tab,
   onTabChange,
@@ -81,9 +90,12 @@ export default function WorkspacePanels({
         return <EvalsStep env={env} envState={envState} patch={patch} onGo={go} locked={locked} backed={backed} onFork={onFork} />;
       case "runs":
         return (
+          // The pre-flight "evals applied" tile counts and names the server's
+          // `evaluations.selected` on a backed env — the same list the
+          // Evaluations tab renders — so it is handed the overlaid state.
           <RunsPanel
             env={env}
-            envState={envState}
+            envState={serverEnvState}
             runs={runs}
             onStart={() => navigate(runSimulationTarget(env))}
             onOpenRun={openRun}
@@ -94,9 +106,15 @@ export default function WorkspacePanels({
         return <SettingsPanel env={env} locked={locked} backed={backed} />;
       default:
         return (
+          // The next-steps checklist's "Add evaluations" step and its CTA
+          // count read `envState.evals`. On a backed env that set is the
+          // server's, not the client store's, so the Overview gets the same
+          // overlaid state the tab badge and the Runs tile do — otherwise it
+          // can offer "Add evaluations (0)" while the Evaluations tab lists
+          // eight.
           <OverviewPanel
             env={env}
-            envState={envState}
+            envState={serverEnvState}
             patch={patch}
             onGo={go}
             agentConnected={!!envState?.agent}
@@ -163,6 +181,9 @@ WorkspacePanels.propTypes = {
     ),
     runs: PropTypes.arrayOf(PropTypes.shape({ id: PropTypes.string })),
   }).isRequired,
+  // Same shape as envState; on a backed env its `evals` are the environment
+  // detail's selected entries (a catalogue entry plus `id` and `runnable`).
+  serverEnvState: PropTypes.object,
   patch: PropTypes.func.isRequired,
   tab: PropTypes.string,
   onTabChange: PropTypes.func.isRequired,
@@ -175,11 +196,12 @@ WorkspacePanels.propTypes = {
     scenarios: PropTypes.number,
     evals: PropTypes.number,
   }),
-  // Real §6 counts for the Overview summary tiles on a backed env.
+  // The environment detail's real counts for the Overview summary tiles on a
+  // backed env.
   overviewCounts: PropTypes.object,
-  // Real §6 world content (stores/amendments/dependencies) for the Overview.
+  // Its real world content (stores/amendments/dependencies) for the Overview.
   overviewWorld: PropTypes.object,
-  // Real §6 capability-graph data (tools/flows/personas/guardrails) for Contract.
+  // Its real capability-graph data (tools/flows/personas/guardrails) for Contract.
   graphData: PropTypes.object,
   // Starts a run scoped to the scenario selection × trials — (ids, trials).
   onStartRun: PropTypes.func,

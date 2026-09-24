@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
 import { alpha } from "@mui/material/styles";
-import { Box, CircularProgress, Stack, Typography, IconButton, Tooltip, Tab } from "@mui/material";
+import { Box, Chip, CircularProgress, Stack, Typography, IconButton, Tooltip, Tab } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
@@ -15,6 +15,28 @@ import { Meta, Cell, Attr } from "./chatDrawerCells";
 
 const num = (n) => (n == null ? "—" : Number(n).toLocaleString());
 const secs = (ms) => (ms == null ? "—" : `${(ms / 1000).toFixed(1)}s`);
+
+// This eval was removed from the environment after it graded this call.
+// The verdict stands as it was stored — it is marked, never hidden and
+// never restated — everywhere a call's verdicts render, so the banner and
+// the Evals tab row share this exact chip.
+function RemovedChip() {
+  return (
+    <Chip
+      data-testid="removed-eval-marker"
+      size="small"
+      label="Removed"
+      sx={{
+        height: 18,
+        fontSize: 10,
+        fontWeight: 600,
+        bgcolor: "background.neutral",
+        color: "text.subtitle",
+        "& .MuiChip-label": { px: 0.75 },
+      }}
+    />
+  );
+}
 
 // The chat / non-voice call drawer — a lean port of the designer's two-pane
 // CallDrawer over REAL call-detail data. The left pane is the transcript (with
@@ -119,9 +141,12 @@ export default function ChatCallDrawer({ task, onClose }) {
                 <Stack key={r.id} direction="row" spacing={1.25} alignItems="flex-start">
                   <Iconify icon="solar:close-circle-bold" width={15} sx={{ color: BUILD_TONES.red, flexShrink: 0, mt: "1px" }} />
                   <Box minWidth={0}>
-                    <Typography sx={{ typography: "s2", fontWeight: 700 }}>
-                      {r.name} failed{r.score != null ? ` (${Math.round(r.score * 100)})` : ""}
-                    </Typography>
+                    <Stack direction="row" alignItems="center" spacing={0.75} minWidth={0}>
+                      <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+                        {r.name} failed{r.score != null ? ` (${Math.round(r.score * 100)})` : ""}
+                      </Typography>
+                      {r.removed && <RemovedChip />}
+                    </Stack>
                     {r.reason && (
                       <Typography sx={{ typography: "s2", color: "text.secondary" }}>{r.reason}</Typography>
                     )}
@@ -173,9 +198,14 @@ export default function ChatCallDrawer({ task, onClose }) {
                       sx={{ color: r.passed === false ? BUILD_TONES.red : BUILD_TONES.green, flexShrink: 0, mt: "1px" }}
                     />
                     <Box flex={1} minWidth={0}>
-                      <Typography sx={{ typography: "s2", fontWeight: 600 }}>{r.name}</Typography>
+                      <Stack direction="row" alignItems="center" spacing={0.75} minWidth={0}>
+                        <Typography sx={{ typography: "s2", fontWeight: 600 }}>{r.name}</Typography>
+                        {r.removed && <RemovedChip />}
+                      </Stack>
                       {r.reason && (
-                        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{r.reason}</Typography>
+                        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                          {r.reason}
+                        </Typography>
                       )}
                     </Box>
                     {r.score != null && (

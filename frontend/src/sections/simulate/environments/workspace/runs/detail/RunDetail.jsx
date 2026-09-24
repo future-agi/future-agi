@@ -19,8 +19,8 @@ import { runSimulationTarget } from "src/api/simulate-environments/runs";
 
 import SectionCard from "../../../components/SectionCard";
 import StatusChip from "../StatusChip";
+import AddEvaluationDrawer from "../../evals/AddEvaluationDrawer";
 import AddEvalsDrawer from "../../evals/AddEvalsDrawer";
-import { useAppliedEvals } from "../../evals/useAppliedEvals";
 import RunTraceTable from "./trace/RunTraceTable";
 import CallDrawer from "./CallDrawer";
 import FixMyAgentDrawer from "./fixmyagent/FixMyAgentDrawer";
@@ -50,7 +50,7 @@ function headerStatus(identity, stats) {
  * `RunResults` chrome — the identity header and tab strip — over real run-level
  * data (`useRunDetail`).
  */
-export default function RunDetail({ env, envState, patch, testId, executionId }) {
+export default function RunDetail({ env, envState, backed = false, testId, executionId }) {
   const navigate = useNavigate();
   const [tab, setTab] = useState("tasks");
   const [analyticsFilters, setAnalyticsFilters] = useState({});
@@ -72,9 +72,6 @@ export default function RunDetail({ env, envState, patch, testId, executionId })
   // Keep the client bound: `useQueryClient().invalidateQueries` detached from
   // the client throws on `this.#queryCache` in react-query v5.
   const queryClient = useQueryClient();
-  // Applied-evals store add, so "Add evals" on the run page actually persists
-  // the configured evals (mirrors the Evals tab) instead of dropping them.
-  const { add: addEvals } = useAppliedEvals(envState, patch);
 
   const openOptimization = (row) =>
     navigate(
@@ -317,23 +314,31 @@ export default function RunDetail({ env, envState, patch, testId, executionId })
         </Box>
       </Box>
 
-      <AddEvalsDrawer
-        open={addingEvals}
-        onClose={() => setAddingEvals(false)}
-        env={env}
-        envState={envState}
-        existingIds={
-          new Set(
-            (envState?.evals || []).map((e) =>
-              typeof e === "string" ? e : e?.id,
-            ),
-          )
-        }
-        onAdd={(entries) => {
-          if (entries?.length) addEvals(entries);
-          setAddingEvals(false);
-        }}
-      />
+      {/* The same picker the Evaluations tab opens. Adding from here binds
+          the eval to the environment exactly as the tab's add does and then
+          queues this run's finished calls that hold no verdict for it; the
+          drawer shows the counts the 202 returns. Only a backed environment
+          has a backend to call — a client/template env (reachable here
+          via the `?mockRuns=1` QA switch) gets the same store-only picker the
+          Evaluations tab falls back to. */}
+      {backed ? (
+        <AddEvaluationDrawer
+          open={addingEvals}
+          env={env}
+          executionId={executionId}
+          completedCallsCount={stats.completed}
+          onClose={() => setAddingEvals(false)}
+        />
+      ) : (
+        <AddEvalsDrawer
+          open={addingEvals}
+          onClose={() => setAddingEvals(false)}
+          env={env}
+          envState={envState}
+          existingIds={new Set((envState?.evals || []).map((e) => (typeof e === "string" ? e : e?.id)))}
+          onAdd={() => setAddingEvals(false)}
+        />
+      )}
 
       <CallDrawer
         task={openCall}
@@ -376,10 +381,17 @@ RunDetail.propTypes = {
       testExecutionId: PropTypes.string,
     }),
   }).isRequired,
+  // Client store state — only read for a non-backed env, to drive the
+  // fixture-only `AddEvalsDrawer` fallback the same way it always has.
   envState: PropTypes.shape({
     evals: PropTypes.array,
   }),
-  patch: PropTypes.func,
+  // Whether this environment has a real backend (`source === "harness"`,
+  // computed once by EnvironmentWorkspace and threaded down through the same
+  // Outlet-context route `envState` already takes). Gates which "Add evals"
+  // drawer renders: the real API picker for a backed env, the client-store
+  // picker otherwise.
+  backed: PropTypes.bool,
   testId: PropTypes.string,
   executionId: PropTypes.string,
 };

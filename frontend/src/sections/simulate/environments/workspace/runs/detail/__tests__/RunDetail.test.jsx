@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import PropTypes from "prop-types";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router-dom";
@@ -35,19 +36,39 @@ vi.mock(
   }),
 );
 
-// The Add-evals drawer pulls the heavy product eval picker; stub it to a marker
-// that can also fire onAdd with a configured eval.
-vi.mock("../../../evals/AddEvalsDrawer", () => ({
-  default: ({ open, onAdd }) =>
-    open ? (
-      <div>
-        add-evals-drawer
-        <button type="button" onClick={() => onAdd([{ id: "new-eval", name: "New Eval" }])}>
-          drawer-add-eval
-        </button>
-      </div>
-    ) : null,
-}));
+// The picker owns its own network hooks; stub it to a marker that proves the
+// run view hands it the execution id (the add goes to the run, not the
+// environment). The picker's own behaviour is covered in
+// evals/__tests__/addEvaluationDrawer.test.jsx.
+//
+// Widened to render `completedCallsCount` too, so a wiring bug
+// (`RunDetail.jsx` handing the drawer the run's TOTAL call count instead of
+// its COMPLETED count) can't hide again — every test in this file would
+// have passed with `completedCallsCount={-1}` before this.
+function AddEvaluationDrawerStub({ open, executionId, completedCallsCount }) {
+  const completed = Number.isFinite(completedCallsCount) ? completedCallsCount : "unknown";
+  return open ? <div>add-evals-drawer:{executionId} completed:{completed}</div> : null;
+}
+AddEvaluationDrawerStub.propTypes = {
+  open: PropTypes.bool,
+  executionId: PropTypes.string,
+  completedCallsCount: PropTypes.number,
+};
+vi.mock("../../../evals/AddEvaluationDrawer", () => ({ default: AddEvaluationDrawerStub }));
+
+// A non-backed environment (client/template — reachable on this route via
+// the `?mockRuns=1` QA switch, which mints run history for any env) gets
+// the same store-only picker the Evaluations tab falls back to, not the
+// real API picker. Stubbed separately so the two are never confused for one
+// another.
+function AddEvalsDrawerStub({ open, envState }) {
+  return open ? <div>add-evals-drawer-fixture:{(envState?.evals || []).length}</div> : null;
+}
+AddEvalsDrawerStub.propTypes = {
+  open: PropTypes.bool,
+  envState: PropTypes.shape({ evals: PropTypes.array }),
+};
+vi.mock("../../../evals/AddEvalsDrawer", () => ({ default: AddEvalsDrawerStub }));
 
 
 // The per-call table owns its own network hook, so stub it to a marker.
@@ -122,21 +143,18 @@ function LocationProbe() {
   return <div data-testid="location">{pathname}</div>;
 }
 
-const renderDetail = ({ patch, client: passedClient } = {}) => {
+// `backed` defaults to true: every test in this file except the one below
+// exercises the real (backed) run-detail route, which is what this whole
+// suite predates and assumes.
+const renderDetail = ({ backed = true, envState, client: passedClient } = {}) => {
   const client =
-    passedClient ||
+    passedClient ??
     new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
         <LocationProbe />
-        <RunDetail
-          env={ENV}
-          envState={{ evals: [] }}
-          patch={patch}
-          testId="rt1"
-          executionId="ex1"
-        />
+        <RunDetail env={ENV} envState={envState} backed={backed} testId="rt1" executionId="ex1" />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -186,35 +204,60 @@ describe("RunDetail", () => {
     expect(screen.queryByText("Failed")).toBeNull();
   });
 
-  it("opens the Add-evals drawer from the header action", async () => {
+  it("opens the real eval picker from the header action, pointed at this run", async () => {
+    useRunDetail.mockReturnValue({ identity: IDENTITY, stats: STATS, isLoading: false });
+    const user = userEvent.setup();
+    renderDetail();
+
+    expect(screen.queryByText(/add-evals-drawer/)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Add evals" }));
+    // STATS carries no `completed` field (still loading it) — the drawer
+    // must receive no finite count, never a borrowed number.
+    expect(screen.getByText("add-evals-drawer:ex1 completed:unknown")).toBeInTheDocument();
+  });
+
+  it("hands the picker the run's COMPLETED call count, not its total — the two differ on a run with failures", async () => {
     useRunDetail.mockReturnValue({
       identity: IDENTITY,
-      stats: STATS,
+      stats: { ...STATS, total: 16, failed: 4, completed: 12 },
       isLoading: false,
     });
     const user = userEvent.setup();
     renderDetail();
 
-    expect(screen.queryByText("add-evals-drawer")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Add evals" }));
-    expect(screen.getByText("add-evals-drawer")).toBeInTheDocument();
+    expect(screen.getByText("add-evals-drawer:ex1 completed:12")).toBeInTheDocument();
   });
 
-  it("persists the configured evals when Add evals is confirmed", async () => {
-    // onAdd previously just closed the drawer, dropping the configured evals.
-    useRunDetail.mockReturnValue({ identity: IDENTITY, stats: STATS, isLoading: false });
-    const patch = vi.fn();
+  it("hands the picker no finite count while the KPIs are still loading, rather than 0", async () => {
+    // `buildRunStats` defaults `total` to 0 before the kpis query resolves;
+    // `completed` must stay unknown in that same window, never inherit that
+    // placeholder 0.
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: { ...STATS, total: 0 },
+      isLoading: true,
+    });
     const user = userEvent.setup();
-    renderDetail({ patch });
+    renderDetail();
 
     await user.click(screen.getByRole("button", { name: "Add evals" }));
-    await user.click(screen.getByRole("button", { name: "drawer-add-eval" }));
+    expect(screen.getByText("add-evals-drawer:ex1 completed:unknown")).toBeInTheDocument();
+  });
 
-    expect(patch).toHaveBeenCalledWith(
-      expect.objectContaining({
-        evals: expect.arrayContaining([expect.objectContaining({ id: "new-eval" })]),
-      }),
-    );
+  it("falls back to the store-only picker for a non-backed environment reached via ?mockRuns=1", async () => {
+    useRunDetail.mockReturnValue({ identity: IDENTITY, stats: STATS, isLoading: false });
+    const user = userEvent.setup();
+    renderDetail({ backed: false, envState: { evals: ["preset-eval"] } });
+
+    expect(screen.queryByText(/^add-evals-drawer:/)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Add evals" }));
+
+    // The store-only fixture picker opens, fed the client envState …
+    expect(screen.getByText("add-evals-drawer-fixture:1")).toBeInTheDocument();
+    // … and the real API picker never mounts — it would 404/error against a
+    // client-minted id that has no `/harness-environments/{id}/` backend.
+    expect(screen.queryByText(/^add-evals-drawer:/)).toBeNull();
   });
 
   it("invalidates the optimization runs on launch without a detached-client crash", async () => {
