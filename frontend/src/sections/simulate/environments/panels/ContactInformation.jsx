@@ -86,16 +86,12 @@ export default function ContactInformation({
         </Stack>
       )}
 
-      {/* A phone call always runs inbound — the platform dials the agent — so
-          the switch is shown locked on rather than offering a choice the
-          backend overrides. */}
       {effectiveMode === "phone" && (
         <ToggleRow
-          checked
-          disabled
+          checked={inboundCalls}
           onChange={onInboundCalls}
           title="Inbound Calls"
-          body="The platform calls your agent's number, so phone calls are always inbound."
+          body="Allows the agent to take inbound calls."
         />
       )}
 
@@ -181,7 +177,7 @@ SegmentedToggle.propTypes = {
   options: PropTypes.arrayOf(PropTypes.shape({ value: PropTypes.string, label: PropTypes.node })),
 };
 
-function ToggleRow({ checked, disabled = false, onChange, title, body }) {
+function ToggleRow({ checked, onChange, title, body }) {
   return (
     <Stack
       direction="row"
@@ -193,19 +189,12 @@ function ToggleRow({ checked, disabled = false, onChange, title, body }) {
         <Typography sx={{ typography: "s2", fontWeight: 700 }}>{title}</Typography>
         <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}>{body}</Typography>
       </Box>
-      <Switch
-        size="small"
-        checked={checked}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.checked)}
-        inputProps={{ "aria-label": typeof title === "string" ? title : undefined }}
-      />
+      <Switch size="small" checked={checked} onChange={(e) => onChange(e.target.checked)} />
     </Stack>
   );
 }
 ToggleRow.propTypes = {
   checked: PropTypes.bool,
-  disabled: PropTypes.bool,
   onChange: PropTypes.func,
   title: PropTypes.node,
   body: PropTypes.node,

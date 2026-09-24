@@ -22,7 +22,6 @@ import { useWorkspaceChat } from "src/api/simulate-environments/workspaceChat";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
 import { runHarnessEnvironment } from "src/api/simulate-environments/harnessEnvironments";
 import { runSimulationTarget } from "src/api/simulate-environments/runs";
-import { listAllScenarioKeys } from "src/api/simulate-environments/scenarios";
 
 import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
 import { useEnvState } from "../store/envState";
@@ -99,10 +98,10 @@ export default function EnvironmentWorkspace() {
   const queryClient = useQueryClient();
   const pendingSubmission = useRef(null);
   const runMutation = useMutation({
-    mutationFn: async ({ ids, trials }) => {
-      // Run-all reads the keys from the server list: the bootstrap
-      // `envState.scenarios` is seeded once and keeps a key an amend dropped.
-      const scenarioIds = ids === undefined ? await listAllScenarioKeys(env.id) : ids;
+    mutationFn: ({ ids, trials }) => {
+      const scenarioIds = ids === undefined
+        ? (envState?.scenarios || []).map((scenario) => scenario.id).filter(Boolean)
+        : ids;
       const selection = JSON.stringify([env.id, scenarioIds, trials || 1]);
       if (pendingSubmission.current?.selection !== selection) {
         pendingSubmission.current = {
