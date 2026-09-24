@@ -437,21 +437,33 @@ func TestTranslateRequest_ToolChoiceAuto(t *testing.T) {
 }
 
 func TestTranslateRequest_ToolChoiceNone(t *testing.T) {
-	req := &models.ChatCompletionRequest{
-		Model: "claude-3-sonnet-20240229",
-		Messages: []models.Message{
-			{Role: "user", Content: json.RawMessage(`"Hi"`)},
-		},
-		ToolChoice: json.RawMessage(`"none"`),
+	body := []byte(`{"model":"claude-sonnet-4-20250514","messages":[{"role":"user","content":"Hi"}],` +
+		`"tool_choice":"none","tools":[{"type":"function","function":{"name":"do_not_call","parameters":{"type":"object"}}}]}`)
+	var req models.ChatCompletionRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Fatalf("unmarshaling request: %v", err)
 	}
 
-	ar, err := translateRequest(req)
+	ar, err := translateRequest(&req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Anthropic doesn't have "none" -- tool_choice should be nil (omitted).
-	if ar.ToolChoice != nil {
-		t.Errorf("tool_choice = %+v, want nil (anthropic has no 'none' equivalent)", ar.ToolChoice)
+	if len(ar.Tools) != 1 {
+		t.Fatalf("tools length = %d, want 1", len(ar.Tools))
+	}
+	if ar.ToolChoice == nil || ar.ToolChoice.Type != "none" {
+		t.Fatalf("tool_choice = %+v, want none while tools remain declared", ar.ToolChoice)
+	}
+	encoded, err := json.Marshal(ar)
+	if err != nil {
+		t.Fatalf("encoding Anthropic request: %v", err)
+	}
+	var forwarded map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &forwarded); err != nil {
+		t.Fatalf("decoding Anthropic request: %v", err)
+	}
+	if string(forwarded["tool_choice"]) != `{"type":"none"}` {
+		t.Errorf("forwarded tool_choice = %s, want none", forwarded["tool_choice"])
 	}
 }
 
