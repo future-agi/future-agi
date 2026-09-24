@@ -1629,7 +1629,9 @@ class HostedHarnessProvider:
         response.data["scenario_editing"] = self._editing_contract(spoken)
         from simulate.services.harness_scenarios import GROUPINGS
 
-        response.data["groupings"] = [dict(one) for one in GROUPINGS]
+        response.data["groupings"] = [
+            dict(one) for one in GROUPINGS if spoken or one["value"] != "accent"
+        ]
         from simulate.services.harness_scenarios import level_labels_for
         response.data["level_labels"] = level_labels_for(rows)
         return response
@@ -1651,11 +1653,14 @@ class HostedHarnessProvider:
         queryset = HostedHarnessScenario.no_workspace_objects.filter(job=job)
         queryset = apply_search(queryset, request.query_params.get("search", ""))
         queryset = apply_filters(queryset, request.query_params)
+        from simulate.services.harness_environment import AGENT_TYPE_VOICE, agent_type
+
         return Response(
             coverage_grid(
                 queryset,
                 request.query_params.get("row_axis") or DEFAULT_ROW_AXIS,
                 request.query_params.get("col_axis") or DEFAULT_COL_AXIS,
+                spoken=agent_type(job) == AGENT_TYPE_VOICE,
             )
         )
 

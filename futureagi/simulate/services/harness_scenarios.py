@@ -126,8 +126,18 @@ AXIS_LABELS: dict[str, str] = {
 }
 
 
-def axis_label(axis: str) -> str:
+# The same axes read in the words of a chat where a call's words would be wrong.
+CHAT_AXIS_LABELS: dict[str, str] = {
+    "counterparty": "Who is asking",
+    "interface": "How they write",
+    "interaction": "How the chat goes",
+}
+
+
+def axis_label(axis: str, spoken: bool = True) -> str:
     """The reader-facing name for one axis."""
+    if not spoken and axis in CHAT_AXIS_LABELS:
+        return CHAT_AXIS_LABELS[axis]
     return AXIS_LABELS.get(axis) or str(axis or "").replace("_", " ").strip().capitalize()
 
 
@@ -322,7 +332,9 @@ def field_catalogue(queryset: QuerySet, spoken: bool = True) -> list[dict[str, A
     return catalogue
 
 
-def coverage_grid(queryset: QuerySet, row_axis: str, col_axis: str) -> dict[str, Any]:
+def coverage_grid(
+    queryset: QuerySet, row_axis: str, col_axis: str, spoken: bool = True
+) -> dict[str, Any]:
     """One cross-tab of the suite. Empty cells are the point, so they are returned as zero."""
     rows: dict[str, int] = {}
     cols: dict[str, int] = {}
@@ -347,7 +359,7 @@ def coverage_grid(queryset: QuerySet, row_axis: str, col_axis: str) -> dict[str,
         "per_axis": [
             {
                 "axis": axis,
-                "label": axis_label(axis),
+                "label": axis_label(axis, spoken),
                 "levels": len(held),
                 "scenarios": sum(held.values()),
                 "counts": dict(sorted(held.items(), key=lambda pair: (-pair[1], pair[0]))),
@@ -356,9 +368,9 @@ def coverage_grid(queryset: QuerySet, row_axis: str, col_axis: str) -> dict[str,
             if held
         ],
         "row_axis": row_axis,
-        "row_axis_label": axis_label(row_axis),
+        "row_axis_label": axis_label(row_axis, spoken),
         "col_axis": col_axis,
-        "col_axis_label": axis_label(col_axis),
+        "col_axis_label": axis_label(col_axis, spoken),
         "rows": sorted(rows),
         "columns": sorted(cols),
         "cells": [
@@ -371,7 +383,7 @@ def coverage_grid(queryset: QuerySet, row_axis: str, col_axis: str) -> dict[str,
             for across in sorted(cols)
         ],
         "axes": list(AXES),
-        "axis_labels": {axis: axis_label(axis) for axis in AXES},
+        "axis_labels": {axis: axis_label(axis, spoken) for axis in AXES},
         "level_labels": {
             level: level_label(level)
             for axis in levels

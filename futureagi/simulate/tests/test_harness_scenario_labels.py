@@ -66,3 +66,12 @@ def test_a_call_reports_no_turn_budget_among_its_end_conditions():
 
     assert _end_conditions(call, {}, docs)["max_turns"] is None
     assert _end_conditions(chat, {}, docs)["max_turns"] == 9
+
+
+def test_a_chat_reads_its_axes_in_a_chat_s_words():
+    from simulate.services.harness_scenarios import axis_label
+
+    assert axis_label("interaction") == "How the call goes"
+    assert axis_label("interaction", spoken=False) == "How the chat goes"
+    assert axis_label("counterparty", spoken=False) == "Who is asking"
+    assert axis_label("task", spoken=False) == axis_label("task")
