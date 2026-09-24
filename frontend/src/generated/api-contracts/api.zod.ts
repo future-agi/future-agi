@@ -35017,6 +35017,13 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
       test_execution_id: zod.string().uuid(),
       simulation_url: zod.string().min(1),
     }),
+    agent: zod.object({
+      id: zod.string().uuid(),
+      name: zod.string().min(1),
+      provider: zod.string().min(1),
+      versions_count: zod.number(),
+      active_version: zod.string().min(1),
+    }),
   }),
   contract: zod.object({
     agent: zod.string().optional(),
@@ -35202,6 +35209,13 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
       run_test_id: zod.string().uuid(),
       test_execution_id: zod.string().uuid(),
       simulation_url: zod.string().min(1),
+    }),
+    agent: zod.object({
+      id: zod.string().uuid(),
+      name: zod.string().min(1),
+      provider: zod.string().min(1),
+      versions_count: zod.number(),
+      active_version: zod.string().min(1),
     }),
   }),
   contract: zod.object({

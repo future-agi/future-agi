@@ -119717,6 +119717,46 @@
                 }
             }
         },
+        "HarnessEnvironmentAgent": {
+            "required": [
+                "id",
+                "name",
+                "provider",
+                "versions_count",
+                "active_version"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "provider": {
+                    "title": "Provider",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "versions_count": {
+                    "title": "Versions count",
+                    "type": "integer"
+                },
+                "active_version": {
+                    "title": "Active version",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
         "HarnessEnvironmentOverview": {
             "required": [
                 "id",
@@ -119737,7 +119777,8 @@
                 "guardrails_count",
                 "personas_count",
                 "evaluations_count",
-                "run"
+                "run",
+                "agent"
             ],
             "type": "object",
             "properties": {
@@ -119841,6 +119882,9 @@
                 },
                 "run": {
                     "$ref": "#/definitions/HarnessEnvironmentRunLink"
+                },
+                "agent": {
+                    "$ref": "#/definitions/HarnessEnvironmentAgent"
                 }
             }
         },

@@ -16933,6 +16933,17 @@ export interface HarnessEnvironmentRunLinkApi {
   simulation_url: string;
 }
 
+export interface HarnessEnvironmentAgentApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  provider: string;
+  versions_count: number;
+  /** @minLength 1 */
+  active_version: string;
+}
+
 export interface HarnessEnvironmentOverviewApi {
   id: string;
   /** @minLength 1 */
@@ -16958,6 +16969,7 @@ export interface HarnessEnvironmentOverviewApi {
   personas_count: number;
   evaluations_count: number;
   run: HarnessEnvironmentRunLinkApi;
+  agent: HarnessEnvironmentAgentApi;
 }
 
 export interface HarnessEnvironmentAmendmentApi {

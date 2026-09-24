@@ -87562,6 +87562,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "personas_count",
         "evaluations_count",
         "run",
+        "agent",
       ],
       type: "object",
       properties: {
@@ -87657,6 +87658,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         run: {
           $ref: "#/definitions/HarnessEnvironmentRunLink",
+        },
+        agent: {
+          $ref: "#/definitions/HarnessEnvironmentAgent",
         },
       },
     },
@@ -102958,6 +102962,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
         },
       },
+    },
+    HarnessEnvironmentAgent: {
+      required: ["id", "name", "provider", "versions_count", "active_version"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        provider: {
+          title: "Provider",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        versions_count: {
+          title: "Versions count",
+          type: "integer",
+        },
+        active_version: {
+          title: "Active version",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
     },
     HarnessEnvironmentRunLink: {
       required: ["run_test_id", "test_execution_id", "simulation_url"],

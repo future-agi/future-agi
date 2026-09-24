@@ -346,6 +346,7 @@ def environment_detail(job: HostedHarnessJob) -> dict[str, Any]:
             "personas_count": len(personas) if personas else None,
             "evaluations_count": len(selected),
             "run": _run_link(job),
+            "agent": _agent(job),
         }
     )
     return {
@@ -716,6 +717,30 @@ def _world_section(
         "runtime": runtime,
         "personas": personas,
         "stores": stores if isinstance(stores, list) else [],
+    }
+
+
+def _agent(job: HostedHarnessJob) -> dict[str, Any] | None:
+    """The agent under test, as the platform recorded it for this environment's run."""
+    from simulate.models import RunTest
+
+    if not job.run_test_id:
+        return None
+    run_test = (
+        RunTest.objects.filter(id=job.run_test_id, deleted=False)
+        .select_related("agent_definition")
+        .first()
+    )
+    definition = getattr(run_test, "agent_definition", None)
+    if definition is None:
+        return None
+    latest = definition.latest_version
+    return {
+        "id": str(definition.id),
+        "name": definition.agent_name or None,
+        "provider": definition.provider or None,
+        "versions_count": definition.version_count,
+        "active_version": f"v{latest.version_number}" if latest else None,
     }
 
 
