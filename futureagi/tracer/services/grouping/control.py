@@ -209,12 +209,17 @@ def claim_feature_jobs(*, worker_id: str, limit: int) -> dict:
                     "lease_expires_at": job.lease_expires_at,
                     "report_id": str(job.report_id),
                     "organization_id": str(job.report.organization_id),
+                    "organization_name": (
+                        job.report.organization.display_name
+                        or job.report.organization.name
+                    ),
                     "workspace_id": (
                         str(job.report.workspace_id)
                         if job.report.workspace_id
                         else None
                     ),
                     "project_id": str(job.report.project_id),
+                    "project_name": job.report.project.name,
                     "policy_version": job.policy_version,
                     "snapshot": snapshot,
                 }
@@ -500,12 +505,17 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
                 "lease_expires_at": attempt.lease_expires_at,
                 "report_id": str(attempt.work.report_id),
                 "organization_id": str(attempt.work.scope.organization_id),
+                "organization_name": (
+                    attempt.work.scope.organization.display_name
+                    or attempt.work.scope.organization.name
+                ),
                 "workspace_id": (
                     str(attempt.work.scope.workspace_id)
                     if attempt.work.scope.workspace_id
                     else None
                 ),
                 "project_id": str(attempt.work.scope.project_id),
+                "project_name": attempt.work.scope.project.name,
                 "scope_revision": attempt.work.input_revision,
                 "registry_revision": attempt.registry_revision,
                 "candidate_digest": attempt.candidate_digest,
