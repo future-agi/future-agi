@@ -323,14 +323,13 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     def add_run_evaluation(self, request, pk=None, execution_id=None):
         """Add an eval from inside a finished run, and grade that run's calls with it.
 
-        Two things happen, and they happen inside one ``transaction.atomic()``
-        block: the eval is bound to the environment exactly as
-        ``add_evaluation`` binds it -- the same gates, the same refusals, the
-        same lock, and the same idempotency, so adding a name that is already
-        bound is not an error and does not create a second row -- and this
-        run's finished calls are selected and stamped for grading. Wrapping
-        both together (TH-8046) means a failure anywhere in this request
-        rolls the bind and the stamps back together: no grading job is ever
+        Two things happen inside one ``transaction.atomic()`` block: the eval
+        is bound to the environment exactly as ``add_evaluation`` binds it --
+        same gates, refusals, lock, and idempotency, so adding an
+        already-bound name is not an error and creates no second row -- and
+        this run's finished calls are selected and stamped for grading.
+        Wrapping both together means a failure anywhere in this request rolls
+        the bind and the stamps back together: no grading job is ever
         dispatched against a bind that did not survive, because
         ``queue_eval_for_finished_calls`` schedules every dispatch with
         ``transaction.on_commit``, which this outer block is what actually
@@ -346,22 +345,14 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
 
         The bind can return an eval config whose ``mapping`` is empty -- one
         of the harness's own result columns, bound by ingestion under the
-        same name -- through the same idempotent name match §3 already
-        tolerates. Such a config is not something this endpoint can grade
-        with: it is refused 400 with its own reason (contract P18b), distinct
-        from P9's "does not produce" refusal, because the run demonstrably
-        CAN fill this eval's inputs -- the harness already reports it
-        natively; it simply is not a selected eval this endpoint can
-        dispatch grading for. Checked right after the bind and before
-        anything is stamped. The ``return`` leaves the ``atomic()`` block
-        normally, so the rollback is made explicit rather than resting on
-        the fact that the bind cannot have written anything on this path.
+        same name. Such a config is not something this endpoint can grade
+        with: it is refused 400 with its own reason, distinct from the "does
+        not produce" refusal, because the run demonstrably CAN fill this
+        eval's inputs -- the harness already reports it natively. Checked
+        right after the bind and before anything is stamped.
 
         The run is resolved *before* the eval is bound: a request naming a
         run that is not this environment's must leave nothing behind.
-
-        Contract api_contracts/harness/eval-offer-backend-frontend.md v1.9 §6
-        (P18, P18b-P22), F3; design §6; lld-4-add-from-run.puml.
         """
         from django.db import transaction
 
@@ -397,29 +388,24 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         modality = eval_modality(job)
         wanted = request.validated_data["name"]
         # Captured before the bind, so a freshly bound config's `updated_at`
-        # (set by `auto_now` on insert AND on a revived binding's save)
-        # reads as AFTER this timestamp, and an idempotent bind's -- an
-        # already-bound row the name match below returns unchanged, so
-        # nothing is saved -- reads as before it. Under contention, two
-        # concurrent clicks can both read `updated_at >= before_bind`: the
-        # second one blocks on the same row's `select_for_update` and then
-        # observes the first one's write, so it touches although it bound
-        # nothing itself -- harmless (an extra clock bump, never a missed
-        # one).
+        # (set by `auto_now` on insert and on a revived binding's save) reads
+        # as after this timestamp, while an idempotent bind's -- an
+        # already-bound row returned unchanged -- reads as before it. Under
+        # contention, two concurrent clicks can both read
+        # `updated_at >= before_bind`, since the second blocks on the same
+        # row's `select_for_update` and observes the first's write --
+        # harmless, an extra clock bump, never a missed one.
         before_bind = timezone.now()
         try:
             with transaction.atomic():
                 eval_config = add_selected_eval(job.run_test, wanted, modality)
                 if not eval_config.mapping:
                     # The idempotent name match above can return one of the
-                    # harness's own result-column rows (empty ``mapping``,
-                    # ingestion-bound) instead of a selected eval. That is
-                    # NOT the same condition P9's "needs X, which a Y run
-                    # does not produce" describes -- this run demonstrably
-                    # CAN fill the eval's inputs, the harness already
-                    # reports it natively -- so it gets its own reason
-                    # (contract P18b) instead of borrowing that one, before
-                    # anything is stamped.
+                    # harness's own result-column rows (empty ``mapping``)
+                    # instead of a selected eval -- not the same condition as
+                    # the "does not produce" refusal, since this run
+                    # demonstrably CAN fill the eval's inputs. It gets its
+                    # own reason before anything is stamped.
                     transaction.set_rollback(True)
                     return Response(
                         {
@@ -437,15 +423,12 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             return Response(
                 {"detail": str(refused)}, status=status.HTTP_400_BAD_REQUEST
             )
-        # Skipped only when the bind wrote nothing (NOT a fresh insert or a
-        # revived binding -- the idempotent name match returned an
-        # already-bound row unchanged) AND nothing was queued -- a genuinely
-        # no-op repeat that changed nothing about the environment's content.
-        # Any other click, including a repeat that queues a call newly
-        # eligible since the last one, still bumps it: P22 expects this
-        # endpoint to be clicked again, and a click that stamps or
-        # dispatches anything is real content movement, the same as
-        # `add_evaluation`'s own touch.
+        # Skipped only when the bind wrote nothing (the idempotent name match
+        # returned an already-bound row unchanged) AND nothing was queued --
+        # a genuinely no-op repeat. Any other click, including a repeat that
+        # queues a call newly eligible since the last one, still bumps it: a
+        # click that stamps or dispatches anything is real content movement,
+        # the same as `add_evaluation`'s own touch.
         if eval_config.updated_at >= before_bind or counts["queued"]:
             _touch_content(job)
         return Response(counts, status=status.HTTP_202_ACCEPTED)

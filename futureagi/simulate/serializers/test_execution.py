@@ -1352,11 +1352,11 @@ class RunTestKPIsResponseSerializer(serializers.Serializer):
     """Response for GET /simulate/test-executions/{id}/kpis/."""
 
     total_calls = serializers.IntegerField(read_only=True)
-    # Contract v1.9 P27: the run's COMPLETED-status call count, for both
-    # modalities. Distinct from `total_calls` (every status) and from
-    # `connected_calls` (`connected_voice_calls` on a voice run). Not
-    # `TestExecution.completed_calls`, the executor-maintained counter
-    # column of the same name -- this is recomputed from the calls.
+    # The run's COMPLETED-status call count, for both modalities. Distinct
+    # from `total_calls` (every status), `connected_calls`
+    # (`connected_voice_calls` on a voice run), and from
+    # `TestExecution.completed_calls`, an unrelated counter column of the
+    # same name.
     completed_calls = serializers.IntegerField(read_only=True)
     avg_score = serializers.FloatField(read_only=True)
     avg_response = serializers.FloatField(read_only=True)

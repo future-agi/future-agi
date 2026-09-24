@@ -127,16 +127,9 @@ class HarnessEnvironmentAddEvaluationSerializer(serializers.Serializer):
 class HarnessEnvironmentRunEvaluationQueuedSerializer(serializers.Serializer):
     """What adding an eval from inside a run reports back.
 
-    Not the environment detail: this endpoint's answer is how much grading it
-    started and why it started less than the run has finished calls. The client
-    refetches the detail itself after an add (frontend contract P29).
-
+    Not the environment detail -- the client refetches that itself.
     ``completed_calls`` is the finished calls the endpoint looked at, and the
-    four others always partition it exactly. ``queued`` means "stamped and
-    scheduled for dispatch" -- a call whose stamp committed but whose grading
-    job then failed to queue is still counted in ``queued``, not subtracted
-    from it; the failure is logged and the stamp is cleared so the next
-    request can retry it (contract P19).
+    four others always partition it exactly.
     """
 
     queued = serializers.IntegerField(

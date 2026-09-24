@@ -2064,29 +2064,20 @@ class RunTestKPIsView(APIView):
             # Prepare response
             kpi_data = {
                 "total_calls": total_calls,
-                # Contract v1.9 P27 / P19: the run's COMPLETED-status call count,
-                # for BOTH modalities. `connected_calls` above is NOT a stand-in:
-                # on a chat run it is this same column (`:1903`), but on a voice
-                # run it is `connected_voice_calls` (`duration_seconds > 0`,
-                # `sql_query.py:369`) — a different filter. This is
-                # `COUNT(*) FILTER (WHERE status = 'completed')`
-                # (`sql_query.py:368`), which is the same SQL predicate P19's
-                # `completed_calls` names, and it is what the picker names
-                # before a run-level add (TH-8047). `total_calls` is COUNT(*)
-                # over every status (`sql_query.py:364`) and is a different
-                # number.
+                # The run's COMPLETED-status call count, for both modalities.
+                # `connected_calls` above is not a stand-in: on a chat run it is
+                # this same column, but on a voice run it is
+                # `connected_voice_calls` (`duration_seconds > 0`) -- a
+                # different filter. `total_calls` counts every status and is a
+                # different number too.
                 #
-                # Known limit (TH-8057): this SQL query
-                # has no `deleted = false` clause, so this count -- like every
-                # other KPI here -- counts a soft-deleted call. The run-level
-                # add's own 202 (`harness_run_evals.py::queue_eval_for_finished_calls`)
-                # selects through `CallExecution.objects`, which IS filtered to
-                # live rows, so the two counts can disagree by exactly the
-                # soft-deleted calls of a run. Not fixed here: changing this
-                # query's WHERE clause changes every KPI number it returns, and
-                # that is its own decision (TH-8057). Until then the run-level
-                # add's own 202 is the authoritative count; the KPI number is
-                # the picker's estimate and may be higher.
+                # Known limit: this query has no `deleted = false` clause, so
+                # this count, unlike every other KPI here, counts a
+                # soft-deleted call -- while the run-level add's own 202
+                # (`harness_run_evals.py::queue_eval_for_finished_calls`)
+                # selects through `CallExecution.objects`, which is filtered to
+                # live rows, so the two can disagree by exactly a run's
+                # soft-deleted calls.
                 "completed_calls": metrics.get("completed_calls", 0) or 0,
                 "avg_score": avg_score,
                 "avg_response": avg_response,
