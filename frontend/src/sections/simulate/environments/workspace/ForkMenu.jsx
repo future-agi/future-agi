@@ -25,6 +25,11 @@ export default function ForkMenu({ onDelete }) {
     onDelete?.();
   };
 
+  // With Fork temporarily disabled, Delete is the only item — so a menu with no
+  // onDelete would open empty. Render nothing rather than an empty menu. (When
+  // Fork is re-enabled below, widen this to `!onDelete && !onFork`.)
+  if (!onDelete) return null;
+
   return (
     <>
       <CustomTooltip show title={WORKSPACE_COPY.moreActions} size="small" arrow>

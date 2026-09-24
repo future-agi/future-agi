@@ -197,14 +197,11 @@ describe("WorkspaceHeader", () => {
     expect(screen.getByText("Delete environment?")).toBeInTheDocument();
   });
 
-  it("omits Delete for a non-backed env (nothing to remove on the server)", async () => {
-    const user = userEvent.setup();
+  it("hides the overflow menu for a non-backed env (Delete absent, Fork disabled → no empty menu)", () => {
+    // A non-backed env has nothing to delete on the server and Fork is currently
+    // commented out, so the kebab must not render (opening an empty menu).
     render(withRouter(<WorkspaceHeader {...baseProps} />));
-
-    await user.click(screen.getByRole("button", { name: "More actions" }));
-    expect(screen.queryByRole("menuitem", { name: /Delete environment/ })).toBeNull();
-    // Fork is temporarily commented out in ForkMenu.
-    expect(screen.queryByRole("menuitem", { name: /Fork environment/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "More actions" })).toBeNull();
   });
 
   // Fork is temporarily commented out in ForkMenu — re-enable this with it.
