@@ -25,17 +25,10 @@ const { RUN_COLORS } = await import(
   "src/sections/simulate/environments/workspace/runs/runs.constants"
 );
 
-// One completed, one failed row, out of order so the ordinal reflects the sort.
+// One completed, one failed row, in the server's newest-first order, with
+// `count` = the run-test total — so `ex-new` is ordinal 2 and `ex-old` is 1.
 const executionsPayload = () => ({
   results: [
-    {
-      id: "ex-old",
-      status: "Failed",
-      start_time: "2026-01-12T11:05:00.000Z",
-      agent_version: "v1",
-      total_chats: 10,
-      success_rate: 60,
-    },
     {
       id: "ex-new",
       status: "Completed",
@@ -43,6 +36,14 @@ const executionsPayload = () => ({
       agent_version: "v2",
       total_chats: 12,
       success_rate: 100,
+    },
+    {
+      id: "ex-old",
+      status: "Failed",
+      start_time: "2026-01-12T11:05:00.000Z",
+      agent_version: "v1",
+      total_chats: 10,
+      success_rate: 60,
     },
   ],
   count: 2,

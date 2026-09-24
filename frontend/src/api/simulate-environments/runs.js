@@ -58,20 +58,23 @@ export function executionToRun(raw) {
   };
 }
 
-// Maps + sorts the raw payload newest-first, then assigns ordinal labels
-// (newest = highest number, matching the MOCK_RUNS convention). The `ordinal`
-// is stamped alongside the label so the run-detail header can key its identity
-// chip (letter + colour) off the same number the history list shows — one
-// identity, assigned once at the source. Exported so `useRunDetail` reuses this
-// exact derivation rather than renumbering by its own.
+// Maps the raw payload and stamps each run's ordinal — the run's stable
+// identity number that the run-detail header also shows (run_results_v3
+// `_execution_payload`: the count of the run-test's executions created no later
+// than this one). The list arrives newest-first (server `-created_at`) and
+// `count` is the run-test's total, so on this page that server count is exactly
+// `count - index` for row `index` — the same number the detail header reads, so
+// the two never disagree, and it stays right when the list is paginated (a
+// 3-row page of 12 runs is Run 12..10, not Run 3..1). The server order is
+// trusted rather than re-sorted: a pending newest run has a null start_time, and
+// sorting by it would drop it to the bottom and mislabel it Run 1. Exported so
+// `useRunDetail` reuses this exact derivation.
 export function mapExecutions(payload) {
-  const rows = (payload?.results ?? []).map(executionToRun);
-  rows.sort(
-    (a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime(),
-  );
-  return rows.map((run, index) => {
-    const ordinal = rows.length - index;
-    return { ...run, ordinal, label: `Run ${ordinal}` };
+  const results = payload?.results ?? [];
+  const count = payload?.count ?? results.length;
+  return results.map((raw, index) => {
+    const ordinal = count - index;
+    return { ...executionToRun(raw), ordinal, label: `Run ${ordinal}` };
   });
 }
 

@@ -20,18 +20,10 @@ const { useEnvironmentRuns, executionToRun, runSimulationTarget, runSelectionTar
   await import("../runs");
 
 // Raw executions payload (the product's `results[]` shape) — capitalised
-// product statuses, `success_rate` on the 0–100 scale, out of chronological
-// order on purpose so the "newest first" assertion actually proves the sort.
+// product statuses, `success_rate` on the 0–100 scale, in the server's own
+// newest-first (`-created_at`) order, with `count` = the run-test's total.
 const rawExecutions = () => ({
   results: [
-    {
-      id: "ex-old",
-      status: "Failed",
-      start_time: "2026-01-12T11:05:00.000Z",
-      agent_version: "v1",
-      total_chats: 10,
-      success_rate: 70,
-    },
     {
       id: "ex-new",
       status: "Completed",
@@ -47,6 +39,14 @@ const rawExecutions = () => ({
       agent_version: "v2",
       total_chats: 12,
       success_rate: 50,
+    },
+    {
+      id: "ex-old",
+      status: "Failed",
+      start_time: "2026-01-12T11:05:00.000Z",
+      agent_version: "v1",
+      total_chats: 10,
+      success_rate: 70,
     },
   ],
   count: 3,
@@ -129,7 +129,7 @@ describe("executionToRun", () => {
 });
 
 describe("useEnvironmentRuns", () => {
-  it("fetches executions when the env carries platform.runTestId and maps + sorts them newest-first", async () => {
+  it("fetches executions when the env carries platform.runTestId and maps them in the server's newest-first order", async () => {
     const env = { id: "env-1", platform: { runTestId: "rt1", testExecutionId: "ex1" } };
     const { result } = renderHook(() => useEnvironmentRuns(env, { runs: [] }), {
       wrapper: makeWrapper(),
@@ -149,9 +149,62 @@ describe("useEnvironmentRuns", () => {
     expect(first.status).toBe("passed");
     expect(second.status).toBe("running");
     expect(third.status).toBe("failed");
-    // Newest → highest ordinal label.
+    // Newest (server-first) → highest ordinal label, from `count`.
     expect(first.label).toBe("Run 3");
     expect(third.label).toBe("Run 1");
+  });
+
+  it("stamps the server ordinal from `count`, not the page length", async () => {
+    // A 3-row page out of a 12-run history: the server orders newest-first and
+    // reports the run-test's total in `count`. The ordinal each row shows must
+    // be its server identity number (12, 11, 10 — the same the run-detail header
+    // reads), never `rows.length - index` (3, 2, 1), which diverges the moment
+    // the list is paginated or a run is deleted.
+    axios.get.mockResolvedValue({
+      data: {
+        count: 12,
+        results: [
+          { id: "ex-12", status: "Completed", start_time: "2026-02-03T10:00:00.000Z", total_chats: 5, success_rate: 100 },
+          { id: "ex-11", status: "Failed", start_time: "2026-02-02T10:00:00.000Z", total_chats: 5, success_rate: 40 },
+          { id: "ex-10", status: "Completed", start_time: "2026-02-01T10:00:00.000Z", total_chats: 5, success_rate: 100 },
+        ],
+      },
+    });
+    const env = { id: "env-g", platform: { runTestId: "rt1", testExecutionId: "ex1" } };
+    const { result } = renderHook(() => useEnvironmentRuns(env, { runs: [] }), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.runs.length).toBe(3));
+    const [first, second, third] = result.current.runs;
+    expect(first.ordinal).toBe(12);
+    expect(first.label).toBe("Run 12");
+    expect(second.ordinal).toBe(11);
+    expect(third.ordinal).toBe(10);
+  });
+
+  it("keeps a pending newest run (null start_time) at the top ordinal", async () => {
+    // The server already sorts by -created_at, so a just-launched run with no
+    // start_time is first. Trusting that order (rather than re-sorting by
+    // start_time, which sends null to the epoch and the bottom) keeps it Run N.
+    axios.get.mockResolvedValue({
+      data: {
+        count: 2,
+        results: [
+          { id: "ex-pending", status: "Pending", start_time: null, total_chats: 0, success_rate: 0 },
+          { id: "ex-done", status: "Completed", start_time: "2026-02-01T10:00:00.000Z", total_chats: 5, success_rate: 100 },
+        ],
+      },
+    });
+    const env = { id: "env-p", platform: { runTestId: "rt1", testExecutionId: "ex1" } };
+    const { result } = renderHook(() => useEnvironmentRuns(env, { runs: [] }), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.runs.length).toBe(2));
+    expect(result.current.runs[0].id).toBe("ex-pending");
+    expect(result.current.runs[0].ordinal).toBe(2);
+    expect(result.current.runs[0].label).toBe("Run 2");
   });
 
   it("returns envState.runs with no fetch when the env has no platform", () => {
