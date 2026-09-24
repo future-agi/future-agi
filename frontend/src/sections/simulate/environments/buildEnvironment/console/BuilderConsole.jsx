@@ -1,9 +1,8 @@
 import PropTypes from "prop-types";
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useEffect, useReducer, useRef } from "react";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Button, TextField, IconButton, Menu, MenuItem } from "@mui/material";
+import { Box, Stack, Typography, TextField, IconButton } from "@mui/material";
 import Iconify from "src/components/iconify";
-import CustomTooltip from "src/components/tooltip";
 
 import { BUILD_TONES } from "../buildTones";
 import { CONSOLE_COPY } from "../build.constants";
@@ -11,7 +10,6 @@ import { Turn, Working } from "./ConsoleTurn";
 // Voice input is temporarily disabled (Web Speech is blocked in Brave); re-enable
 // with a server-side transcription path. Kept for that follow-up.
 // import VoiceInput from "./VoiceInput";
-import { BUILDER_MODES, getBuilderMode, subscribeBuilderMode, setBuilderMode } from "./builderModeBus";
 import { subscribeComposerScaffold } from "./composerScaffoldBus";
 
 const INITIAL = { draft: "", scaffolds: [] };
@@ -51,9 +49,7 @@ function composerReducer(state, action) {
 export default function BuilderConsole({
   turns,
   running,
-  chips,
   onSend,
-  onChip,
   onStop,
   canStop = false,
   preComposer,
@@ -143,25 +139,6 @@ export default function BuilderConsole({
         </Stack>
       </Box>
 
-      {(chips || []).length > 0 && !blocked && (
-        <Stack direction="row" spacing={1} sx={{ px: 2.5, pb: 1.5, flexWrap: "wrap", rowGap: 1 }}>
-          {(chips || []).map((c) => (
-            <Button
-              key={c}
-              size="small"
-              onClick={() => onChip?.(c)}
-              sx={{
-                typography: "s2", fontWeight: "fontWeightMedium", px: 1.5, borderRadius: 5,
-                color: "text.secondary", border: "1px solid", borderColor: "divider",
-                "&:hover": { borderColor: "text.subtitle", bgcolor: "action.hover" },
-              }}
-            >
-              {c}
-            </Button>
-          ))}
-        </Stack>
-      )}
-
       {/* Slot for anything a caller wants to pin above the composer (the intake
           questionnaire or the selection-context chip drops in here). */}
       {preComposer && <Box sx={{ px: 2.5, pb: 1 }}>{preComposer}</Box>}
@@ -234,14 +211,13 @@ export default function BuilderConsole({
             InputProps={{ disableUnderline: true, sx: { typography: "s2", lineHeight: 1.55, px: 0.75, py: 0.5 } }}
           />
 
-          {/* Row 2: toolbar — mode picker · flex-spacer · send. */}
+          {/* Row 2: toolbar — flex-spacer · stop · send. */}
           <Stack direction="row" alignItems="center" spacing={0.25} sx={{ mt: 0.5, pl: 0.25 }}>
             {/* Voice input disabled for now: the Web Speech API is blocked in
                 Brave, so it only works in Chrome/Edge/Safari. Re-enable once a
                 server-side transcription endpoint (record -> /audio/transcriptions)
                 is wired so it works in every browser. VoiceInput.jsx is kept. */}
             {/* <VoiceInput onTranscript={(text) => dispatch({ type: "draft", value: text })} disabled={blocked} /> */}
-            <ModePicker disabled={blocked} />
 
             <Box flex={1} />
 
@@ -289,83 +265,10 @@ export default function BuilderConsole({
 BuilderConsole.propTypes = {
   turns: PropTypes.array,
   running: PropTypes.bool,
-  chips: PropTypes.array,
   onSend: PropTypes.func,
-  onChip: PropTypes.func,
   onStop: PropTypes.func,
   canStop: PropTypes.bool,
   preComposer: PropTypes.node,
   frozen: PropTypes.bool,
   frozenReason: PropTypes.string,
 };
-
-/**
- * Mode picker — Auto vs Manual.
- *
- * A compact icon+label chip in the composer toolbar that opens a two-item menu.
- * Selection stores in a module-level bus so the derivation stream on the other
- * side of the tree can read it without prop-threading; the bus fires on
- * subscribe, so the local mirror stays in sync.
- */
-function ModePicker({ disabled }) {
-  const [mode, setMode] = useState(getBuilderMode);
-  const [anchor, setAnchor] = useState(null);
-  useEffect(() => subscribeBuilderMode(setMode), []);
-  const current = BUILDER_MODES.find((m) => m.id === mode) || BUILDER_MODES[0];
-
-  return (
-    <>
-      <CustomTooltip show={!disabled} title={CONSOLE_COPY.mode} size="small" arrow>
-        <Button
-          size="small"
-          disabled={disabled}
-          onClick={(e) => setAnchor(e.currentTarget)}
-          startIcon={<Iconify icon={current.icon} width={12} />}
-          endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={10} />}
-          sx={{
-            height: 30, borderRadius: 1, px: 0.75, minWidth: 0,
-            typography: "s3", fontWeight: "fontWeightSemiBold",
-            color: "text.subtitle",
-            "& .MuiButton-startIcon": { mr: 0.5 },
-            "& .MuiButton-endIcon": { ml: 0.25 },
-            "&:hover": { bgcolor: "action.hover", color: "text.primary" },
-          }}
-        >
-          {current.label}
-        </Button>
-      </CustomTooltip>
-      <Menu
-        anchorEl={anchor}
-        open={!!anchor}
-        onClose={() => setAnchor(null)}
-        anchorOrigin={{ vertical: "top", horizontal: "right" }}
-        transformOrigin={{ vertical: "bottom", horizontal: "right" }}
-        slotProps={{ paper: { sx: { minWidth: 280, mb: 0.5 } } }}
-      >
-        {BUILDER_MODES.map((m) => {
-          const active = m.id === mode;
-          return (
-            <MenuItem
-              key={m.id}
-              onClick={() => { setBuilderMode(m.id); setAnchor(null); }}
-              sx={{ alignItems: "flex-start", gap: 1.25, py: 1 }}
-            >
-              <Iconify
-                icon={active ? "solar:check-circle-bold" : m.icon}
-                width={16}
-                sx={{ color: active ? "primary.main" : "text.subtitle", mt: "2px", flexShrink: 0 }}
-              />
-              <Box minWidth={0}>
-                <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>{m.label}</Typography>
-                <Typography sx={{ typography: "s3", color: "text.subtitle", whiteSpace: "normal" }}>
-                  {m.hint}
-                </Typography>
-              </Box>
-            </MenuItem>
-          );
-        })}
-      </Menu>
-    </>
-  );
-}
-ModePicker.propTypes = { disabled: PropTypes.bool };

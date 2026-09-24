@@ -61,7 +61,6 @@ export const NARRATION_STAGES = {
         "One of the three was found in a README rather than the prompt, and a README is writable by anything in the repo, so it is recorded with its origin and held back until you accept it.",
       ),
     ],
-    chips: ["build the world →", "show me the tools"],
   }),
 
   build: {
@@ -79,7 +78,6 @@ export const NARRATION_STAGES = {
         "so a scenario asserts the order is actually cancelled rather than that the agent said so.",
       ),
     ],
-    chips: ["write the scenarios →", "what did you seed?"],
   },
 
   scenarios: {
@@ -100,7 +98,6 @@ export const NARRATION_STAGES = {
       file("scenarios/", "one folder each: scenario.json, setup.py, ready.py, checks/"),
       note("8 of 8 kept. Only proved scenarios are ever run."),
     ],
-    chips: ["use this environment →", "write 4 more edge cases"],
   },
 };
 
@@ -141,10 +138,3 @@ export const ASK_REPLIES = [
 export const ASK_FALLBACK = note(
   "In this prototype I answer on tools, seeded data, rules and adding scenarios — and the stage buttons drive the rest.",
 );
-
-// Chips that advance a stage or leave the screen — stripped from the asides the
-// chat offers (the engine chains stages itself, so they never appear).
-export const STAGE_CHIPS = ["build the world", "write the scenarios", "use this environment"];
-
-export const asideChips = (list = []) =>
-  list.filter((c) => !STAGE_CHIPS.some((t) => c.startsWith(t)));

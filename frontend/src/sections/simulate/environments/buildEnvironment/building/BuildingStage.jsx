@@ -38,9 +38,7 @@ export default function BuildingStage({ progress, chat, env, envState, patch, pr
         <BuilderConsole
           turns={console_.turns}
           running={console_.running}
-          chips={p.chips}
           onSend={console_.send}
-          onChip={console_.send}
           onStop={console_.stop}
           canStop={console_.inFlight}
           frozen={console_.frozen}
@@ -78,9 +76,7 @@ BuildingStage.propTypes = {
       retryable: PropTypes.bool,
     }),
     turns: PropTypes.array,
-    chips: PropTypes.array,
     send: PropTypes.func,
-    onChip: PropTypes.func,
   }),
   chat: PropTypes.shape({
     turns: PropTypes.array,

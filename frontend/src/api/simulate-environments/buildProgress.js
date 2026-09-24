@@ -11,13 +11,12 @@ import {
   ASK_FALLBACK,
   ASK_REPLIES,
   NARRATION_STAGES,
-  asideChips,
 } from "./_fixtures/builderNarration";
 
 export const STEP_MS = 380;
 export const STAGE_GAP_MS = 500;
 
-// The milestone order narration + chips key off, in build order.
+// The milestone order the narration keys off, in build order.
 const STAGE_ORDER = ["understand", "build", "scenarios"];
 
 const narrationFor = (key, agentRef) => {
@@ -40,7 +39,7 @@ function useConsoleReplies() {
       { id: `t-ask-${uid}`, role: "builder", title: null, steps: hit ? hit.steps : [ASK_FALLBACK] },
     ]);
   };
-  return { replies, send, onChip: (chip) => send(chip) };
+  return { replies, send };
 }
 
 // ---- Real path: poll the live job -----------------------------------------
@@ -74,20 +73,14 @@ function useRealBuildProgress({ envId, agentRef, enabled }) {
     });
   }, [done, enabled]);
 
-  const chips = useMemo(() => {
-    if (!done.includes("scenarios")) return [];
-    const stage = narrationFor("scenarios", agentRefRef.current);
-    return stage ? asideChips(stage.chips) : [];
-  }, [done]);
+  const { replies, send } = useConsoleReplies();
 
-  const { replies, send, onChip } = useConsoleReplies();
-
-  return { done, running, failure, turns: [...turns, ...replies], chips, send, onChip, job };
+  return { done, running, failure, turns: [...turns, ...replies], send, job };
 }
 
 // ---- Mock path: the prototype fixture timer-walk (mockMode only) -----------
 
-const MOCK_INITIAL = { turns: [], done: [], running: false, chips: [], failure: null };
+const MOCK_INITIAL = { turns: [], done: [], running: false, failure: null };
 
 function mockReducer(state, action) {
   switch (action.type) {
@@ -106,8 +99,6 @@ function mockReducer(state, action) {
       return state.done.includes(action.key)
         ? state
         : { ...state, done: [...state.done, action.key] };
-    case "SET_CHIPS":
-      return { ...state, chips: action.chips };
     case "RESET":
       return MOCK_INITIAL;
     default:
@@ -125,10 +116,9 @@ function useMockBuildProgress({ agentRef, enabled }) {
   const push = (t) => timers.current.push(t);
   const nextId = (prefix = "t") => `${prefix}-${(idCounter.current += 1)}`;
 
-  const play = ({ id, title, steps, stageKey, onDone, clearChips = true }) => {
+  const play = ({ id, title, steps, stageKey, onDone }) => {
     dispatch({ type: "APPEND_TURN", turn: { id, role: "builder", title, steps: [] } });
     dispatch({ type: "SET_RUNNING", running: true });
-    if (clearChips) dispatch({ type: "SET_CHIPS", chips: [] });
     steps.forEach((step, i) => {
       push(
         setTimeout(() => {
@@ -154,8 +144,6 @@ function useMockBuildProgress({ agentRef, enabled }) {
         const next = idx + 1;
         if (next < STAGE_ORDER.length) {
           push(setTimeout(() => runStage(next), STAGE_GAP_MS));
-        } else {
-          dispatch({ type: "SET_CHIPS", chips: asideChips(stage.chips) });
         }
       },
     });
@@ -164,7 +152,7 @@ function useMockBuildProgress({ agentRef, enabled }) {
   const send = (text) => {
     dispatch({ type: "APPEND_TURN", turn: { id: nextId("u"), role: "user", text } });
     const hit = ASK_REPLIES.find((a) => a.match.test(text));
-    play({ id: nextId(), title: null, steps: hit ? hit.steps : [ASK_FALLBACK], stageKey: null, clearChips: false });
+    play({ id: nextId(), title: null, steps: hit ? hit.steps : [ASK_FALLBACK], stageKey: null });
   };
 
   // Kick off the first stage when building turns on, and tear down on unmount OR
@@ -188,9 +176,7 @@ function useMockBuildProgress({ agentRef, enabled }) {
     running: state.running,
     failure: state.failure,
     turns: state.turns,
-    chips: state.chips,
     send,
-    onChip: (chip) => send(chip),
     job: undefined,
   };
 }
