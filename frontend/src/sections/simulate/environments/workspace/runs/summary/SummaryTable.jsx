@@ -17,7 +17,7 @@ const DASH = "—";
 // dashed cell under a "Dummy"-tagged header. Selecting runs to compare is a
 // later phase, so the checkboxes are present (for parity with the design) but
 // disabled behind a "coming soon" tooltip.
-export default function SummaryTable({ rows, evals, envVersion, onOpenRun }) {
+export default function SummaryTable({ rows, evals, onOpenRun }) {
   return (
     <Box sx={{ overflowX: "auto" }}>
       <Table size="small" sx={{ minWidth: 720 }}>
@@ -32,7 +32,7 @@ export default function SummaryTable({ rows, evals, envVersion, onOpenRun }) {
             </TableCell>
             <TableCell>Run</TableCell>
             <TableCell align="right">Pass</TableCell>
-            <TableCell align="right">Avg duration</TableCell>
+            <TableCell align="right">Duration</TableCell>
             <TableCell align="right">Tokens<ColumnDummyTag /></TableCell>
             <TableCell align="right">Cost<ColumnDummyTag /></TableCell>
             <TableCell align="right">Said not done<ColumnDummyTag /></TableCell>
@@ -44,7 +44,7 @@ export default function SummaryTable({ rows, evals, envVersion, onOpenRun }) {
         </TableHead>
         <TableBody>
           {rows.map((r) => (
-            <SummaryRow key={r.id} row={r} evals={evals} envVersion={envVersion} onOpenRun={onOpenRun} />
+            <SummaryRow key={r.id} row={r} evals={evals} onOpenRun={onOpenRun} />
           ))}
         </TableBody>
       </Table>
@@ -55,19 +55,18 @@ export default function SummaryTable({ rows, evals, envVersion, onOpenRun }) {
 SummaryTable.propTypes = {
   rows: PropTypes.arrayOf(PropTypes.object).isRequired,
   evals: PropTypes.arrayOf(PropTypes.shape({ id: PropTypes.string, name: PropTypes.string })).isRequired,
-  envVersion: PropTypes.string,
   onOpenRun: PropTypes.func,
 };
 
-function SummaryRow({ row, evals, envVersion, onOpenRun }) {
+function SummaryRow({ row, evals, onOpenRun }) {
   const color = runColor(row.ordinal);
   const clickable = !!row.executionId;
   const open = () => clickable && onOpenRun?.(row);
 
-  const sub = [
-    row.agentVersion ? `agent ${row.agentVersion}` : null,
-    envVersion ? `env ${envVersion}` : null,
-  ].filter(Boolean).join(" × ");
+  // The run's own agent version (per-execution, real). The environment version
+  // is deliberately NOT shown per row: there is no per-run env version, so
+  // stamping the current one onto every run misrepresents what each ran against.
+  const sub = row.agentVersion ? `agent ${row.agentVersion}` : "";
 
   return (
     <TableRow
@@ -126,7 +125,6 @@ function SummaryRow({ row, evals, envVersion, onOpenRun }) {
 SummaryRow.propTypes = {
   row: PropTypes.object.isRequired,
   evals: PropTypes.array.isRequired,
-  envVersion: PropTypes.string,
   onOpenRun: PropTypes.func,
 };
 

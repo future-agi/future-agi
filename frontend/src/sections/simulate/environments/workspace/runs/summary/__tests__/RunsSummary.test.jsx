@@ -95,6 +95,22 @@ describe("RunsSummary", () => {
     ).not.toThrow();
   });
 
+  it("labels the duration column as the run total, not an average", () => {
+    renderSummary();
+    // The column shows the run's total wall-clock (executionToRun.durationS), so
+    // it must not claim to be an average.
+    expect(screen.getByText("Duration")).toBeInTheDocument();
+    expect(screen.queryByText("Avg duration")).toBeNull();
+  });
+
+  it("shows each run's own agent version, not the current environment version", () => {
+    renderSummary();
+    // Every run previously carried "× env <current>" — the same fixture version
+    // for all of them, which misrepresents what each run actually ran against.
+    expect(screen.getByText(/Run 2 · agent v2/)).toBeInTheDocument();
+    expect(screen.queryByText(/× env/)).toBeNull();
+  });
+
   it("opens a run when its row is clicked", () => {
     const onOpenRun = vi.fn();
     renderSummary({ onOpenRun });
