@@ -150,14 +150,14 @@ LEVEL_LABELS: dict[str, str] = {
 }
 # What each background a caller can be heard over sounds like, for the noise column only.
 NOISE_LABELS: dict[str, str] = {
-    "quiet line": "Quiet line (no background noise)",
-    "present": "Background noise, place not recorded",
-    "street": "Street traffic",
-    "vehicle": "Inside a car",
-    "transit": "Airport or train station",
-    "retail": "Shop or mall",
+    "quiet line": "Quiet line",
+    "present": "Unnamed place",
+    "street": "Street",
+    "vehicle": "In a car",
+    "transit": "Airport / station",
+    "retail": "Shop / mall",
     "office": "Office",
-    "outdoors": "Park or outdoors",
+    "outdoors": "Outdoors",
     "crowd": "Crowded room",
 }
 # Only a caller who is heard has an accent or a room behind them.

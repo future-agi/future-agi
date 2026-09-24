@@ -19,8 +19,8 @@ def test_a_background_reads_as_what_the_caller_is_heard_over():
         ]
     )
 
-    assert labels["transit"] == "Airport or train station"
-    assert labels["quiet line"] == "Quiet line (no background noise)"
+    assert labels["transit"] == "Airport / station"
+    assert labels["quiet line"] == "Quiet line"
     assert labels["none"] == "No attack"
 
 
