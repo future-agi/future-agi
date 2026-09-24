@@ -2,6 +2,11 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import RunsPanel from "../RunsPanel";
 import { RUNS_COPY } from "../runs.constants";
+import {
+  LIBRARY_VOICE_EVAL,
+  NO_MISSELLING,
+  selectedEntry,
+} from "../../evals/__tests__/fixtures/evalEntries";
 
 const env = { id: "env-1", name: "Refund Support", surface: "voice" };
 
@@ -91,6 +96,33 @@ describe("RunsPanel empty state", () => {
     renderPanel({ runs: [] });
     expect(screen.getByText(RUNS_COPY.empty.title)).toBeInTheDocument();
     expect(screen.getByText(RUNS_COPY.empty.body)).toBeInTheDocument();
+  });
+});
+
+describe("RunsPanel evals-applied tile (P26)", () => {
+  // A backed environment's applied set arrives already overlaid on `envState`
+  // by the workspace: `evals` is §5's `evaluations.selected[]`, each row a §1
+  // entry plus its config id. Both halves of the tile read that one list.
+  //
+  // L3 (round 4): P3/§5 — one environment has one `agent_type`, so its
+  // `selected[]` can never hold both a voice eval and a text eval. The old
+  // fixture paired NO_MISSELLING (voice) with CUSTOM_EVAL (text), the same
+  // impossibility round-3 L5 and fix-round-2 Minor-6 already removed from the
+  // drawer tests. LIBRARY_VOICE_EVAL is the second voice eval those fixes
+  // introduced for exactly this.
+  const selected = [
+    selectedEntry(NO_MISSELLING, "cfg-1"),
+    selectedEntry(LIBRARY_VOICE_EVAL, "cfg-2"),
+  ];
+
+  it("counts the §5 selected evals and names them under the count", () => {
+    renderPanel({ envState: { ...readyState, evals: selected } });
+
+    expect(screen.getByText(RUNS_COPY.applied(2))).toBeInTheDocument();
+    expect(screen.getByText("no_misselling, off_topic_detection")).toBeInTheDocument();
+    // The count and the sub-line come from the same list, so "2 applied" can
+    // never sit over "Optional".
+    expect(screen.queryByText(RUNS_COPY.optional)).toBeNull();
   });
 });
 

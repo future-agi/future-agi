@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import PropTypes from "prop-types";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useSearchParams } from "react-router-dom";
@@ -14,7 +15,14 @@ vi.mock("../overview/OverviewPanel", () => ({ default: () => <div>overview-body<
 vi.mock("../contract/RlContractPanel", () => ({ default: () => <div>contract-body</div> }));
 vi.mock("../scenarios/ScenariosStep", () => ({ default: () => <div>scenarios-body</div> }));
 vi.mock("../evals/EvalsStep", () => ({ default: () => <div>evals-body</div> }));
-vi.mock("../runs/RunsPanel", () => ({ default: () => <div>runs-body</div> }));
+// P26: the Runs tab must get the badge state (a backed env's §5
+// `evaluations.selected` overlaid on the store), not the raw store. The stub
+// echoes the eval names it was handed so the wiring is what's under test.
+function RunsPanelStub({ envState }) {
+  return <div>runs-body:{envState.evals.map((e) => e.name || e.id).join(",")}</div>;
+}
+RunsPanelStub.propTypes = { envState: PropTypes.object };
+vi.mock("../runs/RunsPanel", () => ({ default: RunsPanelStub }));
 
 const ENV = { id: "env-1", name: "Refund Copilot", surface: "voice" };
 
@@ -105,6 +113,22 @@ describe("WorkspacePanels", () => {
 
     await user.click(screen.getByRole("tab", { name: /Contract/ }));
     expect(onTabChange).toHaveBeenCalledWith("contract");
+  });
+
+  it("hands the Runs panel the badge state, so the pre-flight count matches the tab (P26)", () => {
+    renderPanels({
+      tab: "runs",
+      envState: baseEnvState({ evals: [{ id: "stale-store-eval" }] }),
+      badgeEnvState: baseEnvState({
+        evals: [{ id: "cfg-1", name: "no_misselling" }],
+      }),
+    });
+    expect(screen.getByText("runs-body:no_misselling")).toBeInTheDocument();
+  });
+
+  it("falls back to envState when no badge state is passed (the build page)", () => {
+    renderPanels({ tab: "runs", envState: baseEnvState({ evals: [{ id: "e1" }] }) });
+    expect(screen.getByText("runs-body:e1")).toBeInTheDocument();
   });
 });
 

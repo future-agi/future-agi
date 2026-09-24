@@ -1,11 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { useState } from "react";
 import { render as rtlRender, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import EvalsStep from "../EvalsStep";
 import { EVALS_COPY } from "../evals.constants";
+import { NO_MISSELLING, selectedEntry } from "./fixtures/evalEntries";
 
-// §9 client, mocked so a backed-env remove exercises the real DELETE path
+// §4 client, mocked so a backed-env remove exercises the real DELETE path
 // without the apiPath contract throw.
 vi.mock("src/api/simulate-environments/harnessEnvironments", () => ({
   listHarnessEnvironments: vi.fn(),
@@ -15,12 +16,13 @@ vi.mock("src/api/simulate-environments/harnessEnvironments", () => ({
   deleteAppliedEvaluation: vi.fn(() => Promise.resolve()),
   getAvailableEvaluations: vi.fn(() => Promise.resolve({ evaluations: [] })),
   addEvaluation: vi.fn(),
+  addRunEvaluation: vi.fn(),
 }));
 const { deleteAppliedEvaluation, getHarnessEnvironment } = await import(
   "src/api/simulate-environments/harnessEnvironments"
 );
 
-// EvalsStep now uses a react-query mutation (§9 remove-eval), so every render
+// EvalsStep now uses a react-query mutation (§4 remove-eval), so every render
 // needs a client. Wrap the library render once so the call sites stay unchanged.
 const render = (ui, options) =>
   rtlRender(
@@ -226,23 +228,47 @@ describe("EvalsStep — template lock (read-only until forked)", () => {
   });
 });
 
-describe("EvalsStep — §9 remove on a backend-backed env", () => {
-  // A backed env's applied set comes from §6 detail (evaluations.selected), not
+describe("EvalsStep — §4 remove on a backend-backed env", () => {
+  // A backed env's applied set comes from §5 detail (evaluations.selected), not
   // the store — so mock the detail fetch to supply the real selected row.
   const detailWith = (selected) => ({ evaluations: { selected } });
   const state = { scenarios: [{ id: "s1" }], evals: [] };
 
   beforeEach(() => {
     getHarnessEnvironment.mockResolvedValue(
-      detailWith([{ id: "cfg-1", name: "Task success", description: "Did it work" }]),
+      detailWith([selectedEntry(NO_MISSELLING, "cfg-1")]),
     );
   });
 
-  it("lists the §6 selected evals and fires the real DELETE with the config id", async () => {
+  // Minor-3 (fix round 1): the module mock's default is
+  // `deleteAppliedEvaluation: vi.fn(() => Promise.resolve())`, but the
+  // top-level `beforeEach` only `mockClear()`s it — that clears call history,
+  // not an implementation override. The L4 test below sets
+  // `mockRejectedValue`, which is a standing override that survives
+  // `mockClear()`; left in place it would fail the next test appended after
+  // it with a rejected DELETE it never asked for. `mockRestore()` undoes both
+  // the override and the call history, back to the `vi.fn(() => …)` given at
+  // mock-factory time.
+  afterEach(() => {
+    deleteAppliedEvaluation.mockRestore();
+  });
+
+  it("shows where the eval came from, whether it costs, and what fills its inputs (P25)", async () => {
     render(<Harness backed initial={state} patchSpy={vi.fn()} />);
 
-    // The applied row comes from §6 detail, not the store.
-    expect(await screen.findByText("Task success")).toBeInTheDocument();
+    expect(await screen.findByText("no_misselling")).toBeInTheDocument();
+    expect(screen.getByText("Library")).toBeInTheDocument();
+    expect(screen.getByText("0.5 credits per run + judge tokens")).toBeInTheDocument();
+    expect(screen.getByText("{{conversation}}")).toBeInTheDocument();
+    expect(screen.getByText("Call recording")).toBeInTheDocument();
+    // P1: the raw source never reaches the screen.
+    expect(screen.queryByText("voice_recording")).toBeNull();
+  });
+
+  it("lists the §5 selected evals and fires the real DELETE with the config id", async () => {
+    render(<Harness backed initial={state} patchSpy={vi.fn()} />);
+
+    expect(await screen.findByText("no_misselling")).toBeInTheDocument();
     fireEvent.click(screen.getAllByRole("button", { name: EVALS_COPY.remove })[0]);
 
     await waitFor(() =>
@@ -269,7 +295,28 @@ describe("EvalsStep — §9 remove on a backend-backed env", () => {
     render(
       <Harness backed env={{ ...ENV, buildStatus: "building" }} initial={state} patchSpy={vi.fn()} />,
     );
-    expect(await screen.findByText("Task success")).toBeInTheDocument();
+    expect(await screen.findByText("no_misselling")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: EVALS_COPY.remove })[0]).toBeDisabled();
+  });
+
+  it("shows the server's sentence when a remove is refused, attributed to the eval it failed for, and keeps the row (L4, Minor-5)", async () => {
+    deleteAppliedEvaluation.mockRejectedValue({
+      detail: "Environment has no evaluations until it finishes building",
+      statusCode: 409,
+    });
+    render(<Harness backed initial={state} patchSpy={vi.fn()} />);
+
+    await screen.findByText("no_misselling");
+    fireEvent.click(screen.getAllByRole("button", { name: EVALS_COPY.remove })[0]);
+
+    // Minor-5 (fix round 1): the Alert names which row the refusal belongs to,
+    // not just the server's sentence — with several rows a bare "already
+    // removed" doesn't say which one.
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "no_misselling: Environment has no evaluations until it finishes building",
+    );
+    // Nothing was removed, so the row is still there — the Alert is the only
+    // thing that changed.
+    expect(screen.getByText("no_misselling")).toBeInTheDocument();
   });
 });

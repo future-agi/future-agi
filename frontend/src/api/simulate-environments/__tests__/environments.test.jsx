@@ -11,14 +11,19 @@ vi.mock("src/api/harness/harness", () => ({
 vi.mock("src/api/simulate-environments/harnessEnvironments", () => ({
   listHarnessEnvironments: vi.fn(),
   deleteHarnessEnvironment: vi.fn(),
+  renameHarnessEnvironment: vi.fn(),
+  getHarnessEnvironment: vi.fn(),
+  deleteAppliedEvaluation: vi.fn(),
+  getAvailableEvaluations: vi.fn(),
+  addEvaluation: vi.fn(),
+  addRunEvaluation: vi.fn(),
 }));
 
 const { createHarnessJob, uploadHarnessSecretFile } = await import(
   "src/api/harness/harness"
 );
-const { listHarnessEnvironments, deleteHarnessEnvironment } = await import(
-  "src/api/simulate-environments/harnessEnvironments"
-);
+const { listHarnessEnvironments, deleteHarnessEnvironment, addEvaluation, addRunEvaluation } =
+  await import("src/api/simulate-environments/harnessEnvironments");
 const {
   useMyEnvironments,
   useDeleteEnvironment,
@@ -26,7 +31,10 @@ const {
   useUploadSecretFile,
   useRunSimulation,
   useAdoptTemplate,
+  useAddEvaluation,
+  useAddRunEvaluation,
   SIMULATE_ENVIRONMENTS_KEY,
+  availableEvaluationsKey,
 } = await import("../environments");
 
 // The paginated harness-environments payload the hook maps into table rows.
@@ -274,5 +282,114 @@ describe("useAdoptTemplate", () => {
     const out = await result.current.mutateAsync("env-voice-support");
     expect(out.envId).toMatch(/^env-/);
     expect(out.templateId).toBeUndefined();
+  });
+});
+
+describe("useAddEvaluation (§3, L11)", () => {
+  it("seeds the detail from the 201 body and does NOT invalidate it in the same tick (P29, L11)", async () => {
+    const detail = { evaluations: { selected: [{ id: "cfg-1", name: "no_misselling" }] } };
+    addEvaluation.mockResolvedValue(detail);
+    const { queryClient, Wrapper } = makeWrapper();
+    const setData = vi.spyOn(queryClient, "setQueryData");
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useAddEvaluation(), { wrapper: Wrapper });
+
+    result.current.mutate({ id: "env-1", name: "no_misselling" });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(setData).toHaveBeenCalledWith(["harness-environment", "env-1"], detail);
+    // A refetch here races the write it is meant to confirm and can flip the
+    // row back from "Added"; the drawer refetches on close instead.
+    expect(invalidate).not.toHaveBeenCalledWith({
+      queryKey: ["harness-environment", "env-1"],
+    });
+  });
+
+  // Important-1 (fix round 2, reverting fix round 1): `available` is the
+  // drawer's only active observer of this query, so invalidating it here
+  // would refetch it in the SAME tick — the server would apply P6 and return
+  // the list minus what was just bound, dropping the just-added row (and its
+  // only confirmation in environment mode, "Added") off screen. The
+  // duplicate-row bug that invalidation was meant to fix is already closed by
+  // `boundEntries`' filter in `AddEvaluationDrawer.jsx` (by name, against
+  // what the offer is currently showing), which costs none of this.
+  it("does NOT invalidate the available list on add — the offer stays in place, marked Added (Important-1)", async () => {
+    const detail = { evaluations: { selected: [{ id: "cfg-1", name: "no_misselling" }] } };
+    addEvaluation.mockResolvedValue(detail);
+    const { queryClient, Wrapper } = makeWrapper();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useAddEvaluation(), { wrapper: Wrapper });
+
+    result.current.mutate({ id: "env-1", name: "no_misselling" });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(invalidate).not.toHaveBeenCalledWith({
+      queryKey: availableEvaluationsKey("env-1"),
+    });
+  });
+});
+
+describe("useAddRunEvaluation (§6)", () => {
+  it("posts the name on the run and returns the five counts", async () => {
+    addRunEvaluation.mockResolvedValue({
+      queued: 12,
+      skipped_existing: 3,
+      skipped_in_flight: 0,
+      skipped_pending: 1,
+      completed_calls: 16,
+    });
+    const { Wrapper } = makeWrapper();
+    const { result } = renderHook(() => useAddRunEvaluation(), { wrapper: Wrapper });
+
+    result.current.mutate({ id: "env-1", executionId: "ex-1", name: "no_misselling" });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(addRunEvaluation).toHaveBeenCalledWith("env-1", "ex-1", "no_misselling");
+    expect(result.current.data).toMatchObject({ queued: 12, completed_calls: 16 });
+  });
+
+  it("refetches the environment detail rather than patching it from the 202 (P29)", async () => {
+    addRunEvaluation.mockResolvedValue({
+      queued: 1,
+      skipped_existing: 0,
+      skipped_in_flight: 0,
+      skipped_pending: 0,
+      completed_calls: 1,
+    });
+    const { queryClient, Wrapper } = makeWrapper();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useAddRunEvaluation(), { wrapper: Wrapper });
+
+    result.current.mutate({ id: "env-1", executionId: "ex-1", name: "no_misselling" });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: ["harness-environment", "env-1"],
+    });
+  });
+
+  // Important-1 (fix round 2, reverting fix round 1): same reasoning as
+  // `useAddEvaluation` above — invalidating `available` here would refetch it
+  // while the picker is still open and drop the just-added row out of the
+  // offer immediately, ahead of the bound group's filter that already
+  // prevents the duplicate.
+  it("does NOT invalidate the available list (Important-1)", async () => {
+    addRunEvaluation.mockResolvedValue({
+      queued: 1,
+      skipped_existing: 0,
+      skipped_in_flight: 0,
+      skipped_pending: 0,
+      completed_calls: 1,
+    });
+    const { queryClient, Wrapper } = makeWrapper();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useAddRunEvaluation(), { wrapper: Wrapper });
+
+    result.current.mutate({ id: "env-1", executionId: "ex-1", name: "no_misselling" });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(invalidate).not.toHaveBeenCalledWith({
+      queryKey: availableEvaluationsKey("env-1"),
+    });
   });
 });
