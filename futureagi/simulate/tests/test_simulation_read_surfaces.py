@@ -1,6 +1,8 @@
+import copy
 import csv
 import io
 import uuid
+from unittest.mock import patch
 
 import pytest
 from rest_framework import status
@@ -8,6 +10,11 @@ from rest_framework import status
 from accounts.models.organization import Organization
 from accounts.models.user import OrgApiKey
 from accounts.models.workspace import Workspace
+from model_hub.models.error_localizer_model import (
+    ErrorLocalizerSource,
+    ErrorLocalizerStatus,
+    ErrorLocalizerTask,
+)
 from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import AgentDefinition, Scenarios
 from simulate.models.eval_config import SimulateEvalConfig
@@ -15,10 +22,12 @@ from simulate.models.run_test import RunTest
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import (
     CallExecution,
+    CallExecutionSnapshot,
     CallTranscript,
     TestExecution as SimulationTestExecution,
 )
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
+from simulate.views import run_test as run_test_views
 
 
 @pytest.fixture
@@ -348,6 +357,522 @@ def test_get_eval_outputs_surfaces_all_when_context_absent(
 
     assert str(live.id) in outputs
     assert str(deleted.id) in outputs
+
+
+@pytest.mark.django_db
+def test_call_details_marks_removed(auth_client, simulation_tree, eval_configs):
+    """A removed eval's verdict is still returned by call details, marked
+    ``removed: true`` in both projections; a live eval's verdict carries no
+    such key; the stored value is never rewritten.
+    """
+    live, deleted = eval_configs["live"], eval_configs["deleted"]
+    call_execution = simulation_tree["call_execution"]
+    # An independent copy: if the read path ever mutated the dict in place, it
+    # would mutate this too, and the final `== stored` assertion would keep
+    # passing regardless. `refresh_from_db()` below rebinds the attribute to a
+    # freshly deserialised dict either way, but that guard is only real if
+    # `stored` cannot be the same object as what got mutated.
+    stored = copy.deepcopy(_eval_outputs_for(live, deleted))
+    call_execution.eval_outputs = copy.deepcopy(stored)
+    call_execution.save(update_fields=["eval_outputs"])
+
+    response = auth_client.get(f"/simulate/call-executions/{call_execution.id}/")
+
+    assert response.status_code == status.HTTP_200_OK
+    outputs = response.data["eval_outputs"]
+    metrics = response.data["eval_metrics"]
+
+    # The removed eval's verdict is present and marked, in both places.
+    assert outputs[str(deleted.id)]["removed"] is True
+    assert metrics[str(deleted.id)]["removed"] is True
+    # ... and still carries its real value, not a blanked one.
+    assert outputs[str(deleted.id)]["value"] == "Passed"
+    assert metrics[str(deleted.id)]["value"] == "Passed"
+
+    # The live eval's verdict carries no "removed" key at all (not `false`).
+    assert "removed" not in outputs[str(live.id)]
+    assert "removed" not in metrics[str(live.id)]
+
+    # Reading never rewrites what is stored.
+    call_execution.refresh_from_db()
+    assert call_execution.eval_outputs == stored
+
+
+@pytest.mark.django_db
+def test_run_test_call_execution_list_marks_removed_evals(
+    auth_client, simulation_tree, eval_configs
+):
+    """The run's call list (``GET /simulate/run-tests/{id}/call-executions/``,
+    ``RunTestCallExecutionsView``) marks a removed eval's verdict the same
+    way call details does -- mirrors ``test_call_details_marks_removed``. The
+    view used to build ``CallExecutionDetailSerializer`` with no context at
+    all, so a removed eval's verdict came back indistinguishable from a live
+    one here.
+    """
+    live, deleted = eval_configs["live"], eval_configs["deleted"]
+    run_test = simulation_tree["run_test"]
+    call_execution = simulation_tree["call_execution"]
+    stored = copy.deepcopy(_eval_outputs_for(live, deleted))
+    call_execution.eval_outputs = copy.deepcopy(stored)
+    call_execution.save(update_fields=["eval_outputs"])
+
+    response = auth_client.get(f"/simulate/run-tests/{run_test.id}/call-executions/")
+
+    assert response.status_code == status.HTTP_200_OK
+    results = response.data["results"]
+    row = next(r for r in results if str(r["id"]) == str(call_execution.id))
+    outputs = row["eval_outputs"]
+    metrics = row["eval_metrics"]
+
+    # The removed eval's verdict is present and marked, in both places.
+    assert outputs[str(deleted.id)]["removed"] is True
+    assert metrics[str(deleted.id)]["removed"] is True
+    # ... and still carries its real value, not a blanked one.
+    assert outputs[str(deleted.id)]["value"] == "Passed"
+    assert metrics[str(deleted.id)]["value"] == "Passed"
+
+    # The live eval's verdict carries no "removed" key at all (not `false`).
+    assert "removed" not in outputs[str(live.id)]
+    assert "removed" not in metrics[str(live.id)]
+
+    # Reading never rewrites what is stored.
+    call_execution.refresh_from_db()
+    assert call_execution.eval_outputs == stored
+
+
+@pytest.mark.django_db
+def test_run_test_call_execution_list_name_less_row_falls_back_to_empty_string(
+    auth_client, simulation_tree, eval_configs
+):
+    """The ``""`` ``name`` fallback under ``mark_removed_only`` in
+    ``get_eval_metrics`` keeps a status-less row with no stored ``name`` from
+    picking up the live config's name on this surface."""
+    deleted = eval_configs["deleted"]
+    run_test = simulation_tree["run_test"]
+    call_execution = simulation_tree["call_execution"]
+    call_execution.eval_outputs = {
+        str(deleted.id): {
+            "output": "Passed",
+            "output_type": "Pass/Fail",
+            "status": "completed",
+        }
+    }
+    call_execution.save(update_fields=["eval_outputs"])
+
+    response = auth_client.get(f"/simulate/run-tests/{run_test.id}/call-executions/")
+
+    assert response.status_code == status.HTTP_200_OK
+    row = next(
+        r for r in response.data["results"] if str(r["id"]) == str(call_execution.id)
+    )
+    assert row["eval_metrics"][str(deleted.id)]["name"] == ""
+
+
+@pytest.mark.django_db
+def test_serializer_does_not_mutate_stored_eval_outputs(simulation_tree, eval_configs):
+    """Calling the getters directly, on one instance, never leaves a trace on
+    that instance's ``eval_outputs`` -- no ``removed`` key leaks into the
+    model's dict, and the stored value is unaffected by whatever the
+    serializer builds for the API. Unlike ``test_call_details_marks_removed``,
+    this never goes through ``refresh_from_db()``, so it would catch an
+    in-place mutation."""
+    live, deleted = eval_configs["live"], eval_configs["deleted"]
+    call_execution = simulation_tree["call_execution"]
+    expected = copy.deepcopy(_eval_outputs_for(live, deleted))
+    call_execution.eval_outputs = copy.deepcopy(expected)
+    call_execution.save(update_fields=["eval_outputs"])
+
+    serializer = CallExecutionDetailSerializer(
+        context={"eval_configs": {str(live.id): live, str(deleted.id): deleted}}
+    )
+    outputs = serializer.get_eval_outputs(call_execution)
+    metrics = serializer.get_eval_metrics(call_execution)
+
+    # The serializer output does carry `removed` for the deleted config...
+    assert outputs[str(deleted.id)]["removed"] is True
+    assert metrics[str(deleted.id)]["removed"] is True
+    # ...but the model instance's own eval_outputs is untouched, same object.
+    assert call_execution.eval_outputs == expected
+    assert "removed" not in call_execution.eval_outputs[str(deleted.id)]
+    assert "removed" not in call_execution.eval_outputs[str(live.id)]
+
+
+@pytest.mark.django_db
+def test_call_details_config_map_includes_removed_configs(
+    simulation_tree, eval_configs
+):
+    """``build_eval_configs_map`` is the single hinge: it reads
+    ``all_objects``, so ``iter_live_eval_outputs`` no longer drops the removed
+    eval's row on this one surface."""
+    from simulate.services.test_executor import build_eval_configs_map
+
+    live, deleted = eval_configs["live"], eval_configs["deleted"]
+    call_execution = simulation_tree["call_execution"]
+    call_execution.eval_outputs = _eval_outputs_for(live, deleted)
+    call_execution.save(update_fields=["eval_outputs"])
+
+    config_map = build_eval_configs_map(call_execution)
+
+    assert set(config_map) == {str(live.id), str(deleted.id)}
+    assert config_map[str(deleted.id)].deleted is True
+    assert config_map[str(live.id)].deleted is False
+
+
+@pytest.mark.django_db
+def test_run_test_call_execution_list_builds_the_eval_config_map_once_per_request(
+    auth_client, simulation_tree, eval_configs
+):
+    """``build_eval_configs_map`` must be built exactly once per request, from
+    the union of every row's ``eval_outputs`` keys, and reused for every row
+    -- not called once per call-execution row and once per snapshot row,
+    which would make its query cost grow with the number of rows on a page.
+
+    Asserted by spying on the real ``build_eval_configs_map`` (wrapped, not
+    replaced) and counting calls, rather than the endpoint's total query
+    count: this view's serializer has other, pre-existing per-row queries
+    unrelated to eval configs, so total-count invariance would conflate that
+    unrelated cost with the one this fix removes.
+
+    The one snapshot row below matters: with zero ``CallExecutionSnapshot``
+    rows planted, a regressed per-snapshot ``build_eval_configs_map`` call
+    inside the snapshot branch would still keep
+    ``map_spy.assert_called_once()`` green.
+    """
+    live, deleted = eval_configs["live"], eval_configs["deleted"]
+    run_test = simulation_tree["run_test"]
+    call_execution = simulation_tree["call_execution"]
+    call_execution.eval_outputs = _eval_outputs_for(live, deleted)
+    call_execution.save(update_fields=["eval_outputs"])
+
+    for i in range(2):
+        CallExecution.objects.create(
+            test_execution=call_execution.test_execution,
+            scenario=call_execution.scenario,
+            phone_number=f"+1555999000{i}",
+            status=CallExecution.CallStatus.COMPLETED,
+            simulation_call_type=CallExecution.SimulationCallType.TEXT,
+            call_metadata={},
+            eval_outputs=_eval_outputs_for(live, deleted),
+        )
+    CallExecutionSnapshot.objects.create(
+        call_execution=call_execution,
+        rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
+        status=call_execution.status,
+        eval_outputs=_eval_outputs_for(live, deleted),
+    )
+
+    with patch(
+        "simulate.views.run_test.build_eval_configs_map",
+        wraps=run_test_views.build_eval_configs_map,
+    ) as map_spy:
+        response = auth_client.get(
+            f"/simulate/run-tests/{run_test.id}/call-executions/"
+        )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert len(response.data["results"]) == 4
+    map_spy.assert_called_once()
+    for row in response.data["results"]:
+        assert row["eval_outputs"][str(deleted.id)]["removed"] is True
+
+
+@pytest.mark.django_db
+def test_run_test_call_execution_list_omits_error_localizer_payload(
+    auth_client, simulation_tree, eval_configs, organization, workspace
+):
+    """The run's call list must not fire a per-row error-localizer lookup or
+    embed its payload (``input_data`` can hold a full transcript) in a
+    paginated response. ``mark_removed_only`` keeps ``error_localizer`` false
+    for every entry regardless of the config's own flag, so
+    ``get_eval_metrics``'s EL merge block never runs here -- ``template_type``
+    stays ``None`` too, exactly the shape this surface had with no context
+    at all.
+    """
+    live, deleted = eval_configs["live"], eval_configs["deleted"]
+    live.error_localizer = True
+    live.save(update_fields=["error_localizer"])
+    run_test = simulation_tree["run_test"]
+    call_execution = simulation_tree["call_execution"]
+    call_execution.eval_outputs = _eval_outputs_for(live, deleted)
+    call_execution.save(update_fields=["eval_outputs"])
+    ErrorLocalizerTask.objects.create(
+        source=ErrorLocalizerSource.SIMULATE,
+        status=ErrorLocalizerStatus.COMPLETED,
+        input_data={"conversation": "a very long transcript ..."},
+        input_keys=["conversation"],
+        input_types={"conversation": "text"},
+        error_analysis={"root_cause": "prompt too vague"},
+        selected_input_key="conversation",
+        organization=organization,
+        workspace=workspace,
+        metadata={
+            "call_execution_id": str(call_execution.id),
+            "eval_config_id": str(live.id),
+        },
+    )
+
+    response = auth_client.get(f"/simulate/run-tests/{run_test.id}/call-executions/")
+
+    assert response.status_code == status.HTTP_200_OK
+    row = next(
+        r for r in response.data["results"] if str(r["id"]) == str(call_execution.id)
+    )
+    metric = row["eval_metrics"][str(live.id)]
+    assert metric["error_localizer"] is False
+    assert metric["template_type"] is None
+    assert "error_analysis" not in metric
+    assert "input_data" not in metric
+
+
+@pytest.mark.django_db
+def test_call_details_keeps_error_localizer_payload(
+    auth_client, simulation_tree, eval_configs, organization, workspace
+):
+    """The mirror of ``test_run_test_call_execution_list_omits_error_localizer_payload``,
+    on call details instead of the run's call list: ``CallExecutionDetailView``
+    never sets ``mark_removed_only``, so ``template_type`` and the
+    error-localizer merge (``error_localizer``, ``error_analysis``) must stay
+    live there -- the drawer's error-analysis tab depends on them.
+    """
+    live, deleted = eval_configs["live"], eval_configs["deleted"]
+    live.error_localizer = True
+    live.save(update_fields=["error_localizer"])
+    call_execution = simulation_tree["call_execution"]
+    call_execution.eval_outputs = _eval_outputs_for(live, deleted)
+    call_execution.save(update_fields=["eval_outputs"])
+    ErrorLocalizerTask.objects.create(
+        source=ErrorLocalizerSource.SIMULATE,
+        status=ErrorLocalizerStatus.COMPLETED,
+        input_data={"conversation": "a very long transcript ..."},
+        input_keys=["conversation"],
+        input_types={"conversation": "text"},
+        error_analysis={"root_cause": "prompt too vague"},
+        selected_input_key="conversation",
+        organization=organization,
+        workspace=workspace,
+        metadata={
+            "call_execution_id": str(call_execution.id),
+            "eval_config_id": str(live.id),
+        },
+    )
+
+    response = auth_client.get(f"/simulate/call-executions/{call_execution.id}/")
+
+    assert response.status_code == status.HTTP_200_OK
+    metric = response.data["eval_metrics"][str(live.id)]
+    assert metric["error_localizer"] is True
+    assert metric["template_type"] == "single"
+    assert metric["error_analysis"] == {"root_cause": "prompt too vague"}
+
+
+@pytest.mark.django_db
+def test_run_test_call_execution_list_keeps_key_with_no_config_row(
+    auth_client, simulation_tree, eval_configs
+):
+    """A stored ``eval_outputs`` key with no matching config row at all must
+    not be silently dropped from this surface by ``iter_live_eval_outputs``'s
+    filtering: ``mark_removed_only`` iterates ``eval_outputs`` directly, same
+    as the no-context branch, so nothing is dropped for lacking a config row.
+    """
+    live = eval_configs["live"]
+    run_test = simulation_tree["run_test"]
+    call_execution = simulation_tree["call_execution"]
+    orphan_id = str(uuid.uuid4())
+    call_execution.eval_outputs = {
+        str(live.id): {
+            "name": "Live Eval",
+            "output": "Passed",
+            "output_type": "Pass/Fail",
+            "status": "completed",
+        },
+        orphan_id: {
+            "name": "Orphan Eval",
+            "output": "Passed",
+            "output_type": "Pass/Fail",
+            "status": "completed",
+        },
+    }
+    call_execution.save(update_fields=["eval_outputs"])
+
+    response = auth_client.get(f"/simulate/run-tests/{run_test.id}/call-executions/")
+
+    assert response.status_code == status.HTTP_200_OK
+    row = next(
+        r for r in response.data["results"] if str(r["id"]) == str(call_execution.id)
+    )
+    assert orphan_id in row["eval_outputs"]
+    assert orphan_id in row["eval_metrics"]
+
+
+@pytest.mark.django_db
+def test_run_test_call_execution_list_survives_a_non_uuid_eval_outputs_key(
+    auth_client, simulation_tree, eval_configs
+):
+    """A raw, non-UUID key in one row's stored ``eval_outputs`` (a corrupted
+    or hand-edited row) must not 500 the whole page: passing a raw non-UUID
+    string straight into ``SimulateEvalConfig.all_objects.filter(id__in=...)``
+    raises ``ValidationError``, which this view's blanket
+    ``except Exception`` would turn into a 500 for every row sharing the
+    single page-level map, not just the row that holds the bad key. The fix
+    filters non-UUID keys out of the map query; the bad key's own entry
+    simply has no matching config, while every other row's ``removed``
+    marking is unaffected.
+    """
+    live, deleted = eval_configs["live"], eval_configs["deleted"]
+    run_test = simulation_tree["run_test"]
+    call_execution = simulation_tree["call_execution"]
+    call_execution.eval_outputs = {
+        "not-a-uuid": {
+            "name": "Corrupted Row",
+            "output": "Passed",
+            "output_type": "Pass/Fail",
+            "status": "completed",
+        },
+        str(live.id): {
+            "name": "Live Eval",
+            "output": "Passed",
+            "output_type": "Pass/Fail",
+            "status": "completed",
+        },
+    }
+    call_execution.save(update_fields=["eval_outputs"])
+    other_call = CallExecution.objects.create(
+        test_execution=call_execution.test_execution,
+        scenario=call_execution.scenario,
+        phone_number="+15559990099",
+        status=CallExecution.CallStatus.COMPLETED,
+        simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        call_metadata={},
+        eval_outputs=_eval_outputs_for(live, deleted),
+    )
+
+    response = auth_client.get(f"/simulate/run-tests/{run_test.id}/call-executions/")
+
+    assert response.status_code == status.HTTP_200_OK
+    results = response.data["results"]
+    corrupted_row = next(r for r in results if str(r["id"]) == str(call_execution.id))
+    assert "not-a-uuid" in corrupted_row["eval_outputs"]
+    assert "removed" not in corrupted_row["eval_outputs"]["not-a-uuid"]
+
+    other_row = next(r for r in results if str(r["id"]) == str(other_call.id))
+    assert other_row["eval_outputs"][str(deleted.id)]["removed"] is True
+    assert "removed" not in other_row["eval_outputs"][str(live.id)]
+
+
+@pytest.mark.django_db
+def test_call_details_survives_a_non_uuid_eval_outputs_key(
+    auth_client, simulation_tree, eval_configs
+):
+    """Unlike the run's call list (which iterates ``eval_outputs`` directly
+    under ``mark_removed_only`` and keeps the bad key), call details feeds
+    the filtered map straight to ``iter_live_eval_outputs``. A non-UUID key
+    is never in that map and has no ``"source": "harness"`` marker, so
+    ``iter_live_eval_outputs`` drops the row -- a deliberate trade-off (never
+    500 the page) over surfacing the corrupted key.
+    """
+    live = eval_configs["live"]
+    call_execution = simulation_tree["call_execution"]
+    call_execution.eval_outputs = {
+        "not-a-uuid": {
+            "name": "Corrupted Row",
+            "output": "Passed",
+            "output_type": "Pass/Fail",
+            "status": "completed",
+        },
+        str(live.id): {
+            "name": "Live Eval",
+            "output": "Passed",
+            "output_type": "Pass/Fail",
+            "status": "completed",
+        },
+    }
+    call_execution.save(update_fields=["eval_outputs"])
+
+    response = auth_client.get(f"/simulate/call-executions/{call_execution.id}/")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert "not-a-uuid" not in response.data["eval_outputs"]
+    assert "not-a-uuid" not in response.data["eval_metrics"]
+    assert response.data["eval_outputs"][str(live.id)]["value"] == "Passed"
+    assert response.data["eval_metrics"][str(live.id)]["value"] == "Passed"
+
+
+@pytest.mark.django_db
+def test_run_test_call_execution_list_snapshot_row_marks_removed_evals(
+    auth_client, simulation_tree, eval_configs
+):
+    """A snapshot row's own ``eval_outputs`` (returned raw, not through the
+    serializer -- a pre-existing shape mismatch with a live call execution's
+    row for the same field name) gets the removed marker too, from the same
+    page-level config map.
+    """
+    live, deleted = eval_configs["live"], eval_configs["deleted"]
+    run_test = simulation_tree["run_test"]
+    call_execution = simulation_tree["call_execution"]
+    snapshot = CallExecutionSnapshot.objects.create(
+        call_execution=call_execution,
+        rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
+        status=call_execution.status,
+        eval_outputs=_eval_outputs_for(live, deleted),
+    )
+
+    response = auth_client.get(f"/simulate/run-tests/{run_test.id}/call-executions/")
+
+    assert response.status_code == status.HTTP_200_OK
+    row = next(r for r in response.data["results"] if str(r["id"]) == str(snapshot.id))
+    assert row["is_snapshot"] is True
+    outputs = row["eval_outputs"]
+
+    assert outputs[str(deleted.id)]["removed"] is True
+    assert "removed" not in outputs[str(live.id)]
+    # Raw stored shape, not the serializer's structured one (pre-existing).
+    assert outputs[str(deleted.id)]["output"] == "Passed"
+
+    # Reading never rewrites what is stored on the snapshot. NOTE: this is
+    # not itself a mutation guard, since nothing above calls
+    # ``snapshot.save()`` -- see ``test_mark_removed_evals_does_not_mutate_input``
+    # below for the real guard, which calls ``_mark_removed_evals`` directly.
+    snapshot.refresh_from_db()
+    assert "removed" not in snapshot.eval_outputs[str(deleted.id)]
+
+
+@pytest.mark.django_db
+def test_mark_removed_evals_does_not_mutate_input(simulation_tree, eval_configs):
+    """``RunTestCallExecutionsView._mark_removed_evals`` returns a stamped
+    copy and never touches the dict it was handed -- called directly here,
+    with the input diffed against a ``copy.deepcopy`` taken before the call,
+    so an in-place mutation would actually be caught.
+
+    Plants a nested ``details`` dict on the live row and mutates it through
+    the returned ``marked`` copy: if the helper shallow-copied each row
+    (``dict(eval_data)`` instead of ``copy.deepcopy(eval_data)``) that
+    mutation would reach back into the caller's own ``eval_outputs`` through
+    the shared nested dict.
+    """
+    live, deleted = eval_configs["live"], eval_configs["deleted"]
+    eval_outputs = _eval_outputs_for(live, deleted)
+    eval_outputs[str(live.id)]["details"] = {"choices": ["a", "b"]}
+    before = copy.deepcopy(eval_outputs)
+    eval_configs_map = {str(live.id): live, str(deleted.id): deleted}
+
+    marked = run_test_views.RunTestCallExecutionsView._mark_removed_evals(
+        eval_outputs, eval_configs_map
+    )
+
+    # The stamp landed on the returned copy...
+    assert marked[str(deleted.id)]["removed"] is True
+    assert "removed" not in marked[str(live.id)]
+    # ...but the caller's own dict, and every row dict nested inside it, is
+    # byte-for-byte unchanged.
+    assert eval_outputs == before
+    assert "removed" not in eval_outputs[str(deleted.id)]
+    assert "removed" not in eval_outputs[str(live.id)]
+
+    # Mutate the returned copy's nested value: if the helper only shallow-
+    # copied each row, this reaches back into the caller's own dict through
+    # the shared nested object.
+    marked[str(live.id)]["details"]["choices"].append("c")
+    assert eval_outputs[str(live.id)]["details"]["choices"] == ["a", "b"]
 
 
 @pytest.mark.django_db
