@@ -8,12 +8,13 @@ import { clearScenarioSelection, publishScenarioSelection } from "src/sections/s
 vi.mock("src/api/harness/harness", () => ({
   getHarnessJob: vi.fn(),
   sendHarnessConversationMessage: vi.fn(),
-  harnessIdempotencyKey: () => "req-test",
+  harnessIdempotencyKey: vi.fn(() => "req-test"),
 }));
 
 import {
   getHarnessJob,
   sendHarnessConversationMessage,
+  harnessIdempotencyKey,
 } from "src/api/harness/harness";
 
 const ENV = { id: "job-1", name: "Support triage" };
@@ -55,6 +56,8 @@ describe("useWorkspaceChat (real)", () => {
     clearScenarioSelection();
     sendHarnessConversationMessage.mockReset();
     getHarnessJob.mockReset();
+    harnessIdempotencyKey.mockReset();
+    harnessIdempotencyKey.mockReturnValue("req-test");
   });
   afterEach(() => clearScenarioSelection());
 
@@ -175,6 +178,70 @@ describe("useWorkspaceChat (real)", () => {
       expect(errStep?.text).toContain("does not identify the open harness question");
       expect(errStep?.onRetry).toBeUndefined();
     });
+  });
+
+  it("replays the original payload and idempotency key on retry, not current state", async () => {
+    // The first send clears the scenario selection and mints a client_request_id.
+    // A retry must replay THAT command — same scenario_ids, same id — so a lost
+    // response can't post the turn twice or with a narrower scope.
+    harnessIdempotencyKey.mockReturnValueOnce("req-A").mockReturnValueOnce("req-B");
+    sendHarnessConversationMessage
+      .mockRejectedValueOnce({ message: "network blip", retryable: true, statusCode: 503 })
+      .mockResolvedValueOnce(conversationWith());
+    publishScenarioSelection({ ids: ["s1", "s2"], rows: [{ name: "a" }, { name: "b" }] });
+    const { result } = renderChat(conversationWith());
+
+    await act(async () => result.current.send("make them impatient"));
+
+    let errStep;
+    await waitFor(() => {
+      errStep = result.current.turns.flatMap((t) => t.steps || []).find((s) => s.kind === "error");
+      expect(errStep?.onRetry).toBeInstanceOf(Function);
+    });
+
+    await act(async () => errStep.onRetry());
+
+    await waitFor(() => expect(sendHarnessConversationMessage).toHaveBeenCalledTimes(2));
+    const first = sendHarnessConversationMessage.mock.calls[0][1];
+    const second = sendHarnessConversationMessage.mock.calls[1][1];
+    expect(second.payload.scenario_ids).toEqual(["s1", "s2"]);
+    expect(second.client_request_id).toBe(first.client_request_id);
+    expect(second.client_request_id).toBe("req-A");
+  });
+
+  it("writes the response into the job that submitted it, not the mounted job", async () => {
+    // Navigate from env A to a cached env B while A's send is still posting. The
+    // success handler must update A's ["harness-job", A] cache, never B's.
+    let resolveSend;
+    sendHarnessConversationMessage.mockImplementation(
+      () => new Promise((res) => { resolveSend = res; }),
+    );
+    const { client, Wrapper } = wrapper();
+    // Per-id so the background poll for job-2 restores cB, not cA — isolating
+    // the mutation write from the query refetch.
+    getHarnessJob.mockImplementation((id) =>
+      Promise.resolve(jobWith(conversationWith({ conversation_id: id === "job-2" ? "cB" : "cA" }))),
+    );
+    client.setQueryData(["harness-job", "job-1"], jobWith(conversationWith({ conversation_id: "cA" })));
+    client.setQueryData(["harness-job", "job-2"], jobWith(conversationWith({ conversation_id: "cB" })));
+
+    const { result, rerender } = renderHook(
+      ({ env }) => useWorkspaceChat(env, { source: "harness" }),
+      { wrapper: Wrapper, initialProps: { env: { id: "job-1", name: "A" } } },
+    );
+
+    await act(async () => result.current.send("hi"));
+    rerender({ env: { id: "job-2", name: "B" } });
+
+    await act(async () => {
+      resolveSend(conversationWith({ conversation_id: "cA-updated" }));
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(client.getQueryData(["harness-job", "job-1"]).conversation.conversation_id).toBe("cA-updated"),
+    );
+    expect(client.getQueryData(["harness-job", "job-2"]).conversation.conversation_id).toBe("cB");
   });
 
   it("uses the no-workspace frozen reason for a terminal run with no runtime", () => {

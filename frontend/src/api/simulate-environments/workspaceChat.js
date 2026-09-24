@@ -59,10 +59,13 @@ export function useWorkspaceChat(env, { source } = {}) {
 
   const mutation = useMutation({
     mutationFn: ({ id, payload }) => sendHarnessConversationMessage(id, payload),
-    onSuccess: async (value, { requestId }) => {
+    onSuccess: async (value, { id, requestId }) => {
       setPending((prev) => prev.filter((p) => p.id !== requestId));
       if (!value) return;
-      const key = ["harness-job", jobIdRef.current];
+      // Key off the job that SUBMITTED this send, not the currently-mounted one:
+      // if the workspace navigated to another env mid-flight, `jobIdRef.current`
+      // now points at it and we'd write this conversation into the wrong cache.
+      const key = ["harness-job", id];
       await queryClient.cancelQueries({ queryKey: key });
       queryClient.setQueryData(key, (prev) =>
         prev ? { ...prev, conversation: value } : prev,
@@ -119,8 +122,11 @@ export function useWorkspaceChat(env, { source } = {}) {
       if (scenarioIds) clearScenarioSelection();
 
       const requestId = harnessIdempotencyKey();
-      setPending((prev) => [...prev, { id: requestId, text: content }]);
-      mutate({
+      // Snapshot the exact command so Retry replays THIS payload and id — the
+      // selection has already been cleared and the blocking question may have
+      // moved on, so re-deriving it on retry would change the scope and mint a
+      // new client_request_id, defeating server-side deduplication.
+      const variables = {
         id,
         requestId,
         payload: {
@@ -133,7 +139,9 @@ export function useWorkspaceChat(env, { source } = {}) {
             ...(scenarioIds ? { scenario_ids: scenarioIds } : {}),
           },
         },
-      });
+      };
+      setPending((prev) => [...prev, { id: requestId, text: content, variables }]);
+      mutate(variables);
     },
     [mutate],
   );
@@ -179,13 +187,21 @@ export function useWorkspaceChat(env, { source } = {}) {
     });
   }, [conversation, send]);
 
-  // Retry a failed send: drop its marker and re-send the same text.
+  // Retry a failed send by replaying its original variables (same payload, same
+  // client_request_id) rather than composing a fresh send from current state.
   const retry = useCallback(
-    (id, text) => {
-      setPending((prev) => prev.filter((p) => p.id !== id));
-      send(text);
+    (marker) => {
+      if (!marker?.variables) return;
+      setPending((prev) =>
+        prev.map((p) =>
+          p.id === marker.id
+            ? { ...p, failed: false, errorMessage: undefined, retryable: undefined }
+            : p,
+        ),
+      );
+      mutate(marker.variables);
     },
-    [send],
+    [mutate],
   );
 
   // Optimistic user turns (+ any failed-send markers) tack onto the end.
@@ -203,7 +219,7 @@ export function useWorkspaceChat(env, { source } = {}) {
                   id: `${p.id}-es`,
                   kind: "error",
                   text: p.errorMessage || "Couldn't send that message.",
-                  onRetry: p.retryable ? () => retry(p.id, p.text) : undefined,
+                  onRetry: p.retryable ? () => retry(p) : undefined,
                 },
               ],
             },
