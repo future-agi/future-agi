@@ -45701,6 +45701,1218 @@ export const SimulateTestExecutionsTranscriptsListResponse = zod.object({
   total_transcripts: zod.number().optional(),
 });
 
+export const SimulateV3CallExecutionDetailParams = zod.object({
+  call_execution_id: zod.string(),
+});
+
+export const simulateV3CallExecutionDetailResponseDurationSecondsMin =
+  -2147483648;
+export const simulateV3CallExecutionDetailResponseDurationSecondsMax = 2147483647;
+
+export const simulateV3CallExecutionDetailResponseResponseTimeMsMin =
+  -2147483648;
+export const simulateV3CallExecutionDetailResponseResponseTimeMsMax = 2147483647;
+
+export const simulateV3CallExecutionDetailResponseEndedReasonMax = 10000;
+
+export const simulateV3CallExecutionDetailResponseAvgAgentLatencyMsMin =
+  -2147483648;
+export const simulateV3CallExecutionDetailResponseAvgAgentLatencyMsMax = 2147483647;
+
+export const simulateV3CallExecutionDetailResponseUserInterruptionCountMin =
+  -2147483648;
+export const simulateV3CallExecutionDetailResponseUserInterruptionCountMax = 2147483647;
+
+export const simulateV3CallExecutionDetailResponseAiInterruptionCountMin =
+  -2147483648;
+export const simulateV3CallExecutionDetailResponseAiInterruptionCountMax = 2147483647;
+
+export const simulateV3CallExecutionDetailResponseCostCentsMin = -2147483648;
+export const simulateV3CallExecutionDetailResponseCostCentsMax = 2147483647;
+
+export const simulateV3CallExecutionDetailResponseCustomerCostCentsMin =
+  -2147483648;
+export const simulateV3CallExecutionDetailResponseCustomerCostCentsMax = 2147483647;
+
+export const simulateV3CallExecutionDetailResponseCustomerCallIdMax = 255;
+
+export const simulateV3CallExecutionDetailResponsePhoneNumberMax = 20;
+
+export const SimulateV3CallExecutionDetailResponse = zod.object({
+  id: zod.string().uuid().optional(),
+  service_provider_call_id: zod.string().min(1).optional(),
+  session_id: zod.string().optional(),
+  timestamp: zod.string().datetime({ offset: true }).optional(),
+  call_type: zod.string().optional(),
+  status: zod
+    .enum([
+      "pending",
+      "queued",
+      "ongoing",
+      "completed",
+      "failed",
+      "analyzing",
+      "cancelled",
+    ])
+    .optional()
+    .describe("Current status of the call"),
+  duration: zod.string().optional(),
+  duration_seconds: zod
+    .number()
+    .min(simulateV3CallExecutionDetailResponseDurationSecondsMin)
+    .max(simulateV3CallExecutionDetailResponseDurationSecondsMax)
+    .optional()
+    .describe("Duration of the call in seconds"),
+  start_time: zod.string().optional(),
+  transcript: zod.string().optional(),
+  scenario: zod.string().min(1).optional(),
+  overall_score: zod.string().optional(),
+  response_time: zod.string().optional(),
+  response_time_ms: zod
+    .number()
+    .min(simulateV3CallExecutionDetailResponseResponseTimeMsMin)
+    .max(simulateV3CallExecutionDetailResponseResponseTimeMsMax)
+    .optional()
+    .describe("Average response time in milliseconds"),
+  audio_url: zod.string().url().min(1).optional(),
+  customer_name: zod.string().min(1).optional(),
+  eval_outputs: zod.string().optional(),
+  eval_metrics: zod
+    .record(
+      zod.string(),
+      zod.object({
+        id: zod.string().optional(),
+        name: zod.string().optional(),
+        value: zod
+          .object({})
+          .passthrough()
+          .optional()
+          .describe("number | bool | string | list[string] | null"),
+        reason: zod.string().optional(),
+        type: zod.string().optional(),
+        template_type: zod.string().optional(),
+        visible: zod.boolean().optional(),
+        error: zod.boolean().optional(),
+        status: zod.string().optional(),
+        skipped: zod.boolean().optional(),
+        error_localizer: zod.boolean().optional(),
+        error_analysis: zod.object({}).passthrough().optional(),
+        error_localizer_status: zod.string().optional(),
+        error_localizer_message: zod.string().optional(),
+        selected_input_key: zod.string().optional(),
+        input_data: zod.object({}).passthrough().optional(),
+        input_types: zod.object({}).passthrough().optional(),
+      }),
+    )
+    .optional()
+    .describe("Get evaluation metrics in a format suitable for the UI"),
+  scenario_columns: zod.string().optional(),
+  ended_reason: zod
+    .string()
+    .max(simulateV3CallExecutionDetailResponseEndedReasonMax)
+    .optional()
+    .describe("Reason why the call ended"),
+  simulator_agent_name: zod.string().min(1).optional(),
+  simulator_agent_id: zod.string().uuid().optional(),
+  agent_definition_used_name: zod.string().min(1).optional(),
+  agent_definition_used_id: zod.string().uuid().optional(),
+  call_summary: zod
+    .string()
+    .optional()
+    .describe("Call summary from the service"),
+  recordings: zod.string().optional(),
+  test_execution_id: zod.string().uuid().optional(),
+  scenario_id: zod.string().optional(),
+  scenario_graph: zod.string().optional(),
+  scenario_graph_id: zod.string().optional(),
+  avg_agent_latency: zod.number().optional(),
+  avg_agent_latency_ms: zod
+    .number()
+    .min(simulateV3CallExecutionDetailResponseAvgAgentLatencyMsMin)
+    .max(simulateV3CallExecutionDetailResponseAvgAgentLatencyMsMax)
+    .optional()
+    .describe(
+      "Average agent latency in milliseconds (time taken by agent to respond after user's pause)",
+    ),
+  user_interruption_count: zod
+    .number()
+    .min(simulateV3CallExecutionDetailResponseUserInterruptionCountMin)
+    .max(simulateV3CallExecutionDetailResponseUserInterruptionCountMax)
+    .optional()
+    .describe("Number of times user interrupted the AI"),
+  user_interruption_rate: zod
+    .number()
+    .optional()
+    .describe("Rate of user interruptions (interruptions per minute)"),
+  user_wpm: zod.number().optional().describe("User's words per minute"),
+  bot_wpm: zod.number().optional().describe("Bot's words per minute"),
+  talk_ratio: zod
+    .number()
+    .optional()
+    .describe("Ratio of bot speaking time to user speaking time"),
+  ai_interruption_count: zod
+    .number()
+    .min(simulateV3CallExecutionDetailResponseAiInterruptionCountMin)
+    .max(simulateV3CallExecutionDetailResponseAiInterruptionCountMax)
+    .optional()
+    .describe("Number of times AI interrupted the user"),
+  ai_interruption_rate: zod
+    .number()
+    .optional()
+    .describe("Rate of AI interruptions (interruptions per minute)"),
+  avg_stop_time_after_interruption: zod.number().optional(),
+  total_tokens: zod.string().optional(),
+  input_tokens: zod.string().optional(),
+  output_tokens: zod.string().optional(),
+  avg_latency_ms: zod.string().optional(),
+  turn_count: zod.string().optional(),
+  agent_talk_percentage: zod.string().optional(),
+  csat_score: zod.string().optional(),
+  processing_skipped: zod.string().optional(),
+  processing_skip_reason: zod.string().optional(),
+  rerun_snapshots: zod.string().optional(),
+  is_snapshot: zod.string().optional(),
+  snapshot_timestamp: zod.string().optional(),
+  rerun_type: zod.string().optional(),
+  original_call_execution_id: zod.string().optional(),
+  tool_outputs: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe("Tool evaluation output - separate from standard evaluations"),
+  cost_cents: zod
+    .number()
+    .min(simulateV3CallExecutionDetailResponseCostCentsMin)
+    .max(simulateV3CallExecutionDetailResponseCostCentsMax)
+    .optional()
+    .describe("Cost of the call in cents"),
+  customer_cost_cents: zod
+    .number()
+    .min(simulateV3CallExecutionDetailResponseCustomerCostCentsMin)
+    .max(simulateV3CallExecutionDetailResponseCustomerCostCentsMax)
+    .optional()
+    .describe("Total customer-reported cost in cents"),
+  customer_cost_breakdown: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe("Detailed cost breakdown from customer call data"),
+  customer_latency_metrics: zod
+    .object({})
+    .passthrough()
+    .optional()
+    .describe("Latency metrics from customer call data"),
+  customer_call_id: zod
+    .string()
+    .max(simulateV3CallExecutionDetailResponseCustomerCallIdMax)
+    .optional()
+    .describe("Customer call ID if available"),
+  simulation_call_type: zod
+    .enum(["voice", "text"])
+    .optional()
+    .describe("Type of simulation call"),
+  provider: zod.string().optional(),
+  phone_number: zod
+    .string()
+    .max(simulateV3CallExecutionDetailResponsePhoneNumberMax)
+    .optional()
+    .describe("Phone number called (null for TEXT/chat simulations)"),
+  goal: zod.string().min(1),
+  scenario_details: zod.string().min(1),
+  ideal_outcome: zod.string().min(1),
+  conversation_branch: zod.string().min(1),
+  persona: zod.string().min(1),
+  persona_details: zod.object({
+    name: zod.string().min(1),
+    voice: zod.string().min(1),
+    age: zod.string().min(1),
+    traits: zod.array(zod.string().min(1)),
+  }),
+  sub_goals: zod.array(zod.string().min(1)),
+  outcome: zod.enum(["passed", "failed", "error", "inconclusive"]),
+  cost_breakdown_cents: zod.object({
+    stt: zod.number(),
+    llm: zod.number(),
+    tts: zod.number(),
+    storage: zod.number(),
+    customer: zod.number(),
+  }),
+  evaluations: zod.array(
+    zod.object({
+      id: zod.string().min(1),
+      name: zod.string().min(1),
+      type: zod.string().min(1),
+      value: zod.object({}).passthrough(),
+      score: zod.number(),
+      passed: zod.boolean(),
+      reason: zod.string(),
+      status: zod.string().min(1),
+    }),
+  ),
+  function_calls: zod.array(
+    zod.object({
+      id: zod.string().min(1).optional(),
+      name: zod.string().min(1).optional(),
+      arguments: zod.object({}).passthrough().optional(),
+      result: zod.object({}).passthrough().optional(),
+      output: zod.object({}).passthrough().optional(),
+      duration_ms: zod.number().optional(),
+    }),
+  ),
+});
+
+export const SimulateV3TestExecutionAnalyticsParams = zod.object({
+  test_execution_id: zod.string(),
+});
+
+export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
+  dashboard: zod.object({
+    metrics: zod.array(
+      zod.object({
+        key: zod.string().min(1),
+        label: zod.string().min(1),
+        value: zod.number(),
+        unit: zod.enum([
+          "number",
+          "percent",
+          "ms",
+          "seconds",
+          "ratio",
+          "cents",
+        ]),
+        measured: zod.number(),
+        total: zod.number(),
+        note: zod.string(),
+      }),
+    ),
+    breakdowns: zod.array(
+      zod.object({
+        key: zod.string().min(1),
+        label: zod.string().min(1),
+        total: zod.number(),
+        segments: zod.array(
+          zod.object({
+            label: zod.string().min(1),
+            count: zod.number(),
+            share: zod.number(),
+            statuses: zod.array(zod.string().min(1)).optional(),
+          }),
+        ),
+        headline: zod.object({
+          label: zod.string().min(1),
+          count: zod.number(),
+          share: zod.number(),
+          statuses: zod.array(zod.string().min(1)).optional(),
+        }),
+      }),
+    ),
+    voice_slos: zod.array(
+      zod.object({
+        key: zod.string().min(1),
+        average: zod.number(),
+        measured: zod.number(),
+        max: zod.number(),
+        p50: zod.number(),
+        p90: zod.number(),
+        p99: zod.number(),
+        label: zod.string().min(1),
+      }),
+    ),
+    interruptions: zod.object({
+      total: zod.number(),
+      measured: zod.number(),
+      average: zod.number(),
+    }),
+    series: zod.array(
+      zod.object({
+        label: zod.string().min(1),
+        started_at: zod.string().datetime({ offset: true }),
+        calls: zod.number(),
+        duration_ms: zod.number(),
+        llm_cents: zod.number(),
+        tts_cents: zod.number(),
+        stt_cents: zod.number(),
+        storage_cents: zod.number(),
+      }),
+    ),
+    series_limit: zod.number(),
+    series_mode: zod.enum(["calls", "time_buckets"]),
+    latency_percentiles: zod.array(
+      zod.object({
+        percentile: zod.number(),
+        value: zod.number(),
+      }),
+    ),
+    distributions: zod.array(
+      zod.object({
+        key: zod.string().min(1),
+        average: zod.number(),
+        measured: zod.number(),
+        max: zod.number(),
+        p50: zod.number(),
+        p90: zod.number(),
+        p99: zod.number(),
+      }),
+    ),
+    csat: zod.object({
+      bins: zod.array(
+        zod.object({
+          label: zod.string().min(1),
+          lower: zod.number(),
+          upper: zod.number(),
+          count: zod.number(),
+          danger: zod.boolean(),
+        }),
+      ),
+      measured: zod.number(),
+      total: zod.number(),
+      agreement: zod.object({
+        compared: zod.number(),
+        agreed: zod.number(),
+        percent: zod.number(),
+      }),
+    }),
+    agent_response_time: zod.object({
+      bins: zod.array(
+        zod.object({
+          label: zod.string().min(1),
+          lower: zod.number(),
+          upper: zod.number(),
+          count: zod.number(),
+          danger: zod.boolean(),
+        }),
+      ),
+      measured: zod.number(),
+      total: zod.number(),
+      target_ms: zod.number(),
+      p50: zod.number(),
+      p95: zod.number(),
+      at_or_above_target: zod.number(),
+      at_or_above_target_percent: zod.number(),
+    }),
+    pipeline_cost: zod.array(
+      zod.object({
+        key: zod.string().min(1),
+        label: zod.string().min(1),
+        total_cents: zod.number(),
+        share: zod.number(),
+      }),
+    ),
+    tools: zod.object({
+      total_invocations: zod.number(),
+      total_tools: zod.number(),
+      volume: zod.array(
+        zod.object({
+          name: zod.string().min(1),
+          invocations: zod.number(),
+          measured: zod.number(),
+          failures: zod.number(),
+          failure_rate: zod.number(),
+          failure_label: zod.string().min(1),
+        }),
+      ),
+      failures: zod.array(
+        zod.object({
+          name: zod.string().min(1),
+          invocations: zod.number(),
+          measured: zod.number(),
+          failures: zod.number(),
+          failure_rate: zod.number(),
+          failure_label: zod.string().min(1),
+        }),
+      ),
+    }),
+    slowest_tasks: zod.array(
+      zod.object({
+        rank: zod.number(),
+        id: zod.string().uuid(),
+        label: zod.string().min(1),
+        axis_label: zod.string().min(1),
+        value: zod.number(),
+        modality: zod.string().min(1),
+        provider: zod.string().min(1),
+      }),
+    ),
+    most_expensive_tasks: zod.array(
+      zod.object({
+        rank: zod.number(),
+        id: zod.string().uuid(),
+        label: zod.string().min(1),
+        axis_label: zod.string().min(1),
+        value: zod.number(),
+        modality: zod.string().min(1),
+        provider: zod.string().min(1),
+      }),
+    ),
+    unavailable_features: zod.array(
+      zod.object({
+        key: zod.string().min(1),
+        reason: zod.string().min(1),
+      }),
+    ),
+    evaluation_summary: zod.object({
+      graders: zod.number(),
+      passed: zod.number(),
+      measured: zod.number(),
+      pass_rate: zod.number(),
+    }),
+    use_case_risk: zod.array(
+      zod.object({
+        goal: zod.string().min(1),
+        passed: zod.number(),
+        failed: zod.number(),
+        error: zod.number(),
+        inconclusive: zod.number(),
+      }),
+    ),
+    goal_count: zod.number(),
+  }),
+  execution: zod.object({
+    id: zod.string().uuid(),
+    name: zod.string().min(1),
+    started_at: zod.string().datetime({ offset: true }),
+    completed_at: zod.string().datetime({ offset: true }),
+  }),
+  summary: zod.object({
+    total: zod.number(),
+    outcomes: zod.object({
+      passed: zod.number(),
+      failed: zod.number(),
+      error: zod.number(),
+      inconclusive: zod.number(),
+    }),
+    measured: zod.number(),
+    pass_rate: zod.number(),
+    duration: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+    }),
+    latency: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+    }),
+    tokens: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+      total_value: zod.number(),
+    }),
+    cost_cents: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+      total_value: zod.number(),
+    }),
+    evaluators: zod.number(),
+  }),
+  scenario_risk: zod.array(
+    zod.object({
+      total: zod.number(),
+      outcomes: zod.object({
+        passed: zod.number(),
+        failed: zod.number(),
+        error: zod.number(),
+        inconclusive: zod.number(),
+      }),
+      measured: zod.number(),
+      pass_rate: zod.number(),
+      duration: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      latency: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      tokens: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+      cost_cents: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+      goal: zod.string().min(1),
+    }),
+  ),
+  turn_distribution: zod.array(
+    zod.object({
+      passed: zod.number(),
+      failed: zod.number(),
+      error: zod.number(),
+      inconclusive: zod.number(),
+      turn_count: zod.number(),
+    }),
+  ),
+  evaluations: zod.array(
+    zod.object({
+      id: zod.string().min(1),
+      name: zod.string().min(1),
+      passed: zod.number(),
+      failed: zod.number(),
+      measured: zod.number(),
+      missing: zod.number(),
+      pass_rate: zod.number(),
+      average_score: zod.number(),
+    }),
+  ),
+  failure_breakdown: zod.array(
+    zod.object({
+      reason: zod.string().min(1),
+      failures: zod.number(),
+      share: zod.number(),
+    }),
+  ),
+  distributions: zod.object({
+    duration_seconds: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+    }),
+    latency_ms: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+    }),
+    tokens: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+      total_value: zod.number(),
+    }),
+    cost_cents: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+      total_value: zod.number(),
+    }),
+  }),
+  cost_breakdown_cents: zod.object({
+    stt: zod.object({
+      total: zod.number(),
+      measured: zod.number(),
+      calls: zod.number(),
+    }),
+    llm: zod.object({
+      total: zod.number(),
+      measured: zod.number(),
+      calls: zod.number(),
+    }),
+    tts: zod.object({
+      total: zod.number(),
+      measured: zod.number(),
+      calls: zod.number(),
+    }),
+    storage: zod.object({
+      total: zod.number(),
+      measured: zod.number(),
+      calls: zod.number(),
+    }),
+    customer: zod.object({
+      total: zod.number(),
+      measured: zod.number(),
+      calls: zod.number(),
+    }),
+  }),
+  provider_breakdown: zod.array(
+    zod.object({
+      total: zod.number(),
+      outcomes: zod.object({
+        passed: zod.number(),
+        failed: zod.number(),
+        error: zod.number(),
+        inconclusive: zod.number(),
+      }),
+      measured: zod.number(),
+      pass_rate: zod.number(),
+      duration: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      latency: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      tokens: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+      cost_cents: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+      provider: zod.string().min(1),
+    }),
+  ),
+  modality_breakdown: zod.array(
+    zod.object({
+      total: zod.number(),
+      outcomes: zod.object({
+        passed: zod.number(),
+        failed: zod.number(),
+        error: zod.number(),
+        inconclusive: zod.number(),
+      }),
+      measured: zod.number(),
+      pass_rate: zod.number(),
+      duration: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      latency: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      tokens: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+      cost_cents: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+      modality: zod.string().min(1),
+    }),
+  ),
+  trends: zod.array(
+    zod.object({
+      total: zod.number(),
+      outcomes: zod.object({
+        passed: zod.number(),
+        failed: zod.number(),
+        error: zod.number(),
+        inconclusive: zod.number(),
+      }),
+      measured: zod.number(),
+      pass_rate: zod.number(),
+      duration: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      latency: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      tokens: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+      cost_cents: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+      execution_id: zod.string().uuid(),
+      started_at: zod.string().datetime({ offset: true }),
+    }),
+  ),
+});
+
+export const SimulateV3TestExecutionCallsParams = zod.object({
+  test_execution_id: zod.string(),
+});
+
+export const simulateV3TestExecutionCallsQuerySearchDefault = ``;
+export const simulateV3TestExecutionCallsQueryFiltersDefault = {};
+export const simulateV3TestExecutionCallsQueryOrderingDefault = `-started_at`;
+export const simulateV3TestExecutionCallsQueryPageDefault = 1;
+
+export const simulateV3TestExecutionCallsQueryPageSizeDefault = 50;
+export const simulateV3TestExecutionCallsQueryPageSizeMax = 500;
+
+export const simulateV3TestExecutionCallsQueryGroupByDefault = ``;
+
+export const SimulateV3TestExecutionCallsQueryParams = zod.object({
+  search: zod.string().default(simulateV3TestExecutionCallsQuerySearchDefault),
+  filters: zod
+    .string()
+    .default(simulateV3TestExecutionCallsQueryFiltersDefault),
+  ordering: zod
+    .enum([
+      "started_at",
+      "-started_at",
+      "duration_seconds",
+      "-duration_seconds",
+      "latency_ms",
+      "-latency_ms",
+      "turn_count",
+      "-turn_count",
+      "tokens",
+      "-tokens",
+      "cost_cents",
+      "-cost_cents",
+      "scenario",
+      "-scenario",
+      "goal",
+      "-goal",
+      "outcome",
+      "-outcome",
+    ])
+    .default(simulateV3TestExecutionCallsQueryOrderingDefault),
+  page: zod
+    .number()
+    .min(1)
+    .default(simulateV3TestExecutionCallsQueryPageDefault),
+  page_size: zod
+    .number()
+    .min(1)
+    .max(simulateV3TestExecutionCallsQueryPageSizeMax)
+    .default(simulateV3TestExecutionCallsQueryPageSizeDefault),
+  group_by: zod
+    .enum(["goal", "status"])
+    .default(simulateV3TestExecutionCallsQueryGroupByDefault),
+  group_key: zod.string().optional(),
+});
+
+export const SimulateV3TestExecutionCallsResponse = zod.object({
+  execution: zod.object({
+    id: zod.string().uuid(),
+    run_test_id: zod.string().uuid(),
+    name: zod.string().min(1),
+    status: zod.string().min(1),
+    started_at: zod.string().datetime({ offset: true }),
+    completed_at: zod.string().datetime({ offset: true }),
+    ordinal: zod.number(),
+    agent_version: zod.string().min(1),
+    agent_type: zod.string().min(1),
+    summary: zod.object({
+      total: zod.number(),
+      outcomes: zod.object({
+        passed: zod.number(),
+        failed: zod.number(),
+        error: zod.number(),
+        inconclusive: zod.number(),
+      }),
+      measured: zod.number(),
+      pass_rate: zod.number(),
+      duration: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      latency: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      tokens: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+      cost_cents: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+    }),
+  }),
+  summary: zod.object({
+    total: zod.number(),
+    outcomes: zod.object({
+      passed: zod.number(),
+      failed: zod.number(),
+      error: zod.number(),
+      inconclusive: zod.number(),
+    }),
+    measured: zod.number(),
+    pass_rate: zod.number(),
+    duration: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+    }),
+    latency: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+    }),
+    tokens: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+      total_value: zod.number(),
+    }),
+    cost_cents: zod.object({
+      average: zod.number(),
+      p50: zod.number(),
+      p75: zod.number(),
+      p90: zod.number(),
+      p95: zod.number(),
+      p99: zod.number(),
+      measured: zod.number(),
+      total: zod.number(),
+      total_value: zod.number(),
+    }),
+  }),
+  count: zod.number(),
+  page: zod.number(),
+  page_size: zod.number(),
+  total_pages: zod.number(),
+  results: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      scenario: zod.string().min(1),
+      scenario_details: zod.string().min(1),
+      goal: zod.string().min(1),
+      ideal_outcome: zod.string().min(1),
+      conversation_branch: zod.string().min(1),
+      persona: zod.string().min(1),
+      persona_details: zod.object({
+        name: zod.string().min(1),
+        voice: zod.string().min(1),
+        age: zod.string().min(1),
+        traits: zod.array(zod.string().min(1)),
+      }),
+      sub_goals: zod.array(zod.string().min(1)),
+      outcome: zod.enum(["passed", "failed", "error", "inconclusive"]),
+      execution_status: zod.string().min(1),
+      modality: zod.string().min(1),
+      provider: zod.string().min(1),
+      started_at: zod.string().datetime({ offset: true }),
+      completed_at: zod.string().datetime({ offset: true }),
+      duration_seconds: zod.number(),
+      latency_ms: zod.number(),
+      turn_count: zod.number(),
+      tokens: zod.number(),
+      cost_cents: zod.number(),
+      cost_breakdown_cents: zod.object({
+        stt: zod.number(),
+        llm: zod.number(),
+        tts: zod.number(),
+        storage: zod.number(),
+        customer: zod.number(),
+      }),
+      csat: zod.number(),
+      ended_reason: zod.string().min(1),
+      error_message: zod.string().min(1),
+      evaluations: zod.array(
+        zod.object({
+          id: zod.string().min(1),
+          name: zod.string().min(1),
+          type: zod.string().min(1),
+          value: zod.object({}).passthrough(),
+          score: zod.number(),
+          passed: zod.boolean(),
+          reason: zod.string(),
+          status: zod.string().min(1),
+        }),
+      ),
+    }),
+  ),
+  groups: zod.array(
+    zod.object({
+      total: zod.number(),
+      outcomes: zod.object({
+        passed: zod.number(),
+        failed: zod.number(),
+        error: zod.number(),
+        inconclusive: zod.number(),
+      }),
+      measured: zod.number(),
+      pass_rate: zod.number(),
+      duration: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      latency: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+      }),
+      tokens: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+      cost_cents: zod.object({
+        average: zod.number(),
+        p50: zod.number(),
+        p75: zod.number(),
+        p90: zod.number(),
+        p95: zod.number(),
+        p99: zod.number(),
+        measured: zod.number(),
+        total: zod.number(),
+        total_value: zod.number(),
+      }),
+      key: zod.string().min(1),
+      label: zod.string().min(1),
+      result_ids: zod.array(zod.string().uuid()),
+      aggregates: zod.object({
+        csat: zod.number(),
+        turns: zod.number(),
+        latency_ms: zod.number(),
+        tokens: zod.number(),
+        evaluations: zod.object({}).passthrough(),
+      }),
+    }),
+  ),
+  facets: zod.object({
+    goal: zod.array(
+      zod.object({
+        value: zod.string().min(1),
+        count: zod.number(),
+      }),
+    ),
+    sub_goal: zod.array(
+      zod.object({
+        value: zod.string().min(1),
+        count: zod.number(),
+      }),
+    ),
+    status: zod.array(
+      zod.object({
+        value: zod.string().min(1),
+        count: zod.number(),
+      }),
+    ),
+  }),
+  evaluation_columns: zod.array(
+    zod.object({
+      id: zod.string().min(1),
+      name: zod.string().min(1),
+    }),
+  ),
+});
+
+export const SimulateV3TestExecutionExportParams = zod.object({
+  test_execution_id: zod.string(),
+});
+
+export const simulateV3TestExecutionExportBodySearchDefault = ``;
+export const simulateV3TestExecutionExportBodyFiltersDefault = {};
+export const simulateV3TestExecutionExportBodyOrderingDefault = `-started_at`;
+
+export const SimulateV3TestExecutionExportBody = zod.object({
+  search: zod.string().default(simulateV3TestExecutionExportBodySearchDefault),
+  filters: zod
+    .object({})
+    .passthrough()
+    .default(simulateV3TestExecutionExportBodyFiltersDefault),
+  ordering: zod
+    .enum([
+      "started_at",
+      "-started_at",
+      "duration_seconds",
+      "-duration_seconds",
+      "latency_ms",
+      "-latency_ms",
+      "turn_count",
+      "-turn_count",
+      "tokens",
+      "-tokens",
+      "cost_cents",
+      "-cost_cents",
+      "scenario",
+      "-scenario",
+      "goal",
+      "-goal",
+      "outcome",
+      "-outcome",
+    ])
+    .default(simulateV3TestExecutionExportBodyOrderingDefault),
+});
+
 export const telemetryHeartbeatCreateBodySchemaVersionDefault = 1;
 export const telemetryHeartbeatCreateBodyVersionMax = 100;
 

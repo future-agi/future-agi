@@ -242,6 +242,7 @@ import type {
   CallExecutionLogsResponseApi,
   CallExecutionRerunApi,
   CallExecutionStatusUpdateApi,
+  CallExecutionV3DetailResponseApi,
   CallTranscriptResponseApi,
   CallWebsocketErrorResponseApi,
   CallWebsocketRequestApi,
@@ -980,6 +981,9 @@ import type {
   ResourceTypeListResponseApi,
   ReviewItemRequestApi,
   RootSpansResponseApi,
+  RunAnalyticsV3ResponseApi,
+  RunCallsV3ResponseApi,
+  RunExportV3RequestApi,
   RunNewEvalsOnTestExecutionApi,
   RunNewEvalsResponseApi,
   RunPromptColumnConfigResponseApi,
@@ -1110,6 +1114,7 @@ import type {
   SimulateScenariosListParams,
   SimulateTestExecutionsPreviewCallsListParams,
   SimulateTestExecutionsReadParams,
+  SimulateV3TestExecutionCallsParams,
   SimulationPreviewErrorApi,
   SimulationPreviewPageApi,
   SimulatorAgentApi,
@@ -66463,6 +66468,195 @@ export const simulateTestExecutionsTranscriptsList = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateV3CallExecutionDetailResponse200 = {
+  data: CallExecutionV3DetailResponseApi;
+  status: 200;
+};
+
+export type simulateV3CallExecutionDetailResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateV3CallExecutionDetailResponseSuccess =
+  simulateV3CallExecutionDetailResponse200 & {
+    headers: Headers;
+  };
+export type simulateV3CallExecutionDetailResponseError =
+  simulateV3CallExecutionDetailResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateV3CallExecutionDetailResponse =
+  | simulateV3CallExecutionDetailResponseSuccess
+  | simulateV3CallExecutionDetailResponseError;
+
+export const getSimulateV3CallExecutionDetailUrl = (
+  callExecutionId: string,
+) => {
+  return `/simulate/v3/call-executions/${callExecutionId}/`;
+};
+
+export const simulateV3CallExecutionDetail = async (
+  callExecutionId: string,
+  options?: RequestInit,
+): Promise<simulateV3CallExecutionDetailResponse> => {
+  return apiMutator<simulateV3CallExecutionDetailResponse>(
+    getSimulateV3CallExecutionDetailUrl(callExecutionId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateV3TestExecutionAnalyticsResponse200 = {
+  data: RunAnalyticsV3ResponseApi;
+  status: 200;
+};
+
+export type simulateV3TestExecutionAnalyticsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateV3TestExecutionAnalyticsResponseSuccess =
+  simulateV3TestExecutionAnalyticsResponse200 & {
+    headers: Headers;
+  };
+export type simulateV3TestExecutionAnalyticsResponseError =
+  simulateV3TestExecutionAnalyticsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateV3TestExecutionAnalyticsResponse =
+  | simulateV3TestExecutionAnalyticsResponseSuccess
+  | simulateV3TestExecutionAnalyticsResponseError;
+
+export const getSimulateV3TestExecutionAnalyticsUrl = (
+  testExecutionId: string,
+) => {
+  return `/simulate/v3/test-executions/${testExecutionId}/analytics/`;
+};
+
+export const simulateV3TestExecutionAnalytics = async (
+  testExecutionId: string,
+  options?: RequestInit,
+): Promise<simulateV3TestExecutionAnalyticsResponse> => {
+  return apiMutator<simulateV3TestExecutionAnalyticsResponse>(
+    getSimulateV3TestExecutionAnalyticsUrl(testExecutionId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateV3TestExecutionCallsResponse200 = {
+  data: RunCallsV3ResponseApi;
+  status: 200;
+};
+
+export type simulateV3TestExecutionCallsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateV3TestExecutionCallsResponseSuccess =
+  simulateV3TestExecutionCallsResponse200 & {
+    headers: Headers;
+  };
+export type simulateV3TestExecutionCallsResponseError =
+  simulateV3TestExecutionCallsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateV3TestExecutionCallsResponse =
+  | simulateV3TestExecutionCallsResponseSuccess
+  | simulateV3TestExecutionCallsResponseError;
+
+export const getSimulateV3TestExecutionCallsUrl = (
+  testExecutionId: string,
+  params?: SimulateV3TestExecutionCallsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/v3/test-executions/${testExecutionId}/calls/?${stringifiedParams}`
+    : `/simulate/v3/test-executions/${testExecutionId}/calls/`;
+};
+
+export const simulateV3TestExecutionCalls = async (
+  testExecutionId: string,
+  params?: SimulateV3TestExecutionCallsParams,
+  options?: RequestInit,
+): Promise<simulateV3TestExecutionCallsResponse> => {
+  return apiMutator<simulateV3TestExecutionCallsResponse>(
+    getSimulateV3TestExecutionCallsUrl(testExecutionId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateV3TestExecutionExportResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateV3TestExecutionExportResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateV3TestExecutionExportResponseSuccess =
+  simulateV3TestExecutionExportResponse200 & {
+    headers: Headers;
+  };
+export type simulateV3TestExecutionExportResponseError =
+  simulateV3TestExecutionExportResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateV3TestExecutionExportResponse =
+  | simulateV3TestExecutionExportResponseSuccess
+  | simulateV3TestExecutionExportResponseError;
+
+export const getSimulateV3TestExecutionExportUrl = (
+  testExecutionId: string,
+) => {
+  return `/simulate/v3/test-executions/${testExecutionId}/export/`;
+};
+
+export const simulateV3TestExecutionExport = async (
+  testExecutionId: string,
+  runExportV3RequestApi: RunExportV3RequestApi,
+  options?: RequestInit,
+): Promise<simulateV3TestExecutionExportResponse> => {
+  return apiMutator<simulateV3TestExecutionExportResponse>(
+    getSimulateV3TestExecutionExportUrl(testExecutionId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(runExportV3RequestApi),
     },
   );
 };

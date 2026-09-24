@@ -1,0 +1,45 @@
+import { screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { render } from "src/utils/test-utils";
+import CopyField from "../CopyField";
+
+const writeText = vi.fn().mockResolvedValue(undefined);
+
+// userEvent.setup() installs its own clipboard stub, so re-assert ours after.
+const stubClipboard = () => {
+  Object.defineProperty(navigator, "clipboard", {
+    value: { writeText },
+    configurable: true,
+  });
+};
+
+beforeEach(() => {
+  writeText.mockClear();
+  stubClipboard();
+});
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
+
+describe("CopyField", () => {
+  it("renders the value", () => {
+    render(<CopyField value="fai env init demo" />);
+    expect(screen.getByText("fai env init demo")).toBeInTheDocument();
+  });
+
+  it("copies the value to the clipboard on click", async () => {
+    const user = userEvent.setup();
+    stubClipboard();
+    render(<CopyField value="fai env init demo" />);
+
+    await user.click(screen.getByRole("button", { name: /copy/i }));
+
+    expect(writeText).toHaveBeenCalledWith("fai env init demo");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /copied/i })).toBeInTheDocument(),
+    );
+  });
+});
