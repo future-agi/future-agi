@@ -303,6 +303,13 @@ jobs:
           repository: future-agi/deployment
           token: ${{ steps.app-token.outputs.token }}
           ref: main
+      # This repo's release scripts, beside the deployment checkout rather than
+      # in place of it: the bump below addresses values files by relative path.
+      - name: Checkout release scripts
+        uses: actions/checkout@v4
+        with:
+          path: platform
+          sparse-checkout: scripts
       - name: Install yq
         run: sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64 && sudo chmod +x /usr/local/bin/yq
       - name: Bump platform tags
@@ -334,6 +341,17 @@ jobs:
             test "$(yq '.errorFeed.image.digest' "$file")" != 'null'
             yq -i '.errorFeed.image.digest = strenv(WORKER_DIGEST)' "$file"
           done
+      - name: Verify no platform image was left behind
+        run: |
+          set -eu
+          # The path list above bumps what it is told to. This asserts the
+          # result: every image in the platform release lane must now carry
+          # $VERSION, so a tag added to a values file but not to the path list
+          # fails here instead of in a deploy. The image list lives in the
+          # script; scripts/test_verify_platform_image_tags.py pins it.
+          python3 -c 'import yaml' 2>/dev/null || python3 -m pip install --quiet --user pyyaml
+          python3 platform/scripts/verify-platform-image-tags.py "$VERSION" \
+            eu/gcp/deployment/values.yaml us/gcp/deployment/values.yaml
       - name: Open bump PR
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
