@@ -30,6 +30,7 @@ import {
   useHarnessScenarioCoverage,
   useHarnessScenarios,
 } from "src/api/harness/scenarios";
+import { noiseValue } from "src/sections/simulate/environments/workspace/scenarios/scenarioEditor.constants";
 import ScenarioEditForm from "./ScenarioEditForm";
 
 const selectableCheckboxSx = {
@@ -172,8 +173,17 @@ export default function ScenarioSuite({
   const fields = served?.fields || [];
   // The groupings the server offers. Nothing here is written into the client.
   const groupings = served?.groupings || [];
-  const editableFields =
-    served?.editing?.editable_fields || scenarioEditing?.editable_fields;
+  const contract = served?.editing || scenarioEditing;
+  const editableFields = contract?.editable_fields;
+  const personaFields = contract?.persona_fields;
+  const levelLabels = served?.levelLabels || {};
+  const noiseChoices =
+    fields.find((one) => one.value === "background_noise")?.choices || [];
+  const filterFields = fields.map((one) =>
+    one.value === "background_noise"
+      ? { ...one, choiceLabels: levelLabels }
+      : one,
+  );
 
   const activeFilters = Object.keys(filters).length;
   const applyFilters = (result) => {
@@ -280,31 +290,43 @@ export default function ScenarioSuite({
     // One scenario at a time. Each scenario's checks are its own, so there is nothing sensible
     // to apply across a selection: a shared "passes when" would erase what makes each a test.
     const naming = { scenario: editing.name };
+    const offered = (field) => (editableFields || []).includes(field);
     const changes = [
       { op: "set_field", ...naming, field: "tests", value: form.tests },
-      { op: "set_field", ...naming, field: "max_turns", value: form.max_turns },
       { op: "set_field", ...naming, field: "keywords", value: form.keywords },
-      {
+      offered("max_turns") &&
+        form.max_turns != null && {
+          op: "set_field",
+          ...naming,
+          field: "max_turns",
+          value: form.max_turns,
+        },
+      offered("background_noise") && {
         op: "set_field",
         ...naming,
         field: "background_noise",
-        // The form names a place, and off is the absence of one. The harness stores either a place
-        // or false, so it goes over the wire the way it is stored.
-        value: form.background_noise === "off" ? false : form.background_noise,
+        value: noiseValue(form.background_noise),
       },
-    ];
+    ].filter(Boolean);
     if (editing.persona) {
+      const persona = {
+        personality: form.personality,
+        communication_style: form.communication_style,
+        accent: form.accent,
+        languages: form.languages,
+        occupation: form.occupation,
+        location: form.location,
+      };
       changes.push({
         op: "set_persona",
         ...naming,
-        persona: {
-          personality: form.personality,
-          communication_style: form.communication_style,
-          accent: form.accent,
-          languages: form.languages,
-          occupation: form.occupation,
-          location: form.location,
-        },
+        persona: personaFields
+          ? Object.fromEntries(
+              Object.entries(persona).filter(([key]) =>
+                personaFields.includes(key),
+              ),
+            )
+          : persona,
       });
     }
     send(changes, { rework: true });
@@ -662,7 +684,11 @@ export default function ScenarioSuite({
                         </Typography>
                       </TableCell>
                       <TableCell sx={{ maxWidth: 220, verticalAlign: "top" }}>
-                        <Levers scenario={scenario} persona={persona} />
+                        <Levers
+                          scenario={scenario}
+                          persona={persona}
+                          levelLabels={levelLabels}
+                        />
                       </TableCell>
                       <TableCell sx={{ maxWidth: 320, verticalAlign: "top" }}>
                         <Clamped text={scenario.instruction} />
@@ -770,7 +796,7 @@ export default function ScenarioSuite({
         anchorEl={filterAnchor}
         open={Boolean(filterAnchor)}
         onClose={() => setFilterAnchor(null)}
-        filterFields={fields}
+        filterFields={filterFields}
         currentFilters={activeFilters ? filters : null}
         onApply={applyFilters}
         aiPlaceholder="e.g. 'Indian accent callers carrying an attack'"
@@ -786,6 +812,9 @@ export default function ScenarioSuite({
             <ScenarioEditForm
               scenario={editing}
               editableFields={editableFields}
+              personaFields={personaFields}
+              noiseChoices={noiseChoices}
+              levelLabels={levelLabels}
               busy={busy}
               onCancel={() => setEditing(null)}
               onSave={saveScenario}
@@ -951,7 +980,7 @@ CoverageGrid.propTypes = {
 
 // The four things a voice suite is graded on: who is calling, in what accent and language, over
 // what noise, and whether the call is an attack.
-function Levers({ scenario, persona }) {
+function Levers({ scenario, persona, levelLabels = {} }) {
   const coverage = scenario.coverage || {};
   const overlay = String(coverage.overlay || "").trim();
   const noise =
@@ -974,7 +1003,11 @@ function Levers({ scenario, persona }) {
       label: spoken[0],
       tone: "default",
     },
-    noise && { key: `n-${noise}`, label: readable(noise), tone: "default" },
+    noise && {
+      key: `n-${noise}`,
+      label: levelLabels[noise] ?? readable(noise),
+      tone: "default",
+    },
     overlay &&
       overlay !== "none" && {
         key: `o-${overlay}`,
@@ -1022,6 +1055,7 @@ function Levers({ scenario, persona }) {
 Levers.propTypes = {
   scenario: PropTypes.object,
   persona: PropTypes.object,
+  levelLabels: PropTypes.object,
 };
 
 function SubGoals({ names }) {

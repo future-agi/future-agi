@@ -9,7 +9,7 @@ import {
 import SideDrawer from "../../components/SideDrawer";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import { SCENARIO_SHAPE } from "./scenarios.shapes";
-import { EDITOR_COPY, NOISE_OPTIONS, subTasksToText } from "./scenarioEditor.constants";
+import { EDITOR_COPY, noiseKey, noiseValue, subTasksToText } from "./scenarioEditor.constants";
 
 const fieldSx = { typography: "s2" };
 const selectedToggleSx = (t) => ({
@@ -25,7 +25,7 @@ const selectedToggleSx = (t) => ({
 const READ_ONLY_HINT = "Proved, not editable — this was verified when the scenario was generated.";
 const REPROOF_HINT = "Editing this re-proves the scenario.";
 
-export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEditing, noiseOptions = [] }) {
+export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEditing, noiseOptions = [], levelLabels = {} }) {
   const editableFields = useMemo(
     () => scenarioEditing?.editable_fields ?? [],
     [scenarioEditing],
@@ -35,8 +35,8 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
   // catalogue is absent, and always include the current value so it stays
   // selectable even if it's outside the server's list.
   const noiseChoices = useMemo(() => {
-    const base = noiseOptions.length ? noiseOptions : NOISE_OPTIONS;
-    const current = row?.backgroundNoise;
+    const base = noiseOptions;
+    const current = noiseKey(row?.backgroundNoise);
     return current && !base.includes(current) ? [...base, current] : base;
   }, [noiseOptions, row?.backgroundNoise]);
   const personaFields = useMemo(
@@ -69,7 +69,8 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
       tests: row.expected ?? "",
       subGoalsText: subTasksToText(row.subTasks),
       maxTurns: row.maxTurns ?? "",
-      backgroundNoise: row.backgroundNoise ?? "",
+      backgroundNoise: noiseKey(row.backgroundNoise),
+      keywords: asList(row.keywords),
       persona: {
         name: p.name ?? "",
         ageGroup: p.age_group ?? "",
@@ -80,7 +81,6 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
         occupation: p.occupation ?? "",
         location: p.location ?? "",
         languages: asList(p.languages),
-        keywords: asList(p.keywords),
       },
     };
   }, [row]);
@@ -105,8 +105,11 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
     if (canEdit("max_turns") && String(draft.maxTurns) !== String(base.maxTurns)) {
       setField("max_turns", Number(draft.maxTurns) || 0);
     }
+    if (canEdit("keywords") && draft.keywords !== base.keywords) {
+      setField("keywords", String(draft.keywords || "").split(",").map((k) => k.trim()).filter(Boolean));
+    }
     if (canEdit("background_noise") && draft.backgroundNoise !== base.backgroundNoise) {
-      setField("background_noise", draft.backgroundNoise);
+      setField("background_noise", noiseValue(draft.backgroundNoise));
     }
 
     // Persona: one set_persona op carrying only the changed, writable fields.
@@ -117,9 +120,8 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
       occupation: "occupation",
       location: "location",
       languages: "languages",
-      keywords: "keywords",
     };
-    const LIST_KEYS = new Set(["languages", "keywords"]);
+    const LIST_KEYS = new Set(["languages"]);
     const persona = {};
     for (const [draftKey, serverKey] of Object.entries(PERSONA_MAP)) {
       if (!canEditPersona(serverKey)) continue;
@@ -222,13 +224,21 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
               InputProps={{ sx: fieldSx }}
             />
           </Stack>
-          <PersonaField label="Accent" k="accent" draft={draft} onChange={setPersona} canEditPersona={canEditPersona} reworkFields={reworkFields} serverKey="accent" />
+          {canEditPersona("accent") && (
+            <PersonaField label="Accent" k="accent" draft={draft} onChange={setPersona} canEditPersona={canEditPersona} reworkFields={reworkFields} serverKey="accent" />
+          )}
           <PersonaField label="Communication style" k="communicationStyle" draft={draft} onChange={setPersona} canEditPersona={canEditPersona} reworkFields={reworkFields} serverKey="communication_style" />
           <PersonaField label="Personality" k="personality" draft={draft} onChange={setPersona} canEditPersona={canEditPersona} reworkFields={reworkFields} serverKey="personality" />
           <PersonaField label="Occupation" k="occupation" draft={draft} onChange={setPersona} canEditPersona={canEditPersona} reworkFields={reworkFields} serverKey="occupation" />
           <PersonaField label="Location" k="location" draft={draft} onChange={setPersona} canEditPersona={canEditPersona} reworkFields={reworkFields} serverKey="location" />
           <PersonaField label="Languages" k="languages" draft={draft} onChange={setPersona} canEditPersona={canEditPersona} reworkFields={reworkFields} serverKey="languages" hint="Comma-separated." />
-          <PersonaField label="Keywords" k="keywords" draft={draft} onChange={setPersona} canEditPersona={canEditPersona} reworkFields={reworkFields} serverKey="keywords" hint="Comma-separated — how the scenario is found." />
+          <TextField
+            size="small" label="Keywords" value={draft.keywords || ""}
+            disabled={!canEdit("keywords")}
+            onChange={(e) => set("keywords")(e.target.value)}
+            helperText={canEdit("keywords") ? "Comma-separated, how the scenario is found." : READ_ONLY_HINT}
+            InputProps={{ sx: fieldSx }}
+          />
 
           {(canEdit("max_turns") || canEdit("background_noise")) && (
             <>
@@ -237,7 +247,7 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
                 <Box>
                   <Stack direction="row" alignItems="center" spacing={1}>
                     <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold", flex: 1 }}>Max turns</Typography>
-                    <Typography sx={{ typography: "s2", fontVariantNumeric: "tabular-nums" }}>~{draft.maxTurns || 0}</Typography>
+                    <Typography sx={{ typography: "s2", fontVariantNumeric: "tabular-nums" }}>{draft.maxTurns ? `~${draft.maxTurns}` : "Default"}</Typography>
                   </Stack>
                   <Slider size="small" min={2} max={20} value={Number(draft.maxTurns) || 0} onChange={(_, v) => set("maxTurns")(v)} />
                   <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
@@ -261,7 +271,7 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
                       },
                     }}
                   >
-                    {noiseChoices.map((n) => <ToggleButton key={n} value={n}>{n}</ToggleButton>)}
+                    {noiseChoices.map((n) => <ToggleButton key={n} value={n}>{levelLabels[n] ?? n}</ToggleButton>)}
                   </ToggleButtonGroup>
                 </Box>
               )}
@@ -304,6 +314,7 @@ ScenarioEditor.propTypes = {
   // Background-noise choices from the server field catalogue (values the agent
   // uses). Falls back to the abstract levels when absent.
   noiseOptions: PropTypes.arrayOf(PropTypes.string),
+  levelLabels: PropTypes.object,
 };
 
 // One persona text field, gated by the server's persona_fields. Read-only when

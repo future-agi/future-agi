@@ -43,6 +43,7 @@ const toPage = (data) => ({
   groupings: Array.isArray(data?.groupings) ? data.groupings : [],
   fields: Array.isArray(data?.fields) ? data.fields : [],
   scenarioEditing: data?.scenario_editing ?? null,
+  levelLabels: data?.level_labels ?? {},
 });
 
 export function useHarnessScenarios({

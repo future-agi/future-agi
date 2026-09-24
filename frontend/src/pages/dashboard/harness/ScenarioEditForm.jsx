@@ -17,6 +17,7 @@ import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
 
 import Iconify from "src/components/iconify";
+import { noiseKey } from "src/sections/simulate/environments/workspace/scenarios/scenarioEditor.constants";
 import {
   AccentOptions,
   CommunicationStyleOptions,
@@ -41,16 +42,6 @@ const readable = (name) => String(name || "").replace(/[_-]+/g, " ").trim();
 const pick = (options) =>
   (options || []).map((one) => (typeof one === "string" ? one : one.label ?? one.value));
 
-// Where the call is made from. The voice runtime maps each of these to a real ambience clip, so
-// these are the settings that actually reach a run.
-const NOISE = ["off", "home", "office", "retail", "street", "vehicle", "transit", "outdoors"];
-
-const noiseOf = (value) => {
-  if (!value || value === "quiet line") return "off";
-  if (value === "present") return "home";
-  return typeof value === "string" ? value : "home";
-};
-
 const draftOf = (scenario) => {
   const persona = scenario.persona || {};
   return {
@@ -63,12 +54,21 @@ const draftOf = (scenario) => {
     languages: persona.languages || [],
     occupation: persona.occupation || "",
     location: persona.location || "",
-    max_turns: scenario.max_turns || 10,
-    background_noise: noiseOf(scenario.background_noise),
+    max_turns: scenario.max_turns ?? null,
+    background_noise: noiseKey(scenario.background_noise),
   };
 };
 
-export default function ScenarioEditForm({ scenario, busy, onCancel, onSave, editableFields }) {
+export default function ScenarioEditForm({
+  scenario,
+  busy,
+  onCancel,
+  onSave,
+  editableFields,
+  personaFields,
+  noiseChoices = [],
+  levelLabels = {},
+}) {
   const persona = scenario.persona || {};
   const initial = useMemo(() => draftOf(scenario), [scenario]);
   const [form, setForm] = useState(initial);
@@ -80,6 +80,11 @@ export default function ScenarioEditForm({ scenario, busy, onCancel, onSave, edi
 
   // Absent list means nothing is editable.
   const editable = (field) => (editableFields || []).includes(field);
+  const personaEditable = (field) => !personaFields || personaFields.includes(field);
+  const noiseOptions =
+    form.background_noise && !noiseChoices.includes(form.background_noise)
+      ? [...noiseChoices, form.background_noise]
+      : noiseChoices;
 
   return (
     <Stack sx={{ height: "100%" }}>
@@ -213,14 +218,16 @@ export default function ScenarioEditForm({ scenario, busy, onCancel, onSave, edi
             </Stack>
 
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-              <Autocomplete
-                fullWidth
-                size="small"
-                options={pick(AccentOptions)}
-                value={form.accent}
-                onChange={(event, value) => set("accent")(value || "")}
-                renderInput={(params) => <TextField {...params} label="Accent" />}
-              />
+              {personaEditable("accent") && (
+                <Autocomplete
+                  fullWidth
+                  size="small"
+                  options={pick(AccentOptions)}
+                  value={form.accent}
+                  onChange={(event, value) => set("accent")(value || "")}
+                  renderInput={(params) => <TextField {...params} label="Accent" />}
+                />
+              )}
               <Autocomplete
                 multiple
                 fullWidth
@@ -253,72 +260,80 @@ export default function ScenarioEditForm({ scenario, busy, onCancel, onSave, edi
               />
             </Stack>
 
-            <SectionHeader
-              title="Call constraints"
-              hint="Every scenario carries defaults. Overriding them here is safe."
-            />
+            {(editable("max_turns") || editable("background_noise")) && (
+              <>
+                <SectionHeader
+                  title="Call constraints"
+                  hint="Every scenario carries defaults. Overriding them here is safe."
+                />
 
-            <Box>
-              <Stack direction="row" alignItems="center" spacing={1}>
-                <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>
-                  Max turns
-                </Typography>
-                <Typography sx={{ typography: "s2", fontVariantNumeric: "tabular-nums" }}>
-                  {form.max_turns}
-                </Typography>
-              </Stack>
-              <Slider
-                size="small"
-                min={2}
-                max={40}
-                value={form.max_turns}
-                onChange={(event, value) => set("max_turns")(value)}
-              />
-              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                How long the call may go before it is called off.
-              </Typography>
-            </Box>
+                {editable("max_turns") && (
+                <Box>
+                  <Stack direction="row" alignItems="center" spacing={1}>
+                    <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>
+                      Max turns
+                    </Typography>
+                    <Typography sx={{ typography: "s2", fontVariantNumeric: "tabular-nums" }}>
+                      {form.max_turns ?? "Default"}
+                    </Typography>
+                  </Stack>
+                  <Slider
+                    size="small"
+                    min={2}
+                    max={40}
+                    value={form.max_turns ?? 10}
+                    onChange={(event, value) => set("max_turns")(value)}
+                  />
+                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                    How long the call may go before it is called off.
+                  </Typography>
+                </Box>
+                )}
 
-            <Box>
-              <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.75 }}>
-                Background noise
-              </Typography>
-              <ToggleButtonGroup
-                size="small"
-                exclusive
-                value={form.background_noise}
-                onChange={(event, value) => value && set("background_noise")(value)}
-                sx={{
-                  flexWrap: "wrap",
-                  gap: 0.5,
-                  "& .MuiToggleButton-root": {
-                    typography: "s2",
-                    fontWeight: 600,
-                    textTransform: "none",
-                    px: 1.5,
-                    py: 0.375,
-                    color: "text.secondary",
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: 1,
-                    "&.Mui-selected": {
-                      bgcolor: (theme) => alpha(theme.palette.primary.main, 0.12),
-                      color: "primary.main",
-                      borderColor: "primary.main",
-                    },
-                  },
-                }}
-              >
-                {NOISE.map((one) => (
-                  <ToggleButton key={one} value={one}>
-                    {one}
-                  </ToggleButton>
-                ))}
-              </ToggleButtonGroup>
-              <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.75 }}>
-                Where the call is made from. Each of these is a real ambience the run plays.
-              </Typography>
-            </Box>
+                {editable("background_noise") && (
+                <Box>
+                  <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.75 }}>
+                    Background noise
+                  </Typography>
+                  <ToggleButtonGroup
+                    size="small"
+                    exclusive
+                    value={form.background_noise}
+                    onChange={(event, value) => value && set("background_noise")(value)}
+                    sx={{
+                      flexWrap: "wrap",
+                      gap: 0.5,
+                      "& .MuiToggleButton-root": {
+                        typography: "s2",
+                        fontWeight: 600,
+                        textTransform: "none",
+                        px: 1.5,
+                        py: 0.375,
+                        color: "text.secondary",
+                        border: "1px solid",
+                        borderColor: "divider",
+                        borderRadius: 1,
+                        "&.Mui-selected": {
+                          bgcolor: (theme) => alpha(theme.palette.primary.main, 0.12),
+                          color: "primary.main",
+                          borderColor: "primary.main",
+                        },
+                      },
+                    }}
+                  >
+                    {noiseOptions.map((one) => (
+                      <ToggleButton key={one} value={one}>
+                        {levelLabels[one] ?? readable(one)}
+                      </ToggleButton>
+                    ))}
+                  </ToggleButtonGroup>
+                  <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.75 }}>
+                    Where the call is made from. Each of these is a real ambience the run plays.
+                  </Typography>
+                </Box>
+                )}
+              </>
+            )}
           </>
         )}
 
@@ -380,6 +395,9 @@ ScenarioEditForm.propTypes = {
   onCancel: PropTypes.func.isRequired,
   onSave: PropTypes.func.isRequired,
   editableFields: PropTypes.arrayOf(PropTypes.string),
+  personaFields: PropTypes.arrayOf(PropTypes.string),
+  noiseChoices: PropTypes.arrayOf(PropTypes.string),
+  levelLabels: PropTypes.object,
 };
 
 function SectionHeader({ title, hint }) {

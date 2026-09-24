@@ -29,7 +29,16 @@ export const TONE_OPTIONS = [
 export const STYLE_OPTIONS = ["concise", "verbose", "formal", "casual", "chatty", "terse"];
 export const ACCENT_OPTIONS = ["US", "UK", "IN", "BR", "AE", "JP", "other"];
 export const LANGUAGE_OPTIONS = ["English", "Spanish", "Portuguese", "Hindi", "Japanese", "Arabic"];
-export const NOISE_OPTIONS = ["none", "low", "high"];
+// The server lists noise on/off as "present" and "quiet line"; a scenario stores them as true/false.
+export const noiseKey = (value) => {
+  if (typeof value === "string") return value;
+  if (value === true) return "present";
+  return value === false ? "quiet line" : "";
+};
+export const noiseValue = (key) => {
+  if (key === "present") return true;
+  return key === "quiet line" ? false : key;
+};
 
 // Read an accent out of a "US female" / "IN male" voice string.
 const parseAccent = (voice) => {

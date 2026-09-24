@@ -174,7 +174,13 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   // The filter catalogue comes straight from the server (`fields`), counted
   // over the searched suite so an OR stays buildable; it drops into the shared
   // FilterPanel unchanged.
-  const filterFields = pageData.fields;
+  const filterFields = useMemo(
+    () =>
+      (pageData.fields || []).map((f) =>
+        f.value === "background_noise" ? { ...f, choiceLabels: pageData.levelLabels } : f,
+      ),
+    [pageData.fields, pageData.levelLabels],
+  );
   // The editor's background-noise choices come from the server field catalogue
   // (the values the agent actually uses), not a hardcoded list — so the picker
   // matches the suite and follows any backend vocabulary change automatically.
@@ -486,6 +492,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
         onSave={saveScenario}
         scenarioEditing={pageData.scenarioEditing}
         noiseOptions={noiseOptions}
+        levelLabels={pageData.levelLabels}
       />
       <ConfirmDialog
         open={!!pendingDelete}

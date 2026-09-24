@@ -4,9 +4,8 @@ import { alpha } from "@mui/material/styles";
 import { Box, Stack, Typography, Collapse } from "@mui/material";
 
 import Iconify from "src/components/iconify";
-import { subTasksFor } from "src/api/simulate-environments/_fixtures/contract";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
-import { ENV_SHAPE, SCENARIO_SHAPE } from "./scenarios.shapes";
+import { SCENARIO_SHAPE } from "./scenarios.shapes";
 
 // A scenario, in full — the expanded body of a list-view row.
 //
@@ -16,7 +15,7 @@ import { ENV_SHAPE, SCENARIO_SHAPE } from "./scenarios.shapes";
 // folder" all read fixtures (validate / proofStatus / VALIDATION_CHECKS /
 // simulatorPolicy / scenarioFolder) that are not ported in this phase and sit
 // outside the scenarios slice. The sections kept below render entirely from the
-// pooled scenario row and the ported subTasksFor helper.
+// scenario row.
 const onKeyActivate = (fn) => (e) => {
   if (e.key === "Enter" || e.key === " ") {
     e.preventDefault();
@@ -24,12 +23,12 @@ const onKeyActivate = (fn) => (e) => {
   }
 };
 
-export default function ScenarioDetail({ row, env, defaultOpen = false }) {
+export default function ScenarioDetail({ row, defaultOpen = false }) {
   const [open, setOpen] = useState(defaultOpen);
   const s = row;
   if (!s) return null;
 
-  const steps = row.subTasks?.length ? row.subTasks : subTasksFor(row, env);
+  const steps = row.subTasks || [];
 
   return (
     <Box>
@@ -160,7 +159,6 @@ export default function ScenarioDetail({ row, env, defaultOpen = false }) {
 
 ScenarioDetail.propTypes = {
   row: SCENARIO_SHAPE,
-  env: ENV_SHAPE,
   defaultOpen: PropTypes.bool,
 };
 
