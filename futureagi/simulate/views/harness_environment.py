@@ -334,7 +334,9 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         right after the bind and before anything is stamped.
 
         The run is resolved *before* the eval is bound: a request naming a
-        run that is not this environment's must leave nothing behind.
+        run that is not this environment's must leave nothing behind. A run
+        that is cancelled or cancelling is refused 409 at the same point: the
+        worker would not grade it, so nothing is bound or stamped.
         """
         from django.db import transaction
 
@@ -366,6 +368,18 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             return Response(
                 {"detail": "Run not found"},
                 status=status.HTTP_404_NOT_FOUND,
+            )
+        if execution.status in (
+            TestExecution.ExecutionStatus.CANCELLED,
+            TestExecution.ExecutionStatus.CANCELLING,
+        ):
+            # The eval worker never grades a call whose run is cancelled, so
+            # binding and stamping here would report queued work that will
+            # not happen -- and the stamp would then hide a retry for ten
+            # minutes. Refused before the bind, so nothing is left behind.
+            return Response(
+                {"detail": "Run is cancelled; nothing will be graded"},
+                status=status.HTTP_409_CONFLICT,
             )
         modality = eval_modality(job)
         wanted = request.validated_data["name"]

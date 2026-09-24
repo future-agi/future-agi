@@ -1347,6 +1347,95 @@ def test_run_add_refuses_an_environment_with_no_run_test(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    "run_status",
+    [
+        TestExecution.ExecutionStatus.CANCELLED,
+        TestExecution.ExecutionStatus.CANCELLING,
+    ],
+)
+def test_run_add_refuses_a_cancelled_run_before_binding_or_stamping(
+    env_client,
+    environment,
+    workspace,
+    dispatch,
+    django_capture_on_commit_callbacks,
+    run_status,
+):
+    """A cancelled (or cancelling) run with finished calls is refused 409:
+    the eval worker never grades a cancelled run, so a 202 here would count
+    work that does not happen. Nothing is bound and no call is stamped, so
+    the next click after the run is no longer cancelled is not hidden by the
+    ten-minute stamp."""
+    # A bindable eval, so that without the refusal this request would bind
+    # and stamp -- which is what makes the "nothing left behind" assertions
+    # below able to fail.
+    template = _template("no_misselling", ["conversation"], tags=("Conversation",))
+    run_test = environment.run_test
+    scenario = run_test.scenarios.first()
+    execution = TestExecution.objects.create(
+        run_test=run_test,
+        status=run_status,
+        total_scenarios=1,
+        scenario_ids=[str(scenario.id)],
+    )
+    call = _call(execution, metadata=_graded())
+    bound_before = set(
+        SimulateEvalConfig.objects.filter(run_test=run_test).values_list(
+            "id", flat=True
+        )
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        response = _run_add(
+            env_client, environment, execution, workspace, template.name
+        )
+
+    assert response.status_code == 409, response.content
+    assert response.json()["detail"] == "Run is cancelled; nothing will be graded"
+    dispatch.assert_not_called()
+    assert (
+        set(
+            SimulateEvalConfig.objects.filter(run_test=run_test).values_list(
+                "id", flat=True
+            )
+        )
+        == bound_before
+    ), "the refusal must come before the bind"
+    call.refresh_from_db()
+    assert (
+        "eval_queued" not in call.call_metadata
+    ), "the refusal must come before the stamp"
+
+
+@pytest.mark.django_db
+def test_queue_eval_for_finished_calls_refuses_a_cancelled_run(environment):
+    """The service backstop: no caller can stamp a cancelled run's calls."""
+    from simulate.services.harness_evals import add_selected_eval
+    from simulate.services.harness_run_evals import queue_eval_for_finished_calls
+
+    run_test = environment.run_test
+    scenario = run_test.scenarios.first()
+    execution = TestExecution.objects.create(
+        run_test=run_test,
+        status=TestExecution.ExecutionStatus.CANCELLED,
+        total_scenarios=1,
+        scenario_ids=[str(scenario.id)],
+    )
+    call = _call(execution, metadata=_graded())
+    # `add_selected_eval` needs a real catalog template to bind against, the
+    # same convention `test_run_add_counts` above uses.
+    _template("no_misselling", ["conversation"], tags=("Conversation",))
+    eval_config = add_selected_eval(run_test, "no_misselling", "voice")
+
+    with pytest.raises(ValueError, match="does not grade a cancelled run"):
+        queue_eval_for_finished_calls(execution, eval_config)
+
+    call.refresh_from_db()
+    assert "eval_queued" not in call.call_metadata
+
+
+@pytest.mark.django_db
 def test_run_add_moves_the_environment_clock_only_when_something_changed(
     env_client,
     environment,
