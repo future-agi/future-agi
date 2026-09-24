@@ -309,6 +309,8 @@ const finiteNumber = (value) => {
 // Explicit relative offsets can legitimately be zero. Harness `at` is an epoch
 // timestamp, with zero meaning unknown, so it must not be read as an offset.
 function relativeTime(row, end = false) {
+  // The serializer uses null (and stored end_time_ms=0) for unknown ends.
+  if (end && row.end_time_seconds === null) return null;
   const seconds = end
     ? [row.end_time_seconds, row.completed_at_seconds]
     : [row.start_time_seconds, row.started_at_seconds];
@@ -317,6 +319,7 @@ function relativeTime(row, end = false) {
     if (number != null) return number;
   }
   const milliseconds = finiteNumber(end ? row.end_time_ms : row.start_time_ms);
+  if (end && milliseconds <= 0) return null;
   return milliseconds == null ? null : milliseconds / 1000;
 }
 

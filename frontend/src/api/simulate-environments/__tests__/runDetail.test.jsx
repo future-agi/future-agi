@@ -2,6 +2,10 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import PropTypes from "prop-types";
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  enrichTurns,
+  computeCallMetrics,
+} from "src/components/VoiceDetailDrawerV2/transcriptUtils";
 
 // Mock only the axios default instance; keep the real `endpoints` so the URL
 // assertions below are genuine, not a tautology against our own mock.
@@ -283,6 +287,46 @@ describe("mapCallDetail", () => {
 });
 
 describe("callTranscript", () => {
+  it.each([null, undefined])(
+    "preserves unknown speech ends (%s) without corrupting voice metrics",
+    (missingEnd) => {
+      const rows = callTranscript({
+        transcript: [
+          {
+            speaker_role: "assistant",
+            start_time_seconds: 0,
+            end_time_seconds: 3,
+            start_time_ms: 0,
+            end_time_ms: 3000,
+          },
+          {
+            speaker_role: "user",
+            start_time_seconds: 6,
+            end_time_seconds: missingEnd,
+            start_time_ms: 6000,
+            end_time_ms: 0,
+          },
+          {
+            speaker_role: "assistant",
+            start_time_seconds: 8,
+            end_time_seconds: 25,
+            start_time_ms: 8000,
+            end_time_ms: 25000,
+          },
+        ],
+      });
+      expect(rows[1].end_time_seconds).toBeNull();
+      const turns = enrichTurns(rows);
+      expect(turns[1].duration).toBeNull();
+      expect(computeCallMetrics(turns)).toMatchObject({
+        userTalkPct: 0,
+        assistantTalkPct: 100,
+        silenceTotal: 3,
+        silenceCount: 1,
+      });
+    },
+  );
+
   it("interleaves timed tools and leaves missing harness timestamps at the end", () => {
     const raw = {
       transcript: [
