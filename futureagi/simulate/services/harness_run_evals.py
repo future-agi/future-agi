@@ -247,73 +247,25 @@ def queue_eval_for_finished_calls(
 ) -> dict[str, int]:
     """Queue one grading job per finished call of this run that is eligible.
 
-    Returns the five counts::
+    Returns ``{queued, skipped_existing, skipped_in_flight, skipped_pending,
+    completed_calls}``; the four skip/queue counts partition ``completed_calls``.
 
-        {queued, skipped_existing, skipped_in_flight, skipped_pending,
-         completed_calls}
+    Three things to know before editing this:
 
-    ``completed_calls`` is every call of this run with status ``completed``,
-    and the four others always partition it exactly: there is no shortfall.
-    ``queued`` means "stamped and scheduled for dispatch", counted the moment
-    a call is stamped, not once its grading job has actually reached the
-    broker -- dispatch happens after commit (below). A dispatch that then
-    fails clears its own stamp, and every stamp behind it in the same batch
-    (``_dispatch_batch_after_commit``), but that failure is not, and cannot
-    be, deducted from this number.
+    - the run's completed calls are locked in ``id`` order and stamped in one
+      ``bulk_update``, so two concurrent clicks queue behind each other rather
+      than double-queueing;
+    - dispatch is scheduled with ``transaction.on_commit``, which waits for the
+      OUTERMOST transaction -- the caller must wrap this call in its own
+      ``atomic()`` together with whatever else must succeed or fail with it;
+    - ``queued`` means stamped and scheduled, not delivered to the broker; a
+      dispatch that fails afterwards clears its stamp (and the rest of the
+      batch) but the returned count is not corrected.
 
-    Must be called from inside the caller's own ``transaction.atomic()``
-    block, alongside whatever else has to succeed or fail with it. This
-    function opens a ``transaction.atomic()`` of its own for the
-    select-and-stamp step below, which becomes a savepoint nested inside the
-    caller's transaction rather than a commit of its own, and every grading
-    job is scheduled with ``transaction.on_commit``, which Django defers
-    until the OUTERMOST transaction actually commits -- not until this
-    function's own nested block exits. So no grading job can start against a
-    stamp the caller's transaction could still roll back, and a later
-    failure elsewhere in the same request rolls the stamp and the bind back
-    together, before anything was ever dispatched. (Called with no enclosing
-    transaction at all, this function's own block simply becomes the
-    outermost one, and dispatch still waits for it to commit -- the ordering
-    guarantee degrades safely rather than silently. The caller should still
-    wrap this call: that is what ties the stamp to whatever else the request
-    must not do halfway.)
-
-    Two clicks against *this function*, a second apart, do not double-queue
-    each other -- that is what the row lock below buys, and no more. The
-    selection *and* the stamping happen inside one transaction that holds a
-    row lock on every completed call of the run, so the second request
-    blocks until the first commits and then reads the stamps the first
-    wrote -- and counts every call as ``skipped_in_flight``. Locking in
-    ``id`` order gives two concurrent requests the same lock order, so they
-    queue behind each other instead of deadlocking. The lock does not
-    protect the stamp from other whole-column writers of ``call_metadata``.
-
-    Only the completed calls, and the two JSONB columns the loop actually
-    reads (``call_metadata``, ``eval_outputs``), are fetched -- not the wide
-    row ``CallExecution`` otherwise carries -- and every eligible call is
-    stamped in one ``bulk_update`` rather than one ``UPDATE`` per row, so the
-    lock is held for one SELECT and at most one UPDATE regardless of how many
-    calls the run has. Dispatch still happens once per stamped call, each its
-    own broker round-trip, after commit; there is no batching of that part,
-    so for a run with many completed calls this is still N broker calls on
-    the request path.
-
-    This function's own nested ``transaction.atomic()`` cannot shorten how
-    long the locks above are held: Postgres releases a row lock only when the
-    OUTERMOST transaction ends, never when an inner savepoint's block exits,
-    so when the endpoint wraps this call and ``add_selected_eval``'s bind
-    together in one caller-level ``transaction.atomic()`` -- required so
-    dispatch waits for both to be durable together -- both this function's
-    ``CallExecution`` row locks and ``add_selected_eval``'s own ``RunTest``
-    row lock are held for the combined span of the bind and this whole
-    select-and-stamp, not for either function's own block alone.
-
-    ``eval_config`` must be this run's own and must carry a non-empty
-    ``mapping``; the endpoint checks the second itself so it can answer 400.
-    The run must not be cancelled or cancelling: the worker skips those, so
-    a stamp against one would be a promise nothing keeps. The endpoint
-    refuses that case itself with a 409; this is the backstop for any other
-    caller.
+    Backstops for any other caller: ``eval_config`` must be this run's own and
+    carry a non-empty ``mapping``, and the run must not be cancelled or
+    cancelling (the worker never grades those); the endpoint refuses each of
+    these itself with its own status.
     """
     if eval_config.run_test_id != test_execution.run_test_id:
         raise ValueError(
