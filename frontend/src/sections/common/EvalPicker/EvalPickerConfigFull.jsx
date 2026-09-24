@@ -603,6 +603,12 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       // ("small") for built-in templates while detail returns the full
       // canonical value, so we intentionally prefer `fullEval.model`
       // over `evalData.model` to avoid the chip rendering "small".
+      // Do NOT map `model` into `normalizedRunConfig` to "restore" the
+      // saved value: `config` is spread run-config-last, so an explicit
+      // `evalData.model` there lands in `config.model` and wins over
+      // `fullEval.model`, reintroducing the stripped-form bug. The saved
+      // model already arrives via `...rawRunConfig` once the backend
+      // stops filtering it out of `run_config` (see `build_run_config_view`).
       setModel(
         config?.model || fullEval?.model || evalData?.model || "turing_large",
       );
