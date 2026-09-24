@@ -148,6 +148,20 @@ LEVEL_LABELS: dict[str, str] = {
     "non_native": "Non-native speaker",
     "code_switching": "Switches language",
 }
+# What each background a caller can be heard over sounds like, for the noise column only.
+NOISE_LABELS: dict[str, str] = {
+    "quiet line": "Quiet line (no background noise)",
+    "present": "Background noise, place not recorded",
+    "street": "Street traffic",
+    "vehicle": "Inside a car",
+    "transit": "Airport or train station",
+    "retail": "Shop or mall",
+    "office": "Office",
+    "outdoors": "Park or outdoors",
+    "crowd": "Crowded room",
+}
+# Only a caller who is heard has an accent or a room behind them.
+VOICE_ONLY_FIELDS = frozenset({"persona.accent", "background_noise"})
 
 
 def level_label(level: str) -> str:
@@ -275,7 +289,7 @@ def apply_search(queryset: QuerySet, term: str) -> QuerySet:
     return queryset.filter(matches)
 
 
-def field_catalogue(queryset: QuerySet) -> list[dict[str, Any]]:
+def field_catalogue(queryset: QuerySet, spoken: bool = True) -> list[dict[str, Any]]:
     """The panel's `fields`, with each enum's values and counts over the whole filtered suite."""
     enums = [field for field in FIELDS if field["type"] == "enum"]
     paths = {field["value"]: _orm_path(field["value"]) for field in enums}
@@ -291,6 +305,8 @@ def field_catalogue(queryset: QuerySet) -> list[dict[str, Any]]:
 
     catalogue: list[dict[str, Any]] = []
     for field in FIELDS:
+        if not spoken and field["value"] in VOICE_ONLY_FIELDS:
+            continue
         entry = {key: value for key, value in field.items()}
         if field["type"] != "enum":
             catalogue.append(entry)
@@ -366,16 +382,19 @@ def coverage_grid(queryset: QuerySet, row_axis: str, col_axis: str) -> dict[str,
 
 def level_labels_for(rows: list[dict[str, Any]]) -> dict[str, str]:
     """The reader-facing name for every coverage level and noise bed on one page of rows."""
-    seen: set[str] = set()
+    levels: set[str] = set()
+    beds: set[str] = set()
     for row in rows or []:
         for value in (row.get("coverage") or {}).values():
             said = str(value or "").strip()
             if said:
-                seen.add(said)
+                levels.add(said)
         bed = row.get("background_noise")
         if isinstance(bed, str) and bed.strip():
-            seen.add(bed.strip())
-    return {level: level_label(level) for level in sorted(seen)}
+            beds.add(bed.strip())
+    labels = {bed: NOISE_LABELS.get(bed) or level_label(bed) for bed in sorted(beds)}
+    labels.update({level: level_label(level) for level in sorted(levels)})
+    return labels
 
 
 def scenario_row(row: HostedHarnessScenario) -> dict[str, Any]:

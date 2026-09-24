@@ -1617,7 +1617,11 @@ class HostedHarnessProvider:
         response = paginator.get_paginated_response(rows)
         response.data["groups"] = group_counts(rows, queryset, group_by)
         response.data["group_by"] = group_by
-        response.data["fields"] = field_catalogue(offerable)
+        from simulate.services.harness_environment import AGENT_TYPE_VOICE, agent_type
+
+        response.data["fields"] = field_catalogue(
+            offerable, spoken=agent_type(job) == AGENT_TYPE_VOICE
+        )
         response.data["scenario_editing"] = self._editing_contract()
         from simulate.services.harness_scenarios import GROUPINGS
 
