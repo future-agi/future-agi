@@ -422,7 +422,11 @@ services:
   # ===========================================
 
   minio:
-    image: quay.io/minio/minio:RELEASE.2025-02-07T23-21-09Z
+    # MinIO stopped publishing images (Docker Hub removed minio/minio, quay.io
+    # refuses anonymous pulls). pgsty/silo is the maintained AGPL fork: same
+    # server flags, env vars, on-disk format and bundled mc, so existing volumes
+    # keep working. Its entrypoint maps `server ...` to the renamed `silo` binary.
+    image: pgsty/silo:RELEASE.2026-09-03T13-18-01Z
     container_name: minio
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
@@ -867,7 +871,8 @@ services:
     entrypoint: ["bash", "/setup.sh"]
 
   peerdb-minio:
-    image: quay.io/minio/minio:latest
+    # Same image as minio; the fork's server binary is `silo`.
+    image: pgsty/silo:RELEASE.2026-09-03T13-18-01Z
     container_name: peerdb-minio
     restart: unless-stopped
     volumes:
@@ -877,7 +882,7 @@ services:
       MINIO_ROOT_PASSWORD: _peerdb_minioadmin
     entrypoint: >
       /bin/sh -c "
-      minio server /data --console-address=:36987 &
+      silo server /data --console-address=:36987 &
       sleep 2;
       mc alias set myminiopeerdb http://localhost:9000 _peerdb_minioadmin _peerdb_minioadmin;
       mc mb --ignore-existing myminiopeerdb/peerdbbucket;

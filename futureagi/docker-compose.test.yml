@@ -70,11 +70,10 @@ services:
       retries: 5
 
   test-minio:
-    # quay.io/minio/minio now requires authentication, and Docker Hub no
-    # longer serves minio/minio. bitnamilegacy keeps a frozen, public,
-    # pinned build; its entrypoint starts the server (API 9000, console 9001)
-    # on its own data directory, so no command is passed.
-    image: bitnamilegacy/minio:2025.7.23-debian-12-r5
+    # Maintained MinIO fork (upstream images are gone); same flags and
+    # bundled mc/curl as the old image.
+    image: pgsty/silo:RELEASE.2026-09-03T13-18-01Z
+    command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin

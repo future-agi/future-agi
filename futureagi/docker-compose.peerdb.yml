@@ -138,7 +138,8 @@ services:
 
   # PeerDB MinIO (staging area for CH ingestion)
   peerdb-minio:
-    image: quay.io/minio/minio:latest
+    # Maintained MinIO fork (see docker-compose.yml); its server binary is `silo`.
+    image: pgsty/silo:RELEASE.2026-09-03T13-18-01Z
     restart: unless-stopped
     volumes:
       - peerdb-minio-data:/data
@@ -147,7 +148,7 @@ services:
       MINIO_ROOT_PASSWORD: _peerdb_minioadmin
     entrypoint: >
       /bin/sh -c "
-      minio server /data --console-address=:36987 &
+      silo server /data --console-address=:36987 &
       sleep 2;
       mc alias set myminiopeerdb http://localhost:9000 _peerdb_minioadmin _peerdb_minioadmin;
       mc mb --ignore-existing myminiopeerdb/peerdbbucket;
