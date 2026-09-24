@@ -871,22 +871,42 @@ def _apply_receipt_to_call(
         )
         # A hosted receipt never travels the SDK result path, so dispatch here, after commit.
         try:
-            selected = (
-                runnable_eval_config_ids(run_test_id)
-                if isinstance(run_test_id, (str, UUID))
-                else []
-            )
-        except Exception:  # noqa: BLE001 - a receipt is never lost over what it schedules next
+            known = isinstance(run_test_id, (str, UUID))
+            selected = runnable_eval_config_ids(run_test_id) if known else []
+            tool_on = _tool_evaluation_on(run_test_id) if known else False
+        except Exception:  # noqa: BLE001 - a receipt is never lost over scheduling
             logger.exception(
-                "harness_eval_selection_lookup_failed", call_id=str(call_id)
+                "harness_eval_selection_lookup_failed for call %s", call_id
             )
-            selected = []
-        if selected:
+            selected, tool_on = [], False
+        # TH-8055 P35: the tool-call judge switch is independent of the eval
+        # catalogue (contract v1.9 §13), so it must still dispatch when this
+        # environment has no runnable eval selected.
+        if selected or tool_on:
             transaction.on_commit(
                 lambda: _dispatch_evaluations_once(
-                    CallExecution.objects.get(id=call_id), eval_config_ids=selected
+                    CallExecution.objects.get(id=call_id),
+                    eval_config_ids=selected,  # [] stays [], never None (TH-8055 P35)
                 )
             )
+
+
+def _tool_evaluation_on(run_test_id) -> bool:
+    """Whether ``run_test_id``'s tool-call judge switch (P35) is on.
+
+    One column read, independent of ``runnable_eval_config_ids`` -- callers
+    OR this in with their own catalogue-eval check so the switch alone can
+    still trigger dispatch when zero evals are selected (TH-8055 P35).
+    """
+    from simulate.models import RunTest
+
+    if not run_test_id:
+        return False
+    return bool(
+        RunTest.objects.filter(id=run_test_id)
+        .values_list("enable_tool_evaluation", flat=True)
+        .first()
+    )
 
 
 def _ensure_run_agent_is_voice(job: HostedHarnessJob) -> None:

@@ -133,6 +133,50 @@ def _add(client, job, workspace, name):
     )
 
 
+def _set_tool_call(client, job, workspace, enabled):
+    return client.put(
+        f"{ENVIRONMENTS}/{job.id}/evaluations/tool-call/",
+        {"enable_tool_evaluation": enabled},
+        format="json",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+
+
+def _text_environment(user, workspace):
+    """A built, TEXT-modality environment -- one the switch can be turned on
+    for. `environment` above is voice-modality with no `AgentVersion`, which
+    the switch's 409 check now refuses to turn on.
+    """
+    job, _ = create_hosted_job(
+        user.organization,
+        _payload(),
+        idempotency_key="env-evals-tool-call-text",
+        workspace=workspace,
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    response = APIClient().post(
+        f"{ATTEMPTS}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Refunds (text)",
+            "modality": "text",
+            "personas": [
+                {
+                    "scenario_key": "refund-request",
+                    "name": "Customer",
+                    "situation": "Asks for a refund",
+                    "outcome": "Agent follows policy",
+                }
+            ],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    assert response.status_code == 200, response.content
+    job.refresh_from_db()
+    return job
+
+
 def _file_receipt(job, *, scenario_key="refund-request"):
     """Post one accepted result receipt for a registered scenario.
 
@@ -1609,6 +1653,275 @@ def test_run_add_moves_the_environment_clock_only_when_something_changed(
     assert "eval_queued" in newly_eligible.call_metadata
 
     assert dispatch.call_count == 1
+
+
+# --- TH-8055: the tool-call evaluation switch --------------------------------
+
+
+@pytest.mark.django_db
+def test_tool_call_switch_is_read_from_the_detail(env_client, environment, workspace):
+    """P31: `settings.enable_tool_evaluation` is a boolean on every detail, off
+    by default, and it reports the run test's column rather than a constant.
+
+    Failing scenario this catches: return a hard-coded `False` from `_settings`
+    and every other test in this file still passes while the read surface lies
+    about an environment whose switch is on.
+    """
+    first = _detail(env_client, environment, workspace)
+    assert first.status_code == 200, first.content
+    assert first.json()["settings"]["enable_tool_evaluation"] is False
+
+    run_test = environment.run_test
+    run_test.enable_tool_evaluation = True
+    run_test.save(update_fields=["enable_tool_evaluation", "updated_at"])
+
+    second = _detail(env_client, environment, workspace)
+    assert second.status_code == 200, second.content
+    assert second.json()["settings"]["enable_tool_evaluation"] is True
+
+
+@pytest.mark.django_db
+def test_tool_call_switch_reads_false_before_the_environment_is_built(
+    env_client, user, workspace
+):
+    """P31: never null and never absent — an environment with no run test
+    yet reads `false`, not `null`."""
+    unbuilt, _ = create_hosted_job(
+        user.organization,
+        _payload(),
+        idempotency_key="env-evals-tool-call-unbuilt-detail",
+        workspace=workspace,
+    )
+    body = _detail(env_client, unbuilt, workspace)
+    assert body.status_code == 200, body.content
+    assert body.json()["settings"]["enable_tool_evaluation"] is False
+
+
+@pytest.mark.django_db
+def test_tool_call_switch_toggles(env_client, user, workspace):
+    """P32: PUT sets the column and answers with the whole environment detail,
+    already showing the new value, in both directions.
+
+    Uses a TEXT-modality environment: the shared `environment` fixture is
+    voice-modality with no `AgentVersion`, which the switch now refuses to
+    turn on.
+    """
+    environment = _text_environment(user, workspace)
+    on = _set_tool_call(env_client, environment, workspace, True)
+    assert on.status_code == 200, on.content
+    body = on.json()
+    assert body["settings"]["enable_tool_evaluation"] is True
+    # The 200 is the same body as GET {id}/, not a fragment: the client must
+    # not have to refetch to learn anything else about the environment.
+    assert set(body) == {
+        "id",
+        "overview",
+        "contract",
+        "world",
+        "scenarios",
+        "evaluations",
+        "settings",
+    }
+    environment.run_test.refresh_from_db()
+    assert environment.run_test.enable_tool_evaluation is True
+
+    off = _set_tool_call(env_client, environment, workspace, False)
+    assert off.status_code == 200, off.content
+    assert off.json()["settings"]["enable_tool_evaluation"] is False
+    environment.run_test.refresh_from_db()
+    assert environment.run_test.enable_tool_evaluation is False
+
+    # Turning it on and off again binds no eval and leaves the catalogue lists
+    # alone: this is a switch, not an entry (contract v1.9 §13 opening).
+    assert off.json()["evaluations"]["selected"] == []
+
+
+@pytest.mark.django_db
+def test_tool_call_switch_is_idempotent(env_client, user, workspace):
+    """P34: setting the value it already has is a 200, not an error, and moves
+    only the environment's content clock.
+
+    There is no second row to create, so idempotency here means "the repeat is
+    accepted and changes nothing else" -- including that it does not somehow
+    flip the value back. Uses a TEXT-modality environment for the same reason
+    `test_tool_call_switch_toggles` does.
+    """
+    environment = _text_environment(user, workspace)
+    first = _set_tool_call(env_client, environment, workspace, True)
+    assert first.status_code == 200, first.content
+    environment.refresh_from_db()
+    after_first = environment.content_updated_at
+
+    second = _set_tool_call(env_client, environment, workspace, True)
+    assert second.status_code == 200, second.content
+    assert second.json()["settings"]["enable_tool_evaluation"] is True
+    environment.run_test.refresh_from_db()
+    assert environment.run_test.enable_tool_evaluation is True
+
+    environment.refresh_from_db()
+    assert environment.content_updated_at > after_first, (
+        "_touch_content must fire on every accepted call, as the add and the "
+        "remove do -- one rule for the list's clock"
+    )
+
+
+@pytest.mark.django_db
+def test_tool_call_switch_refusals(env_client, environment, user, workspace):
+    """P33: the same 404 and 409 as this endpoint's three siblings, and a 400
+    for a body this switch cannot read."""
+    import uuid
+
+    missing = _set_tool_call(
+        env_client, type("J", (), {"id": uuid.uuid4()})(), workspace, True
+    )
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "Environment not found"
+
+    nonsense = env_client.put(
+        f"{ENVIRONMENTS}/not-a-uuid/evaluations/tool-call/",
+        {"enable_tool_evaluation": True},
+        format="json",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+    assert nonsense.status_code == 404
+    assert nonsense.json()["detail"] == "Environment not found"
+
+    unbuilt, _ = create_hosted_job(
+        user.organization,
+        _payload(),
+        idempotency_key="env-evals-tool-call-unbuilt",
+        workspace=workspace,
+    )
+    no_run_test = _set_tool_call(env_client, unbuilt, workspace, True)
+    assert no_run_test.status_code == 409
+    assert no_run_test.json()["detail"] == (
+        "Environment has no evaluations until it finishes building"
+    )
+
+    empty = env_client.put(
+        f"{ENVIRONMENTS}/{environment.id}/evaluations/tool-call/",
+        {},
+        format="json",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+    assert empty.status_code == 400, empty.content
+
+    not_a_boolean = _set_tool_call(env_client, environment, workspace, "maybe")
+    assert not_a_boolean.status_code == 400, not_a_boolean.content
+
+    unknown_field = env_client.put(
+        f"{ENVIRONMENTS}/{environment.id}/evaluations/tool-call/",
+        {"enable_tool_evaluation": True, "unexpected": "field"},
+        format="json",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+    assert unknown_field.status_code == 400, unknown_field.content
+
+    # Two more P33 clauses.
+    null_value = env_client.put(
+        f"{ENVIRONMENTS}/{environment.id}/evaluations/tool-call/",
+        {"enable_tool_evaluation": None},
+        format="json",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+    assert null_value.status_code == 400, null_value.content
+
+    # A malformed body 400s even against an environment the caller cannot
+    # see -- request validation runs before the environment lookup.
+    invisible_malformed = env_client.put(
+        f"{ENVIRONMENTS}/{uuid.uuid4()}/evaluations/tool-call/",
+        {"enable_tool_evaluation": "maybe"},
+        format="json",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+    assert invisible_malformed.status_code == 400, invisible_malformed.content
+
+    # None of the refusals wrote anything.
+    environment.run_test.refresh_from_db()
+    assert environment.run_test.enable_tool_evaluation is False
+
+
+@pytest.mark.django_db
+def test_tool_call_switch_not_visible_across_workspaces(env_client, user, workspace):
+    """P33's tenancy half: an environment that exists, but in a workspace the
+    caller did not ask for, is a 404 -- and the write must not land.
+
+    Failing scenario this catches: resolve the job with a bare
+    `HostedHarnessJob.objects.get(id=...)` in the new action instead of going
+    through `_run_test_job`/`_queryset`, and one workspace can switch on a
+    judge that bills another workspace's calls.
+    """
+    from accounts.models.workspace import Workspace
+
+    other_workspace = Workspace.objects.create(
+        name="Other workspace",
+        organization=user.organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+    foreign, _ = create_hosted_job(
+        user.organization,
+        _payload(),
+        idempotency_key="env-evals-tool-call-other-workspace",
+        workspace=other_workspace,
+    )
+    response = _set_tool_call(env_client, foreign, workspace, True)
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Environment not found"
+    # The 404 is the whole signal, deliberately. `foreign` came straight from
+    # `create_hosted_job` with no attempt and no scenario registration, so it
+    # has no run test at all -- there is no column for a leaked write to land
+    # in, and an assertion on `foreign.run_test` would pass no matter what the
+    # endpoint did. What this test proves is the refusal itself: a bare
+    # `HostedHarnessJob.objects.get(...)` would answer 409 here (the row
+    # exists, it just has no run test), and 404 is the only answer that says
+    # the caller may not see this environment at all.
+
+
+def test_tool_call_switch_does_not_publish_its_internals_to_swagger():
+    """TH-8055: `operation_description` on the PUT's `@validated_request` must
+    exist, or drf-yasg falls back to the action's internal docstring -- which
+    cites an internal file path and the contract's own "never committed"
+    working-file name -- as the published `swagger.json` description.
+
+    Failing scenario this catches: drop the `operation_description` keyword
+    argument and `overrides["operation_description"]` raises `KeyError`
+    instead of holding the one-sentence summary.
+    """
+    from simulate.views.harness_environment import HarnessEnvironmentViewSet
+
+    overrides = HarnessEnvironmentViewSet.set_tool_call_evaluation._swagger_auto_schema
+    # drf-yasg keys the overrides by HTTP method for a viewset action.
+    overrides = overrides.get("put", overrides)
+    description = overrides["operation_description"]
+    assert "test_executor.py" not in description
+    assert "eval-offer-backend-frontend" not in description
+
+
+@pytest.mark.django_db
+def test_tool_call_switch_refuses_on_for_a_versionless_voice_environment(
+    env_client, environment, workspace
+):
+    """TH-8055: a hosted voice environment's agent definition has no
+    `AgentVersion` (`_provision_agent_definition` never creates one), so the
+    judge would silently never run. Turning the switch on for that shape is
+    refused, 409; turning it off is always allowed.
+
+    `environment` itself is exactly this shape -- voice, no version -- which
+    is what makes it usable here without any extra setup.
+    """
+    on = _set_tool_call(env_client, environment, workspace, True)
+    assert on.status_code == 409, on.content
+    assert on.json()["detail"] == (
+        "Tool-call evaluation is not available for a voice environment yet"
+    )
+    environment.run_test.refresh_from_db()
+    assert environment.run_test.enable_tool_evaluation is False
+
+    off = _set_tool_call(env_client, environment, workspace, False)
+    assert off.status_code == 200, off.content
+    assert off.json()["settings"]["enable_tool_evaluation"] is False
 
 
 # --- Reviewer findings -------------------------------------------------------

@@ -657,8 +657,14 @@ class TestChatMetricsResolution:
 
     @patch("simulate.services.test_executor.run_eval_func")
     def test_chat_only_metrics_resolve_empty_on_voice_sim_with_no_metrics(
-        self, mock_run, run_test, transcript_data, eval_template, agent_version,
-        test_execution, scenario,
+        self,
+        mock_run,
+        run_test,
+        transcript_data,
+        eval_template,
+        agent_version,
+        test_execution,
+        scenario,
     ):
         """Voice sim with no conversation_metrics_data resolves chat metrics to empty."""
         ce = CallExecution.objects.create(
@@ -708,7 +714,10 @@ class TestGenericDottedPathResolution:
     ):
         mock_run.return_value = _SUCCESS_STUB
         ec = _make_eval(
-            {"a": "call.customer_cost_breakdown.stt.cost", "b": "customer_cost_breakdown.stt.cost"},
+            {
+                "a": "call.customer_cost_breakdown.stt.cost",
+                "b": "customer_cost_breakdown.stt.cost",
+            },
             run_test,
             eval_template,
         )
@@ -752,7 +761,10 @@ class TestGenericDottedPathResolution:
     ):
         mock_run.return_value = _SUCCESS_STUB
         ec = _make_eval(
-            {"first": "tool_outputs.0.name", "second_dur": "tool_outputs.1.duration_ms"},
+            {
+                "first": "tool_outputs.0.name",
+                "second_dur": "tool_outputs.1.duration_ms",
+            },
             run_test,
             eval_template,
         )
@@ -778,8 +790,14 @@ class TestGenericDottedPathResolution:
 
     @patch("simulate.services.test_executor.run_eval_func")
     def test_arbitrary_depth_walking_stays_correct(
-        self, mock_run, run_test, transcript_data, eval_template, test_execution,
-        scenario, agent_version,
+        self,
+        mock_run,
+        run_test,
+        transcript_data,
+        eval_template,
+        test_execution,
+        scenario,
+        agent_version,
     ):
         deep = {"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": {"i": {"j": 42}}}}}}}}}}
         ce = CallExecution.objects.create(
@@ -792,7 +810,9 @@ class TestGenericDottedPathResolution:
         )
         mock_run.return_value = _SUCCESS_STUB
         ec = _make_eval(
-            {"leaf": "customer_cost_breakdown.a.b.c.d.e.f.g.h.i.j"}, run_test, eval_template
+            {"leaf": "customer_cost_breakdown.a.b.c.d.e.f.g.h.i.j"},
+            run_test,
+            eval_template,
         )
 
         _run(ec, ce, transcript_data)
@@ -819,9 +839,7 @@ class TestGenericDottedPathResolution:
         self, mock_run, run_test, call_execution, transcript_data, eval_template
     ):
         mock_run.return_value = _SUCCESS_STUB
-        ec = _make_eval(
-            {"missing": "tool_outputs.99.name"}, run_test, eval_template
-        )
+        ec = _make_eval({"missing": "tool_outputs.99.name"}, run_test, eval_template)
 
         _run(ec, call_execution, transcript_data)
 
@@ -863,9 +881,7 @@ class TestWalkerAttributeSafety:
     def test_dunder_dict_does_not_resolve(
         self, mock_run, run_test, call_execution, transcript_data, eval_template
     ):
-        ec = _make_eval(
-            {"x": "call.__dict__"}, run_test, eval_template
-        )
+        ec = _make_eval({"x": "call.__dict__"}, run_test, eval_template)
         with pytest.raises(Exception):
             _run(ec, call_execution, transcript_data)
 
@@ -873,9 +889,7 @@ class TestWalkerAttributeSafety:
     def test_django_private_meta_does_not_resolve(
         self, mock_run, run_test, call_execution, transcript_data, eval_template
     ):
-        ec = _make_eval(
-            {"x": "call._meta.app_label"}, run_test, eval_template
-        )
+        ec = _make_eval({"x": "call._meta.app_label"}, run_test, eval_template)
         with pytest.raises(Exception):
             _run(ec, call_execution, transcript_data)
 
@@ -923,8 +937,7 @@ class TestSubjectDispatchRobustness:
         _run(ec, call_execution, transcript_data)
 
         assert (
-            mock_run.call_args.kwargs["mappings"]["desc"]
-            == "You are a helpful agent."
+            mock_run.call_args.kwargs["mappings"]["desc"] == "You are a helpful agent."
         )
 
     @patch("simulate.services.test_executor.run_eval_func")
@@ -932,9 +945,7 @@ class TestSubjectDispatchRobustness:
         self, mock_run, run_test, call_execution, transcript_data, eval_template
     ):
         mock_run.return_value = _SUCCESS_STUB
-        ec = _make_eval(
-            {"vp": "persona.voice_provider"}, run_test, eval_template
-        )
+        ec = _make_eval({"vp": "persona.voice_provider"}, run_test, eval_template)
 
         _run(ec, call_execution, transcript_data)
 
@@ -945,17 +956,12 @@ class TestSubjectDispatchRobustness:
         self, mock_run, run_test, call_execution, transcript_data, eval_template
     ):
         mock_run.return_value = _SUCCESS_STUB
-        ec = _make_eval(
-            {"src": "simulation.source_type"}, run_test, eval_template
-        )
+        ec = _make_eval({"src": "simulation.source_type"}, run_test, eval_template)
 
         _run(ec, call_execution, transcript_data)
 
         # source_type is a CharField on RunTest; walker returns its default.
-        assert (
-            mock_run.call_args.kwargs["mappings"]["src"]
-            == str(run_test.source_type)
-        )
+        assert mock_run.call_args.kwargs["mappings"]["src"] == str(run_test.source_type)
 
     @patch("simulate.services.test_executor.run_eval_func")
     def test_bare_head_on_non_call_subject_falls_through_to_agent_version(
@@ -972,8 +978,7 @@ class TestSubjectDispatchRobustness:
         _run(ec, call_execution, transcript_data)
 
         assert (
-            mock_run.call_args.kwargs["mappings"]["desc"]
-            == "You are a helpful agent."
+            mock_run.call_args.kwargs["mappings"]["desc"] == "You are a helpful agent."
         )
 
     @patch("simulate.services.test_executor.run_eval_func")
@@ -1304,7 +1309,10 @@ class TestComputedSerializerFieldsInContext:
 
         _run(ec, call_execution, transcript_data)
 
-        assert mock_run.call_args.kwargs["mappings"]["s"] == "Customer called about order 123."
+        assert (
+            mock_run.call_args.kwargs["mappings"]["s"]
+            == "Customer called about order 123."
+        )
 
     @patch("simulate.services.test_executor.run_eval_func")
     def test_chat_sim_voice_labeled_metrics_fall_back_to_conv_metrics(
@@ -1313,9 +1321,16 @@ class TestComputedSerializerFieldsInContext:
         """Chat sim: voice-labeled latency + talk_ratio resolve via conv_metrics fallback."""
         mock_run.return_value = _SUCCESS_STUB
         ec = _make_eval(
-            {"rt_ms": "response_time_ms", "rt": "response_time", "aal_ms": "avg_agent_latency_ms",
-             "aal": "avg_agent_latency", "tr": "talk_ratio", "atp": "agent_talk_percentage"},
-            run_test, eval_template,
+            {
+                "rt_ms": "response_time_ms",
+                "rt": "response_time",
+                "aal_ms": "avg_agent_latency_ms",
+                "aal": "avg_agent_latency",
+                "tr": "talk_ratio",
+                "atp": "agent_talk_percentage",
+            },
+            run_test,
+            eval_template,
         )
 
         _run(ec, chat_call_execution, transcript_data)
@@ -1329,20 +1344,35 @@ class TestComputedSerializerFieldsInContext:
 
     @patch("simulate.services.test_executor.run_eval_func")
     def test_voice_sim_chat_labeled_metrics_fall_back_to_model_fields(
-        self, mock_run, run_test, transcript_data, eval_template,
-        test_execution, scenario, agent_version,
+        self,
+        mock_run,
+        run_test,
+        transcript_data,
+        eval_template,
+        test_execution,
+        scenario,
+        agent_version,
     ):
         """Voice sim without conv_metrics: chat-labeled fields fall back to model."""
         ce = CallExecution.objects.create(
-            test_execution=test_execution, scenario=scenario, agent_version=agent_version,
+            test_execution=test_execution,
+            scenario=scenario,
+            agent_version=agent_version,
             status=CallExecution.CallStatus.COMPLETED,
             simulation_call_type=CallExecution.SimulationCallType.VOICE,
-            avg_agent_latency_ms=8652, talk_ratio=0.62, overall_score=7,
+            avg_agent_latency_ms=8652,
+            talk_ratio=0.62,
+            overall_score=7,
         )
         mock_run.return_value = _SUCCESS_STUB
         ec = _make_eval(
-            {"lat": "avg_latency_ms", "atp": "agent_talk_percentage", "c": "csat_score"},
-            run_test, eval_template,
+            {
+                "lat": "avg_latency_ms",
+                "atp": "agent_talk_percentage",
+                "c": "csat_score",
+            },
+            run_test,
+            eval_template,
         )
 
         _run(ec, ce, transcript_data)
@@ -1354,14 +1384,22 @@ class TestComputedSerializerFieldsInContext:
 
     @patch("simulate.services.test_executor.run_eval_func")
     def test_chat_sim_zero_valued_metrics_survive_fallback(
-        self, mock_run, run_test, transcript_data, eval_template,
-        test_execution, scenario, agent_version,
+        self,
+        mock_run,
+        run_test,
+        transcript_data,
+        eval_template,
+        test_execution,
+        scenario,
+        agent_version,
     ):
         """A legitimate 0 / 0.0 / 0-ms on the primary source must not be
         clobbered by the cross-modality fallback. If someone rewrites
         `is not None` -> `or` this test fails loudly."""
         ce = CallExecution.objects.create(
-            test_execution=test_execution, scenario=scenario, agent_version=agent_version,
+            test_execution=test_execution,
+            scenario=scenario,
+            agent_version=agent_version,
             status=CallExecution.CallStatus.COMPLETED,
             simulation_call_type=CallExecution.SimulationCallType.TEXT,
             response_time_ms=0,
@@ -1381,7 +1419,8 @@ class TestComputedSerializerFieldsInContext:
                 "aal_ms": "avg_agent_latency_ms",
                 "tr": "talk_ratio",
             },
-            run_test, eval_template,
+            run_test,
+            eval_template,
         )
 
         _run(ec, ce, transcript_data)
@@ -1394,16 +1433,26 @@ class TestComputedSerializerFieldsInContext:
 
     @patch("simulate.services.test_executor.run_eval_func")
     def test_voice_sim_zero_valued_metrics_survive_fallback(
-        self, mock_run, run_test, transcript_data, eval_template,
-        test_execution, scenario, agent_version,
+        self,
+        mock_run,
+        run_test,
+        transcript_data,
+        eval_template,
+        test_execution,
+        scenario,
+        agent_version,
     ):
         """Chat-side keys with a legitimate 0 on the conv_metrics side must
         not fall through to the voice-side model field."""
         ce = CallExecution.objects.create(
-            test_execution=test_execution, scenario=scenario, agent_version=agent_version,
+            test_execution=test_execution,
+            scenario=scenario,
+            agent_version=agent_version,
             status=CallExecution.CallStatus.COMPLETED,
             simulation_call_type=CallExecution.SimulationCallType.VOICE,
-            avg_agent_latency_ms=8652, talk_ratio=0.62, overall_score=7,
+            avg_agent_latency_ms=8652,
+            talk_ratio=0.62,
+            overall_score=7,
             conversation_metrics_data={
                 "avg_latency_ms": 0.0,
                 "agent_talk_percentage": 0.0,
@@ -1417,7 +1466,8 @@ class TestComputedSerializerFieldsInContext:
                 "atp": "agent_talk_percentage",
                 "c": "csat_score",
             },
-            run_test, eval_template,
+            run_test,
+            eval_template,
         )
 
         _run(ec, ce, transcript_data)
@@ -1430,7 +1480,14 @@ class TestComputedSerializerFieldsInContext:
 
     @patch("simulate.services.test_executor.run_eval_func")
     def test_scenario_graph_node_resolves_via_computed_subject(
-        self, mock_run, run_test, call_execution, transcript_data, eval_template, scenario, organization
+        self,
+        mock_run,
+        run_test,
+        call_execution,
+        transcript_data,
+        eval_template,
+        scenario,
+        organization,
     ):
         """`scenario_graph.nodes.<i>.<field>` exercises get_scenario_graph inline call."""
         from simulate.models.scenario_graph import ScenarioGraph
@@ -1443,14 +1500,14 @@ class TestComputedSerializerFieldsInContext:
             is_active=True,
             graph_config={
                 "graph_data": {
-                    "nodes": [{"id": "n1", "type": "intent", "data": {"label": "Greet"}}],
+                    "nodes": [
+                        {"id": "n1", "type": "intent", "data": {"label": "Greet"}}
+                    ],
                     "edges": [],
                 }
             },
         )
-        ec = _make_eval(
-            {"nt": "scenario_graph.nodes.0.type"}, run_test, eval_template
-        )
+        ec = _make_eval({"nt": "scenario_graph.nodes.0.type"}, run_test, eval_template)
 
         _run(ec, call_execution, transcript_data)
 
@@ -1458,7 +1515,13 @@ class TestComputedSerializerFieldsInContext:
 
     @patch("simulate.services.test_executor.run_eval_func")
     def test_subject_build_failure_leaves_ctx_usable(
-        self, mock_run, run_test, call_execution, transcript_data, eval_template, monkeypatch
+        self,
+        mock_run,
+        run_test,
+        call_execution,
+        transcript_data,
+        eval_template,
+        monkeypatch,
     ):
         """Serializer exception in subject builder falls back to {}, ctx stays usable."""
         from simulate.serializers.test_execution import CallExecutionDetailSerializer
@@ -1561,7 +1624,7 @@ class TestLegacyTranscriptRecordingResolution:
                     "assistant": "s3://bucket/assistant.mp3",
                     "customer": "s3://bucket/customer.mp3",
                 },
-            }
+            },
         }
         executor = TestExecutor()
         executor.voice_service_manager = Mock()
@@ -1573,8 +1636,7 @@ class TestLegacyTranscriptRecordingResolution:
 
         assert transcript_data["voice_recording"] == call_execution.recording_url
         assert (
-            transcript_data["stereo_recording"]
-            == call_execution.stereo_recording_url
+            transcript_data["stereo_recording"] == call_execution.stereo_recording_url
         )
         assert transcript_data["assistant_recording"] == "s3://bucket/assistant.mp3"
         assert transcript_data["customer_recording"] == "s3://bucket/customer.mp3"
@@ -2443,3 +2505,368 @@ def test_receipt_dispatch_binds_skip_existing_false(
     assert bound.arguments["call_execution_id"] == str(call_execution.id)
     assert bound.arguments["eval_config_ids"] == [str(config.id)]
     assert bound.arguments.get("skip_existing", False) is False
+
+
+@pytest.mark.django_db
+class TestToolEvaluationGate:
+    """The tool-call judge, as a harness environment actually reaches it.
+
+    Contract api_contracts/harness/eval-offer-backend-frontend.md v1.9 §13,
+    TH-8055. No LLM is called: `ToolEvalAgent` is patched at its import site
+    in `test_executor` in every case but one --
+    `test_harness_tool_call_is_extracted_with_its_result`, which drives
+    `ToolEvalAgent`'s private helpers directly (not through
+    `_run_tool_evaluation`) and so builds the real class with `llm=Mock()`
+    instead. Every case stops at the point the method decides whether to go
+    on.
+    """
+
+    def _chat_agent(self, agent_definition):
+        agent_definition.agent_type = AgentDefinition.AgentTypeChoices.TEXT
+        agent_definition.save(update_fields=["agent_type"])
+        return agent_definition
+
+    def test_the_switch_is_what_decides(
+        self, test_execution, chat_call_execution, agent_definition
+    ):
+        """The judge is never constructed while the switch is off, and is while
+        it is on. This is the whole product behaviour of the endpoint."""
+        self._chat_agent(agent_definition)
+        test_execution.run_test.enable_tool_evaluation = False
+        test_execution.run_test.save(update_fields=["enable_tool_evaluation"])
+
+        with patch("simulate.services.test_executor.ToolEvalAgent") as judge:
+            TestExecutor()._run_tool_evaluation(chat_call_execution, test_execution)
+        judge.assert_not_called()
+
+        test_execution.run_test.enable_tool_evaluation = True
+        test_execution.run_test.save(update_fields=["enable_tool_evaluation"])
+
+        with patch("simulate.services.test_executor.ToolEvalAgent") as judge:
+            judge.return_value._get_chat_data_from_database.return_value = {
+                "conversation_context": [],
+                "messages": [],
+            }
+            judge.return_value._extract_tool_calls.return_value = []
+            TestExecutor()._run_tool_evaluation(chat_call_execution, test_execution)
+        judge.assert_called_once_with()
+
+    def test_a_harness_chat_call_clears_the_call_type_gate(
+        self, test_execution, chat_call_execution, agent_definition
+    ):
+        """TH-8055: a harness chat call has no `service_provider_call_id`, and
+        `_run_tool_evaluation`'s call-type guard still lets it through,
+        because its `simulation_call_type` is TEXT.
+
+        Failing scenario this catches: change that guard to skip whenever
+        there is no provider call id, and every chat run -- harness or
+        native -- silently stops being tool-graded.
+        """
+        self._chat_agent(agent_definition)
+        test_execution.run_test.enable_tool_evaluation = True
+        test_execution.run_test.save(update_fields=["enable_tool_evaluation"])
+        assert (
+            chat_call_execution.simulation_call_type
+            == CallExecution.SimulationCallType.TEXT
+        )
+        assert not chat_call_execution.service_provider_call_id
+
+        with patch("simulate.services.test_executor.ToolEvalAgent") as judge:
+            judge.return_value._get_chat_data_from_database.return_value = {
+                "conversation_context": [],
+                "messages": [],
+            }
+            judge.return_value._extract_tool_calls.return_value = []
+            TestExecutor()._run_tool_evaluation(chat_call_execution, test_execution)
+
+        judge.return_value._get_chat_data_from_database.assert_called_once_with(
+            chat_call_execution
+        )
+        # With no tool calls the method records that it looked, and writes
+        # nothing to `tool_outputs` -- F2 holds trivially here.
+        chat_call_execution.refresh_from_db()
+        assert chat_call_execution.evaluation_data["tool_column_order"] == []
+        assert not chat_call_execution.tool_outputs
+
+    def test_an_agent_definition_with_no_version_still_reaches_the_judge(
+        self, test_execution, chat_call_execution, agent_definition, agent_version
+    ):
+        """TH-8055: the harness shape -- an AgentDefinition provisioned without
+        any AgentVersion, and a TestExecution carrying none either.
+
+        Before the fix this raised AttributeError on
+        `agent_version.configuration_snapshot`, which the method's own outer
+        `except` swallowed into a log line: the switch appeared to work and
+        graded nothing. Reverting `_run_tool_evaluation`'s defensive
+        `snapshot = agent_version.configuration_snapshot if agent_version else
+        {}` read back to an unguarded attribute access makes this go red.
+        """
+        self._chat_agent(agent_definition)
+        test_execution.run_test.enable_tool_evaluation = True
+        test_execution.run_test.save(update_fields=["enable_tool_evaluation"])
+        test_execution.agent_version = None
+        test_execution.save(update_fields=["agent_version"])
+        agent_version.delete()
+        assert agent_definition.latest_version is None
+
+        with patch("simulate.services.test_executor.ToolEvalAgent") as judge:
+            judge.return_value._get_chat_data_from_database.return_value = {
+                "conversation_context": [],
+                "messages": [],
+            }
+            judge.return_value._extract_tool_calls.return_value = []
+            TestExecutor()._run_tool_evaluation(chat_call_execution, test_execution)
+
+        judge.return_value._get_chat_data_from_database.assert_called_once_with(
+            chat_call_execution
+        )
+
+    @patch("simulate.services.test_executor.close_old_connections", lambda: None)
+    def test_tool_judge_runs_when_the_switch_is_on_and_no_eval_configs_exist(
+        self, test_execution, chat_call_execution
+    ):
+        """TH-8055: the switch is independent of the eval catalogue (contract
+        v1.9 §13) -- an explicit (harness) dispatch with zero
+        `SimulateEvalConfig` rows must still reach the judge when the switch
+        is on.
+
+        Before this fix, `_run_simulate_evaluations`'s `if not
+        eval_configs.exists(): ... return` sat above the
+        `enable_tool_evaluation` read and returned before the judge was ever
+        called.
+
+        The call below passes `eval_config_ids=[]` explicitly -- the shape a
+        harness/hosted dispatch sends now that the switch no longer widens an
+        empty selection to `None`. A bare
+        `_run_simulate_evaluations(chat_call_execution)` (no
+        `eval_config_ids`, i.e. `None`) is the *native* shape, which
+        `test_a_native_run_with_no_configs_and_the_switch_on_does_not_reach_the_judge`
+        below covers on purpose -- and does **not** reach the judge.
+        """
+        test_execution.run_test.enable_tool_evaluation = True
+        test_execution.run_test.save(update_fields=["enable_tool_evaluation"])
+
+        with patch.object(TestExecutor, "_run_tool_evaluation") as spy:
+            TestExecutor()._run_simulate_evaluations(
+                chat_call_execution, eval_config_ids=[]
+            )
+
+        assert spy.call_count == 1
+
+    @patch("simulate.services.test_executor.close_old_connections", lambda: None)
+    def test_an_explicitly_empty_selection_grades_nothing(
+        self, test_execution, chat_call_execution, run_test, eval_template
+    ):
+        """TH-8055 P35/F2: `[]` means "grade nothing from the catalogue", never
+        "grade every config on the run test" -- which would re-grade, and on
+        error overwrite, a harness result column's stored verdict."""
+        _make_eval({}, run_test, eval_template)  # the harness result-column shape
+        test_execution.run_test.enable_tool_evaluation = True
+        test_execution.run_test.save(update_fields=["enable_tool_evaluation"])
+        with (
+            patch.object(TestExecutor, "_run_single_simulate_evaluation") as graded,
+            patch.object(TestExecutor, "_run_tool_evaluation") as judge,
+        ):
+            TestExecutor()._run_simulate_evaluations(
+                chat_call_execution, eval_config_ids=[]
+            )
+        graded.assert_not_called()
+        assert judge.call_count == 1
+
+    def test_a_crash_before_the_config_check_still_stamps_completion_on_an_empty_selection(
+        self, test_execution, chat_call_execution, run_test, eval_template
+    ):
+        """TH-8055: `_check_and_update_eval_completion`'s
+        own `eval_config_ids is not None` is reached from
+        `_run_simulate_evaluations`'s recovery `except` too. A crash before
+        the main "eval configs" check still passes the original
+        `eval_config_ids=[]` through unchanged, so an explicit empty
+        selection stamps `eval_completed=True` immediately -- even though
+        `run_test` carries a live `SimulateEvalConfig` that was never
+        graded. This documents the accepted behaviour (P35: `[]` means
+        "grade nothing from the catalogue"), not a bug: before the `is not
+        None` fix, the same crash would have waited on every config on the
+        run test instead.
+        """
+        _make_eval({}, run_test, eval_template)
+        test_execution.run_test.enable_tool_evaluation = True
+        test_execution.run_test.save(update_fields=["enable_tool_evaluation"])
+
+        with patch(
+            "simulate.services.test_executor.close_old_connections",
+            side_effect=RuntimeError("boom"),
+        ):
+            TestExecutor()._run_simulate_evaluations(
+                chat_call_execution, eval_config_ids=[]
+            )
+
+        chat_call_execution.refresh_from_db()
+        assert chat_call_execution.call_metadata.get("eval_completed") is True
+
+    @patch("simulate.services.test_executor.close_old_connections", lambda: None)
+    def test_a_short_call_with_no_configs_is_tool_graded_on_the_explicit_dispatch_arm(
+        self, test_execution, chat_call_execution, run_test, eval_template
+    ):
+        """TH-8055 P35: "On the no-catalog-eval arm the judge runs before
+        either check, so such a call is tool-graded there -- an inversion
+        accepted for now rather than reordering the eval task's early
+        returns, which every native run shares." A too-short call on the
+        explicit (harness) dispatch arm with zero `SimulateEvalConfig` rows
+        still reaches the judge, because the new arm sits above
+        `decide_processing_skip` and the empty-transcript check.
+        """
+        test_execution.run_test.enable_tool_evaluation = True
+        test_execution.run_test.save(update_fields=["enable_tool_evaluation"])
+        chat_call_execution.duration_seconds = 1
+        chat_call_execution.save(update_fields=["duration_seconds"])
+
+        with patch.object(TestExecutor, "_run_tool_evaluation") as spy:
+            TestExecutor()._run_simulate_evaluations(
+                chat_call_execution, eval_config_ids=[]
+            )
+
+        assert spy.call_count == 1
+
+        # The negative companion: the
+        # same too-short call, on the same explicit dispatch, with one live
+        # `SimulateEvalConfig` selected instead of zero, is skipped by
+        # `decide_processing_skip` **before** the judge -- only the
+        # zero-config arm above sits ahead of that check.
+        eval_config = _make_eval({}, run_test, eval_template)
+        with patch.object(TestExecutor, "_run_tool_evaluation") as spy:
+            TestExecutor()._run_simulate_evaluations(
+                chat_call_execution, eval_config_ids=[str(eval_config.id)]
+            )
+
+        assert spy.call_count == 0
+
+    @patch("simulate.services.test_executor.close_old_connections", lambda: None)
+    def test_a_native_run_with_no_configs_and_the_switch_on_does_not_reach_the_judge(
+        self, test_execution, chat_call_execution
+    ):
+        """TH-8055, scoped: `_run_simulate_evaluations`'s "no eval configs"
+        arm only reaches the judge for an explicit (harness) dispatch,
+        `eval_config_ids is not None`. A *native* run test's undispatched
+        call -- every call site that reaches this method with no
+        `eval_config_ids` argument at all, i.e. `None` -- keeps its
+        pre-TH-8055 behaviour: the switch being on and having zero configs
+        does **not**, by itself, start billing a judge per tool call.
+
+        Failing scenario this catches: revert the `and eval_config_ids is
+        not None` clause on the new arm's `if`, and this goes red -- the
+        judge would be reached for every native run test with the switch on,
+        not only for a harness/hosted dispatch.
+        """
+        test_execution.run_test.enable_tool_evaluation = True
+        test_execution.run_test.save(update_fields=["enable_tool_evaluation"])
+
+        with patch.object(TestExecutor, "_run_tool_evaluation") as spy:
+            TestExecutor()._run_simulate_evaluations(chat_call_execution)
+
+        assert spy.call_count == 0
+
+    def test_versionless_voice_call_skips_without_calling_the_provider(
+        self, test_execution, call_execution, agent_definition, agent_version
+    ):
+        """TH-8055: a harness voice AgentDefinition provisioned without an
+        AgentVersion must skip cleanly, not turn a crash into a wasted
+        provider call.
+
+        Before the fix, `snapshot = getattr(agent_version, ...)` still let
+        control reach the voice branch with `snapshot == {}` and call
+        `voice_service_manager.get_call(...)` before finding
+        `customer_api_key`/`customer_assistant_id` are `None`. Removing the
+        `if not snapshot: ... return` guard from the voice branch makes this
+        go red.
+
+        `ToolEvalAgent` is patched at its import site so control reaches the
+        guard under test: unpatched, `agent = ToolEvalAgent()` (`:5378`)
+        raises `ValueError` for missing Vertex credentials before the voice
+        branch is ever entered, which would make this test pass for the
+        wrong reason.
+        """
+        test_execution.run_test.enable_tool_evaluation = True
+        test_execution.run_test.save(update_fields=["enable_tool_evaluation"])
+        test_execution.agent_version = None
+        test_execution.save(update_fields=["agent_version"])
+        agent_version.delete()
+        assert agent_definition.latest_version is None
+
+        call_execution.service_provider_call_id = "vapi-call-1"
+        call_execution.tool_outputs = None
+        call_execution.save(update_fields=["service_provider_call_id", "tool_outputs"])
+
+        executor = TestExecutor()
+        executor.voice_service_manager = Mock()
+        with patch("simulate.services.test_executor.ToolEvalAgent"):
+            executor._run_tool_evaluation(call_execution, test_execution)
+
+        assert executor.voice_service_manager.get_call.call_count == 0
+        call_execution.refresh_from_db()
+        assert not call_execution.tool_outputs
+
+    @pytest.mark.requires_ee
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "TH-8055 known limit: ALK writes the tool result as "
+            "role=assistant/kind=tool_call_result; the judge only reads "
+            "role=tool with a tool_call_id -- follow-up ticket"
+        ),
+    )
+    def test_harness_tool_call_is_extracted_with_its_result(self, chat_call_execution):
+        """TH-8055 (known gap, not fixed here): a harness chat call's tool
+        result never reaches the judge. ALK writes the result as an
+        `{"role": "assistant", "kind": "tool_call_result"}` segment
+        (`alk_simulate_ingestion.py::_store_alk_chat_messages`'s `_row`),
+        never `role == "tool"` with a `tool_call_id`, which is the only shape
+        `_get_chat_data_from_database` (`tool_eval_agent.py:610`) turns into
+        a `tool_call_result` message. `_extract_tool_calls` therefore never
+        fills `result`. This test documents the gap red; a follow-up maps
+        `kind == "tool_call_result"` onto the judge's `tool_call_result`
+        message shape.
+
+        `ToolEvalAgent(llm=Mock())` skips `_init_client` (`tool_eval_agent.py`
+        `__init__`), so this xfails on the documented shape mismatch, not on
+        a missing `GOOGLE_APPLICATION_CREDENTIALS`/`GOOGLE_CLOUD_PROJECT`
+        environment.
+        """
+        from ee.agenthub.tool_eval_agent.tool_eval_agent import ToolEvalAgent
+        from simulate.models.chat_message import ChatMessageModel
+
+        ChatMessageModel.objects.create(
+            call_execution=chat_call_execution,
+            role=ChatMessageModel.RoleChoices.ASSISTANT,
+            messages=["", "The order shipped yesterday."],
+            content=[
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "kind": "tool_calls",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "function": {
+                                "name": "lookup_order",
+                                "arguments": '{"order_id": "123"}',
+                            },
+                        }
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": "The order shipped yesterday.",
+                    "kind": "tool_call_result",
+                },
+            ],
+            session_id="alk-chat-test",
+            organization=chat_call_execution.test_execution.run_test.organization,
+            workspace=chat_call_execution.test_execution.run_test.workspace,
+        )
+
+        agent = ToolEvalAgent(llm=Mock())
+        call_data = agent._get_chat_data_from_database(chat_call_execution)
+        tool_calls = agent._extract_tool_calls(call_data)
+
+        assert tool_calls
+        assert tool_calls[0]["result"] is not None

@@ -796,7 +796,8 @@ def _run_link(job: HostedHarnessJob) -> dict[str, Any]:
 
 
 def _settings(job: HostedHarnessJob) -> dict[str, Any]:
-    """The request the environment was built from, with every secret value removed."""
+    """How this environment runs: the build request with every secret value
+    removed, plus the one key a person can set."""
     from simulate.services.harness_credentials import is_credential_file_ref
     from simulate.services.hosted_harness_gateway import _secret_safe
 
@@ -827,4 +828,19 @@ def _settings(job: HostedHarnessJob) -> dict[str, Any]:
             )
         ],
     }
+    # The only settings key that is not a record of how the environment was
+    # built: the tool-call judge's switch, which a person turns on and off
+    # through `PUT evaluations/tool-call/` (frontend contract v1.9 P31).
+    #
+    # It is reported as `false`, not `null`, for an environment with no run
+    # test. There is genuinely nothing to read there, and "off" is what such an
+    # environment would do if it ran — a null would make every client write a
+    # branch for a state that behaves exactly like the false one.
+    #
+    # `job.run_test` costs no extra query on the detail path: `_selected_evals`
+    # already touched it earlier in `environment_detail`, before the return
+    # dict this feeds, and Django caches a forward FK on the instance.
+    settings["enable_tool_evaluation"] = bool(
+        job.run_test.enable_tool_evaluation if job.run_test_id else False
+    )
     return settings

@@ -300,6 +300,7 @@ def provision_alk_sim_run_test(
     agent_name: str | None = None,
     description: str = "",
     modality: str = "text",
+    enable_tool_evaluation: bool = False,
 ) -> tuple[RunTest, list[Scenarios], AgentDefinition]:
     """Stand up a modality-correct RunTest for an SDK-first run, two ways.
 
@@ -312,6 +313,13 @@ def provision_alk_sim_run_test(
       supplied personas (see ``_build_persona_scenario_dataset``). This matches
       the platform's native dataset model: a scenario suite is one dataset and
       every conversation case is one datapoint.
+
+    ``enable_tool_evaluation`` starts the run test with the tool-call judge on.
+    It defaults to off: a run costs an extra judge per call while it is on, and
+    that is a choice someone makes, not a default they inherit. A v3
+    environment leaves it off here and turns it on through
+    ``PUT /simulate/api/harness-environments/{id}/evaluations/tool-call/``
+    (frontend contract v1.9 §13 P36a).
 
     One CallExecution is created per dataset row at batch time, so keep the row
     count (== persona count, or the reused scenarios' rows) equal to the
@@ -343,6 +351,15 @@ def provision_alk_sim_run_test(
                 modality,
                 workspace,
             )
+            if (
+                enable_tool_evaluation
+                and agent_definition.agent_type
+                == AgentDefinition.AgentTypeChoices.VOICE
+                and agent_definition.latest_version is None
+            ):
+                raise ALKSimulateIngestionError(
+                    "Tool-call evaluation is not available for a voice environment yet"
+                )
             simulator_agent = next(
                 (s.simulator_agent for s in scenarios if s.simulator_agent), None
             )
@@ -363,6 +380,7 @@ def provision_alk_sim_run_test(
                 simulator_agent=simulator_agent,
                 organization=organization,
                 workspace=workspace,
+                enable_tool_evaluation=enable_tool_evaluation,
             )
             run_test.scenarios.set(scenarios)
             return run_test, scenarios, agent_definition
@@ -375,6 +393,14 @@ def provision_alk_sim_run_test(
             modality,
             workspace,
         )
+        if (
+            enable_tool_evaluation
+            and agent_definition.agent_type == AgentDefinition.AgentTypeChoices.VOICE
+            and agent_definition.latest_version is None
+        ):
+            raise ALKSimulateIngestionError(
+                "Tool-call evaluation is not available for a voice environment yet"
+            )
 
         scenarios = _create_persona_scenarios(
             organization,
@@ -391,6 +417,7 @@ def provision_alk_sim_run_test(
             agent_definition=agent_definition,
             organization=organization,
             workspace=workspace,
+            enable_tool_evaluation=enable_tool_evaluation,
         )
         run_test.scenarios.set(scenarios)
 
@@ -894,7 +921,15 @@ def ingest_alk_sim_result(
         call_metadata = call_execution.call_metadata or {}
         # Dispatched only once the row is COMPLETED, with the config ids chosen at provision.
         selected_eval_config_ids = _selected_eval_config_ids(call_execution)
-        if "harness_evaluations" in call_metadata and not selected_eval_config_ids:
+        # TH-8055 P35: the tool-call judge switch is independent of the eval
+        # catalogue (contract v1.9 §13), so a switched-on run test must still
+        # take the dispatch arm below even with no catalogue eval selected.
+        run_test_id = getattr(call_execution.test_execution, "run_test_id", None)
+        if (
+            "harness_evaluations" in call_metadata
+            and not selected_eval_config_ids
+            and not _tool_evaluation_on(run_test_id)
+        ):
             # An ALK harness result already contains the execution-backed
             # checks. Starting the platform evaluator as well leaves the call
             # permanently `eval_started` when no platform eval templates are
@@ -905,8 +940,19 @@ def ingest_alk_sim_result(
             call_execution.call_metadata = call_metadata
             call_execution.save(update_fields=["call_metadata"])
         else:
+            # TH-8055 P35: a harness receipt's selection must reach the
+            # dispatcher unchanged -- `[]` stays `[]`, never widened to `None`
+            # ("every config on the run test") -- so a switch-driven dispatch
+            # cannot re-grade a harness result column. A non-harness ALK run
+            # keeps its pre-existing `or None` ("no explicit selection means
+            # every config"), since it was never routed through the switch.
             eval_dispatched = _dispatch_evaluations_once(
-                call_execution, eval_config_ids=selected_eval_config_ids or None
+                call_execution,
+                eval_config_ids=(
+                    selected_eval_config_ids
+                    if "harness_evaluations" in call_metadata
+                    else (selected_eval_config_ids or None)
+                ),
             )
 
     _roll_up_external_execution(call_execution.test_execution_id)
@@ -1767,6 +1813,22 @@ def _selected_eval_config_ids(call_execution: CallExecution) -> list[str]:
     if not run_test_id:
         return []
     return runnable_eval_config_ids(run_test_id)
+
+
+def _tool_evaluation_on(run_test_id) -> bool:
+    """Whether ``run_test_id``'s tool-call judge switch (P35) is on.
+
+    One column read, independent of ``runnable_eval_config_ids`` -- callers
+    OR this in with their own catalogue-eval check so the switch alone can
+    still trigger dispatch when zero evals are selected (TH-8055 P35).
+    """
+    if not run_test_id:
+        return False
+    return bool(
+        RunTest.objects.filter(id=run_test_id)
+        .values_list("enable_tool_evaluation", flat=True)
+        .first()
+    )
 
 
 def _dispatch_evaluations_once(

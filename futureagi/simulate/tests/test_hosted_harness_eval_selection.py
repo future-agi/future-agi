@@ -1,7 +1,7 @@
 """The offer rule and the one list format.
 
 Contracts: api_contracts/harness/eval-catalog.md v1.6 (P3-P6, P11, P12, F1, F2);
-eval-offer-backend-frontend.md v1.7 (§1 P1-P5, §2 P6);
+eval-offer-backend-frontend.md v1.9 (§1 P1-P5, §2 P6, §13 P31-P36a);
 eval-offer-backend-harness.md v1.6 (P1-P9, P8a — the three-way stale/unknown/
 wrong-kind provisioning drop; see the M3 tests below).
 Design: internal-docs/rl-environment/add-evals/design.md v1.5 §3-§5.
@@ -1478,3 +1478,339 @@ def test_the_cap_only_drops_survivors_past_the_eighth(organization, workspace):
         entry for entry in logs if entry["event"] == "harness_eval_selection_capped"
     )
     assert capped["dropped"] == [ONE_TOO_MANY]
+
+
+# --- TH-8055: the tool-call judge switch is independent of the catalog ------
+
+
+@pytest.mark.django_db
+def test_receipt_dispatches_evaluations_when_only_the_tool_switch_is_on(
+    organization, django_capture_on_commit_callbacks
+):
+    """TH-8055: the switch is independent of the eval catalogue (contract
+    v1.9 §13) -- a hosted receipt for an environment with zero selected evals
+    must still dispatch when the run test's tool-call judge is on.
+
+    Before the fix, `_apply_receipt_to_call`'s `if selected:` was the only
+    dispatch guard, so a switched-on run with no runnable eval never called
+    `_dispatch_evaluations_once` at all.
+    """
+    from simulate.services.hosted_harness import canonical_digest
+    from simulate.services.hosted_harness_ingestion import ingest_result_receipt
+
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="tool-switch-only-key"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client = APIClient()
+    provision = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Tool switch only",
+            "modality": "text",
+            "personas": [
+                {
+                    "scenario_key": "tool-switch",
+                    "name": "Caller",
+                    "situation": "Needs help",
+                    "outcome": "Receives help",
+                }
+            ],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    assert provision.status_code == 200, provision.content
+    provisioned = provision.json()["result"]
+    scenario = provisioned["scenarios"][0]
+
+    job.refresh_from_db()
+    job.run_test.enable_tool_evaluation = True
+    job.run_test.save(update_fields=["enable_tool_evaluation"])
+
+    client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "begin",
+            "run_test_id": provisioned["run_test_id"],
+            "scenario_keys": ["tool-switch"],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    receipt = {
+        "schema_version": "futureagi.harness-result.v1",
+        "job_id": str(job.id),
+        "attempt_id": str(capability.attempt.id),
+        "attempt_number": 1,
+        "scenario_key": "tool-switch",
+        "scenario_id": scenario["scenario_id"],
+        "scenario_attempt": 1,
+        "world_index": None,
+        "status": "passed",
+        "sub_goals": [],
+        "evaluations": [],
+        "call": None,
+        "failure": None,
+    }
+    receipt["digest"] = canonical_digest(receipt)
+
+    with (
+        patch(
+            "simulate.services.alk_simulate_ingestion._dispatch_evaluations_once"
+        ) as dispatch,
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        _, created = ingest_result_receipt(capability.attempt, receipt)
+
+    assert created is True
+    dispatch.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_hosted_scenario_provision_leaves_tool_evaluation_off(organization, workspace):
+    """TH-8055: the v3/hosted gateway is not a door for the tool-call switch
+    (contract v1.9 P36a) -- `services/hosted_harness.py::provision_scenarios`
+    never reads `enable_tool_evaluation` off the guest payload it hands to
+    `provision_alk_sim_run_test`, so even a guest payload that carries the key
+    cannot turn the switch on.
+    """
+    from simulate.services.hosted_harness import provision_scenarios
+
+    job, _ = create_hosted_job(
+        organization,
+        _payload(),
+        idempotency_key="tool-eval-guest-key",
+        workspace=workspace,
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    payload = {
+        "name": "Guest tries the switch",
+        "modality": "voice",
+        "enable_tool_evaluation": True,
+        "personas": [
+            {
+                "scenario_key": "refund-request",
+                "name": "Customer",
+                "situation": "Asks for a refund",
+                "outcome": "Agent follows policy",
+            }
+        ],
+    }
+    provision_scenarios(capability.attempt, payload)
+
+    job.refresh_from_db()
+    assert job.run_test_id is not None
+    assert job.run_test.enable_tool_evaluation is False
+
+
+@pytest.mark.django_db
+def test_the_tool_switch_does_not_regrade_a_harness_result_column(
+    organization, django_capture_on_commit_callbacks
+):
+    """TH-8055: before this fix, `eval_config_ids=selected or None` let the
+    switch widen an explicit empty selection into "every config on the run
+    test" once it reached `_run_simulate_evaluations` -- including a harness
+    result column's own empty-mapping `SimulateEvalConfig` row, created by
+    `_get_or_create_harness_eval_config` for every `platform_template` the
+    receipt resolves. The platform evaluator would then re-grade (and, on
+    error, overwrite) that column's stored verdict -- the exact waste and
+    risk `_apply_harness_evaluation_outputs`'s own docstring says this path
+    must never cause.
+    """
+    from model_hub.models.evals_metric import EvalTemplate
+    from simulate.models import CallExecution, SimulateEvalConfig
+    from simulate.services.hosted_harness import canonical_digest
+    from simulate.services.hosted_harness_ingestion import ingest_result_receipt
+
+    EvalTemplate.objects.create(
+        name="Politeness",
+        description="Politeness description",
+        config={"required_keys": []},
+        eval_tags=["Conversation"],
+        eval_id=0,
+    )
+
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="tool-switch-no-regrade-key"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client = APIClient()
+    provision = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Tool switch no regrade",
+            "modality": "text",
+            "personas": [
+                {
+                    "scenario_key": "tool-switch-regrade",
+                    "name": "Caller",
+                    "situation": "Needs help",
+                    "outcome": "Receives help",
+                }
+            ],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    assert provision.status_code == 200, provision.content
+    provisioned = provision.json()["result"]
+    scenario = provisioned["scenarios"][0]
+
+    job.refresh_from_db()
+    job.run_test.enable_tool_evaluation = True
+    job.run_test.save(update_fields=["enable_tool_evaluation"])
+
+    client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "begin",
+            "run_test_id": provisioned["run_test_id"],
+            "scenario_keys": ["tool-switch-regrade"],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    receipt = {
+        "schema_version": "futureagi.harness-result.v1",
+        "job_id": str(job.id),
+        "attempt_id": str(capability.attempt.id),
+        "attempt_number": 1,
+        "scenario_key": "tool-switch-regrade",
+        "scenario_id": scenario["scenario_id"],
+        "scenario_attempt": 1,
+        "world_index": None,
+        "status": "passed",
+        "sub_goals": [],
+        "evaluations": [
+            {
+                "name": "Politeness",
+                "kind": "eval",
+                "platform_template": "Politeness",
+                "passed": True,
+                "reason": "The agent was polite throughout.",
+            }
+        ],
+        "call": None,
+        "failure": None,
+    }
+    receipt["digest"] = canonical_digest(receipt)
+
+    # Patched at the call site `_dispatch_evaluations_once` actually uses --
+    # `alk_simulate_ingestion` imports `_run_simulate_evaluations_task` from
+    # `test_executor` at module scope.
+    with (
+        patch(
+            "simulate.services.alk_simulate_ingestion._run_simulate_evaluations_task"
+        ) as task,
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        _, created = ingest_result_receipt(capability.attempt, receipt)
+
+    assert created is True
+    call = CallExecution.objects.get(
+        hosted_registration__scenario_key="tool-switch-regrade"
+    )
+    config = SimulateEvalConfig.objects.get(
+        run_test_id=job.run_test_id, name="Politeness"
+    )
+    # [] -- not None -- is what stops `_run_simulate_evaluations` from
+    # widening the dispatch to "every config on the run test".
+    task.apply_async.assert_called_once_with(args=(str(call.id), []))
+
+    # The harness's own verdict on that column is untouched: it was written
+    # by `_apply_harness_evaluation_outputs` before dispatch, and the mocked
+    # task never ran, so nothing re-graded or overwrote it.
+    call.refresh_from_db()
+    assert call.eval_outputs[str(config.id)]["source"] == "harness"
+
+
+@pytest.mark.django_db
+def test_a_switch_lookup_failure_never_loses_the_receipt(
+    organization, django_capture_on_commit_callbacks
+):
+    """TH-8055: before this fix, `_tool_evaluation_on`'s read sat outside the
+    `try`/`except` and the `isinstance` type guard that already wrap
+    `runnable_eval_config_ids`'s read a few lines above it -- so a transient
+    DB error on that one extra query would propagate out of
+    `_apply_receipt_to_call`, past the receipt writer, and the receipt would
+    be lost. The `# noqa: BLE001` on that `except` already says a receipt
+    must never be lost over what it schedules next; this pins that the
+    switch lookup now honours the same promise.
+    """
+    from django.db.utils import OperationalError
+
+    from simulate.models import CallExecution
+    from simulate.services.hosted_harness import canonical_digest
+    from simulate.services.hosted_harness_ingestion import ingest_result_receipt
+
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="tool-switch-lookup-failure-key"
+    )
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client = APIClient()
+    provision = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Tool switch lookup failure",
+            "modality": "text",
+            "personas": [
+                {
+                    "scenario_key": "tool-switch-lookup-failure",
+                    "name": "Caller",
+                    "situation": "Needs help",
+                    "outcome": "Receives help",
+                }
+            ],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    assert provision.status_code == 200, provision.content
+    provisioned = provision.json()["result"]
+    scenario = provisioned["scenarios"][0]
+
+    client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "begin",
+            "run_test_id": provisioned["run_test_id"],
+            "scenario_keys": ["tool-switch-lookup-failure"],
+        },
+        format="json",
+        **_headers(capability),
+    )
+    receipt = {
+        "schema_version": "futureagi.harness-result.v1",
+        "job_id": str(job.id),
+        "attempt_id": str(capability.attempt.id),
+        "attempt_number": 1,
+        "scenario_key": "tool-switch-lookup-failure",
+        "scenario_id": scenario["scenario_id"],
+        "scenario_attempt": 1,
+        "world_index": None,
+        "status": "passed",
+        "sub_goals": [],
+        "evaluations": [],
+        "call": None,
+        "failure": None,
+    }
+    receipt["digest"] = canonical_digest(receipt)
+
+    with (
+        patch(
+            "simulate.services.hosted_harness_ingestion._tool_evaluation_on",
+            side_effect=OperationalError("connection reset"),
+        ),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        _, created = ingest_result_receipt(capability.attempt, receipt)
+
+    assert created is True
+    call = CallExecution.objects.get(
+        hosted_registration__scenario_key="tool-switch-lookup-failure"
+    )
+    assert call.status == CallExecution.CallStatus.COMPLETED

@@ -7,7 +7,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from simulate.models import HostedHarnessJob
+from simulate.models import AgentDefinition, HostedHarnessJob
 from simulate.serializers.harness_environment import (
     HarnessEnvironmentAddEvaluationSerializer,
     HarnessEnvironmentAvailableEvalsSerializer,
@@ -18,6 +18,7 @@ from simulate.serializers.harness_environment import (
     HarnessEnvironmentRunEvaluationQueuedSerializer,
     HarnessEnvironmentRunResponseSerializer,
     HarnessEnvironmentRunSerializer,
+    HarnessEnvironmentToolCallEvaluationSerializer,
 )
 from simulate.services.harness_environment import (
     annotate_for_list,
@@ -39,7 +40,8 @@ def _touch_content(job):
     """Record that the environment's content changed, for the list's clock.
 
     Which evals grade an environment is part of what the environment is, so
-    binding or removing one moves the row the same way a pipeline stage does.
+    binding or removing one moves the row the same way a pipeline stage does,
+    and so is whether its tool calls are graded.
     """
     job.content_updated_at = timezone.now()
     job.save(update_fields=["content_updated_at", "updated_at"])
@@ -488,3 +490,84 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         config.save(update_fields=["deleted", "deleted_at", "updated_at"])
         _touch_content(job)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @validated_request(
+        request_serializer=HarnessEnvironmentToolCallEvaluationSerializer,
+        responses={200: HarnessEnvironmentDetailSerializer},
+        reject_unknown_fields=True,
+        operation_description=(
+            "Turn the tool-call judge on or off for this environment. "
+            "Returns the full environment detail. Turning it on is refused "
+            "for a hosted voice environment with no agent version yet."
+        ),
+    )
+    @action(detail=True, methods=["put"], url_path="evaluations/tool-call")
+    def set_tool_call_evaluation(self, request, pk=None):
+        """Turn the tool-call judge on or off for this environment.
+
+        Deliberately not an eval. The three endpoints above take a name or an
+        id out of a catalogue; this one takes a boolean, because what it sets
+        is a single column on the run test
+        (``RunTest.enable_tool_evaluation``) that the grading path has read
+        since long before environments existed
+        (``services/test_executor.py``'s ``_run_tool_evaluation``). It is
+        never offered by ``available``, never listed in
+        ``evaluations.selected``, and never counted against the cap of eight.
+
+        What "on" costs is worth saying out loud: every call the environment
+        produces is read once more by a judge that grades the tools the agent
+        reached for, one grading per tool call, charging that judge's tokens.
+        Its output goes to the call's ``tool_outputs`` column, which is not
+        where verdicts live, so nothing here can touch a stored verdict.
+
+        ``PUT`` rather than ``PATCH``: the body carries the whole state of the
+        switch, so the same request twice leaves the same result. The answer is
+        the whole environment detail, as the add's 201 is, so the client reads
+        the new value back from the server instead of patching its own copy.
+
+        Past calls are untouched in both directions -- turning it on grades
+        nothing that already ran, and turning it off erases nothing that was
+        already graded.
+
+        Turning it on is refused, 409, for a hosted voice environment whose
+        agent definition has no version yet -- the judge has nothing to grade
+        against on that shape today (contract v1.9 §13, P35 amended). Turning
+        it off is always allowed.
+
+        Contract api_contracts/harness/eval-offer-backend-frontend.md v1.9 §13
+        (P31-P36), F2.
+        """
+        from django.db import transaction
+
+        job, refusal = self._run_test_job(request, pk)
+        if refusal is not None:
+            return refusal
+        enable_tool_evaluation = request.validated_data["enable_tool_evaluation"]
+        if enable_tool_evaluation:
+            agent_definition = job.run_test.agent_definition
+            if (
+                agent_definition is not None
+                and agent_definition.agent_type
+                == AgentDefinition.AgentTypeChoices.VOICE
+                and agent_definition.latest_version is None
+            ):
+                return Response(
+                    {
+                        "detail": "Tool-call evaluation is not available for a voice environment yet"
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+        # `job.run_test` caches the instance on the job, and
+        # `environment_detail` -> `_settings` reads the same attribute below,
+        # so the response reports the value this request just wrote without a
+        # refetch and without a second query.
+        run_test = job.run_test
+        run_test.enable_tool_evaluation = enable_tool_evaluation
+        with transaction.atomic():
+            run_test.save(update_fields=["enable_tool_evaluation", "updated_at"])
+            # Unconditional, exactly as the add and the remove are: whether an
+            # environment's tool calls are graded is part of what the environment
+            # is, and one rule for the list's clock beats a special case for the
+            # request that set the value it already had.
+            _touch_content(job)
+        return Response(environment_detail(job))
