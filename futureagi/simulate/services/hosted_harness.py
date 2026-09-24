@@ -451,9 +451,7 @@ def delete_environment(job: HostedHarnessJob) -> None:
 
 def request_cancellation(job: HostedHarnessJob, reason: str) -> HostedHarnessJob:
     with transaction.atomic():
-        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
-            id=job.id
-        )
+        locked = HostedHarnessJob.all_objects.select_for_update().get(id=job.id)
         if locked.state in {
             HostedHarnessJob.State.COMPLETED,
             HostedHarnessJob.State.FAILED,
@@ -991,9 +989,7 @@ def record_cleanup(
         record_sandbox_runtime(attempt, final=True)
         # Teardown seals all measured authoring, even when no bundle was produced.
         replay_harness_usage(attempt)
-        job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
-            id=attempt.job_id
-        )
+        job = HostedHarnessJob.all_objects.select_for_update().get(id=attempt.job_id)
         if attempt.attempt_number < job.current_attempt_number:
             return job
         if retry_pending:
