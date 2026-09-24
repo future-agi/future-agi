@@ -56,17 +56,35 @@ export function useEnvState(envId, bootstrap, { persist = true } = {}) {
   const envState =
     slice || (bootstrap ? { ...emptyEnvState(), ...bootstrap } : emptyEnvState());
 
+  // The first write while the bootstrap is unpersisted has to carry it into the
+  // store: patchEnvState merges into emptyEnvState(), so writing on its own
+  // would mint a slice with none of the harness-derived agent or scenarios and
+  // they would disappear from the workspace mid-build.
+  const seedIfUnwritten = useCallback(() => {
+    if (slice || !bootstrap) return;
+    patchEnvState(envId, bootstrap);
+  }, [slice, bootstrap, envId, patchEnvState]);
+
   const patch = useCallback(
-    (p) => patchEnvState(envId, p),
-    [patchEnvState, envId],
+    (p) => {
+      seedIfUnwritten();
+      patchEnvState(envId, p);
+    },
+    [seedIfUnwritten, patchEnvState, envId],
   );
   const recordRun = useCallback(
-    (run) => recordRunAction(envId, run),
-    [recordRunAction, envId],
+    (run) => {
+      seedIfUnwritten();
+      recordRunAction(envId, run);
+    },
+    [seedIfUnwritten, recordRunAction, envId],
   );
   const addAgentVersion = useCallback(
-    (version) => addAgentVersionAction(envId, version),
-    [addAgentVersionAction, envId],
+    (version) => {
+      seedIfUnwritten();
+      addAgentVersionAction(envId, version);
+    },
+    [seedIfUnwritten, addAgentVersionAction, envId],
   );
 
   const canRun = !!envState.agent && (envState.scenarios?.length || 0) > 0;

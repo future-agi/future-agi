@@ -16,8 +16,13 @@ const axios = axiosMod.default;
 const { endpoints } = axiosMod;
 const { paths } = await import("src/routes/paths");
 const { MOCK_RUNS } = await import("../_fixtures/runs");
-const { useEnvironmentRuns, executionToRun, runSimulationTarget, RUNS_PAGE_SIZE } =
-  await import("../runs");
+const {
+  useEnvironmentRuns,
+  executionToRun,
+  runSimulationTarget,
+  mockRunsEnabled,
+  RUNS_PAGE_SIZE,
+} = await import("../runs");
 
 // Raw executions payload (the product's `results[]` shape) — capitalised
 // product statuses, `success_rate` on the 0–100 scale. RunTestExecutionsView
@@ -233,6 +238,23 @@ describe("useEnvironmentRuns", () => {
 
     expect(axios.get).not.toHaveBeenCalled();
     expect(result.current.runs).toEqual(MOCK_RUNS);
+  });
+});
+
+describe("mockRunsEnabled", () => {
+  it("honours ?mockRuns=1 in a dev build", () => {
+    expect(mockRunsEnabled("1", true)).toBe(true);
+  });
+
+  it("ignores ?mockRuns=1 in a production build", () => {
+    // The QA switch swaps real executions for a fixture; it must not be
+    // reachable from a deployed build.
+    expect(mockRunsEnabled("1", false)).toBe(false);
+  });
+
+  it("is off without the param", () => {
+    expect(mockRunsEnabled(null, true)).toBe(false);
+    expect(mockRunsEnabled("0", true)).toBe(false);
   });
 });
 

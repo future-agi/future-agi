@@ -90,9 +90,14 @@ const hasLiveExecution = (data) =>
 
 const RUNS_POLL_MS = 5000;
 
+// The ?mockRuns=1 QA switch swaps the real executions for MOCK_RUNS. Taking
+// `isDev` as an argument keeps it out of a production build and testable
+// without stubbing import.meta.
+export const mockRunsEnabled = (param, isDev) => param === "1" && Boolean(isDev);
+
 export function useEnvironmentRuns(env, envState) {
   const [params] = useSearchParams();
-  const mockRuns = params.get("mockRuns") === "1" && import.meta.env.DEV;
+  const mockRuns = mockRunsEnabled(params.get("mockRuns"), import.meta.env.DEV);
   const runTestId = env?.platform?.runTestId;
 
   const query = useInfiniteQuery({

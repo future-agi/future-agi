@@ -379,6 +379,26 @@ describe("useEnvironmentsStore", () => {
       expect(useEnvironmentsStore.getState().byEnv["env-building"]).toBeUndefined();
     });
 
+    it("keeps the bootstrap when the first write lands while persist is off", () => {
+      // patchEnvState merges into emptyEnvState(), so a write before the
+      // bootstrap was persisted used to create a slice with none of it — the
+      // harness agent and its scenarios simply vanished from the workspace.
+      const bootstrap = {
+        ...emptyEnvState(),
+        agent: { via: "endpoint" },
+        scenarios: [{ id: "s1" }],
+      };
+      const { result } = renderHook(() =>
+        useEnvState("env-write", bootstrap, { persist: false }),
+      );
+
+      act(() => result.current.patch({ evals: ["e1"] }));
+
+      expect(result.current.envState.agent).toEqual(bootstrap.agent);
+      expect(result.current.envState.scenarios).toEqual(bootstrap.scenarios);
+      expect(result.current.envState.evals).toEqual(["e1"]);
+    });
+
     it("exposes patch/recordRun/addAgentVersion bound to the env id", () => {
       const { result } = renderHook(() => useEnvState("env-bound"));
       act(() => result.current.patch({ evals: ["e1"] }));

@@ -174,6 +174,7 @@ export default function EnvironmentWorkspace() {
             tab={activeTab}
             onTabChange={onTabChange}
             locked={locked}
+            canRun={runnable}
             onFork={onFork}
             gapsByTab={gapsByTab(env, envState)}
             counts={counts(envState)}

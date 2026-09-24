@@ -212,6 +212,17 @@ describe("EnvironmentWorkspace route shell", () => {
     });
   });
 
+  it("enables Start simulation for a built job the header can already run", async () => {
+    getHarnessJob.mockResolvedValue(COMPLETED_JOB);
+
+    renderWorkspace("/dashboard/simulate/environments/job-done?tab=runs");
+
+    // The header gates on the run-test bridge (canRunHeader), so the pre-flight
+    // must not disagree and refuse the same run.
+    const start = await screen.findByRole("button", { name: /Start simulation/ });
+    expect(start).toBeEnabled();
+  });
+
   it("opens the Runs tab from ?tab=runs", async () => {
     seedClientEnv(TEMPLATE, {
       ...emptyEnvState(),

@@ -31,6 +31,7 @@ export default function WorkspacePanels({
   tab,
   onTabChange,
   locked = false,
+  canRun,
   onFork,
   buildMode = false,
   gapsByTab,
@@ -82,6 +83,7 @@ export default function WorkspacePanels({
             env={env}
             envState={envState}
             runs={runs}
+            canRun={canRun}
             total={runHistory.total}
             isLoading={runHistory.isLoading}
             isError={runHistory.isError}
@@ -166,6 +168,7 @@ WorkspacePanels.propTypes = {
   tab: PropTypes.string,
   onTabChange: PropTypes.func.isRequired,
   locked: PropTypes.bool,
+  canRun: PropTypes.bool,
   onFork: PropTypes.func,
   buildMode: PropTypes.bool,
   gapsByTab: PropTypes.objectOf(GAP_SHAPE),

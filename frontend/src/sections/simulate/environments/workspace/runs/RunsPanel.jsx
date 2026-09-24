@@ -26,6 +26,7 @@ export default function RunsPanel({
   envState,
   runs,
   total,
+  canRun,
   isLoading = false,
   isError = false,
   hasMore = false,
@@ -40,7 +41,12 @@ export default function RunsPanel({
   const scenarioCount = envState.scenarios.length;
   const criticalCount = envState.scenarios.filter((s) => s.critical).length;
   const evalCount = envState.evals.length;
-  const ready = !!agent && scenarioCount > 0;
+  // `canRun` is the workspace's own answer (canRunHeader), which lets a built
+  // harness job run through its product bridge even before the client-side
+  // agent/scenario checks are met. Falling back to the local check keeps the
+  // panel usable on its own, but when the header says the env can run the
+  // pre-flight must not refuse the same run.
+  const ready = canRun ?? (!!agent && scenarioCount > 0);
 
   // Loading and failure are not "no runs yet" — an environment whose history is
   // still in flight, or whose executions request failed, used to read as one
@@ -204,6 +210,7 @@ RunsPanel.propTypes = {
   runs: PropTypes.arrayOf(PropTypes.shape({ id: PropTypes.string, status: PropTypes.string }))
     .isRequired,
   total: PropTypes.number,
+  canRun: PropTypes.bool,
   isLoading: PropTypes.bool,
   isError: PropTypes.bool,
   hasMore: PropTypes.bool,
