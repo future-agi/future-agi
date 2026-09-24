@@ -276,3 +276,34 @@ describe("EvalPickerConfigFull — error localization gating (TH-7177)", () => {
     expect(screen.getByText("Error Localization")).toBeTruthy();
   });
 });
+
+describe("EvalPickerConfigFull — host-supplied queue decorations", () => {
+  it("overrides the primary button label and renders the progress node", async () => {
+    render(
+      <EvalPickerProvider
+        source="task"
+        sourceId="project-1"
+        sourceRowType="traces"
+        sourceColumns={[]}
+        existingEvals={[]}
+        onEvalAdded={() => {}}
+        onClose={() => {}}
+      >
+        <EvalPickerConfigFull
+          evalData={{ id: "tpl-1", templateId: "tpl-1", name: "toxicity" }}
+          onBack={() => {}}
+          onSave={() => {}}
+          isSaving={false}
+          primaryLabel="Walk on"
+          progress={<div data-testid="queue-progress">bar</div>}
+        />
+      </EvalPickerProvider>,
+    );
+
+    expect(
+      await screen.findByRole("button", { name: "Walk on" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add Evaluation" })).toBeNull();
+    expect(screen.getByTestId("queue-progress")).toBeInTheDocument();
+  });
+});
