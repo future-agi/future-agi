@@ -9,9 +9,10 @@ import { PARALLELISM_COPY, degradeReasonCopy } from "../../parallelism.constants
 // import Iconify from "src/components/iconify";
 // import SideDrawer from "../../components/SideDrawer";
 // import AgentsPanel from "../agents/AgentsPanel";
-// import AgentSummarySection from "./AgentSummarySection";
 // (AGENT_SUMMARY_COPY dropped from the overview.constants import with it)
 import { GroupHeading, Fact } from "./OverviewPrimitives";
+import AgentSummarySection from "./AgentSummarySection";
+import SourceReadCard from "./SourceReadCard";
 import AgentRefreshBanner from "./AgentRefreshBanner";
 import NextStepsChecklist from "./NextStepsChecklist";
 import StateSummary from "./StateSummary";
@@ -88,8 +89,8 @@ export default function OverviewPanel({ env, envState, patch, onGo, agentConnect
       <Stack
         direction="row"
         flexWrap="wrap"
-        divider={<Box sx={{ width: "1px", bgcolor: "divider", alignSelf: "stretch", mx: 2 }} />}
-        sx={{ my: 2, py: 1.25, px: 2, border: "1px solid", borderColor: "divider", borderRadius: 1.5, rowGap: 1 }}
+        divider={<Box sx={{ width: "1px", bgcolor: "divider", mx: 2 }} />}
+        sx={{ my: 2, py: 1.25, px: 2, border: "1px solid", borderColor: "divider", borderRadius: 1.5, rowGap: 1, width: "fit-content", maxWidth: "100%" }}
       >
         <Fact label={OVERVIEW_COPY.facts.channel} value={surface.label} />
         <Fact label={OVERVIEW_COPY.facts.connector} value={connectorLabel} />
@@ -111,14 +112,7 @@ export default function OverviewPanel({ env, envState, patch, onGo, agentConnect
         </Box>
       )}
 
-      {/* Manage-versions container (agent "test subject" card + "Manage
-          versions") — commented out, to be picked up later.
-      <AgentSummarySection
-        envState={envState}
-        agentConnected={agentConnected}
-        locked={locked}
-        onManageVersions={() => setAgentDrawerOpen(true)}
-      /> */}
+      <AgentSummarySection subject={env.testSubject} />
 
       {/* Optional re-derive prompt when the attached agent has moved ahead of
           the world; only an unlocked env can re-derive. */}
@@ -140,8 +134,7 @@ export default function OverviewPanel({ env, envState, patch, onGo, agentConnect
           the environment belongs. Overview keeps the summary, not the definition. */}
       <GroupHeading>{OVERVIEW_COPY.capabilities}</GroupHeading>
 
-      {/* The source-to-sandbox ledger was removed: its origin chips and sandbox
-          targets were derived by position and keyword, not reported by ALK. */}
+      <SourceReadCard tools={env.tools} rules={env.rules} />
 
       {/* Tools and Hard rules cards were here — removed as duplicates of the
           Contract tab, which owns the tool inventory and the hard-rule list. */}

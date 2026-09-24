@@ -39,15 +39,22 @@ export const OVERVIEW_COPY = {
 };
 
 // The agent summary (test-subject) card copy.
+export const SOURCE_READ_COPY = {
+  title: "Read from source",
+  tools: "Tools",
+  toolsHint: "from the agent config & call-graph",
+  rules: "Rules",
+  rulesHint: "hard constraints the agent must hold",
+  count: (n) => `${n} found`,
+};
+
 export const AGENT_SUMMARY_COPY = {
   label: "Test subject",
   connected: "Connected",
   noAgentTitle: "No agent attached",
-  agentTitle: (label) => `Agent ${label}`,
+  agentTitle: (name, label) => [name || "Agent", label].filter(Boolean).join(" "),
   lockedBody:
     "Seeded baseline shipped with this template. Fork the environment to add your own agent versions.",
-  attachedBody: (count, endpoint) =>
-    `${count} version${count === 1 ? "" : "s"} on record${endpoint ? ` · ${endpoint}` : ""}. This environment stays put — swap in another agent to compare.`,
   portableBody:
     "This environment is portable. Attach an agent as the test subject; you can swap in different agents later without rebuilding the env.",
   fork: "Fork to edit",
