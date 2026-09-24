@@ -67,6 +67,14 @@ function evalResultFor(row, col) {
     label,
     reason: data.reason || "",
     threshold: 0.5,
+    // §7 P23/P28: the verdict of an eval that has since been removed from the
+    // environment still carries `removed: true` here, on the SAME serializer
+    // the run's call list reads (contract L1 v1.5, "same serializer, same
+    // marker"). Without this the chat call drawer's list-derived fallback
+    // (ChatCallDrawer.jsx, while `useCallDetail` is loading or has errored)
+    // renders a removed verdict with no marker — the same expression
+    // `runDetail.js`'s `callEvalResult` already uses.
+    removed: data.removed === true,
   };
 }
 

@@ -668,8 +668,8 @@ const AGENT_METRICS = {
 };
 
 const DETAILS_KEYS = {
-  VOICE: ["total_calls", "connected_calls", "calls_connected_percentage"],
-  CHAT: ["total_calls", "connected_calls", "calls_connected_percentage"],
+  VOICE: ["total_calls", "connected_calls", "calls_connected_percentage", "completed_calls"],
+  CHAT: ["total_calls", "connected_calls", "calls_connected_percentage", "completed_calls"],
 };
 
 // Keys to exclude from processing

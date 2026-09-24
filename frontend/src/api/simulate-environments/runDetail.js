@@ -47,6 +47,10 @@ import { listRunTestExecutions, mapExecutions } from "./runs";
  * @property {number} total         Calls/chats run (`kpis.total_calls`).
  * @property {number} passed        `total - failed`.
  * @property {number} failed        `kpis.failed_calls`.
+ * @property {?number} completed    P19's `completed_calls` straight from the
+ *                                  KPI body, both modalities (TH-8046); null
+ *                                  while the KPIs haven't loaded or the field
+ *                                  is absent — never 0, never `total`.
  * @property {number} passRate      0–100; `performance-summary.pass_rate` when
  *                                  present, else derived `passed/total`.
  * @property {?number} durationS    Total wall-clock seconds (`total_duration`).
@@ -116,6 +120,23 @@ export function buildRunStats(kpis, perf, row) {
         ? Math.round((passed / total) * 100)
         : 0;
 
+  // P27 (contract v1.8, owner's ruling 2026-09-23 night; round-3 M2): the KPI
+  // body now exposes `completed_calls` for BOTH modalities — TH-8046 adds
+  // `"completed_calls": metrics.get("completed_calls", 0) or 0` to
+  // `RunTestKPIsView`'s `kpi_data`, off the column P19 names,
+  // `COUNT(*) FILTER (WHERE status = 'completed')` (`sql_query.py:368`). So
+  // this reads one field instead of borrowing the chat branch's
+  // `connected_calls` (which on a voice run is `connected_voice_calls`,
+  // `duration_seconds > 0` — a different filter), and a voice run finally gets
+  // the count P27 promises before the click.
+  //
+  // It stays a different number from `total` (COUNT(*) over every status,
+  // `sql_query.py:364`), and it stays `null` — never `0`, never `total` —
+  // whenever the KPIs have not loaded or the field is absent (an older backend,
+  // before TH-8046 lands). "Not known yet" must never be shown as a number that
+  // means something else.
+  const completed = kpis?.completed_calls ?? null;
+
   const durationS = kpis?.total_duration ?? null;
   const avgDurationMs =
     durationS != null && total ? Math.round((durationS * 1000) / total) : null;
@@ -131,6 +152,7 @@ export function buildRunStats(kpis, perf, row) {
     total,
     passed,
     failed,
+    completed,
     passRate,
     durationS,
     avgDurationMs,
@@ -268,7 +290,8 @@ export {
  * @property {?string} summary       `call_summary`.
  * @property {Object<string,string>} recordings  `recordings` map (voice audio).
  * @property {Array<{ id: string, name: string, score: ?number,
- *   passed: ?boolean, reason: string }>} evalResults  From `eval_metrics`.
+ *   passed: ?boolean, reason: string, removed: boolean }>} evalResults  From
+ *   `eval_metrics`; `removed` is true for a verdict whose eval was removed (P23).
  */
 
 // Normalise a transcript/chat role to the two the drawer paints. Voice
@@ -315,6 +338,10 @@ function callEvalResult(evalId, data) {
     score,
     passed,
     reason: data.reason || "",
+    // §7 P23: the verdict of an eval that has since been removed from the
+    // environment is still returned, carrying `removed: true`. It is never
+    // hidden and never rewritten — the drawer marks it (P28).
+    removed: data.removed === true,
   };
 }
 
