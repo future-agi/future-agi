@@ -6,11 +6,10 @@ export default function useKpis(executionId, options = {}) {
 
   const query = useQuery({
     queryKey,
-    // Cache the body, not the AxiosResponse. `useRunsSummary` (environments
-    // workspace) shares this exact query key and caches `res.data` — if this
-    // hook cached the raw response instead, whichever observer mounted second
-    // would read the wrong shape back off the shared cache entry (M2,
-    // final-review-r4.md).
+    // Cache the body, not the AxiosResponse: `useRunsSummary` (environments
+    // workspace) shares this query key and caches `res.data` too, so caching
+    // the raw response here would let whichever observer mounts second read
+    // the wrong shape off the shared cache entry.
     queryFn: () => axios.get(endpoints.testExecutions.kpis(executionId)).then((res) => res.data),
     enabled: options.enabled ?? !!executionId,
     refetchInterval: options.refetch ? 5000 : false,

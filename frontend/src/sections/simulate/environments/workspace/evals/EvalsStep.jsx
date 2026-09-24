@@ -53,7 +53,7 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
   const detailQuery = useQuery(harnessEnvironmentQuery(env.id, { enabled: backed }));
   // §5 selected[]: each row is a full §1 entry plus `id` and `runnable`. Kept
   // whole — the tab shows `source`, the cost line (`credits_per_run` /
-  // `charges_judge_tokens`) and `inputs` (P25), which the old {id,name,blurb}
+  // `charges_judge_tokens`) and `inputs`, which the old {id,name,blurb}
   // projection threw away.
   const selectedFromDetail = useMemo(() => {
     const selected = detailQuery.data?.evaluations?.selected;
@@ -79,18 +79,17 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
     removeEval.mutate({ id: env.id, evalConfigId: id });
   };
 
-  // Minor-5 (fix round 1): with several rows, one Alert for the whole card
-  // doesn't say which one a failed remove belongs to. `removeEval.variables`
-  // is the mutation's own last input — `{ id, evalConfigId }` — so the failed
-  // row is whichever applied eval still carries that config id.
+  // With several rows, one Alert for the whole card doesn't say which one a
+  // failed remove belongs to. `removeEval.variables` is the mutation's own
+  // last input — `{ id, evalConfigId }` — so the failed row is whichever
+  // applied eval still carries that config id.
   const failedRemoveName = useMemo(() => {
     if (!removeEval.isError) return null;
-    // Minor-4 (fix round 1): an absent `variables` (or one carrying no
-    // `evalConfigId`) must not fall through to `e.id === undefined` — that
-    // would match the first applied eval that happens to carry no `id` and
-    // attribute the Alert to a row the refusal has nothing to do with. P16
-    // guarantees an `id` on every `selected[]` row, so this is not reachable
-    // through the contract today; the guard is defensive.
+    // An absent `variables` (or one carrying no `evalConfigId`) must not
+    // fall through to `e.id === undefined` — that would match the first
+    // applied eval that happens to carry no `id` and attribute the Alert to
+    // a row the refusal has nothing to do with. Not reachable through the
+    // contract today; the guard is defensive.
     const failedId = removeEval.variables?.evalConfigId;
     if (!failedId) return null;
     return appliedEvals.find((e) => e.id === failedId)?.name || null;
@@ -196,13 +195,12 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
         </Tooltip>
       </Stack>
 
-      {/* L4 (round 3): a failed §4 remove used to change nothing on screen —
-          the row stays (correctly: nothing was removed) and the user was told
-          nothing. The server's sentence is shown exactly as returned, like
-          every other refusal in this feature: 409 while the environment is
-          still building, 404 if it was already removed (safe to retry).
-          Minor-5 (fix round 1): prefixed with the eval's own name — one Alert
-          for the whole card said nothing about which row a 404 belonged to. */}
+      {/* A failed remove used to change nothing on screen — the row stays
+          (correctly: nothing was removed) but the user was told nothing. The
+          server's sentence is shown exactly as returned: 409 while the
+          environment is still building, 404 if already removed (safe to
+          retry) — prefixed with the eval's own name so it's clear which row
+          it belongs to. */}
       {backed && removeEval.isError && (
         <Alert severity="error" sx={{ mb: 2, typography: "s3" }}>
           {failedRemoveName ? `${failedRemoveName}: ` : ""}

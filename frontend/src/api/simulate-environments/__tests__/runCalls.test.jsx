@@ -91,7 +91,7 @@ describe("mapCallRow", () => {
     expect(t.durationMs).toBeNull();
   });
 
-  it("carries a removed eval's marker (M1, §7 P23/P28) — the SAME serializer/marker as the call list's own read surface", () => {
+  it("carries a removed eval's marker", () => {
     const row = {
       id: "c4",
       status: "completed",

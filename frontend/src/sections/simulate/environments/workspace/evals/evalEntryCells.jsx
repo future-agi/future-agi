@@ -14,11 +14,12 @@ const chipSx = {
   "& .MuiChip-label": { px: 0.75 },
 };
 
-// Library/Custom and the cost line, both read straight off the entry (P25):
+// Library/Custom and the cost line, both read straight off the entry:
 // "0.5 credits per run" or "0.5 credits per run + judge tokens", built from
-// `credits_per_run` and `charges_judge_tokens` — never from `eval_type` or the
-// name. `runMode` (the picker opened from inside a run) swaps the cost chip to
-// "0.5 credits per call graded" / "… + judge tokens" — see `costLabel`.
+// `credits_per_run` and `charges_judge_tokens` — never from `eval_type` or
+// the name. `runMode` (the picker opened from inside a run) swaps the cost
+// chip to "0.5 credits per call graded" / "… + judge tokens" — see
+// `costLabel`.
 export function EvalEntryChips({ entry, runMode = false }) {
   return (
     <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0 }}>
@@ -29,9 +30,10 @@ export function EvalEntryChips({ entry, runMode = false }) {
 }
 EvalEntryChips.propTypes = { entry: EVAL_ENTRY_SHAPE, runMode: PropTypes.bool };
 
-// "required key → what fills it", one row per `inputs[]` entry, in the order the
-// API sent them. The right-hand side is `label` and nothing else (P1): the raw
-// source name (voice_recording, scenario_columns.situation.value) is never shown.
+// "required key → what fills it", one row per `inputs[]` entry, in the order
+// the API sent them. The right-hand side is `label` and nothing else: the
+// raw source name (voice_recording, scenario_columns.situation.value) is
+// never shown.
 export function EvalInputs({ entry, heading = "INPUTS" }) {
   const rows = inputRowsOf(entry);
   if (rows.length === 0) return null;

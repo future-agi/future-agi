@@ -87,14 +87,8 @@ export function useRenameEnvironment() {
 export function useRemoveAppliedEvaluation() {
   const queryClient = useQueryClient();
   return useMutation({
-    // L4 (round 3): the global mutation-error handler (`src/app.jsx:75-93`) is
-    // gated on `error?.result`, and the axios interceptor rejects with
-    // `{...body, statusCode, transportCode}` over an error body that is always
-    // `{"detail": "…"}` — so there is no `result` key and the global toast
-    // never fires for this endpoint either way. Opting out is therefore honest
-    // rather than a silencing, and the caller owns the message: `EvalsStep`
-    // renders `removeEval.error.detail` beside the list (409 while building,
-    // 404 already removed).
+    // The global handler only fires on `error?.result`, which this endpoint's
+    // `{"detail": …}` body never has — `EvalsStep` shows the message itself.
     meta: { errorHandled: true },
     mutationFn: ({ id, evalConfigId }) =>
       deleteAppliedEvaluation(id, evalConfigId),
@@ -129,75 +123,44 @@ export function useAvailableEvaluations(envId, { enabled = true } = {}) {
 export function useAddEvaluation() {
   const queryClient = useQueryClient();
   return useMutation({
-    // L8 (round 4): harmless today only because the global handler
-    // (`app.jsx:74-93`) is gated on `error?.result`, which this endpoint's
-    // `{"detail": …}` body never carries (see the `useRemoveAppliedEvaluation`
-    // comment above for the same reasoning) — but that is a property of the
-    // error shape, not of this mutation. Opt out explicitly so
-    // `AddEvaluationDrawer`'s own Alert stays the single owner of the message
-    // if the shape ever changes.
+    // Same reasoning as `useRemoveAppliedEvaluation`'s opt-out; kept explicit
+    // so `AddEvaluationDrawer`'s own Alert stays the single owner of the
+    // message if the error shape ever changes.
     meta: { errorHandled: true },
     mutationFn: ({ id, name }) => addEvaluation(id, name),
     onSuccess: (detail, { id }) => {
-      // P29 is kept by the SERVER's own body: the 201 is the full §5 detail,
-      // not something the client assembled, so seeding from it is reading the
-      // server's answer, not patching from client state.
-      //
-      // L11 (round 3): do NOT invalidate the DETAIL key here as well. Two
-      // detail queries are active while the picker is open (the drawer's own,
-      // and the workspace's), so an invalidation refetches immediately — and
-      // if that read is served before the write is visible, the seeded row is
-      // replaced by the pre-add list and the button flips "Added" back to
-      // "Add" in front of the user. Read-after-write on this endpoint is not
-      // something the frontend can prove. The detail refetch happens when the
-      // drawer closes (`AddEvaluationDrawer`'s `handleClose`), by which point
-      // nothing is waiting on it and a stale read costs nothing.
+      // Seed from the server's own body rather than patching client state.
+      // Don't also invalidate the detail key: two detail queries are active
+      // while the picker is open, and a same-tick refetch can win the race
+      // and flip the row back to "Add". `AddEvaluationDrawer`'s `handleClose`
+      // refetches once it's safe.
       if (detail) queryClient.setQueryData(harnessEnvironmentKey(id), detail);
-      // Important-1 (fix round 2, reverting fix round 1): do NOT invalidate
-      // the AVAILABLE list here either. Round 1 added that invalidation to
-      // stop a just-added eval from rendering twice — once as an offered row
-      // marked "Added", once in the run-mode bound group — but `available` is
-      // the drawer's ONLY active observer of that query (`AddEvaluationDrawer`
-      // alone), so invalidating it while the drawer is still open refetches it
-      // in the same tick (react-query v5's default `refetchType: "active"`).
-      // The server then applies P6 and returns the list minus this eval,
-      // dropping the just-added row off screen entirely — in environment
-      // mode there is no bound group and no counts receipt to replace it, so
-      // nothing on screen says the add happened. The dedupe is already solved
-      // without this: `boundEntries` (below, in `AddEvaluationDrawer.jsx`) is
-      // filtered by the names `available` is CURRENTLY showing, so a
-      // just-added row that stays in the offer marked "Added" can never also
-      // render in the bound group. `available` catches up to P6's
-      // subtraction the next time it is actually fetched — the drawer
-      // reopening, or any other remount — never by an invalidation from here.
+      // Don't invalidate the AVAILABLE list either: it's the drawer's only
+      // active observer, so refetching here would drop the just-added row
+      // off the offer with nothing to replace it. `boundEntries` (below, in
+      // `AddEvaluationDrawer.jsx`) already dedupes by filtering on
+      // `available`'s current names.
     },
   });
 }
 
 // §6 add an evaluation from inside a run. Same body as §3 (`{ name }`), same
-// refusals — a §3 refusal is returned unchanged and nothing is queued (P18) —
-// but the 202 body is the five counts, not the detail. So there is nothing to
-// seed: invalidate the detail and let the server say what is selected now (P29).
-// The counts themselves stay on the mutation (`mutation.data`) for the caller to
-// render; they are a receipt for one click, not cached state.
+// refusals, but the 202 body is the five counts, not the detail — so there is
+// nothing to seed: invalidate the detail and let the server say what is
+// selected now. The counts stay on the mutation (`mutation.data`) for the
+// caller to render; they are a receipt for one click, not cached state.
 export function useAddRunEvaluation() {
   const queryClient = useQueryClient();
   return useMutation({
-    // L8 (round 4): same reasoning as `useAddEvaluation` above.
+    // Same reasoning as `useAddEvaluation` above.
     meta: { errorHandled: true },
     mutationFn: ({ id, executionId, name }) =>
       addRunEvaluation(id, executionId, name),
     onSuccess: (_counts, { id }) => {
       queryClient.invalidateQueries({ queryKey: harnessEnvironmentKey(id) });
-      // Important-1 (fix round 2, reverting fix round 1): same reasoning as
-      // `useAddEvaluation` above — do NOT also invalidate the offer list.
-      // `available` is active while the picker is open, so invalidating it
-      // here refetches it in the same tick and the server's P6 subtraction
-      // removes the just-added row from the offer immediately, undoing the
-      // "stays in place marked Added" confirmation the picker depends on.
-      // `boundEntries`' filter by the offer's current names is what actually
-      // stops the eval from rendering in both groups; leaving `available`
-      // stale until it is next genuinely fetched costs nothing.
+      // Same reasoning as `useAddEvaluation` above — don't also invalidate
+      // the offer list; `boundEntries`'s filter on its current names already
+      // stops the eval from rendering in both groups.
     },
   });
 }

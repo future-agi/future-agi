@@ -32,11 +32,11 @@ vi.mock("src/sections/test-detail/CreateEditOptimization/CreateEditOptimizationF
 // run view hands it the execution id (§6 — the add goes to the run, not the
 // environment). The picker's own behaviour is covered in
 // evals/__tests__/addEvaluationDrawer.test.jsx.
-// M1 (round 2): widened to render `completedCallsCount` too, so the wiring
-// bug this test file didn't catch (`RunDetail.jsx` handing the drawer the
-// run's TOTAL call count instead of its COMPLETED count, P27) can't hide
-// again — every test in this file would have passed with
-// `completedCallsCount={-1}` before this.
+//
+// Widened to render `completedCallsCount` too, so a wiring bug
+// (`RunDetail.jsx` handing the drawer the run's TOTAL call count instead of
+// its COMPLETED count) can't hide again — every test in this file would
+// have passed with `completedCallsCount={-1}` before this.
 function AddEvaluationDrawerStub({ open, executionId, completedCallsCount }) {
   const completed = Number.isFinite(completedCallsCount) ? completedCallsCount : "unknown";
   return open ? <div>add-evals-drawer:{executionId} completed:{completed}</div> : null;
@@ -48,10 +48,11 @@ AddEvaluationDrawerStub.propTypes = {
 };
 vi.mock("../../../evals/AddEvaluationDrawer", () => ({ default: AddEvaluationDrawerStub }));
 
-// L6: a non-backed environment (client/template — reachable on this route via
-// the `?mockRuns=1` QA switch, which mints run history for any env) gets the
-// same store-only picker the Evaluations tab falls back to, not the real API
-// picker. Stubbed separately so the two are never confused for one another.
+// A non-backed environment (client/template — reachable on this route via
+// the `?mockRuns=1` QA switch, which mints run history for any env) gets
+// the same store-only picker the Evaluations tab falls back to, not the
+// real API picker. Stubbed separately so the two are never confused for one
+// another.
 function AddEvalsDrawerStub({ open, envState }) {
   return open ? <div>add-evals-drawer-fixture:{(envState?.evals || []).length}</div> : null;
 }
@@ -139,7 +140,7 @@ function LocationProbe() {
   return <div data-testid="location">{pathname}</div>;
 }
 
-// `backed` defaults to true: every test in this file except the L6 one below
+// `backed` defaults to true: every test in this file except the one below
 // exercises the real (backed) run-detail route, which is what this whole
 // suite predates and assumes.
 const renderDetail = ({ backed = true, envState } = {}) => {
@@ -184,12 +185,12 @@ describe("RunDetail", () => {
 
     expect(screen.queryByText(/add-evals-drawer/)).toBeNull();
     await user.click(screen.getByRole("button", { name: "Add evals" }));
-    // STATS carries no `completed` field (still loading it) — the drawer must
-    // receive no finite count, never a borrowed number (M1, round 2).
+    // STATS carries no `completed` field (still loading it) — the drawer
+    // must receive no finite count, never a borrowed number.
     expect(screen.getByText("add-evals-drawer:ex1 completed:unknown")).toBeInTheDocument();
   });
 
-  it("hands the picker the run's COMPLETED call count, not its total — the two differ on a run with failures (M1, round 2, P27/P19)", async () => {
+  it("hands the picker the run's COMPLETED call count, not its total — the two differ on a run with failures", async () => {
     useRunDetail.mockReturnValue({
       identity: IDENTITY,
       stats: { ...STATS, total: 16, failed: 4, completed: 12 },
@@ -202,7 +203,7 @@ describe("RunDetail", () => {
     expect(screen.getByText("add-evals-drawer:ex1 completed:12")).toBeInTheDocument();
   });
 
-  it("hands the picker no finite count while the KPIs are still loading, rather than 0 (M1, round 2)", async () => {
+  it("hands the picker no finite count while the KPIs are still loading, rather than 0", async () => {
     // `buildRunStats` defaults `total` to 0 before the kpis query resolves;
     // `completed` must stay unknown in that same window, never inherit that
     // placeholder 0.
@@ -218,7 +219,7 @@ describe("RunDetail", () => {
     expect(screen.getByText("add-evals-drawer:ex1 completed:unknown")).toBeInTheDocument();
   });
 
-  it("falls back to the store-only picker for a non-backed environment reached via ?mockRuns=1 (L6)", async () => {
+  it("falls back to the store-only picker for a non-backed environment reached via ?mockRuns=1", async () => {
     useRunDetail.mockReturnValue({ identity: IDENTITY, stats: STATS, isLoading: false });
     const user = userEvent.setup();
     renderDetail({ backed: false, envState: { evals: ["preset-eval"] } });

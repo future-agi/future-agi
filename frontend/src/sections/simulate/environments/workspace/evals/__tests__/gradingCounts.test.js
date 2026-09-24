@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { gradingCountsSentence } from "../gradingCounts";
 
-describe("gradingCountsSentence (§6 202 counts, P19)", () => {
+describe("gradingCountsSentence (§6 202 counts)", () => {
   it("says what was queued and what was skipped, in plain words", () => {
     expect(
       gradingCountsSentence({
@@ -16,7 +16,7 @@ describe("gradingCountsSentence (§6 202 counts, P19)", () => {
     );
   });
 
-  it("names the in-flight bucket when a second click hits the 10-minute stamp (P22)", () => {
+  it("names the in-flight bucket when a second click hits the 10-minute stamp", () => {
     expect(
       gradingCountsSentence({
         queued: 0,
@@ -42,7 +42,7 @@ describe("gradingCountsSentence (§6 202 counts, P19)", () => {
     ).toBe("1 call queued for grading — of 1 call that finished in this run.");
   });
 
-  it("treats a missing body's buckets as zero, but never invents a finished-call count (Minor-1, fix round 1)", () => {
+  it("treats a missing body's buckets as zero, but never invents a finished-call count", () => {
     // Every field is undefined here — the four buckets read as "nothing
     // queued, nothing skipped" (genuinely true of an empty body), but
     // `completed_calls` is not a bucket: printing "of 0 calls that finished
@@ -54,13 +54,11 @@ describe("gradingCountsSentence (§6 202 counts, P19)", () => {
     expect(gradingCountsSentence()).not.toMatch(/of 0 calls/);
   });
 
-  it("says 'of 0 calls' when the run genuinely finished none — a real, known zero, distinct from an absent body (Minor-2, fix round 2)", () => {
-    // A live P19 response for a run with no completed call: `completed_calls`
-    // IS known here, and known to be 0 — the one case where "of 0 calls that
-    // finished in this run" is the correct, honest sentence. Minor-1's rewrite
-    // above repurposed the old "all zeros" case to cover the absent-body
-    // branch instead, leaving this — the only other branch of
-    // `completedKnown` — with no test.
+  it("says 'of 0 calls' when the run genuinely finished none — a real, known zero, distinct from an absent body", () => {
+    // A response for a run with no completed call: `completed_calls` IS
+    // known here, and known to be 0 — the one case where "of 0 calls that
+    // finished in this run" is the correct, honest sentence, distinct from
+    // an absent body where the count isn't known at all.
     expect(
       gradingCountsSentence({
         queued: 0,
@@ -72,13 +70,11 @@ describe("gradingCountsSentence (§6 202 counts, P19)", () => {
     ).toBe("Nothing new to grade — of 0 calls that finished in this run.");
   });
 
-  // L11 (round 4): P19 allows the four buckets to fall short of
-  // `completed_calls` — the gap is calls that failed to queue. Prove by
-  // removal: dropping the shortfall clause makes this fail because the
-  // sentence would read "Nothing new to grade — of 16 calls that finished in
-  // this run", which claims there was nothing to do when 16 dispatches
-  // actually failed.
-  it("names the P19 shortfall when the buckets fall short of the completed count", () => {
+  // The four buckets can fall short of `completed_calls` — the gap is calls
+  // that failed to queue. Without the shortfall clause, the sentence would
+  // read "Nothing new to grade — of 16 calls that finished in this run",
+  // which claims there was nothing to do when 16 dispatches actually failed.
+  it("names the shortfall when the buckets fall short of the completed count", () => {
     expect(
       gradingCountsSentence({
         queued: 0,

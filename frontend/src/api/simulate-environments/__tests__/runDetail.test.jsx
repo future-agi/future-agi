@@ -127,13 +127,11 @@ describe("buildRunStats", () => {
     expect(stats.avgDurationMs).toBeNull();
   });
 
-  // P19/P27 (contract v1.7): `completed` (status = `completed`) is a different
-  // number from `total` (COUNT(*) over every status). It must never fall back
-  // to `total` — a caller that needs "the run's completed calls" and gets the
-  // wrong number is worse than one that is told the number isn't known yet.
-  // Round 3's M2 moved the source: the KPI body now carries `completed_calls`
-  // itself, for both modalities (TH-8046), instead of the chat-only
-  // `connected_calls` borrow.
+  // `completed` (status = completed) is a different number from `total`
+  // (every status). It must never fall back to `total` — a caller that needs
+  // "the run's completed calls" and gets the wrong number is worse than one
+  // told the number isn't known yet. The KPI body carries `completed_calls`
+  // for both modalities, not the chat-only `connected_calls` borrow.
   it("reads `completed` from kpis.completed_calls on a chat run", () => {
     const stats = buildRunStats(
       { agent_type: "text", completed_calls: 12, connected_calls: 12, total_calls: 16 },
@@ -144,11 +142,11 @@ describe("buildRunStats", () => {
     expect(stats.total).toBe(16);
   });
 
-  // The voice case is the whole point of the v1.7 change: `connected_calls`
-  // here is `connected_voice_calls` (`duration_seconds > 0`), a different
-  // filter and a different number, and reading it would be wrong. The fixture
-  // makes the two differ on purpose, so borrowing it again fails this case.
-  it("reads `completed` from kpis.completed_calls on a voice run too, never from connected_calls (P27 v1.7)", () => {
+  // Voice's `connected_calls` is `connected_voice_calls`
+  // (`duration_seconds > 0`), a different filter and a different number —
+  // reading it would be wrong. The fixture makes the two differ on purpose,
+  // so borrowing it again fails this case.
+  it("reads `completed` from kpis.completed_calls on a voice run too, never from connected_calls", () => {
     const stats = buildRunStats(
       { agent_type: "voice", completed_calls: 12, connected_calls: 9, total_calls: 16 },
       null,
@@ -166,9 +164,8 @@ describe("buildRunStats", () => {
     expect(stats.completed).not.toBe(stats.total);
   });
 
-  // Merge order (Q3): until TH-8046 lands the field, a KPI body that has loaded
-  // simply has no `completed_calls`. That must read as "not known yet", not as
-  // a zero and not as `total`.
+  // A KPI body that has loaded may still have no `completed_calls` (an older
+  // backend). That must read as "not known yet", not a zero and not `total`.
   it("leaves `completed` null when a loaded kpis payload carries no completed_calls", () => {
     const stats = buildRunStats(
       { agent_type: "voice", connected_calls: 9, total_calls: 16 },
@@ -179,13 +176,9 @@ describe("buildRunStats", () => {
     expect(stats.completed).not.toBe(stats.total);
   });
 
-  // M1 (final-review-r4.md): `completed_calls` is a call count, not a verdict —
-  // `extractKpis` (common.js DETAILS_KEYS) must file it as a run detail, never
-  // as an eval metric, or every run grows a fake "Completed calls" eval the
-  // moment TH-8046 sends the field. Prove by removal: reverting the
-  // `DETAILS_KEYS` change (dropping "completed_calls" back out of
-  // `.VOICE`/`.CHAT`) makes `stats.scores` pick it up as an eval metric and
-  // this fails.
+  // `completed_calls` is a call count, not a verdict — `DETAILS_KEYS`
+  // (common.js) must file it as a run detail, never an eval metric, or every
+  // run grows a fake "Completed calls" eval.
   it("never files completed_calls as an eval score (it is a call count, not a verdict)", () => {
     const stats = buildRunStats(
       { agent_type: "text", completed_calls: 12, total_calls: 16, task_success: 49 },
@@ -296,7 +289,7 @@ describe("mapCallDetail", () => {
     expect(mapCallDetail(null)).toBeNull();
   });
 
-  it("keeps a removed eval's verdict and carries its marker (P23)", () => {
+  it("keeps a removed eval's verdict and carries its marker", () => {
     const d = mapCallDetail({
       id: "call-2",
       simulation_call_type: "text",
@@ -324,12 +317,10 @@ describe("mapCallDetail", () => {
     expect(d.evalResults.find((e) => e.id === "cfg-live").removed).toBe(false);
   });
 
-  it("drops a removed eval's stored row when it carries no value, but keeps one that does (P28 v1.6, L7)", () => {
-    // F2 / P28 (contract v1.6): "removed" marks a VERDICT — a pending, skipped
-    // or errored row is a stored row, not a verdict, and is never rendered on
-    // any surface, live or removed. `norm.kind === "empty"` (keyed on the
-    // value, not the status) already enforces this; this test pins it so a
-    // future change can't silently start rendering a value-less removed row.
+  it("drops a removed eval's stored row when it carries no value, but keeps one that does", () => {
+    // "removed" marks a VERDICT — a pending, skipped or errored row is a
+    // stored row, not a verdict, and is never rendered, live or removed.
+    // `norm.kind === "empty"` already enforces this; this test pins it.
     const d = mapCallDetail({
       id: "call-3",
       simulation_call_type: "text",
@@ -432,17 +423,11 @@ describe("useRunDetail", () => {
     );
   });
 
-  // M2 (final-review-r4.md): `useKpis` (src/hooks/useKpis.js) and
-  // `useRunsSummary` (workspace/runs/summary/useRunsSummary.js) share the
-  // query key `["test-execution-detail", "KPIS", id]`. `useRunsSummary`
-  // caches the plain body (`res.data`); `useKpis` used to cache the raw
-  // AxiosResponse and convert via `select`, so an observer that mounted onto
-  // a cache entry primed by the Runs tab read `body.data` → `undefined`. Seed
-  // the cache exactly as `useRunsSummary` does — the body, not `{ data: … }`
-  // — and prove `useRunDetail` (which reads `useKpis` under the hood) still
-  // gets a number. Prove by removal: restoring `useKpis`'s old
-  // `queryFn: () => axios.get(...)` + `select: (d) => d.data` shape makes
-  // `stats.completed` come back `null` here.
+  // `useKpis` and `useRunsSummary` share the query key
+  // `["test-execution-detail", "KPIS", id]` and must cache the same shape
+  // (the plain body), or whichever one mounts second reads the wrong shape
+  // off the shared cache entry. Seed the cache the way `useRunsSummary` does
+  // and confirm `useRunDetail` still gets a number.
   it("still reads the KPI body when the Runs summary primed the same cache key first", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     client.setQueryData(

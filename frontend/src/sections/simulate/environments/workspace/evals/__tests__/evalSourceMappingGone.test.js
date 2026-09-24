@@ -1,9 +1,8 @@
-// frontend/src/sections/simulate/environments/workspace/evals/__tests__/evalSourceMappingGone.test.js
-//
-// F1 / P24: the frontend never computes which source fills a required key, and
-// the local tables that used to do it are gone. This is the test that keeps them
-// gone — a re-introduced copy (under any name that still imports the module, or
-// the file itself) fails here rather than silently drifting from the API.
+// The frontend never computes which source fills a required key, and the
+// local tables that used to do it are gone. This is the test that keeps
+// them gone — a re-introduced copy (under any name that still imports the
+// module, or the file itself) fails here rather than silently drifting from
+// the API.
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
@@ -28,9 +27,8 @@ const SKIP_DIRS = new Set(["node_modules", "generated", "__snapshots__"]);
 const EXTENSIONS = new Set([".js", ".jsx", ".ts", ".tsx"]);
 const MAX_BYTES = 1_000_000; // the generated contract bundles; nothing hand-written
 
-// The deleted module's exports (verified against
-// `git show b157d333f:frontend/src/sections/simulate/environments/workspace/evals/evalSourceMapping.js`).
-// `modalityOf` is left out: it's too generic a name to police on its own.
+// The deleted module's exports. `modalityOf` is left out: it's too generic
+// a name to police on its own.
 const FORBIDDEN = [
   "evalSourceMapping",
   "SOURCE_BY_KEY",
@@ -39,9 +37,10 @@ const FORBIDDEN = [
   "humanizeMappingTerm",
 ];
 
-// L4: word-boundary, not a raw substring match — `\b` either side, so an
-// unrelated identifier that merely CONTAINS a forbidden token (SOURCE_BY_KEYS,
-// sourceForKeyword, mappingRowsForTable) doesn't false-positive the guard.
+// Word-boundary, not a raw substring match — `\b` either side, so an
+// unrelated identifier that merely CONTAINS a forbidden token
+// (SOURCE_BY_KEYS, sourceForKeyword, mappingRowsForTable) doesn't
+// false-positive the guard.
 const FORBIDDEN_PATTERNS = FORBIDDEN.map((token) => ({
   token,
   re: new RegExp(`\\b${token}\\b`),
@@ -61,10 +60,11 @@ function* sourceFiles(dir, skipFile = self) {
 }
 
 // Scan `root` for any forbidden token (word-boundary matched), reporting each
-// hit as `relativePath → token`. L3: takes a root so the self-test below can
-// scan a throwaway temp tree instead of writing a probe file into src/ — a
+// hit as `relativePath → token`. Takes a root so the self-test below can scan
+// a throwaway temp tree instead of writing a probe file into src/ — a
 // leftover probe from a killed process would otherwise fail test 2
-// permanently and get committed by an unfiltered `git add` of this directory.
+// permanently and get committed by an unfiltered `git add` of this
+// directory.
 function scanForForbiddenTokens(root = srcRoot) {
   const offenders = [];
   // Only skip the guard's own file when scanning its real home (srcRoot); a
@@ -82,7 +82,7 @@ function scanForForbiddenTokens(root = srcRoot) {
   return offenders;
 }
 
-describe("the client-side eval source mapping is gone (F1, P24)", () => {
+describe("the client-side eval source mapping is gone", () => {
   it("no longer exists on disk", () => {
     expect(fs.existsSync(path.join(evalsDir, "evalSourceMapping.js"))).toBe(false);
   });
@@ -91,7 +91,7 @@ describe("the client-side eval source mapping is gone (F1, P24)", () => {
     expect(scanForForbiddenTokens()).toEqual([]);
   });
 
-  it("the scan itself catches a re-introduced mapping under a new name, and does not false-positive on a longer identifier that merely contains one (L3, L4)", () => {
+  it("the scan itself catches a re-introduced mapping under a new name, and does not false-positive on a longer identifier that merely contains one", () => {
     const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "evalSourceMappingGone-"));
     try {
       const hitFile = path.join(tmpRoot, "probe-hit.js");

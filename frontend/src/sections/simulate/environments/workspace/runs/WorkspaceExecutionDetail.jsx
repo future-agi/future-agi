@@ -15,7 +15,7 @@ import RunDetail from "./detail/RunDetail";
 export default function WorkspaceExecutionDetail() {
   // `envState` and `backed` ride the same Outlet context `env` does (see
   // EnvironmentWorkspace's executionMatch branch) — RunDetail needs both to
-  // decide which "Add evals" drawer a non-backed env gets (L6).
+  // decide which "Add evals" drawer a non-backed env gets.
   const { env, envState, backed } = useOutletContext() || {};
   const { testId, executionId } = useParams();
 

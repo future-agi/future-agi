@@ -285,8 +285,8 @@ describe("useAdoptTemplate", () => {
   });
 });
 
-describe("useAddEvaluation (§3, L11)", () => {
-  it("seeds the detail from the 201 body and does NOT invalidate it in the same tick (P29, L11)", async () => {
+describe("useAddEvaluation (§3)", () => {
+  it("seeds the detail from the 201 body and does NOT invalidate it in the same tick", async () => {
     const detail = { evaluations: { selected: [{ id: "cfg-1", name: "no_misselling" }] } };
     addEvaluation.mockResolvedValue(detail);
     const { queryClient, Wrapper } = makeWrapper();
@@ -305,15 +305,11 @@ describe("useAddEvaluation (§3, L11)", () => {
     });
   });
 
-  // Important-1 (fix round 2, reverting fix round 1): `available` is the
-  // drawer's only active observer of this query, so invalidating it here
-  // would refetch it in the SAME tick — the server would apply P6 and return
-  // the list minus what was just bound, dropping the just-added row (and its
-  // only confirmation in environment mode, "Added") off screen. The
-  // duplicate-row bug that invalidation was meant to fix is already closed by
-  // `boundEntries`' filter in `AddEvaluationDrawer.jsx` (by name, against
-  // what the offer is currently showing), which costs none of this.
-  it("does NOT invalidate the available list on add — the offer stays in place, marked Added (Important-1)", async () => {
+  // `available` is the drawer's only active observer of this query, so
+  // invalidating it here would refetch it in the same tick and drop the
+  // just-added row off the offer. `boundEntries`'s filter in
+  // `AddEvaluationDrawer.jsx` already prevents the duplicate without this.
+  it("does NOT invalidate the available list on add — the offer stays in place, marked Added", async () => {
     const detail = { evaluations: { selected: [{ id: "cfg-1", name: "no_misselling" }] } };
     addEvaluation.mockResolvedValue(detail);
     const { queryClient, Wrapper } = makeWrapper();
@@ -348,7 +344,7 @@ describe("useAddRunEvaluation (§6)", () => {
     expect(result.current.data).toMatchObject({ queued: 12, completed_calls: 16 });
   });
 
-  it("refetches the environment detail rather than patching it from the 202 (P29)", async () => {
+  it("refetches the environment detail rather than patching it from the 202", async () => {
     addRunEvaluation.mockResolvedValue({
       queued: 1,
       skipped_existing: 0,
@@ -368,12 +364,11 @@ describe("useAddRunEvaluation (§6)", () => {
     });
   });
 
-  // Important-1 (fix round 2, reverting fix round 1): same reasoning as
-  // `useAddEvaluation` above — invalidating `available` here would refetch it
-  // while the picker is still open and drop the just-added row out of the
-  // offer immediately, ahead of the bound group's filter that already
+  // Same reasoning as `useAddEvaluation` above: invalidating `available` here
+  // would refetch it while the picker is still open and drop the just-added
+  // row out of the offer, ahead of the bound group's filter that already
   // prevents the duplicate.
-  it("does NOT invalidate the available list (Important-1)", async () => {
+  it("does NOT invalidate the available list", async () => {
     addRunEvaluation.mockResolvedValue({
       queued: 1,
       skipped_existing: 0,

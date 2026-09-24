@@ -76,12 +76,11 @@ const runEvaluationsPath = (id, executionId) =>
     { id, execution_id: executionId },
   );
 
-// §6 add one evaluation from inside a run. The body is `{ name }` only, exactly
-// as §3's: the endpoint first does what §3 does (same refusals, same idempotency)
-// and only then queues grading for this run's finished calls. The 202 body is
-// the five counts — { queued, skipped_existing, skipped_in_flight,
-// skipped_pending, completed_calls } — NOT the environment detail, so the caller
-// refetches the detail rather than seeding it from this response. The path is
-// in the generated Swagger surface as of TH-8046 (backend PR #3015).
+// §6 add one evaluation from inside a run. Same body as §3 (`{ name }`), and
+// does what §3 does first (same refusals, same idempotency) before queuing
+// grading for the run's finished calls. The 202 body is the five counts —
+// { queued, skipped_existing, skipped_in_flight, skipped_pending,
+// completed_calls } — not the environment detail, so the caller refetches
+// the detail rather than seeding from this response.
 export const addRunEvaluation = async (id, executionId, name) =>
   (await axios.post(runEvaluationsPath(id, executionId), { name })).data;

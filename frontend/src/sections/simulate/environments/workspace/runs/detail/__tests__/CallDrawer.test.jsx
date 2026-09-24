@@ -29,13 +29,10 @@ const { mapCallDetail } = await import("src/api/simulate-environments/runDetail"
 const { mapCallRow } = await import("src/api/simulate-environments/runCalls");
 const { isVoiceCall } = await import("../callRouting");
 
-// L1: built through the REAL `mapCallDetail`, from a raw `call-executions/{id}/`
-// body shaped the way the backend actually sends it, rather than hand-writing
-// the CallDetail view-model literal. A hand-written literal exercises nothing
-// about the mapper — planted bug 3 (deleting `removed: data.removed === true`
-// from `runDetail.js`) proved that: with the old hand-written CHAT_DETAIL this
-// file stayed green even though the mapper had stopped carrying `removed`.
-// Routing this fixture through `mapCallDetail` closes that gap.
+// Built through the REAL `mapCallDetail`, from a raw `call-executions/{id}/`
+// body shaped the way the backend actually sends it, rather than
+// hand-writing the CallDetail view-model literal — a hand-written literal
+// exercises nothing about the mapper itself, so this closes that gap.
 const RAW_CHAT_PAYLOAD = {
   id: "chat-1",
   simulation_call_type: "text",
@@ -64,8 +61,8 @@ const RAW_CHAT_PAYLOAD = {
     },
     // Removed AND failing: this is the verdict that must surface with a
     // "Removed" marker wherever the call's verdicts render — the banner
-    // included (P28). A removed-but-passing verdict wouldn't hit the banner
-    // at all, so it can't stand in for that case.
+    // included. A removed-but-passing verdict wouldn't hit the banner at
+    // all, so it can't stand in for that case.
     e2: {
       name: "no_misselling",
       value: "Failed",
@@ -78,14 +75,12 @@ const RAW_CHAT_PAYLOAD = {
 
 const CHAT_DETAIL = mapCallDetail(RAW_CHAT_PAYLOAD);
 
-// L2: `chatTask.evalResults` is the list-derived fallback slot
+// `chatTask.evalResults` is the list-derived fallback slot
 // (`ChatCallDrawer.jsx`'s `callDetail?.evalResults ?? task.evalResults ?? []`),
-// which in production is filled by `mapCallRow` (`runCalls.js`) — a different
-// mapper than `mapCallDetail` above. Routing the SAME raw `eval_metrics`
-// through the real `mapCallRow` (rather than reusing `CHAT_DETAIL.evalResults`,
-// which is `mapCallDetail`'s output) makes the "both paths agree" comment true
-// and means deleting `removed: data.removed === true` from `runCalls.js`
-// alone — not just `runDetail.js` — turns this file red too.
+// which in production is filled by `mapCallRow` (`runCalls.js`) — a
+// different mapper than `mapCallDetail` above. Routing the SAME raw
+// `eval_metrics` through the real `mapCallRow` exercises that mapper too,
+// rather than just reusing `mapCallDetail`'s output.
 const LIST_EVAL_COLUMNS = [
   { id: "e1", type: "evaluation" },
   { id: "e2", type: "evaluation" },
@@ -145,7 +140,7 @@ describe("CallDrawer — chat branch", () => {
     expect(screen.queryByTestId("voice-drawer")).toBeNull();
   });
 
-  it("still lists the verdict of an eval that was removed, marked (P28), everywhere call details render it", async () => {
+  it("still lists the verdict of an eval that was removed, marked, everywhere call details render it", async () => {
     useCallDetail.mockReturnValue({ callDetail: CHAT_DETAIL, isLoading: false });
     const user = userEvent.setup();
     render(<CallDrawer task={chatTask} agentType="text" onClose={() => {}} />);
@@ -154,7 +149,7 @@ describe("CallDrawer — chat branch", () => {
     // marked there, same as the Evals tab row.
     expect(screen.getByText(/no_misselling failed/)).toBeInTheDocument();
     expect(screen.getAllByText("Removed")).toHaveLength(1);
-    // TH-8048's e2e locates the marker by id — assert it renders alongside
+    // An e2e test locates the marker by id — assert it renders alongside
     // the text, not just the text.
     expect(screen.getAllByTestId("removed-eval-marker")).toHaveLength(1);
 
@@ -169,14 +164,14 @@ describe("CallDrawer — chat branch", () => {
     expect(screen.getByText(/Refund correctness failed/)).toBeInTheDocument();
   });
 
-  it("M1: marks a removed verdict on the list-derived fallback too, while the call detail hasn't loaded (or never does)", async () => {
+  it("marks a removed verdict on the list-derived fallback too, while the call detail hasn't loaded (or never does)", async () => {
     // `useCallDetail` returns no detail yet — the drawer falls back to
-    // `task.evalResults`, which is what `runCalls.js`'s `mapCallRow` built from
-    // the run's call-list rows. If that mapper ever drops `removed` again
-    // (planted bug 3 in `runDetail.js`/`runCalls.js`), this is the test that
-    // catches it: `chatTask.evalResults` is now built through the REAL
-    // `mapCallRow` (L2, round 2) from the same raw `eval_metrics` `CHAT_DETAIL`
-    // uses, so both paths are genuinely exercised, not just asserted to agree.
+    // `task.evalResults`, which is what `runCalls.js`'s `mapCallRow` built
+    // from the run's call-list rows. If that mapper ever drops `removed`
+    // again, this is the test that catches it: `chatTask.evalResults` is
+    // built through the REAL `mapCallRow` from the same raw `eval_metrics`
+    // `CHAT_DETAIL` uses, so both paths are genuinely exercised, not just
+    // asserted to agree.
     useCallDetail.mockReturnValue({ callDetail: null, isLoading: false });
     const user = userEvent.setup();
     render(<CallDrawer task={chatTask} agentType="text" onClose={() => {}} />);

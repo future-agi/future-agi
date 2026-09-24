@@ -15,7 +15,7 @@ vi.mock("../overview/OverviewPanel", () => ({ default: () => <div>overview-body<
 vi.mock("../contract/RlContractPanel", () => ({ default: () => <div>contract-body</div> }));
 vi.mock("../scenarios/ScenariosStep", () => ({ default: () => <div>scenarios-body</div> }));
 vi.mock("../evals/EvalsStep", () => ({ default: () => <div>evals-body</div> }));
-// P26: the Runs tab must get the badge state (a backed env's §5
+// The Runs tab must get the badge state (a backed env's §5
 // `evaluations.selected` overlaid on the store), not the raw store. The stub
 // echoes the eval names it was handed so the wiring is what's under test.
 function RunsPanelStub({ envState }) {
@@ -115,7 +115,7 @@ describe("WorkspacePanels", () => {
     expect(onTabChange).toHaveBeenCalledWith("contract");
   });
 
-  it("hands the Runs panel the badge state, so the pre-flight count matches the tab (P26)", () => {
+  it("hands the Runs panel the badge state, so the pre-flight count matches the tab", () => {
     renderPanels({
       tab: "runs",
       envState: baseEnvState({ evals: [{ id: "stale-store-eval" }] }),

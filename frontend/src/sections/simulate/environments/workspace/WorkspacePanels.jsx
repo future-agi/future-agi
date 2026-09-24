@@ -32,8 +32,8 @@ export default function WorkspacePanels({
   // The same state with a backed environment's real applied evals (§5
   // `evaluations.selected`) overlaid, exactly as EnvironmentWorkspace already
   // computes it for the tab badges and the setup gaps. Only the Runs panel's
-  // pre-flight tile reads it (P26). It defaults to `envState` for the build
-  // page, which has no backend detail to overlay yet.
+  // pre-flight tile reads it. It defaults to `envState` for the build page,
+  // which has no backend detail to overlay yet.
   badgeEnvState = envState,
   patch,
   tab,
@@ -88,7 +88,7 @@ export default function WorkspacePanels({
         return <EvalsStep env={env} envState={envState} patch={patch} onGo={go} locked={locked} backed={backed} onFork={onFork} />;
       case "runs":
         return (
-          // P26: the pre-flight "evals applied" tile counts and names §5's
+          // The pre-flight "evals applied" tile counts and names §5's
           // `evaluations.selected` on a backed env — the same list the
           // Evaluations tab renders — so it is handed the overlaid state.
           <RunsPanel

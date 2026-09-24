@@ -240,20 +240,19 @@ describe("EvalsStep — §4 remove on a backend-backed env", () => {
     );
   });
 
-  // Minor-3 (fix round 1): the module mock's default is
+  // The module mock's default is
   // `deleteAppliedEvaluation: vi.fn(() => Promise.resolve())`, but the
-  // top-level `beforeEach` only `mockClear()`s it — that clears call history,
-  // not an implementation override. The L4 test below sets
-  // `mockRejectedValue`, which is a standing override that survives
-  // `mockClear()`; left in place it would fail the next test appended after
-  // it with a rejected DELETE it never asked for. `mockRestore()` undoes both
-  // the override and the call history, back to the `vi.fn(() => …)` given at
-  // mock-factory time.
+  // top-level `beforeEach` only `mockClear()`s it — that clears call
+  // history, not an implementation override. A test below sets
+  // `mockRejectedValue`, a standing override that survives `mockClear()`;
+  // left in place it would fail the next test with a rejected DELETE it
+  // never asked for. `mockRestore()` undoes both, back to the
+  // `vi.fn(() => …)` given at mock-factory time.
   afterEach(() => {
     deleteAppliedEvaluation.mockRestore();
   });
 
-  it("shows where the eval came from, whether it costs, and what fills its inputs (P25)", async () => {
+  it("shows where the eval came from, whether it costs, and what fills its inputs", async () => {
     render(<Harness backed initial={state} patchSpy={vi.fn()} />);
 
     expect(await screen.findByText("no_misselling")).toBeInTheDocument();
@@ -261,7 +260,7 @@ describe("EvalsStep — §4 remove on a backend-backed env", () => {
     expect(screen.getByText("0.5 credits per run + judge tokens")).toBeInTheDocument();
     expect(screen.getByText("{{conversation}}")).toBeInTheDocument();
     expect(screen.getByText("Call recording")).toBeInTheDocument();
-    // P1: the raw source never reaches the screen.
+    // The raw source never reaches the screen.
     expect(screen.queryByText("voice_recording")).toBeNull();
   });
 
@@ -299,7 +298,7 @@ describe("EvalsStep — §4 remove on a backend-backed env", () => {
     expect(screen.getAllByRole("button", { name: EVALS_COPY.remove })[0]).toBeDisabled();
   });
 
-  it("shows the server's sentence when a remove is refused, attributed to the eval it failed for, and keeps the row (L4, Minor-5)", async () => {
+  it("shows the server's sentence when a remove is refused, attributed to the eval it failed for, and keeps the row", async () => {
     deleteAppliedEvaluation.mockRejectedValue({
       detail: "Environment has no evaluations until it finishes building",
       statusCode: 409,
@@ -309,9 +308,9 @@ describe("EvalsStep — §4 remove on a backend-backed env", () => {
     await screen.findByText("no_misselling");
     fireEvent.click(screen.getAllByRole("button", { name: EVALS_COPY.remove })[0]);
 
-    // Minor-5 (fix round 1): the Alert names which row the refusal belongs to,
-    // not just the server's sentence — with several rows a bare "already
-    // removed" doesn't say which one.
+    // The Alert names which row the refusal belongs to, not just the
+    // server's sentence — with several rows a bare "already removed"
+    // doesn't say which one.
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "no_misselling: Environment has no evaluations until it finishes building",
     );

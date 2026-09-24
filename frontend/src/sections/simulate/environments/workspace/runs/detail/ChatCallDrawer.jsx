@@ -16,10 +16,10 @@ import { Meta, Cell, Attr } from "./chatDrawerCells";
 const num = (n) => (n == null ? "—" : Number(n).toLocaleString());
 const secs = (ms) => (ms == null ? "—" : `${(ms / 1000).toFixed(1)}s`);
 
-// §7 P23/P28: this eval was removed from the environment after it graded
-// this call. The verdict stands as it was stored — it is marked, never
-// hidden and never restated — everywhere a call's verdicts render, so the
-// banner and the Evals tab row share this exact chip.
+// This eval was removed from the environment after it graded this call.
+// The verdict stands as it was stored — it is marked, never hidden and
+// never restated — everywhere a call's verdicts render, so the banner and
+// the Evals tab row share this exact chip.
 function RemovedChip() {
   return (
     <Chip

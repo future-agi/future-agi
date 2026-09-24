@@ -99,17 +99,15 @@ describe("RunsPanel empty state", () => {
   });
 });
 
-describe("RunsPanel evals-applied tile (P26)", () => {
-  // A backed environment's applied set arrives already overlaid on `envState`
-  // by the workspace: `evals` is §5's `evaluations.selected[]`, each row a §1
-  // entry plus its config id. Both halves of the tile read that one list.
+describe("RunsPanel evals-applied tile", () => {
+  // A backed environment's applied set arrives already overlaid on
+  // `envState` by the workspace: `evals` is §5's `evaluations.selected[]`,
+  // each row a §1 entry plus its config id. Both halves of the tile read
+  // that one list.
   //
-  // L3 (round 4): P3/§5 — one environment has one `agent_type`, so its
-  // `selected[]` can never hold both a voice eval and a text eval. The old
-  // fixture paired NO_MISSELLING (voice) with CUSTOM_EVAL (text), the same
-  // impossibility round-3 L5 and fix-round-2 Minor-6 already removed from the
-  // drawer tests. LIBRARY_VOICE_EVAL is the second voice eval those fixes
-  // introduced for exactly this.
+  // One environment has one `agent_type`, so its `selected[]` can never
+  // hold both a voice eval and a text eval — LIBRARY_VOICE_EVAL is a second
+  // voice eval used here for exactly that reason.
   const selected = [
     selectedEntry(NO_MISSELLING, "cfg-1"),
     selectedEntry(LIBRARY_VOICE_EVAL, "cfg-2"),

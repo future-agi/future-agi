@@ -107,11 +107,9 @@ describe("addEvaluation (§3)", () => {
   });
 });
 
-// Every consumer test (`environments.test.jsx`, `evals.test.jsx`,
-// `addEvaluationDrawer.test.jsx`) mocks the whole `harnessEnvironments`
-// module, so the exact URL this client builds is pinned here, like every
-// sibling client above. The path is in the generated contract as of TH-8046
-// (backend PR #3015): `apiPath()` resolves it and the POST goes out.
+// Every consumer test mocks the whole `harnessEnvironments` module, so the
+// exact URL this client builds is pinned here, like every sibling client
+// above.
 describe("addRunEvaluation (§6)", () => {
   beforeEach(() => axios.post.mockClear());
 

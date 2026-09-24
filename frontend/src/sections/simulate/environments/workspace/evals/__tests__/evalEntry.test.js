@@ -3,17 +3,17 @@ import { costLabel, inputRowsOf, sourceLabel } from "../evalEntry";
 import { CODE_EVAL, CUSTOM_EVAL, NO_MISSELLING } from "./fixtures/evalEntries";
 
 describe("evalEntry — the §1 entry, read not computed", () => {
-  it("reads Library/Custom off `source` (P25)", () => {
+  it("reads Library/Custom off `source`", () => {
     expect(sourceLabel(NO_MISSELLING)).toBe("Library");
     expect(sourceLabel(CUSTOM_EVAL)).toBe("Custom");
   });
 
-  it("builds the cost line from `credits_per_run` and `charges_judge_tokens` (P25)", () => {
+  it("builds the cost line from `credits_per_run` and `charges_judge_tokens`", () => {
     expect(costLabel(NO_MISSELLING)).toBe("0.5 credits per run + judge tokens");
     expect(costLabel(CODE_EVAL)).toBe("0.5 credits per run");
   });
 
-  it("swaps the cost line for the run-mode chip when opened from a run (P25, owner's rule 2026-09-23 night)", () => {
+  it("swaps the cost line for the run-mode chip when opened from a run", () => {
     // On the run screen "run" already means the simulation run, so the chip
     // reads "per call graded" instead of "per run" — same two numbers
     // (`credits_per_run`, `charges_judge_tokens`), different words.
@@ -23,14 +23,14 @@ describe("evalEntry — the §1 entry, read not computed", () => {
     expect(costLabel(NO_MISSELLING)).toBe(costLabel(NO_MISSELLING, false));
   });
 
-  it("reads singular when the API ever sends exactly 1 credit (L8, round 2)", () => {
+  it("reads singular when the API ever sends exactly 1 credit", () => {
     expect(costLabel({ credits_per_run: 1 })).toBe("1 credit per run");
     expect(costLabel({ credits_per_run: 1 }, true)).toBe("1 credit per call graded");
     // Still plural either side of 1.
     expect(costLabel({ credits_per_run: 2 })).toBe("2 credits per run");
   });
 
-  it("returns `inputs` exactly as the API built them (F1)", () => {
+  it("returns `inputs` exactly as the API built them", () => {
     expect(inputRowsOf(NO_MISSELLING)).toEqual(NO_MISSELLING.inputs);
   });
 
