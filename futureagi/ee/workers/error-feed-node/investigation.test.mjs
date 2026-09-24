@@ -1,3 +1,4 @@
+import {configureObservability, stopObservability} from './observability.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp, rm, readdir} from 'node:fs/promises';
@@ -38,6 +39,14 @@ test('failure diagnostics classify host budget errors without exposing upstream 
 
 test('Omega compacts a long investigation transcript through the accounted gateway', async () => {
   const scratch = await mkdtemp(join(tmpdir(), 'omega-compaction-test-'));
+  const spans = [];
+  configureObservability({captureContent:true,rootContext:null,withParent:(_,span)=>span,
+    provider:{shutdown:async()=>{}},tracer:{startSpan(name,options,parent) {
+      const span={name,parent,attributes:{...options.attributes},ended:false,
+        setAttributes(attrs){Object.assign(this.attributes,attrs);},setStatus(status){this.status=status;},
+        end(){this.ended=true;}};
+      spans.push(span);return span;
+    }}});
   try {
     const claim = makeClaim();
     claim.limits.max_model_calls = 24;
@@ -77,7 +86,22 @@ test('Omega compacts a long investigation transcript through the accounted gatew
     assert.equal(sawCompactedSummary, true);
     assert.equal(result.usage.model_calls, controllerCalls + summaryCalls + 1);
     assert.equal(Math.round(result.usage.cost_usd * 1e6), result.usage.model_calls * 100);
-  } finally { await rm(scratch, {recursive: true, force: true}); }
+    const root = spans.find(span=>span.name==='error_feed.investigation');
+    assert.equal(root.attributes['error_feed.attempt_id'],claim.attempt_id);
+    assert.ok(spans.some(span=>span.name==='error_feed.agent.verifier' && span.parent===root));
+    assert.ok(spans.some(span=>span.name==='error_feed.tool.read_span'
+      && span.parent.name==='error_feed.agent.controller'));
+    const modelSpans=spans.filter(span=>span.name==='error_feed.model');
+    assert.equal(modelSpans.length,result.usage.model_calls);
+    assert.ok(modelSpans.every(span=>span.parent.name.startsWith('error_feed.agent.')));
+    assert.ok(spans.every(span=>span.ended));
+    assert.ok(spans.every(span=>span.attributes['user.id']===claim.organization_id));
+    assert.equal(JSON.parse(root.attributes['input.value']).trace_id, claim.trace_id);
+    assert.equal(JSON.parse(root.attributes['output.value']).execution_status, 'completed');
+    assert.ok(spans.every(span=>span.attributes['input.value'] && span.attributes['output.value']));
+    assert.ok(modelSpans.every(span=>JSON.parse(span.attributes['input.value']).messages.length > 0));
+    assert.ok(modelSpans.every(span=>span.attributes['gen_ai.cost.total'] === 0.0001));
+  } finally { await stopObservability(); await rm(scratch, {recursive: true, force: true}); }
 });
 
 for (const scenario of ['controller_truncated', 'verifier_truncated', 'provider_overrun']) {

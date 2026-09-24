@@ -29,6 +29,7 @@ test('image preparation reuses verified Kafka and Snappy artifacts offline and r
     const source = join(root, 'fixture/package');
     for (const path of [worker, join(context, 'packages'), source]) await mkdir(path, {recursive: true});
     await copyFile(new URL('./prepare-image.mjs', import.meta.url), join(worker, 'prepare-image.mjs'));
+    await copyFile(new URL('./prepare-telemetry.mjs', import.meta.url), join(worker, 'prepare-telemetry.mjs'));
     await copyFile(new URL('./image-files.mjs', import.meta.url), join(worker, 'image-files.mjs'));
     for (const name of [...workerFiles,'Dockerfile']) {
       await mkdir(dirname(join(worker,name)),{recursive:true});
@@ -48,6 +49,20 @@ test('image preparation reuses verified Kafka and Snappy artifacts offline and r
       const sha256 = createHash('sha256').update(await readFile(join(context, file))).digest('hex');
       externalPackages.push({name, version, file, sha256});
     }
+    await mkdir(join(worker, 'telemetry'), {recursive: true});
+    const sourceHash = createHash('sha256');
+    for (const name of ['package.json','package-lock.json','index.mjs']) {
+      const bytes = await readFile(new URL('./telemetry/' + name, import.meta.url));
+      await writeFile(join(worker, 'telemetry', name), bytes);
+      sourceHash.update(bytes);
+    }
+    const telemetryName = '@future-agi/error-feed-telemetry';
+    await writeFile(join(source, 'package.json'), JSON.stringify({name:telemetryName,version:'0.0.1'}));
+    const telemetryFile = 'packages/future-agi-error-feed-telemetry-0.0.1.tgz';
+    execFileSync('tar', ['-czf', join(context, telemetryFile), '-C', join(root, 'fixture'), 'package']);
+    externalPackages.push({name:telemetryName,version:'0.0.1',file:telemetryFile,
+      sourceDigest:sourceHash.digest('hex'),
+      sha256:createHash('sha256').update(await readFile(join(context,telemetryFile))).digest('hex')});
     await writeFile(join(context, 'manifest.json'), JSON.stringify({packages: [omegaPackage], externalPackages}));
     await writeFile(join(context, 'package.json'), JSON.stringify({name: 'fixture', version: '1.0.0',
       private: true, dependencies: {'@future-agi/omega-runtime': 'file:' + omegaFile}}));
@@ -80,7 +95,7 @@ test('image preparation reuses verified Kafka and Snappy artifacts offline and r
       await writeFile(artifact, 'tampered fixture');
       const invalid = spawnSync(process.execPath, [join(worker, 'prepare-image.mjs')], options);
       assert.notEqual(invalid.status, 0);
-      assert.match(invalid.stderr, /External package checksum or version mismatch/);
+      assert.match(invalid.stderr, /(?:External|Telemetry) package checksum or version mismatch/);
       await writeFile(artifact, original);
     }
   } finally { await rm(root, {recursive: true, force: true}); }

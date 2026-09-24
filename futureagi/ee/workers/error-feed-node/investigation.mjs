@@ -1,3 +1,4 @@
+import {observe, claimAttributes, claimInput, executionResult, observeAgent, observeTool} from './observability.mjs';
 import {createHash} from 'node:crypto';
 import {mkdtemp, mkdir, rm} from 'node:fs/promises';
 import {join} from 'node:path';
@@ -122,7 +123,12 @@ function applyCoverageBoundary(assessment, coverage) {
 // Same controller -> bounded children -> final-verifier topology as the
 // adaptive experiment. The file-tool adapter is a new engine version: its
 // accuracy must be remeasured; the old full-prompt benchmark is not its score.
-export async function investigateTrace(claim, {gatewayConfig, clickhouse, scratchRoot = '/tmp', signal,
+export async function investigateTrace(claim, options) {
+  return observe('error_feed.investigation', 'AGENT', claimAttributes(claim), async () =>
+    executionResult(await runInvestigation(claim, options)), {root: true, input: () => claimInput(claim), output: true});
+}
+
+async function runInvestigation(claim, {gatewayConfig, clickhouse, scratchRoot = '/tmp', signal,
   fetchEvidence = downloadEvidence, resolveRecording, contextWindowTokens = defaultContextWindowTokens}) {
   validateClaim(claim);
   const maxChildren = claim.limits.max_children;
@@ -154,7 +160,7 @@ export async function investigateTrace(claim, {gatewayConfig, clickhouse, scratc
           length: {type: 'integer', minimum: 1, maximum: Math.min(claim.limits.max_tool_result_bytes, 8000)}}),
         execute: ({span_id, offset, length}) => reader.read(span_id, offset, length)}),
       ...(audioInspection ? [audioInspection.tool] : []),
-    ];
+    ].map(observeTool);
     const rules = audioInspection ? evidenceRules.replace(
       'no external payload resolver is available, you must not access them, and read_complete=false prevents a success conclusion.',
       'inspect_audio can inspect a trusted recording for one focused question, but never open a URL. Its answer is a fallible model observation, not verified task state. Read the linked span and cite that span receipt; do not claim the span text itself contains the audio observation. Other unresolved payloads still prevent a success conclusion.') : evidenceRules;
@@ -211,7 +217,7 @@ export async function investigateTrace(claim, {gatewayConfig, clickhouse, scratc
       const forceFinish = children.length >= maxChildren || remaining < 5;
       let output;
       try {
-        output = (await omega.runJson('controller', JSON.stringify({...shared, coverage: currentCoverage(),
+        output = (await observeAgent(omega, 'controller', JSON.stringify({...shared, coverage: currentCoverage(),
           children, force_finish: forceFinish}), {output: decision})).value;
       } catch (error) {
         if (!(error instanceof EarlierStageOutputTruncated)) throw error;
@@ -228,7 +234,7 @@ export async function investigateTrace(claim, {gatewayConfig, clickhouse, scratc
       phase = 'child';
       try {
         const child = applyCoverageBoundary(
-          (await omega.runJson(childId, JSON.stringify({...shared, coverage: currentCoverage(),
+          (await observeAgent(omega, childId, JSON.stringify({...shared, coverage: currentCoverage(),
             question: output.question}), {output: report})).value, currentCoverage());
         validateAssessment(child, reader.receipts(), currentCoverage());
         children.push({question: output.question, assessment: child});
@@ -242,7 +248,7 @@ export async function investigateTrace(claim, {gatewayConfig, clickhouse, scratc
       const receiptCount = reader.receipts().length;
       let modelAssessment;
       try {
-        modelAssessment = (await omega.runJson('verifier', JSON.stringify({...shared,
+        modelAssessment = (await observeAgent(omega, 'verifier', JSON.stringify({...shared,
           coverage: currentCoverage(), proposed, children,
           unread_span_ids: reader.unreadSpanIds(),
           observed_evidence_ids: reader.receipts().map(receipt => receipt.evidence_id)}), {output: report})).value;
