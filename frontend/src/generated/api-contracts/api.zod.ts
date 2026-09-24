@@ -35767,10 +35767,23 @@ export const SimulateApiHarnessJobsCreateBody = zod.object({
     })
     .optional(),
   agent: zod.object({
-    connector: zod.enum(["livekit", "vapi", "retell", "retell_chat", "auto"]),
+    connector: zod.enum([
+      "livekit",
+      "vapi",
+      "retell",
+      "retell_chat",
+      "phone",
+      "auto",
+    ]),
     mode: zod
       .enum(["connect_only", "environment_backed", "provider_import"])
       .optional(),
+    call_direction: zod
+      .enum(["inbound", "outbound"])
+      .optional()
+      .describe(
+        "inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.",
+      ),
     config: zod
       .object({})
       .passthrough()
@@ -36089,10 +36102,23 @@ export const SimulateApiHarnessJobsPreflightBody = zod.object({
     })
     .optional(),
   agent: zod.object({
-    connector: zod.enum(["livekit", "vapi", "retell", "retell_chat", "auto"]),
+    connector: zod.enum([
+      "livekit",
+      "vapi",
+      "retell",
+      "retell_chat",
+      "phone",
+      "auto",
+    ]),
     mode: zod
       .enum(["connect_only", "environment_backed", "provider_import"])
       .optional(),
+    call_direction: zod
+      .enum(["inbound", "outbound"])
+      .optional()
+      .describe(
+        "inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.",
+      ),
     config: zod
       .object({})
       .passthrough()
