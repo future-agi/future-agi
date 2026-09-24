@@ -2,7 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import axios, { endpoints } from "src/utils/axios";
 import { paths } from "src/routes/paths";
-import { TERMINAL_STATUSES } from "src/sections/common/simulation/constants/statusStyles";
+import {
+  STOPPABLE_STATUSES,
+  TERMINAL_STATUSES,
+} from "src/sections/common/simulation/constants/statusStyles";
 import { MOCK_RUNS } from "./_fixtures/runs";
 
 // The Runs tab's data source. For a real completed harness job the env carries
@@ -28,6 +31,16 @@ export function listRunTestExecutions(runTestId) {
 // and order (kept out of this pure mapper). `executionId` mirrors `id` so a row
 // click routes into the
 // reused product execution detail.
+const RUN_STATE = {
+  Pending: "queued",
+  Running: "running",
+  Evaluating: "running",
+  Cancelling: "running",
+  Completed: "finished",
+  Failed: "failed",
+  Cancelled: "cancelled",
+};
+
 export function executionToRun(raw) {
   const total =
     raw?.total_calls ?? raw?.total_chats ?? raw?.calls_attempted ?? raw?.calls ?? 0;
@@ -44,6 +57,9 @@ export function executionToRun(raw) {
   let status;
   if (!TERMINAL_STATUSES.includes(raw?.status)) {
     status = "running";
+  } else if (raw.status === "Cancelled") {
+    // A stopped run is terminal but not a failure.
+    status = "cancelled";
   } else if (raw.status === "Completed" && failed === 0) {
     status = "passed";
   } else {
@@ -54,6 +70,11 @@ export function executionToRun(raw) {
     id: raw?.id,
     executionId: raw?.id,
     status,
+    // The run's lifecycle for the Status column — `status` above is a verdict
+    // (passed/failed), this is where the run is (queued/running/completed).
+    runState: RUN_STATE[raw?.status] ?? status,
+    // Only a run that hasn't finished and isn't already stopping can be stopped.
+    stoppable: STOPPABLE_STATUSES.includes(raw?.status),
     startedAt: raw?.start_time ?? null,
     finishedAt: raw?.completed_at ?? null,
     total,

@@ -13,6 +13,8 @@ vi.mock("src/api/simulate-environments/runs", async (importOriginal) => {
 
 const { useEnvironmentRuns } = await import("src/api/simulate-environments/runs");
 const { default: RunsSummary } = await import("../RunsSummary");
+const { STATUS_META } = await import("../../runs.constants");
+const { BUILD_TONES } = await import("../../../../buildEnvironment/buildTones");
 
 const RUNS = [
   {
@@ -118,5 +120,35 @@ describe("RunsSummary", () => {
     fireEvent.click(screen.getByText(/Run 2 · agent v2/));
     expect(onOpenRun).toHaveBeenCalledTimes(1);
     expect(onOpenRun.mock.calls[0][0]).toMatchObject({ executionId: "ex2" });
+  });
+
+  it("adds a Status column that reads each run's lifecycle", () => {
+    useEnvironmentRuns.mockReturnValue({
+      runs: [
+        { ...RUNS[0], id: "ex3", executionId: "ex3", ordinal: 3, label: "Run 3", runState: "queued", stoppable: true },
+        { ...RUNS[0], runState: "finished", stoppable: false },
+        { ...RUNS[1], runState: "running", stoppable: true },
+      ],
+      isLoading: false,
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <RunsSummary env={env} envState={envState} onStart={vi.fn()} onOpenRun={vi.fn()} onGo={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByRole("columnheader", { name: "Status" })).toBeInTheDocument();
+    expect(screen.getByText("Queued")).toBeInTheDocument();
+    expect(screen.getByText("Completed")).toBeInTheDocument();
+    expect(screen.getByText("Running")).toBeInTheDocument();
+    // Stop sits in the Status cell, only on the runs that can still be stopped.
+    const stops = screen.getAllByRole("button", { name: "Stop simulation" });
+    expect(stops).toHaveLength(2);
+    expect(stops[0].closest("td")).toContainElement(screen.getByText("Queued"));
+    expect(stops[1].closest("td")).toContainElement(screen.getByText("Running"));
+    expect(screen.getByText("Completed").closest("td").querySelector("button")).toBeNull();
+    // A finished run reads green in the table, like the design.
+    expect(STATUS_META.finished).toEqual({ color: BUILD_TONES.green, label: "Completed" });
   });
 });

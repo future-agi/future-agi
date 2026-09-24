@@ -7,6 +7,8 @@ import {
 import CustomTooltip from "src/components/tooltip";
 import { fDateTime, formatDuration } from "src/utils/format-time";
 import { runColor } from "../runs.constants";
+import StatusChip from "../StatusChip";
+import StopRunControl from "../StopRunControl";
 
 // The dashed placeholder a not-yet-backed cell shows.
 const DASH = "—";
@@ -30,6 +32,7 @@ export default function SummaryTable({ rows, evals, onOpenRun }) {
               </CustomTooltip>
             </TableCell>
             <TableCell>Run</TableCell>
+            <TableCell>Status</TableCell>
             <TableCell align="right">Scenarios</TableCell>
             <TableCell align="right">Trials</TableCell>
             <TableCell align="right">Simulations</TableCell>
@@ -107,6 +110,13 @@ function SummaryRow({ row, evals, onOpenRun }) {
               {row.at ? fDateTime(row.at) : DASH}
             </Typography>
           </Box>
+        </Stack>
+      </TableCell>
+      <TableCell>
+        {/* Same shape as the product's "Run status" cell: the status, then Stop. */}
+        <Stack direction="row" alignItems="center" spacing={1}>
+          {row.runState ? <StatusChip status={row.runState} /> : DASH}
+          <StopRunControl executionId={row.executionId} stoppable={row.stoppable} />
         </Stack>
       </TableCell>
       <NumCell value={row.scenarioCount ?? DASH} />

@@ -698,6 +698,24 @@ describe("useRunDetail", () => {
     expect(result.current.stats.failed).toBe(4);
   });
 
+  it("marks a running Run stoppable and a cancelling one not", async () => {
+    const identityFor = async (status) => {
+      axios.get.mockResolvedValueOnce({
+        data: { execution: { id: `ex-${status}`, status, summary: { total: 4, outcomes: {} } } },
+      });
+      const { result } = renderHook(() => useRunDetail("rt1", `ex-${status}`), {
+        wrapper: makeWrapper(),
+      });
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      return result.current.identity;
+    };
+
+    expect((await identityFor("running")).stoppable).toBe(true);
+    expect((await identityFor("pending")).stoppable).toBe(true);
+    expect((await identityFor("cancelling")).stoppable).toBe(false);
+    expect((await identityFor("completed")).stoppable).toBe(false);
+  });
+
   it("polls the Run summary while active and stops when it completes", async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },

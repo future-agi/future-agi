@@ -18,6 +18,7 @@ import { exportRunResults } from "src/api/simulate-environments/runAnalytics";
 
 import SectionCard from "../../../components/SectionCard";
 import StatusChip from "../StatusChip";
+import StopRunControl from "../StopRunControl";
 import AddEvaluationDrawer from "../../evals/AddEvaluationDrawer";
 import AddEvalsDrawer from "../../evals/AddEvalsDrawer";
 import RunTraceTable from "./trace/RunTraceTable";
@@ -168,6 +169,11 @@ export default function RunDetail({
                 : "Run complete"}
             </Typography>
             {status && <StatusChip status={status} />}
+            <StopRunControl
+              executionId={executionId}
+              stoppable={!!identity?.stoppable}
+              label="Stop simulation"
+            />
           </Stack>
           <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
             {env.name} · {stats.total} tasks
