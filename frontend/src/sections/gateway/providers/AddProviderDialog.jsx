@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import PropTypes from "prop-types";
 import {
   Dialog,
@@ -9,6 +9,7 @@ import {
   TextField,
   Stack,
   Alert,
+  AlertTitle,
   Chip,
   Autocomplete,
   MenuItem,
@@ -45,6 +46,13 @@ const PROVIDER_PRESETS = {
     apiFormat: "google",
     keyPlaceholder: "AIza...",
     supportedFormats: ["openai", "google"],
+  },
+  vertex: {
+    label: "Google Vertex AI",
+    baseUrl: "",
+    apiFormat: "gemini",
+    authType: "gcp",
+    supportedFormats: ["gemini"],
   },
   azure: {
     label: "Azure OpenAI",
@@ -128,9 +136,48 @@ const API_FORMATS = [
   "anthropic",
   "cohere",
   "google",
+  "gemini",
   "azure",
   "bedrock",
 ];
+
+const vertexSettingsFromUrl = (url) => {
+  const match = String(url || "").match(
+    /^https:\/\/(?:[a-z0-9-]+-)?aiplatform\.googleapis\.com\/v1beta1\/projects\/([^/]+)\/locations\/([^/]+)\/?$/,
+  );
+  return { project: match?.[1] || "", location: match?.[2] || "us-central1" };
+};
+
+// The API types a provider's models as free-form JSON, so an entry need not be
+// a string — and a non-string one takes the dialog down when it reaches state.
+const toModelId = (value) => {
+  if (typeof value === "string") return value.trim();
+  if (value && typeof value === "object") {
+    return String(value.id ?? value.name ?? value.model ?? "").trim();
+  }
+  return value == null ? "" : String(value).trim();
+};
+
+const normalizeModels = (list) =>
+  Array.isArray(list) ? list.map(toModelId).filter(Boolean) : [];
+
+const KEY_FETCH_FAILED =
+  "Couldn't load any models with this key. Check that it is valid for this " +
+  "provider, or add model IDs manually below.";
+
+const STORED_KEY_UNVERIFIED =
+  "Couldn't list this provider's models with the stored key. Enter a new API " +
+  "key, or add model IDs manually below, to save changes.";
+
+// Summary labels, in form order so the summary reads like the dialog.
+const FIELD_LABELS = {
+  name: "Provider Name",
+  awsAccessKeyId: "AWS Access Key ID",
+  awsSecretAccessKey: "AWS Secret Access Key",
+  baseUrl: "Base URL",
+  apiKey: "API Key",
+  timeout: "Timeout",
+};
 
 const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   const isEditMode = Boolean(provider);
@@ -148,37 +195,87 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   const [awsSecretAccessKey, setAwsSecretAccessKey] = useState("");
   const [awsRegion, setAwsRegion] = useState("us-east-1");
   const [awsSessionToken, setAwsSessionToken] = useState("");
+  const [gcpProject, setGcpProject] = useState("");
+  const [gcpLocation, setGcpLocation] = useState("us-central1");
+  const [serviceAccountJSON, setServiceAccountJSON] = useState("");
 
   // Validation state
   const [errors, setErrors] = useState({});
+  const [summaryDismissed, setSummaryDismissed] = useState(false);
+  // Every model ID a listing has offered in this dialog, plus the ones already
+  // stored on the provider. Anything selected outside it was typed by hand.
+  const offeredModels = useRef(new Set());
+  // The body scrolls, so a failed Save has to bring the summary back into view.
+  const contentRef = useRef(null);
 
   const updateProvider = useUpdateProvider();
   const fetchModels = useFetchProviderModels();
   const [modelOptions, setModelOptions] = useState([]);
   const [fetchError, setFetchError] = useState("");
   const [hasFetched, setHasFetched] = useState(false);
+  // Kept out of `errors` so a failed fetch does not raise the Save-time summary.
+  const [keyFetchError, setKeyFetchError] = useState("");
+  // A debounced fetch is armed but has not fired yet.
+  const [fetchScheduled, setFetchScheduled] = useState(false);
+  const fetchSeqRef = useRef(0);
+
+  // What the fetch-by-name concluded, so clearing a typed key restores it.
+  const storedKeyResult = useRef(null);
+
+  // The last fetch made with a key typed into the form.
+  const typedFetchSeqRef = useRef(0);
 
   const doFetchModels = useCallback(
     ({ providerName, url, key, format }) => {
+      const seq = fetchSeqRef.current + 1;
+      fetchSeqRef.current = seq;
+      if (!providerName) typedFetchSeqRef.current = seq;
+      const isStale = () => fetchSeqRef.current !== seq;
       setFetchError("");
+      setKeyFetchError("");
       setHasFetched(false);
+      // A by-name fetch uses the stored credential; no key here to blame.
+      const blameKey = !providerName;
       fetchModels.mutate(
         providerName
           ? { providerName }
           : { baseUrl: url, apiKey: key, apiFormat: format },
         {
           onSuccess: (result) => {
-            const fetched = result?.models || [];
-            if (fetched.length === 0 && result?.error) {
-              setFetchError(result.error);
-            }
+            if (isStale()) return;
+            const fetched = normalizeModels(result?.models);
+            const emptyReason =
+              fetched.length === 0
+                ? result?.error || "Provider returned no models"
+                : "";
+            setFetchError(emptyReason);
+            if (emptyReason && blameKey) setKeyFetchError(KEY_FETCH_FAILED);
+            fetched.forEach((m) => offeredModels.current.add(m));
             setModelOptions(fetched);
             setHasFetched(true);
+            if (providerName) {
+              storedKeyResult.current = {
+                options: fetched,
+                error: emptyReason,
+                hasFetched: true,
+              };
+            }
           },
           onError: (err) => {
-            setFetchError(err?.message || "Failed to fetch models");
+            if (isStale()) return;
+            // A request that failed reached no verdict on the key, so
+            // `hasFetched` stays false and the API Key field is left alone.
+            const message = err?.message || "Failed to fetch models";
+            setFetchError(message);
             setModelOptions([]);
-            setHasFetched(true);
+            setHasFetched(false);
+            if (providerName) {
+              storedKeyResult.current = {
+                options: [],
+                error: message,
+                hasFetched: false,
+              };
+            }
           },
         },
       );
@@ -194,15 +291,24 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       setBaseUrl(c.base_url ?? c.baseUrl ?? "");
       setApiKey("");
       setApiFormat(c.api_format ?? c.apiFormat ?? "openai");
-      setModels(Array.isArray(c.models) ? c.models : []);
-      setTimeoutVal(c.default_timeout ?? c.defaultTimeout ?? "");
+      setModels(normalizeModels(c.models));
+      const timeoutRaw = c.default_timeout ?? c.defaultTimeout;
+      setTimeoutVal(timeoutRaw != null ? String(timeoutRaw) : "");
       setMaxConcurrent(
         c.max_concurrent != null
           ? String(c.max_concurrent ?? c.maxConcurrent ?? "")
           : "",
       );
+      const vertexSettings = vertexSettingsFromUrl(c.base_url ?? c.baseUrl);
+      setGcpProject(vertexSettings.project);
+      setGcpLocation(vertexSettings.location);
+      setServiceAccountJSON("");
       setErrors({});
-      doFetchModels({ providerName: provider.name });
+      setSummaryDismissed(false);
+      offeredModels.current = new Set(normalizeModels(c.models));
+      storedKeyResult.current = null;
+      if (provider.name !== "vertex")
+        doFetchModels({ providerName: provider.name });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, isEditMode, provider]);
@@ -216,27 +322,58 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   }, [open, isEditMode]);
 
   const isAwsAuth = PROVIDER_PRESETS[name]?.authType === "aws";
+  const isVertexAuth = PROVIDER_PRESETS[name]?.authType === "gcp";
 
-  // Create mode: auto-fetch when API key is entered (debounced)
+  // Auto-fetch when an API key is entered (debounced). Edit mode included: a
+  // typed key replaces the stored one, so it has to list models before Save.
   // Skip auto-fetch for AWS providers (Bedrock models must be entered manually)
   useEffect(() => {
-    if (isEditMode || isAwsAuth) return;
+    if (isAwsAuth || isVertexAuth) {
+      setFetchScheduled(false);
+      return;
+    }
     if (!apiKey.trim()) {
+      setFetchScheduled(false);
+      // Blank in edit mode means "keep the stored key", so restore its verdict:
+      // a typed key's result left standing blames the stored one for it.
+      if (isEditMode) {
+        // Abandon a typed-key fetch still in flight, whose late response would
+        // overwrite the restore. Only that one: this also runs on mount, where
+        // the request in flight is the by-name fetch just made.
+        if (fetchSeqRef.current === typedFetchSeqRef.current) {
+          fetchSeqRef.current += 1;
+        }
+        const snapshot = storedKeyResult.current;
+        if (snapshot) {
+          setModelOptions(snapshot.options);
+          setFetchError(snapshot.error);
+          setHasFetched(snapshot.hasFetched);
+          setKeyFetchError("");
+        }
+        return;
+      }
       setModelOptions([]);
       setFetchError("");
+      setKeyFetchError("");
       setHasFetched(false);
       return;
     }
     // Don't fetch if base URL is required but empty (azure, custom)
     const preset = PROVIDER_PRESETS[name];
-    if (preset && !preset.baseUrl && !baseUrl.trim()) return;
+    if (preset && !preset.baseUrl && !baseUrl.trim()) {
+      setFetchScheduled(false);
+      return;
+    }
 
+    // Held from the first keystroke: the debounce is long enough to click in.
+    setFetchScheduled(true);
     const timer = setTimeout(() => {
+      setFetchScheduled(false);
       doFetchModels({ url: baseUrl, key: apiKey, format: apiFormat });
     }, 600);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiKey, baseUrl, apiFormat, isEditMode, isAwsAuth]);
+  }, [apiKey, baseUrl, apiFormat, isEditMode, isAwsAuth, isVertexAuth]);
 
   const resetForm = () => {
     const defaultPreset = PROVIDER_PRESETS.openai;
@@ -247,6 +384,8 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     setModels([]);
     setModelOptions([]);
     setFetchError("");
+    setKeyFetchError("");
+    setFetchScheduled(false);
     setHasFetched(false);
     setTimeoutVal("");
     setMaxConcurrent("");
@@ -254,7 +393,13 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     setAwsSecretAccessKey("");
     setAwsRegion("us-east-1");
     setAwsSessionToken("");
+    setGcpProject("");
+    setGcpLocation("us-central1");
+    setServiceAccountJSON("");
     setErrors({});
+    setSummaryDismissed(false);
+    offeredModels.current = new Set();
+    storedKeyResult.current = null;
   };
 
   const handleClose = () => {
@@ -263,6 +408,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   };
 
   const handleProviderChange = (newName) => {
+    fetchSeqRef.current += 1;
     setName(newName);
     const preset = PROVIDER_PRESETS[newName];
     if (preset) {
@@ -278,12 +424,20 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
           : prev,
       );
     }
+    setApiKey("");
+    setGcpProject("");
+    setGcpLocation("us-central1");
+    setServiceAccountJSON("");
     // Clear models since provider changed
     setModels([]);
     setModelOptions([]);
     setFetchError("");
+    setKeyFetchError("");
     setHasFetched(false);
     setErrors({});
+    setSummaryDismissed(false);
+    offeredModels.current = new Set();
+    storedKeyResult.current = null;
   };
 
   const handleAwsRegionChange = (region) => {
@@ -299,14 +453,47 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     }
   };
 
-  const validate = () => {
+  // A model the provider never offered was typed in by hand, overriding an
+  // empty listing: the azure and custom presets are probed with a plain
+  // `{base_url}/models` a working endpoint need not serve, so an empty list
+  // there is no proof the key is bad. Derived, so removing the chip re-arms
+  // the gate.
+  const manualModels = models.some((m) => !offeredModels.current.has(m));
+
+  const validate = (timeoutSeconds) => {
     const newErrors = {};
 
     if (!name.trim()) {
       newErrors.name = "Provider name is required";
     }
 
-    if (isAwsAuth) {
+    if (isVertexAuth) {
+      if (!/^[a-z][a-z0-9-]{4,62}$/.test(gcpProject.trim())) {
+        newErrors.gcpProject = "Enter a valid Google Cloud project ID";
+      }
+      if (!/^[a-z][a-z0-9-]{1,62}$/.test(gcpLocation.trim())) {
+        newErrors.gcpLocation = "Enter a valid Vertex AI location";
+      }
+      if (!isEditMode && !serviceAccountJSON) {
+        newErrors.serviceAccountJSON = "Paste the Google service-account JSON";
+      } else if (serviceAccountJSON) {
+        try {
+          const parsed = JSON.parse(serviceAccountJSON);
+          if (
+            parsed?.type !== "service_account" ||
+            !parsed.client_email ||
+            !parsed.private_key ||
+            !parsed.project_id ||
+            parsed.token_uri !== "https://oauth2.googleapis.com/token"
+          ) {
+            newErrors.serviceAccountJSON =
+              "Paste a complete Google service-account JSON key";
+          }
+        } catch {
+          newErrors.serviceAccountJSON = "Paste valid JSON";
+        }
+      }
+    } else if (isAwsAuth) {
       // AWS-specific validation
       if (!isEditMode && !awsAccessKeyId.trim()) {
         newErrors.awsAccessKeyId = "AWS Access Key ID is required";
@@ -319,10 +506,11 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       const preset = PROVIDER_PRESETS[name];
       const needsBaseUrl = !preset || !preset.baseUrl;
       if (needsBaseUrl && !baseUrl.trim()) {
-        newErrors.baseUrl = "Base URL is required for this provider";
+        newErrors.baseUrl =
+          "This provider has no preset endpoint — enter its base URL, e.g. https://your-endpoint.com";
       }
-      if (baseUrl.trim() && !baseUrl.startsWith("http")) {
-        newErrors.baseUrl = "Base URL must start with http:// or https://";
+      if (baseUrl.trim() && !/^https?:\/\//i.test(baseUrl.trim())) {
+        newErrors.baseUrl = `Base URL must start with http:// or https:// (got "${baseUrl.trim()}")`;
       }
 
       // API key required for new providers
@@ -330,36 +518,41 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
         newErrors.apiKey = "API key is required";
       }
 
-      // Key validation — only block if fetch completed with zero models
+      // Only a listing that came back empty counts, and only until models are
+      // entered by hand.
       if (
-        !isEditMode &&
         apiKey.trim() &&
         hasFetched &&
-        modelOptions.length === 0
+        modelOptions.length === 0 &&
+        !manualModels
       ) {
-        newErrors.apiKey =
-          "Invalid API key or unreachable provider — please check your credentials";
+        newErrors.apiKey = KEY_FETCH_FAILED;
       }
     }
 
-    // Require at least one model selected
-    if (models.length === 0) {
-      newErrors.models = "Select at least one model";
-    }
-
-    if (timeoutVal.trim() && parseTimeoutSeconds(timeoutVal) === null) {
-      newErrors.timeout = "Use seconds, e.g. 30 or 30s";
+    if (timeoutVal.trim() && timeoutSeconds === null) {
+      newErrors.timeout = `Timeout must be a whole number of seconds, e.g. 30 or 30s (got "${timeoutVal.trim()}")`;
     }
 
     setErrors(newErrors);
+    setSummaryDismissed(false);
     return Object.keys(newErrors).length === 0;
   };
 
   const handleSave = () => {
-    if (!validate()) return;
+    const timeoutSeconds = parseTimeoutSeconds(timeoutVal);
+    if (!validate(timeoutSeconds)) {
+      // scrollTo is missing in jsdom — never throw on a cosmetic scroll.
+      contentRef.current?.scrollTo?.({ top: 0, behavior: "smooth" });
+      return;
+    }
 
     const config = { base_url: baseUrl, api_format: apiFormat };
-    if (isAwsAuth) {
+    if (isVertexAuth) {
+      config.gcp_project = gcpProject.trim();
+      config.gcp_location = gcpLocation.trim();
+      if (serviceAccountJSON) config.service_account_json = serviceAccountJSON;
+    } else if (isAwsAuth) {
       if (awsAccessKeyId) config.aws_access_key_id = awsAccessKeyId;
       if (awsSecretAccessKey) config.aws_secret_access_key = awsSecretAccessKey;
       if (awsRegion) config.aws_region = awsRegion;
@@ -368,7 +561,6 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       config.api_key = apiKey;
     }
     if (models.length > 0) config.models = models;
-    const timeoutSeconds = parseTimeoutSeconds(timeoutVal);
     if (timeoutSeconds !== null) config.default_timeout = timeoutSeconds;
     if (maxConcurrent) config.max_concurrent = Number(maxConcurrent);
 
@@ -394,16 +586,63 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     );
   };
 
+  const modelsLoading = fetchScheduled || fetchModels.isPending;
+
+  // A typed key answered with an empty list; hand-entered models lift it.
+  const typedKeyUnverified = !!keyFetchError && !manualModels;
+
+  // The stored credential listed nothing and no replacement key has been typed.
+  // AWS is exempt: Bedrock has no list endpoint and no API Key field to explain
+  // a block on, so gating there would lock those providers out of editing.
+  const savedKeyUnverified =
+    isEditMode &&
+    !isAwsAuth &&
+    !isVertexAuth &&
+    hasFetched &&
+    modelOptions.length === 0 &&
+    !apiKey.trim() &&
+    !manualModels;
+
   const allSelected =
     modelOptions.length > 0 && models.length === modelOptions.length;
 
   const preset = PROVIDER_PRESETS[name] || PROVIDER_PRESETS.custom;
 
+  // A key FIELD_LABELS does not know goes last rather than dropping silently.
+  const errorKeys = Object.keys(errors).filter((key) => errors[key]);
+  const errorList = [
+    ...Object.keys(FIELD_LABELS).filter((key) => errors[key]),
+    ...errorKeys.filter((key) => !(key in FIELD_LABELS)),
+  ].map((key) => ({
+    key,
+    label: FIELD_LABELS[key] || key,
+    message: errors[key],
+  }));
+
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
       <DialogTitle>{isEditMode ? "Edit Provider" : "Add Provider"}</DialogTitle>
-      <DialogContent>
+      <DialogContent ref={contentRef}>
         <Stack spacing={2} mt={1}>
+          {errorList.length > 0 && !summaryDismissed && (
+            <Alert severity="error" onClose={() => setSummaryDismissed(true)}>
+              <AlertTitle>
+                {errorList.length === 1
+                  ? "Fix this before saving"
+                  : `Fix ${errorList.length} issues before saving`}
+              </AlertTitle>
+              <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
+                {errorList.map(({ key, label, message }) => (
+                  <li key={key}>
+                    <Typography variant="body2" component="span">
+                      <strong>{label}:</strong> {message}
+                    </Typography>
+                  </li>
+                ))}
+              </Box>
+            </Alert>
+          )}
+
           {/* Provider Name — dropdown for common providers */}
           {isEditMode ? (
             <TextField
@@ -412,7 +651,8 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
               required
               value={name}
               disabled
-              helperText="Provider name cannot be changed"
+              error={!!errors.name}
+              helperText={errors.name || "Provider name cannot be changed"}
             />
           ) : (
             <TextField
@@ -433,7 +673,59 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
             </TextField>
           )}
 
-          {isAwsAuth ? (
+          {isVertexAuth ? (
+            <>
+              <TextField
+                label="Google Cloud project ID"
+                fullWidth
+                required
+                value={gcpProject}
+                onChange={(e) => {
+                  setGcpProject(e.target.value);
+                  setErrors((prev) => ({ ...prev, gcpProject: undefined }));
+                }}
+                error={!!errors.gcpProject}
+                helperText={errors.gcpProject}
+              />
+              <TextField
+                label="Vertex AI location"
+                fullWidth
+                required
+                value={gcpLocation}
+                onChange={(e) => {
+                  setGcpLocation(e.target.value);
+                  setErrors((prev) => ({ ...prev, gcpLocation: undefined }));
+                }}
+                error={!!errors.gcpLocation}
+                helperText={errors.gcpLocation || "For example, us-central1"}
+              />
+              <TextField
+                label="Service-account JSON"
+                fullWidth
+                required={!isEditMode}
+                type="password"
+                autoComplete="off"
+                value={serviceAccountJSON}
+                onChange={(e) => {
+                  setServiceAccountJSON(e.target.value);
+                  setErrors((prev) => ({
+                    ...prev,
+                    serviceAccountJSON: undefined,
+                  }));
+                }}
+                placeholder={
+                  isEditMode
+                    ? "Leave blank to keep current key"
+                    : "Paste the entire JSON key"
+                }
+                error={!!errors.serviceAccountJSON}
+                helperText={
+                  errors.serviceAccountJSON ||
+                  "Encrypted at rest. Never returned to the browser after saving."
+                }
+              />
+            </>
+          ) : isAwsAuth ? (
             <>
               <TextField
                 label="AWS Region"
@@ -507,7 +799,10 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
                 fullWidth
                 required={!preset.baseUrl}
                 value={baseUrl}
-                onChange={(e) => setBaseUrl(e.target.value)}
+                onChange={(e) => {
+                  setBaseUrl(e.target.value);
+                  setErrors((prev) => ({ ...prev, baseUrl: undefined }));
+                }}
                 placeholder={preset.baseUrl || "https://your-endpoint.com"}
                 error={!!errors.baseUrl}
                 helperText={
@@ -527,14 +822,22 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
                 onChange={(e) => {
                   setApiKey(e.target.value);
                   setErrors((prev) => ({ ...prev, apiKey: undefined }));
+                  // The refetch is debounced; drop the stale verdict now.
+                  setKeyFetchError("");
                 }}
                 placeholder={
                   isEditMode
                     ? "Leave blank to keep current key"
                     : preset.keyPlaceholder
                 }
-                error={!!errors.apiKey}
-                helperText={errors.apiKey}
+                error={
+                  !!errors.apiKey || typedKeyUnverified || savedKeyUnverified
+                }
+                helperText={
+                  errors.apiKey ||
+                  keyFetchError ||
+                  (savedKeyUnverified ? STORED_KEY_UNVERIFIED : undefined)
+                }
               />
             </>
           )}
@@ -580,9 +883,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
             >
               <Typography variant="subtitle2" color="text.secondary">
                 Models
-                {fetchModels.isPending && (
-                  <CircularProgress size={14} sx={{ ml: 1 }} />
-                )}
+                {modelsLoading && <CircularProgress size={14} sx={{ ml: 1 }} />}
                 {hasFetched && modelOptions.length > 0 && (
                   <Typography
                     component="span"
@@ -606,11 +907,15 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
               freeSolo
               autoSelect
               disableCloseOnSelect
+              size="small"
+              sx={{
+                "&:hover .MuiAutocomplete-input, &.Mui-focused .MuiAutocomplete-input":
+                  { minWidth: 30 },
+              }}
               options={modelOptions}
               value={models}
               onChange={(_, val) => {
-                setModels(val.map((v) => v.trim()).filter(Boolean));
-                setErrors((prev) => ({ ...prev, models: undefined }));
+                setModels(normalizeModels(val));
               }}
               renderOption={(props, option, { selected }) => (
                 <li {...props} key={option}>
@@ -632,15 +937,14 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
                 <TextField
                   {...params}
                   placeholder={
-                    fetchModels.isPending
+                    modelsLoading
                       ? "Fetching models..."
                       : modelOptions.length > 0
                         ? "Select models..."
-                        : isAwsAuth
+                        : isAwsAuth || isVertexAuth
                           ? "Type or paste comma-separated model IDs"
                           : "Enter API key to load models, or type manually"
                   }
-                  size="small"
                   onPaste={(e) => {
                     const pasted = e.clipboardData.getData("text");
                     if (!/[,\n]/.test(pasted)) return;
@@ -653,7 +957,6 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
                     setModels((prev) =>
                       Array.from(new Set([...prev, ...tokens])),
                     );
-                    setErrors((p) => ({ ...p, models: undefined }));
                   }}
                 />
               )}
@@ -667,9 +970,17 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
                 {fetchError}
               </Alert>
             )}
-            {errors.models && (
-              <Typography variant="caption" color="error" sx={{ mt: 0.5 }}>
-                {errors.models}
+            {models.length === 0 && (
+              // Save is held until a model is picked, so say so here.
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ mt: 0.5, display: "block" }}
+              >
+                Select at least one model to enable Save
+                {modelOptions.length === 0
+                  ? " — type a model ID and press Enter to add one manually."
+                  : "."}
               </Typography>
             )}
           </Box>
@@ -709,18 +1020,30 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       </DialogContent>
       <DialogActions>
         <Button onClick={handleClose}>Cancel</Button>
+        {/* Held for the states a click could never get past. Each is explained
+            on its own field, and each has a way out — pick or type a model, or
+            enter a key that lists them. */}
         <Button
           variant="contained"
           onClick={handleSave}
-          disabled={!name.trim() || updateProvider.isPending}
+          disabled={
+            !name.trim() ||
+            updateProvider.isPending ||
+            modelsLoading ||
+            typedKeyUnverified ||
+            savedKeyUnverified ||
+            models.length === 0
+          }
         >
-          {updateProvider.isPending
-            ? isEditMode
-              ? "Saving..."
-              : "Adding..."
-            : isEditMode
-              ? "Save Changes"
-              : "Add Provider"}
+          {modelsLoading
+            ? "Loading models..."
+            : updateProvider.isPending
+              ? isEditMode
+                ? "Saving..."
+                : "Adding..."
+              : isEditMode
+                ? "Save Changes"
+                : "Add Provider"}
         </Button>
       </DialogActions>
     </Dialog>

@@ -98,7 +98,7 @@ def test_provider_poll_emits_one_stable_billing_key_per_rehosted_artifact(
 
     monkeypatch.setattr(op, "normalize_vapi_data", lambda *_args, **_kwargs: normalized)
     monkeypatch.setattr(op, "_create_observation_span", lambda *_args: Mock())
-    monkeypatch.setattr(op, "_export_provider_call_to_collector", lambda *_args: None)
+    monkeypatch.setattr(op, "_export_provider_call_to_collector", lambda *_args: 1)
     monkeypatch.setattr(
         op, "emit_span_ingestion_usage", lambda **kwargs: emitted.append(kwargs)
     )
@@ -132,7 +132,7 @@ def test_retell_rehost_uploads_are_billed_with_project_aware_normalization(
 
     monkeypatch.setattr(op, "normalize_retell_data", _normalize_retell)
     monkeypatch.setattr(op, "_create_observation_span", lambda *_args: Mock())
-    monkeypatch.setattr(op, "_export_provider_call_to_collector", lambda *_args: None)
+    monkeypatch.setattr(op, "_export_provider_call_to_collector", lambda *_args: 1)
     monkeypatch.setattr(
         op, "emit_span_ingestion_usage", lambda **kwargs: emitted.append(kwargs)
     )

@@ -215,6 +215,80 @@ def test_get_eval_outputs_skips_missing_config(simulation_tree, eval_configs):
 
 
 @pytest.mark.django_db
+def test_get_eval_outputs_keeps_external_harness_results_without_config(
+    simulation_tree, eval_configs
+):
+    live, _ = eval_configs["live"], eval_configs["deleted"]
+    call_execution = simulation_tree["call_execution"]
+    harness_id = str(uuid.uuid4())
+    call_execution.eval_outputs = {
+        harness_id: {
+            "name": "database_state_verified",
+            "output": "Passed",
+            "output_type": "Pass/Fail",
+            "status": "completed",
+            "source": "harness",
+        }
+    }
+    call_execution.save(update_fields=["eval_outputs"])
+
+    outputs = CallExecutionDetailSerializer(
+        context={"eval_configs": {str(live.id): live}}
+    ).get_eval_outputs(call_execution)
+
+    assert outputs[harness_id]["name"] == "database_state_verified"
+    assert outputs[harness_id]["value"] == "Passed"
+
+
+@pytest.mark.django_db
+def test_hosted_recording_artifacts_surface_in_detail_recording_shape(simulation_tree):
+    call_execution = simulation_tree["call_execution"]
+    agent_definition = call_execution.test_execution.run_test.agent_definition
+    agent_definition.agent_type = AgentDefinition.AgentTypeChoices.VOICE
+    agent_definition.save(update_fields=["agent_type"])
+    call_execution.simulation_call_type = CallExecution.SimulationCallType.VOICE
+    call_execution.call_metadata = {
+        "hosted_harness_artifacts": {
+            "recording_combined": {"url": "https://media.example/combined.wav"},
+            "recording_stereo": {"url": "https://media.example/stereo.wav"},
+            "recording_customer": {"url": "https://media.example/customer.wav"},
+            "recording_assistant": {"url": "https://media.example/assistant.wav"},
+        }
+    }
+
+    recordings = CallExecutionDetailSerializer(
+        context={"detail_mode": True}
+    ).get_recordings(call_execution)
+
+    assert recordings == {
+        "combined": "https://media.example/combined.wav",
+        "stereo": "https://media.example/stereo.wav",
+        "customer": "https://media.example/customer.wav",
+        "assistant": "https://media.example/assistant.wav",
+    }
+
+
+@pytest.mark.django_db
+def test_explicit_voice_call_type_wins_over_stale_text_agent_definition(simulation_tree):
+    call_execution = simulation_tree["call_execution"]
+    agent_definition = call_execution.test_execution.run_test.agent_definition
+    agent_definition.agent_type = AgentDefinition.AgentTypeChoices.TEXT
+    agent_definition.save(update_fields=["agent_type"])
+    call_execution.simulation_call_type = CallExecution.SimulationCallType.VOICE
+    call_execution.duration_seconds = 42
+    call_execution.recording_url = "https://media.example/combined.wav"
+
+    serializer = CallExecutionDetailSerializer(
+        call_execution, context={"detail_mode": True}
+    )
+
+    assert serializer.data["duration"] == 42
+    assert serializer.data["recordings"] == {
+        "combined": "https://media.example/combined.wav"
+    }
+
+
+@pytest.mark.django_db
 def test_get_eval_metrics_skips_missing_config(simulation_tree, eval_configs):
     live, deleted = eval_configs["live"], eval_configs["deleted"]
     call_execution = simulation_tree["call_execution"]

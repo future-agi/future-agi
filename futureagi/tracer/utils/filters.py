@@ -10,6 +10,7 @@ from django.db.models.functions import Cast, Round
 from django.utils.dateparse import parse_datetime as django_parse_datetime
 
 from tracer.models.observability_provider import ProviderChoices
+from tracer.services.simulator_phones import SIMULATOR_PHONE_NUMBERS
 from tracer.utils.helper import extract_date
 
 
@@ -624,7 +625,9 @@ class FilterEngine:
         expected_values = (
             filter_value if isinstance(filter_value, list) else [filter_value]
         )
-        expected_values = [value for value in expected_values if value not in (None, "")]
+        expected_values = [
+            value for value in expected_values if value not in (None, "")
+        ]
         if filter_op in ("is_null", "is_not_null"):
             return [
                 obj
@@ -1546,7 +1549,12 @@ class FilterEngine:
                     return []
                 return [raw_value]
 
-            def _eval_choice_condition(raw_value):
+            def _eval_choice_condition(
+                raw_value,
+                *,
+                filter_op=filter_op,
+                metric_column_id=metric_column_id,
+            ):
                 values = _values(raw_value)
                 if not values:
                     return (
@@ -1814,15 +1822,22 @@ class FilterEngine:
                 filter_value = filter_config.get("filter_value")
                 if isinstance(filter_value, str):
                     filter_value = filter_value.lower() == "true"
-                if filter_value and user_id:
-                    q_conditions &= Q(
-                        Exists(
-                            Score.objects.filter(
-                                source_q,
-                                annotator_id=user_id,
-                                deleted=False,
-                            )
+                if not user_id:
+                    # Fail closed for background/legacy callers that did not
+                    # receive a server-bound principal.  This applies to both
+                    # true and false; an unbound NOT EXISTS would otherwise
+                    # broaden to all rows.
+                    q_conditions &= Q(pk__in=[])
+                else:
+                    user_annotations = Exists(
+                        Score.objects.filter(
+                            source_q,
+                            annotator_id=user_id,
+                            deleted=False,
                         )
+                    )
+                    q_conditions &= (
+                        Q(user_annotations) if filter_value else ~Q(user_annotations)
                     )
                 continue
 
@@ -2170,34 +2185,17 @@ class FilterEngine:
         if not remove_simulation_calls or remove_simulation_calls == "false":
             return Q()
 
-        VAPI_PHONE_NUMBERS = [
-            "+18568806998",
-            "+17755715840",
-            "+13463424590",
-            "+12175683677",
-            "+12175696753",
-            "+12175683493",
-            "+12175681887",
-            "+12176018447",
-            "+12176018280",
-            "+12175696862",
-            "+19168660414",
-            "+19163473349",
-            "+18563161617",
-            "+13463619738",
-            "+19847339395",
-        ]
         remove_simulation_calls_filters = Q()
 
         # Handling case for VAPI call logs
         # Use span_attributes (canonical) - eval_attributes is deprecated
         remove_simulation_calls_filters |= Q(provider=ProviderChoices.VAPI) & Q(
-            span_attributes__raw_log__customer__number__in=VAPI_PHONE_NUMBERS
+            span_attributes__raw_log__customer__number__in=SIMULATOR_PHONE_NUMBERS
         )
 
         # Handling case for Retell call logs
         remove_simulation_calls_filters |= Q(provider=ProviderChoices.RETELL) & Q(
-            span_attributes__raw_log__from_number__in=VAPI_PHONE_NUMBERS
+            span_attributes__raw_log__from_number__in=SIMULATOR_PHONE_NUMBERS
         )
 
         return remove_simulation_calls_filters
@@ -2351,12 +2349,15 @@ class FilterEngine:
 
         # Use span_attributes (canonical) for all filters - eval_attributes is deprecated.
         # Vocabulary mirrors `SPAN_ATTR_ALLOWED_OPS` in `tracer.utils.constants`.
-        _null_q = lambda col: (
-            ~Q(span_attributes__has_key=col) | Q(span_attributes__contains={col: None})
-        )
-        _not_null_q = lambda col: (
-            Q(span_attributes__has_key=col) & ~Q(span_attributes__contains={col: None})
-        )
+        def _null_q(col):
+            return ~Q(span_attributes__has_key=col) | Q(
+                span_attributes__contains={col: None}
+            )
+
+        def _not_null_q(col):
+            return Q(span_attributes__has_key=col) & ~Q(
+                span_attributes__contains={col: None}
+            )
 
         text_operator_map = {
             "equals": lambda col, val: Q(span_attributes__contains={col: val}),

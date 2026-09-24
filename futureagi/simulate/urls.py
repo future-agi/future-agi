@@ -14,6 +14,10 @@ from simulate.views.chat_simulation import (
     RunTestNameView,
     TestExecutionChatBatchView,
 )
+from simulate.views.preview_pagination import (
+    RunTestPreviewExecutionsView,
+    TestExecutionPreviewCallsView,
+)
 from simulate.views.prompt_simulation import (
     ExecutePromptSimulationView,
     PromptSimulationDetailView,
@@ -96,6 +100,12 @@ from .views.agent_version import (
     RestoreAgentVersionView,
 )
 from .views.alk_simulate_ingestion import ALKSimulateIngestionViewSet
+from .views.harness_job import HarnessJobViewSet
+from .views.hosted_harness import (
+    HostedHarnessAttemptViewSet,
+    HostedHarnessIngressProxyView,
+)
+from .views.hosted_harness_conversation import HostedHarnessConversationViewSet
 from .views.livekit_api import (
     CallConfigView,
     CallExecutionUpdateView,
@@ -123,9 +133,30 @@ router.register(r"agent-prompt-optimiser", AgentPromptOptimiserRunViewSet)
 router.register(
     r"alk-simulate", ALKSimulateIngestionViewSet, basename="alk-simulate-ingestion"
 )
+router.register(r"harness-jobs", HarnessJobViewSet, basename="harness-job")
+router.register(
+    r"harness/attempts",
+    HostedHarnessAttemptViewSet,
+    basename="hosted-harness-attempt",
+)
+router.register(
+    r"harness/conversations",
+    HostedHarnessConversationViewSet,
+    basename="hosted-harness-conversation",
+)
 
 urlpatterns = [
     path("api/", include(router.urls)),
+    path(
+        "api/harness/ingress/<str:token>/",
+        HostedHarnessIngressProxyView.as_view(),
+        name="hosted-harness-ingress-proxy",
+    ),
+    path(
+        "api/harness/ingress/<str:token>/<path:target_path>",
+        HostedHarnessIngressProxyView.as_view(),
+        name="hosted-harness-ingress-proxy-path",
+    ),
     # Persona duplicate endpoint with custom URL pattern
     path(
         "api/personas/duplicate/<uuid:persona_id>/",
@@ -303,6 +334,11 @@ urlpatterns = [
         name="run-tests-executions",
     ),
     path(
+        "run-tests/<uuid:run_test_id>/preview-executions/",
+        RunTestPreviewExecutionsView.as_view(),
+        name="run-tests-preview-executions",
+    ),
+    path(
         "run-tests/<uuid:run_test_id>/eval-summary/",
         RunTestEvalSummaryView.as_view(),
         name="run-tests-eval-summary",
@@ -427,6 +463,11 @@ urlpatterns = [
         "test-executions/<uuid:test_execution_id>/",
         TestExecutionDetailView.as_view(),
         name="test-execution-detail",
+    ),
+    path(
+        "test-executions/<uuid:test_execution_id>/preview-calls/",
+        TestExecutionPreviewCallsView.as_view(),
+        name="test-execution-preview-calls",
     ),
     path(
         "test-executions/<uuid:test_execution_id>/column-order/",

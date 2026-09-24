@@ -2150,6 +2150,23 @@ class TestDisposableEmailDomains:
 
         assert not is_disposable_email_domain("com")
 
+    def test_locally_added_providers_are_disposable(self):
+        """Domains we saw at signup before upstream listed them. The packaged
+        list is regenerated wholesale, so these live in a separate set that the
+        weekly refresh cannot clobber."""
+        from accounts.utils import is_disposable_email_domain
+
+        assert is_disposable_email_domain("insight-travel.my.id")
+        assert is_disposable_email_domain("uberip.com")
+        assert is_disposable_email_domain("mail.uberip.com")
+
+    def test_the_local_set_does_not_swallow_its_parent_domain(self):
+        """`insight-travel.my.id` is one host under the `my.id` public suffix,
+        not the whole namespace -- listing it must not block every `.my.id`."""
+        from accounts.utils import is_disposable_email_domain
+
+        assert not is_disposable_email_domain("acme.my.id")
+
     def test_free_providers_are_absent_from_the_package_list(self):
         """gmail and friends are permanent mailboxes, not throwaways, so the
         package does not list them. Dropping the hand-maintained set in favour

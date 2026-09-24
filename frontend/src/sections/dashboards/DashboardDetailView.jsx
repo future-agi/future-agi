@@ -1,12 +1,13 @@
-/* eslint-disable react/prop-types */
 import React, {
   forwardRef,
   useCallback,
+  useEffect,
   useImperativeHandle,
   useMemo,
   useRef,
   useState,
 } from "react";
+import PropTypes from "prop-types";
 import {
   Box,
   Breadcrumbs,
@@ -14,6 +15,7 @@ import {
   Card,
   CardContent,
   Chip,
+  CircularProgress,
   ClickAwayListener,
   Divider,
   IconButton,
@@ -92,6 +94,17 @@ function computeRows(widgets) {
   return rows;
 }
 
+const widgetPropType = PropTypes.shape({
+  id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+  name: PropTypes.string,
+  description: PropTypes.string,
+  position: PropTypes.number,
+  width: PropTypes.number,
+  height: PropTypes.number,
+  query_config: PropTypes.object,
+  chart_config: PropTypes.object,
+});
+
 // ---------------------------------------------------------------------------
 // InlineEdit — click-to-edit text field
 // ---------------------------------------------------------------------------
@@ -103,14 +116,14 @@ const InlineEdit = forwardRef(function InlineEdit(
   const [draft, setDraft] = useState(value || "");
   const inputRef = useRef(null);
 
-  const startEdit = () => {
+  const startEdit = useCallback(() => {
     if (readOnly) return;
     setDraft(value || "");
     setEditing(true);
     setTimeout(() => inputRef.current?.focus(), 0);
-  };
+  }, [readOnly, value]);
 
-  useImperativeHandle(ref, () => ({ startEdit }), [value]);
+  useImperativeHandle(ref, () => ({ startEdit }), [startEdit]);
 
   const save = () => {
     setEditing(false);
@@ -184,6 +197,15 @@ const InlineEdit = forwardRef(function InlineEdit(
   );
 });
 
+InlineEdit.propTypes = {
+  value: PropTypes.string,
+  onSave: PropTypes.func.isRequired,
+  placeholder: PropTypes.string,
+  typographyProps: PropTypes.object,
+  multiline: PropTypes.bool,
+  readOnly: PropTypes.bool,
+};
+
 // ---------------------------------------------------------------------------
 // DropZone — droppable area that shows a blue indicator line when hovered
 // ---------------------------------------------------------------------------
@@ -245,6 +267,12 @@ function DropZone({ id, direction = "vertical", isDragging }) {
     </Box>
   );
 }
+
+DropZone.propTypes = {
+  id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+  direction: PropTypes.oneOf(["horizontal", "vertical"]),
+  isDragging: PropTypes.bool,
+};
 
 // ---------------------------------------------------------------------------
 // ResizeHandle — draggable divider between adjacent widgets in a row
@@ -367,6 +395,13 @@ function ResizeHandle({
   );
 }
 
+ResizeHandle.propTypes = {
+  leftWidget: widgetPropType.isRequired,
+  rightWidget: widgetPropType.isRequired,
+  containerWidth: PropTypes.number.isRequired,
+  onResizeEnd: PropTypes.func.isRequired,
+};
+
 // ---------------------------------------------------------------------------
 // RowResizeHandle — a single horizontal bar below the entire row
 // ---------------------------------------------------------------------------
@@ -431,6 +466,11 @@ function RowResizeHandle({ row, onRowResize }) {
   );
 }
 
+RowResizeHandle.propTypes = {
+  row: PropTypes.arrayOf(widgetPropType).isRequired,
+  onRowResize: PropTypes.func.isRequired,
+};
+
 // ---------------------------------------------------------------------------
 // DraggableWidgetCard — individual widget card with drag handle
 // ---------------------------------------------------------------------------
@@ -444,6 +484,8 @@ function DraggableWidgetCard({
   rowHeight,
   datePreset,
   isReadOnly,
+  refreshRequestId,
+  onQuerySettled,
 }) {
   const theme = useTheme();
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
@@ -609,7 +651,10 @@ function DraggableWidgetCard({
                   : ""
               }`}
               widget={widget}
+              dashboardId={dashboardId}
               globalDateRange={globalDateRange}
+              refreshRequestId={refreshRequestId}
+              onQuerySettled={onQuerySettled}
             />
           </Box>
         </CardContent>
@@ -617,6 +662,21 @@ function DraggableWidgetCard({
     </Box>
   );
 }
+
+DraggableWidgetCard.propTypes = {
+  widget: widgetPropType.isRequired,
+  dashboardId: PropTypes.oneOfType([PropTypes.string, PropTypes.number])
+    .isRequired,
+  navigate: PropTypes.func.isRequired,
+  onMenuOpen: PropTypes.func.isRequired,
+  globalDateRange: PropTypes.object,
+  _isDragActive: PropTypes.bool,
+  rowHeight: PropTypes.number,
+  datePreset: PropTypes.string,
+  isReadOnly: PropTypes.bool,
+  refreshRequestId: PropTypes.number,
+  onQuerySettled: PropTypes.func,
+};
 
 // ---------------------------------------------------------------------------
 // DragOverlayCard — compact preview shown while dragging
@@ -663,6 +723,10 @@ function DragOverlayCard({ widget }) {
     </Card>
   );
 }
+
+DragOverlayCard.propTypes = {
+  widget: widgetPropType.isRequired,
+};
 
 // ---------------------------------------------------------------------------
 // Main Component
@@ -719,6 +783,25 @@ export default function DashboardDetailView() {
 
   // Drag state
   const [activeWidget, setActiveWidget] = useState(null);
+  const refreshSequenceRef = useRef(0);
+  const pendingRefreshWidgetsRef = useRef(new Set());
+  const refreshFailedRef = useRef(false);
+  const refreshPausedRef = useRef(false);
+  const refreshTimesRef = useRef([]);
+  const [refreshRequestId, setRefreshRequestId] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const activeDashboardIdRef = useRef(dashboardId);
+  activeDashboardIdRef.current = dashboardId;
+
+  useEffect(() => {
+    pendingRefreshWidgetsRef.current.clear();
+    refreshFailedRef.current = false;
+    refreshPausedRef.current = false;
+    refreshTimesRef.current = [];
+    setIsRefreshing(false);
+    setLastUpdated(null);
+  }, [dashboardId]);
 
   // DnD sensors
   const sensors = useSensors(
@@ -738,6 +821,75 @@ export default function DashboardDetailView() {
   // The time filter only acts on widgets — hide the bar until one exists
   // (an interactive-but-inert bar on an empty dashboard reads as broken).
   const hasWidgets = widgets.length > 0;
+
+  const handleRefreshDashboard = useCallback(() => {
+    const queryableWidgetIds = widgets
+      .filter((widget) => widget.query_config?.metrics?.length > 0)
+      .map((widget) => widget.id);
+    if (!queryableWidgetIds.length) return;
+
+    refreshSequenceRef.current += 1;
+    pendingRefreshWidgetsRef.current = new Set(queryableWidgetIds);
+    refreshFailedRef.current = false;
+    refreshPausedRef.current = false;
+    refreshTimesRef.current = [];
+    setIsRefreshing(true);
+    setRefreshRequestId(refreshSequenceRef.current);
+  }, [widgets]);
+
+  const handleWidgetQuerySettled = useCallback(
+    ({
+      dashboardId: settledDashboardId,
+      widgetId,
+      refreshRequestId: requestId,
+      manualRefresh,
+      exact,
+      pollingPaused,
+      updatedAt,
+    }) => {
+      if (
+        String(settledDashboardId || "") !==
+        String(activeDashboardIdRef.current || "")
+      ) {
+        return;
+      }
+      const parsedUpdatedAt = updatedAt ? new Date(updatedAt) : null;
+      const validUpdatedAt =
+        parsedUpdatedAt && !Number.isNaN(parsedUpdatedAt.getTime())
+          ? parsedUpdatedAt
+          : null;
+
+      if (!manualRefresh) {
+        if (exact && validUpdatedAt) {
+          setLastUpdated((current) =>
+            !current || validUpdatedAt > current ? validUpdatedAt : current,
+          );
+        }
+        return;
+      }
+
+      if (requestId !== refreshSequenceRef.current) return;
+      const pending = pendingRefreshWidgetsRef.current;
+      if (!pending.has(widgetId)) return;
+
+      pending.delete(widgetId);
+      if (!exact && !pollingPaused) refreshFailedRef.current = true;
+      if (pollingPaused) refreshPausedRef.current = true;
+      if (exact && validUpdatedAt) refreshTimesRef.current.push(validUpdatedAt);
+
+      if (pending.size === 0) {
+        setIsRefreshing(false);
+        if (!refreshFailedRef.current && !refreshPausedRef.current) {
+          const completedAt = refreshTimesRef.current.reduce(
+            (latest, value) => (!latest || value > latest ? value : latest),
+            null,
+          );
+          if (completedAt) setLastUpdated(completedAt);
+        }
+      }
+    },
+    [],
+  );
 
   // --- Handlers ---
 
@@ -1109,6 +1261,41 @@ export default function DashboardDetailView() {
         </Breadcrumbs>
 
         <Stack direction="row" spacing={0.5} alignItems="center">
+          {hasWidgets && lastUpdated && (
+            <Stack
+              direction="row"
+              spacing={0.5}
+              alignItems="center"
+              sx={{ mr: 0.5 }}
+            >
+              <Iconify
+                icon="mdi:clock-outline"
+                width={14}
+                sx={{ color: "text.secondary" }}
+              />
+              <Typography variant="caption" color="text.secondary" noWrap>
+                Last updated {format(lastUpdated, "MMM d, yyyy, h:mm a")}
+              </Typography>
+            </Stack>
+          )}
+          {hasWidgets && (
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={
+                isRefreshing ? (
+                  <CircularProgress size={14} color="inherit" />
+                ) : (
+                  <Iconify icon="mdi:refresh" width={16} />
+                )
+              }
+              onClick={handleRefreshDashboard}
+              disabled={isRefreshing}
+              sx={{ textTransform: "none" }}
+            >
+              {isRefreshing ? "Refreshing" : "Refresh"}
+            </Button>
+          )}
           <Tooltip title={linkCopied ? "Copied!" : "Copy link to share"}>
             <IconButton
               size="small"
@@ -1403,6 +1590,8 @@ export default function DashboardDetailView() {
                               rowHeight={rowHeight}
                               datePreset={datePreset}
                               isReadOnly={isReadOnly}
+                              refreshRequestId={refreshRequestId}
+                              onQuerySettled={handleWidgetQuerySettled}
                             />
 
                             {/* Resize handle between adjacent widgets */}

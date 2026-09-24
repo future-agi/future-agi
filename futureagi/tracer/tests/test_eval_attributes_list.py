@@ -308,58 +308,55 @@ class TestSpanAttributeKeysNormalisation:
 
 
 class TestSpanAttributeKeysPartitionPruning:
-    """The recent-window discovery query must prune, stay unordered, and stay
-    exhaustive.
+    """The CH25 discovery facade emits bounded partition-pruned reads."""
 
-    ``spans`` is partitioned by ``toDate(start_time)``; ``created_at`` is
-    neither the partition key nor in the sort key. Windowing by ``created_at``
-    defeats partition pruning and scans the whole project. Pin that the query
-    windows by ``start_time`` and does NOT order by it: ``start_time`` sits
-    behind ``observation_type``/``service_name`` in the sort key, so an ordered
-    lane sorts the whole window (materializing the fat ``attrs_*`` maps) ->
-    Code 396 / Code 159 on high-volume projects.
-
-    Discovery is exhaustive over that window: each lane ARRAY JOINs the
-    ``<map>.keys`` subcolumn over every span, never a row sample, so a key
-    carried by a thin slice of spans still reaches the filter picker. The
-    unbounded path keeps the legacy ``LIMIT 10000`` sample as a visibility-only
-    superset lane that contributes no count. Also pin that only the Map
-    ``.keys`` subcolumn is read (never values).
-    """
-
-    WINDOW = "start_time >= now() - toIntervalDay(%(window_days)s)"
-
-    def _capture_sql(self, monkeypatch, *, recent_days=7, **kwargs) -> str:
+    def _capture_calls(self, monkeypatch, *, recent_days=7):
+        from tracer.services.clickhouse.attribute_reads import (
+            AttributeQueryPage,
+            V2AttributeQueryExecutor,
+        )
         from tracer.services.clickhouse.query_service import AnalyticsQueryService
 
-        captured: dict = {}
+        calls = []
 
-        class _Result:
-            data: list = []
+        def _capture(self, query, params, *, timeout_ms, settings):
+            calls.append((query, params, timeout_ms, settings))
+            return AttributeQueryPage(data=[], query_time_ms=0)
 
-        def _capture(self, query, params, timeout_ms=None):
-            captured["query"] = query
-            return _Result()
-
-        monkeypatch.setattr(
-            AnalyticsQueryService, "execute_ch_query", _capture, raising=True
-        )
+        monkeypatch.setattr(V2AttributeQueryExecutor, "execute", _capture)
         AnalyticsQueryService().get_span_attribute_keys_ch_for_projects(
-            ["c4de3065-12b5-488c-a814-aa1c8e3f856f"],
-            recent_days=recent_days,
-            **kwargs,
+            ["c4de3065-12b5-488c-a814-aa1c8e3f856f"], recent_days=recent_days
         )
-        return captured["query"]
+        return calls
 
-    def test_windows_by_start_time_without_recency_order(self, monkeypatch):
-        sql = self._capture_sql(monkeypatch, recent_days=7)
+    def test_windows_by_start_time_with_streaming_identity_limit(self, monkeypatch):
+        calls = self._capture_calls(monkeypatch, recent_days=7)
+        assert len(calls) == 1
+        sql, params, _, settings = calls[0]
         # start_time is the partition key -> CH can prune to the window.
-        assert "start_time >= now() - toIntervalDay" in sql
-        # No recency ORDER BY: an ordered lane would sort the whole window.
-        assert "ORDER BY start_time" not in sql
+        assert "start_time >= fromUnixTimestamp64Micro(%(segment_start_us)s)" in sql
+        assert "start_time < fromUnixTimestamp64Micro(%(segment_end_us)s)" in sql
+        assert isinstance(params["segment_start_us"], int)
+        assert isinstance(params["segment_end_us"], int)
+        assert params["segment_start_us"] < params["segment_end_us"]
+        # Picker reads are explicitly sampled. The initial probe follows the
+        # storage key so LIMIT can stop early; latest-state replay still
+        # verifies every retained physical identity before it is exposed.
+        assert "LIMIT 1 BY project_id, trace_id, id, start_time" not in sql
+        assert "GROUP BY" not in sql
+        for storage_key in (
+            "attribute_source.project_id ASC",
+            "attribute_source.observation_type ASC",
+            "attribute_source.service_name ASC",
+            "toStartOfHour(attribute_source.start_time) ASC",
+            "attribute_source.trace_id ASC",
+            "attribute_source.id ASC",
+        ):
+            assert storage_key in sql
+        assert settings["optimize_read_in_order"] == 1
 
     def test_reads_keys_subcolumn_not_whole_map(self, monkeypatch):
-        sql = self._capture_sql(monkeypatch, recent_days=7)
+        sql = self._capture_calls(monkeypatch, recent_days=7)[0][0]
         # keys-only endpoint -> read the Map .keys subcolumn, never the
         # (200-380 KB) map values via mapKeys().
         assert "attrs_string.keys" in sql
@@ -367,51 +364,43 @@ class TestSpanAttributeKeysPartitionPruning:
         assert "attrs_bool.keys" in sql
         assert "mapKeys(" not in sql
 
-    def test_preserves_type_labels(self, monkeypatch):
-        sql = self._capture_sql(monkeypatch, recent_days=7)
-        # The windowed lanes are exhaustive, so only the type labels survive.
-        assert "'string'" in sql
-        assert "'number'" in sql
-        assert "'boolean'" in sql
+    def test_preserves_hard_query_limits(self, monkeypatch):
+        from tracer.services.clickhouse.attribute_reads import (
+            ATTRIBUTE_READ_CANDIDATE_LIMIT,
+            ATTRIBUTE_READ_QUERY_TIMEOUT_MS,
+        )
+
+        sql, params, timeout_ms, settings = self._capture_calls(
+            monkeypatch, recent_days=7
+        )[0]
+        assert "LIMIT %(candidate_limit)s" in sql
+        assert params["candidate_limit"] == ATTRIBUTE_READ_CANDIDATE_LIMIT + 1
+        assert 0 < timeout_ms <= ATTRIBUTE_READ_QUERY_TIMEOUT_MS
+        assert settings["max_threads"] == 1
+        assert settings["max_bytes_to_read"] == 36 * 1024 * 1024 * 1024
+        assert "max_rows_to_read" not in settings
+        assert settings["optimize_use_projections"] == 0
+        assert settings["allow_experimental_projection_optimization"] == 0
+        assert settings["use_skip_indexes"] == 0
+        assert settings["max_block_size"] == 8_192
 
     def test_does_not_window_or_order_by_created_at(self, monkeypatch):
-        sql = self._capture_sql(monkeypatch, recent_days=7)
+        sql = self._capture_calls(monkeypatch, recent_days=7)[0][0]
         # created_at defeats pruning; it must not gate the recent window.
-        assert "created_at >= now()" not in sql
-        assert "ORDER BY created_at" not in sql
+        assert "created_at" not in sql
 
-    def test_full_project_discovery_skips_order_by_to_short_circuit(self, monkeypatch):
-        # recent_days=None (dashboard/metrics filter discovery) unions the
-        # windowed lane with the legacy sample; the ORDER BY must stay dropped
-        # or LIMIT 10000 can't short-circuit and CH scans the whole project
-        # (~477k rows) instead of ~15k.
-        sql = self._capture_sql(monkeypatch, recent_days=None)
-        assert "ORDER BY start_time" not in sql
-        assert "LIMIT 10000" in sql
-
-    def test_each_lane_array_joins_keys_across_the_whole_window(self, monkeypatch):
-        # No row sample: every lane reads .keys for every span in the window, so
-        # a key on a thin slice of spans cannot fall outside it (TH-7632).
-        sql = self._capture_sql(monkeypatch, recent_days=7)
-        for column in ("attrs_string", "attrs_number", "attrs_bool"):
-            assert f"FROM spans ARRAY JOIN {column}.keys AS key" in sql
-        assert sql.count(self.WINDOW) == 3
-        assert "LIMIT 10000" not in sql
-
-    def test_unbounded_discovery_keeps_the_legacy_sample_lane(self, monkeypatch):
-        # recent_days=None unions the old sample in, so no key regresses.
-        sql = self._capture_sql(monkeypatch, recent_days=None)
-        assert sql.count(self.WINDOW) == 3
-        assert sql.count("LIMIT 10000") == 3
-        assert sql.count("UNION ALL") == 5
-
-    def test_sample_lane_contributes_no_count(self, monkeypatch):
-        # A span inside both the window and the sample would otherwise be summed
-        # twice by the outer sum(cnt) and inflate argMax(type, cnt).
-        sql = self._capture_sql(monkeypatch, recent_days=None, include_counts=True)
-        assert sql.count("0 AS cnt") == 3
-        assert sql.count("count() AS cnt") == 3
-        assert "sum(cnt) AS count" in sql
+    def test_full_inventory_walks_five_adjacent_bounded_bands(self, monkeypatch):
+        calls = self._capture_calls(monkeypatch, recent_days=None)
+        assert len(calls) == 5
+        windows = [
+            (params["segment_start"], params["segment_end"])
+            for _, params, _, _ in calls
+        ]
+        assert all(
+            newer[0] == older[1]
+            for newer, older in zip(windows, windows[1:], strict=False)
+        )
+        assert (windows[0][1] - windows[-1][0]).days == 365
 
 
 @pytest.mark.integration

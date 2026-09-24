@@ -1474,7 +1474,11 @@ class TraceErrorAnalysisDB:
                     AND metadata.value[indexOf(metadata.key, 'error_detail_pk')] = %(detail_id)s
                     LIMIT 1
                 """
-                result = db.client.execute(query, {"detail_id": str(error_detail_id)})
+                result = db.execute_read(
+                    query,
+                    {"detail_id": str(error_detail_id)},
+                    max_result_rows=1,
+                )
                 return len(result) > 0
             finally:
                 db.close()

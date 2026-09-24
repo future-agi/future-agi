@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -28,13 +29,19 @@ var (
 
 // Authenticator is the top-level auth facade. Safe for concurrent use.
 type Authenticator struct {
-	cfg    Config
-	pg     *PGResolver
-	cache  *cache
-	rdb    *redis.Client
-	sfKey  singleflight.Group // dedup concurrent key lookups
-	sfProj singleflight.Group // dedup concurrent project lookups
-	log    *slog.Logger
+	cfg      Config
+	pg       *PGResolver
+	projects projectResolver
+	cache    *cache
+	rdb      *redis.Client
+	sfKey    singleflight.Group // dedup concurrent key lookups
+	sfProj   singleflight.Group // dedup concurrent project lookups
+	log      *slog.Logger
+}
+
+type projectResolver interface {
+	ResolveProjects(context.Context, string, string, []string) (map[string]string, error)
+	GetOrCreateProject(context.Context, string, string, string, string) (string, error)
 }
 
 // New creates an Authenticator. If cfg.Enabled is false, returns nil
@@ -53,11 +60,12 @@ func New(ctx context.Context, cfg Config, rdb *redis.Client, log *slog.Logger) (
 	}
 
 	return &Authenticator{
-		cfg:   cfg,
-		pg:    pg,
-		cache: newCache(cfg.CacheTTL, cfg.WarmTTL),
-		rdb:   rdb,
-		log:   log,
+		cfg:      cfg,
+		pg:       pg,
+		projects: pg,
+		cache:    newCache(cfg.CacheTTL, cfg.WarmTTL),
+		rdb:      rdb,
+		log:      log,
 	}, nil
 }
 
@@ -162,36 +170,56 @@ func (a *Authenticator) ResolveProjectsForKey(ctx context.Context, cacheKey stri
 		return nil
 	}
 
-	missing := result.MissingProjects(names)
+	if result.OrgID == "" || result.WorkspaceID == "" {
+		return errors.New("resolve projects requires authenticated organization and workspace scope")
+	}
+	missing, scoped := result.MissingProjectsInWorkspace(result.WorkspaceID, names)
+	if !scoped {
+		return errors.New("resolve projects workspace scope does not match authentication result")
+	}
 	if len(missing) == 0 {
 		return nil
 	}
+	resolver := a.projects
+	if resolver == nil {
+		resolver = a.pg
+	}
+	if resolver == nil {
+		return errors.New("resolve projects requires a PostgreSQL project resolver")
+	}
 
 	// Batch resolve from PG read pool
-	resolved, err := a.pg.ResolveProjects(ctx, result.OrgID, missing)
+	resolved, err := resolver.ResolveProjects(ctx, result.OrgID, result.WorkspaceID, missing)
 	if err != nil {
 		return fmt.Errorf("resolve projects: %w", err)
 	}
 
-	result.SetProjects(resolved)
-	a.cache.addProjects(cacheKey, resolved)
+	if !result.SetProjectsInWorkspace(result.WorkspaceID, resolved) ||
+		!a.cache.addProjectsScoped(cacheKey, result.OrgID, result.WorkspaceID, resolved) {
+		return errors.New("resolve projects authentication cache scope changed during lookup")
+	}
 
 	// Auto-create any still-missing projects via write pool
 	for _, name := range missing {
-		if _, ok := result.GetProject(name); ok {
+		if _, ok := result.GetProjectInWorkspace(result.WorkspaceID, name); ok {
 			continue
 		}
-		sfKey := cacheKey + ":" + name
+		sfKey := strings.Join(
+			[]string{cacheKey, result.OrgID, result.WorkspaceID, name, "observe"}, "\x00",
+		)
 		val, err, _ := a.sfProj.Do(sfKey, func() (any, error) {
-			return a.pg.GetOrCreateProject(ctx, result.OrgID, result.WorkspaceID, name, "observe")
+			return resolver.GetOrCreateProject(ctx, result.OrgID, result.WorkspaceID, name, "observe")
 		})
 		if err != nil {
 			a.log.Warn("project auto-create failed", "name", name, "org", result.OrgID, "err", err)
 			continue
 		}
 		id := val.(string)
-		result.SetProject(name, id)
-		a.cache.addProjects(cacheKey, map[string]string{name: id})
+		created := map[string]string{name: id}
+		if !result.SetProjectsInWorkspace(result.WorkspaceID, created) ||
+			!a.cache.addProjectsScoped(cacheKey, result.OrgID, result.WorkspaceID, created) {
+			return errors.New("created project cache scope changed during lookup")
+		}
 	}
 
 	return nil

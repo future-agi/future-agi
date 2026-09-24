@@ -9,7 +9,7 @@ import {
 } from "@mui/material";
 import PropTypes from "prop-types";
 import { AgGridReact } from "ag-grid-react";
-import { useAgTheme } from "src/hooks/use-ag-theme";
+import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { useErrorFeedTraces } from "src/api/errorFeed/error-feed";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { useVoiceCallDetail } from "src/sections/agents/helper";
@@ -23,6 +23,11 @@ const EMPTY_AGG = {
   avg_turns: 0,
   p50_latency: 0,
   p95_latency: 0,
+};
+
+const TRACES_GRID_THEME_PARAMS = {
+  wrapperBorder: { width: 0 },
+  wrapperBorderRadius: 4,
 };
 
 // ── Aggregate bar (no Failing / Passing) ────────────────────────────────────
@@ -131,7 +136,7 @@ ScoreCellRenderer.propTypes = { value: PropTypes.number };
 
 // ── Traces AG Grid ────────────────────────────────────────────────────────────
 function TracesGrid({ rows, onRowClick }) {
-  const agTheme = useAgTheme();
+  const agTheme = useAgThemeWith(TRACES_GRID_THEME_PARAMS);
   const gridRef = useRef(null);
 
   const colDefs = useMemo(
@@ -239,10 +244,7 @@ function TracesGrid({ rows, onRowClick }) {
         suppressRowClickSelection
         onRowClicked={(e) => onRowClick?.(e.data?.id)}
         rowStyle={{ cursor: "pointer" }}
-        theme={agTheme.withParams({
-          wrapperBorder: { width: 0 },
-          wrapperBorderRadius: 4,
-        })}
+        theme={agTheme}
       />
     </Box>
   );

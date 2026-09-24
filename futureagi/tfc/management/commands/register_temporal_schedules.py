@@ -12,9 +12,13 @@ Usage:
 
 import asyncio
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
-from tfc.temporal import ALL_SCHEDULES, MODEL_HUB_SCHEDULES
+from tfc.temporal import (
+    ALL_SCHEDULES,
+    MODEL_HUB_SCHEDULES,
+    PROPERTY_CATALOG_SCHEDULES,
+)
 from tfc.temporal.common.client import get_client
 from tfc.temporal.schedules import (
     a_delete_schedule,
@@ -47,6 +51,11 @@ class Command(BaseCommand):
             help="Only register model_hub schedules",
         )
         parser.add_argument(
+            "--property-catalog-only",
+            action="store_true",
+            help="Only register the one reviewed DEV property-catalog schedule",
+        )
+        parser.add_argument(
             "--pause",
             type=str,
             metavar="SCHEDULE_ID",
@@ -75,6 +84,30 @@ class Command(BaseCommand):
         asyncio.run(self._handle_async(options))
 
     async def _handle_async(self, options):
+        action_names = ("list", "delete_all", "pause", "unpause", "trigger", "describe")
+        scoped_registration = (
+            options["model_hub_only"] or options["property_catalog_only"]
+        )
+        if options["model_hub_only"] and options["property_catalog_only"]:
+            raise CommandError(
+                "--model-hub-only and --property-catalog-only are mutually exclusive"
+            )
+        if scoped_registration and any(options[name] for name in action_names):
+            raise CommandError(
+                "registration scope flags cannot be combined with schedule actions"
+            )
+
+        if options["property_catalog_only"]:
+            schedules = PROPERTY_CATALOG_SCHEDULES
+            if len(schedules) != 1:
+                raise CommandError(
+                    "property-catalog-only registration requires exactly one configured schedule"
+                )
+        elif options["model_hub_only"]:
+            schedules = MODEL_HUB_SCHEDULES
+        else:
+            schedules = ALL_SCHEDULES
+
         client = await get_client()
 
         if options["list"]:
@@ -102,10 +135,15 @@ class Command(BaseCommand):
             return
 
         # Register schedules
-        schedules = MODEL_HUB_SCHEDULES if options["model_hub_only"] else ALL_SCHEDULES
         self.stdout.write(f"Registering {len(schedules)} schedules...")
 
-        await a_register_schedules(client, schedules)
+        # A scoped registration must not treat schedules outside its scope as
+        # orphans. Only a full registration owns the complete schedule set.
+        await a_register_schedules(
+            client,
+            schedules,
+            cleanup_orphans=not scoped_registration,
+        )
 
         self.stdout.write(
             self.style.SUCCESS(f"Successfully registered {len(schedules)} schedules")

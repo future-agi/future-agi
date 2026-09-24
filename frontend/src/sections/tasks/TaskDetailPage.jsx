@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Alert,
   Box,
   Button,
   CircularProgress,
+  MenuItem,
   Stack,
   Tab,
   Tabs,
@@ -21,6 +23,7 @@ import TaskLogsView from "src/sections/common/EvalsTasks/TaskLogsView";
 import { useGetTaskData } from "src/sections/common/EvalsTasks/common";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import CustomPopover, { usePopover } from "src/components/custom-popover";
 import TaskHeader from "./components/TaskHeader";
 import TaskConfigPanel from "./components/TaskConfigPanel";
 import TaskLivePreview from "./components/TaskLivePreview";
@@ -31,14 +34,12 @@ import {
   getNewTaskFilters,
 } from "./schema";
 import TaskConfirmDialog from "src/sections/common/EvalsTasks/EditTaskDrawer/TaskConfirmBox";
+import DuplicateTaskDialog from "./components/DuplicateTaskDialog";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 const getTaskDetailsErrorMessage = (error) =>
-  error?.result ||
-  error?.message ||
-  error?.response?.data?.result ||
-  error?.response?.data?.message ||
-  "Task details could not be loaded.";
+  getSafeActionErrorMessage(error, "Task details could not be loaded.");
 
 const TAB_OPTIONS = [
   { label: "Details", value: "details", icon: "solar:settings-linear" },
@@ -73,8 +74,10 @@ const TaskDetailPage = () => {
   const canEditTask =
     RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][role];
   const queryClient = useQueryClient();
+  const popover = usePopover();
   const [tab, setTab] = useState("details");
   const [confirmMode, setConfirmMode] = useState(null);
+  const [duplicateDialogOpen, setDuplicateDialogOpen] = useState(false);
 
   // Test runner — imperative handle from the live preview
   const previewRef = useRef(null);
@@ -91,6 +94,8 @@ const TaskDetailPage = () => {
     isLoading,
     isError,
     error,
+    isFetching,
+    refetch,
   } = useGetTaskData(taskId, {
     enabled: !!taskId,
     // Poll while non-terminal so the header/badge advance without a refresh.
@@ -101,7 +106,14 @@ const TaskDetailPage = () => {
     },
   });
 
-  const { control, handleSubmit, getValues, setValue, reset } = useForm({
+  const {
+    control,
+    handleSubmit,
+    getValues,
+    setValue,
+    reset,
+    formState: { dirtyFields },
+  } = useForm({
     defaultValues: getDefaultTaskValues(null, null),
     resolver: zodResolver(NewTaskValidationSchema()),
   });
@@ -118,6 +130,7 @@ const TaskDetailPage = () => {
 
   // ── Mutations ──
   const { mutate: updateTask, isPending: isUpdating } = useMutation({
+    meta: { errorHandled: true },
     mutationFn: ({ payload }) =>
       axios.patch(endpoints.project.patchEvalTask(), {
         ...payload,
@@ -133,10 +146,12 @@ const TaskDetailPage = () => {
     },
     onError: (err, { mode }) => {
       enqueueSnackbar(
-        err?.response?.data?.result ||
-          (mode === "rerun"
+        getSafeActionErrorMessage(
+          err,
+          mode === "rerun"
             ? "Failed to start the re-run"
-            : "Failed to update task"),
+            : "Task could not be updated. Review the filters and try again.",
+        ),
         { variant: "error" },
       );
     },
@@ -226,6 +241,81 @@ const TaskDetailPage = () => {
     [handleSubmit],
   );
 
+  const { mutate: duplicateTask, isPending: isDuplicating } = useMutation({
+    mutationFn: (payload) =>
+      axios.post(endpoints.project.createEvalTask(), payload),
+    meta: { errorHandled: true },
+    onSuccess: (resp) => {
+      queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
+      enqueueSnackbar("Your task has been duplicated", { variant: "success" });
+      const newId = resp?.data?.result?.id;
+      navigate(newId ? `/dashboard/tasks/${newId}` : "/dashboard/tasks");
+    },
+    onError: (err) => {
+      enqueueSnackbar(
+        err?.response?.data?.result || err?.message || "Failed to duplicate task",
+        { variant: "error" },
+      );
+    },
+  });
+
+  const handleOpenDuplicateDialog = () => {
+    popover.onClose();
+    setDuplicateDialogOpen(true);
+  };
+
+  const handleConfirmDuplicate = (taskName) => {
+    if (!taskDetails || isDuplicating) return;
+    const src = formValues?.name
+      ? formValues
+      : getDefaultTaskValues(taskDetails, null);
+
+    const isDateDirty = Boolean(dirtyFields?.startDate || dirtyFields?.endDate);
+    const hasSavedDateRange = Boolean(
+      taskDetails?.filters_applied?.date_range?.length ||
+        taskDetails?.filters_applied?.start_date ||
+        taskDetails?.filters_applied?.end_date ||
+        taskDetails?.start_date ||
+        taskDetails?.end_date,
+    );
+    const includeDateRange = hasSavedDateRange || isDateDirty;
+
+    const { filters: wireFilters, attributeFilters } = getNewTaskFilters(
+      src,
+      src.project,
+      !includeDateRange,
+    );
+
+    if (!includeDateRange && wireFilters.date_range) {
+      delete wireFilters.date_range;
+    }
+
+    const payload = {
+      name: taskName,
+      project: src.project,
+      run_type: src.runType,
+      row_type: src.rowType,
+      ...(src.runType !== "continuous" &&
+      Number.isFinite(Number(src.spansLimit)) &&
+      Number(src.spansLimit) > 0
+        ? { spans_limit: Number(src.spansLimit) }
+        : {}),
+      sampling_rate: src.samplingRate,
+      evals: src.evalsDetails?.map((item) => item.id || item) || [],
+      filters: {
+        ...wireFilters,
+        ...(attributeFilters?.length > 0
+          ? { filters: attributeFilters }
+          : {}),
+      },
+    };
+    duplicateTask(payload, {
+      onSuccess: () => {
+        setDuplicateDialogOpen(false);
+      },
+    });
+  };
+
   const handleConfirm = useCallback(
     (editType) => {
       const data = formValues;
@@ -256,7 +346,7 @@ const TaskDetailPage = () => {
     [formValues, updateTask, confirmMode],
   );
 
-  if (isLoading) {
+  if (isLoading && !taskDetails) {
     return (
       <Box
         sx={{
@@ -271,7 +361,7 @@ const TaskDetailPage = () => {
     );
   }
 
-  if (isError || !taskDetails) {
+  if (!taskDetails) {
     const message = getTaskDetailsErrorMessage(error);
     return (
       <Box
@@ -302,15 +392,26 @@ const TaskDetailPage = () => {
               {message}
             </Typography>
           </Box>
-          <Button
-            variant="contained"
-            size="small"
-            onClick={() => navigate("/dashboard/tasks")}
-            startIcon={<Iconify icon="solar:arrow-left-linear" width={14} />}
-            sx={{ textTransform: "none" }}
-          >
-            Back to Tasks
-          </Button>
+          <Stack direction="row" spacing={1}>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => refetch?.()}
+              disabled={isFetching}
+              sx={{ textTransform: "none" }}
+            >
+              Retry
+            </Button>
+            <Button
+              variant="contained"
+              size="small"
+              onClick={() => navigate("/dashboard/tasks")}
+              startIcon={<Iconify icon="solar:arrow-left-linear" width={14} />}
+              sx={{ textTransform: "none" }}
+            >
+              Back to Tasks
+            </Button>
+          </Stack>
         </Stack>
       </Box>
     );
@@ -403,6 +504,34 @@ const TaskDetailPage = () => {
           </LoadingButton>
         </span>
       </CustomTooltip>
+
+      <LoadingButton
+        variant="outlined"
+        size="small"
+        onClick={popover.onOpen}
+        loading={isDuplicating}
+        endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
+        sx={{
+          textTransform: "none",
+        }}
+      >
+        Actions
+      </LoadingButton>
+
+      <CustomPopover
+        open={popover.open}
+        onClose={popover.onClose}
+        arrow="top-right"
+        sx={{ width: 140 }}
+      >
+        <MenuItem
+          onClick={handleOpenDuplicateDialog}
+          disabled={!canEditTask || isDuplicating}
+        >
+          <Iconify icon="solar:copy-linear" width={16} />
+          Duplicate
+        </MenuItem>
+      </CustomPopover>
     </>
   );
 
@@ -416,6 +545,26 @@ const TaskDetailPage = () => {
         actions={headerActions}
         onNameChange={(newName) => renameTask(newName)}
       />
+
+      {isError && (
+        <Alert
+          severity="error"
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() => refetch?.()}
+              disabled={isFetching}
+            >
+              Retry
+            </Button>
+          }
+          sx={{ mx: 2, mt: 1, flexShrink: 0 }}
+        >
+          {getTaskDetailsErrorMessage(error)} Existing task details are still
+          shown.
+        </Alert>
+      )}
 
       {/* Segmented-pill tabs — matches EvalDetailPage style */}
       <Box
@@ -583,6 +732,16 @@ const TaskDetailPage = () => {
         onConfirm={handleConfirm}
         isLoading={isUpdating}
       />
+
+      {duplicateDialogOpen && (
+        <DuplicateTaskDialog
+          open={duplicateDialogOpen}
+          onClose={() => setDuplicateDialogOpen(false)}
+          defaultName={`${formValues?.name || taskDetails?.name || "Task"}-duplicate`}
+          onSubmit={handleConfirmDuplicate}
+          isSubmitting={isDuplicating}
+        />
+      )}
     </Box>
   );
 };

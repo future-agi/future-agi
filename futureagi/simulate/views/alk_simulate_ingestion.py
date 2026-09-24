@@ -169,12 +169,14 @@ class ALKSimulateIngestionViewSet(ViewSet):
         try:
             run_test, scenarios, agent_definition = provision_alk_sim_run_test(
                 organization,
+                workspace=getattr(request, "workspace", None),
                 name=payload["name"],
                 personas=payload.get("personas"),
                 scenario_ids=payload.get("scenario_ids"),
                 agent_definition_id=payload.get("agent_definition_id"),
                 agent_name=payload.get("agent_name"),
                 description=payload.get("description", ""),
+                modality=payload.get("modality", "text"),
             )
         except ALKSimulateIngestionError as e:
             return self.gm.bad_request(str(e))
@@ -230,7 +232,9 @@ class ALKSimulateIngestionViewSet(ViewSet):
             test_execution = create_alk_sim_test_execution(
                 run_test,
                 scenario_ids=payload.get("scenario_ids") or None,
+                scenario_selectors=payload.get("scenario_selectors") or None,
                 simulator_agent=simulator_agent,
+                harness_job_id=payload.get("harness_job_id"),
             )
         except ALKSimulateIngestionError as e:
             return self.gm.bad_request(str(e))
@@ -351,6 +355,8 @@ class ALKSimulateIngestionViewSet(ViewSet):
                 call_execution,
                 audio_bytes,
                 filename=filename,
+                expected_sha256=request.validated_data.get("sha256"),
+                kind=request.validated_data.get("kind", "combined"),
             )
         except ALKSimulateIngestionError as e:
             return self.gm.bad_request(str(e))

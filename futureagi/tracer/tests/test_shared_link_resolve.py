@@ -291,3 +291,38 @@ def test_shared_link_create_rejects_unsupported_and_cross_workspace_resources(
         resource_type="project",
         resource_id=str(other_project.id),
     ).exists()
+
+
+@pytest.mark.django_db
+def test_project_share_falls_back_to_user_org_when_request_org_unresolved(
+    observe_project,
+    user,
+):
+    """Sharing must resolve the org the same way the read paths do.
+
+    Authentication sets ``request.organization`` to None whenever it cannot
+    resolve one from the X-Organization-Id header, and every view that shows
+    these resources falls back to the user's active membership
+    (``ProjectView._request_organization``). When the share endpoint read the
+    attribute bare instead, its existence check ran with ``organization=None``,
+    matched nothing, and answered "Shared resource not found" for the very
+    project the user had open.
+    """
+    from rest_framework.test import APIClient
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/tracer/shared-links/",
+        data={
+            "resource_type": "project",
+            "resource_id": str(observe_project.id),
+            "access_type": "public",
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_201_CREATED
+    link = SharedLink.no_workspace_objects.get(id=response.json()["result"]["id"])
+    assert link.organization_id == observe_project.organization_id

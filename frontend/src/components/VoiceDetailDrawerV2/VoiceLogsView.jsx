@@ -1,10 +1,4 @@
-import React, {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useTransition,
-} from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -147,27 +141,24 @@ LevelPill.propTypes = {
 
 const LogAttributes = ({ attributes, body }) => {
   const [query, setQuery] = useState("");
-  // `appliedQuery` is debounced + transitioned so the expensive deep
-  // filter runs once per typing burst, not once per keystroke — same
-  // pattern used in `AttributesTable`.
+  // Debounced but NOT transitioned — see the note in `AttributesTable`: an
+  // interruptible update can be restarted indefinitely by this drawer's
+  // re-renders and then never commits, leaving the filter on the empty query.
   const [appliedQuery, setAppliedQuery] = useState("");
-  const [, startFilterTransition] = useTransition();
   const debounceRef = useRef(null);
 
   const handleQueryChange = (e) => {
     const value = e.target.value;
     setQuery(value);
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      startFilterTransition(() => setAppliedQuery(value));
-    }, 120);
+    debounceRef.current = setTimeout(() => setAppliedQuery(value), 120);
   };
 
   const handleClearQuery = (e) => {
     e.stopPropagation();
     setQuery("");
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    startFilterTransition(() => setAppliedQuery(""));
+    setAppliedQuery("");
   };
 
   useEffect(

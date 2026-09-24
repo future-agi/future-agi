@@ -31,31 +31,32 @@ from tracer.models.observation_span import (
     EvalTargetType,
     ObservationSpan,
 )
+from tracer.models.trace import Trace
+from tracer.models.trace_session import TraceSession
+from tracer.tests._ch_seed import (
+    seed_ch_eval_loggers_v2,
+    truncate_ch_eval_logger_v2,
+)
 
 AUTH_REQUIRED_STATUS_CODES = (
     status.HTTP_401_UNAUTHORIZED,
     status.HTTP_403_FORBIDDEN,
 )
-from tracer.models.trace import Trace
-from tracer.models.trace_session import TraceSession
-from tracer.tests._ch_seed import seed_ch_eval_loggers, truncate_ch_eval_logger
 
 
 @pytest.fixture(autouse=True)
 def _ch_eval_logger(settings):
-    """Pin the eval-logger read to CH ``tracer_eval_logger`` (prod default, not
-    the ``_v2`` test default) so the endpoint matches prod, and truncate the
-    table around each test so seeded rows never leak into another's ``total``."""
-    settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger"
-    truncate_ch_eval_logger()
+    """Seed only the direct-write table read by the production endpoint."""
+    settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger_v2"
+    truncate_ch_eval_logger_v2()
     yield
-    truncate_ch_eval_logger()
+    truncate_ch_eval_logger_v2()
 
 
 def _seed(*rows):
     """Seed the given EvalLogger rows into CH. Call right before the request,
     after any soft-delete mutation, so each row's ``deleted`` flag is final."""
-    seed_ch_eval_loggers([r for r in rows if r is not None])
+    seed_ch_eval_loggers_v2([r for r in rows if r is not None])
 
 
 def _result(response):
@@ -100,17 +101,17 @@ def _make_session_eval(session, custom_eval_config, **overrides):
     NULL span/trace and a populated ``trace_session`` for session rows;
     passing extra FKs here will rightly fail at save() — that's by design.
     """
-    fields = dict(
-        target_type=EvalTargetType.SESSION,
-        trace_session=session,
-        observation_span=None,
-        trace=None,
-        custom_eval_config=custom_eval_config,
-        eval_task_id=str(uuid.uuid4()),
-        output_bool=True,
-        eval_explanation="ok",
-        error=False,
-    )
+    fields = {
+        "target_type": EvalTargetType.SESSION,
+        "trace_session": session,
+        "observation_span": None,
+        "trace": None,
+        "custom_eval_config": custom_eval_config,
+        "eval_task_id": str(uuid.uuid4()),
+        "output_bool": True,
+        "eval_explanation": "ok",
+        "error": False,
+    }
     fields.update(overrides)
     return EvalLogger.objects.create(**fields)
 
@@ -179,9 +180,7 @@ class TestSessionEvalLogsFiltering:
         # Seed all three so the wall-off is proven at the CH read layer
         # (target_type='session' filter), not just by absence of data.
         _seed(session_row, span_row, trace_row)
-        response = auth_client.get(
-            f"/tracer/trace-session/{session.id}/eval_logs/"
-        )
+        response = auth_client.get(f"/tracer/trace-session/{session.id}/eval_logs/")
         assert response.status_code == status.HTTP_200_OK
         result = _result(response)
         assert result["total"] == 1
@@ -193,9 +192,7 @@ class TestSessionEvalLogsFiltering:
         self, auth_client, observe_project, custom_eval_config
     ):
         session = _make_session(observe_project, name="S1")
-        live = _make_session_eval(
-            session, custom_eval_config, eval_explanation="live"
-        )
+        live = _make_session_eval(session, custom_eval_config, eval_explanation="live")
         deleted = _make_session_eval(
             session, custom_eval_config, eval_explanation="deleted"
         )
@@ -204,9 +201,7 @@ class TestSessionEvalLogsFiltering:
 
         # Seed AFTER the soft-delete so CH captures deleted=1 for that row.
         _seed(live, deleted)
-        response = auth_client.get(
-            f"/tracer/trace-session/{session.id}/eval_logs/"
-        )
+        response = auth_client.get(f"/tracer/trace-session/{session.id}/eval_logs/")
         assert response.status_code == status.HTTP_200_OK
         result = _result(response)
         assert result["total"] == 1
@@ -247,9 +242,7 @@ class TestSessionEvalLogsShape:
         )
 
         _seed(row)
-        response = auth_client.get(
-            f"/tracer/trace-session/{session.id}/eval_logs/"
-        )
+        response = auth_client.get(f"/tracer/trace-session/{session.id}/eval_logs/")
         assert response.status_code == status.HTTP_200_OK
         item = _result(response)["items"][0]
 
@@ -300,9 +293,7 @@ class TestSessionEvalLogsShape:
         )
 
         _seed(row)
-        response = auth_client.get(
-            f"/tracer/trace-session/{session.id}/eval_logs/"
-        )
+        response = auth_client.get(f"/tracer/trace-session/{session.id}/eval_logs/")
         item = _result(response)["items"][0]
         assert item["status"] == "error"
         assert item["result"] == "Error"
@@ -370,8 +361,6 @@ class TestSessionEvalLogsPagination:
         session = _make_session(observe_project, name="Pagey")
         _seed(_make_session_eval(session, custom_eval_config))
 
-        response = auth_client.get(
-            f"/tracer/trace-session/{session.id}/eval_logs/"
-        )
+        response = auth_client.get(f"/tracer/trace-session/{session.id}/eval_logs/")
         assert response.status_code == status.HTTP_200_OK
         assert _result(response)["page_size"] == 25

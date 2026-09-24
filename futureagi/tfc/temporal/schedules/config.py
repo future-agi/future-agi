@@ -27,6 +27,10 @@ class ScheduleConfig:
     deterministic state at fire time (e.g. a closing period derived from
     ``workflow.now()``) that the activity cannot reconstruct reliably
     from its own wall clock.
+
+    ``activity_args`` and ``activity_kwargs`` are serialized into the generic
+    task-runner input. They let one registered activity own many independently
+    scheduled scopes without performing an unbounded fan-out inside one run.
     """
 
     schedule_id: str
@@ -39,6 +43,8 @@ class ScheduleConfig:
     description: str | None = None
     overlap_policy: ScheduleOverlapPolicy = field(default=ScheduleOverlapPolicy.SKIP)
     workflow_class: Any | None = None
+    activity_args: tuple[Any, ...] = ()
+    activity_kwargs: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.cron_expression and self.interval_seconds <= 0:

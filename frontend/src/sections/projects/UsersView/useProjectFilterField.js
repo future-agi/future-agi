@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
+import { fetchAllObserveProjects } from "src/api/project/observe-project-list";
 
 // Fetches the workspace's observe projects and returns a filter-field spec
 // compatible with TraceFilterPanel (`filterFields` prop). The resulting field
@@ -13,16 +13,9 @@ export default function useProjectFilterField({ enabled = true } = {}) {
   const { data: projects = [] } = useQuery({
     queryKey: ["user-detail-project-filter-options"],
     enabled,
-    queryFn: () =>
-      axios.get(endpoints.project.projectObserveList, {
-        params: {
-          page_number: 0,
-          page_size: 500,
-          project_type: "observe",
-        },
-      }),
-    select: (res) => res?.data?.result?.table || [],
+    queryFn: ({ signal }) => fetchAllObserveProjects({ signal }),
     staleTime: 5 * 60_000,
+    retry: false,
   });
 
   return useMemo(() => {

@@ -30,6 +30,14 @@ from .settings import INSTALLED_APPS  # noqa: E402
 TESTING = True
 DEBUG = False
 
+# EE usage endpoint contract fixtures create APICallLog rows directly in the
+# test database. ClickHouse selector behavior has dedicated tests; endpoint
+# contract tests should exercise the deterministic ORM fallback they seed.
+EVAL_USAGE_CLICKHOUSE_ENABLED = os.environ.get(
+    "EVAL_USAGE_CLICKHOUSE_ENABLED",
+    "false",
+).lower() in ("true", "1", "t", "yes", "y")
+
 # Test database configuration
 # Use different ports than dev (5432/9000) to avoid collisions
 # Dev: PG=5432, CH=9000 | Test: PG=15432, CH=19000
@@ -83,6 +91,21 @@ CLICKHOUSE_V2 = {
     "QUERY_TYPES_SHADOW": os.environ.get("CH25_QUERY_TYPES_SHADOW", ""),
     "QUERY_TYPES_DISABLED": os.environ.get("CH25_QUERY_TYPES_DISABLED", ""),
 }
+
+# Tests exercise shadow routing only through explicit ``override_settings``.
+# Keep the process default identical to production and leave epoch 0 unusable.
+SPAN_ATTRIBUTE_CATALOG_READ_MODE = "off"
+SPAN_ATTRIBUTE_CATALOG_EPOCH = 0
+SPAN_ATTRIBUTE_CATALOG_DATABASE = ""
+SPAN_ATTRIBUTE_CATALOG_DEV_READ_ACK = ""
+SPAN_ATTRIBUTE_CATALOG_DEV_SNAPSHOT_ENABLED = False
+SPAN_ATTRIBUTE_CATALOG_HANDOFF_START = None
+SPAN_ATTRIBUTE_CATALOG_HANDOFF_END = None
+SPAN_ATTRIBUTE_CATALOG_CH_HOST = ""
+SPAN_ATTRIBUTE_CATALOG_CH_PORT = 0
+SPAN_ATTRIBUTE_CATALOG_CH_DATABASE = ""
+SPAN_ATTRIBUTE_CATALOG_CH_USER = ""
+SPAN_ATTRIBUTE_CATALOG_CH_PASSWORD = ""
 
 CH25_EVAL_LOGGER_TABLE = os.environ.get(
     "CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger"
@@ -223,6 +246,9 @@ FEATURE_FLAGS = {
     "enable_analytics": False,
     "enable_monitoring": False,
 }
+
+# Exercise the post-backfill reader in unit/API tests. Production defaults to
+# the bounded legacy reader until operators explicitly pass the readiness gate.
 
 
 def ensure_clickhouse_test_database():

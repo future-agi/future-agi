@@ -360,6 +360,16 @@ class AWSMarketplaceSignupResponseSerializer(serializers.Serializer):
     result = AWSMarketplaceSignupResultSerializer()
 
 
+class GCPMarketplaceSignupResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    user_email = serializers.EmailField()
+
+
+class GCPMarketplaceSignupResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = GCPMarketplaceSignupResultSerializer()
+
+
 class OrganizationNameRequestSerializer(serializers.Serializer):
     organization_name = serializers.CharField(required=False, allow_blank=True)
 
@@ -454,6 +464,16 @@ class AWSMarketplaceSignupRequestSerializer(serializers.Serializer):
 
 class AWSMarketplaceLaunchRequestSerializer(serializers.Serializer):
     x_amzn_marketplace_token = serializers.CharField()
+
+
+class GCPMarketplaceTokenFormSerializer(serializers.Serializer):
+    x_gcp_marketplace_token = serializers.CharField()
+
+
+class GCPMarketplaceSignupRequestSerializer(serializers.Serializer):
+    onboarding_token = serializers.CharField()
+    email = serializers.EmailField()
+    full_name = serializers.CharField()
 
 
 class WebAuthnRelyingPartySerializer(serializers.Serializer):

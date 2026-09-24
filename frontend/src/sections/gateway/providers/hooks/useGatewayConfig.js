@@ -1,11 +1,40 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 
+// The shared axios instance is created without a `timeout`, and axios defaults
+// to 0 — wait forever. A stalled gateway request therefore never rejects, so
+// React Query's isPending sticks on and the caller's UI is left disabled with
+// no error (the Save button stuck on "Saving..."). Scope a timeout to the
+// gateway admin calls rather than changing the global instance.
+const GATEWAY_TIMEOUT = 30000;
+const REQUEST_CONFIG = { timeout: GATEWAY_TIMEOUT };
+
+// Listing a provider's models is a round trip through the gateway to a third
+// party, so it gets a longer budget than a config write.
+const FETCH_MODELS_CONFIG = { timeout: 60000 };
+
+// axios surfaces a timeout as ECONNABORTED with "timeout of 30000ms exceeded",
+// which is not something a user can act on.
+export function asRequestError(err, action) {
+  const timedOut =
+    err?.code === "ECONNABORTED" ||
+    /^timeout of \d+ms/.test(err?.message || "");
+  if (!timedOut) return err;
+  const friendly = new Error(
+    `${action} timed out — the gateway did not respond. Check that it is reachable, then try again.`,
+  );
+  friendly.cause = err;
+  return friendly;
+}
+
 export function useGatewayConfig(gatewayId) {
   return useQuery({
     queryKey: ["agentcc-gateway-config", gatewayId],
     queryFn: async () => {
-      const { data } = await axios.get(endpoints.gateway.config(gatewayId));
+      const { data } = await axios.get(
+        endpoints.gateway.config(gatewayId),
+        REQUEST_CONFIG,
+      );
       return data.result;
     },
     enabled: Boolean(gatewayId),
@@ -17,7 +46,10 @@ export function useProviderHealth(gatewayId) {
   return useQuery({
     queryKey: ["agentcc-provider-health", gatewayId],
     queryFn: async () => {
-      const { data } = await axios.get(endpoints.gateway.providers(gatewayId));
+      const { data } = await axios.get(
+        endpoints.gateway.providers(gatewayId),
+        REQUEST_CONFIG,
+      );
       return data.result;
     },
     enabled: Boolean(gatewayId),
@@ -31,14 +63,19 @@ export function useUpdateProvider() {
 
   return useMutation({
     mutationFn: async ({ gatewayId, name, config }) => {
-      const { data } = await axios.post(
-        endpoints.gateway.updateProvider(gatewayId),
-        {
-          name,
-          config,
-        },
-      );
-      return data.result;
+      try {
+        const { data } = await axios.post(
+          endpoints.gateway.updateProvider(gatewayId),
+          {
+            name,
+            config,
+          },
+          REQUEST_CONFIG,
+        );
+        return data.result;
+      } catch (err) {
+        throw asRequestError(err, "Saving the provider");
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["agentcc-gateway-config"] });
@@ -55,6 +92,7 @@ export function useRemoveProvider() {
       const { data } = await axios.post(
         endpoints.gateway.removeProvider(gatewayId),
         { name },
+        REQUEST_CONFIG,
       );
       return data.result;
     },
@@ -76,6 +114,7 @@ export function useToggleGuardrail() {
           name,
           enabled,
         },
+        REQUEST_CONFIG,
       );
       return data.result;
     },
@@ -97,6 +136,7 @@ export function useUpdateGuardrail() {
           name,
           config,
         },
+        REQUEST_CONFIG,
       );
       return data.result;
     },
@@ -118,6 +158,7 @@ export function useSetBudget() {
           level,
           config,
         },
+        REQUEST_CONFIG,
       );
       return data.result;
     },
@@ -135,6 +176,7 @@ export function useRemoveBudget() {
       const { data } = await axios.post(
         endpoints.gateway.removeBudget(gatewayId),
         { level },
+        REQUEST_CONFIG,
       );
       return data.result;
     },
@@ -153,6 +195,7 @@ export function useUpdateConfig() {
       const { data } = await axios.post(
         endpoints.gateway.updateConfig(gatewayId),
         config,
+        REQUEST_CONFIG,
       );
       return data.result;
     },
@@ -171,6 +214,7 @@ export function useReloadConfig() {
       const { data } = await axios.post(
         endpoints.gateway.reload(gatewayId),
         {},
+        REQUEST_CONFIG,
       );
       return data.result;
     },
@@ -187,11 +231,16 @@ export function useFetchProviderModels() {
       const body = providerName
         ? { provider_name: providerName }
         : { base_url: baseUrl, api_key: apiKey, api_format: apiFormat };
-      const { data } = await axios.post(
-        endpoints.gateway.providerCredentials.fetchModels,
-        body,
-      );
-      return data.result;
+      try {
+        const { data } = await axios.post(
+          endpoints.gateway.providerCredentials.fetchModels,
+          body,
+          FETCH_MODELS_CONFIG,
+        );
+        return data.result;
+      } catch (err) {
+        throw asRequestError(err, "Loading this provider's models");
+      }
     },
   });
 }

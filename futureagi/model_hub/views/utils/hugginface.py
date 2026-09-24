@@ -74,7 +74,9 @@ def _pdfplumber_document_to_bytes(value):
             return raw_bytes.encode()
         return bytes(raw_bytes)
 
-    from datasets.features.pdf import pdf_to_bytes
+    from tfc.utils.lazy_extras import load_extra
+
+    pdf_to_bytes = load_extra("datasets.features.pdf", "ml").pdf_to_bytes
 
     return pdf_to_bytes(value)
 

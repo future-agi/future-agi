@@ -4,22 +4,23 @@ import io
 import json
 import uuid
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from typing import Any
 
 import pandas as pd
 import structlog
-from django.db.models import Count, Max, Prefetch, Q
+from django.db import DatabaseError, connection, transaction
+from django.db.models import Count, Exists, Max, OuterRef, Prefetch, Q
 from django.http import FileResponse
 from django_filters import rest_framework as django_filters
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
-from rest_framework import generics
+from rest_framework import generics, status
 from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import JSONRenderer
+from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from agentic_eval.core.utils.functions import normalize_val
@@ -46,7 +47,9 @@ from model_hub.serializers.contracts import (
     ExperimentAdditionalEvaluationsRequestSerializer,
     ExperimentComparisonWeightsRequestSerializer,
     ExperimentRerunRequestSerializer,
+    ExperimentTableRowsQuerySerializer,
     ModelHubEmptyRequestSerializer,
+    ModelHubErrorResponseSerializer,
     UserEvalMutationRequestSerializer,
 )
 from model_hub.serializers.experiment_contracts import (
@@ -79,14 +82,29 @@ from model_hub.serializers.experiments import (
     ExperimentsTableUpdateSerializer,
     ExperimentUpdateV2Serializer,
 )
+from model_hub.services.bounded_dataset_read import (
+    DATASET_ROW_ADJACENCY_MAX_ROWS,
+    BoundedDatasetPageDepthExceeded,
+    BoundedDatasetReadDeadline,
+    BoundedDatasetReadDeadlineExceeded,
+    BoundedDatasetReadLimitExceeded,
+    assert_bounded_page,
+    assert_bounded_projection,
+)
 from model_hub.services.dataset_snapshot import create_dataset_snapshot
+from model_hub.services.dataset_table_snapshot import (
+    DATASET_TABLE_EXACT_MAX_COLUMNS,
+    DatasetTableExactLimitExceeded,
+    assert_dataset_table_cells_within_limits,
+    assert_dataset_table_response_within_limits,
+)
+from model_hub.services.lifecycle import bulk_soft_delete
 from model_hub.tasks.experiment_runner import process_experiments
 from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
 from model_hub.utils.function_eval_params import (
     has_function_params_schema,
     normalize_eval_runtime_config,
 )
-from model_hub.utils.SQL_queries import SQLQueryHandler
 from model_hub.utils.utils import get_diff
 from model_hub.views.experiment_runner import ExperimentRunner
 from tfc.middleware.workspace_context import get_current_workspace
@@ -182,6 +200,13 @@ def _scoped_eval_metric_queryset(request, dataset, organization=None):
         organization=organization,
         dataset=dataset,
         deleted=False,
+    )
+
+
+def _bounded_experiment_read_error(*, status_code, code, detail):
+    return Response(
+        {"status": False, "code": code, "detail": detail},
+        status=status_code,
     )
 
 
@@ -604,7 +629,7 @@ class ExperimentsTableView(APIView):
                     experiment_dataset_table = experiment.experiments_datasets
 
                     if experiment_dataset_table.exists():
-                        experiment_dataset_table.update(deleted=True)
+                        bulk_soft_delete(experiment_dataset_table)
 
                     workflow_id = start_experiment_workflow(
                         experiment_id=str(experiment.id),
@@ -684,7 +709,15 @@ class DatasetExperimentsView(APIView):
         ):
             return None, {}
 
-        if prefetched_base_cells:
+        # An empty mapping is still a completed bulk prefetch: it proves that
+        # none of the selected rows has a live base cell.  Treating ``{}`` as
+        # a cache miss turns that legitimate empty result into one point query
+        # per projected experiment cell across the configured bounded page and
+        # projection; the fallback queries do not receive a freshly-shrunk
+        # request deadline.
+        # ``None`` alone means this helper was called outside the bounded bulk
+        # path and must retain the legacy point-read compatibility behavior.
+        if prefetched_base_cells is not None:
             base_cell = prefetched_base_cells.get(cell.row_id)
         else:
             base_cell = Cell.objects.filter(
@@ -864,121 +897,137 @@ class DatasetExperimentsView(APIView):
             return parsed if isinstance(parsed, dict) else {}
         return {}
 
-    @swagger_auto_schema(
+    def _search_cell_metadata(self, value, search_key):
+        """Return zero-based inclusive match ranges for one returned page cell."""
+
+        if not search_key or not isinstance(value, str):
+            return None
+        value_lower = value.lower()
+        search_lower = search_key.lower()
+        indices = []
+        start = 0
+        while True:
+            index = value_lower.find(search_lower, start)
+            if index < 0:
+                break
+            indices.append([index, index + len(search_lower) - 1])
+            start = index + 1
+        if not indices:
+            return None
+        return {"key_exists": True, "indices": indices}
+
+    @validated_request(
+        query_serializer=ExperimentTableRowsQuerySerializer,
         responses={
             200: ExperimentTableRowsResponseSerializer,
+            413: ModelHubErrorResponseSerializer,
+            422: ModelHubErrorResponseSerializer,
+            503: ModelHubErrorResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
-        }
+        },
     )
+    @transaction.atomic
     def get(self, request, experiment_id, row_id=None, *args, **kwargs):
+        deadline = BoundedDatasetReadDeadline.start()
         try:
-            # Get pagination parameters
-            page_size = request.GET.get("page_size", 10)
-            current_page = request.GET.get("current_page_index", 0)
-            column_config_only = self._parse_bool(
-                request.GET.get("column_config_only"), default=False
-            )
-            diff = self._parse_bool(request.GET.get("get_diff"), default=False)
-            search_key = request.GET.get("search", "").strip()
-
-            try:
-                page_size = int(page_size)
-                current_page = int(current_page)
-            except ValueError:
-                return self._gm.bad_request(get_error_message("INVALID_PAGINATION"))
+            query = request.validated_query_data
+            page_size = query["page_size"]
+            current_page = query["current_page_index"]
+            column_config_only = query["column_config_only"]
+            diff = query["get_diff"]
+            search_key = query["search"]
+            assert_bounded_page(page_size=page_size, current_page_index=current_page)
 
             start = current_page * page_size
             end = start + page_size
 
             # Get specific experiment with all related data
-            # NOTE: removed cell_set prefetch — we bulk-fetch cells below
-            experiment = ExperimentsTable.objects.prefetch_related(
-                "experiments_datasets",
-                "experiments_datasets__columns",
-                "experiments_datasets__columns__cell_set",
-                "experiments_datasets__prompt_config",
-                "experiment_datasets",
-                "experiment_datasets__columns",
-                "experiment_datasets__columns__cell_set",
-                "experiment_datasets__prompt_config",
-                "experiment_datasets__prompt_config__prompt_template",
-                "experiment_datasets__prompt_config__prompt_version",
-                "experiment_datasets__agent_config",
-                "user_eval_template_ids",
-            ).get(
-                id=experiment_id,
-                dataset__organization=getattr(request, "organization", None)
-                or request.user.organization,
-                dataset__deleted=False,
-                deleted=False,
+            # Cells are deliberately absent: they are fetched only after the
+            # bounded row page has been selected below.
+            deadline.before_query()
+            experiment = (
+                _scoped_experiment_queryset(request)
+                .select_related("dataset", "snapshot_dataset", "column")
+                .get(id=experiment_id)
             )
             # V2 experiments link EDTs via FK (experiment_datasets),
             # V1 uses the M2M (experiments_datasets).
             is_v2 = bool(experiment.snapshot_dataset_id)
 
-            # Get IDs of deleted eval templates to exclude their columns
-            deleted_eval_metric_ids = list(
-                experiment.user_eval_template_ids.filter(
-                    template__deleted=True
-                ).values_list("id", flat=True)
+            deadline.before_query()
+            attached_metrics = list(
+                experiment.user_eval_template_ids.select_related("template").order_by(
+                    "id"
+                )[: DATASET_TABLE_EXACT_MAX_COLUMNS + 1]
             )
+            if len(attached_metrics) > DATASET_TABLE_EXACT_MAX_COLUMNS:
+                raise BoundedDatasetReadLimitExceeded(
+                    "The experiment contains more than "
+                    f"{DATASET_TABLE_EXACT_MAX_COLUMNS} evaluation metrics."
+                )
+            deleted_eval_metric_ids = [
+                metric.id for metric in attached_metrics if metric.template.deleted
+            ]
 
             # ── Determine dataset context ─────────────────────────────
             # V2 experiments use a snapshot dataset (rows/columns copied
             # with new IDs). All cells are stored against snapshot rows.
             if experiment.snapshot_dataset_id:
-                query_dataset = experiment.snapshot_dataset
+                query_dataset_id = experiment.snapshot_dataset_id
                 target_column = experiment.column
             else:
-                query_dataset = experiment.dataset
+                query_dataset_id = experiment.dataset_id
                 target_column = experiment.column
+            deadline.before_query()
+            query_dataset = (
+                _scoped_dataset_queryset(request).filter(id=query_dataset_id).first()
+            )
+            if query_dataset is None:
+                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
             # ── Row-first pagination ──────────────────────────────────
-            rows_qs = Row.objects.filter(dataset=query_dataset, deleted=False).order_by(
-                "order"
-            )
+            rows_qs = Row.no_workspace_objects.filter(
+                dataset=query_dataset, deleted=False
+            ).order_by("order", "id")
 
             # ── Apply search filter (list view only) ─────────────────
-            search_results = {}
             if search_key and not row_id and not column_config_only:
-                sql_results = SQLQueryHandler.search_cells_by_text(
-                    search_key.lower(), query_dataset.id
+                matching_cell = Cell.no_workspace_objects.filter(
+                    row_id=OuterRef("pk"),
+                    row__dataset=query_dataset,
+                    column__dataset=query_dataset,
+                    dataset=query_dataset,
+                    status=CellStatus.PASS.value,
+                    value__icontains=search_key,
+                    deleted=False,
                 )
-                matched_cell_ids = set()
-                for cell_id, key_exists, indices in sql_results:
-                    matched_cell_ids.add(cell_id)
-                    search_results[str(cell_id)] = {
-                        "key_exists": key_exists,
-                        "indices": indices,
-                    }
-                if matched_cell_ids:
-                    matched_row_ids = set(
-                        Cell.objects.filter(
-                            id__in=matched_cell_ids, deleted=False
-                        ).values_list("row_id", flat=True)
-                    )
-                    rows_qs = rows_qs.filter(id__in=matched_row_ids)
-                else:
-                    rows_qs = rows_qs.none()
+                rows_qs = rows_qs.filter(Exists(matching_cell))
 
             next_row_ids = []
             if row_id:
                 paginated_rows = rows_qs.filter(id=row_id)
                 total_rows = 1
                 total_pages = 1
-                # Compute next 50 rows for single-row view
+                # Compute a bounded continuation window for single-row view.
+                deadline.before_query()
                 target_row = paginated_rows.first()
                 if target_row:
+                    deadline.before_query()
                     next_row_ids = list(
-                        rows_qs.filter(order__gt=target_row.order)
-                        .order_by("order")[:50]
-                        .values_list("id", flat=True)
+                        rows_qs.filter(
+                            Q(order__gt=target_row.order)
+                            | Q(order=target_row.order, id__gt=target_row.id)
+                        )
+                        .order_by("order", "id")
+                        .values_list("id", flat=True)[:DATASET_ROW_ADJACENCY_MAX_ROWS]
                     )
             else:
+                deadline.before_query()
                 total_rows = rows_qs.count()
                 total_pages = (total_rows + page_size - 1) // page_size
                 paginated_rows = rows_qs[start:end]
 
+            deadline.before_query()
             row_ids_list = list(paginated_rows.values_list("id", flat=True))
             cells_by_row: dict[Any, Any] = {
                 rid: {"row_id": str(rid)} for rid in row_ids_list
@@ -991,11 +1040,24 @@ class DatasetExperimentsView(APIView):
                 SourceChoices.OTHERS.value,
                 SourceChoices.RUN_PROMPT.value,
             ]
-            user_eval_metric = list(experiment.user_eval_template_ids.all())
-            all_columns = Column.objects.filter(
-                source_id__in=[str(metric.id) for metric in user_eval_metric],
-                deleted=False,
-            ).exclude(source_id__in=deleted_eval_metric_ids)
+            user_eval_metric = [
+                metric for metric in attached_metrics if not metric.deleted
+            ]
+            deadline.before_query()
+            all_columns = list(
+                Column.no_workspace_objects.filter(
+                    source_id__in=[str(metric.id) for metric in user_eval_metric],
+                    dataset=query_dataset,
+                    deleted=False,
+                )
+                .exclude(source_id__in=deleted_eval_metric_ids)
+                .order_by("id")[: DATASET_TABLE_EXACT_MAX_COLUMNS + 1]
+            )
+            if len(all_columns) > DATASET_TABLE_EXACT_MAX_COLUMNS:
+                raise BoundedDatasetReadLimitExceeded(
+                    "The experiment contains more than "
+                    f"{DATASET_TABLE_EXACT_MAX_COLUMNS} evaluation columns."
+                )
             q_filter = Q(source__in=ALLOWED_DATASET_COLUMN_SOURCES)
             if target_column:
                 q_filter |= Q(id=target_column.id)
@@ -1007,22 +1069,25 @@ class DatasetExperimentsView(APIView):
                     for metric in user_eval_metric
                 ]
             )
-            dataset_other_columns = (
-                Column.objects.filter(
+            deadline.before_query()
+            dataset_other_columns = list(
+                Column.no_workspace_objects.filter(
                     q_filter,
                     deleted=False,
                     dataset=query_dataset,
                 )
                 .exclude(source_id__in=deleted_eval_metric_ids)
-                .order_by("created_at")
+                .order_by("created_at", "id")[: DATASET_TABLE_EXACT_MAX_COLUMNS + 1]
             )
+            if len(dataset_other_columns) > DATASET_TABLE_EXACT_MAX_COLUMNS:
+                raise BoundedDatasetReadLimitExceeded(
+                    "The experiment projection contains more than "
+                    f"{DATASET_TABLE_EXACT_MAX_COLUMNS} columns."
+                )
 
-            def get_column_averages(column):
-                avg_score = calculate_column_average(column)
-                avg_score = avg_score.get("average", None)
-                return {str(column.id): avg_score}
-
-            futures = []
+            # Keep global averages out of this interactive row/config path.
+            # The legacy helper materializes full columns; a bounded aggregate
+            # endpoint can populate these independently in a follow-up.
             col_avgs = {}
             exp_cols_by_exp_dataset: dict[Any, Any] = {}
             all_cols = []
@@ -1033,23 +1098,49 @@ class DatasetExperimentsView(APIView):
                 if is_v2
                 else experiment.experiments_datasets.filter(deleted=False)
             )
-            for _i, exp_dataset in enumerate(edt_qs.all()):
-                exp_cols = exp_dataset.columns.filter(
-                    deleted=False, dataset=query_dataset
-                ).all()
+            deadline.before_query()
+            edt_list = list(edt_qs[: DATASET_TABLE_EXACT_MAX_COLUMNS + 1])
+            if len(edt_list) > DATASET_TABLE_EXACT_MAX_COLUMNS:
+                raise BoundedDatasetReadLimitExceeded(
+                    "The experiment contains more than "
+                    f"{DATASET_TABLE_EXACT_MAX_COLUMNS} dataset projections."
+                )
+            for _i, exp_dataset in enumerate(edt_list):
+                deadline.before_query()
+                raw_exp_cols = list(
+                    Column.all_objects.filter(experiments_dataset_column=exp_dataset)
+                    .select_related("dataset")
+                    .order_by("created_at", "id")[: DATASET_TABLE_EXACT_MAX_COLUMNS + 1]
+                )
+                if len(raw_exp_cols) > DATASET_TABLE_EXACT_MAX_COLUMNS or any(
+                    column.dataset_id != query_dataset.id for column in raw_exp_cols
+                ):
+                    raise BoundedDatasetReadLimitExceeded(
+                        "An experiment dataset projection is too wide or inconsistent."
+                    )
+                exp_cols = [column for column in raw_exp_cols if not column.deleted]
                 exp_cols_by_exp_dataset[str(exp_dataset.id)] = exp_cols
                 all_cols.extend(exp_cols)
 
-            if column_config_only:
-                with ThreadPoolExecutor(max_workers=10) as executor:
-                    for column in list(dataset_other_columns) + all_cols:
-                        futures.append(executor.submit(get_column_averages, column))
-                for future in as_completed(futures):
-                    col_avgs.update(future.result())
+            assert_bounded_projection(
+                # Count links, not only unique ids: cells and config entries are
+                # processed once per EDT link below.
+                column_count=len(dataset_other_columns) + len(all_cols),
+                page_row_count=page_size,
+            )
+            projected_column_ids = {
+                str(column.id) for column in [*dataset_other_columns, *all_cols]
+            }
+            if connection.vendor == "postgresql":
+                assert_dataset_table_cells_within_limits(
+                    row_ids=[str(row_id) for row_id in row_ids_list],
+                    column_ids=list(projected_column_ids),
+                    deadline=deadline,
+                )
 
             # ── Bulk-load UserEvalMetric map (eliminates N+1) ─────────
             eval_id_set = set()
-            for col in list(dataset_other_columns) + list(all_cols):
+            for col in [*dataset_other_columns, *all_cols]:
                 if col.source in [
                     SourceChoices.EXPERIMENT_EVALUATION.value,
                     SourceChoices.EVALUATION.value,
@@ -1064,9 +1155,10 @@ class DatasetExperimentsView(APIView):
                     if eid:
                         eval_id_set.add(eid)
 
-            eval_metrics_qs = UserEvalMetric.objects.select_related("template").filter(
-                id__in=list(eval_id_set)
-            )
+            deadline.before_query()
+            eval_metrics_qs = experiment.user_eval_template_ids.select_related(
+                "template"
+            ).filter(id__in=list(eval_id_set), deleted=False)
             eval_metric_map: dict[str, UserEvalMetric] = {
                 str(m.id): m for m in eval_metrics_qs
             }
@@ -1181,12 +1273,13 @@ class DatasetExperimentsView(APIView):
 
             # ── Bulk-fetch dataset cells for the page ─────────────────
             if not column_config_only and row_ids_list:
-                dataset_col_ids = list(
-                    dataset_other_columns.values_list("id", flat=True)
-                )
-                dataset_cells = Cell.objects.filter(
+                dataset_col_ids = [column.id for column in dataset_other_columns]
+                deadline.before_query()
+                dataset_cells = Cell.no_workspace_objects.filter(
                     row_id__in=row_ids_list,
+                    row__dataset=query_dataset,
                     column_id__in=dataset_col_ids,
+                    column__dataset=query_dataset,
                     deleted=False,
                     row__deleted=False,
                     column__deleted=False,
@@ -1195,13 +1288,11 @@ class DatasetExperimentsView(APIView):
                     cell_row_id, cell_data = self._process_dataset_cell(cell)
                     if cell_row_id is not None and cell_row_id in cells_by_row:
                         cells_by_row[cell_row_id][str(cell.column_id)] = cell_data
-                        if search_results and str(cell.id) in search_results:
-                            cell_data["key_exists"] = search_results[str(cell.id)][
-                                "key_exists"
-                            ]
-                            cell_data["indices"] = search_results[str(cell.id)][
-                                "indices"
-                            ]
+                        search_metadata = self._search_cell_metadata(
+                            cell.value, search_key
+                        )
+                        if search_metadata:
+                            cell_data.update(search_metadata)
 
             # ── Build columnConfig + cells for experiment datasets ─────
             # Build experiment-dataset → (group_id, group_name) map
@@ -1209,7 +1300,8 @@ class DatasetExperimentsView(APIView):
             is_llm = getattr(experiment, "experiment_type", "llm") == "llm"
             inline_counter = 0
             seen_inline_groups = {}  # grp_id -> grp_name
-            for _exp_ds in edt_qs.all():
+            for _exp_ds in edt_list:
+                deadline.checkpoint()
                 try:
                     epc = _exp_ds.prompt_config
                     if is_llm and epc.prompt_version_id:
@@ -1246,7 +1338,8 @@ class DatasetExperimentsView(APIView):
             agent_edt_ids = set()
             agent_node_order = {}  # edt_id -> {node_id_str: position}
             agent_end_nodes = {}  # edt_id -> set of end node_id_str
-            for _exp_ds in edt_qs.all():
+            for _exp_ds in edt_list:
+                deadline.checkpoint()
                 try:
                     eac = _exp_ds.agent_config
                     edt_id_str = str(_exp_ds.id)
@@ -1268,16 +1361,20 @@ class DatasetExperimentsView(APIView):
             base_column = experiment.column
             prefetched_base_cells = {}
             if (diff or row_id) and base_column and row_ids_list:
-                base_cells_qs = Cell.objects.filter(
+                deadline.before_query()
+                base_cells_qs = Cell.no_workspace_objects.filter(
                     row_id__in=row_ids_list,
+                    row__dataset=query_dataset,
                     column=base_column,
+                    column__dataset=query_dataset,
                     deleted=False,
                     status=CellStatus.PASS.value,
                 )
                 for bc in base_cells_qs:
                     prefetched_base_cells[bc.row_id] = bc
 
-            for i, exp_dataset in enumerate(edt_qs.all()):
+            for i, exp_dataset in enumerate(edt_list):
+                deadline.checkpoint()
                 for column in exp_cols_by_exp_dataset[str(exp_dataset.id)]:
                     # Skip columns associated with deleted/hidden evaluations
                     if column.source in [
@@ -1410,15 +1507,16 @@ class DatasetExperimentsView(APIView):
                     continue
 
                 # ── Bulk-fetch experiment cells for this exp_dataset ───
-                exp_col_ids = list(
-                    exp_cols_by_exp_dataset[str(exp_dataset.id)].values_list(
-                        "id", flat=True
-                    )
-                )
+                exp_col_ids = [
+                    column.id for column in exp_cols_by_exp_dataset[str(exp_dataset.id)]
+                ]
                 if row_ids_list and exp_col_ids:
-                    exp_cells = Cell.objects.filter(
+                    deadline.before_query()
+                    exp_cells = Cell.no_workspace_objects.filter(
                         row_id__in=row_ids_list,
+                        row__dataset=query_dataset,
                         column_id__in=exp_col_ids,
+                        column__dataset=query_dataset,
                         deleted=False,
                         row__deleted=False,
                         column__deleted=False,
@@ -1452,13 +1550,11 @@ class DatasetExperimentsView(APIView):
                             and cell_row_id in cells_by_row
                         ):
                             cells_by_row[cell_row_id][column_id] = cell_data
-                            if search_results and str(cell.id) in search_results:
-                                cell_data["key_exists"] = search_results[str(cell.id)][
-                                    "key_exists"
-                                ]
-                                cell_data["indices"] = search_results[str(cell.id)][
-                                    "indices"
-                                ]
+                            search_metadata = self._search_cell_metadata(
+                                cell.value, search_key
+                            )
+                            if search_metadata:
+                                cell_data.update(search_metadata)
 
             # ── Order columns by canonical column_order ────────────
             if is_v2 and query_dataset.column_order:
@@ -1480,13 +1576,14 @@ class DatasetExperimentsView(APIView):
                 except Exception:
                     experiment_output_format = "text"
 
-                return self._gm.success_response(
-                    {
-                        "column_config": column_config,
-                        "output_format": experiment_output_format,
-                        "status": experiment.status,
-                    }
-                )
+                response_data = {
+                    "column_config": column_config,
+                    "output_format": experiment_output_format,
+                    "status": experiment.status,
+                }
+                assert_dataset_table_response_within_limits(response_data)
+                deadline.checkpoint()
+                return self._gm.success_response(response_data)
 
             # Build table_data in stable row order
             table_data = [cells_by_row[rid] for rid in row_ids_list]
@@ -1499,6 +1596,13 @@ class DatasetExperimentsView(APIView):
             except Exception:
                 experiment_output_format = "text"
 
+            deadline.before_query()
+            descriptions = {
+                str(eval.id): eval.template.description
+                for eval in experiment.user_eval_template_ids.select_related("template")
+                .filter(deleted=False, template__deleted=False)
+                .all()
+            }
             response_data = {
                 "column_config": column_config,
                 "table": table_data,
@@ -1508,12 +1612,7 @@ class DatasetExperimentsView(APIView):
                     "dataset_name": query_dataset.name,
                     "column": str(target_column.id) if target_column else None,
                     "total_pages": total_pages,
-                    "description": {
-                        str(eval.id): eval.template.description
-                        for eval in experiment.user_eval_template_ids.filter(
-                            deleted=False, template__deleted=False
-                        ).all()
-                    },
+                    "description": descriptions,
                 },
                 "output_format": experiment_output_format,
             }
@@ -1521,10 +1620,31 @@ class DatasetExperimentsView(APIView):
                 response_data["next_row_ids"] = next_row_ids
 
             response_data["status"] = experiment.status
+            assert_dataset_table_response_within_limits(response_data)
+            deadline.checkpoint()
             return self._gm.success_response(response_data)
 
         except ExperimentsTable.DoesNotExist:
             return self._gm.not_found(get_error_message("EXPERIMENT_NOT_FOUND"))
+        except BoundedDatasetPageDepthExceeded as e:
+            return _bounded_experiment_read_error(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                code="page_depth_exceeded",
+                detail=str(e),
+            )
+        except (BoundedDatasetReadLimitExceeded, DatasetTableExactLimitExceeded) as e:
+            return _bounded_experiment_read_error(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                code="dataset_read_limit_exceeded",
+                detail=str(e),
+            )
+        except (BoundedDatasetReadDeadlineExceeded, DatabaseError):
+            logger.exception("Bounded experiment rows read failed or timed out")
+            return _bounded_experiment_read_error(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                code="dataset_read_unavailable",
+                detail="The experiment read could not finish within the server deadline.",
+            )
         except Exception as e:
             logger.exception(f"Error in fetching experiment: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_GET_EXP"))
@@ -3596,9 +3716,7 @@ class ExperimentDeleteView(APIView):
             if not experiments.exists():
                 return self._gm.not_found("No experiments found")
 
-            from django.utils import timezone
-
-            updated_count = experiments.update(deleted=True, deleted_at=timezone.now())
+            updated_count = bulk_soft_delete(experiments)
 
             return self._gm.success_response(
                 {
@@ -4628,15 +4746,18 @@ def _delete_base_eval_columns(experiment):
             reason_source_ids.append(f"{col_id}-sourceid-{metric_id}")
 
     now = timezone.now()
-    base_eval_cols.update(deleted=True, deleted_at=now)
+    bulk_soft_delete(base_eval_cols, now=now)
 
     if reason_source_ids:
-        Column.objects.filter(
-            dataset=snapshot_ds,
-            source=SourceChoices.EVALUATION_REASON.value,
-            source_id__in=reason_source_ids,
-            deleted=False,
-        ).update(deleted=True, deleted_at=now)
+        bulk_soft_delete(
+            Column.objects.filter(
+                dataset=snapshot_ds,
+                source=SourceChoices.EVALUATION_REASON.value,
+                source_id__in=reason_source_ids,
+                deleted=False,
+            ),
+            now=now,
+        )
 
 
 def _soft_delete_edt_and_columns(edt):
@@ -4666,10 +4787,10 @@ def _soft_delete_edt_and_columns(edt):
     eval_col_keys = list(eval_cols.values_list("id", "source_id"))
 
     # 1. Soft-delete M2M-linked columns (prompt output and any linked evals)
-    edt.columns.filter(deleted=False).update(deleted=True, deleted_at=now)
+    bulk_soft_delete(edt.columns.filter(deleted=False), now=now)
 
     # 2. Soft-delete per-EDT eval columns + their reason columns
-    eval_cols.update(deleted=True, deleted_at=now)
+    bulk_soft_delete(eval_cols, now=now)
 
     if eval_col_keys:
         reason_source_ids = []
@@ -4677,15 +4798,20 @@ def _soft_delete_edt_and_columns(edt):
             if source_id and "-sourceid-" in source_id:
                 metric_id = source_id.rsplit("-sourceid-", 1)[1]
                 reason_source_ids.append(f"{col_id}-sourceid-{metric_id}")
-        Column.objects.filter(
-            dataset=snapshot_dataset,
-            source=SourceChoices.EVALUATION_REASON.value,
-            source_id__in=reason_source_ids,
-            deleted=False,
-        ).update(deleted=True, deleted_at=now)
+        bulk_soft_delete(
+            Column.objects.filter(
+                dataset=snapshot_dataset,
+                source=SourceChoices.EVALUATION_REASON.value,
+                source_id__in=reason_source_ids,
+                deleted=False,
+            ),
+            now=now,
+        )
 
-    edt.deleted = True
-    edt.save(update_fields=["deleted"])
+    bulk_soft_delete(
+        ExperimentDatasetTable.objects.filter(id=edt.id),
+        now=now,
+    )
 
 
 def _precreate_eval_columns_for_configs(
@@ -5195,11 +5321,13 @@ def _diff_and_update_evals(
             delete_q |= Q(source_id=mid)
             delete_q |= Q(source_id__endswith=f"-sourceid-{mid}")
 
-        Column.objects.filter(
-            delete_q,
-            dataset=experiment.snapshot_dataset,
-            deleted=False,
-        ).update(deleted=True)
+        bulk_soft_delete(
+            Column.objects.filter(
+                delete_q,
+                dataset=experiment.snapshot_dataset,
+                deleted=False,
+            )
+        )
 
     return rerun_ids
 
@@ -5404,9 +5532,7 @@ class ExperimentDeleteV2View(APIView):
                 _soft_delete_edt_and_columns(edt)
 
             # Soft-delete experiments
-            from django.utils import timezone
-
-            updated_count = experiments.update(deleted=True, deleted_at=timezone.now())
+            updated_count = bulk_soft_delete(experiments)
 
             return self._gm.success_response(
                 {

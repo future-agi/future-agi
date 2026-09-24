@@ -4,13 +4,11 @@ Model Hub Temporal schedules.
 These replace the Celery Beat schedules for model_hub tasks.
 """
 
-from typing import List
-
 from tfc.temporal.schedules.config import ScheduleConfig
 
 # Model Hub schedules (migrated from Celery Beat)
 # Note: execute_run_prompt removed - workflows are now triggered directly from API
-MODEL_HUB_SCHEDULES: List[ScheduleConfig] = [
+MODEL_HUB_SCHEDULES: list[ScheduleConfig] = [
     ScheduleConfig(
         schedule_id="eval-evaluation",
         activity_name="execute_evaluation",

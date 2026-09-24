@@ -60,16 +60,20 @@ async def fetch_client_call_data(input: FetchClientCallInput) -> FetchClientCall
                 success=True,
             )
 
-        # Bland's transcript/recording/cost are already fetched and persisted by
-        # the main fetch_and_persist path via its engine, so there is nothing
-        # extra to pull here. Bland also exposes no client-side latency metrics
-        # or log URL, and its engine's get_customer_metrics/find_client_call
-        # raise by design — so this skip is correctness-required, not just an
-        # optimization: removing it would fail closed on the enrichment call.
-        if input.client_provider == ProviderChoices.BLAND.value:
+        # Bland's and Retell's transcript/recording/cost are already fetched and
+        # persisted by the main fetch_and_persist path via their engines, so
+        # there is nothing extra to pull here. Neither exposes client-side
+        # latency metrics through this path, and both engines'
+        # get_customer_metrics/find_client_call raise by design — so this skip
+        # is correctness-required, not just an optimization: removing it would
+        # fail closed on the enrichment call.
+        if input.client_provider in {
+            ProviderChoices.BLAND.value,
+            ProviderChoices.RETELL.value,
+        }:
             activity.logger.info(
-                f"Skipping client call data fetch for bland provider "
-                f"(call_id={input.call_id}); data already persisted."
+                f"Skipping client call data fetch for {input.client_provider} "
+                f"provider (call_id={input.call_id}); data already persisted."
             )
             return FetchClientCallOutput(
                 success=True,
@@ -228,9 +232,9 @@ async def fetch_client_call_data(input: FetchClientCallInput) -> FetchClientCall
                 ).get("recording")
                 call.provider_call_data[input.client_provider] = client_raw_data
                 if existing_recording:
-                    call.provider_call_data[input.client_provider][
-                        "recording"
-                    ] = existing_recording
+                    call.provider_call_data[input.client_provider]["recording"] = (
+                        existing_recording
+                    )
 
             if client_call_data.analysis_data and not call.analysis_data:
                 client_analysis = client_call_data.analysis_data.get(
@@ -294,9 +298,7 @@ async def fetch_client_call_data(input: FetchClientCallInput) -> FetchClientCall
                         source=CallLogEntry.LogSource.CUSTOMER,
                     ).aexists()
                     if not already_ingested:
-                        await sync_to_async(
-                            _ingest_call_logs, thread_sensitive=False
-                        )(
+                        await sync_to_async(_ingest_call_logs, thread_sensitive=False)(
                             str(call.id),
                             client_log_url,
                             source=CallLogEntry.LogSource.CUSTOMER,
@@ -386,7 +388,16 @@ async def calculate_voice_csat_score(
                     )
 
                     csat_choices = [
-                        "1", "2", "3", "4", "5", "6", "7", "8", "9", "10",
+                        "1",
+                        "2",
+                        "3",
+                        "4",
+                        "5",
+                        "6",
+                        "7",
+                        "8",
+                        "9",
+                        "10",
                     ]
                     csat_rule_prompt = (
                         "Assess the overall satisfaction expressed by the customer during the interaction. "

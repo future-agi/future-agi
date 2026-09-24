@@ -1,8 +1,8 @@
 {
   "generated_from": "api_contracts/openapi/swagger.json",
   "summary": {
-    "paths": 984,
-    "operations": 1329,
+    "paths": 1037,
+    "operations": 1404,
     "mutation_endpoints_without_body_schema": 0,
     "operations_without_response_schema": 0,
     "broad_success_response_schemas": 0,
@@ -11,8 +11,8 @@
   },
   "by_group": {
     "accounts": {
-      "paths": 80,
-      "operations": 104,
+      "paths": 82,
+      "operations": 106,
       "mutation_endpoints_without_body_schema": 0,
       "operations_without_response_schema": 0,
       "broad_success_response_schemas": 0,
@@ -29,8 +29,8 @@
       "broad_error_response_schemas": 0
     },
     "agentcc": {
-      "paths": 101,
-      "operations": 149,
+      "paths": 102,
+      "operations": 150,
       "mutation_endpoints_without_body_schema": 0,
       "operations_without_response_schema": 0,
       "broad_success_response_schemas": 0,
@@ -128,8 +128,8 @@
       "broad_error_response_schemas": 0
     },
     "simulate": {
-      "paths": 112,
-      "operations": 132,
+      "paths": 142,
+      "operations": 171,
       "mutation_endpoints_without_body_schema": 0,
       "operations_without_response_schema": 0,
       "broad_success_response_schemas": 0,
@@ -146,8 +146,8 @@
       "broad_error_response_schemas": 0
     },
     "tracer": {
-      "paths": 154,
-      "operations": 218,
+      "paths": 174,
+      "operations": 251,
       "mutation_endpoints_without_body_schema": 0,
       "operations_without_response_schema": 0,
       "broad_success_response_schemas": 0,

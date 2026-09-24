@@ -9,6 +9,8 @@ carve-out, workspace mismatch, cross-org). Real CH parity lives in the
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from structlog.testing import capture_logs
 
@@ -30,21 +32,29 @@ def _install_fake_session_builder(monkeypatch, *, rows, capture):
     class _FakeBuilder:
         def __init__(self, *, filters, **kwargs):
             capture["filters"] = filters
+            capture["builder_kwargs"] = kwargs
 
-        def build(self):
-            return "SELECT session_id FROM spans", {}
+        def supports_bounded_filter_scan(self):
+            return True
+
+        def bounded_filter_degraded_error_code(self):
+            return None
 
     class _FakeAnalytics:
         def execute_ch_query(self, query, params, timeout_ms=None):
             return _FakeResult(rows)
 
     monkeypatch.setattr(
-        "tracer.services.clickhouse.v2.dispatch.get_query_builder_class",
-        lambda name: _FakeBuilder,
+        "tracer.services.clickhouse.v2.query_builders.session_list.SessionListQueryBuilderV2",
+        _FakeBuilder,
     )
     monkeypatch.setattr(
-        "tracer.services.clickhouse.query_service.AnalyticsQueryService",
+        "tracer.services.clickhouse.v2.query_service.V2AnalyticsQueryService",
         _FakeAnalytics,
+    )
+    monkeypatch.setattr(
+        "model_hub.services.bulk_selection._read_bounded_bulk_page",
+        lambda **kwargs: SimpleNamespace(rows=rows, has_more=False),
     )
 
 
@@ -55,32 +65,46 @@ def _rows(*sids):
 # ---------------------------------------------------------------------------
 # _resolve_session_ids_clickhouse wiring
 # ---------------------------------------------------------------------------
-def test_injects_all_history_1971_when_no_time_filter(monkeypatch):
+def test_all_history_envelope_uses_bounded_selector_not_legacy_build(monkeypatch):
     capture: dict = {}
     _install_fake_session_builder(monkeypatch, rows=_rows("s1"), capture=capture)
 
     _resolve_session_ids_clickhouse(
-        project_id="p1", non_score_filters=[], score_filters=[],
-        exclude_ids=set(), organization=None, cap=10,
+        project_id="p1",
+        non_score_filters=[],
+        score_filters=[],
+        exclude_ids=set(),
+        organization=None,
+        cap=10,
     )
 
     injected = [f for f in capture["filters"] if f.get("column_id") == "start_time"]
     assert len(injected) == 1
     # 1970 would underflow the score subqueries' `- INTERVAL 1 DAY`.
     assert injected[0]["filter_config"]["filter_value"][0].startswith("1971")
+    assert not injected[0]["filter_config"]["filter_value"][1].startswith("2099")
+    assert capture["builder_kwargs"]["bounded_internal_scan"] is True
 
 
 def test_excludes_and_cap_plus_one(monkeypatch):
     _install_fake_session_builder(monkeypatch, rows=_rows("a", "b", "c"), capture={})
     res = _resolve_session_ids_clickhouse(
-        project_id="p1", non_score_filters=[], score_filters=[],
-        exclude_ids={"b"}, organization=None, cap=10,
+        project_id="p1",
+        non_score_filters=[],
+        score_filters=[],
+        exclude_ids={"b"},
+        organization=None,
+        cap=10,
     )
     assert res.ids == ["a", "c"]
 
     res2 = _resolve_session_ids_clickhouse(
-        project_id="p1", non_score_filters=[], score_filters=[],
-        exclude_ids=set(), organization=None, cap=2,
+        project_id="p1",
+        non_score_filters=[],
+        score_filters=[],
+        exclude_ids=set(),
+        organization=None,
+        cap=2,
     )
     assert res2.truncated is True
     assert res2.total_matching == 3
@@ -95,9 +119,12 @@ def test_score_filters_intersected_via_annotation_score_table(monkeypatch):
         lambda ids, score_filters: ["a"],
     )
     res = _resolve_session_ids_clickhouse(
-        project_id="p1", non_score_filters=[],
+        project_id="p1",
+        non_score_filters=[],
         score_filters=[{"column_id": "label-1", "filter_config": {}}],
-        exclude_ids=set(), organization=None, cap=10,
+        exclude_ids=set(),
+        organization=None,
+        cap=10,
     )
     assert res.ids == ["a"]
 
@@ -107,18 +134,33 @@ def test_ch_failure_propagates(monkeypatch):
         def __init__(self, **kwargs):
             pass
 
-        def build(self):
-            raise RuntimeError("CH down")
+        def supports_bounded_filter_scan(self):
+            return True
+
+        def bounded_filter_degraded_error_code(self):
+            return None
 
     monkeypatch.setattr(
-        "tracer.services.clickhouse.v2.dispatch.get_query_builder_class",
-        lambda name: _Boom,
+        "tracer.services.clickhouse.v2.query_builders.session_list.SessionListQueryBuilderV2",
+        _Boom,
+    )
+    monkeypatch.setattr(
+        "tracer.services.clickhouse.v2.query_service.V2AnalyticsQueryService",
+        lambda: object(),
+    )
+    monkeypatch.setattr(
+        "model_hub.services.bulk_selection._read_bounded_bulk_page",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("CH down")),
     )
     with capture_logs() as logs:
         with pytest.raises(RuntimeError, match="CH down"):
             _resolve_session_ids_clickhouse(
-                project_id="p1", non_score_filters=[], score_filters=[],
-                exclude_ids=set(), organization=None, cap=10,
+                project_id="p1",
+                non_score_filters=[],
+                score_filters=[],
+                exclude_ids=set(),
+                organization=None,
+                cap=10,
             )
     # The failure must leave a breadcrumb for log-based alerting before it raises.
     assert any(

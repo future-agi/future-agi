@@ -10,6 +10,43 @@ const pickMessage = (...messages) =>
     (message) => typeof message === "string" && message.trim().length > 0,
   ) || "";
 
+const SAFE_VALIDATION_STATUS_CODES = new Set([400, 404, 409, 422]);
+const INTERNAL_ERROR_MARKERS =
+  /DB::|ClickHouse|Stack\s*trace|Traceback|Code:\s*\d+|SELECT\s|maximum:\s*\d+|elapsed\s+\d+/i;
+
+/**
+ * Return concise validation feedback, but never expose infrastructure/query
+ * details from a failed mutation. Server-side failures and suspiciously large
+ * or multiline payloads intentionally collapse to the caller's safe fallback.
+ */
+export function getSafeActionErrorMessage(error, fallback) {
+  const responseData = error?.response?.data || {};
+  const statusCode = Number(
+    error?.response?.status ||
+      responseData?.statusCode ||
+      error?.status ||
+      error?.statusCode,
+  );
+  const message = pickMessage(
+    responseData?.message,
+    responseData?.detail,
+    responseData?.error,
+    responseData?.result,
+    error?.result,
+  ).trim();
+
+  if (
+    !SAFE_VALIDATION_STATUS_CODES.has(statusCode) ||
+    !message ||
+    message.length > 240 ||
+    /[\r\n]/.test(message) ||
+    INTERNAL_ERROR_MARKERS.test(message)
+  ) {
+    return fallback;
+  }
+  return message;
+}
+
 function withRetryGuidance(message, retryAction) {
   const baseMessage = (message || DEFAULT_RATE_LIMIT_MESSAGE).trim();
   const guidance = retryAction

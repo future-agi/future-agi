@@ -197,4 +197,18 @@ describe("EvalPickerCreateNew — task preview time window", () => {
       timeWindow.endDate,
     ]);
   });
+
+  it("enables exact/freeSolo attribute mapping on the create-task route", () => {
+    renderWithSource("task", {
+      sourceId: "00000000-0000-4000-8000-000000000901",
+      sourceRowType: "spans",
+    });
+
+    expect(capturedProps.tracing).not.toBeNull();
+    expect(capturedProps.tracing.initialProjectId).toBe(
+      "00000000-0000-4000-8000-000000000901",
+    );
+    expect(capturedProps.tracing.initialRowType).toBe("spans");
+    expect(capturedProps.tracing.allowCustomFieldPath).toBe(true);
+  });
 });

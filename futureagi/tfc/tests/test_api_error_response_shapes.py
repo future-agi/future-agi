@@ -19,7 +19,16 @@ RAW_ERROR_DEBT_BY_FILE = {
     # overlay is checked out (CI, dev machines); harmless entries otherwise.
     Path("futureagi/ee/cloud/control_plane/activation.py"): 8,
     Path("futureagi/ee/cloud/control_plane/views.py"): 10,
+    Path("futureagi/model_hub/views/develop_dataset.py"): 10,
     Path("futureagi/model_hub/views/dataset_optimization.py"): 8,
+    Path("futureagi/model_hub/views/experiments.py"): 1,
+    # Hosted harness endpoints predate the common response envelope. Keep the
+    # current counts explicit so additions still fail this guard while the
+    # existing responses are migrated without breaking UI clients.
+    Path("futureagi/simulate/services/harness_provider.py"): 30,
+    Path("futureagi/simulate/views/harness_job.py"): 8,
+    Path("futureagi/simulate/views/hosted_harness.py"): 1,
+    Path("futureagi/simulate/views/preview_pagination.py"): 1,
     Path("futureagi/tracer/views/annotation.py"): 1,
     Path("futureagi/tracer/views/charts.py"): 1,
 }

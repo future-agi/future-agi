@@ -991,6 +991,12 @@ class AgentLoop:
                 "path_prefix": "/dashboard/evaluations/",
                 "detail_path": "/dashboard/evaluations/{id}",
             },
+            "create_dashboard": {
+                "title": "Dashboard created",
+                "action_label": "Go to dashboard",
+                "path_prefix": "/dashboard/dashboards/",
+                "detail_path": "/dashboard/dashboards/{id}",
+            },
             "create_eval_task": {
                 "title": "Eval task created",
                 "action_label": "Go to task",

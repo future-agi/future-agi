@@ -8,7 +8,7 @@ from io import BytesIO
 from math import ceil
 from typing import Optional  # Import ceil to use for rounding up
 
-import av
+from tfc.utils.lazy_extras import av
 import requests
 import structlog
 import tiktoken

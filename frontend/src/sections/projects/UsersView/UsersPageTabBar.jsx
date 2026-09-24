@@ -14,6 +14,7 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import FixedTab from "src/components/observe-tabs/FixedTab";
 import CustomViewTab from "src/components/observe-tabs/CustomViewTab";
 import SaveViewPopover from "src/components/traceDetail/SaveViewDialog";
+import { getRequestErrorMessage } from "src/utils/errorUtils";
 import {
   useGetWorkspaceSavedViews,
   useCreateWorkspaceSavedView,
@@ -92,8 +93,10 @@ const UsersPageTabBar = ({
             setSaveViewAnchor(null);
             setIsSavingView(false);
           },
-          onError: () => {
-            enqueueSnackbar("Failed to create view", { variant: "error" });
+          onError: (err) => {
+            enqueueSnackbar(getRequestErrorMessage(err, "Failed to create view"), {
+              variant: "error",
+            });
             setIsSavingView(false);
           },
         },
@@ -115,7 +118,16 @@ const UsersPageTabBar = ({
 
   const handleRenameSubmit = useCallback(
     (viewId, newName) => {
-      updateSavedView({ id: viewId, name: newName });
+      updateSavedView(
+        { id: viewId, name: newName },
+        {
+          onError: (err) =>
+            enqueueSnackbar(getRequestErrorMessage(err, "Failed to rename view"), {
+              variant: "error",
+            }),
+        },
+      );
+      // Always exit edit mode — a lingering rename state would re-submit on blur.
       setRenamingId(null);
     },
     [updateSavedView],
@@ -234,6 +246,7 @@ const UsersPageTabBar = ({
         onClose={() => setSaveViewAnchor(null)}
         onSave={handleSaveViewConfirm}
         isLoading={isSavingView}
+        existingNames={customViews.map((v) => v.name)}
       />
     </Box>
   );

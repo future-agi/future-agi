@@ -6,14 +6,7 @@ import AgentVideoPlayerModal from "../AgentVideoPlayerModal";
 import PropTypes from "prop-types";
 import { useWatch } from "react-hook-form";
 import { ShowComponent } from "src/components/show";
-import {
-  PROVIDER_CHOICES,
-  PROVIDER_STEPS_MAPPER,
-  isLiveKitProvider,
-} from "../../constants";
-import { enqueueSnackbar } from "notistack";
-import { copyToClipboard } from "src/utils/utils";
-import { HOST_API } from "src/config-global";
+import { PROVIDER_STEPS_MAPPER, isLiveKitProvider } from "../../constants";
 
 const AgentConfigurationStepRightSection = ({ control, getValues }) => {
   const [open, setOpen] = useState(false);
@@ -203,39 +196,6 @@ const AgentConfigurationStepRightSection = ({ control, getValues }) => {
                   </Typography>
                 ),
               )}
-
-              <ShowComponent
-                condition={selectedProvider === PROVIDER_CHOICES.RETELL}
-              >
-                <Typography
-                  component={"span"}
-                  typography="s1"
-                  color="text.primary"
-                >
-                  {`${PROVIDER_STEPS_MAPPER[selectedProvider]?.length + 1}. Please add `}
-                  <Typography
-                    typography="s1"
-                    color="text.primary"
-                    component={"span"}
-                    onClick={() => {
-                      copyToClipboard(`${HOST_API}/tracer/webhook`);
-                      enqueueSnackbar({
-                        message: "Copied to clipboard",
-                        variant: "success",
-                      });
-                    }}
-                    sx={{
-                      textDecorationLine: "underline",
-                      ":hover": {
-                        cursor: "pointer",
-                      },
-                    }}
-                  >
-                    {`${HOST_API}/tracer/webhook`}
-                  </Typography>
-                  {` to the Agent Level Webhook URL on Retell`}
-                </Typography>
-              </ShowComponent>
             </Box>
           </Box>
         </ShowComponent>

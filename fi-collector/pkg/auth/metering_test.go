@@ -274,7 +274,6 @@ func TestCheckUsageStorageDimension(t *testing.T) {
 	}
 }
 
-
 func TestFreeTierAllowances(t *testing.T) {
 	if freeTierAllowances["tracing_events"] != 50_000 {
 		t.Errorf("tracing_events allowance = %d, want 50000", freeTierAllowances["tracing_events"])

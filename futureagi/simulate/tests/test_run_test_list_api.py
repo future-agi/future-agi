@@ -192,6 +192,80 @@ class TestRunTestRuntimeContracts:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert response.json()["details"]["legacyPageSize"] == ["Unknown field."]
 
+    def test_summary_list_returns_only_bounded_list_card_fields(
+        self,
+        auth_client,
+        run_test_with_v10_scenario,
+        word_count_eval_template,
+    ):
+        SimulateEvalConfig.objects.create(
+            name="Summary eval",
+            eval_template=word_count_eval_template,
+            run_test=run_test_with_v10_scenario,
+            model="turing_small",
+            status="completed",
+        )
+
+        response = auth_client.get("/simulate/run-tests/?page=1&limit=50&summary=true")
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        item = next(
+            result
+            for result in response.json()["results"]
+            if result["id"] == str(run_test_with_v10_scenario.id)
+        )
+        assert set(item) == {
+            "id",
+            "name",
+            "source_type",
+            "source_type_display",
+            "agent_definition_detail",
+            "scenarios_detail",
+            "evals_detail",
+            "last_run_at",
+        }
+        assert set(item["agent_definition_detail"]) == {
+            "id",
+            "agent_name",
+            "agent_type",
+            "provider",
+            "contact_number",
+        }
+        assert item["scenarios_detail"][0]["dataset_rows"] == 0
+        assert item["evals_detail"][0]["model_type"] == "turing_small"
+        assert "agent_version" not in item
+        assert "simulate_eval_configs_detail" not in item
+
+    def test_summary_list_stays_within_guard_when_full_nested_fields_do_not(
+        self,
+        auth_client,
+        run_test_with_v10_scenario,
+        scenario_with_prompt_version,
+        agent_definition,
+        monkeypatch,
+    ):
+        from simulate.views import run_test as run_test_view
+
+        agent_definition.description = "a" * 10_000
+        agent_definition.save(update_fields=["description"])
+        scenario_with_prompt_version.source = "s" * 10_000
+        scenario_with_prompt_version.save(update_fields=["source"])
+        monkeypatch.setattr(
+            run_test_view,
+            "_RUN_TEST_READ_MAX_RESPONSE_UNITS",
+            20_000,
+        )
+
+        summary_response = auth_client.get(
+            "/simulate/run-tests/?page=1&limit=50&summary=true"
+        )
+        full_response = auth_client.get("/simulate/run-tests/?page=1&limit=50")
+
+        assert (
+            summary_response.status_code == status.HTTP_200_OK
+        ), summary_response.content
+        assert full_response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+
     def test_create_accepts_declared_agent_version_field(
         self, auth_client, agent_definition, scenario_with_prompt_version
     ):
@@ -491,9 +565,9 @@ class TestRunTestRuntimeContracts:
             format="json",
         )
 
-        assert create_response.status_code == status.HTTP_201_CREATED, (
-            create_response.content
-        )
+        assert (
+            create_response.status_code == status.HTTP_201_CREATED
+        ), create_response.content
         eval_config_id = create_response.json()["created_eval_configs"][0]["id"]
         eval_config = SimulateEvalConfig.objects.get(id=eval_config_id)
         assert eval_config.run_test_id == run_test_with_v10_scenario.id
@@ -506,9 +580,9 @@ class TestRunTestRuntimeContracts:
             f"{eval_config_id}/get-structure/"
         )
 
-        assert structure_response.status_code == status.HTTP_200_OK, (
-            structure_response.content
-        )
+        assert (
+            structure_response.status_code == status.HTTP_200_OK
+        ), structure_response.content
         structure = structure_response.json()["result"]["eval"]
         assert structure["id"] == eval_config_id
         assert structure["template_id"] == str(word_count_eval_template.id)
@@ -543,9 +617,9 @@ class TestRunTestRuntimeContracts:
             format="json",
         )
 
-        assert update_response.status_code == status.HTTP_200_OK, (
-            update_response.content
-        )
+        assert (
+            update_response.status_code == status.HTTP_200_OK
+        ), update_response.content
         eval_config.refresh_from_db()
         assert eval_config.name == "word_count_updated"
         assert eval_config.mapping == {"text": "agent_output"}
@@ -1289,7 +1363,8 @@ class TestRunTestScenariosView:
         listed_ids = {row["id"] for row in body["results"]}
         assert str(scenario_with_prompt_version.id) in listed_ids
         matched = next(
-            row for row in body["results"]
+            row
+            for row in body["results"]
             if row["id"] == str(scenario_with_prompt_version.id)
         )
         assert matched["name"] == scenario_with_prompt_version.name
@@ -1565,6 +1640,26 @@ class TestTestExecutionAPIView:
         assert str(own_execution.id) in listed_ids
         assert str(hidden_execution.id) not in listed_ids
 
+    def test_list_test_executions_keeps_accepting_large_limits(
+        self, auth_client, run_test_with_v10_scenario
+    ):
+        """Documenting the list query must not cap `limit`; limit=200 worked
+        before the query serializer existed."""
+        TestExecution.objects.create(
+            run_test=run_test_with_v10_scenario,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            total_scenarios=1,
+        )
+
+        response = auth_client.get("/simulate/api/test-executions/?limit=200")
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+
+    def test_list_test_executions_still_rejects_non_positive_limit(self, auth_client):
+        response = auth_client.get("/simulate/api/test-executions/?limit=0")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -1617,9 +1712,7 @@ class TestRunTestCallExecutionsView:
         )
 
     def test_get_run_test_call_executions_not_found_returns_404(self, auth_client):
-        response = auth_client.get(
-            f"/simulate/run-tests/{uuid4()}/call-executions/"
-        )
+        response = auth_client.get(f"/simulate/run-tests/{uuid4()}/call-executions/")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert "not found" in str(response.content).lower()
@@ -1732,9 +1825,7 @@ class TestRunTestDetailWorkspaceScope:
             source_type=RunTest.SourceTypes.AGENT_DEFINITION,
         )
 
-        detail_response = auth_client.get(
-            f"/simulate/run-tests/{hidden_run_test.id}/"
-        )
+        detail_response = auth_client.get(f"/simulate/run-tests/{hidden_run_test.id}/")
         patch_response = auth_client.patch(
             f"/simulate/run-tests/{hidden_run_test.id}/",
             {"name": "Leaked Hidden Run Test"},
@@ -2009,9 +2100,7 @@ class TestRunTestStatusView:
             source_type=RunTest.SourceTypes.AGENT_DEFINITION,
         )
 
-        response = auth_client.get(
-            f"/simulate/run-tests/{hidden_run_test.id}/status/"
-        )
+        response = auth_client.get(f"/simulate/run-tests/{hidden_run_test.id}/status/")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 

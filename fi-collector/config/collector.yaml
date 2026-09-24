@@ -50,5 +50,29 @@ auth:
   # Redis for rate limiting + usage event emission. Empty disables both.
   redis_addr: ""
 
+# Independent span-attribute catalog. The zero/default mode is disabled.
+# Dev qualification uses exactly one mode at a time and separate epochs:
+# direct for the lightweight Go->ClickHouse path, kafka for the scalable
+# producer/consumer path. Production remains disabled until dev evidence and
+# the replicated-table rollout are reviewed.
+catalog:
+  mode: disabled
+  environment: ""
+  catalog_epoch: 0
+  producer_stream_id: ""
+  spool_dir: /var/lib/fi-collector/catalog-wal
+  replay_interval: 1s
+  # Direct mode only. Configure the catalog-only ClickHouse identity through
+  # FI_CATALOG_CH_URL / DATABASE / USERNAME / PASSWORD. Zero-valued bounds use
+  # conservative defaults and remain hard-capped at 10s.
+  # Kafka producer mode rejects every ClickHouse setting.
+  clickhouse: {}
+  kafka:
+    # Collector Kafka mode is producer-only. A separate consumer owns inserts
+    # into the new catalog tables. The collector receives no ClickHouse
+    # credentials and no consumer-group membership in this mode.
+    brokers: []
+    topic: ""
+
 admin:
   addr: ":9464" # /healthz and /metrics

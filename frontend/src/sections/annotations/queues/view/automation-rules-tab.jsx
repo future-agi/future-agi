@@ -180,11 +180,20 @@ export default function AutomationRulesTab({ queueId, queue }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
-  const { data: rules = [], isLoading } = useAutomationRules(queueId);
+  const {
+    data: rulesPage,
+    isLoading,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+    isError,
+    isFetchNextPageError,
+    refetch,
+  } = useAutomationRules(queueId);
   const { mutate: updateRule } = useUpdateAutomationRule();
   const { mutate: deleteRule } = useDeleteAutomationRule();
 
-  const rulesList = Array.isArray(rules) ? rules : [];
+  const rulesList = Array.isArray(rulesPage?.results) ? rulesPage.results : [];
 
   const columnDefs = useMemo(
     () => [
@@ -323,26 +332,68 @@ export default function AutomationRulesTab({ queueId, queue }) {
         </Button>
       </Stack>
 
-      <Box>
-        <AgGridReact
-          ref={gridRef}
-          theme={agTheme}
-          domLayout="autoHeight"
-          rowData={isLoading ? SKELETON_ROWS : rulesList}
-          columnDefs={columnDefs}
-          defaultColDef={defaultColDef}
-          context={gridContext}
-          rowHeight={52}
-          headerHeight={42}
-          pagination={false}
-          animateRows={false}
-          suppressRowClickSelection
-          rowStyle={{ cursor: isLoading ? "default" : "pointer" }}
-          onCellClicked={isLoading ? undefined : onCellClicked}
-          getRowId={getRowId}
-          noRowsOverlayComponent={CustomNoRowsOverlay}
-        />
-      </Box>
+      {isError && (
+        <Box
+          role="alert"
+          sx={{
+            px: 1.5,
+            py: 1,
+            mb: 1,
+            color: "warning.main",
+            bgcolor: "warning.lighter",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          We couldn&apos;t load automation rules. Existing rows were kept.
+          <Button
+            size="small"
+            onClick={() =>
+              isFetchNextPageError && rulesList.length > 0
+                ? fetchNextPage()
+                : refetch()
+            }
+          >
+            Retry
+          </Button>
+        </Box>
+      )}
+
+      {(!isError || rulesList.length > 0) && (
+        <Box>
+          <AgGridReact
+            ref={gridRef}
+            theme={agTheme}
+            domLayout="autoHeight"
+            rowData={isLoading ? SKELETON_ROWS : rulesList}
+            columnDefs={columnDefs}
+            defaultColDef={defaultColDef}
+            context={gridContext}
+            rowHeight={52}
+            headerHeight={42}
+            pagination={false}
+            animateRows={false}
+            suppressRowClickSelection
+            rowStyle={{ cursor: isLoading ? "default" : "pointer" }}
+            onCellClicked={isLoading ? undefined : onCellClicked}
+            getRowId={getRowId}
+            noRowsOverlayComponent={CustomNoRowsOverlay}
+          />
+        </Box>
+      )}
+
+      {hasNextPage && !isError && (
+        <Box sx={{ display: "flex", justifyContent: "center", py: 1.5 }}>
+          <Button
+            variant="outlined"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+          >
+            {isFetchingNextPage ? "Loading..." : "Load more"}
+          </Button>
+        </Box>
+      )}
 
       <CreateRuleDialog
         open={createOpen}
