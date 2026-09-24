@@ -14,6 +14,7 @@ vi.mock("src/api/harness/harness", () => ({
   })),
 }));
 
+const { uploadHarnessSecretFile } = await import("src/api/harness/harness");
 const { default: EnvironmentValues } = await import("../panels/EnvironmentValues");
 
 const renderWithQuery = (ui) => {
@@ -99,6 +100,25 @@ describe("EnvironmentValues", () => {
     // Contents never enter the textarea / draft.
     expect(onEnvText).not.toHaveBeenCalled();
     expect(screen.getByPlaceholderText(/OPENAI_API_KEY/).value).toBe("");
+  });
+
+  it("surfaces a rejected credential upload instead of failing silently", async () => {
+    // The upload mutation carries `meta.errorHandled`, which suppresses the
+    // global error toast — so a rejected upload (e.g. the hosted 422 on a
+    // wrong label) must be shown by the panel itself, or the user is told
+    // nothing and no reference is ever created.
+    uploadHarnessSecretFile.mockRejectedValueOnce({
+      statusCode: 422,
+      message: "Hosted credential uploads must use GOOGLE_APPLICATION_CREDENTIALS.",
+    });
+    const { container } = renderWithQuery(<Harness />);
+    fireEvent.change(container.querySelector('input[type="file"]'), {
+      target: { files: [new File(["{}"], "creds.json", { type: "application/json" })] },
+    });
+    await waitFor(() =>
+      expect(screen.getByText(/Hosted credential uploads must use/)).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/creds\.json uploaded/)).toBeNull();
   });
 
   it("removes an uploaded credential reference", async () => {

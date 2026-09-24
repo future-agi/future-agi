@@ -244,12 +244,30 @@ describe("useUploadSecretFile", () => {
     const form = uploadHarnessSecretFile.mock.calls[0][0];
     expect(form).toBeInstanceOf(FormData);
     expect(form.get("file")).toBe(file);
-    expect(form.get("environment_name")).toBe("GOOGLE_APPLICATION_CREDENTIALS_JSON");
+    // The upload endpoint accepts exactly one label, Google's own variable name.
+    // `_JSON` is what the REPLY names the stored secret, and is the key
+    // `secret_refs` must use — not the label to upload with.
+    expect(form.get("environment_name")).toBe("GOOGLE_APPLICATION_CREDENTIALS");
+    expect(out.environment_name).toBe("GOOGLE_APPLICATION_CREDENTIALS_JSON");
 
     expect(out.secret_ref).toBe("harness_environment_file://ref-9");
     expect(out.name).toBe("creds.json");
     expect(out.size).toBe(42);
     expect(out).not.toHaveProperty("contents");
+  });
+
+  it("surfaces a rejected upload rather than swallowing it", async () => {
+    const rejection = { statusCode: 422, message: "Hosted credential uploads…" };
+    uploadHarnessSecretFile.mockRejectedValue(rejection);
+    const { Wrapper } = makeWrapper();
+    const { result } = renderHook(() => useUploadSecretFile(), {
+      wrapper: Wrapper,
+    });
+    const file = new File(["{}"], "creds.json", { type: "application/json" });
+
+    // `meta.errorHandled` suppresses the global error toast, so the caller has
+    // to see the rejection or the user is told nothing at all.
+    await expect(result.current.mutateAsync({ file })).rejects.toBe(rejection);
   });
 });
 
