@@ -72,6 +72,7 @@ export default function RunTraceTable({
     facets = {},
     totalPages = 1,
     isLoading,
+    error,
   } = useRunCalls(executionId, {
     page,
     limit: 50,
@@ -273,6 +274,12 @@ export default function RunTraceTable({
       <SectionCard title={title} action={action}>
         {isLoading ? (
           <EmptyState icon="solar:hourglass-linear" title="Loading calls…" />
+        ) : error ? (
+          <EmptyState
+            icon="solar:danger-triangle-linear"
+            title="Couldn't load calls"
+            body="Something went wrong loading this run's calls. Try again."
+          />
         ) : tasks.length === 0 ? (
           <EmptyState
             icon="solar:filter-linear"

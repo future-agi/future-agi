@@ -68,6 +68,14 @@ describe("ScenariosStep — pagination", () => {
     fireEvent.click(await screen.findByLabelText("Go to page 2"));
     expect(await screen.findByText(/Showing 26–50 of 60/)).toBeInTheDocument();
   });
+
+  it("shows an error state, not the empty placeholder, when the list request fails", async () => {
+    listScenarios.mockRejectedValue(new Error("boom"));
+    renderStep();
+    expect(await screen.findByText(/Couldn't load scenarios/i)).toBeInTheDocument();
+    // Not the "no scenarios yet" empty placeholder.
+    expect(screen.queryByText(/no scenarios/i)).toBeNull();
+  });
 });
 
 describe("ScenariosStep — select all matching", () => {

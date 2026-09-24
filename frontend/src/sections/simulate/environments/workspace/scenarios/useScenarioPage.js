@@ -74,6 +74,8 @@ export default function useScenarioPage({
     pageCount,
     limit: pageSize,
     loading: query.isPending,
+    isError: query.isError,
+    error: query.error,
     groupCounts,
     pageGroups,
     pageIds,

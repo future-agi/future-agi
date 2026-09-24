@@ -46,4 +46,13 @@ describe("CoverageMatrix", () => {
     // The forced-overlays checklist reads from per_axis.overlay.counts.
     expect(screen.getByText("Destructive / irreversible")).toBeInTheDocument();
   });
+
+  it("shows an error state instead of a zero-coverage grid when the request fails", () => {
+    // Without this, a failed request renders 0/8 axes and 0% pairs — falsely
+    // telling the user their suite covers nothing.
+    useScenarioCoverage.mockReturnValue({ data: undefined, isError: true });
+    render(<CoverageMatrix jobId="job-1" search="" filters={{}} />);
+    expect(screen.getByText(/Couldn't load coverage/i)).toBeInTheDocument();
+    expect(screen.queryByText("8/8")).toBeNull();
+  });
 });

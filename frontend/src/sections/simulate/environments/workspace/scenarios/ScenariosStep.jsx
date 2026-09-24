@@ -361,7 +361,13 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
         {hasScenarios && <AddButton onClick={() => setAdding(true)} contained locked={locked} />}
       </Stack>
 
-      {!hasScenarios ? (
+      {pageData.isError || suiteQuery.isError ? (
+        <EmptyState
+          icon="solar:danger-triangle-linear"
+          title="Couldn't load scenarios"
+          body="Something went wrong loading this environment's scenarios. Try again."
+        />
+      ) : !hasScenarios ? (
         <RoutePlaceholder onAdd={() => setAdding(true)} locked={locked} />
       ) : (
         <>

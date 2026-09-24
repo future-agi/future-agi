@@ -46,7 +46,7 @@ export default function CoverageMatrix({ jobId, search, filters, defaultExpanded
   const [colAxis, setColAxis] = useState(undefined);
   const [expanded, setExpanded] = useState(defaultExpanded);
 
-  const { data } = useScenarioCoverage(jobId, { search, filters, rowAxis, colAxis });
+  const { data, isError } = useScenarioCoverage(jobId, { search, filters, rowAxis, colAxis });
 
   const axes = data?.axes ?? [];
   const perAxis = useMemo(() => data?.per_axis ?? [], [data]);
@@ -92,6 +92,20 @@ export default function CoverageMatrix({ jobId, search, filters, defaultExpanded
   const forcedPresent = FORCED_OVERLAYS.filter((f) => (overlayCounts[f.id] ?? 0) > 0);
 
   const toggle = () => setExpanded((v) => !v);
+
+  // A failed coverage request must read as an error, not as a zero-coverage
+  // grid (which would falsely tell the user their suite covers nothing).
+  if (isError) {
+    return (
+      <SectionCard title="Coverage">
+        <Box sx={{ py: 3, px: 2, textAlign: "center" }}>
+          <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+            Couldn&apos;t load coverage. Try again.
+          </Typography>
+        </Box>
+      </SectionCard>
+    );
+  }
 
   const helpContent = (
     <Box sx={{ p: 0.5, maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
