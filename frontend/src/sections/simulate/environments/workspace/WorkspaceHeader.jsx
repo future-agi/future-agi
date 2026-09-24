@@ -179,6 +179,7 @@ export default function WorkspaceHeader({
           }
           action={
             <Button
+              size="small"
               variant="contained"
               disabled={deleteEnv.isPending}
               onClick={() => {
@@ -190,6 +191,7 @@ export default function WorkspaceHeader({
                 "&:hover": { bgcolor: DELETE_TONE.hover },
                 typography: "s2",
                 fontWeight: "fontWeightBold",
+                paddingX: "24px",
               }}
             >
               {DELETE_DIALOG_COPY.confirm}

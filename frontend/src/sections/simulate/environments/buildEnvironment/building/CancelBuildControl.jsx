@@ -57,7 +57,13 @@ export default function CancelBuildControl({ envId, building = false }) {
           </Typography>
         )}
         action={
-          <Button size="small" variant="contained" color="error" onClick={onConfirm}>
+          <Button
+            size="small"
+            variant="contained"
+            color="error"
+            onClick={onConfirm}
+            sx={{ paddingX: "24px" }}
+          >
             Stop build
           </Button>
         }
