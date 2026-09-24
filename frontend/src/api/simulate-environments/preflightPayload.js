@@ -18,7 +18,13 @@ import { parseGitHubInput, parseEgressDomains } from "src/pages/dashboard/harnes
 const SCHEMA_VERSION = "futureagi.harness-job.v1";
 const DEFAULT_BRANCH = "main";
 const SCENARIO_COUNT = 10;
-const MAX_PARALLELISM = 8;
+// The backend's `runtime.cpu_units`, which this payload never sends and which
+// therefore takes HarnessRuntimeSerializer's default of 4. Above it the request
+// is rejected as "voice parallelism must not exceed cpu_units" for every
+// connector this module emits, `auto` (repo and upload) included. Duplicated
+// from sections/parallelism.constants.js for the no-sections-imports rule in the
+// module docstring above — keep the two in step.
+const MAX_PARALLELISM = 4;
 
 const ARTIFACTS = {
   level: "full",

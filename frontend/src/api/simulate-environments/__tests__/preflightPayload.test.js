@@ -263,3 +263,27 @@ describe("environmentNameFor", () => {
     expect(environmentNameFor({ kind: "mystery" })).toBe("agent");
   });
 });
+
+describe("draftToPreflightPayload — parallelism ceiling", () => {
+  // HarnessRuntimeSerializer rejects "voice parallelism must not exceed
+  // cpu_units" for livekit, vapi, retell, phone and auto — and every repo /
+  // upload source is "auto". The payload never sends cpu_units, so the value
+  // that applies is the serializer default of 4 (Daytona has no fixed_resources;
+  // E2B's ALK_E2B_TEMPLATE_CPU_UNITS also defaults to 4). Anything above that
+  // is a guaranteed 400.
+  const runtimeFor = (parallelism) =>
+    draftToPreflightPayload(repoDraft({ parallelism })).payload.runtime;
+
+  it("clamps a requested parallelism to the backend's cpu_units", () => {
+    expect(runtimeFor(8).parallelism).toBe(4);
+  });
+
+  it("passes a request at or under the ceiling through unchanged", () => {
+    expect(runtimeFor(4).parallelism).toBe(4);
+    expect(runtimeFor(2).parallelism).toBe(2);
+  });
+
+  it("omits runtime entirely for a single world", () => {
+    expect(runtimeFor(1)).toBeUndefined();
+  });
+});

@@ -1,4 +1,11 @@
-export const MAX_PARALLELISM = 8;
+// The ceiling is the backend's `runtime.cpu_units`, not HarnessRuntimeSerializer's
+// own parallelism max of 8. That serializer rejects "voice parallelism must not
+// exceed cpu_units" for livekit, vapi, retell, phone and auto — and every
+// repo/upload source builds as "auto" — while the payload sends no cpu_units, so
+// the value that applies is the serializer default of 4 (Daytona declares no
+// fixed_resources; E2B's ALK_E2B_TEMPLATE_CPU_UNITS also defaults to 4).
+// Offering 5-8 was offering a guaranteed 400.
+export const MAX_PARALLELISM = 4;
 
 export const clampParallelism = (value) =>
   Math.min(MAX_PARALLELISM, Math.max(1, Math.trunc(Number(value) || 1)));
