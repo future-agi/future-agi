@@ -89322,10 +89322,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         config: {
           title: "Config",
           type: "object",
-          additionalProperties: {
-            type: "string",
-            "x-nullable": true,
-          },
           default: {},
         },
         secret_refs: {
