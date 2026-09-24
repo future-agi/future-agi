@@ -1670,12 +1670,17 @@ class HostedHarnessProvider:
         }
     )
 
-    def _editing_contract(self) -> dict[str, list[str]]:
+    def _editing_contract(self, spoken: bool = True) -> dict[str, list[str]]:
         """Which fields an amend will take, and which of them cannot be taken without a re-proof."""
+        # A call has no turn budget; a chat has no accent or room behind the caller.
+        behavioural = self._BEHAVIOURAL_FIELDS - (
+            {"max_turns"} if spoken else {"background_noise"}
+        )
+        persona = self._PERSONA_FIELDS - (set() if spoken else {"accent"})
         return {
-            "editable_fields": sorted(self._DESCRIPTIVE_FIELDS | self._BEHAVIOURAL_FIELDS),
-            "persona_fields": sorted(self._PERSONA_FIELDS),
-            "rework_fields": sorted(self._BEHAVIOURAL_FIELDS | self._PERSONA_FIELDS),
+            "editable_fields": sorted(self._DESCRIPTIVE_FIELDS | behavioural),
+            "persona_fields": sorted(persona),
+            "rework_fields": sorted(behavioural | persona),
         }
 
     def list_scenarios(self, request, pk) -> Response:
@@ -1739,11 +1744,16 @@ class HostedHarnessProvider:
         response = paginator.get_paginated_response(rows)
         response.data["groups"] = group_counts(rows, queryset, group_by)
         response.data["group_by"] = group_by
-        response.data["fields"] = field_catalogue(offerable)
-        response.data["scenario_editing"] = self._editing_contract()
+        from simulate.services.harness_environment import AGENT_TYPE_VOICE, agent_type
+
+        spoken = agent_type(job) == AGENT_TYPE_VOICE
+        response.data["fields"] = field_catalogue(offerable, spoken=spoken)
+        response.data["scenario_editing"] = self._editing_contract(spoken)
         from simulate.services.harness_scenarios import GROUPINGS
 
-        response.data["groupings"] = [dict(one) for one in GROUPINGS]
+        response.data["groupings"] = [
+            dict(one) for one in GROUPINGS if spoken or one["value"] != "accent"
+        ]
         from simulate.services.harness_scenarios import level_labels_for
         response.data["level_labels"] = level_labels_for(rows)
         return response
@@ -1765,11 +1775,14 @@ class HostedHarnessProvider:
         queryset = HostedHarnessScenario.no_workspace_objects.filter(job=job)
         queryset = apply_search(queryset, request.query_params.get("search", ""))
         queryset = apply_filters(queryset, request.query_params)
+        from simulate.services.harness_environment import AGENT_TYPE_VOICE, agent_type
+
         return Response(
             coverage_grid(
                 queryset,
                 request.query_params.get("row_axis") or DEFAULT_ROW_AXIS,
                 request.query_params.get("col_axis") or DEFAULT_COL_AXIS,
+                spoken=agent_type(job) == AGENT_TYPE_VOICE,
             )
         )
 

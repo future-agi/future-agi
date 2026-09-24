@@ -126,8 +126,18 @@ AXIS_LABELS: dict[str, str] = {
 }
 
 
-def axis_label(axis: str) -> str:
+# The same axes read in the words of a chat where a call's words would be wrong.
+CHAT_AXIS_LABELS: dict[str, str] = {
+    "counterparty": "Who is asking",
+    "interface": "How they write",
+    "interaction": "How the chat goes",
+}
+
+
+def axis_label(axis: str, spoken: bool = True) -> str:
     """The reader-facing name for one axis."""
+    if not spoken and axis in CHAT_AXIS_LABELS:
+        return CHAT_AXIS_LABELS[axis]
     return AXIS_LABELS.get(axis) or str(axis or "").replace("_", " ").strip().capitalize()
 
 
@@ -148,6 +158,20 @@ LEVEL_LABELS: dict[str, str] = {
     "non_native": "Non-native speaker",
     "code_switching": "Switches language",
 }
+# What each background a caller can be heard over sounds like, for the noise column only.
+NOISE_LABELS: dict[str, str] = {
+    "quiet line": "Quiet line",
+    "present": "Background noise",
+    "street": "Street",
+    "vehicle": "In a car",
+    "transit": "Airport / station",
+    "retail": "Shop / mall",
+    "office": "Office",
+    "outdoors": "Outdoors",
+    "crowd": "Crowded room",
+}
+# Only a caller who is heard has an accent or a room behind them.
+VOICE_ONLY_FIELDS = frozenset({"persona.accent", "background_noise"})
 
 
 def level_label(level: str) -> str:
@@ -275,7 +299,7 @@ def apply_search(queryset: QuerySet, term: str) -> QuerySet:
     return queryset.filter(matches)
 
 
-def field_catalogue(queryset: QuerySet) -> list[dict[str, Any]]:
+def field_catalogue(queryset: QuerySet, spoken: bool = True) -> list[dict[str, Any]]:
     """The panel's `fields`, with each enum's values and counts over the whole filtered suite."""
     enums = [field for field in FIELDS if field["type"] == "enum"]
     paths = {field["value"]: _orm_path(field["value"]) for field in enums}
@@ -291,6 +315,8 @@ def field_catalogue(queryset: QuerySet) -> list[dict[str, Any]]:
 
     catalogue: list[dict[str, Any]] = []
     for field in FIELDS:
+        if not spoken and field["value"] in VOICE_ONLY_FIELDS:
+            continue
         entry = {key: value for key, value in field.items()}
         if field["type"] != "enum":
             catalogue.append(entry)
@@ -306,7 +332,9 @@ def field_catalogue(queryset: QuerySet) -> list[dict[str, Any]]:
     return catalogue
 
 
-def coverage_grid(queryset: QuerySet, row_axis: str, col_axis: str) -> dict[str, Any]:
+def coverage_grid(
+    queryset: QuerySet, row_axis: str, col_axis: str, spoken: bool = True
+) -> dict[str, Any]:
     """One cross-tab of the suite. Empty cells are the point, so they are returned as zero."""
     rows: dict[str, int] = {}
     cols: dict[str, int] = {}
@@ -331,7 +359,7 @@ def coverage_grid(queryset: QuerySet, row_axis: str, col_axis: str) -> dict[str,
         "per_axis": [
             {
                 "axis": axis,
-                "label": axis_label(axis),
+                "label": axis_label(axis, spoken),
                 "levels": len(held),
                 "scenarios": sum(held.values()),
                 "counts": dict(sorted(held.items(), key=lambda pair: (-pair[1], pair[0]))),
@@ -340,9 +368,9 @@ def coverage_grid(queryset: QuerySet, row_axis: str, col_axis: str) -> dict[str,
             if held
         ],
         "row_axis": row_axis,
-        "row_axis_label": axis_label(row_axis),
+        "row_axis_label": axis_label(row_axis, spoken),
         "col_axis": col_axis,
-        "col_axis_label": axis_label(col_axis),
+        "col_axis_label": axis_label(col_axis, spoken),
         "rows": sorted(rows),
         "columns": sorted(cols),
         "cells": [
@@ -355,7 +383,7 @@ def coverage_grid(queryset: QuerySet, row_axis: str, col_axis: str) -> dict[str,
             for across in sorted(cols)
         ],
         "axes": list(AXES),
-        "axis_labels": {axis: axis_label(axis) for axis in AXES},
+        "axis_labels": {axis: axis_label(axis, spoken) for axis in AXES},
         "level_labels": {
             level: level_label(level)
             for axis in levels
@@ -366,16 +394,19 @@ def coverage_grid(queryset: QuerySet, row_axis: str, col_axis: str) -> dict[str,
 
 def level_labels_for(rows: list[dict[str, Any]]) -> dict[str, str]:
     """The reader-facing name for every coverage level and noise bed on one page of rows."""
-    seen: set[str] = set()
+    levels: set[str] = set()
+    beds: set[str] = set()
     for row in rows or []:
         for value in (row.get("coverage") or {}).values():
             said = str(value or "").strip()
             if said:
-                seen.add(said)
+                levels.add(said)
         bed = row.get("background_noise")
         if isinstance(bed, str) and bed.strip():
-            seen.add(bed.strip())
-    return {level: level_label(level) for level in sorted(seen)}
+            beds.add(bed.strip())
+    labels = {bed: NOISE_LABELS.get(bed) or level_label(bed) for bed in sorted(beds)}
+    labels.update({level: level_label(level) for level in sorted(levels)})
+    return labels
 
 
 def scenario_row(row: HostedHarnessScenario) -> dict[str, Any]:

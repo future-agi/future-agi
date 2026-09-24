@@ -36,7 +36,6 @@ export const CONSOLE_COPY = {
   attachAccept: ".csv,.tsv,.json,.jsonl,.xlsx,.txt,.md,.pdf",
   workingDot: "Working…",
   frozen: "Environment is still being built",
-  mode: "Builder mode — Auto or Manual",
   stop: "Stop the current turn",
 };
 

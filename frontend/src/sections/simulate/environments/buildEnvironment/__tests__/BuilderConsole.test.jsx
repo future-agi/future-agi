@@ -13,8 +13,8 @@ beforeAll(() => {
 });
 
 afterEach(() => {
-  // The builder mode is module-level; reset so a mode-picker test can't leak
-  // "guided" into the default-Auto expectations of another test.
+  // The builder mode is module-level; reset so no test leaks a non-default
+  // mode into another.
   setBuilderMode("auto");
 });
 
@@ -90,17 +90,12 @@ describe("BuilderConsole", () => {
     expect(screen.getByText("make it harder")).toBeInTheDocument();
   });
 
-  it("renders chips as buttons only when idle and fires onChip", () => {
-    const onChip = vi.fn();
-    const { rerender } = render(
-      <BuilderConsole turns={[]} running={false} chips={["Show tools"]} onChip={onChip} />,
-    );
-    const chip = screen.getByRole("button", { name: "Show tools" });
-    fireEvent.click(chip);
-    expect(onChip).toHaveBeenCalledWith("Show tools");
-
-    rerender(<BuilderConsole turns={[]} running chips={["Show tools"]} onChip={onChip} />);
-    expect(screen.queryByRole("button", { name: "Show tools" })).toBeNull();
+  it("shows no suggestion chips and no builder-mode picker", () => {
+    render(<BuilderConsole turns={[]} running={false} onSend={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: /Auto/ })).toBeNull();
+    expect(screen.queryByText("Summarise what's in this environment")).toBeNull();
+    // The chat still sends the default mode from the bus.
+    expect(getBuilderMode()).toBe("auto");
   });
 
   it("sends the draft on Enter and clears the field", () => {
@@ -173,18 +168,6 @@ describe("BuilderConsole", () => {
     act(() => injectComposerScaffold("Add a dispute case"));
     fireEvent.click(screen.getByRole("button", { name: "Remove Add a dispute case" }));
     expect(screen.queryByText("Add a dispute case")).toBeNull();
-  });
-
-  it("switches the builder mode from the composer picker", () => {
-    render(<BuilderConsole turns={[]} running={false} onSend={vi.fn()} />);
-
-    // Defaults to Auto.
-    expect(screen.getByRole("button", { name: /Auto/ })).toBeInTheDocument();
-    expect(getBuilderMode()).toBe("auto");
-
-    fireEvent.click(screen.getByRole("button", { name: /Auto/ }));
-    fireEvent.click(screen.getByRole("menuitem", { name: /Manual/ }));
-    expect(getBuilderMode()).toBe("guided");
   });
 
   it("renders an ask step inline as the AskUserQuestion card", () => {

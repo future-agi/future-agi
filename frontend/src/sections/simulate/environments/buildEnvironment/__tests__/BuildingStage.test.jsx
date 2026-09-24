@@ -27,9 +27,7 @@ const makeProgress = (over = {}) => ({
   running: false,
   failure: null,
   turns: [],
-  chips: [],
   send: vi.fn(),
-  onChip: vi.fn(),
   ...over,
 });
 

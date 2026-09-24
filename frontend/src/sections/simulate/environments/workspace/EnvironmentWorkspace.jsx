@@ -41,7 +41,7 @@ import WorkspacePanels from "./WorkspacePanels";
 import useWorkspaceTab from "./helpers/useWorkspaceTab";
 import { gapsByTab, counts } from "./helpers/workspaceGaps";
 import { forkEnvironment as buildFork } from "./helpers/forkEnvironment";
-import { CHIPS_BY_TAB, WORKSPACE_COPY } from "./workspace.constants";
+import { WORKSPACE_COPY } from "./workspace.constants";
 
 const EXECUTION_PATTERN = {
   path: `${paths.dashboard.simulate.environments.root}/:envId/runs/:testId/:executionId`,
@@ -392,9 +392,7 @@ export default function EnvironmentWorkspace() {
           <BuilderConsole
             turns={chat.turns}
             running={chat.running}
-            chips={CHIPS_BY_TAB[activeTab] || CHIPS_BY_TAB.overview}
             onSend={chat.send}
-            onChip={chat.send}
             onStop={chat.stop}
             canStop={chat.inFlight}
             frozen={!envLive || chat.frozen}

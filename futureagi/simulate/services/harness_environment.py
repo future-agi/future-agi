@@ -656,15 +656,15 @@ def _end_conditions(
 ) -> dict[str, Any]:
     """What stops a run, from the values that actually stop it.
 
-    Only two limits truncate a run: a scenario's own turn budget and the job's
-    wall-clock ceiling. Everything else is a way the conversation ended, which
+    Only two limits truncate a run: a chat scenario's own turn budget and the job's
+    wall-clock ceiling; a call has no turn budget. Everything else is a way the conversation ended, which
     the platform records per call rather than deciding up front, so the reasons
     travel as the vocabulary a caller may see rather than as thresholds.
     """
     runtime = (job.payload or {}).get("runtime") or {}
     voice = agent_type(job, contract) == AGENT_TYPE_VOICE
     return {
-        "max_turns": _max_turns(scenario_docs),
+        "max_turns": None if voice else _max_turns(scenario_docs),
         "max_duration_seconds": runtime.get("max_duration_seconds"),
         "clock": "real-time" if voice else "stepped",
         "ended_reasons": canonical_ended_reasons(),
