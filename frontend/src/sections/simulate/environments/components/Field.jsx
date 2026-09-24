@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import { Box, Typography, TextField } from "@mui/material";
 
-export default function Field({ label, required, value, onChange, placeholder, helper, error, mono, type, multiline, fullWidth, autoComplete }) {
+export default function Field({ label, required, value, onChange, placeholder, helper, error, mono, type, multiline, fullWidth, autoComplete, inputProps }) {
   // An error message takes over the helper line and turns the input red.
   const caption = error || helper;
   return (
@@ -20,6 +20,7 @@ export default function Field({ label, required, value, onChange, placeholder, h
         placeholder={placeholder}
         type={type}
         autoComplete={autoComplete}
+        inputProps={inputProps}
         multiline={multiline}
         minRows={multiline ? 2 : undefined}
         sx={{
@@ -45,4 +46,5 @@ Field.propTypes = {
   mono: PropTypes.bool, type: PropTypes.string,
   multiline: PropTypes.bool, fullWidth: PropTypes.bool,
   autoComplete: PropTypes.string,
+  inputProps: PropTypes.object,
 };
