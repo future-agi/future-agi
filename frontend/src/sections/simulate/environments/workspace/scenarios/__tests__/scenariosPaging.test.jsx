@@ -77,6 +77,23 @@ describe("ScenariosStep — pagination", () => {
     expect(screen.queryByText(/no scenarios/i)).toBeNull();
   });
 
+  it("debounces the search and resets to the first page in the handler", async () => {
+    renderStep();
+    fireEvent.click(await screen.findByLabelText("Go to page 2"));
+    expect(await screen.findByText(/Showing 26–50 of 60/)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText(/Search scenarios/i), {
+      target: { value: "ride" },
+    });
+
+    // After the debounce, the fetch is for page 1 (reset) with the typed term —
+    // proving the reset happens in the change handler, not a tick-late effect.
+    await waitFor(() => {
+      const last = listScenarios.mock.calls.at(-1);
+      expect(last[1]).toMatchObject({ page: 1, search: "ride" });
+    });
+  });
+
   it("clamps back onto the last real page after a delete empties the current one", async () => {
     // Serve 60 rows (3 pages) until a delete shrinks the suite to 40 (2 pages).
     let rowCount = 60;

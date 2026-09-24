@@ -24,6 +24,7 @@ import { ENV_SHAPE, ENV_STATE_SHAPE } from "./scenarios.shapes";
 import useScenarioPage, { PAGE_SIZE } from "./useScenarioPage";
 import { isScenarioSampleMode, SAMPLE_PAGE_SIZE } from "src/api/simulate-environments/scenariosSampleMode";
 import { useHarnessScenarios } from "src/api/simulate-environments/scenariosHooks";
+import { useDebounce } from "src/hooks/use-debounce";
 import useSelection from "./useSelection";
 import PagedScenarioViews from "./PagedScenarioViews";
 
@@ -104,7 +105,8 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   // Hidden groups — click-to-hide directly on the group header. IDs are
   // dimension-specific, so switching the axis clears the hidden set.
   const [hiddenGroupIds, setHiddenGroupIds] = useState([]);
-  const setGroupBy = (next) => { setGroupByRaw(next); setHiddenGroupIds([]); };
+  const setGroupBy = (next) => { setGroupByRaw(next); setHiddenGroupIds([]); resetView(); };
+  const handleQueryChange = (next) => { setQuery(next); resetView(); };
   const toggleGroupHidden = (id) => setHiddenGroupIds((prev) => (
     prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]
   ));
@@ -117,12 +119,15 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   // params the server answers — and selection is a predicate (useSelection) so
   // "select all N matching" never needs every id loaded.
   const [page, setPage] = useState(0);
+  // Debounce the term that drives the fetch so typing doesn't fire a request
+  // per keystroke; the input itself stays on the immediate `query` state.
+  const debouncedQuery = useDebounce(query, 300);
   // Sample mode (?scnSample) pages the 20-row captured suite in smaller pages so
   // the pager is exercisable; the live default is PAGE_SIZE (25).
   const pageSize = isScenarioSampleMode() ? SAMPLE_PAGE_SIZE : PAGE_SIZE;
   const pageData = useScenarioPage({
     jobId: env?.id,
-    search: query,
+    search: debouncedQuery,
     filters,
     groupBy,
     page,
@@ -140,14 +145,14 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   const suiteQuery = useHarnessScenarios({ jobId: env?.id, page: 0, pageSize: 1 });
   const suiteTotal = suiteQuery.data?.total ?? selected.length;
   const hasScenarios = suiteTotal > 0;
-  // A changed query moves the matching set, invalidating both the page position
-  // and the selection predicate — reset both when it changes.
-  const queryKey = JSON.stringify({ query, filters, groupBy });
-  useEffect(() => {
+  // A change to the search, the filters or the grouping moves the matching set,
+  // so the page position and the selection predicate are reset in each change
+  // handler below (resetView) — not in an effect, which needed an exhaustive-deps
+  // disable and reset a tick late.
+  const resetView = () => {
     setPage(0);
     sel.clearRef.current();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryKey]);
+  };
 
   // Deleting the last rows of the last page shrinks the suite, so the current
   // page can fall past the new last page — the server then 404s that page and
@@ -181,6 +186,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   // [{ field, operator, value }] (Query tab). Flatten both to the
   // { field: [values] } shape the predicate below reads.
   const applyFilters = (result) => {
+    resetView();
     if (!result) { setFilters({}); return; }
     if (Array.isArray(result)) {
       const flat = {};
@@ -199,7 +205,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   // Hiding groups is a page-local visual toggle.
   const hiddenCount = pageData.pageGroups.filter((g) => hiddenGroupIds.includes(g.id)).length;
 
-  const clearFilters = () => { setQuery(""); setFilters({}); setHiddenGroupIds([]); };
+  const clearFilters = () => { setQuery(""); setFilters({}); setHiddenGroupIds([]); resetView(); };
 
   // Surface an amend's receipts: a refusal (a field that is proved, not
   // described) wins the message with its `why`; otherwise the success label.
@@ -275,7 +281,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
       const res = await listScenarios(env?.id, {
         page: p,
         limit: 100,
-        search: query,
+        search: debouncedQuery,
         group_by: "",
         ...filters,
       });
@@ -385,7 +391,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
               Pairs / Forced) are visible on landing without scrolling past the
               list; the chevron unfurls the full breakdown. */}
           <Box sx={{ mb: 2 }}>
-            <CoverageMatrix jobId={env?.id} search={query} filters={filters} />
+            <CoverageMatrix jobId={env?.id} search={debouncedQuery} filters={filters} />
           </Box>
 
           <SectionCard sx={{ mb: 2 }}>
@@ -398,7 +404,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
               <Box aria-hidden={!locked && sel.count > 0 ? true : undefined}>
                 <ScenarioToolbar
                   query={query}
-                  onQueryChange={setQuery}
+                  onQueryChange={handleQueryChange}
                   view={view}
                   onViewChange={setView}
                   groupBy={activeGroupBy}
