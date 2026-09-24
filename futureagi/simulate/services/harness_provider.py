@@ -1548,12 +1548,17 @@ class HostedHarnessProvider:
         }
     )
 
-    def _editing_contract(self) -> dict[str, list[str]]:
+    def _editing_contract(self, spoken: bool = True) -> dict[str, list[str]]:
         """Which fields an amend will take, and which of them cannot be taken without a re-proof."""
+        # A call has no turn budget; a chat has no accent or room behind the caller.
+        behavioural = self._BEHAVIOURAL_FIELDS - (
+            {"max_turns"} if spoken else {"background_noise"}
+        )
+        persona = self._PERSONA_FIELDS - (set() if spoken else {"accent"})
         return {
-            "editable_fields": sorted(self._DESCRIPTIVE_FIELDS | self._BEHAVIOURAL_FIELDS),
-            "persona_fields": sorted(self._PERSONA_FIELDS),
-            "rework_fields": sorted(self._BEHAVIOURAL_FIELDS | self._PERSONA_FIELDS),
+            "editable_fields": sorted(self._DESCRIPTIVE_FIELDS | behavioural),
+            "persona_fields": sorted(persona),
+            "rework_fields": sorted(behavioural | persona),
         }
 
     def list_scenarios(self, request, pk) -> Response:
@@ -1619,10 +1624,9 @@ class HostedHarnessProvider:
         response.data["group_by"] = group_by
         from simulate.services.harness_environment import AGENT_TYPE_VOICE, agent_type
 
-        response.data["fields"] = field_catalogue(
-            offerable, spoken=agent_type(job) == AGENT_TYPE_VOICE
-        )
-        response.data["scenario_editing"] = self._editing_contract()
+        spoken = agent_type(job) == AGENT_TYPE_VOICE
+        response.data["fields"] = field_catalogue(offerable, spoken=spoken)
+        response.data["scenario_editing"] = self._editing_contract(spoken)
         from simulate.services.harness_scenarios import GROUPINGS
 
         response.data["groupings"] = [dict(one) for one in GROUPINGS]

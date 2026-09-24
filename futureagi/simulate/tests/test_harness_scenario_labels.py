@@ -41,3 +41,28 @@ def test_voice_only_fields_are_not_offered_for_a_chat_agent():
     assert {"persona.accent", "background_noise"} <= spoken
     assert not {"persona.accent", "background_noise"} & typed
     assert "use_case" in typed
+
+
+def test_a_call_offers_no_turn_budget_and_a_chat_no_voice_fields():
+    from simulate.services.harness_provider import HostedHarnessProvider
+
+    spoken = HostedHarnessProvider._editing_contract(HostedHarnessProvider, spoken=True)
+    typed = HostedHarnessProvider._editing_contract(HostedHarnessProvider, spoken=False)
+
+    assert "max_turns" not in spoken["editable_fields"]
+    assert "background_noise" in spoken["editable_fields"] and "accent" in spoken["persona_fields"]
+    assert "max_turns" in typed["editable_fields"]
+    assert "background_noise" not in typed["editable_fields"] and "accent" not in typed["persona_fields"]
+
+
+def test_a_call_reports_no_turn_budget_among_its_end_conditions():
+    from types import SimpleNamespace
+
+    from simulate.services.harness_environment import _end_conditions
+
+    docs = [{"max_turns": 5}, {"max_turns": 9}]
+    call = SimpleNamespace(payload={"agent": {"connector": "phone"}, "runtime": {}})
+    chat = SimpleNamespace(payload={"agent": {"connector": "http"}, "runtime": {}})
+
+    assert _end_conditions(call, {}, docs)["max_turns"] is None
+    assert _end_conditions(chat, {}, docs)["max_turns"] == 9
