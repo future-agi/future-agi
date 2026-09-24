@@ -27,7 +27,7 @@ criteria: "You are evaluating how the agent handles the opening of the call, whi
 eval_tags:
 - Agents
 - Conversation
-- Voice
+- Audio
 visible_ui: true
 permissions:
   allow_edit: false

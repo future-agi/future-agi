@@ -6,7 +6,6 @@ criteria: Measures speech recognition accuracy by counting word-level insertions
 eval_tags:
 - NLP Metrics
 - Audio
-- Voice
 visible_ui: true
 permissions:
   allow_edit: false

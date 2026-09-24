@@ -32,7 +32,6 @@ criteria: "You are evaluating whether the agent's language, delivery, and turn-t
 eval_tags:
 - Agents
 - Conversation
-- Voice
 - Audio
 visible_ui: true
 permissions:

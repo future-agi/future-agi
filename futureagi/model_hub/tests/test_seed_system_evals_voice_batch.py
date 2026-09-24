@@ -1,6 +1,9 @@
 """Voice-agent system evals (eval_id 209-218) load through the seeder with a
 well-formed judge contract, and tag additions survive the catalog override.
 
+A voice agent's conversation can arrive as audio or transcript; these evals use
+the existing Audio chip rather than a separate Voice tag.
+
 The seeder replaces a YAML's ``eval_tags`` with the entry in
 ``evaluations/catalog/system_evals.yaml`` whenever the eval name is listed
 there, so a tag added only to the YAML of a catalog-listed eval is silently
@@ -88,11 +91,9 @@ def test_output_contract(evals_by_name, name):
 @pytest.mark.parametrize(
     "name,tag",
     [
-        ("ASR/STT_accuracy", "Voice"),
-        ("TTS_accuracy", "Voice"),
         ("evaluate_function_calling", "Tools"),
         ("customer_agent_objection_handling", "Sales"),
-        ("word_error_rate", "Voice"),
+        ("tool_call_accuracy", "Tools"),
         ("no_misselling", "Compliance"),
         ("lead_qualification_completeness", "Sales"),
     ],

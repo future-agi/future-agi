@@ -22,7 +22,6 @@ eval_tags:
 - Red Teaming
 - Data Leakage
 - Safety
-- Security
 visible_ui: true
 permissions:
   allow_edit: false

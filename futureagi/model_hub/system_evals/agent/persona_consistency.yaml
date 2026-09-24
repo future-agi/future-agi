@@ -31,7 +31,7 @@ criteria: "You are evaluating whether the agent maintains a stable identity, per
 eval_tags:
 - Agents
 - Conversation
-- Voice
+- Audio
 - Chatbot behaviors
 visible_ui: true
 permissions:

@@ -2314,7 +2314,7 @@ ASR/STT_accuracy:
   output: score
   required_keys: [audio, generated_transcript]
   description: Evaluates speech-to-text accuracy
-  tags: [Audio, Transcription, Voice]
+  tags: [Audio, Transcription]
   rule_prompt: |
     You are evaluating the accuracy of an automatic speech recognition transcription against the source audio.
 
@@ -2353,7 +2353,7 @@ TTS_accuracy:
   output: score
   required_keys: [text, generated_audio]
   description: Evaluates text-to-speech accuracy
-  tags: [Audio, TTS, Voice]
+  tags: [Audio, TTS]
   rule_prompt: |
     You are evaluating whether text-to-speech audio output accurately conveys the intended text message.
 

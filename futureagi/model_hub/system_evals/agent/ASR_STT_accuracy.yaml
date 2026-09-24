@@ -18,7 +18,6 @@ criteria: "You are evaluating the accuracy of an automatic speech recognition tr
 eval_tags:
 - Audio
 - NLP Metrics
-- Voice
 visible_ui: true
 permissions:
   allow_edit: false

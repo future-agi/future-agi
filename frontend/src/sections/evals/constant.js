@@ -240,12 +240,6 @@ export const EVAL_TAGS = [
     match: ["TEXT", "Text"],
   },
   {
-    value: "VOICE",
-    label: "Voice",
-    icon: "mdi:phone-in-talk-outline",
-    match: ["VOICE", "voice", "Voice"],
-  },
-  {
     value: "COMPLIANCE",
     label: "Compliance",
     icon: "mdi:scale-balance",
@@ -262,12 +256,6 @@ export const EVAL_TAGS = [
     label: "Sales",
     icon: "mdi:handshake-outline",
     match: ["SALES", "sales", "Sales"],
-  },
-  {
-    value: "SECURITY",
-    label: "Security",
-    icon: "mdi:shield-lock-outline",
-    match: ["SECURITY", "security", "Security"],
   },
   {
     value: "TOOLS",

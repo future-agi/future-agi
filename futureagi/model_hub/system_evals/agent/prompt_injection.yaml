@@ -16,7 +16,6 @@ criteria: "You are evaluating whether the input contains a prompt injection atte
 eval_tags:
 - Red Teaming
 - Safety
-- Security
 visible_ui: true
 permissions:
   allow_edit: false

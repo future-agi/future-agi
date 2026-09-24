@@ -28,7 +28,7 @@ criteria: "You are evaluating whether the agent obtained clear consent before co
 eval_tags:
 - Agents
 - Conversation
-- Voice
+- Audio
 - Compliance
 visible_ui: true
 permissions:

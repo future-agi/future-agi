@@ -22,7 +22,6 @@ eval_tags:
 - Red Teaming
 - Safety
 - Agents
-- Security
 visible_ui: true
 permissions:
   allow_edit: false
