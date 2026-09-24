@@ -57,6 +57,9 @@ export default function CoverageMatrix({ jobId, search, filters, defaultExpanded
   // so preferring `data` here would snap the dropdown back mid-fetch.)
   const activeRowAxis = rowAxis ?? data?.row_axis ?? "";
   const activeColAxis = colAxis ?? data?.col_axis ?? "";
+  // Axis and level names are served with the grid; humanize only covers a missing one.
+  const axisLabel = (axis) => data?.axis_labels?.[axis] ?? humanize(axis);
+  const levelLabel = (level) => data?.level_labels?.[level] ?? humanize(level);
 
   // A count lookup for the chosen pair, and the busiest cell for the ramp.
   const { cellAt, maxCell } = useMemo(() => {
@@ -208,7 +211,7 @@ export default function CoverageMatrix({ jobId, search, filters, defaultExpanded
                   <TableRow key={a.axis} hover>
                     <TableCell>
                       <Typography sx={{ typography: "s2", color: "text.primary" }}>
-                        {humanize(a.axis)}
+                        {axisLabel(a.axis)}
                       </Typography>
                     </TableCell>
                     <TableCell align="right">
@@ -224,9 +227,9 @@ export default function CoverageMatrix({ jobId, search, filters, defaultExpanded
                       <Typography
                         sx={{ typography: "s3", color: "text.subtitle" }}
                         noWrap
-                        title={levelNames.map((lvl) => `${humanize(lvl)} (${a.counts[lvl]})`).join(" · ")}
+                        title={levelNames.map((lvl) => `${levelLabel(lvl)} (${a.counts[lvl]})`).join(" · ")}
                       >
-                        {levelNames.map((lvl) => `${humanize(lvl)} · ${a.counts[lvl]}`).join("   ")}
+                        {levelNames.map((lvl) => `${levelLabel(lvl)} · ${a.counts[lvl]}`).join("   ")}
                       </Typography>
                     </TableCell>
                   </TableRow>
@@ -284,11 +287,11 @@ export default function CoverageMatrix({ jobId, search, filters, defaultExpanded
           <Box sx={{ px: 2.5, py: 1.5 }}>
             <Stack direction="row" alignItems="center" spacing={1.5} sx={{ mb: 1.5 }}>
               <Typography sx={{ typography: "s2", fontWeight: 700, color: "text.primary" }}>
-                Pairwise · {humanize(activeRowAxis)} × {humanize(activeColAxis)}
+                Pairwise · {axisLabel(activeRowAxis)} × {axisLabel(activeColAxis)}
               </Typography>
               <Box sx={{ flex: 1 }} />
-              <AxisPick label="Rows" value={activeRowAxis} onChange={setRowAxis} options={axes} exclude={activeColAxis} />
-              <AxisPick label="Columns" value={activeColAxis} onChange={setColAxis} options={axes} exclude={activeRowAxis} />
+              <AxisPick label="Rows" value={activeRowAxis} onChange={setRowAxis} options={axes} exclude={activeColAxis} labelOf={axisLabel} />
+              <AxisPick label="Columns" value={activeColAxis} onChange={setColAxis} options={axes} exclude={activeRowAxis} labelOf={axisLabel} />
             </Stack>
             <Box sx={{ overflowX: "auto" }}>
               <Box
@@ -308,7 +311,7 @@ export default function CoverageMatrix({ jobId, search, filters, defaultExpanded
                       letterSpacing: 0.3, fontSize: 10.5,
                     }}
                   >
-                    {humanize(c)}
+                    {levelLabel(c)}
                   </Typography>
                 ))}
 
@@ -318,7 +321,7 @@ export default function CoverageMatrix({ jobId, search, filters, defaultExpanded
                       typography: "s2", fontWeight: 600, alignSelf: "center",
                       pr: 1.5, fontSize: 12.5,
                     }}>
-                      {humanize(r)}
+                      {levelLabel(r)}
                     </Typography>
                     {columns.map((c) => {
                       const n = cellAt(r, c);
@@ -329,8 +332,8 @@ export default function CoverageMatrix({ jobId, search, filters, defaultExpanded
                         <Tooltip
                           key={c} arrow
                           title={n
-                            ? `${n} scenario${n === 1 ? "" : "s"} — ${humanize(r)} × ${humanize(c)}`
-                            : `Empty — ${humanize(r)} × ${humanize(c)}`}
+                            ? `${n} scenario${n === 1 ? "" : "s"} — ${levelLabel(r)} × ${levelLabel(c)}`
+                            : `Empty — ${levelLabel(r)} × ${levelLabel(c)}`}
                         >
                           <Box
                             sx={{
@@ -417,7 +420,7 @@ function toneColor(ratio) {
   return GREEN;
 }
 
-function AxisPick({ label, value, onChange, options, exclude }) {
+function AxisPick({ label, value, onChange, options, exclude, labelOf = humanize }) {
   return (
     <TextField
       select size="small" label={label} value={value || ""}
@@ -425,7 +428,7 @@ function AxisPick({ label, value, onChange, options, exclude }) {
       sx={{ minWidth: 140, "& .MuiInputBase-input": { typography: "s2", py: 0.5, fontSize: 12 } }}
     >
       {options.filter((a) => a !== exclude).map((a) => (
-        <MenuItem key={a} value={a} sx={{ typography: "s2" }}>{humanize(a)}</MenuItem>
+        <MenuItem key={a} value={a} sx={{ typography: "s2" }}>{labelOf(a)}</MenuItem>
       ))}
     </TextField>
   );
@@ -436,4 +439,5 @@ AxisPick.propTypes = {
   onChange: PropTypes.func,
   options: PropTypes.arrayOf(PropTypes.string),
   exclude: PropTypes.string,
+  labelOf: PropTypes.func,
 };
