@@ -191,10 +191,12 @@ describe("WorkspaceHeader", () => {
 
     await user.click(screen.getByRole("button", { name: "More actions" }));
     expect(screen.queryByRole("menuitem", { name: /Delete environment/ })).toBeNull();
-    expect(screen.getByRole("menuitem", { name: /Fork environment/ })).toBeInTheDocument();
+    // Fork is temporarily commented out in ForkMenu.
+    expect(screen.queryByRole("menuitem", { name: /Fork environment/ })).toBeNull();
   });
 
-  it("forks from the overflow menu when unlocked", async () => {
+  // Fork is temporarily commented out in ForkMenu — re-enable this with it.
+  it.skip("forks from the overflow menu when unlocked", async () => {
     const user = userEvent.setup();
     const onFork = vi.fn();
     render(withRouter(<WorkspaceHeader {...baseProps} onFork={onFork} locked={false} />));

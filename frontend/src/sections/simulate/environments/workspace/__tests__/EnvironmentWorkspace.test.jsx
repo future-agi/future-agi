@@ -330,7 +330,8 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(screen.getByRole("button", { name: /Fork to edit/ })).toBeInTheDocument();
   });
 
-  it("forks an unlocked env into a new id and navigates to it", async () => {
+  // Fork is temporarily commented out in ForkMenu — re-enable this with it.
+  it.skip("forks an unlocked env into a new id and navigates to it", async () => {
     seedClientEnv(TEMPLATE, {
       ...emptyEnvState(),
       agent: { name: "Support agent" },
