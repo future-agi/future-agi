@@ -9,7 +9,8 @@ describe("PanelHostedPlatform", () => {
     expect(screen.getByText("Chat")).toBeInTheDocument();
     expect(screen.getByText("Computer use")).toBeInTheDocument();
     expect(screen.getByText("Robotics")).toBeInTheDocument();
-    expect(screen.getAllByLabelText("Coming soon")).toHaveLength(3);
+    // Three agent types, plus LiveKit in the voice roster.
+    expect(screen.getAllByLabelText("Coming soon")).toHaveLength(4);
   });
 
   it("keeps Voice selected when a coming-soon type is clicked", () => {
@@ -30,6 +31,18 @@ describe("PanelHostedPlatform", () => {
     expect(screen.getByText("Bland.ai")).toBeInTheDocument();
     expect(screen.getByText("ElevenLabs")).toBeInTheDocument();
     expect(screen.getByText("LiveKit")).toBeInTheDocument();
+  });
+
+  it("cannot select LiveKit — the backend rejects connect_only for it today", () => {
+    render(<PanelHostedPlatform onBuild={vi.fn()} />);
+
+    const livekit = screen.getByText("LiveKit").closest("[role='button']");
+    expect(livekit).toHaveAttribute("aria-disabled", "true");
+
+    fireEvent.click(screen.getByText("LiveKit"));
+    // Still on Vapi — its assistant-id placeholder, not LiveKit's agent name.
+    expect(screen.getByPlaceholderText("asst_9f2c…")).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("returns-line-agent")).toBeNull();
   });
 
   it("switches to the chat roster and clears the id/key fields", () => {

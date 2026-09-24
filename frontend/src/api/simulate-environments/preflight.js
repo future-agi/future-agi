@@ -1,7 +1,7 @@
 // The real preflight read: maps a redacted Phase-1 source draft to a
 // HarnessPreflight body (T5), fires the one POST the backend exposes, and
 // derives the ReadAudit view model (T6). A draft that cannot be preflighted
-// for real resolves synchronously to a mock-only audit — no request.
+// for real resolves synchronously without a request.
 //
 // react-query is v5: a disabled query reports `isPending: true` forever, so the
 // pending surface keys off `isFetching` (true only while a request is in
@@ -13,12 +13,24 @@ import { preflightHarnessJob } from "src/api/harness/harness";
 import { SIMULATE_ENVIRONMENTS_KEY } from "./environments";
 import { draftToPreflightPayload } from "./preflightPayload";
 import { preflightToReadAudit } from "./preflightReadAudit";
+import { getPendingCredentialValues } from "./credentialValues";
 
 export const preflightQueryKey = (payload) => [
   ...SIMULATE_ENVIRONMENTS_KEY,
   "preflight",
   payload,
 ];
+
+// `credential_values` is write-only and plaintext: it drives the backend's live
+// `credentials_valid` / `provider_target` probes and is stripped from anything
+// echoed back. It is attached here, inside the request, rather than in the
+// payload the query key is built from — a key is serialised into the cache.
+function withCredentialValues(payload) {
+  const values = getPendingCredentialValues();
+  return Object.keys(values).length
+    ? { ...payload, credential_values: values }
+    : payload;
+}
 
 export function usePreflight(draft, { retriedSections = [] } = {}) {
   const { payload, skipped } = useMemo(
@@ -28,7 +40,7 @@ export function usePreflight(draft, { retriedSections = [] } = {}) {
 
   const query = useQuery({
     queryKey: preflightQueryKey(payload ?? { skipped }),
-    queryFn: () => preflightHarnessJob(payload),
+    queryFn: () => preflightHarnessJob(withCredentialValues(payload)),
     enabled: !!draft && !!payload,
     retry: false,
     staleTime: Infinity,

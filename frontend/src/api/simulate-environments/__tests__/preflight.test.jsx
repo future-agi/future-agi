@@ -6,8 +6,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 vi.mock("src/api/harness/harness", () => ({ preflightHarnessJob: vi.fn() }));
 
 const { preflightHarnessJob } = await import("src/api/harness/harness");
-const { usePreflight } = await import("../preflight");
+const { usePreflight, preflightQueryKey } = await import("../preflight");
 const { draftToPreflightPayload } = await import("../preflightPayload");
+const { setPendingCredentialValues, clearPendingCredentialValues } = await import(
+  "../credentialValues"
+);
 
 const repoDraft = { kind: "repo", value: "acme/support-bot", ref: "main" };
 const uploadDraft = { kind: "upload", entry: "src/agent.py", files: [] };
@@ -39,6 +42,7 @@ const makeWrapper = () => {
 beforeEach(() => {
   preflightHarnessJob.mockReset();
   preflightHarnessJob.mockResolvedValue(happyResponse());
+  clearPendingCredentialValues();
 });
 
 describe("usePreflight", () => {
@@ -119,6 +123,28 @@ describe("usePreflight", () => {
     expect(result.current.audit.status).toBe("hardfail");
     expect(result.current.audit.hardfailReason).toBe("boom");
     expect(preflightHarnessJob).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends the staged credential values so the live probe actually runs", async () => {
+    setPendingCredentialValues({ VAPI_API_KEY: "sk-secret" });
+    const { Wrapper } = makeWrapper();
+    renderHook(() => usePreflight(repoDraft), { wrapper: Wrapper });
+
+    await waitFor(() => expect(preflightHarnessJob).toHaveBeenCalledTimes(1));
+
+    const sent = preflightHarnessJob.mock.calls[0][0];
+    expect(sent.credential_values).toEqual({ VAPI_API_KEY: "sk-secret" });
+    // The plaintext must not be part of the cache key.
+    expect(JSON.stringify(preflightQueryKey(draftToPreflightPayload(repoDraft).payload)))
+      .not.toContain("sk-secret");
+  });
+
+  it("omits credential_values entirely when none were staged", async () => {
+    const { Wrapper } = makeWrapper();
+    renderHook(() => usePreflight(repoDraft), { wrapper: Wrapper });
+
+    await waitFor(() => expect(preflightHarnessJob).toHaveBeenCalledTimes(1));
+    expect(preflightHarnessJob.mock.calls[0][0]).not.toHaveProperty("credential_values");
   });
 
   it("draft=null → no call, audit null", () => {

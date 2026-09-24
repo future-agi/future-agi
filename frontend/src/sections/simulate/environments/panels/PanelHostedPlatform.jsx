@@ -83,6 +83,7 @@ export default function PanelHostedPlatform({ onBuild }) {
                 /* Wordmark logos already spell the name — don't repeat it. */
                 label={PLATFORM_LOGOS[p.id]?.type === "wordmark" ? null : p.name}
                 on={platform === p.id}
+                comingSoon={p.comingSoon}
                 onClick={() => set("platform")(p.id)}
               />
             ))}

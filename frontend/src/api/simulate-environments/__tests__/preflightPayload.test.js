@@ -39,6 +39,13 @@ describe("PREFLIGHT_CONNECTOR / PROVIDER_TO_CONNECTOR", () => {
 });
 
 describe("draftToPreflightPayload — repo", () => {
+  it("carries the exchanged secret refs from a pasted .env", () => {
+    const { payload } = draftToPreflightPayload(
+      repoDraft({ secret_refs: { OPENAI_API_KEY: "sref-3" } }),
+    );
+    expect(payload.agent.secret_refs).toStrictEqual({ OPENAI_API_KEY: "sref-3" });
+  });
+
   it("maps the canonical owner/repo draft to the §5.1 example", () => {
     const { payload, skipped } = draftToPreflightPayload(repoDraft());
     expect(skipped).toBeUndefined();
@@ -141,6 +148,13 @@ describe("draftToPreflightPayload — platform", () => {
     expect(payload.metadata.name).toBe("asst_1");
   });
 
+  it("carries the exchanged secret refs so the backend can resolve the key", () => {
+    const { payload } = draftToPreflightPayload(
+      platformDraft({ secret_refs: { VAPI_API_KEY: "sref-1" } }),
+    );
+    expect(payload.agent.secret_refs).toStrictEqual({ VAPI_API_KEY: "sref-1" });
+  });
+
   it("maps retell and livekit to agent_id", () => {
     const retell = draftToPreflightPayload(platformDraft({ provider: "retell" })).payload;
     expect(retell.agent.connector).toBe("retell");
@@ -169,6 +183,17 @@ describe("draftToPreflightPayload — upload", () => {
     expect(skipped).toBeUndefined();
     expect(payload.source).toStrictEqual({ kind: "archive", archive_artifact_id: "art_1" });
     expect(payload.agent).toStrictEqual({ connector: "auto", config: {}, secret_refs: {} });
+  });
+
+  it("carries the exchanged secret refs for an uploaded archive too", () => {
+    const { payload } = draftToPreflightPayload({
+      kind: "upload",
+      archive_artifact_id: "art_1",
+      entry: "agent.py",
+      files: [{ name: "agent.py" }],
+      secret_refs: { OPENAI_API_KEY: "sref-2" },
+    });
+    expect(payload.agent.secret_refs).toStrictEqual({ OPENAI_API_KEY: "sref-2" });
   });
 
   it("skips an upload draft without an archive id", () => {

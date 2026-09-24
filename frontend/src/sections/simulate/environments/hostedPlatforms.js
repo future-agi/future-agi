@@ -53,6 +53,10 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       idLabel: "Agent name",
       idPlaceholder: "returns-line-agent",
       keyLabel: "LiveKit API key",
+      // `connect_only` is accepted for Vapi, Retell and phone only, so a LiveKit
+      // draft is rejected by HarnessAgentSerializer every time. Surfaced, but
+      // not selectable until the backend takes it.
+      comingSoon: true,
     },
   ],
   [AGENT_TYPES.CHAT]: [
