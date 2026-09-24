@@ -29,10 +29,13 @@ const { useEnvironmentsStore, resetEnvironmentsStore } = await import(
 
 const PASS = {
   ready_to_submit: true,
-  state: "connected",
-  checks: [
-    { id: "provider_target", label: "Provider target", status: "passed", detail: "vapi reachable", missing: [], fix: null },
-  ],
+  credentials: {
+    scanned_files: 0,
+    detected_connectors: ["vapi"],
+    requirements: [{ environment_name: "VAPI_API_KEY", purpose: "target_provider", required: true, status: "configured" }],
+    credential_choices: [],
+    probe: [{ provider: "vapi_target", label: "Vapi agent", aliases: ["VAPI_API_KEY"], ok: true, message: "Agent found" }],
+  },
 };
 
 const render = (ui) => {

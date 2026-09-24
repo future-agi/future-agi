@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { enqueueSnackbar } from "notistack";
 import { Box, Button, Stack } from "@mui/material";
 import {
   useNavigate,
@@ -7,8 +8,9 @@ import {
   Outlet,
 } from "react-router-dom";
 
+import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { paths } from "src/routes/paths";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useEnvironment,
   canRunHeader,
@@ -17,7 +19,9 @@ import {
 } from "src/api/simulate-environments/environment";
 import { useBuildProgress } from "src/api/simulate-environments/buildProgress";
 import { useWorkspaceChat } from "src/api/simulate-environments/workspaceChat";
-import { runSelectionTarget } from "src/api/simulate-environments/runs";
+import { harnessIdempotencyKey } from "src/api/harness/harness";
+import { runHarnessEnvironment } from "src/api/simulate-environments/harnessEnvironments";
+import { runSimulationTarget } from "src/api/simulate-environments/runs";
 
 import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
 import { useEnvState } from "../store/envState";
@@ -91,6 +95,54 @@ export default function EnvironmentWorkspace() {
   const chat = useWorkspaceChat(env, { source });
   const registerFork = useEnvironmentsStore((s) => s.forkEnvironment);
   const selection = useScenarioSelection();
+  const queryClient = useQueryClient();
+  const pendingSubmission = useRef(null);
+  const runMutation = useMutation({
+    mutationFn: ({ ids, trials }) => {
+      const scenarioIds = ids === undefined
+        ? (envState?.scenarios || []).map((scenario) => scenario.id).filter(Boolean)
+        : ids;
+      const selection = JSON.stringify([env.id, scenarioIds, trials || 1]);
+      if (pendingSubmission.current?.selection !== selection) {
+        pendingSubmission.current = {
+          selection,
+          key: harnessIdempotencyKey(),
+        };
+      }
+      return runHarnessEnvironment(
+        env.id,
+        scenarioIds,
+        trials || 1,
+        pendingSubmission.current.key,
+      );
+    },
+    onSuccess: (run) => {
+      pendingSubmission.current = null;
+      queryClient.invalidateQueries({
+        queryKey: ["run-test-executions", run.run_test_id],
+      });
+      navigate(
+        paths.dashboard.simulate.environments.execution(
+          env.id,
+          run.run_test_id,
+          run.test_execution_id,
+        ),
+      );
+    },
+    onError: (error) => {
+      if (error?.statusCode >= 400 && error.statusCode < 500) {
+        pendingSubmission.current = null;
+      }
+      enqueueSnackbar(errorMessage(error), { variant: "error" });
+    },
+  });
+  const startRun = (ids, trials) => {
+    if (source !== "harness") {
+      navigate(runSimulationTarget(env));
+      return;
+    }
+    runMutation.mutate({ ids, trials });
+  };
 
   // While the job is still deriving, this page IS the build experience: the same
   // milestone poll the /build page used, now keyed off the resolved env id. The
@@ -213,7 +265,7 @@ export default function EnvironmentWorkspace() {
             `source === "harness"` test WorkspacePanels/EvalsStep use) rides
             along the same context route, so RunDetail can gate the real API
             picker on it. */}
-        <Outlet context={{ env, envState, backed }} />
+        <Outlet context={{ env, envState, backed, onStartRun: startRun }} />
       </Box>
     );
   }
@@ -233,10 +285,6 @@ export default function EnvironmentWorkspace() {
 
   const runnable = canRunHeader(source, env, canRun);
 
-  // Start a run scoped to a scenario selection (or all, when ids is empty) ×
-  // trials. The target rides ?only=…&trials=k; the product run page doesn't
-  // honour those yet (see runSelectionTarget's honest-gap note).
-  const startRun = (ids, trials) => navigate(runSelectionTarget(env, ids, trials));
 
   // A scenario selection on the Scenarios tab owns the primary Run — the header
   // yields its Run/Repeats while one is active ("one primary at a time").
@@ -311,7 +359,7 @@ export default function EnvironmentWorkspace() {
         env={displayEnv}
         envState={envState}
         patch={patch}
-        canRun={runnable}
+        canRun={runnable && !runMutation.isPending}
         runBlockedReason={blockedReason(envState)}
         locked={locked}
         backed={source === "harness"}
@@ -382,7 +430,7 @@ export default function EnvironmentWorkspace() {
             overviewWorld={overviewWorld}
             graphData={graphData}
             onStartRun={startRun}
-            canRun={runnable}
+            canRun={runnable && !runMutation.isPending}
           />
         </Box>
       </Box>

@@ -1,20 +1,21 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "src/utils/test-utils";
 
-// The credential-file upload now posts to the real /secret-files/ endpoint; mock
-// it so the panel's confirmation flow can be exercised without a network call.
 vi.mock("src/api/harness/harness", () => ({
-  uploadHarnessSecretFile: vi.fn(async () => ({
-    secret_ref: "harness_environment_file://ref-1",
-    environment_name: "GOOGLE_APPLICATION_CREDENTIALS_JSON",
-    size: 8,
-  })),
+  uploadHarnessSecretFile: vi.fn(),
 }));
 
 const { uploadHarnessSecretFile } = await import("src/api/harness/harness");
+const GOOGLE_FILE = JSON.stringify({
+  type: "service_account",
+  project_id: "test-project",
+  client_email: "svc@test-project.iam.gserviceaccount.com",
+  private_key: "test-key",
+});
+
 const { default: EnvironmentValues } = await import("../panels/EnvironmentValues");
 
 const renderWithQuery = (ui) => {
@@ -42,6 +43,15 @@ function Harness({ envText = "", onEnvText = vi.fn() }) {
 Harness.propTypes = { envText: PropTypes.string, onEnvText: PropTypes.func };
 
 describe("EnvironmentValues", () => {
+  beforeEach(() => {
+    uploadHarnessSecretFile.mockReset();
+    uploadHarnessSecretFile.mockResolvedValue({
+      secret_ref: { manager: "platform-vault", key: "ref-1", version: "1", purpose: "target_provider" },
+      environment_name: "GOOGLE_APPLICATION_CREDENTIALS_JSON",
+      size: GOOGLE_FILE.length,
+    });
+  });
+
   it("is collapsed by default", () => {
     renderWithQuery(<Harness />);
     expect(screen.queryByRole("textbox")).toBeNull();
@@ -57,7 +67,7 @@ describe("EnvironmentValues", () => {
 
     // Uploading without expanding still confirms, and never opens the body.
     fireEvent.change(container.querySelector('input[type="file"]'), {
-      target: { files: [new File(['{"k":"v"}'], "creds.json", { type: "application/json" })] },
+      target: { files: [new File([GOOGLE_FILE], "creds.json", { type: "application/json" })] },
     });
     await waitFor(() =>
       expect(screen.getByText(/creds\.json uploaded/)).toBeInTheDocument(),
@@ -89,7 +99,7 @@ describe("EnvironmentValues", () => {
 
     const input = container.querySelector('input[type="file"]');
     fireEvent.change(input, {
-      target: { files: [new File(['{"k":"v"}'], "creds.json", { type: "application/json" })] },
+      target: { files: [new File([GOOGLE_FILE], "creds.json", { type: "application/json" })] },
     });
 
     await waitFor(() =>
@@ -126,12 +136,25 @@ describe("EnvironmentValues", () => {
     fireEvent.click(screen.getByRole("button", { name: /Environment values \(optional\)/ }));
 
     fireEvent.change(container.querySelector('input[type="file"]'), {
-      target: { files: [new File(["x"], "creds.json", { type: "application/json" })] },
+      target: { files: [new File([GOOGLE_FILE], "creds.json", { type: "application/json" })] },
     });
     const row = await screen.findByText(/creds\.json uploaded/);
     expect(row).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Close/ }));
     await waitFor(() => expect(screen.queryByText(/creds\.json uploaded/)).toBeNull());
+  });
+
+  it("shows the hosted rejection next to the upload and does not claim success", async () => {
+    uploadHarnessSecretFile.mockRejectedValueOnce({
+      response: { data: { detail: "Google credential file must contain valid UTF-8 JSON" } },
+    });
+    const { container } = renderWithQuery(<Harness />);
+    fireEvent.change(container.querySelector('input[type="file"]'), {
+      target: { files: [new File(["bad-json"], "creds.json", { type: "application/json" })] },
+    });
+
+    expect(await screen.findByText("Google credential file must contain valid UTF-8 JSON")).toBeInTheDocument();
+    expect(screen.queryByText(/creds\.json uploaded/)).toBeNull();
   });
 });

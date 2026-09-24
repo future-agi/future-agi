@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1031,
+  endpointCount: 1033,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -27816,6 +27816,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-environments/{id}/evaluations/tool-call/": {
+      put: {
+        operationId:
+          "simulate_api_harness-environments_evaluations_set_tool_call_evaluation",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessEnvironmentToolCallEvaluation",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessEnvironmentDetail",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/": {
       delete: {
         operationId: "simulate_api_harness-environments_remove_evaluation",
@@ -27836,12 +27856,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
-          $ref: "#/definitions/HarnessEnvironmentRun",
+          $ref: "#/definitions/HarnessRunCreate",
         },
         queryParameters: {},
         responses: {
           202: {
-            $ref: "#/definitions/HarnessEnvironmentRunResponse",
+            $ref: "#/definitions/HarnessRunCreateResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -28083,6 +28103,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           201: {
             $ref: "#/definitions/HarnessJobExtend",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-jobs/{id}/runs/": {
+      post: {
+        operationId: "simulate_api_harness-jobs_runs",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessRunCreate",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/HarnessRunCreateResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -44255,6 +44294,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           maxLength: 255,
         },
+        enable_tool_evaluation: {
+          title: "Enable tool evaluation",
+          type: "boolean",
+          default: false,
+        },
       },
     },
     ALKSimulateRecordingUploadResponse: {
@@ -50687,6 +50731,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           readOnly: true,
         },
+        source_scenario_key: {
+          title: "Source scenario key",
+          type: "string",
+          readOnly: true,
+        },
+        trial_index: {
+          title: "Trial index",
+          type: "string",
+          readOnly: true,
+        },
+        harness_outcome_status: {
+          title: "Harness outcome status",
+          type: "string",
+          readOnly: true,
+        },
         scenario_graph: {
           title: "Scenario graph",
           type: "string",
@@ -51262,6 +51321,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         scenario_id: {
           title: "Scenario id",
+          type: "string",
+          readOnly: true,
+        },
+        source_scenario_key: {
+          title: "Source scenario key",
+          type: "string",
+          readOnly: true,
+        },
+        trial_index: {
+          title: "Trial index",
+          type: "string",
+          readOnly: true,
+        },
+        harness_outcome_status: {
+          title: "Harness outcome status",
           type: "string",
           readOnly: true,
         },
@@ -60856,10 +60930,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    HarnessEnvironmentRun: {
-      type: "object",
-      properties: {},
-    },
     HarnessEnvironmentRunEvaluationQueued: {
       required: [
         "queued",
@@ -60894,34 +60964,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    HarnessEnvironmentRunResponse: {
-      required: ["environment_id", "job_id", "run_id", "state", "stage"],
+    HarnessEnvironmentToolCallEvaluation: {
+      required: ["enable_tool_evaluation"],
       type: "object",
       properties: {
-        environment_id: {
-          title: "Environment id",
-          type: "string",
-          format: "uuid",
-        },
-        job_id: {
-          title: "Job id",
-          type: "string",
-          format: "uuid",
-        },
-        run_id: {
-          title: "Run id",
-          type: "string",
-          format: "uuid",
-        },
-        state: {
-          title: "State",
-          type: "string",
-          minLength: 1,
-        },
-        stage: {
-          title: "Stage",
-          type: "string",
-          minLength: 1,
+        enable_tool_evaluation: {
+          title: "Enable tool evaluation",
+          type: "boolean",
         },
       },
     },
@@ -61450,6 +61499,96 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Digest",
           type: "string",
           pattern: "^sha256:[0-9a-f]{64}$",
+          minLength: 1,
+        },
+      },
+    },
+    HarnessRunCreate: {
+      required: ["scenario_ids"],
+      type: "object",
+      properties: {
+        scenario_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 1000,
+        },
+        trials: {
+          title: "Trials",
+          type: "integer",
+          default: 1,
+          maximum: 20,
+          minimum: 1,
+        },
+      },
+    },
+    HarnessRunCreateResponse: {
+      required: [
+        "environment_id",
+        "job_id",
+        "run_id",
+        "run_test_id",
+        "test_execution_id",
+        "scenario_count",
+        "trials",
+        "total_calls",
+        "state",
+        "stage",
+      ],
+      type: "object",
+      properties: {
+        environment_id: {
+          title: "Environment id",
+          type: "string",
+          format: "uuid",
+        },
+        job_id: {
+          title: "Job id",
+          type: "string",
+          format: "uuid",
+        },
+        run_id: {
+          title: "Run id",
+          type: "string",
+          format: "uuid",
+        },
+        run_test_id: {
+          title: "Run test id",
+          type: "string",
+          format: "uuid",
+        },
+        test_execution_id: {
+          title: "Test execution id",
+          type: "string",
+          format: "uuid",
+        },
+        scenario_count: {
+          title: "Scenario count",
+          type: "integer",
+          minimum: 1,
+        },
+        trials: {
+          title: "Trials",
+          type: "integer",
+          maximum: 20,
+          minimum: 1,
+        },
+        total_calls: {
+          title: "Total calls",
+          type: "integer",
+          minimum: 1,
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+        stage: {
+          title: "Stage",
+          type: "string",
           minLength: 1,
         },
       },
@@ -70932,6 +71071,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         completed_calls: {
           title: "Completed calls",
+          description:
+            "Calls with status completed, counted like every other KPI here: soft-deleted calls included. The run-level add's 202 counts live calls only, so the two can differ for a run with a deleted call (TH-8057).",
           type: "integer",
           readOnly: true,
         },
@@ -88877,6 +89018,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "artifacts",
         "scenario_count",
         "seed",
+        "enable_tool_evaluation",
       ],
       type: "object",
       properties: {
@@ -88933,6 +89075,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Seed",
           type: "integer",
           "x-nullable": true,
+        },
+        enable_tool_evaluation: {
+          title: "Enable tool evaluation",
+          type: "boolean",
         },
       },
     },
@@ -89176,10 +89322,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         config: {
           title: "Config",
           type: "object",
-          additionalProperties: {
-            type: "string",
-            "x-nullable": true,
-          },
           default: {},
         },
         secret_refs: {
@@ -95369,6 +95511,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "persona",
         "persona_details",
         "sub_goals",
+        "harness_outcome_status",
+        "source_scenario_key",
+        "trial_index",
         "outcome",
         "execution_status",
         "modality",
@@ -95436,6 +95581,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "string",
             minLength: 1,
           },
+        },
+        harness_outcome_status: {
+          title: "Harness outcome status",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        source_scenario_key: {
+          title: "Source scenario key",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        trial_index: {
+          title: "Trial index",
+          type: "integer",
+          "x-nullable": true,
         },
         outcome: {
           title: "Outcome",
@@ -95579,6 +95741,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
           "x-nullable": true,
+        },
+        selected_scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          default: [],
+        },
+        trials: {
+          title: "Trials",
+          type: "integer",
+          default: 1,
+          minimum: 1,
         },
         agent_type: {
           title: "Agent type",
@@ -95937,6 +96113,69 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           readOnly: true,
           minLength: 1,
+        },
+        scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+        selected_scenarios: {
+          title: "Selected scenarios",
+          type: "integer",
+          readOnly: true,
+        },
+        trials: {
+          title: "Trials",
+          type: "integer",
+          readOnly: true,
+        },
+        total_calls: {
+          title: "Total calls",
+          type: "integer",
+          readOnly: true,
+        },
+        completed_calls: {
+          title: "Completed calls",
+          type: "integer",
+          readOnly: true,
+        },
+        failed_calls: {
+          title: "Failed calls",
+          type: "integer",
+          readOnly: true,
+        },
+        pending_calls: {
+          title: "Pending calls",
+          type: "integer",
+          readOnly: true,
+        },
+        completed_at: {
+          title: "Completed at",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        outcome_passed: {
+          title: "Outcome passed",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        outcome_failed: {
+          title: "Outcome failed",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        outcome_skipped: {
+          title: "Outcome skipped",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
         },
       },
     },

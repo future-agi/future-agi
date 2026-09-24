@@ -2,13 +2,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import PropTypes from "prop-types";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, useLocation } from "react-router-dom";
+import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { paths } from "src/routes/paths";
 
-// The run-level data hooks are mocked so the render tests assert the wiring
-// against fixed view-models rather than the network. `runSimulationTarget` is
-// kept real so the Run-again navigation target is genuine.
 const useRunDetail = vi.fn();
 const useOptimizationRuns = vi.fn();
 const useOptimizerAnalysis = vi.fn();
@@ -89,7 +85,9 @@ const IDENTITY = {
   agentVersion: "v2",
   startedAt: "2026-09-10T09:00:00.000Z",
   finishedAt: null,
-  status: "failed",
+  status: "passed",
+  scenarioIds: ["scenario-a", "scenario-b"],
+  trials: 3,
 };
 
 const STATS = {
@@ -138,23 +136,30 @@ const OPT_RUN = {
   startedAt: "2026-09-16T09:00:00.000Z",
 };
 
-function LocationProbe() {
-  const { pathname } = useLocation();
-  return <div data-testid="location">{pathname}</div>;
-}
-
-// `backed` defaults to true: every test in this file except the one below
+// `backed` defaults to true: every test in this file except the store-only one
 // exercises the real (backed) run-detail route, which is what this whole
-// suite predates and assumes.
-const renderDetail = ({ backed = true, envState, client: passedClient } = {}) => {
+// suite predates and assumes. `client` lets a test share a spy-wrapped client,
+// and any remaining props (e.g. `onStartRun`) pass straight through to RunDetail.
+const renderDetail = ({
+  backed = true,
+  envState = { evals: [] },
+  client: passedClient,
+  ...props
+} = {}) => {
   const client =
     passedClient ??
     new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <LocationProbe />
-        <RunDetail env={ENV} envState={envState} backed={backed} testId="rt1" executionId="ex1" />
+        <RunDetail
+          env={ENV}
+          envState={envState}
+          backed={backed}
+          testId="rt1"
+          executionId="ex1"
+          {...props}
+        />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -202,6 +207,17 @@ describe("RunDetail", () => {
     });
     renderDetail();
     expect(screen.queryByText("Failed")).toBeNull();
+  });
+
+  it("shows terminal execution failure despite partial call success", () => {
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, status: "failed" },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+
+    expect(screen.getByText("Failed")).toBeInTheDocument();
   });
 
   it("opens the real eval picker from the header action, pointed at this run", async () => {
@@ -280,20 +296,19 @@ describe("RunDetail", () => {
     });
   });
 
-  it("navigates to the run-simulation target on Run again", async () => {
+  it("submits the same immutable selection and trials on Run again", async () => {
     useRunDetail.mockReturnValue({
       identity: IDENTITY,
       stats: STATS,
       isLoading: false,
     });
     const user = userEvent.setup();
-    renderDetail();
+    const onStartRun = vi.fn();
+    renderDetail({ onStartRun });
 
     await user.click(screen.getByRole("button", { name: "Run again" }));
-    // ENV carries no platform bridge → the product Run-Simulation entry.
-    expect(screen.getByTestId("location")).toHaveTextContent(
-      paths.dashboard.simulate.test,
-    );
+
+    expect(onStartRun).toHaveBeenCalledWith(["scenario-a", "scenario-b"], 3);
   });
 
   it("does not invent a critical-failure classification", () => {

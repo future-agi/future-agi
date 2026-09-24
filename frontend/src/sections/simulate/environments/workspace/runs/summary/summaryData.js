@@ -46,6 +46,8 @@ export function buildSummaryRow(run, scores) {
     status: run?.status,
     at: run?.finishedAt || run?.startedAt || null,
     tasks: total,
+    scenarioCount: run?.scenarioCount ?? null,
+    trials: run?.trials ?? 1,
     passRate: total ? Math.round((passed / total) * 100) : 0,
     durationS: run?.durationS ?? null,
     scores: scores || {},

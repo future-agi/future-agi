@@ -23,15 +23,6 @@ class HarnessEnvironmentListQuerySerializer(serializers.Serializer):
     limit = serializers.IntegerField(required=False, min_value=1, max_value=100)
 
 
-class HarnessEnvironmentRunSerializer(serializers.Serializer):
-    """The body of a run request, which carries nothing.
-
-    Starting a run reuses the saved contract and scenario suite, so there is
-    nothing for a caller to choose. The serializer exists so the endpoint
-    declares that in its schema: a mutation with no declared body reads as an
-    undocumented one, and the contract coverage gate counts it as debt.
-    """
-
 
 class HarnessEnvironmentRenameSerializer(serializers.Serializer):
     """The only field an environment exposes for editing.
@@ -86,19 +77,6 @@ class HarnessEnvironmentListResponseSerializer(serializers.Serializer):
     results = HarnessEnvironmentSerializer(many=True)
 
 
-class HarnessEnvironmentRunResponseSerializer(serializers.Serializer):
-    """What starting a simulation returns.
-
-    The trigger is accepted, not completed: execution is a separate concern and
-    the caller polls the job for progress.
-    """
-
-    environment_id = serializers.UUIDField()
-    job_id = serializers.UUIDField()
-    run_id = serializers.UUIDField()
-    state = serializers.CharField()
-    stage = serializers.CharField()
-
 
 class HarnessEnvironmentRunLinkSerializer(serializers.Serializer):
     run_test_id = serializers.UUIDField(allow_null=True)
@@ -133,18 +111,76 @@ class HarnessEnvironmentAddEvaluationSerializer(serializers.Serializer):
     )
 
 
-class HarnessEnvironmentOfferedEvalSerializer(serializers.Serializer):
-    """One eval this environment could still be graded by.
+class HarnessEnvironmentRunEvaluationQueuedSerializer(serializers.Serializer):
+    """What adding an eval from inside a run reports back.
 
-    ``required_keys`` travels so a picker can say what an eval reads; every
-    entry offered here already resolves all of them, so it is description
+    Not the environment detail -- the client refetches that itself.
+    ``completed_calls`` is the finished calls the endpoint looked at, and the
+    four others always partition it exactly.
+    """
+
+    queued = serializers.IntegerField(
+        help_text=(
+            "Stamped and scheduled for dispatch -- not yet dispatched. A "
+            "call whose stamp committed but whose grading job then failed "
+            "to queue is still counted here, not subtracted."
+        )
+    )
+    skipped_existing = serializers.IntegerField()
+    skipped_in_flight = serializers.IntegerField()
+    skipped_pending = serializers.IntegerField()
+    completed_calls = serializers.IntegerField()
+
+
+class HarnessEnvironmentToolCallEvaluationSerializer(serializers.Serializer):
+    """The tool-call judge's switch, sent as a whole state rather than a patch.
+
+    Required, not defaulted: a body that forgets the key is a client bug, and
+    silently reading it as ``false`` would turn "I meant to switch this on"
+    into "I switched it off".
+    """
+
+    enable_tool_evaluation = serializers.BooleanField()
+
+
+class HarnessEnvironmentEvalInputSerializer(serializers.Serializer):
+    """Which stored piece of a call fills one of an eval's required keys.
+
+    ``label`` is the only text a picker shows for a source: the frontend never
+    computes which source fills a key.
+    """
+
+    key = serializers.CharField()
+    source = serializers.ChoiceField(
+        choices=(
+            "voice_recording",
+            "transcript",
+            "agent_prompt",
+            "scenario_columns.situation.value",
+        )
+    )
+    label = serializers.CharField()
+
+
+class HarnessEnvironmentOfferedEvalSerializer(serializers.Serializer):
+    """One eval in the one list format the harness, the picker and the detail share.
+
+    ``required_keys`` is the template's stored order and ``inputs`` is sorted
+    by key; they are not aligned — pair them by ``key``. Every entry offered
+    here already resolves all of its keys, so ``inputs`` is a description
     rather than a condition the caller has to check.
     """
 
     name = serializers.CharField()
     description = serializers.CharField(allow_blank=True)
+    source = serializers.ChoiceField(choices=("system", "custom"))
+    tags = serializers.ListField(child=serializers.CharField())
     required_keys = serializers.ListField(child=serializers.CharField())
+    agent_type = serializers.ChoiceField(choices=(AGENT_TYPE_VOICE, AGENT_TYPE_CHAT))
     modality = serializers.ChoiceField(choices=("voice", "text", "any"))
+    credits_per_run = serializers.FloatField()
+    charges_judge_tokens = serializers.BooleanField()
+    inputs = HarnessEnvironmentEvalInputSerializer(many=True)
 
 
 class HarnessEnvironmentAvailableEvalsSerializer(serializers.Serializer):
@@ -313,10 +349,16 @@ class HarnessEnvironmentScenarioSerializer(serializers.Serializer):
     call_execution_id = serializers.UUIDField(allow_null=True)
 
 
-class HarnessEnvironmentSelectedEvalSerializer(serializers.Serializer):
+class HarnessEnvironmentSelectedEvalSerializer(HarnessEnvironmentOfferedEvalSerializer):
+    """One eval this environment is graded by: the same entry plus its id.
+
+    Only the configs that carry a mapping are listed; the rows ingestion
+    creates for the harness's own result columns are bound to the run but were
+    never selected. ``runnable`` is therefore always true here and is kept
+    because the frontend already reads it.
+    """
+
     id = serializers.UUIDField()
-    name = serializers.CharField(allow_blank=True)
-    description = serializers.CharField(allow_blank=True)
     runnable = serializers.BooleanField()
 
 
@@ -365,7 +407,14 @@ class HarnessEnvironmentAgentSettingsSerializer(serializers.Serializer):
 
 
 class HarnessEnvironmentSettingsSerializer(serializers.Serializer):
-    """The request the environment was built from. Read-only; secrets are names only."""
+    """How this environment runs: the request it was built from, plus one switch.
+
+    Everything but ``enable_tool_evaluation`` is a record of how the
+    environment was built and cannot be edited; secrets are names only.
+    ``enable_tool_evaluation`` is the tool-call judge's switch, written by
+    ``PUT evaluations/tool-call/``. Never null: an environment with no run
+    test reads ``false``.
+    """
 
     schema_version = serializers.CharField(allow_null=True)
     source = serializers.DictField()
@@ -375,6 +424,7 @@ class HarnessEnvironmentSettingsSerializer(serializers.Serializer):
     artifacts = serializers.DictField(allow_null=True)
     scenario_count = serializers.IntegerField(allow_null=True)
     seed = serializers.IntegerField(allow_null=True)
+    enable_tool_evaluation = serializers.BooleanField()
 
 
 class HarnessEnvironmentDetailSerializer(serializers.Serializer):

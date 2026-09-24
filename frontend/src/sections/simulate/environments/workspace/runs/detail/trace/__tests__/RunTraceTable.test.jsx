@@ -9,6 +9,7 @@ vi.mock("src/api/simulate-environments/runDetail", () => ({
 }));
 
 const { default: RunTraceTable } = await import("../RunTraceTable");
+const { default: TraceGroupHeaderRow } = await import("../TraceGroupHeaderRow");
 
 const TASKS = [
   {
@@ -117,6 +118,48 @@ const renderTable = (props = {}) =>
   render(<RunTraceTable executionId="ex1" onOpenCall={vi.fn()} {...props} />);
 
 describe("RunTraceTable", () => {
+  it("renders full-group aggregates independently of the visible page", () => {
+    render(
+      <table>
+        <tbody>
+          <TraceGroupHeaderRow
+            group={{
+              label: "Refunds",
+              rows: [TASKS[0]],
+              count: 8,
+              measured: 8,
+              passed: 6,
+              agg: {
+                csat: 7.5,
+                turns: 4.5,
+                latency: 250,
+                tokens: 1200,
+                evals: { "eval-1": { scored: 8, scoreSum: 6 } },
+              },
+            }}
+            collapsed={false}
+            onToggle={vi.fn()}
+            show={() => true}
+            showEvals
+            evals={[{ id: "eval-1" }]}
+            selected={new Set()}
+          />
+        </tbody>
+      </table>,
+    );
+    for (const value of [
+      "7.5",
+      "4.5",
+      "250ms",
+      "1,200",
+      "75%",
+      "Avg · 8 scored",
+      "Total",
+    ]) {
+      expect(screen.getByText(value)).toBeInTheDocument();
+    }
+  });
+
   beforeEach(() => {
     useRunCalls.mockImplementation((_executionId, opts = {}) => {
       const status = opts.filters?.status?.[0];
@@ -191,6 +234,50 @@ describe("RunTraceTable", () => {
       "ex1",
       expect.objectContaining({ filters: { status: ["error"] } }),
     );
+  });
+
+  it("exposes later server pages for runs with more than 100 trials", async () => {
+    const user = userEvent.setup();
+    const finalTrial = {
+      ...TASKS[0],
+      id: "trial-200",
+      goal: "Scenario 200",
+      scenario: "Scenario 200 · Trial 20",
+    };
+    useRunCalls.mockImplementation((_executionId, opts = {}) => {
+      const tasks = opts.page === 2 ? [finalTrial] : TASKS;
+      return {
+        tasks,
+        columns: COLUMNS,
+        groups: groupsFor(tasks, opts.groupBy),
+        facets: FACETS,
+        count: 200,
+        totalPages: 2,
+        isLoading: false,
+      };
+    });
+    renderTable();
+
+    await user.click(screen.getByRole("button", { name: "Go to page 2" }));
+
+    expect(screen.getByText("Scenario 200")).toBeInTheDocument();
+    expect(useRunCalls).toHaveBeenLastCalledWith(
+      "ex1",
+      expect.objectContaining({ page: 2, limit: 50 }),
+    );
+  });
+
+  it("applies column picker choices to the rendered table", async () => {
+    const user = userEvent.setup();
+    renderTable();
+
+    expect(
+      screen.getByRole("columnheader", { name: "Latency" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Columns/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Latency" }));
+
+    expect(screen.queryByRole("columnheader", { name: "Latency" })).toBeNull();
   });
 
   it("re-buckets the rows when the group-by axis changes to Status", async () => {

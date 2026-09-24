@@ -3,7 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { extractKpis } from "src/sections/test-detail/common";
 import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
-import { runColor } from "src/sections/simulate/environments/workspace/runs/runs.constants";
+import {
+  ACTIVE_EXECUTION_STATUSES,
+  runColor,
+} from "src/sections/simulate/environments/workspace/runs/runs.constants";
 import useKpis from "src/hooks/useKpis";
 
 /**
@@ -26,7 +29,7 @@ import useKpis from "src/hooks/useKpis";
  * @property {?string} startedAt    ISO start time.
  * @property {?string} finishedAt   ISO finish time — GAP: the executions row
  *                                   carries no end time, so this is null.
- * @property {"passed"|"failed"|"running"} status  Run-level outcome.
+ * @property {"passed"|"failed"|"running"|"cancelled"} status  Run-level outcome.
  */
 
 /**
@@ -78,6 +81,8 @@ export function buildRunIdentity(row, envName = null) {
     startedAt: row.startedAt ?? null,
     finishedAt: row.finishedAt ?? null,
     status: row.status,
+    scenarioIds: row.scenarioIds ?? [],
+    trials: row.trials ?? 1,
   };
 }
 
@@ -91,17 +96,21 @@ export function buildRunIdentity(row, envName = null) {
  * @returns {RunStats}
  */
 export function buildRunStats(kpis, perf, row) {
-  const total = kpis?.total_calls ?? row?.total ?? 0;
-  const failed = kpis?.failed_calls ?? row?.failed ?? 0;
-  const passed = Math.max(total - failed, 0);
+  const total = row?.hasOutcomes
+    ? row.total
+    : kpis?.total_calls ?? row?.total ?? 0;
+  const failed = row?.hasOutcomes
+    ? row.failed
+    : kpis?.failed_calls ?? row?.failed ?? 0;
+  const passed = row?.hasOutcomes ? row.passed : Math.max(total - failed, 0);
 
   const perfRate = perf?.test_run_performance_metrics?.pass_rate;
   const passRate =
-    typeof perfRate === "number"
-      ? Math.round(perfRate)
-      : total
+    row?.hasOutcomes || typeof perfRate !== "number"
+      ? total
         ? Math.round((passed / total) * 100)
-        : 0;
+        : 0
+      : Math.round(perfRate);
 
   // `completed_calls` is its own KPI field for both modalities — not the chat
   // branch's `connected_calls` (voice's `connected_voice_calls` uses a
@@ -138,8 +147,8 @@ export function buildRunStats(kpis, perf, row) {
     tokens: null,
     cost: null,
     scores: { ...evalMetrics },
-    measured: total,
-    unmeasured: 0,
+    measured: row?.hasOutcomes ? passed + failed : total,
+    unmeasured: row?.hasOutcomes ? Math.max(total - passed - failed, 0) : 0,
     flaky: 0,
     dropped: 0,
     failedCritical: 0,
@@ -163,6 +172,10 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
         })
         .then((res) => res.data),
     enabled: !!executionId,
+    refetchInterval: (query) =>
+      ACTIVE_EXECUTION_STATUSES.has(query.state.data?.execution?.status)
+        ? 3000
+        : false,
     staleTime: 1000 * 60 * 5,
   });
   // `completed` is its own KPI field, cached under the key `useRunsSummary`
@@ -183,13 +196,19 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
       name: envName ?? null,
       agentVersion: execution.agent_version ?? null,
       startedAt: execution.started_at ?? null,
-      finishedAt: execution.completed_at ?? null,
-      status:
-        execution.status === "running" || execution.status === "pending"
-          ? "running"
-          : summary?.outcomes?.passed > 0
-            ? "passed"
-            : "failed",
+      status: ACTIVE_EXECUTION_STATUSES.has(execution.status)
+        ? "running"
+        : execution.status === "failed"
+          ? "failed"
+          : execution.status === "cancelled"
+            ? "cancelled"
+            : summary?.outcomes?.passed > 0
+              ? "passed"
+              : "failed",
+      scenarioIds: execution.selected_scenario_keys?.length
+        ? execution.selected_scenario_keys
+        : undefined,
+      trials: execution.trials ?? 1,
     };
   }, [execution, envName, summary]);
   const stats = useMemo(
@@ -238,6 +257,8 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
  * @property {string} scenario     Scenario / task name.
  * @property {?string} persona     Simulated-user persona label.
  * @property {"passed"|"failed"|"flaky"|"error"|"unmeasured"} status
+ * @property {?string} harnessOutcomeStatus Authoritative sealed trial verdict.
+ * @property {?string} executionStatus Transport lifecycle status; kept separate.
  * @property {boolean} critical    Whether the scenario is a release blocker.
  * @property {?number} csat        Per-call CSAT, on the product's 0–10 scale
  *                                 (`overall_score`); null when absent.
@@ -319,8 +340,32 @@ function normalizeRole(role) {
 const displayJson = (value) =>
   typeof value === "string" ? value : JSON.stringify(value);
 
+const finiteNumber = (value) => {
+  if (typeof value !== "number" && typeof value !== "string") return null;
+  if (typeof value === "string" && !value.trim()) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+
+// Explicit relative offsets can legitimately be zero. Harness `at` is an epoch
+// timestamp, with zero meaning unknown, so it must not be read as an offset.
+function relativeTime(row, end = false) {
+  // The serializer uses null (and stored end_time_ms=0) for unknown ends.
+  if (end && row.end_time_seconds === null) return null;
+  const seconds = end
+    ? [row.end_time_seconds, row.completed_at_seconds]
+    : [row.start_time_seconds, row.started_at_seconds];
+  for (const value of seconds) {
+    const number = finiteNumber(value);
+    if (number != null) return number;
+  }
+  const milliseconds = finiteNumber(end ? row.end_time_ms : row.start_time_ms);
+  if (end && milliseconds <= 0) return null;
+  return milliseconds == null ? null : milliseconds / 1000;
+}
+
 export function functionCallTranscriptRows(calls = []) {
-  return calls.map((call, index) => {
+  return (Array.isArray(calls) ? calls : []).map((call, index) => {
     const duration = call.duration_ms ?? call.durationMs;
     const heading = `Function call · ${call.name || call.function?.name || "tool"}${duration != null ? ` · ${duration}ms` : ""}`;
     const args = call.arguments ?? call.function?.arguments;
@@ -335,10 +380,29 @@ export function functionCallTranscriptRows(calls = []) {
       ]
         .filter(Boolean)
         .join("\n"),
-      start_time_seconds: call.start_time_seconds ?? call.started_at_seconds,
-      end_time_seconds: call.end_time_seconds ?? call.completed_at_seconds,
+      start_time_seconds: relativeTime(call),
+      end_time_seconds: relativeTime(call, true),
       tool_calls: [call],
     };
+  });
+}
+
+/** One stable timeline shared by the chat and voice drawers. */
+export function callTranscript(raw) {
+  const transcript = Array.isArray(raw?.transcript) ? raw.transcript : [];
+  return [
+    ...transcript.map((turn) => ({
+      ...turn,
+      start_time_seconds: relativeTime(turn),
+      end_time_seconds: relativeTime(turn, true),
+    })),
+    ...functionCallTranscriptRows(raw?.function_calls),
+  ].sort((a, b) => {
+    const startA = a.start_time_seconds;
+    const startB = b.start_time_seconds;
+    if (startA == null) return startB == null ? 0 : 1;
+    if (startB == null) return -1;
+    return startA - startB;
   });
 }
 
@@ -393,9 +457,7 @@ export function mapCallDetail(raw) {
   if (!raw) return null;
 
   const isChat = raw.simulation_call_type === "text";
-  const transcript = Array.isArray(raw.transcript) ? raw.transcript : [];
-  const functionCallRows = functionCallTranscriptRows(raw.function_calls);
-  const turns = [...transcript, ...functionCallRows].map((t) => ({
+  const turns = callTranscript(raw).map((t) => ({
     role: normalizeRole(t.speaker_role ?? t.role),
     text: t.content ?? "",
     at: t.start_time_seconds ?? null,

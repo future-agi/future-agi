@@ -16,7 +16,7 @@ const axios = axiosMod.default;
 const { endpoints } = axiosMod;
 const { paths } = await import("src/routes/paths");
 const { MOCK_RUNS } = await import("../_fixtures/runs");
-const { useEnvironmentRuns, executionToRun, runSimulationTarget, runSelectionTarget } =
+const { useEnvironmentRuns, executionToRun, runSimulationTarget } =
   await import("../runs");
 
 // Raw executions payload (the product's `results[]` shape) — capitalised
@@ -125,6 +125,53 @@ describe("executionToRun", () => {
   it("leaves durationS null when the execution row has no duration", () => {
     const run = executionToRun({ id: "ex-7", status: "Completed", total_chats: 4, success_rate: 100 });
     expect(run.durationS).toBeNull();
+  });
+
+  it("prefers authoritative trial-aware counts and preserves the Run manifest", () => {
+    const run = executionToRun({
+      id: "ex-trials",
+      status: "Running",
+      selected_scenarios: 2,
+      trials: 3,
+      total_calls: 6,
+      completed_calls: 2,
+      failed_calls: 1,
+      pending_calls: 3,
+      scenario_keys: ["scenario-a", "scenario-b"],
+    });
+
+    expect(run).toMatchObject({
+      total: 6,
+      passed: 2,
+      failed: 1,
+      pending: 3,
+      scenarioCount: 2,
+      trials: 3,
+      scenarioIds: ["scenario-a", "scenario-b"],
+      status: "running",
+    });
+  });
+
+  it("uses scenario verdicts rather than successful transport calls", () => {
+    const run = executionToRun({
+      id: "ex-outcomes",
+      status: "Completed",
+      total_calls: 6,
+      completed_calls: 6,
+      failed_calls: 0,
+      outcome_passed: 3,
+      outcome_failed: 2,
+      outcome_skipped: 1,
+    });
+
+    expect(run).toMatchObject({
+      total: 6,
+      passed: 3,
+      failed: 3,
+      skipped: 1,
+      pending: 0,
+      status: "failed",
+    });
   });
 });
 
@@ -244,32 +291,3 @@ describe("runSimulationTarget", () => {
   });
 });
 
-describe("runSelectionTarget", () => {
-  const base = paths.dashboard.simulate.test;
-
-  it("returns the plain run target when there is no subset and no repeats", () => {
-    expect(runSelectionTarget({}, [], 1)).toBe(base);
-    expect(runSelectionTarget({}, undefined, undefined)).toBe(base);
-  });
-
-  it("appends the selected ids as ?only=<comma-joined>", () => {
-    expect(runSelectionTarget({}, ["a", "b"], 1)).toBe(`${base}?only=a,b`);
-  });
-
-  it("appends ?trials only when k > 1, joining with the ids", () => {
-    expect(runSelectionTarget({}, [], 3)).toBe(`${base}?trials=3`);
-    expect(runSelectionTarget({}, ["a"], 5)).toBe(`${base}?only=a&trials=5`);
-  });
-
-  it("clamps trials to 1..20 (so an out-of-range k never leaks through)", () => {
-    expect(runSelectionTarget({}, [], 999)).toBe(`${base}?trials=20`);
-    expect(runSelectionTarget({}, [], 0)).toBe(base);
-  });
-
-  it("uses & when the base already carries a query string (bridge ids present)", () => {
-    const env = { platform: { runTestId: "rt1", testExecutionId: "ex1" } };
-    const detail = paths.dashboard.simulate.testCallDetails("rt1", "ex1");
-    const target = runSelectionTarget(env, ["a"], 2);
-    expect(target).toBe(`${detail}${detail.includes("?") ? "&" : "?"}only=a&trials=2`);
-  });
-});

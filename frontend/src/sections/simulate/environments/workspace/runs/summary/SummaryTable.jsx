@@ -31,6 +31,9 @@ export default function SummaryTable({ rows, evals, onOpenRun }) {
               </CustomTooltip>
             </TableCell>
             <TableCell>Run</TableCell>
+            <TableCell align="right">Scenarios</TableCell>
+            <TableCell align="right">Trials</TableCell>
+            <TableCell align="right">Simulations</TableCell>
             <TableCell align="right">Pass</TableCell>
             <TableCell align="right">Duration</TableCell>
             <TableCell align="right">Tokens<ColumnDummyTag /></TableCell>
@@ -107,6 +110,9 @@ function SummaryRow({ row, evals, onOpenRun }) {
           </Box>
         </Stack>
       </TableCell>
+      <NumCell value={row.scenarioCount ?? DASH} />
+      <NumCell value={row.trials ?? 1} />
+      <NumCell value={row.tasks} />
 
       <NumCell value={`${row.passRate}%`} bold />
       <NumCell value={row.durationS != null ? formatDuration(row.durationS) : DASH} />

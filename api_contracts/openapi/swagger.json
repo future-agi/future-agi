@@ -50321,6 +50321,49 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/evaluations/tool-call/": {
+            "put": {
+                "operationId": "simulate_api_harness-environments_evaluations_set_tool_call_evaluation",
+                "description": "Turn the tool-call judge on or off for this environment. Returns the full environment detail. Turning it on is refused for a hosted voice environment with no agent version yet.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentToolCallEvaluation"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentDetail"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/": {
             "delete": {
                 "operationId": "simulate_api_harness-environments_remove_evaluation",
@@ -50360,15 +50403,14 @@
         "/simulate/api/harness-environments/{id}/run/": {
             "post": {
                 "operationId": "simulate_api_harness-environments_run",
-                "summary": "Start a simulation on an existing environment.",
-                "description": "This reuses the saved contract and scenario suite rather than authoring\na new one, which is what makes a second run comparable to the first.",
+                "description": "Create one new Run for the selected scenarios and trial count.",
                 "parameters": [
                     {
                         "name": "data",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/HarnessEnvironmentRun"
+                            "$ref": "#/definitions/HarnessRunCreate"
                         }
                     }
                 ],
@@ -50376,7 +50418,7 @@
                     "202": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/HarnessEnvironmentRunResponse"
+                            "$ref": "#/definitions/HarnessRunCreateResponse"
                         }
                     },
                     "default": {
@@ -50906,6 +50948,50 @@
                     "simulate"
                 ],
                 "x-runtime-request-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-jobs/{id}/runs/": {
+            "post": {
+                "operationId": "simulate_api_harness-jobs_runs",
+                "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessRunCreate"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessRunCreateResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -70126,7 +70212,8 @@
         "/usage/admin/invoice/preview/": {
             "post": {
                 "operationId": "usage_admin_invoice_preview_create",
-                "description": "Preview invoice for an org+period (no side effects).",
+                "summary": "Preview invoice for an org+period.",
+                "description": "Creates no invoice and deducts no credits, but does backfill missing\n``UsageSummary`` rows for the usage period. Open to staff so the admin's\nread-only Generate Invoice page can show what would be billed.",
                 "parameters": [
                     {
                         "name": "data",
@@ -119651,6 +119738,11 @@
                     "title": "Agent name",
                     "type": "string",
                     "maxLength": 255
+                },
+                "enable_tool_evaluation": {
+                    "title": "Enable tool evaluation",
+                    "type": "boolean",
+                    "default": false
                 }
             }
         },
@@ -120782,6 +120874,36 @@
                 }
             }
         },
+        "HarnessEnvironmentEvalInput": {
+            "required": [
+                "key",
+                "source",
+                "label"
+            ],
+            "type": "object",
+            "properties": {
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "source": {
+                    "title": "Source",
+                    "type": "string",
+                    "enum": [
+                        "voice_recording",
+                        "transcript",
+                        "agent_prompt",
+                        "scenario_columns.situation.value"
+                    ]
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
         "HarnessEnvironmentSelectedEval": {
             "required": [
                 "name",
@@ -121015,7 +121137,8 @@
                 "security",
                 "artifacts",
                 "scenario_count",
-                "seed"
+                "seed",
+                "enable_tool_evaluation"
             ],
             "type": "object",
             "properties": {
@@ -121072,6 +121195,10 @@
                     "title": "Seed",
                     "type": "integer",
                     "x-nullable": true
+                },
+                "enable_tool_evaluation": {
+                    "title": "Enable tool evaluation",
+                    "type": "boolean"
                 }
             }
         },
@@ -121236,15 +121363,52 @@
                 }
             }
         },
-        "HarnessEnvironmentRun": {
+        "HarnessEnvironmentToolCallEvaluation": {
+            "required": [
+                "enable_tool_evaluation"
+            ],
             "type": "object",
-            "properties": {}
+            "properties": {
+                "enable_tool_evaluation": {
+                    "title": "Enable tool evaluation",
+                    "type": "boolean"
+                }
+            }
         },
-        "HarnessEnvironmentRunResponse": {
+        "HarnessRunCreate": {
+            "required": [
+                "scenario_ids"
+            ],
+            "type": "object",
+            "properties": {
+                "scenario_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    },
+                    "maxItems": 1000
+                },
+                "trials": {
+                    "title": "Trials",
+                    "type": "integer",
+                    "default": 1,
+                    "maximum": 20,
+                    "minimum": 1
+                }
+            }
+        },
+        "HarnessRunCreateResponse": {
             "required": [
                 "environment_id",
                 "job_id",
                 "run_id",
+                "run_test_id",
+                "test_execution_id",
+                "scenario_count",
+                "trials",
+                "total_calls",
                 "state",
                 "stage"
             ],
@@ -121265,6 +121429,32 @@
                     "type": "string",
                     "format": "uuid"
                 },
+                "run_test_id": {
+                    "title": "Run test id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "test_execution_id": {
+                    "title": "Test execution id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "scenario_count": {
+                    "title": "Scenario count",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "trials": {
+                    "title": "Trials",
+                    "type": "integer",
+                    "maximum": 20,
+                    "minimum": 1
+                },
+                "total_calls": {
+                    "title": "Total calls",
+                    "type": "integer",
+                    "minimum": 1
+                },
                 "state": {
                     "title": "State",
                     "type": "string",
@@ -121274,6 +121464,39 @@
                     "title": "Stage",
                     "type": "string",
                     "minLength": 1
+                }
+            }
+        },
+        "HarnessEnvironmentRunEvaluationQueued": {
+            "required": [
+                "queued",
+                "skipped_existing",
+                "skipped_in_flight",
+                "skipped_pending",
+                "completed_calls"
+            ],
+            "type": "object",
+            "properties": {
+                "queued": {
+                    "title": "Queued",
+                    "description": "Stamped and scheduled for dispatch -- not yet dispatched. A call whose stamp committed but whose grading job then failed to queue is still counted here, not subtracted.",
+                    "type": "integer"
+                },
+                "skipped_existing": {
+                    "title": "Skipped existing",
+                    "type": "integer"
+                },
+                "skipped_in_flight": {
+                    "title": "Skipped in flight",
+                    "type": "integer"
+                },
+                "skipped_pending": {
+                    "title": "Skipped pending",
+                    "type": "integer"
+                },
+                "completed_calls": {
+                    "title": "Completed calls",
+                    "type": "integer"
                 }
             }
         },
@@ -122136,10 +122359,6 @@
                 "config": {
                     "title": "Config",
                     "type": "object",
-                    "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
-                    },
                     "default": {}
                 },
                 "secret_refs": {
@@ -126156,6 +126375,21 @@
                     "type": "string",
                     "readOnly": true
                 },
+                "source_scenario_key": {
+                    "title": "Source scenario key",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "trial_index": {
+                    "title": "Trial index",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "harness_outcome_status": {
+                    "title": "Harness outcome status",
+                    "type": "string",
+                    "readOnly": true
+                },
                 "scenario_graph": {
                     "title": "Scenario graph",
                     "type": "string",
@@ -128711,6 +128945,69 @@
                     "type": "string",
                     "readOnly": true,
                     "minLength": 1
+                },
+                "scenario_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "readOnly": true
+                },
+                "selected_scenarios": {
+                    "title": "Selected scenarios",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "trials": {
+                    "title": "Trials",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "total_calls": {
+                    "title": "Total calls",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "completed_calls": {
+                    "title": "Completed calls",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "failed_calls": {
+                    "title": "Failed calls",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "pending_calls": {
+                    "title": "Pending calls",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "completed_at": {
+                    "title": "Completed at",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "outcome_passed": {
+                    "title": "Outcome passed",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "outcome_failed": {
+                    "title": "Outcome failed",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
+                },
+                "outcome_skipped": {
+                    "title": "Outcome skipped",
+                    "type": "integer",
+                    "readOnly": true,
+                    "x-nullable": true
                 }
             }
         },
@@ -130645,6 +130942,7 @@
                 },
                 "completed_calls": {
                     "title": "Completed calls",
+                    "description": "Calls with status completed, counted like every other KPI here: soft-deleted calls included. The run-level add's 202 counts live calls only, so the two can differ for a run with a deleted call (TH-8057).",
                     "type": "integer",
                     "readOnly": true
                 },
@@ -131442,6 +131740,21 @@
                 },
                 "scenario_id": {
                     "title": "Scenario id",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "source_scenario_key": {
+                    "title": "Source scenario key",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "trial_index": {
+                    "title": "Trial index",
+                    "type": "string",
+                    "readOnly": true
+                },
+                "harness_outcome_status": {
+                    "title": "Harness outcome status",
                     "type": "string",
                     "readOnly": true
                 },
@@ -133303,6 +133616,20 @@
                     "minLength": 1,
                     "x-nullable": true
                 },
+                "selected_scenario_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    },
+                    "default": []
+                },
+                "trials": {
+                    "title": "Trials",
+                    "type": "integer",
+                    "default": 1,
+                    "minimum": 1
+                },
                 "agent_type": {
                     "title": "Agent type",
                     "type": "string",
@@ -133325,6 +133652,9 @@
                 "persona",
                 "persona_details",
                 "sub_goals",
+                "harness_outcome_status",
+                "source_scenario_key",
+                "trial_index",
                 "outcome",
                 "execution_status",
                 "modality",
@@ -133392,6 +133722,23 @@
                         "type": "string",
                         "minLength": 1
                     }
+                },
+                "harness_outcome_status": {
+                    "title": "Harness outcome status",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "source_scenario_key": {
+                    "title": "Source scenario key",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "trial_index": {
+                    "title": "Trial index",
+                    "type": "integer",
+                    "x-nullable": true
                 },
                 "outcome": {
                     "title": "Outcome",
@@ -151510,69 +151857,6 @@
                         "oss",
                         "enterprise"
                     ]
-                }
-            }
-        },
-        "HarnessEnvironmentEvalInput": {
-            "required": [
-                "key",
-                "source",
-                "label"
-            ],
-            "type": "object",
-            "properties": {
-                "key": {
-                    "title": "Key",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "source": {
-                    "title": "Source",
-                    "type": "string",
-                    "enum": [
-                        "voice_recording",
-                        "transcript",
-                        "agent_prompt",
-                        "scenario_columns.situation.value"
-                    ]
-                },
-                "label": {
-                    "title": "Label",
-                    "type": "string",
-                    "minLength": 1
-                }
-            }
-        },
-        "HarnessEnvironmentRunEvaluationQueued": {
-            "required": [
-                "queued",
-                "skipped_existing",
-                "skipped_in_flight",
-                "skipped_pending",
-                "completed_calls"
-            ],
-            "type": "object",
-            "properties": {
-                "queued": {
-                    "title": "Queued",
-                    "description": "Stamped and scheduled for dispatch -- not yet dispatched. A call whose stamp committed but whose grading job then failed to queue is still counted here, not subtracted.",
-                    "type": "integer"
-                },
-                "skipped_existing": {
-                    "title": "Skipped existing",
-                    "type": "integer"
-                },
-                "skipped_in_flight": {
-                    "title": "Skipped in flight",
-                    "type": "integer"
-                },
-                "skipped_pending": {
-                    "title": "Skipped pending",
-                    "type": "integer"
-                },
-                "completed_calls": {
-                    "title": "Completed calls",
-                    "type": "integer"
                 }
             }
         }

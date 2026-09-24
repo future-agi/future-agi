@@ -9,7 +9,6 @@ import {
   TableCell,
   TableHead,
   TableRow,
-  Checkbox,
   Button,
 } from "@mui/material";
 
@@ -18,11 +17,9 @@ import CustomTooltip from "src/components/tooltip";
 import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
 import {
   defaultTraceColumns,
-  neutralCheckboxSx,
   headCellSx,
   numCellSx,
   bodyCellSx,
-  checkCellSx,
   runOutcome,
 } from "./traceTable.constants";
 import { MetricValue, Score, Field } from "./traceCells";
@@ -31,16 +28,11 @@ import TraceGroupHeaderRow from "./TraceGroupHeaderRow";
 /**
  * The per-call traces, as a grouped table. Real data only: rows read the mapped
  * `RunTask` scalars (no mock derivations); each evaluation renders as a heat-
- * tinted score column. Row-click opens the call; the checkbox column feeds the
- * bulk "Re-run N" action the parent owns.
+ * tinted score column. Row-click opens the call; past results are read-only.
  */
 export default function TraceTable({
-  tasks,
   groups,
   evals,
-  selected,
-  onToggle,
-  onToggleAll,
   onOpen,
   columns,
 }) {
@@ -49,8 +41,6 @@ export default function TraceTable({
   const show = (key) => visible.has(key);
   const showEvals = show("evals");
 
-  const allOn = tasks.length > 0 && tasks.every((t) => selected.has(t.id));
-  const someOn = tasks.some((t) => selected.has(t.id)) && !allOn;
 
   const collapsedSet = collapsed ?? new Set(groups.map((g) => g.label));
   const toggleCollapsed = (label) =>
@@ -77,15 +67,6 @@ export default function TraceTable({
           bgcolor: "transparent",
         }}
       >
-        <TableCell sx={checkCellSx}>
-          <Checkbox
-            size="small"
-            checked={selected.has(t.id)}
-            onChange={() => onToggle(t.id)}
-            onClick={(e) => e.stopPropagation()}
-            sx={neutralCheckboxSx}
-          />
-        </TableCell>
 
         {show("callDetails") && (
           <TableCell sx={bodyCellSx} onClick={() => onOpen(t)}>
@@ -317,15 +298,6 @@ export default function TraceTable({
         <Table size="small" sx={{ minWidth: 1000, tableLayout: "auto" }}>
           <TableHead>
             <TableRow>
-              <TableCell sx={{ ...headCellSx, ...checkCellSx }}>
-                <Checkbox
-                  size="small"
-                  checked={allOn}
-                  indeterminate={someOn}
-                  onChange={onToggleAll}
-                  sx={neutralCheckboxSx}
-                />
-              </TableCell>
               {show("callDetails") && (
                 <TableCell sx={{ ...headCellSx, width: 200 }}>
                   Run details
@@ -390,16 +362,6 @@ export default function TraceTable({
                   show={show}
                   showEvals={showEvals}
                   evals={evals}
-                  selected={selected}
-                  onToggleGroup={(rows) => {
-                    const ids = rows.map((r) => r.id);
-                    const everySelected = ids.every((id) => selected.has(id));
-                    if (everySelected) ids.forEach((id) => onToggle(id));
-                    else
-                      ids
-                        .filter((id) => !selected.has(id))
-                        .forEach((id) => onToggle(id));
-                  }}
                 />
                 {!collapsedSet.has(g.label) && g.rows.map(renderRow)}
               </React.Fragment>
@@ -411,12 +373,8 @@ export default function TraceTable({
   );
 }
 TraceTable.propTypes = {
-  tasks: PropTypes.array.isRequired,
   groups: PropTypes.array.isRequired,
   evals: PropTypes.array.isRequired,
-  selected: PropTypes.object.isRequired,
-  onToggle: PropTypes.func,
-  onToggleAll: PropTypes.func,
   onOpen: PropTypes.func,
   columns: PropTypes.instanceOf(Set),
 };

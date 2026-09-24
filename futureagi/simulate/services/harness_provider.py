@@ -106,9 +106,8 @@ def _usage_limit_response(exc: Exception) -> Response | None:
 
 
 def request_organization(request):
-    return getattr(request, "organization", None) or getattr(
-        request.user, "organization", None
-    )
+    user = getattr(request, "user", None)
+    return getattr(request, "organization", None) or getattr(user, "organization", None)
 
 
 def request_workspace(request):
@@ -1058,15 +1057,6 @@ class HostedHarnessProvider:
                 status=status.HTTP_400_BAD_REQUEST,
             )
         payload = request.validated_data
-        from simulate.services.harness_usage import require_harness_run_usage
-
-        try:
-            require_harness_run_usage(str(organization.id), payload)
-        except Exception as exc:
-            response = _usage_limit_response(exc)
-            if response is not None:
-                return response
-            raise
         base_url = (
             getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
             or request.build_absolute_uri("/")
@@ -1077,6 +1067,18 @@ class HostedHarnessProvider:
             _validate_secret_refs_hosted(payload["agent"]["secret_refs"])
             _validate_phone_connectivity(payload)
             _validate_known_hosted_egress(payload, base_url)
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        from simulate.services.harness_usage import require_harness_run_usage
+
+        try:
+            require_harness_run_usage(str(organization.id), payload)
+        except Exception as exc:
+            response = _usage_limit_response(exc)
+            if response is not None:
+                return response
+            raise
+        try:
             _validate_required_credential_files(request, payload)
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
@@ -1237,6 +1239,167 @@ class HostedHarnessProvider:
             )
         return Response(serialize_job(job))
 
+    def run(self, request, pk) -> Response:
+        """Create and dispatch one immutable selected-scenario simulation Run."""
+
+        from simulate.services.hosted_harness import (
+            HostedHarnessError,
+            create_selected_harness_run,
+        )
+        from simulate.temporal.client import start_hosted_harness_gateway_workflow
+
+        environment = self._job(request, pk)
+        if environment is None:
+            return Response(
+                {"detail": "Hosted harness environment not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        idempotency_key = request.headers.get("Idempotency-Key", "").strip()
+        if not idempotency_key:
+            return Response(
+                {"detail": "Idempotency-Key header is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            child, created = create_selected_harness_run(
+                environment,
+                scenario_keys=list(request.validated_data["scenario_ids"]),
+                trials=request.validated_data["trials"],
+                idempotency_key=idempotency_key,
+            )
+            retry_dispatch = False
+            if (
+                not created
+                and child.state == HostedHarnessJob.State.FAILED
+                and (child.failure or {}).get("code") == "scheduler_unavailable"
+            ):
+                with transaction.atomic():
+                    child = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                        id=child.id
+                    )
+                    if (
+                        child.state == HostedHarnessJob.State.FAILED
+                        and (child.failure or {}).get("code") == "scheduler_unavailable"
+                    ):
+                        now = timezone.now()
+                        child.state = HostedHarnessJob.State.QUEUED
+                        child.current_stage = "queued"
+                        child.completed_count = 0
+                        child.failed_count = 0
+                        child.uploaded_artifact_bytes = 0
+                        child.terminal_at = None
+                        child.failure = None
+                        child.content_updated_at = now
+                        child.save(
+                            update_fields=[
+                                "state",
+                                "current_stage",
+                                "completed_count",
+                                "failed_count",
+                                "uploaded_artifact_bytes",
+                                "terminal_at",
+                                "failure",
+                                "content_updated_at",
+                                "updated_at",
+                            ]
+                        )
+                        TestExecution.no_workspace_objects.filter(
+                            id=child.test_execution_id
+                        ).update(
+                            status=TestExecution.ExecutionStatus.PENDING,
+                            started_at=now,
+                            completed_at=None,
+                            completed_calls=0,
+                            failed_calls=0,
+                            error_reason=None,
+                        )
+                        retry_dispatch = True
+
+            if created or retry_dispatch:
+                base_url = (
+                    getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
+                    or request.build_absolute_uri("/")
+                ).rstrip("/")
+                retry_cfg = child.payload["retry"]
+                start_hosted_harness_gateway_workflow(
+                    str(child.id),
+                    base_url,
+                    retry_cfg["max_infrastructure_attempts"],
+                    retry_cfg["initial_backoff_seconds"],
+                    retry_cfg["max_backoff_seconds"],
+                )
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        except Exception:
+            logger.exception(
+                "selected harness Run dispatch failed environment=%s", environment.id
+            )
+            if "child" in locals():
+                failure = {
+                    "domain": "infrastructure",
+                    "stage": "queued",
+                    "code": "scheduler_unavailable",
+                    "message": "Selected harness Run could not be scheduled",
+                }
+                with transaction.atomic():
+                    marked_failed = HostedHarnessJob.no_workspace_objects.filter(
+                        id=child.id,
+                        state=HostedHarnessJob.State.QUEUED,
+                    ).update(
+                        state=HostedHarnessJob.State.FAILED,
+                        current_stage="failed",
+                        terminal_at=timezone.now(),
+                        failure=failure,
+                    )
+                    if marked_failed:
+                        TestExecution.no_workspace_objects.filter(
+                            id=child.test_execution_id
+                        ).update(
+                            status=TestExecution.ExecutionStatus.FAILED,
+                            completed_at=timezone.now(),
+                            error_reason=failure["message"],
+                        )
+                        return Response(
+                            {"detail": "Hosted harness scheduler is unavailable"},
+                            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        )
+                child.refresh_from_db()
+                if (
+                    child.state == HostedHarnessJob.State.FAILED
+                    and (child.failure or {}).get("code") == "scheduler_unavailable"
+                ):
+                    return Response(
+                        {"detail": "Hosted harness scheduler is unavailable"},
+                        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    )
+            else:
+                return Response(
+                    {"detail": "Hosted harness scheduler is unavailable"},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+
+        manifest = list(
+            (child.payload.get("metadata") or {}).get("execution_manifest") or []
+        )
+        selected = list(
+            (child.payload.get("metadata") or {}).get("selected_scenario_keys") or []
+        )
+        return Response(
+            {
+                "environment_id": str(environment.id),
+                "job_id": str(child.id),
+                "run_id": str(child.run_id),
+                "run_test_id": str(child.run_test_id),
+                "test_execution_id": str(child.test_execution_id),
+                "scenario_count": len(selected),
+                "trials": int((child.payload.get("metadata") or {}).get("trials") or 1),
+                "total_calls": len(manifest),
+                "state": child.state,
+                "stage": child.current_stage,
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
     def cancel(self, request, pk) -> Response:
         from simulate.services.hosted_harness import request_cancellation
         from simulate.temporal.client import cancel_hosted_harness_gateway_workflow
@@ -1379,18 +1542,15 @@ class HostedHarnessProvider:
         workspace,
         environment_values: dict[str, str],
     ) -> dict[str, Any]:
-        """Start a fresh Daytona attempt for an existing repository job.
+        """Create a new Run from a saved environment without replacing history."""
 
-        Reruns deliberately keep the registered RunTest/TestExecution and their
-        completed call data visible until replacement receipts arrive. The
-        source, contract, scenario registrations, adjustments and encrypted
-        credential references remain attached to the same durable job.
-        """
-        from datetime import timedelta
         from uuid import uuid4
 
         from simulate.models import HostedHarnessSecret
-        from simulate.services.hosted_harness import HostedHarnessError
+        from simulate.services.hosted_harness import (
+            HostedHarnessError,
+            create_selected_harness_run,
+        )
         from simulate.temporal.client import start_hosted_harness_gateway_workflow
 
         base_url = str(getattr(settings, "HARNESS_PUBLIC_BASE_URL", "") or "").rstrip(
@@ -1402,44 +1562,49 @@ class HostedHarnessProvider:
                 "HARNESS_PUBLIC_BASE_URL is required to rerun a hosted harness job",
                 status_code=503,
             )
-        terminal_states = {
+        job = (
+            HostedHarnessJob.no_workspace_objects.filter(
+                id=job_id, organization=organization, workspace=workspace
+            )
+            .select_related("environment")
+            .first()
+        )
+        if job is None:
+            raise HostedHarnessError(
+                "job_not_found",
+                "saved hosted harness job was not found",
+                status_code=404,
+            )
+        if job.state not in {
             HostedHarnessJob.State.COMPLETED,
             HostedHarnessJob.State.FAILED,
             HostedHarnessJob.State.CANCELED,
-        }
-        with transaction.atomic():
-            job = (
-                HostedHarnessJob.no_workspace_objects.select_for_update()
-                .filter(id=job_id, organization=organization, workspace=workspace)
-                .first()
+        }:
+            raise HostedHarnessError(
+                "job_not_terminal",
+                f"hosted harness job cannot be rerun while it is {job.state}",
+                status_code=409,
             )
-            if job is None:
-                raise HostedHarnessError(
-                    "job_not_found",
-                    "saved hosted harness job was not found",
-                    status_code=404,
-                )
-            if job.state not in terminal_states:
-                raise HostedHarnessError(
-                    "job_not_terminal",
-                    f"hosted harness job cannot be rerun while it is {job.state}",
-                    status_code=409,
-                )
 
-            metadata = (job.payload or {}).get("metadata") or {}
-            if job.run_test_id and not metadata.get("authoring_object_key"):
-                raise HostedHarnessError(
-                    "rerun_authoring_snapshot_missing",
-                    "This run predates deterministic scenario reuse. Start one new "
-                    "end-to-end run; subsequent reruns will reuse its saved contract "
-                    "and scenarios.",
-                    status_code=409,
-                )
+        environment = job.environment or job
+        prior_metadata = (job.payload or {}).get("metadata") or {}
+        scenario_keys = list(prior_metadata.get("selected_scenario_keys") or [])
+        if not scenario_keys:
+            scenario_keys = list(
+                environment.scenario_registrations.order_by(
+                    "created_at", "id"
+                ).values_list("scenario_key", flat=True)
+            )
+        trials = int(prior_metadata.get("trials") or 1)
+        child, _ = create_selected_harness_run(
+            environment,
+            scenario_keys=scenario_keys,
+            trials=trials,
+            idempotency_key=str(uuid4()),
+        )
 
-            payload = copy.deepcopy(job.payload)
-            # The indexed column is authoritative. This also repairs jobs created before chat
-            # adjustments atomically updated the dispatch document's duplicated count.
-            payload["scenario_count"] = job.scenario_count
+        if environment_values:
+            payload = copy.deepcopy(child.payload)
             secret_refs = dict((payload.get("agent") or {}).get("secret_refs") or {})
             for alias, value in environment_values.items():
                 key = f"harness-{alias.lower()}-{uuid4().hex}"
@@ -1456,70 +1621,20 @@ class HostedHarnessProvider:
                     "purpose": "target_provider",
                 }
             payload.setdefault("agent", {})["secret_refs"] = secret_refs
-            metadata = payload.setdefault("metadata", {})
-            metadata.pop("usage_limit", None)
-            # Retry limits are per user-triggered run, not over the lifetime of
-            # the durable job. The gateway uses this marker when deciding if a
-            # fresh infrastructure attempt remains available.
-            metadata["attempt_cycle_start"] = job.current_attempt_number + 1
+            child.payload = payload
+            child.save(update_fields=["payload", "updated_at"])
 
-            duration = int(payload["runtime"]["max_duration_seconds"])
-            job.payload = payload
-            job.state = HostedHarnessJob.State.QUEUED
-            job.current_stage = "queued"
-            job.completed_count = 0
-            job.failed_count = 0
-            job.uploaded_artifact_bytes = 0
-            job.deadline_at = timezone.now() + timedelta(seconds=duration)
-            job.cancel_requested_at = None
-            job.cancel_reason = None
-            job.terminal_at = None
-            job.failure = None
-            job.content_updated_at = timezone.now()
-            job.save(
-                update_fields=[
-                    "payload",
-                    "state",
-                    "current_stage",
-                    "completed_count",
-                    "failed_count",
-                    "uploaded_artifact_bytes",
-                    "deadline_at",
-                    "cancel_requested_at",
-                    "cancel_reason",
-                    "terminal_at",
-                    "failure",
-                    "content_updated_at",
-                    "updated_at",
-                ]
-            )
-
-            # A saved-suite rerun reuses the registered TestExecution and its
-            # CallExecution rows. Reopen the execution as part of the same
-            # transaction so clients resume polling while terminal receipts
-            # replace the previous attempt's rows. Leaving it COMPLETED makes
-            # the call-details grid look frozen even though the hosted guest is
-            # actively executing calls.
-            if job.test_execution_id:
-                TestExecution.objects.filter(id=job.test_execution_id).update(
-                    status=TestExecution.ExecutionStatus.RUNNING,
-                    started_at=timezone.now(),
-                    completed_at=None,
-                    completed_calls=0,
-                    failed_calls=0,
-                )
-
-        retry_cfg = payload["retry"]
+        retry_cfg = child.payload["retry"]
         try:
             start_hosted_harness_gateway_workflow(
-                str(job.id),
+                str(child.id),
                 base_url,
                 retry_cfg["max_infrastructure_attempts"],
                 retry_cfg["initial_backoff_seconds"],
                 retry_cfg["max_backoff_seconds"],
             )
         except Exception:
-            HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+            HostedHarnessJob.no_workspace_objects.filter(id=child.id).update(
                 state=HostedHarnessJob.State.FAILED,
                 current_stage="failed",
                 terminal_at=timezone.now(),
@@ -1530,9 +1645,16 @@ class HostedHarnessProvider:
                     "message": "Hosted rerun could not be scheduled",
                 },
             )
+            TestExecution.no_workspace_objects.filter(
+                id=child.test_execution_id
+            ).update(
+                status=TestExecution.ExecutionStatus.FAILED,
+                completed_at=timezone.now(),
+                error_reason="Hosted rerun could not be scheduled",
+            )
             raise
-        job.refresh_from_db()
-        return serialize_job(job)
+        child.refresh_from_db()
+        return serialize_job(child)
 
     # Editable fields; all but `tests` are refused when the caller declines a re-proof.
     _DESCRIPTIVE_FIELDS = frozenset({"tests"})
@@ -2118,6 +2240,16 @@ class SandboxHarnessProvider:
                 "secret_refs": secret_refs,
                 "only": [],
             },
+        )
+
+    def run(self, request, pk) -> Response:
+        return Response(
+            build_error_envelope(
+                "selected environment Runs require the hosted harness provider",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="run_not_supported",
+            ),
+            status=status.HTTP_400_BAD_REQUEST,
         )
 
     def list_scenarios(self, request, pk) -> Response:

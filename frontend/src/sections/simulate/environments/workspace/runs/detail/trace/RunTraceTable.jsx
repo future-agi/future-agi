@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { useMemo, useState } from "react";
-import { Box, Stack, Typography, Button, Pagination } from "@mui/material";
+import { Box, Stack, Button, Pagination } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { FilterPanel } from "src/components/filter-panel";
@@ -37,12 +37,11 @@ const filterButtonSx = {
   "&:hover": { borderColor: "text.disabled", bgcolor: "transparent" },
 };
 
-// The per-call table for a run's Test-runs tab. Owns the hook, the group-by /
-// status / column / filter controls and the row selection, over REAL call data.
+// The per-call table owns server-backed grouping, filtering, columns and paging
+// for read-only execution results.
 export default function RunTraceTable({
   executionId,
   onOpenCall,
-  onRerun,
   initialFilters = {},
 }) {
   const [groupBy, setGroupBy] = useState("useCase");
@@ -53,7 +52,6 @@ export default function RunTraceTable({
   );
   const [filterAnchor, setFilterAnchor] = useState(null);
   const [filters, setFilters] = useState(initialFilters);
-  const [selected, setSelected] = useState(() => new Set());
 
   const serverFilters = useMemo(() => {
     const next = {};
@@ -163,19 +161,7 @@ export default function RunTraceTable({
     setStatusChip("all");
   };
 
-  const toggle = (id) =>
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
-  const title = selected.size ? (
-    <Typography sx={{ typography: "s1", fontWeight: "fontWeightSemiBold" }}>
-      {selected.size} selected
-    </Typography>
-  ) : (
+  const title = (
     <Stack direction="row" alignItems="center" spacing={1.25}>
       <TraceGroupByPicker
         value={groupBy}
@@ -226,31 +212,7 @@ export default function RunTraceTable({
     </Stack>
   );
 
-  const action = selected.size ? (
-    <Stack direction="row" spacing={1}>
-      <Button
-        size="small"
-        onClick={() => setSelected(new Set())}
-        sx={{
-          typography: "s2",
-          fontWeight: "fontWeightSemiBold",
-          color: "text.secondary",
-        }}
-      >
-        Clear
-      </Button>
-      <Button
-        variant="contained"
-        color="primary"
-        size="small"
-        onClick={() => onRerun?.([...selected])}
-        startIcon={<Iconify icon="solar:refresh-bold" width={15} />}
-        sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
-      >
-        Re-run {selected.size}
-      </Button>
-    </Stack>
-  ) : (
+  const action = (
     <Stack direction="row" alignItems="center" spacing={1.5}>
       <StatusFilterChips
         value={statusChip}
@@ -268,7 +230,6 @@ export default function RunTraceTable({
       <TraceColumnsPicker value={visibleColumns} onChange={setVisibleColumns} />
     </Stack>
   );
-
   return (
     <>
       <SectionCard title={title} action={action}>
@@ -287,19 +248,9 @@ export default function RunTraceTable({
           />
         ) : (
           <TraceTable
-            tasks={tasks}
+            columns={visibleColumns}
             groups={groups}
             evals={evals}
-            selected={selected}
-            columns={visibleColumns}
-            onToggle={toggle}
-            onToggleAll={() =>
-              setSelected((prev) =>
-                tasks.every((t) => prev.has(t.id))
-                  ? new Set()
-                  : new Set(tasks.map((t) => t.id)),
-              )
-            }
             onOpen={onOpenCall}
           />
         )}
@@ -334,6 +285,5 @@ export default function RunTraceTable({
 RunTraceTable.propTypes = {
   executionId: PropTypes.string,
   onOpenCall: PropTypes.func,
-  onRerun: PropTypes.func,
   initialFilters: PropTypes.object,
 };

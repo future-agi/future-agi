@@ -6,8 +6,14 @@ import { ENV_STATUS } from "src/sections/simulate/environments/myEnvironments.co
 import { environmentName } from "src/pages/dashboard/harness/harnessShared";
 
 vi.mock("src/api/harness/harness", () => ({ getHarnessJob: vi.fn() }));
+vi.mock("src/api/simulate-environments/harnessEnvironments", () => ({
+  getHarnessEnvironment: vi.fn(),
+}));
 
 const { getHarnessJob } = await import("src/api/harness/harness");
+const { getHarnessEnvironment } = await import(
+  "src/api/simulate-environments/harnessEnvironments"
+);
 const {
   useEnvironment,
   harnessJobToEnvironment,
@@ -15,10 +21,10 @@ const {
   harnessEnvState,
   canRunHeader,
 } = await import("../environment");
-const { MOCK_WORLD } = await import("../_fixtures/world");
 const { useEnvironmentsStore, resetEnvironmentsStore } = await import(
   "src/sections/simulate/environments/store/useEnvironmentsStore"
 );
+const { MOCK_WORLD } = await import("../_fixtures/world");
 
 // A completed harness job detail. `platform` sits at the TOP LEVEL, sibling of
 // `job`/`status`/`stage_outputs` — `status` deliberately carries no platform, so
@@ -99,10 +105,11 @@ const makeWrapper = () => {
   Wrapper.propTypes = { children: PropTypes.node };
   return { queryClient, Wrapper };
 };
-
 beforeEach(() => {
   resetEnvironmentsStore();
   getHarnessJob.mockReset();
+  getHarnessEnvironment.mockReset();
+  getHarnessEnvironment.mockResolvedValue(null);
 });
 
 describe("useEnvironment resolution order", () => {
@@ -208,7 +215,7 @@ describe("useEnvironment resolution order", () => {
       wrapper: Wrapper,
     });
 
-    await waitFor(() => expect(result.current.source).toBe("harness"));
+    await waitFor(() => expect(result.current.bootstrapState).toBeDefined());
     expect(result.current.bootstrapState.agent.via).toBe("endpoint");
     // COMPLETED_JOB declares scenario_count but emits no scenarios output and
     // registers none; the derived fixture pool must not stand in for scenarios
@@ -216,7 +223,7 @@ describe("useEnvironment resolution order", () => {
     expect(result.current.bootstrapState.scenarios).toEqual([]);
   });
 
-  it("enables canRunHeader for a completed harness job", async () => {
+  it("enables canRunHeader only when a completed harness has real scenarios", async () => {
     getHarnessJob.mockResolvedValue(COMPLETED_JOB);
     const { Wrapper } = makeWrapper();
     const { result } = renderHook(() => useEnvironment("job-done"), {
@@ -224,7 +231,8 @@ describe("useEnvironment resolution order", () => {
     });
 
     await waitFor(() => expect(result.current.source).toBe("harness"));
-    expect(canRunHeader("harness", result.current.env, false)).toBe(true);
+    expect(canRunHeader("harness", result.current.env, true)).toBe(true);
+    expect(canRunHeader("harness", result.current.env, false)).toBe(false);
   });
 
   it("flags an unknown id as notFound on a 404", async () => {
@@ -370,10 +378,10 @@ describe("harnessJobToEnvironment", () => {
 });
 
 describe("canRunHeader", () => {
-  it("gates a harness env on its platform run id", () => {
-    expect(canRunHeader("harness", { platform: { runTestId: "rt1" } }, false)).toBe(true);
-    expect(canRunHeader("harness", { platform: {} }, false)).toBe(false);
-    expect(canRunHeader("harness", { platform: {} }, true)).toBe(true);
+  it("requires both a persisted RunTest and real runnable scenarios", () => {
+    expect(canRunHeader("harness", { platform: { runTestId: "rt1" } }, true)).toBe(true);
+    expect(canRunHeader("harness", { platform: { runTestId: "rt1" } }, false)).toBe(false);
+    expect(canRunHeader("harness", { platform: {} }, true)).toBe(false);
   });
 
   it("falls back to canRun for non-harness sources", () => {

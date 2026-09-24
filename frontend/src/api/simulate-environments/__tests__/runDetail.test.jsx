@@ -2,6 +2,10 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import PropTypes from "prop-types";
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  enrichTurns,
+  computeCallMetrics,
+} from "src/components/VoiceDetailDrawerV2/transcriptUtils";
 
 // Mock only the axios default instance; keep the real `endpoints` so the URL
 // assertions below are genuine, not a tautology against our own mock.
@@ -19,6 +23,7 @@ const {
   buildRunStats,
   useRunDetail,
   mapCallDetail,
+  callTranscript,
   useCallDetail,
 } = await import("../runDetail");
 const { RUN_COLORS } = await import(
@@ -117,6 +122,35 @@ describe("buildRunStats", () => {
     expect(stats.tokens).toBeNull();
     expect(stats.cost).toBeNull();
     expect(stats.failedCritical).toBe(0);
+  });
+
+  it("shows hosted verdicts without replacing them with transport KPIs", () => {
+    const row = mapExecutions({
+      results: [
+        {
+          id: "ex-hosted",
+          status: "Running",
+          total_calls: 6,
+          outcome_passed: 2,
+          outcome_failed: 1,
+          outcome_skipped: 0,
+        },
+      ],
+    })[0];
+    const stats = buildRunStats(
+      { total_calls: 6, failed_calls: 0 },
+      { test_run_performance_metrics: { pass_rate: 100 } },
+      row,
+    );
+
+    expect(stats).toMatchObject({
+      total: 6,
+      passed: 2,
+      failed: 1,
+      measured: 3,
+      unmeasured: 3,
+      passRate: 33,
+    });
   });
 
   it("falls back to the executions row counts and derives the pass rate when kpis/perf are absent", () => {
@@ -418,6 +452,109 @@ describe("mapCallDetail", () => {
   });
 });
 
+describe("callTranscript", () => {
+  it.each([null, undefined])(
+    "preserves unknown speech ends (%s) without corrupting voice metrics",
+    (missingEnd) => {
+      const rows = callTranscript({
+        transcript: [
+          {
+            speaker_role: "assistant",
+            start_time_seconds: 0,
+            end_time_seconds: 3,
+            start_time_ms: 0,
+            end_time_ms: 3000,
+          },
+          {
+            speaker_role: "user",
+            start_time_seconds: 6,
+            end_time_seconds: missingEnd,
+            start_time_ms: 6000,
+            end_time_ms: 0,
+          },
+          {
+            speaker_role: "assistant",
+            start_time_seconds: 8,
+            end_time_seconds: 25,
+            start_time_ms: 8000,
+            end_time_ms: 25000,
+          },
+        ],
+      });
+      expect(rows[1].end_time_seconds).toBeNull();
+      const turns = enrichTurns(rows);
+      expect(turns[1].duration).toBeNull();
+      expect(computeCallMetrics(turns)).toMatchObject({
+        userTalkPct: 0,
+        assistantTalkPct: 100,
+        silenceTotal: 3,
+        silenceCount: 1,
+      });
+    },
+  );
+
+  it("interleaves timed tools and leaves missing harness timestamps at the end", () => {
+    const raw = {
+      transcript: [
+        { id: "reply", content: "Found it.", start_time_seconds: 8 },
+        { id: "question", content: "Check my order.", start_time_seconds: 0 },
+      ],
+      function_calls: [
+        { id: "missing", name: "unknown_time", at: 0 },
+        { id: "lookup", name: "lookup_order", started_at_seconds: 4 },
+        { id: "also-missing", name: "other_tool" },
+      ],
+    };
+    expect(callTranscript(raw).map((row) => row.id)).toEqual([
+      "question",
+      "lookup",
+      "reply",
+      "missing",
+      "also-missing",
+    ]);
+    expect(callTranscript(raw)[3].start_time_seconds).toBeNull();
+    expect(raw.transcript[0].id).toBe("reply");
+    expect(mapCallDetail(raw).turns.map((turn) => turn.at)).toEqual([
+      0,
+      4,
+      8,
+      null,
+      null,
+    ]);
+  });
+
+  it("keeps explicit zero offsets and equal timestamps in stable order", () => {
+    expect(
+      callTranscript({
+        transcript: [{ id: "greeting", start_time_seconds: 0 }],
+        function_calls: [
+          { id: "first", start_time_seconds: "0" },
+          { id: "second", start_time_ms: 0 },
+          { id: "third", start_time_ms: 1500 },
+        ],
+      }).map((row) => [row.id, row.start_time_seconds]),
+    ).toEqual([
+      ["greeting", 0],
+      ["first", 0],
+      ["second", 0],
+      ["third", 1.5],
+    ]);
+  });
+
+  it("does not invent times for invalid offsets or absolute timestamps without an anchor", () => {
+    expect(
+      callTranscript({
+        function_calls: [
+          { start_time_seconds: "" },
+          { start_time_seconds: "invalid" },
+          { at: 1790000000 },
+        ],
+      }).every((row) => row.start_time_seconds === null),
+    ).toBe(true);
+    expect(callTranscript({ function_calls: null })).toEqual([]);
+  });
+});
+
 const makeWrapper = () => {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -473,6 +610,8 @@ describe("useRunDetail", () => {
           status: "completed",
           started_at: "2026-01-14T09:12:00.000Z",
           completed_at: "2026-01-14T09:22:00.000Z",
+          selected_scenario_keys: ["scenario-a", "scenario-b"],
+          trials: 3,
           summary: {
             total: 12,
             measured: 12,
@@ -495,9 +634,14 @@ describe("useRunDetail", () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(result.current.error).toBeNull();
+    expect(result.current.identity.status).toBe("passed");
     expect(result.current.identity.ordinal).toBe(2);
     expect(result.current.identity.name).toBe("Refund Copilot");
+    expect(result.current.identity.scenarioIds).toEqual([
+      "scenario-a",
+      "scenario-b",
+    ]);
+    expect(result.current.identity.trials).toBe(3);
     expect(result.current.stats.total).toBe(12);
     expect(result.current.stats.passRate).toBe(74);
     expect(axios.get).toHaveBeenCalledWith(
@@ -528,5 +672,79 @@ describe("useRunDetail", () => {
     );
 
     await waitFor(() => expect(result.current.stats.completed).toBe(12));
+  });
+
+  it("keeps terminal Run failure when some calls already passed", async () => {
+    axios.get.mockResolvedValueOnce({
+      data: {
+        execution: {
+          id: "ex-failed",
+          status: "failed",
+          summary: {
+            total: 12,
+            outcomes: { passed: 8, failed: 2, error: 2, inconclusive: 0 },
+          },
+        },
+      },
+    });
+    const { result } = renderHook(() => useRunDetail("rt1", "ex-failed"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.identity.status).toBe("failed");
+    expect(result.current.stats.passed).toBe(8);
+    expect(result.current.stats.failed).toBe(4);
+  });
+
+  it("polls the Run summary while active and stops when it completes", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    axios.get.mockResolvedValue({
+      data: {
+        execution: {
+          id: "ex-new",
+          status: "evaluating",
+          summary: { total: 0, outcomes: {} },
+        },
+      },
+    });
+
+    const { result, unmount } = renderHook(
+      () => useRunDetail("rt1", "ex-new"),
+      {
+        wrapper: Wrapper,
+      },
+    );
+    await waitFor(() =>
+      expect(
+        queryClient.getQueryData([
+          "simulation-run-results-v3",
+          "ex-new",
+          "summary",
+        ])?.execution?.status,
+      ).toBe("evaluating"),
+    );
+    expect(result.current.identity.status).toBe("running");
+    const query = queryClient.getQueryCache().find({
+      queryKey: ["simulation-run-results-v3", "ex-new", "summary"],
+    });
+
+    expect(query.options.refetchInterval(query)).toBe(3000);
+    queryClient.setQueryData(query.queryKey, {
+      execution: {
+        id: "ex-new",
+        status: "completed",
+        summary: { total: 0, outcomes: {} },
+      },
+    });
+    expect(query.options.refetchInterval(query)).toBe(false);
+    unmount();
   });
 });

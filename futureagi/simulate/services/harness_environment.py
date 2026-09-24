@@ -77,11 +77,14 @@ def annotate_for_list(
                 "scenario_registrations",
                 filter=Q(scenario_registrations__deleted=False),
                 distinct=True,
-            )
+            ),
+            simulation_run_count=Count(
+                "simulation_runs",
+                filter=Q(simulation_runs__deleted=False),
+                distinct=True,
+            ),
         )
         .prefetch_related(
-            # Only the snapshots the row counts from are needed, so the
-            # environment, store and scenario snapshots stay in the database.
             Prefetch(
                 "normalized_stage_outputs",
                 queryset=HostedHarnessStageOutput.no_workspace_objects.filter(
@@ -90,8 +93,6 @@ def annotate_for_list(
                 to_attr="row_outputs",
             )
         )
-        # Newest environment first. Creation order is stable: a list sorted by
-        # last change reshuffles under the reader while background stages land.
         .order_by("-created_at")
     )
 
@@ -99,6 +100,9 @@ def annotate_for_list(
 def environment_row(job: HostedHarnessJob) -> dict[str, Any]:
     """One list row. Safe to call on a job that has never finished building."""
     contract = _contract_data(job)
+    runs_count = getattr(job, "simulation_run_count", None)
+    if runs_count is None:
+        runs_count = job.simulation_runs.filter(deleted=False).count()
     return {
         "id": str(job.id),
         "name": environment_name(job),
@@ -111,7 +115,7 @@ def environment_row(job: HostedHarnessJob) -> dict[str, Any]:
         "scenario_count": scenario_count(job),
         "sub_goals_count": _sub_goals_count(_row_stage_output(job, "sub_goals")),
         "tools_count": _tools_count(contract),
-        "runs_count": 1 if job.test_execution_id else 0,
+        "runs_count": runs_count,
         "last_updated": _isoformat(job.content_updated_at or job.created_at),
         "created_at": _isoformat(job.created_at),
     }
@@ -526,26 +530,63 @@ def eval_modality(job: HostedHarnessJob) -> str:
 
 
 def _selected_evals(job: HostedHarnessJob) -> list[dict[str, Any]]:
-    """The platform evals bound to this environment's run test, in the order chosen."""
-    from simulate.models.eval_config import SimulateEvalConfig
+    """The platform evals bound to this environment's run test, in the order chosen.
 
-    if not job.run_test_id:
+    Only the rows that carry a mapping. A row with an empty mapping is one
+    ingestion made for one of the harness's own result columns: it is bound to
+    the run, but nobody selected it, it is not a "selected eval", and it does
+    not count toward the cap of 8.
+
+    Each row is the same entry the picker shows, built from the mapping that is
+    actually stored — so what was shown when it was added is what runs — plus
+    its `id`, which is what remove addresses, and `runnable`, true by
+    construction here.
+    """
+    from simulate.services.harness_evals import (
+        _required_keys,
+        eval_entry,
+        selected_eval_configs,
+    )
+
+    run_test = job.run_test if job.run_test_id else None
+    if run_test is None:
         return []
-    return [
-        {
-            "id": str(config.id),
-            "name": config.name or getattr(config.eval_template, "name", "") or "",
-            "description": str(getattr(config.eval_template, "description", "") or "")[
-                :500
-            ],
-            "runnable": bool(config.mapping),
-        }
-        for config in SimulateEvalConfig.objects.filter(
-            run_test_id=job.run_test_id, deleted=False
+    modality = eval_modality(job)
+    rows: list[dict[str, Any]] = []
+    for config in selected_eval_configs(run_test, mapping_only=True):
+        # `eval_template` is a non-nullable FK joined by `select_related`, so
+        # this is never `None` regardless of the template's own soft-delete
+        # state.
+        template = config.eval_template
+        # `inputs` must be built from the mapping narrowed to the template's
+        # live `required_keys`, not the raw stored mapping — otherwise, if the
+        # template later drops a required key, `inputs` ends up with more
+        # rows than `required_keys` has names.
+        required_keys = set(_required_keys(template))
+        entry = eval_entry(
+            template,
+            {
+                key: value
+                for key, value in (config.mapping or {}).items()
+                if key in required_keys
+            },
+            modality,
         )
-        .select_related("eval_template")
-        .order_by("created_at")
-    ]
+        # The name a person added is the config's own, which is what add and
+        # remove address; for a row this endpoint created the two are equal.
+        entry["name"] = str(config.name or entry["name"])
+        # Realigned to the stored mapping's own keys rather than the
+        # template's current `required_keys`: the mapping is a snapshot taken
+        # when the eval was added, so `inputs` (built from it) and a live
+        # `required_keys` could otherwise diverge if the template changes
+        # afterwards. Intersected against the template's own stored order,
+        # not `sorted(mapping)`, since `required_keys` and `inputs` carry
+        # different orders on purpose.
+        entry["required_keys"] = [
+            key for key in _required_keys(template) if key in (config.mapping or {})
+        ]
+        rows.append({**entry, "id": str(config.id), "runnable": True})
+    return rows
 
 
 def _results(receipts: dict[str, HostedHarnessReceipt]) -> list[dict[str, Any]]:
@@ -752,13 +793,22 @@ def _agent(job: HostedHarnessJob) -> dict[str, Any] | None:
 
 
 def _run_link(job: HostedHarnessJob) -> dict[str, Any]:
+    latest_run = (
+        job.simulation_runs.filter(deleted=False)
+        .order_by("-created_at", "-id")
+        .first()
+    )
     run_test_id = str(job.run_test_id) if job.run_test_id else None
-    test_execution_id = str(job.test_execution_id) if job.test_execution_id else None
+    test_execution_id = (
+        str(latest_run.test_execution_id)
+        if latest_run and latest_run.test_execution_id
+        else None
+    )
     return {
         "run_test_id": run_test_id,
         "test_execution_id": test_execution_id,
         "simulation_url": (
-            f"/dashboard/simulate/test/{run_test_id}/{test_execution_id}/call-details"
+            f"/dashboard/simulate/environments/{job.id}/runs/{run_test_id}/{test_execution_id}"
             if run_test_id and test_execution_id
             else None
         ),
@@ -766,7 +816,7 @@ def _run_link(job: HostedHarnessJob) -> dict[str, Any]:
 
 
 def _settings(job: HostedHarnessJob) -> dict[str, Any]:
-    """The request the environment was built from, with every secret value removed."""
+    """The build request with every secret value removed, plus the one key a person can set."""
     from simulate.services.harness_credentials import is_credential_file_ref
     from simulate.services.hosted_harness_gateway import _secret_safe
 
@@ -797,4 +847,14 @@ def _settings(job: HostedHarnessJob) -> dict[str, Any]:
             )
         ],
     }
+    # The only settings key that is not a record of how the environment was
+    # built: the tool-call judge's switch, set through `PUT evaluations/tool-call/`.
+    # Reported as `false`, not `null`, for an environment with no run test --
+    # that's what such an environment would do if it ran.
+    #
+    # `job.run_test` costs no extra query here: `_selected_evals` already
+    # touched it earlier in `environment_detail`, and Django caches the FK.
+    settings["enable_tool_evaluation"] = bool(
+        job.run_test.enable_tool_evaluation if job.run_test_id else False
+    )
     return settings

@@ -14,6 +14,7 @@ import {
   listHarnessEnvironments,
   deleteHarnessEnvironment,
   getHarnessEnvironment,
+  runHarnessEnvironment,
   renameHarnessEnvironment,
   deleteAppliedEvaluation,
   getAvailableEvaluations,
@@ -67,7 +68,20 @@ describe("getHarnessEnvironment", () => {
   });
 });
 
-describe("renameHarnessEnvironment", () => {
+describe("runHarnessEnvironment", () => {
+  beforeEach(() => axios.post.mockClear());
+
+  it("POSTs stable scenario keys, trials, and one idempotency key", async () => {
+    await runHarnessEnvironment("env-6", ["scenario-a", "scenario-b"], 3, "request-1");
+    expect(axios.post).toHaveBeenCalledWith(
+      `${BASE}env-6/run/`,
+      { scenario_ids: ["scenario-a", "scenario-b"], trials: 3 },
+      { headers: { "Idempotency-Key": "request-1" } },
+    );
+  });
+});
+
+describe("renameHarnessEnvironment (§8)", () => {
   beforeEach(() => axios.patch.mockClear());
 
   it("PATCHes the environment with the new name only", async () => {

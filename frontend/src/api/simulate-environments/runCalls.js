@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 import { TRACE_COLUMNS } from "src/sections/simulate/environments/workspace/runs/detail/trace/traceTable.constants";
+import { ACTIVE_EXECUTION_STATUSES } from "src/sections/simulate/environments/workspace/runs/runs.constants";
 
 /** Adapt the v3 run-results contract for the trace table. */
 
@@ -79,35 +80,51 @@ export function mapCallRow(row, evalColumns = []) {
     .map((col) => evalResultFor(row, col))
     .filter(Boolean);
 
-  const status = row?.outcome === "inconclusive" ? "unmeasured" : row?.outcome;
+  const outcome = row?.outcome;
+  const status =
+    outcome === "inconclusive" || outcome == null ? "unmeasured" : outcome;
 
+  const trialIndex = row?.trial_index ?? null;
+  const scenarioName =
+    row?.source_scenario_key ||
+    row?.scenario ||
+    row?.customer_name ||
+    "Untitled scenario";
   return {
     id: row?.id,
     goal: row?.goal || row?.scenario || "Untitled goal",
     subGoals: row?.sub_goals ?? [],
-    scenario: row?.scenario || row?.goal || "Untitled scenario",
+    scenario: trialIndex
+      ? `${scenarioName} · Trial ${trialIndex}`
+      : scenarioName,
+    sourceScenario: scenarioName,
+    harnessOutcomeStatus: row?.harness_outcome_status ?? outcome ?? null,
+    trialIndex,
     scenarioDetails: row?.scenario_details ?? null,
     idealOutcome: row?.ideal_outcome ?? null,
     conversationBranch: row?.conversation_branch ?? null,
-    persona: row?.persona || null,
+    persona: row?.persona || row?.customer_name || null,
     personaDetails: row?.persona_details ?? {
-      name: row?.persona || null,
+      name: row?.persona || row?.customer_name || null,
       voice: null,
       age: null,
       traits: [],
     },
     status,
+    executionStatus: row?.execution_status ?? row?.status ?? null,
     critical: false,
     csat: row?.csat != null ? Math.round(row.csat * 10) / 10 : null,
     turns: row?.turn_count ?? null,
-    latencyMs: row?.latency_ms ?? null,
-    tokens: row?.tokens ?? null,
+    latencyMs: row?.latency_ms ?? row?.avg_agent_latency ?? null,
+    tokens: row?.tokens ?? row?.total_tokens ?? null,
     durationMs:
       row?.duration_seconds != null
         ? Math.round(row.duration_seconds * 1000)
-        : null,
+        : row?.duration != null
+          ? Math.round(row.duration * 1000)
+          : null,
     // Routing hints for the call drawer.
-    simulationCallType: row?.modality ?? null,
+    simulationCallType: row?.modality ?? row?.simulation_call_type ?? null,
     provider: row?.provider ?? null,
     evalResults,
   };
@@ -183,13 +200,17 @@ export function useRunCalls(executionId, opts = {}) {
         })
         .then((response) => response.data),
     enabled: !!executionId,
+    refetchInterval: (query) =>
+      ACTIVE_EXECUTION_STATUSES.has(query.state.data?.execution?.status)
+        ? 3000
+        : false,
     staleTime: 1000 * 60,
   });
 
   const data = query.data;
   const { tasks, columns, count, groups, facets, summary, totalPages } =
     useMemo(() => {
-      if (!data)
+      if (!data) {
         return {
           tasks: [],
           columns: [],
@@ -199,6 +220,7 @@ export function useRunCalls(executionId, opts = {}) {
           summary: null,
           totalPages: 1,
         };
+      }
       const evalColumns = data.evaluation_columns ?? [];
       const rows = (data.results ?? []).map((r) => mapCallRow(r, evalColumns));
       const rowsById = new Map(rows.map((row) => [row.id, row]));

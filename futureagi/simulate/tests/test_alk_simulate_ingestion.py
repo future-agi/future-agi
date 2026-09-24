@@ -268,6 +268,59 @@ class TestProvisionRunTest:
             )
         ) == {row.id for row in rows}
 
+    def test_provision_records_the_scenario_dataset_column_order(self, auth_client):
+        """`scenario_columns.situation.value` resolves only through `column_order`."""
+        from model_hub.models.develop_dataset import Column
+
+        resp = self._provision(
+            auth_client,
+            name="column-order",
+            personas=[
+                {
+                    "name": "Sam",
+                    "scenario_name": "Late refund",
+                    "situation": "My refund is late",
+                    "outcome": "Explain the status",
+                }
+            ],
+        )
+        assert resp.status_code == 200, resp.content
+        run_test = RunTest.objects.get(id=resp.json()["result"]["run_test_id"])
+        dataset = run_test.scenarios.get().dataset
+
+        ordered = list(
+            Column.objects.filter(id__in=dataset.column_order).values_list("id", "name")
+        )
+        by_id = dict(ordered)
+        assert [
+            by_id[column_id]
+            for column_id in map(__import__("uuid").UUID, dataset.column_order)
+        ] == [
+            "persona",
+            "situation",
+            "outcome",
+        ]
+
+        # And the path the mapping uses resolves to the situation text.
+        from simulate.serializers.test_execution import (
+            CallExecutionDetailSerializer,
+        )
+        from simulate.temporal.activities.xl import walk_subject_path
+
+        # `CallExecution` has no `run_test` field: the run test hangs off its
+        # `test_execution`, so the filter spans the relation.
+        call = CallExecution.objects.filter(test_execution__run_test=run_test).first()
+        if call is None:
+            _execution_id, call_ids = _start_and_batch(auth_client, run_test)
+            call = CallExecution.objects.get(id=call_ids[0])
+        columns = CallExecutionDetailSerializer().get_scenario_columns(call) or {}
+        assert (
+            walk_subject_path(
+                {"scenario_columns": columns}, "scenario_columns.situation.value"
+            )
+            == "My refund is late"
+        )
+
     def test_provision_voice_preserves_voice_call_type(self, auth_client):
         resp = self._provision(
             auth_client,
@@ -371,6 +424,95 @@ class TestProvisionRunTest:
             agent_definition_id=str(agent_definition.id),
         )
         assert resp.status_code == 400, resp.content
+
+    def test_provisioned_run_test_defaults_tool_evaluation_off(self, auth_client):
+        """A caller who says nothing gets the tool-call judge off by default."""
+        resp = self._provision(
+            auth_client,
+            name="tool-eval-default",
+            personas=[
+                {
+                    "name": "Sam",
+                    "scenario_name": "Late refund",
+                    "situation": "My refund is late",
+                    "outcome": "Explain the status",
+                }
+            ],
+        )
+        assert resp.status_code == 200, resp.content
+        run_test = RunTest.objects.get(id=resp.json()["result"]["run_test_id"])
+        assert run_test.enable_tool_evaluation is False
+
+    def test_provisioned_run_test_accepts_tool_evaluation_on(self, auth_client):
+        """The SDK-first door can start a run test with the judge already on."""
+        resp = self._provision(
+            auth_client,
+            name="tool-eval-on",
+            enable_tool_evaluation=True,
+            personas=[
+                {
+                    "name": "Sam",
+                    "scenario_name": "Late refund",
+                    "situation": "My refund is late",
+                    "outcome": "Explain the status",
+                }
+            ],
+        )
+        assert resp.status_code == 200, resp.content
+        run_test = RunTest.objects.get(id=resp.json()["result"]["run_test_id"])
+        assert run_test.enable_tool_evaluation is True
+
+    def test_provisioning_refuses_tool_evaluation_for_a_versionless_voice_agent(
+        self, auth_client
+    ):
+        """The SDK door must refuse the same shape the PUT endpoint answers 409 for."""
+        resp = self._provision(
+            auth_client,
+            name="voice-tool-eval",
+            modality="voice",
+            enable_tool_evaluation=True,
+            personas=[
+                {
+                    "name": "Sam",
+                    "scenario_name": "s",
+                    "situation": "x",
+                    "outcome": "y",
+                }
+            ],
+        )
+        assert resp.status_code == 400, resp.content
+        assert not RunTest.objects.filter(enable_tool_evaluation=True).exists()
+
+    def test_a_bad_scenario_id_is_reported_before_the_voice_refusal(
+        self, auth_client
+    ):
+        """Error precedence: an unknown scenario id is what a request with both
+        faults hears about, not the tool-evaluation refusal -- the scenario
+        lookup runs before the agent definition is resolved."""
+        resp = self._provision(
+            auth_client,
+            name="voice-tool-eval-bad-scenario",
+            modality="voice",
+            enable_tool_evaluation=True,
+            scenario_ids=[str(uuid.uuid4())],
+        )
+        assert resp.status_code == 400, resp.content
+        assert "scenario(s) not found" in json.dumps(resp.json()).lower()
+        assert not RunTest.objects.filter(enable_tool_evaluation=True).exists()
+
+    def test_scenario_id_provisioning_also_carries_the_switch(
+        self, auth_client, scenario
+    ):
+        """The `scenario_ids` provisioning branch writes the switch too."""
+        resp = self._provision(
+            auth_client,
+            name="tool-eval-scenarios",
+            enable_tool_evaluation=True,
+            scenario_ids=[str(scenario.id)],
+        )
+        assert resp.status_code == 200, resp.content
+        run_test = RunTest.objects.get(id=resp.json()["result"]["run_test_id"])
+        assert run_test.enable_tool_evaluation is True
 
 
 # ---------------------------------------------------------------------------
@@ -807,6 +949,101 @@ class TestResultIngest:
         assert execution.total_calls == 1
         assert execution.completed_calls == 1
         assert execution.failed_calls == 0
+
+    def test_a_harness_receipt_with_the_switch_off_still_short_circuits(
+        self, auth_client, run_test
+    ):
+        """With the switch off (the default), a harness receipt with no
+        selected evals still takes the short circuit and never dispatches."""
+        test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
+        assert run_test.enable_tool_evaluation is False
+
+        with patch(
+            "simulate.services.alk_simulate_ingestion._dispatch_evaluations_once"
+        ) as dispatch:
+            resp = auth_client.patch(
+                f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+                {
+                    "status": "completed",
+                    "transcript": _transcript_payload(),
+                    "call_metadata": {
+                        "harness_evaluations": [
+                            {"name": "ride_booked", "passed": False}
+                        ]
+                    },
+                },
+                format="json",
+            )
+        assert resp.status_code == 200, resp.content
+        dispatch.assert_not_called()
+
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert call.call_metadata["eval_completed"] is True
+
+    def test_a_harness_receipt_with_the_switch_on_dispatches_instead(
+        self, auth_client, run_test
+    ):
+        """With the switch on, a harness receipt with no selected evals
+        dispatches instead, and the selection stays `[]` rather than widening
+        to `None`."""
+        run_test.enable_tool_evaluation = True
+        run_test.save(update_fields=["enable_tool_evaluation"])
+        test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
+
+        with patch(
+            "simulate.services.alk_simulate_ingestion._dispatch_evaluations_once",
+            return_value=True,  # the real function answers a bool the receipt carries
+        ) as dispatch:
+            resp = auth_client.patch(
+                f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+                {
+                    "status": "completed",
+                    "transcript": _transcript_payload(),
+                    "call_metadata": {
+                        "harness_evaluations": [
+                            {"name": "ride_booked", "passed": False}
+                        ]
+                    },
+                },
+                format="json",
+            )
+        assert resp.status_code == 200, resp.content
+        dispatch.assert_called_once()
+        _, kwargs = dispatch.call_args
+        assert kwargs.get("eval_config_ids") == []
+
+    def test_a_switch_on_receipt_leaves_the_call_awaiting_its_grading_job(
+        self, auth_client, run_test
+    ):
+        """With the switch on and no eval selected, a harness call's
+        completion depends on the eval worker running its per-call job: a
+        job accepted but not yet executed leaves the call `eval_started`
+        without `eval_completed`."""
+        run_test.enable_tool_evaluation = True
+        run_test.save(update_fields=["enable_tool_evaluation"])
+        test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
+
+        with patch(
+            "simulate.services.test_executor._run_simulate_evaluations_task.apply_async"
+        ):
+            resp = auth_client.patch(
+                f"{ALK_BASE}/call-executions/{call_ids[0]}/result/",
+                {
+                    "status": "completed",
+                    "transcript": _transcript_payload(),
+                    "call_metadata": {
+                        "harness_evaluations": [
+                            {"name": "ride_booked", "passed": False}
+                        ]
+                    },
+                },
+                format="json",
+            )
+        assert resp.status_code == 200, resp.content
+
+        call = CallExecution.objects.get(id=call_ids[0])
+        assert call.call_metadata["eval_started"] is True
+        assert "eval_completed" not in call.call_metadata
 
     @patch(
         "model_hub.tasks.user_evaluation.trigger_error_localization_for_simulate"
@@ -2430,9 +2667,7 @@ class TestBuildVoiceRunnerJob:
             HOSTED_RUNNER_MAX_WALLCLOCK_SECONDS=600,
         ):
             with pytest.raises(HostedRunnerBuildError) as excinfo:
-                self._build_multi(
-                    organization, workspace, simulator_agent, agent, 3
-                )
+                self._build_multi(organization, workspace, simulator_agent, agent, 3)
         message = str(excinfo.value)
         assert "cap" in message
         assert "HOSTED_RUNNER_MAX_WALLCLOCK_SECONDS" in message
@@ -2458,9 +2693,7 @@ class TestBuildVoiceRunnerJob:
             HOSTED_RUNNER_MAX_CASES=2,
         ):
             with pytest.raises(HostedRunnerBuildError) as excinfo:
-                self._build_multi(
-                    organization, workspace, simulator_agent, agent, 3
-                )
+                self._build_multi(organization, workspace, simulator_agent, agent, 3)
         assert "capped at 2" in str(excinfo.value)
 
     def test_web_transport_admission_refuses_excess_wallclock(
@@ -2484,9 +2717,7 @@ class TestBuildVoiceRunnerJob:
         )
         with override_settings(HOSTED_RUNNER_MAX_WALLCLOCK_SECONDS=100):
             with pytest.raises(HostedRunnerBuildError) as excinfo:
-                self._build_multi(
-                    organization, workspace, simulator_agent, agent, 3
-                )
+                self._build_multi(organization, workspace, simulator_agent, agent, 3)
         assert "HOSTED_RUNNER_MAX_WALLCLOCK_SECONDS" in str(excinfo.value)
 
     def test_admission_env_int_is_lenient(self, monkeypatch):
@@ -2901,9 +3132,8 @@ class TestHostedRunnerActivityHelpers:
         }
         _inject_did_slot(outbound, slot)
         # sip_outbound dials the target directly; never consumes a leased DID.
-        assert (
-            "dispatch_rule_name"
-            not in (outbound["voice"]["agent_definition"]["transport"])
+        assert "dispatch_rule_name" not in (
+            outbound["voice"]["agent_definition"]["transport"]
         )
 
     def test_inject_did_slot_pins_multi_row_originator_job(self):
@@ -3346,9 +3576,9 @@ class TestHostedRunnerActivityHelpers:
         assert build_idx is not None, "build_runner_job call not found"
         assert run_idx is not None, "run_hosted_sdk_job call not found"
         assert finalize_idx is not None, "finalize_hosted_execution call not found"
-        assert build_idx < run_idx < finalize_idx, (
-            "run() must call build, then run, then finalize in that order"
-        )
+        assert (
+            build_idx < run_idx < finalize_idx
+        ), "run() must call build, then run, then finalize in that order"
 
         calls_before_finalize = [
             name
@@ -3374,9 +3604,9 @@ class TestHostedRunnerActivityHelpers:
         raises = [
             n for stmt in between for n in ast.walk(stmt) if isinstance(n, ast.Raise)
         ]
-        assert raises == [], (
-            "no Raise may sit between build_runner_job and run_hosted_sdk_job"
-        )
+        assert (
+            raises == []
+        ), "no Raise may sit between build_runner_job and run_hosted_sdk_job"
 
         run_seconds_ifs = [
             n
@@ -3430,9 +3660,9 @@ class TestHostedRunnerActivityHelpers:
             kw for kw in call.keywords if kw.arg == "start_to_close_timeout"
         )
         expr = timeout_kw.value
-        assert isinstance(expr, ast.Name), (
-            "start_to_close_timeout must be fed by a local, not inlined"
-        )
+        assert isinstance(
+            expr, ast.Name
+        ), "start_to_close_timeout must be fed by a local, not inlined"
         timeout_name = expr.id
 
         def is_build_call(node):
@@ -3493,9 +3723,9 @@ class TestHostedRunnerActivityHelpers:
         # The non-chat arm is a single nested If (an elif in source form):
         # a positive-budget branch and a placeholder branch, never a flat
         # unconditional assignment.
-        assert len(other_top) == 1 and isinstance(other_top[0], ast.If), (
-            "the non-chat arm must be a single nested If on run_seconds"
-        )
+        assert len(other_top) == 1 and isinstance(
+            other_top[0], ast.If
+        ), "the non-chat arm must be a single nested If on run_seconds"
         inner_if = other_top[0]
 
         def assigns_to(stmts, name):
@@ -3509,15 +3739,15 @@ class TestHostedRunnerActivityHelpers:
         chat_assigns = assigns_to(chat_arm, timeout_name)
         positive_assigns = assigns_to(inner_if.body, timeout_name)
         placeholder_assigns = assigns_to(inner_if.orelse, timeout_name)
-        assert len(chat_assigns) == 1, (
-            f"chat arm must assign {timeout_name} exactly once"
-        )
-        assert len(positive_assigns) == 1, (
-            f"the positive-budget branch must assign {timeout_name} once"
-        )
-        assert len(placeholder_assigns) == 1, (
-            f"the placeholder branch must assign {timeout_name} exactly once"
-        )
+        assert (
+            len(chat_assigns) == 1
+        ), f"chat arm must assign {timeout_name} exactly once"
+        assert (
+            len(positive_assigns) == 1
+        ), f"the positive-budget branch must assign {timeout_name} once"
+        assert (
+            len(placeholder_assigns) == 1
+        ), f"the placeholder branch must assign {timeout_name} exactly once"
 
         def normalized_dump(node):
             # ast.dump ignores position info by default; re-parsing an
@@ -3576,9 +3806,9 @@ class TestHostedRunnerActivityHelpers:
                 isinstance(t, ast.Name) and t.id == timeout_name for t in stmt.targets
             )
         ]
-        assert len(all_assigns) == 3, (
-            f"{timeout_name} must be assigned exactly once per branch and nowhere else"
-        )
+        assert (
+            len(all_assigns) == 3
+        ), f"{timeout_name} must be assigned exactly once per branch and nowhere else"
 
         def names_and_attrs(t):
             names = {n.id for n in ast.walk(t) if isinstance(n, ast.Name)}
@@ -3609,15 +3839,15 @@ class TestHostedRunnerActivityHelpers:
             kw for kw in input_call.keywords if kw.arg == "run_seconds"
         )
         expected_run_seconds = expr_dump("job.run_seconds")
-        assert normalized_dump(run_seconds_kw.value) == expected_run_seconds, (
-            "run_seconds must be job.run_seconds verbatim"
-        )
+        assert (
+            normalized_dump(run_seconds_kw.value) == expected_run_seconds
+        ), "run_seconds must be job.run_seconds verbatim"
 
         heartbeat_kw = next(kw for kw in call.keywords if kw.arg == "heartbeat_timeout")
         expected_heartbeat = expr_dump("timedelta(seconds=60)")
-        assert normalized_dump(heartbeat_kw.value) == expected_heartbeat, (
-            "heartbeat_timeout must be exactly timedelta(seconds=60)"
-        )
+        assert (
+            normalized_dump(heartbeat_kw.value) == expected_heartbeat
+        ), "heartbeat_timeout must be exactly timedelta(seconds=60)"
 
     def test_child_environment_maps_internal_sink_secret(self, monkeypatch):
         from simulate.temporal.activities.hosted_runner import _child_environment
@@ -5361,7 +5591,9 @@ class TestAlkVoiceCsatScoring:
         with (
             patch("simulate.tasks.alk_sim.close_old_connections"),
             patch.object(
-                alk_sim, "server_reachable_url", return_value="http://minio:9000/rec.wav"
+                alk_sim,
+                "server_reachable_url",
+                return_value="http://minio:9000/rec.wav",
             ),
             patch.object(alk_sim, "_run_agent_csat", return_value=8.0) as scorer,
         ):

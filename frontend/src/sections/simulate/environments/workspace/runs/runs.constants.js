@@ -4,6 +4,14 @@ import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 // moving, so the chip breathes.
 export const LIVE_STATUSES = ["running", "booting", "grading"];
 
+// TestExecution lifecycle states that can still advance and need polling.
+export const ACTIVE_EXECUTION_STATUSES = new Set([
+  "pending",
+  "running",
+  "cancelling",
+  "evaluating",
+]);
+
 // Stable hook for the pulsing dot so callers (and tests) can target it without
 // depending on emotion's generated class name.
 export const PULSING_DOT_CLASS = "sim-status-dot--pulse";

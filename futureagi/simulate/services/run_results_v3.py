@@ -31,7 +31,11 @@ def _number(value: Any) -> float | None:
 def _truth_value(eval_data: Any) -> bool | None:
     if not isinstance(eval_data, dict):
         return None
-    if eval_data.get("status") in {"pending", "skipped", "error"}:
+    if str(eval_data.get("status") or "").strip().lower() in {
+        "pending",
+        "skipped",
+        "error",
+    }:
         return None
     value = eval_data.get("output")
     if isinstance(value, bool):
@@ -179,7 +183,12 @@ def _eval_rows(call: CallExecution, live_eval_ids: set[str]) -> list[dict[str, A
         if not isinstance(data, dict):
             continue
         value = data.get("output")
-        numeric = _number(value)
+        measured = str(data.get("status") or "").strip().lower() not in {
+            "pending",
+            "skipped",
+            "error",
+        }
+        numeric = _number(value) if measured else None
         verdict = _truth_value(data)
         score = numeric
         if verdict is not None:
@@ -332,6 +341,9 @@ def build_call_rows(
                 "sub_goals": sub_goals,
                 "outcome": call_outcome(call, live_eval_ids),
                 "execution_status": call.status,
+                "harness_outcome_status": metadata.get("harness_outcome_status"),
+                "source_scenario_key": metadata.get("harness_scenario_key"),
+                "trial_index": metadata.get("harness_trial_index"),
                 "modality": call.simulation_call_type,
                 "provider": _provider(call),
                 "started_at": call.started_at,

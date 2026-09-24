@@ -38,6 +38,14 @@ class HostedHarnessJob(BaseModel):
         null=True,
         blank=True,
     )
+    environment = models.ForeignKey(
+        "self",
+        on_delete=models.CASCADE,
+        related_name="simulation_runs",
+        null=True,
+        blank=True,
+        help_text="Authored environment reused by this simulation-only job",
+    )
     run_id = models.UUIDField(unique=True)
     # The name a person gave this environment, which outranks every value
     # derived from the submitted request. Empty means nobody has renamed it, so
@@ -245,6 +253,42 @@ class HostedHarnessScenario(BaseModel):
         ]
 
 
+class HostedHarnessExecution(BaseModel):
+    """One immutable scenario/trial allocation inside a submitted Run."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job = models.ForeignKey(
+        HostedHarnessJob,
+        on_delete=models.CASCADE,
+        related_name="scenario_executions",
+    )
+    source_scenario = models.ForeignKey(
+        HostedHarnessScenario,
+        on_delete=models.PROTECT,
+        related_name="executions",
+    )
+    execution_key = models.CharField(max_length=255)
+    trial_index = models.PositiveSmallIntegerField()
+    call_execution = models.OneToOneField(
+        "simulate.CallExecution",
+        on_delete=models.CASCADE,
+        related_name="hosted_harness_execution",
+    )
+
+    class Meta:
+        db_table = "simulate_hosted_harness_execution"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["job", "execution_key"],
+                name="uniq_harness_job_execution_key",
+            ),
+            models.UniqueConstraint(
+                fields=["job", "source_scenario", "trial_index"],
+                name="uniq_harness_job_scenario_trial",
+            ),
+        ]
+
+
 class HostedHarnessEvent(BaseModel):
     event_id = models.CharField(primary_key=True, max_length=64)
     attempt = models.ForeignKey(
@@ -304,6 +348,13 @@ class HostedHarnessReceipt(BaseModel):
     scenario = models.ForeignKey(
         HostedHarnessScenario, on_delete=models.CASCADE, related_name="receipts"
     )
+    execution = models.OneToOneField(
+        HostedHarnessExecution,
+        on_delete=models.CASCADE,
+        related_name="receipt",
+        null=True,
+        blank=True,
+    )
     attempt_number = models.PositiveIntegerField()
     digest = models.CharField(max_length=71)
     status = models.CharField(max_length=16)
@@ -313,8 +364,15 @@ class HostedHarnessReceipt(BaseModel):
         db_table = "simulate_hosted_harness_receipt"
         constraints = [
             models.UniqueConstraint(
-                fields=["job", "scenario"], name="uniq_harness_job_scenario_receipt"
-            )
+                fields=["job", "execution"],
+                condition=models.Q(execution__isnull=False),
+                name="uniq_harness_job_execution_receipt",
+            ),
+            models.UniqueConstraint(
+                fields=["job", "scenario"],
+                condition=models.Q(execution__isnull=True),
+                name="uniq_harness_legacy_scenario_receipt",
+            ),
         ]
 
 

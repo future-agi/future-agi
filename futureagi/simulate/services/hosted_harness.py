@@ -18,6 +18,7 @@ from simulate.models import (
     HostedHarnessAttempt,
     HostedHarnessCleanupReceipt,
     HostedHarnessConversation,
+    HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessReceipt,
     HostedHarnessScenario,
@@ -28,6 +29,7 @@ from simulate.services.alk_simulate_ingestion import (
     append_alk_sim_scenarios,
     create_alk_sim_call_execution_batch,
     create_alk_sim_test_execution,
+    precreate_alk_sim_call_executions,
     provision_alk_sim_run_test,
 )
 
@@ -222,6 +224,240 @@ def create_hosted_job(
         return job, True
 
 
+def create_selected_harness_run(
+    environment: HostedHarnessJob,
+    *,
+    scenario_keys: list[str],
+    trials: int,
+    idempotency_key: str,
+) -> tuple[HostedHarnessJob, bool]:
+    """Freeze and preallocate one selected-scenario Run for an authored environment."""
+
+    if environment.environment_id is not None:
+        raise HostedHarnessError(
+            "environment_required",
+            "simulation Runs can only be submitted from an authored environment",
+            status_code=409,
+        )
+    if environment.state != HostedHarnessJob.State.COMPLETED:
+        raise HostedHarnessError(
+            "environment_not_ready",
+            "environment authoring must complete before simulations can run",
+            status_code=409,
+        )
+    metadata = dict((environment.payload or {}).get("metadata") or {})
+    if not environment.run_test_id or not metadata.get("authoring_object_key"):
+        raise HostedHarnessError(
+            "environment_snapshot_missing",
+            "environment has no durable validated snapshot",
+            status_code=409,
+        )
+    if not scenario_keys:
+        raise HostedHarnessError(
+            "scenario_selection_empty",
+            "select at least one scenario",
+            status_code=400,
+        )
+    if len(scenario_keys) != len(set(scenario_keys)):
+        raise HostedHarnessError(
+            "scenario_selection_duplicate",
+            "scenario selection must not contain duplicates",
+            status_code=400,
+        )
+    if trials < 1 or trials > 20:
+        raise HostedHarnessError(
+            "trials_out_of_range",
+            "trials must be between 1 and 20",
+            status_code=400,
+        )
+    max_executions = int(getattr(settings, "HARNESS_MAX_EXECUTIONS_PER_RUN", 200))
+    if len(scenario_keys) * trials > max_executions:
+        raise HostedHarnessError(
+            "run_too_large",
+            f"selected scenarios × trials must not exceed {max_executions}",
+            status_code=400,
+        )
+
+    with transaction.atomic():
+        try:
+            environment = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                id=environment.id
+            )
+        except HostedHarnessJob.DoesNotExist as exc:
+            raise HostedHarnessError(
+                "environment_not_ready",
+                "environment was deleted while submitting this Run",
+                status_code=409,
+            ) from exc
+        if (
+            environment.deleted
+            or environment.state != HostedHarnessJob.State.COMPLETED
+            or not environment.run_test_id
+            or not (environment.payload.get("metadata") or {}).get(
+                "authoring_object_key"
+            )
+        ):
+            raise HostedHarnessError(
+                "environment_not_ready",
+                "environment changed while submitting this Run",
+                status_code=409,
+            )
+        registrations = list(
+            HostedHarnessScenario.no_workspace_objects.filter(
+                job=environment, scenario_key__in=scenario_keys
+            )
+            .select_related("scenario", "dataset_row")
+            .order_by("created_at", "id")
+        )
+        by_key = {
+            registration.scenario_key: registration for registration in registrations
+        }
+        missing = [key for key in scenario_keys if key not in by_key]
+        if missing:
+            raise HostedHarnessError(
+                "scenario_selection_unknown",
+                f"scenario keys do not belong to this environment: {missing}",
+                status_code=400,
+            )
+
+        idempotency_digest = hashlib.sha256(idempotency_key.encode()).hexdigest()
+        child_idempotency_key = f"run:{environment.id}:{idempotency_digest}"
+        manifest: list[dict[str, Any]] = []
+        for scenario_key in scenario_keys:
+            registration = by_key[scenario_key]
+            for trial_index in range(1, trials + 1):
+                execution_key = uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    (
+                        f"futureagi:harness-run:{environment.id}:"
+                        f"{idempotency_digest}:{registration.id}:{trial_index}"
+                    ),
+                ).hex
+                manifest.append(
+                    {
+                        "execution_key": execution_key,
+                        "scenario_key": registration.scenario_key,
+                        "scenario_id": str(registration.scenario_id),
+                        "dataset_row_id": (
+                            str(registration.dataset_row_id)
+                            if registration.dataset_row_id
+                            else None
+                        ),
+                        "trial_index": trial_index,
+                    }
+                )
+
+        child_payload = json.loads(json.dumps(environment.payload))
+        child_payload["scenario_count"] = len(manifest)
+        runtime = child_payload["runtime"]
+        runtime["max_duration_seconds"] = max(
+            runtime["max_duration_seconds"], len(manifest) * 360
+        )
+        child_metadata = child_payload.setdefault("metadata", {})
+        for key in (
+            "scenario_extend",
+            "usage_limit",
+            "harness_spend",
+            "authoring_usage_reports",
+            "usage_reports",
+            "sandbox_runtime",
+        ):
+            child_metadata.pop(key, None)
+        child_metadata.update(
+            {
+                "environment_job_id": str(environment.id),
+                "simulation_only": True,
+                "execution_manifest": manifest,
+                "selected_scenario_keys": scenario_keys,
+                "trials": trials,
+            }
+        )
+        child_payload.pop("job_id", None)
+        child_payload.pop("run_id", None)
+
+        child, created = create_hosted_job(
+            environment.organization,
+            child_payload,
+            idempotency_key=child_idempotency_key,
+            workspace=environment.workspace,
+        )
+        if not created:
+            return child, False
+
+        scenario_ids = list(dict.fromkeys(entry["scenario_id"] for entry in manifest))
+        test_execution = TestExecution.no_workspace_objects.create(
+            run_test=environment.run_test,
+            status=TestExecution.ExecutionStatus.PENDING,
+            started_at=timezone.now(),
+            total_scenarios=len(scenario_keys),
+            trials=trials,
+            scenario_ids=scenario_ids,
+            total_calls=len(manifest),
+            picked_up_by_executor=True,
+            simulator_agent=environment.run_test.simulator_agent,
+            agent_definition=environment.run_test.agent_definition,
+            agent_version=environment.run_test.agent_version,
+            execution_metadata={
+                "environment_job_id": str(environment.id),
+                "harness_job_id": str(child.id),
+                "selected_scenario_keys": scenario_keys,
+                "trials": trials,
+                "harness_executions": manifest,
+            },
+        )
+        call_ids = precreate_alk_sim_call_executions(test_execution)
+        calls = CallExecution.no_workspace_objects.filter(id__in=call_ids)
+        calls_by_key = {
+            (call.call_metadata or {}).get("harness_execution_key"): call
+            for call in calls
+        }
+        if set(calls_by_key) != {entry["execution_key"] for entry in manifest}:
+            raise HostedHarnessError(
+                "run_preallocation_incomplete",
+                "could not preallocate every selected scenario trial",
+                status_code=500,
+                retryable=True,
+            )
+        for entry in manifest:
+            entry["call_execution_id"] = str(calls_by_key[entry["execution_key"]].id)
+        child_payload = dict(child.payload)
+        child_metadata = dict(child_payload.get("metadata") or {})
+        child_metadata["execution_manifest"] = manifest
+        child_payload["metadata"] = child_metadata
+        child.payload = child_payload
+        execution_metadata = dict(test_execution.execution_metadata or {})
+        execution_metadata["harness_executions"] = manifest
+        test_execution.execution_metadata = execution_metadata
+        test_execution.save(update_fields=["execution_metadata", "updated_at"])
+        HostedHarnessExecution.no_workspace_objects.bulk_create(
+            [
+                HostedHarnessExecution(
+                    job=child,
+                    source_scenario=by_key[entry["scenario_key"]],
+                    execution_key=entry["execution_key"],
+                    trial_index=entry["trial_index"],
+                    call_execution=calls_by_key[entry["execution_key"]],
+                )
+                for entry in manifest
+            ]
+        )
+        child.environment = environment
+        child.run_test = environment.run_test
+        child.stage_outputs = list(environment.stage_outputs or [])
+        child.bundle_digest = environment.bundle_digest
+        child.test_execution = test_execution
+        child.save(
+            update_fields=[
+                "payload",
+                "environment",
+                "run_test",
+                "test_execution",
+                "updated_at",
+                "stage_outputs",
+                "bundle_digest",
+            ]
+        )
+        return child, True
 def _apply_parallelism_admission(
     job: HostedHarnessJob, snapshot_digest: str | None
 ) -> int:
@@ -341,6 +577,12 @@ def register_attempt(
                 "updated_at",
             ]
         )
+        if job.test_execution_id:
+            TestExecution.no_workspace_objects.filter(id=job.test_execution_id).update(
+                status=TestExecution.ExecutionStatus.RUNNING,
+                completed_at=None,
+                error_reason=None,
+            )
 
     base = endpoint_base_url.rstrip("/")
     prefix = f"{base}/simulate/api/harness/attempts/{attempt.id}"
@@ -428,33 +670,58 @@ DELETE_CANCEL_REASON = "environment_deleted"
 
 
 def delete_environment(job: HostedHarnessJob) -> None:
-    """Soft-delete an environment, cancelling its run first if one is live.
-
-    A live run keeps its row until sandbox cleanup has finished: the cleanup
-    path reads the job through the soft-delete manager, so hiding the row
-    first would strand the sandbox until its TTL. The row is hidden by
-    ``finish_deferred_delete`` when the run reaches a terminal state. The
-    authoring archive and the organization's secrets are left in place:
-    neither is owned by this row, and other environments may reference the
-    same credentials.
-    """
+    """Hide an environment and request cleanup for every live hosted sandbox."""
     from simulate.temporal.client import cancel_hosted_harness_gateway_workflow
 
-    if job.state in _TERMINAL_STATES:
-        _soft_delete(job)
-        return
-    locked = request_cancellation(job, DELETE_CANCEL_REASON)
-    if locked.state in _TERMINAL_STATES:
-        _soft_delete(locked)
-        return
-    try:
-        cancel_hosted_harness_gateway_workflow(str(job.id))
-    except Exception:
-        # Fail open: a scheduler that cannot be reached must not strand the
-        # user with an environment they cannot remove. The workflow is bounded
-        # by the job deadline and its sandbox by its own TTL.
-        logger.exception("hosted_harness_delete_cancel_failed", job_id=str(job.id))
-        _soft_delete(locked)
+    jobs_to_cancel = []
+    parent_cancel_id = None
+    with transaction.atomic():
+        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=job.id
+        )
+        active_children = list(
+            HostedHarnessJob.no_workspace_objects.select_for_update()
+            .filter(environment=locked)
+            .exclude(state__in=_TERMINAL_STATES)
+            .order_by("id")
+        )
+        for child in active_children:
+            child = request_cancellation(child, DELETE_CANCEL_REASON)
+            if child.state not in _TERMINAL_STATES:
+                jobs_to_cancel.append(str(child.id))
+
+        if locked.state in _TERMINAL_STATES:
+            _soft_delete(locked)
+        else:
+            locked = request_cancellation(locked, DELETE_CANCEL_REASON)
+            if locked.state in _TERMINAL_STATES:
+                _soft_delete(locked)
+            else:
+                parent_cancel_id = str(locked.id)
+                jobs_to_cancel.append(parent_cancel_id)
+
+    for job_id in jobs_to_cancel:
+        try:
+            cancel_hosted_harness_gateway_workflow(job_id)
+        except Exception:
+            logger.exception("hosted_harness_delete_cancel_failed", job_id=job_id)
+            try:
+                from simulate.services.hosted_harness_gateway import (
+                    HostedHarnessGateway,
+                )
+
+                cancel_job = HostedHarnessJob.no_workspace_objects.get(id=job_id)
+                HostedHarnessGateway().cancel(
+                    cancel_job, reason=DELETE_CANCEL_REASON
+                )
+            except Exception:
+                logger.exception(
+                    "hosted_harness_delete_direct_cancel_failed", job_id=job_id
+                )
+                if job_id == parent_cancel_id:
+                    _soft_delete(
+                        HostedHarnessJob.no_workspace_objects.get(id=job_id)
+                    )
 
 
 def _soft_delete(job: HostedHarnessJob) -> None:
@@ -1026,7 +1293,20 @@ def record_cleanup(
             job.state = HostedHarnessJob.State.RETRY_WAIT
             job.save(update_fields=["state", "updated_at"])
             return job
-        if attempt.terminal_stage == "completed":
+        snapshot_missing = (
+            job.environment_id is None
+            and job.test_execution_id is None
+            and attempt.terminal_stage == "completed"
+            and (
+                not job.run_test_id
+                or not (job.payload.get("metadata") or {}).get("authoring_object_key")
+                or HostedHarnessScenario.no_workspace_objects.filter(job=job).count()
+                != job.scenario_count
+            )
+        )
+        if snapshot_missing:
+            job.state = HostedHarnessJob.State.FAILED
+        elif attempt.terminal_stage == "completed":
             job.state = HostedHarnessJob.State.COMPLETED
         elif attempt.terminal_stage == "canceled":
             job.state = HostedHarnessJob.State.CANCELED
@@ -1034,12 +1314,22 @@ def record_cleanup(
             job.state = HostedHarnessJob.State.FAILED
         # Cleanup is an intermediate lifecycle stage. Once absence has been verified, expose the
         # guest's terminal stage so a completed job cannot remain visually stuck on cleaning_up.
-        job.current_stage = attempt.terminal_stage or job.state
+        job.current_stage = (
+            HostedHarnessJob.State.FAILED
+            if snapshot_missing
+            else attempt.terminal_stage or job.state
+        )
         job.terminal_at = now
-        # Copy terminal stage/failure onto the job atomically so
-        # status.failure and status.stage are authoritative in the read DTO.
-        job.current_stage = attempt.terminal_stage or job.current_stage
-        job.failure = attempt.terminal_failure
+        job.failure = (
+            {
+                "domain": "platform_sync",
+                "stage": "validating_scenarios",
+                "code": "authoring_snapshot_missing",
+                "message": "Validated scenarios or their durable bundle are missing",
+            }
+            if snapshot_missing
+            else attempt.terminal_failure
+        )
         job.content_updated_at = now
         job.save(
             update_fields=[

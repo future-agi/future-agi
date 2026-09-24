@@ -28,7 +28,6 @@ import {
 } from "./analytics/DashboardCharts";
 import DashboardControls, {
   printDashboard,
-  useDashboardLayout,
 } from "./analytics/DashboardControls";
 import DashboardHistogram from "./analytics/DashboardHistogram";
 import { CHART_GUIDE } from "./analytics/chartGuide";
@@ -141,7 +140,6 @@ RunAnalytics.propTypes = {
 
 function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
   const { data, isPending, isError, refetch } = useRunAnalytics(executionId);
-  const layout = useDashboardLayout(executionId);
   const printable = useRef(null);
   if (isPending)
     return (
@@ -171,11 +169,6 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
       />
     );
   const dashboard = data.dashboard;
-  const hide = (id) =>
-    layout.update((current) => ({
-      ...current,
-      hidden: [...new Set([...current.hidden, id])],
-    }));
   const open = onOpenCall
     ? (task) =>
         onOpenCall({
@@ -501,8 +494,6 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
   return (
     <>
       <DashboardControls
-        layout={layout}
-        widgets={WIDGETS}
         onPrint={() =>
           printDashboard(
             printable.current,
@@ -559,8 +550,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
         </Box>
         {SECTIONS.map((section) => {
           const visible = WIDGETS.filter(
-            (widget) =>
-              widget.section === section && !layout.hidden.includes(widget.id),
+            (widget) => widget.section === section,
           );
           if (!visible.length) return null;
           return (
@@ -598,7 +588,6 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
                     {...widget}
                     subtitle={subtitles[widget.id]}
                     help={CHART_GUIDE[widget.id]}
-                    onHide={hide}
                   >
                     {renderWidget(widget.id)}
                   </Widget>

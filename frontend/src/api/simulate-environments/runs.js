@@ -29,10 +29,17 @@ export function listRunTestExecutions(runTestId) {
 // click routes into the
 // reused product execution detail.
 export function executionToRun(raw) {
-  const total = raw?.total_chats ?? raw?.calls_attempted ?? 0;
+  const total =
+    raw?.total_calls ?? raw?.total_chats ?? raw?.calls_attempted ?? raw?.calls ?? 0;
+  const hasOutcomes = raw?.outcome_passed != null;
   const rate = raw?.success_rate ?? 0;
-  const passed = Math.round((total * rate) / 100);
-  const failed = Math.max(total - passed, 0);
+  const passed = hasOutcomes
+    ? raw.outcome_passed
+    : raw?.completed_calls ?? Math.round((total * rate) / 100);
+  const skipped = hasOutcomes ? raw.outcome_skipped ?? 0 : 0;
+  const failed = hasOutcomes
+    ? (raw.outcome_failed ?? 0) + skipped
+    : raw?.failed_calls ?? Math.max(total - passed, 0);
 
   let status;
   if (!TERMINAL_STATUSES.includes(raw?.status)) {
@@ -48,13 +55,19 @@ export function executionToRun(raw) {
     executionId: raw?.id,
     status,
     startedAt: raw?.start_time ?? null,
-    finishedAt: null,
+    finishedAt: raw?.completed_at ?? null,
     total,
     passed,
     failed,
+    pending: hasOutcomes
+      ? Math.max(total - passed - failed, 0)
+      : raw?.pending_calls ?? Math.max(total - passed - failed, 0),
+    skipped,
+    hasOutcomes,
+    scenarioCount: raw?.selected_scenarios ?? null,
+    scenarioIds: raw?.scenario_keys ?? [],
+    trials: raw?.trials ?? 1,
     agentVersion: raw?.agent_version ?? null,
-    // Run-level wall-clock (SECONDS) the summary table's "Avg duration" reads —
-    // the same `duration` field the product's TestRunsGrid formats; null absent.
     durationS: raw?.duration ?? null,
   };
 }
@@ -90,6 +103,12 @@ export function useEnvironmentRuns(env, envState) {
     queryFn: () => listRunTestExecutions(runTestId),
     enabled: !!runTestId && !mockRuns,
     select: mapExecutions,
+    refetchInterval: (query) =>
+      (query.state.data?.results || []).some(
+        (row) => !TERMINAL_STATUSES.includes(row?.status),
+      )
+        ? 2000
+        : false,
   });
 
   if (mockRuns) {
@@ -113,24 +132,3 @@ export function runSimulationTarget(env) {
   return paths.dashboard.simulate.test;
 }
 
-// Run target for a scoped run: a subset of scenarios (`ids`) and/or a repeat
-// count (`trials`), from the scenario selection bar or the header run-config
-// dialog. The intent rides on the URL — `?only=<id,id>` for a subset,
-// `&trials=<k>` for repeats.
-//
-// HONEST GAP: our branch has no live-run view yet, so this appends onto the
-// product run page, which does NOT read `only`/`trials` today — the run
-// navigates but neither the subset nor the repeat count takes effect. Wire the
-// params through once the live-run route lands (see the hosted-panel gaps note).
-export function runSelectionTarget(env, ids, trials) {
-  const base = runSimulationTarget(env);
-  const parts = [];
-  const only = (ids || []).filter(Boolean);
-  // Keep the id list comma-readable (?only=a,b), encoding each id rather than
-  // the separators, which URLSearchParams would percent-encode.
-  if (only.length) parts.push(`only=${only.map(encodeURIComponent).join(",")}`);
-  const k = Math.max(1, Math.min(20, Number(trials) || 1));
-  if (k > 1) parts.push(`trials=${k}`);
-  if (!parts.length) return base;
-  return `${base}${base.includes("?") ? "&" : "?"}${parts.join("&")}`;
-}

@@ -573,9 +573,8 @@ import type {
   HarnessEnvironmentDetailApi,
   HarnessEnvironmentListResponseApi,
   HarnessEnvironmentRenameApi,
-  HarnessEnvironmentRunApi,
   HarnessEnvironmentRunEvaluationQueuedApi,
-  HarnessEnvironmentRunResponseApi,
+  HarnessEnvironmentToolCallEvaluationApi,
   HarnessEventBatchApi,
   HarnessEventBatchResponseApi,
   HarnessIngressProxyRequestApi,
@@ -590,6 +589,8 @@ import type {
   HarnessPreflightApi,
   HarnessPreflightResponseApi,
   HarnessResultReceiptApi,
+  HarnessRunCreateApi,
+  HarnessRunCreateResponseApi,
   HarnessScenarioAmendApi,
   HarnessScenarioOperationApi,
   HarnessScenarioOperationResponseApi,
@@ -58500,6 +58501,57 @@ export const simulateApiHarnessEnvironmentsEvaluationsAvailableEvaluations =
     );
   };
 
+export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponse200 =
+  {
+    data: HarnessEnvironmentDetailApi;
+    status: 200;
+  };
+
+export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200>;
+  };
+
+export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseSuccess =
+  simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseError =
+  simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponse =
+
+    | simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseSuccess
+    | simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseError;
+
+export const getSimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationUrl =
+  (id: string) => {
+    return `/simulate/api/harness-environments/${id}/evaluations/tool-call/`;
+  };
+
+/**
+ * Turn the tool-call judge on or off for this environment. Returns the full environment detail. Turning it on is refused for a hosted voice environment with no agent version yet.
+ */
+export const simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluation =
+  async (
+    id: string,
+    harnessEnvironmentToolCallEvaluationApi: HarnessEnvironmentToolCallEvaluationApi,
+    options?: RequestInit,
+  ): Promise<simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponse> => {
+    return apiMutator<simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponse>(
+      getSimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationUrl(id),
+      {
+        ...options,
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(harnessEnvironmentToolCallEvaluationApi),
+      },
+    );
+  };
+
 export type simulateApiHarnessEnvironmentsRemoveEvaluationResponse204 = {
   data: void;
   status: 204;
@@ -58553,7 +58605,7 @@ export const simulateApiHarnessEnvironmentsRemoveEvaluation = async (
 };
 
 export type simulateApiHarnessEnvironmentsRunResponse202 = {
-  data: HarnessEnvironmentRunResponseApi;
+  data: HarnessRunCreateResponseApi;
   status: 202;
 };
 
@@ -58580,13 +58632,11 @@ export const getSimulateApiHarnessEnvironmentsRunUrl = (id: string) => {
 };
 
 /**
- * This reuses the saved contract and scenario suite rather than authoring
-a new one, which is what makes a second run comparable to the first.
- * @summary Start a simulation on an existing environment.
+ * Create one new Run for the selected scenarios and trial count.
  */
 export const simulateApiHarnessEnvironmentsRun = async (
   id: string,
-  harnessEnvironmentRunApi: HarnessEnvironmentRunApi,
+  harnessRunCreateApi: HarnessRunCreateApi,
   options?: RequestInit,
 ): Promise<simulateApiHarnessEnvironmentsRunResponse> => {
   return apiMutator<simulateApiHarnessEnvironmentsRunResponse>(
@@ -58595,7 +58645,7 @@ export const simulateApiHarnessEnvironmentsRun = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(harnessEnvironmentRunApi),
+      body: JSON.stringify(harnessRunCreateApi),
     },
   );
 };
@@ -59251,6 +59301,55 @@ export const simulateApiHarnessJobsExtend = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(harnessJobExtendApi),
+    },
+  );
+};
+
+export type simulateApiHarnessJobsRunsResponse202 = {
+  data: HarnessRunCreateResponseApi;
+  status: 202;
+};
+
+export type simulateApiHarnessJobsRunsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202>;
+};
+
+export type simulateApiHarnessJobsRunsResponseSuccess =
+  simulateApiHarnessJobsRunsResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsRunsResponseError =
+  simulateApiHarnessJobsRunsResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsRunsResponse =
+  | simulateApiHarnessJobsRunsResponseSuccess
+  | simulateApiHarnessJobsRunsResponseError;
+
+export const getSimulateApiHarnessJobsRunsUrl = (id: string) => {
+  return `/simulate/api/harness-jobs/${id}/runs/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsRuns = async (
+  id: string,
+  harnessRunCreateApi: HarnessRunCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsRunsResponse> => {
+  return apiMutator<simulateApiHarnessJobsRunsResponse>(
+    getSimulateApiHarnessJobsRunsUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessRunCreateApi),
     },
   );
 };
@@ -80722,7 +80821,10 @@ export const getUsageAdminInvoicePreviewCreateUrl = () => {
 };
 
 /**
- * Preview invoice for an org+period (no side effects).
+ * Creates no invoice and deducts no credits, but does backfill missing
+``UsageSummary`` rows for the usage period. Open to staff so the admin's
+read-only Generate Invoice page can show what would be billed.
+ * @summary Preview invoice for an org+period.
  */
 export const usageAdminInvoicePreviewCreate = async (
   adminInvoiceRequestApi: AdminInvoiceRequestApi,

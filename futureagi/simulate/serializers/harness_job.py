@@ -123,7 +123,13 @@ class HarnessAgentSerializer(serializers.Serializer):
             "dials the simulated caller. Voice connectors only."
         ),
     )
-    config = serializers.DictField(default=dict)
+    # A JSONField, not a DictField: the OpenAPI generator renders an untyped
+    # DictField as a map of strings, and the frontend's generated request
+    # validator then rejects the booleans the preflight and build forms
+    # send here (`inbound`, `target_speaks_first`), which the backend reads
+    # as booleans. A JSONField renders as a plain object; `validate_config`
+    # still requires an object and rejects secrets.
+    config = serializers.JSONField(default=dict)
     secret_refs = serializers.DictField(
         child=SecretReferenceSerializer(), required=False, default=dict
     )
@@ -649,6 +655,28 @@ class HarnessJobActionSerializer(serializers.Serializer):
     reason = serializers.ChoiceField(
         choices=("user_canceled", "ttl_exceeded"), default="user_canceled"
     )
+
+
+class HarnessRunCreateSerializer(serializers.Serializer):
+    scenario_ids = serializers.ListField(
+        child=serializers.CharField(max_length=255),
+        allow_empty=False,
+        max_length=1000,
+    )
+    trials = serializers.IntegerField(min_value=1, max_value=20, default=1)
+
+
+class HarnessRunCreateResponseSerializer(serializers.Serializer):
+    environment_id = serializers.UUIDField()
+    job_id = serializers.UUIDField()
+    run_id = serializers.UUIDField()
+    run_test_id = serializers.UUIDField()
+    test_execution_id = serializers.UUIDField()
+    scenario_count = serializers.IntegerField(min_value=1)
+    trials = serializers.IntegerField(min_value=1, max_value=20)
+    total_calls = serializers.IntegerField(min_value=1)
+    state = serializers.CharField()
+    stage = serializers.CharField()
 
 
 class HarnessPreflightSerializer(HarnessJobCreateSerializer):

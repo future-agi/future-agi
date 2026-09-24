@@ -147,8 +147,7 @@ export default function PanelSourceRepo() {
         status={build.status}
         canRun={canGo}
         onRun={() => build.runPreflight(buildSource())}
-        checks={build.checks}
-        state={build.state}
+        result={build.result}
         error={build.error}
       />
       <ContinueRow

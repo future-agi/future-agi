@@ -24,7 +24,7 @@ import { conversationInFlight } from "./conversationProjection";
 // detail query stays disabled to keep the live workspace error-free. Flip to true
 // once the backend serves §6 — the whole real-detail path (harnessDetailToEnvironment
 // merge + real scenarios/evals/amendments/end_conditions/stores) turns on with it.
-export const HARNESS_DETAIL_ENABLED = false;
+export const HARNESS_DETAIL_ENABLED = true;
 
 // The harness detail poll cadence, matching HarnessDetail's own 2s tick, with a
 // faster 1s tick while a conversation turn is in flight so a reply lands promptly.
@@ -166,7 +166,6 @@ const scenarioFromOutput = (row) => ({
 export function harnessEnvState(item, world) {
   const status = item?.status || {};
   const resolved = world || {};
-
   const scenarios =
     (resolved.scenarios?.length && resolved.scenarios.map(scenarioFromOutput)) ||
     (Array.isArray(item?.scenarios) && item.scenarios.length
@@ -235,7 +234,9 @@ export function harnessJobToEnvironment(item) {
 // Header Run-simulation gating: a built harness job can run through the product
 // bridge as soon as it has a run-test id, even before the client canRun is met.
 export const canRunHeader = (source, env, canRun) =>
-  source === "harness" ? Boolean(env?.platform?.runTestId) || canRun : canRun;
+  source === "harness"
+    ? Boolean(env?.platform?.runTestId) && canRun
+    : canRun;
 
 // Overlay only the keys `extra` actually defines onto `base`, so a real §6 field
 // (or a new structured field like amendments) wins while an absent one leaves the

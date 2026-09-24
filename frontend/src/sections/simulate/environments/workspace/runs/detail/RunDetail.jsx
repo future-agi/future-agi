@@ -15,7 +15,6 @@ import {
   useOptimizationRuns,
 } from "src/api/simulate-environments/runDetail";
 import { exportRunResults } from "src/api/simulate-environments/runAnalytics";
-import { runSimulationTarget } from "src/api/simulate-environments/runs";
 
 import SectionCard from "../../../components/SectionCard";
 import StatusChip from "../StatusChip";
@@ -28,15 +27,16 @@ import OptimizationRunsList from "./fixmyagent/OptimizationRunsList";
 import LaunchOptimizationDrawer from "./fixmyagent/LaunchOptimizationDrawer";
 import RunAnalytics from "./RunAnalytics";
 
-// The header status is a verdict on the RUN, not on any one call in it. Every
-// call failing is a failed run; some passing and some failing is a completed
-// run with findings — calling that "Failed" would bury the ones that passed. A
-// run still in flight stays "running".
+// Terminal execution failures/cancellations outrank call-level outcomes.
+// Otherwise mixed pass/fail results are a completed run with findings.
 function headerStatus(identity, stats) {
   // No verdict until the run resolves: while loading, identity is null and the
   // zeroed stats would otherwise read as "Failed".
   if (!identity) return null;
   if (identity.status === "running") return "running";
+  if (identity.status === "failed" || identity.status === "cancelled") {
+    return identity.status;
+  }
   if (stats.passed === 0) return "failed";
   if (stats.failed === 0) return "passed";
   return "completed";
@@ -50,7 +50,14 @@ function headerStatus(identity, stats) {
  * `RunResults` chrome — the identity header and tab strip — over real run-level
  * data (`useRunDetail`).
  */
-export default function RunDetail({ env, envState, backed = false, testId, executionId }) {
+export default function RunDetail({
+  env,
+  envState,
+  backed = false,
+  testId,
+  executionId,
+  onStartRun,
+}) {
   const navigate = useNavigate();
   const [tab, setTab] = useState("tasks");
   const [analyticsFilters, setAnalyticsFilters] = useState({});
@@ -203,7 +210,12 @@ export default function RunDetail({ env, envState, backed = false, testId, execu
           variant="outlined"
           size="small"
           startIcon={<Iconify icon="solar:refresh-linear" width={15} />}
-          onClick={() => navigate(runSimulationTarget(env))}
+          onClick={() =>
+            onStartRun?.(
+              identity?.scenarioIds || undefined,
+              identity?.trials || 1,
+            )
+          }
           sx={{
             color: "text.primary",
             borderColor: "divider",
@@ -394,4 +406,5 @@ RunDetail.propTypes = {
   backed: PropTypes.bool,
   testId: PropTypes.string,
   executionId: PropTypes.string,
+  onStartRun: PropTypes.func,
 };

@@ -83,12 +83,12 @@ export function projectConversation(conversation) {
 
   const turns = [];
   let builder = null;
-  let toolByCall = null;
+  const toolByCall = new Map();
 
   const startBuilder = () => {
+    if (builder?.title) builder = null;
     if (!builder) {
       builder = { id: null, role: "builder", steps: [] };
-      toolByCall = new Map();
       turns.push(builder);
     }
     return builder;
@@ -99,11 +99,14 @@ export function projectConversation(conversation) {
     // stops pulsing, rather than leaving a permanently in-flight indicator.
     finalizeRunningSteps(builder?.steps);
     builder = null;
-    toolByCall = null;
   };
 
   const pushActivity = (line, seedId) => {
-    const b = startBuilder();
+    if (!builder?.title) {
+      builder = { id: null, role: "builder", title: "Background run activity", steps: [] };
+      turns.push(builder);
+    }
+    const b = builder;
     const last = b.steps[b.steps.length - 1];
     if (last && last.kind === "group") {
       last.lines.push(line);
@@ -170,7 +173,6 @@ export function projectConversation(conversation) {
         break;
       }
       case "tool_result": {
-        const b = startBuilder();
         const existing = e.function_call_id ? toolByCall.get(e.function_call_id) : null;
         const isError = Boolean(e.payload?.is_error);
         const result =
@@ -180,6 +182,7 @@ export function projectConversation(conversation) {
           existing.state = isError ? "failed" : "completed";
           existing.result = result;
         } else {
+          const b = startBuilder();
           b.steps.push({
             id: `tool-${e.function_call_id || e.event_id}`,
             kind: "tool",

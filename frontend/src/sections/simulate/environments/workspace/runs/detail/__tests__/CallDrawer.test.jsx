@@ -310,14 +310,19 @@ describe("CallDrawer — voice branch", () => {
       data: {
         id: "voice-1",
         scenario_id: "s1",
-        transcript: [],
+        transcript: [
+          { content: "Checking.", start_time_seconds: 0 },
+          { content: "Found it.", start_time_seconds: 10 },
+        ],
         function_calls: [
           {
             name: "lookup_order",
             arguments: { order_id: "AB-1" },
             result: { status: "shipped" },
             duration_ms: 309,
+            start_time_seconds: 5,
           },
+          { name: "untimed_tool", at: 0 },
         ],
       },
       isPending: false,
@@ -340,6 +345,16 @@ describe("CallDrawer — voice branch", () => {
     );
     expect(screen.getByTestId("voice-drawer")).toHaveTextContent(
       'result: {"status":"shipped"}',
+    );
+    const timeline = screen.getByTestId("voice-drawer").textContent;
+    expect(timeline.indexOf("Checking.")).toBeLessThan(
+      timeline.indexOf("lookup_order"),
+    );
+    expect(timeline.indexOf("lookup_order")).toBeLessThan(
+      timeline.indexOf("Found it."),
+    );
+    expect(timeline.indexOf("Found it.")).toBeLessThan(
+      timeline.indexOf("untimed_tool"),
     );
   });
 });

@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 
 import jwt
 import requests
+import structlog
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
@@ -68,6 +69,7 @@ from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import ensure_bucket, get_storage_client
 
 logger = logging.getLogger("simulate.hosted_harness_gateway")
+structlog_logger = structlog.get_logger(__name__)
 
 HOSTED_ENGINE_CATALOG = {
     "postgres": {
@@ -1732,17 +1734,12 @@ class HostedHarnessGateway:
                 raise HostedHarnessError(
                     "authoring_failed", detail, status_code=422, retryable=False
                 )
-            # Pack the authoring directory whole rather than an allow-list of file names: the
-            # guest decides what a saved world consists of (world.sqlite today, world.py +
-            # state.json + manifest.json on newer guests), and an allow-list here silently
-            # drops the marker the next reuse needs. Only the sealed bundle is left out: it is
-            # large and bundle_author_v2 regenerates it from this directory on every launch.
-            # cost.json is this run's bill, not part of a saved world: left in, every reuse
-            # reads the first run's authoring cost back as its own.
+            # Preserve the validated environment bundle with the authored inputs.
+            # Later simulation Runs restore this exact snapshot instead of
+            # regenerating or re-authoring the environment.
             packed = sandbox.process.exec(
                 "cd /work/authoring && tar -czf /tmp/authoring.tar.gz "
-                "--exclude=./environment-bundle --exclude=__pycache__ "
-                "--exclude=./cost.json .",
+                "--exclude=__pycache__ --exclude=./cost.json .",
                 timeout=180,
             )
             if packed.exit_code:
@@ -2047,6 +2044,24 @@ class HostedHarnessGateway:
                 if authoring_target_secrets
                 else ""
             )
+            simulation_only = bool(
+                (dispatch_payload.get("metadata") or {}).get("simulation_only")
+            )
+            bundle_command = (
+                "rm -rf /work/bundle && "
+                "cp -a /work/authoring/environment-bundle /work/bundle && "
+                "if [ -f /work/authoring/runtime-validation.json ]; then "
+                "cp /work/authoring/runtime-validation.json /work/runtime-validation.json; "
+                "fi"
+                if simulation_only
+                else (
+                    "python -m fi.alk.harness.bundle_author_v2 "
+                    "--job /work/job.json --source /work/source "
+                    "--authoring /work/authoring --output /work/bundle && "
+                    "rm -rf /work/authoring/environment-bundle && "
+                    "cp -a /work/bundle /work/authoring/environment-bundle"
+                )
+            )
             command = sandbox.process.execute_session_command(
                 _ENTRYPOINT_SESSION,
                 SandboxCommandRequest(
@@ -2059,9 +2074,8 @@ class HostedHarnessGateway:
                         + provider_profile_args
                         + "; fi && "
                         + ((extend_command + " && ") if extend_command else "")
-                        + "python -m fi.alk.harness.bundle_author_v2 "
-                        "--job /work/job.json --source /work/source "
-                        "--authoring /work/authoring --output /work/bundle && "
+                        + bundle_command
+                        + " && "
                         "python -m fi.alk.harness.hosted_entrypoint /work/job.json "
                         "--source /work/source --output /work/artifacts"
                     ),
@@ -3021,13 +3035,19 @@ class HostedHarnessGateway:
         certified = _json("/work/authoring/generic-harness/certification.json")
         _read_harness_usage(attempt, sandbox)
         job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
-        _record_harness_spend(job, spend, attempt.attempt_number)
+        metadata = (job.payload or {}).get("metadata") or {}
+        if not metadata.get("simulation_only"):
+            _record_harness_spend(job, spend, attempt.attempt_number)
         authoring_complete = (
             isinstance(bundle, dict)
             and isinstance(scenarios, list)
             and len(scenarios) == job.scenario_count
         )
-        if authoring_complete and isinstance(spend, dict):
+        if (
+            not metadata.get("simulation_only")
+            and authoring_complete
+            and isinstance(spend, dict)
+        ):
             from simulate.services.harness_usage import (
                 record_harness_authoring_usage,
             )
@@ -3049,7 +3069,6 @@ class HostedHarnessGateway:
         # A chat "add scenarios" extend re-authors the SAME RunTest up to N+delta, so it must
         # re-freeze even though a key already exists — gated on its one-shot marker.
         # store_authoring_archive clears that marker in the same save.
-        metadata = (job.payload or {}).get("metadata") or {}
         if authoring_complete and (
             not metadata.get("authoring_object_key") or metadata.get("scenario_extend")
         ):
@@ -3058,8 +3077,7 @@ class HostedHarnessGateway:
                     "cd /work/authoring && "
                     "[ -f contract.json ] && [ -d scenarios ] && "
                     "tar -czf /tmp/authoring-rerun.tar.gz "
-                    "--exclude=./environment-bundle --exclude=__pycache__ .",
-                    timeout=180,
+                    "--exclude=__pycache__ --exclude=./cost.json .",
                 )
                 if packed.exit_code:
                     raise RuntimeError(str(packed.result or "authoring pack failed"))
@@ -4011,7 +4029,12 @@ def pack_authoring_archive(authoring_root: Path) -> bytes:
         path = authoring_root / name
         if path.is_file() and not path.is_symlink():
             files.append(path)
-    for directory_name in ("scenarios", "handlers", "generic-harness"):
+    for directory_name in (
+        "scenarios",
+        "handlers",
+        "generic-harness",
+        "environment-bundle",
+    ):
         directory = authoring_root / directory_name
         if directory.is_dir() and not directory.is_symlink():
             files.extend(
@@ -4160,25 +4183,22 @@ def prepare_dispatch_payload(
 
 
 def _offered_eval_catalogue(job: Any) -> list[dict[str, Any]]:
-    """The platform evals this job may select, filtered to its own modality and tenant."""
-    from simulate.services.harness_evals import offered_evals
+    """The platform evals this job may select, filtered to its tenant and, once a contract exists, its modality.
+
+    The union-and-`any` logic moved into `harness_evals.briefing_evals`, which
+    is the one place that knows the list format. What stays here is the job:
+    reading the authored modality off `stage_outputs`, and never failing a
+    launch over a catalogue.
+    """
+    from simulate.services.harness_evals import briefing_evals
 
     try:
-        authored = _authored_modality(job)
-        if authored:
-            return offered_evals(job.organization, job.workspace, authored)
-        # No contract yet at launch, so offer both sets and mark a shared name `any`.
-        by_name: dict[str, dict[str, Any]] = {}
-        for modality in ("voice", "text"):
-            for entry in offered_evals(job.organization, job.workspace, modality):
-                name = str(entry.get("name"))
-                if name in by_name:
-                    by_name[name] = {**by_name[name], "modality": "any"}
-                    continue
-                by_name[name] = dict(entry)
-        return list(by_name.values())
+        return briefing_evals(job.organization, job.workspace, _authored_modality(job))
     except Exception:  # noqa: BLE001 - a catalogue is an offer; never fail a launch over it
-        logger.exception("harness_eval_catalogue_failed", job_id=str(job.id))
+        structlog_logger.exception(
+            "harness_eval_catalogue_failed",
+            job_id=str(getattr(job, "id", "") or ""),
+        )
         return []
 
 
@@ -4665,7 +4685,8 @@ def store_authoring_archive(
     job: HostedHarnessJob, body: bytes, *, advance_lifecycle: bool = True
 ) -> str:
     """Persist fresh authoring output and attach its opaque key to the hosted job."""
-    object_key = f"harness-authoring/{job.organization_id}/{job.id}.tar.gz"
+    digest = hashlib.sha256(body).hexdigest()
+    object_key = f"harness-authoring/{job.organization_id}/{job.id}/{digest}.tar.gz"
     client = get_storage_client()
     ensure_bucket(client, UPLOAD_BUCKET_NAME)
     client.put_object(

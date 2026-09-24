@@ -6,13 +6,12 @@ import {
   Typography,
   TableCell,
   TableRow,
-  Checkbox,
 } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
 import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
-import { isBad, neutralCheckboxSx } from "./traceTable.constants";
+import { isBad } from "./traceTable.constants";
 
 const DESC_KEYS = [
   "callDetails",
@@ -34,8 +33,6 @@ export default function TraceGroupHeaderRow({
   show,
   showEvals,
   evals,
-  selected,
-  onToggleGroup,
 }) {
   const cellSx = {
     bgcolor: "transparent",
@@ -69,7 +66,7 @@ export default function TraceGroupHeaderRow({
     return "—";
   };
 
-  const numCell = (value, suffix = "", metric) => {
+  const numCell = (value, suffix = "", metric, aggregation = "Avg") => {
     const bad = metric
       ? isBad(metric, typeof value === "number" ? value : Number(value))
       : false;
@@ -80,24 +77,33 @@ export default function TraceGroupHeaderRow({
             —
           </Typography>
         ) : (
-          <Stack direction="row" alignItems="center" spacing={0.5}>
-            {bad && (
-              <Iconify
-                icon="solar:danger-triangle-bold"
-                width={13}
-                sx={{ color: BUILD_TONES.red, flexShrink: 0 }}
-              />
-            )}
-            <Typography
-              sx={{
-                typography: "s2",
-                fontWeight: "fontWeightBold",
-                fontVariantNumeric: "tabular-nums",
-                color: bad ? BUILD_TONES.red : "text.primary",
-              }}
-            >
-              {typeof value === "number" ? value.toLocaleString() : value}
-              {suffix}
+          <Stack alignItems="flex-start" spacing={0.25}>
+            <Stack direction="row" alignItems="center" spacing={0.5}>
+              {bad && (
+                <Iconify
+                  icon="solar:danger-triangle-bold"
+                  width={13}
+                  sx={{ color: BUILD_TONES.red, flexShrink: 0 }}
+                />
+              )}
+              <Typography
+                sx={{
+                  typography: "s2",
+                  fontWeight: "fontWeightBold",
+                  fontVariantNumeric: "tabular-nums",
+                  color: bad ? BUILD_TONES.red : "text.primary",
+                }}
+              >
+                {typeof value === "number"
+                  ? value.toLocaleString(undefined, {
+                      maximumFractionDigits: 1,
+                    })
+                  : value}
+                {suffix}
+              </Typography>
+            </Stack>
+            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+              {aggregation}
             </Typography>
           </Stack>
         )}
@@ -139,34 +145,9 @@ export default function TraceGroupHeaderRow({
     </Stack>
   );
 
-  const ids = group.rows.map((r) => r.id);
-  const allOn = ids.length > 0 && ids.every((id) => selected?.has(id));
-  const someOn = ids.some((id) => selected?.has(id)) && !allOn;
 
   return (
     <TableRow onClick={onToggle}>
-      <TableCell
-        sx={{
-          width: 48,
-          pl: 1.25,
-          pr: 0,
-          py: 0,
-          verticalAlign: "middle",
-          borderBottom: "1px solid",
-          borderColor: "divider",
-          cursor: "pointer",
-          ".MuiTableRow-root:hover &": { bgcolor: rowHover },
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <Checkbox
-          size="small"
-          checked={allOn}
-          indeterminate={someOn}
-          onChange={() => onToggleGroup?.(group.rows)}
-          sx={neutralCheckboxSx}
-        />
-      </TableCell>
       {descColumns.length === 0 ? (
         <TableCell sx={{ ...cellSx, pl: 2, overflow: "hidden" }}>
           {label}
@@ -193,7 +174,7 @@ export default function TraceGroupHeaderRow({
       {show("csat") && numCell(a.csat, "", "csat")}
       {show("turns") && numCell(a.turns, "", "turns")}
       {show("latency") && numCell(a.latency, "ms", "latency")}
-      {show("tokens") && numCell(a.tokens)}
+      {show("tokens") && numCell(a.tokens, "", undefined, "Total")}
       {showEvals &&
         evals.map((e) => {
           const ea = a.evals?.[e.id];
@@ -218,7 +199,9 @@ export default function TraceGroupHeaderRow({
                   position: "absolute",
                   inset: 0,
                   display: "flex",
-                  alignItems: "center",
+                  flexDirection: "column",
+                  justifyContent: "center",
+                  alignItems: "flex-start",
                   px: 2,
                   py: 1.5,
                   bgcolor: interpolateColorBasedOnScore(meanScore, 1),
@@ -235,6 +218,9 @@ export default function TraceGroupHeaderRow({
                 >
                   {rate}%
                 </Typography>
+                <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                  Avg · {ea.scored} scored
+                </Typography>
               </Box>
             </TableCell>
           );
@@ -249,6 +235,4 @@ TraceGroupHeaderRow.propTypes = {
   show: PropTypes.func,
   showEvals: PropTypes.bool,
   evals: PropTypes.array,
-  selected: PropTypes.object,
-  onToggleGroup: PropTypes.func,
 };

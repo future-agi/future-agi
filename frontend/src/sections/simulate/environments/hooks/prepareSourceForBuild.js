@@ -32,10 +32,8 @@ export function redactSource(source) {
  *  - a hosted provider's `apiKey` → its fixed alias (VAPI_API_KEY / RETELL_API_KEY)
  *  - pasted `.env` contents → one alias per assignment (parsed with parseDotEnv)
  *
- * These same values feed two independent preflight paths: exchanged into opaque
- * `secret_refs` (which the `credentials_present` check reads), and sent verbatim
- * as write-only `credential_values` (which the live `credentials_valid` /
- * `provider_target` probes read). Empty when there is nothing to send.
+ * These values become opaque `secret_refs` for credential readiness and are
+ * also sent write-only as `credential_values` for live provider probes.
  */
 function collectCredentialValues(source) {
   const values = {};
@@ -74,7 +72,7 @@ function fileSecretRefs(source) {
 /**
  * Turn a raw panel source into what preflight/build need:
  *  - `draft`: the redacted, exchanged source — safe to persist and to POST to
- *    preflight/create. Its `secret_refs` satisfy `credentials_present`.
+ *    preflight/create. Its `secret_refs` satisfy credential readiness.
  *  - `credentialValues`: the raw `{ ALIAS: value }` map for the preflight-only,
  *    write-only `credential_values` field that drives the live credential probe.
  *    This is NEVER stored (it holds plaintext secrets) — the caller sends it on

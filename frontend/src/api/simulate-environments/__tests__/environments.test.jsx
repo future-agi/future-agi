@@ -241,7 +241,7 @@ describe("useBuildEnvironment", () => {
 describe("useUploadSecretFile", () => {
   it("posts the file as multipart and returns the real ref, never the contents", async () => {
     uploadHarnessSecretFile.mockResolvedValue({
-      secret_ref: "harness_environment_file://ref-9",
+      secret_ref: { manager: "platform-vault", key: "ref-9", version: "1", purpose: "target_provider" },
       environment_name: "GOOGLE_APPLICATION_CREDENTIALS_JSON",
       size: 42,
     });
@@ -264,7 +264,8 @@ describe("useUploadSecretFile", () => {
     expect(form.get("environment_name")).toBe("GOOGLE_APPLICATION_CREDENTIALS");
     expect(out.environment_name).toBe("GOOGLE_APPLICATION_CREDENTIALS_JSON");
 
-    expect(out.secret_ref).toBe("harness_environment_file://ref-9");
+    expect(out.secret_ref).toEqual({ manager: "platform-vault", key: "ref-9", version: "1", purpose: "target_provider" });
+    expect(out.environment_name).toBe("GOOGLE_APPLICATION_CREDENTIALS_JSON");
     expect(out.name).toBe("creds.json");
     expect(out.size).toBe(42);
     expect(out).not.toHaveProperty("contents");

@@ -3,7 +3,7 @@ import { Box, Stack, Tab } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { CustomTabs } from "src/components/tabs/tabs";
 import { paths } from "src/routes/paths";
-import { useEnvironmentRuns, runSimulationTarget } from "src/api/simulate-environments/runs";
+import { useEnvironmentRuns } from "src/api/simulate-environments/runs";
 import { ENV_TABS_SX } from "../environmentOptions";
 import OverviewPanel from "./overview/OverviewPanel";
 import RlContractPanel from "./contract/RlContractPanel";
@@ -97,7 +97,7 @@ export default function WorkspacePanels({
             env={env}
             envState={serverEnvState}
             runs={runs}
-            onStart={() => navigate(runSimulationTarget(env))}
+            onStart={() => onStartRun?.(undefined, 1)}
             onOpenRun={openRun}
             onGo={go}
           />

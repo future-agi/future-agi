@@ -12,8 +12,8 @@ import { clampParallelism } from "../parallelism.constants";
 /**
  * The inline build machine shared by every source panel. A panel calls:
  *   - `runPreflight(source)` when the user clicks "Run preflight" — exchanges the
- *     source's secrets, then POSTs the real preflight; the result feeds
- *     <RuntimePreflight> via the returned `status`/`checks`/`state`.
+ *     source's secrets, then POSTs hosted preflight; the credential report
+ *     feeds <RuntimePreflight>.
  *   - `resetPreflight()` on any form edit — a green result for one source must
  *     never build a different one.
  *   - `commitBuild()` on "Build environment" (only enabled once `readyToSubmit`)
@@ -86,7 +86,7 @@ export default function usePanelBuild() {
   );
 
   const commitBuild = useCallback(() => {
-    if (!prepared || !preflight.data?.ready_to_submit || committing) return;
+    if (!prepared || !preflight.data?.ready_to_submit || !preflight.data?.credentials || committing) return;
     const draft = parallelismEnabled ? prepared : { ...prepared, parallelism: 1 };
     // Keep the passing draft in the persisted slot so the panel form rehydrates
     // on a back-navigation; the create call below is what actually builds it.
@@ -123,9 +123,8 @@ export default function usePanelBuild() {
 
   return {
     status,
-    checks: preflight.data?.checks,
-    state: preflight.data?.state,
-    readyToSubmit: !!preflight.data?.ready_to_submit,
+    result: preflight.data,
+    readyToSubmit: preflight.data?.ready_to_submit === true && !!preflight.data?.credentials,
     committing,
     parallelism,
     parallelismInput,
