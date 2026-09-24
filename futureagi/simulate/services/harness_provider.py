@@ -1213,12 +1213,12 @@ class HostedHarnessProvider:
 
         from simulate.services.harness_scenarios import (
             apply_filters,
-            index_scenarios,
             apply_ordering,
             apply_search,
             field_catalogue,
             group_counts,
             grouped,
+            index_scenarios,
             scenario_row,
         )
 
