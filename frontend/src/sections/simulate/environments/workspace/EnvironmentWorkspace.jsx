@@ -13,6 +13,7 @@ import {
 } from "src/api/simulate-environments/environment";
 import { useWorkspaceChat } from "src/api/simulate-environments/workspaceChat";
 
+import { BUILD_STATUS } from "../helpers/harnessJobToRow";
 import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
 import { useEnvState } from "../store/envState";
 import SectionCard from "../components/SectionCard";
@@ -56,7 +57,13 @@ export default function EnvironmentWorkspace() {
   const navigate = useNavigate();
   const { envId } = useParams();
   const { env, source, bootstrapState, notFound } = useEnvironment(envId);
-  const { envState, patch, canRun } = useEnvState(envId, bootstrapState);
+  // A still-building harness job re-derives its bootstrap on every poll, so the
+  // workspace shows it live and only lets the store keep it once the build is
+  // terminal — otherwise the first poll's state is frozen in and the scenarios
+  // the run produces afterwards never land.
+  const { envState, patch, canRun } = useEnvState(envId, bootstrapState, {
+    persist: env?.buildStatus !== BUILD_STATUS.BUILDING,
+  });
   const { tab, setTab } = useWorkspaceTab();
   const chat = useWorkspaceChat(env);
   const registerFork = useEnvironmentsStore((s) => s.forkEnvironment);

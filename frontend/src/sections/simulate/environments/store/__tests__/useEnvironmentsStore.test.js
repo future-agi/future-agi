@@ -361,6 +361,24 @@ describe("useEnvironmentsStore", () => {
       });
     });
 
+    it("re-derives from the bootstrap instead of freezing it while persist is off", () => {
+      // A still-building job re-derives its state on every poll; persisting the
+      // first bootstrap froze it, so the scenarios the run eventually produced
+      // never reached the workspace.
+      let bootstrap = { ...emptyEnvState(), agent: { via: "endpoint" }, scenarios: [] };
+      const { result, rerender } = renderHook(() =>
+        useEnvState("env-building", bootstrap, { persist: false }),
+      );
+
+      expect(result.current.envState.scenarios).toEqual([]);
+      expect(useEnvironmentsStore.getState().byEnv["env-building"]).toBeUndefined();
+
+      bootstrap = { ...bootstrap, scenarios: [{ id: "s1" }] };
+      rerender();
+      expect(result.current.envState.scenarios).toEqual([{ id: "s1" }]);
+      expect(useEnvironmentsStore.getState().byEnv["env-building"]).toBeUndefined();
+    });
+
     it("exposes patch/recordRun/addAgentVersion bound to the env id", () => {
       const { result } = renderHook(() => useEnvState("env-bound"));
       act(() => result.current.patch({ evals: ["e1"] }));

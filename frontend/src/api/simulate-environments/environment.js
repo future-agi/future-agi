@@ -13,14 +13,7 @@ import {
   stageToStatus,
   buildStatusFor,
 } from "src/sections/simulate/environments/helpers/harnessJobToRow";
-import { generatedPool } from "./_fixtures/scenarioPool";
-import { MOCK_WORLD } from "./_fixtures/world";
 import { usePrebuiltEnvironments } from "./prebuilt";
-
-// While the real world seam (stage_outputs) is still thin, an environment whose
-// outputs carry nothing parseable falls back to the MOCK_WORLD overlay. Flip this
-// to false (and delete _fixtures/world.js) once the backend fills every output.
-export const MOCK_WORLD_OVERLAY = true;
 
 // The harness detail poll cadence, matching HarnessDetail's own 2s tick.
 const REFETCH_MS = 2000;
@@ -50,8 +43,8 @@ const agentTypeFor = (connectors = []) =>
 
 // Parse the run's stage_outputs (kinds contract / environment / scenarios — see
 // HarnessDetail's StageOutput) into world fields. Returns null when nothing is
-// parseable, so the caller can overlay MOCK_WORLD. Only non-empty fields are set,
-// so a partial contract still lets the overlay fill the gaps.
+// parseable. Only non-empty fields are set, so a field the run has not produced
+// yet stays absent and its panel renders its own empty state.
 export function stageOutputsToWorld(stageOutputs = []) {
   const outputs = Array.isArray(stageOutputs) ? stageOutputs : [];
   const contract = outputs.find((o) => o?.kind === "contract")?.data || {};
@@ -99,17 +92,19 @@ const scenarioFromOutput = (row) => ({
 });
 
 // The initial per-env state for an environment that only exists in the harness
-// backend: an endpoint agent, scenarios from the run (or the derived pool sliced
-// to the run's count) and v1 versions. Real runs arrive from the executions API.
+// backend: an endpoint agent, the scenarios the run emitted and v1 versions.
+// Real runs arrive from the executions API.
+//
+// Scenarios come only from the run's own scenarios stage output. A job that has
+// not emitted them yet bootstraps with none — filling the gap from the derived
+// fixture pool put invented scenarios on a real environment and, because the
+// bootstrap was persisted, they outlived the real ones arriving.
 export function harnessEnvState(item, world) {
   const job = item?.job || {};
   const status = item?.status || {};
-  const resolved = world || MOCK_WORLD;
-  const poolEnv = { ...resolved, id: job.job_id };
+  const resolved = world || {};
 
-  const scenarios = resolved.scenarios?.length
-    ? resolved.scenarios.map(scenarioFromOutput)
-    : generatedPool(poolEnv).slice(0, job.scenario_count ?? undefined);
+  const scenarios = (resolved.scenarios || []).map(scenarioFromOutput);
 
   const version = { label: "v1", note: "First run of this environment.", createdAt: status.created_at };
 
@@ -132,14 +127,12 @@ export function harnessEnvState(item, world) {
 }
 
 // Map a harness job detail into the environment record the workspace reads. The
-// world fields overlay MOCK_WORLD when the run's outputs carry nothing parseable.
+// world fields are whatever the run's own stage outputs carry, and nothing else:
+// a real environment must never be filled in from a fixture.
 export function harnessJobToEnvironment(item) {
   const job = item?.job || {};
   const status = item?.status || {};
-  const parsed = stageOutputsToWorld(item?.stage_outputs);
-  const world = MOCK_WORLD_OVERLAY
-    ? { ...MOCK_WORLD, ...(parsed ?? {}) }
-    : (parsed ?? {});
+  const world = stageOutputsToWorld(item?.stage_outputs) ?? {};
 
   const env = {
     id: job.job_id,

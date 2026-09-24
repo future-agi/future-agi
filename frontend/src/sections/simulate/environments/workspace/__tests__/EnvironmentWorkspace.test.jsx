@@ -177,6 +177,41 @@ describe("EnvironmentWorkspace route shell", () => {
     );
   });
 
+  it("shows no fixture world on a real harness env whose outputs are empty", async () => {
+    getHarnessJob.mockResolvedValue(COMPLETED_JOB);
+
+    renderWorkspace("/dashboard/simulate/environments/job-done?tab=contract");
+
+    expect(await screen.findByText("Done Environment", { selector: "p" }))
+      .toBeInTheDocument();
+    // The "Customer Support Line" fixture world (MOCK_WORLD) used to fill every
+    // missing field on a real environment, so its tools and rules rendered as
+    // this environment's own.
+    expect(screen.queryByText(/verify_identity/)).toBeNull();
+    expect(screen.queryByText(/Goodwill credit is capped/)).toBeNull();
+    expect(
+      screen.queryByText(/A returns-and-orders phone line for a mid-size retailer/),
+    ).toBeNull();
+  });
+
+  it("does not seed a still-building harness env with fixture scenarios", async () => {
+    getHarnessJob.mockResolvedValue(BUILDING_JOB);
+
+    renderWorkspace("/dashboard/simulate/environments/job-build?tab=scenarios");
+
+    expect(await screen.findByText("Building Environment", { selector: "p" }))
+      .toBeInTheDocument();
+    // The fixture pool used to seed the scenario list while the job was still
+    // building, and useEnvState froze that bootstrap in the store, so the real
+    // scenarios never replaced it.
+    await waitFor(() => {
+      const scenariosTab = screen
+        .getAllByRole("tab")
+        .find((t) => t.textContent.startsWith("Scenarios"));
+      expect(scenariosTab.textContent).toBe("Scenarios");
+    });
+  });
+
   it("opens the Runs tab from ?tab=runs", async () => {
     seedClientEnv(TEMPLATE, {
       ...emptyEnvState(),

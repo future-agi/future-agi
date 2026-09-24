@@ -27,7 +27,14 @@ export const emptyEnvState = () => ({
 // direct navigation to an env that only exists in the harness backend still has
 // a usable state. Adopted (build/template) envs already carry a slice, so they
 // never take the bootstrap path.
-export function useEnvState(envId, bootstrap) {
+//
+// `persist` gates that write. A job that is still building re-derives its
+// bootstrap on every poll, so persisting the first one froze the environment at
+// whatever the run had produced by then — the scenarios that landed later never
+// reached the workspace. With `persist: false` the bootstrap is surfaced live
+// and only written once the build is terminal, after which user edits own the
+// slice as before.
+export function useEnvState(envId, bootstrap, { persist = true } = {}) {
   const slice = useEnvironmentsStore((s) => s.byEnv[envId]);
   const patchEnvState = useEnvironmentsStore((s) => s.patchEnvState);
   const recordRunAction = useEnvironmentsStore((s) => s.recordRun);
@@ -38,10 +45,10 @@ export function useEnvState(envId, bootstrap) {
   // to bootstrap the second env.
   const bootstrappedRef = useRef(null);
   useEffect(() => {
-    if (slice || !bootstrap || bootstrappedRef.current === envId) return;
+    if (slice || !bootstrap || !persist || bootstrappedRef.current === envId) return;
     bootstrappedRef.current = envId;
     patchEnvState(envId, bootstrap);
-  }, [slice, bootstrap, envId, patchEnvState]);
+  }, [slice, bootstrap, persist, envId, patchEnvState]);
 
   // Surface a full-shape state on the first render too: patchEnvState merges the
   // bootstrap into emptyEnvState(), so returning the merged shape keeps the

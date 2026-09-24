@@ -159,7 +159,7 @@ describe("useEnvironment resolution order", () => {
     expect(doneQuery.options.refetchInterval(doneQuery)).toBe(false);
   });
 
-  it("takes world tools from a parseable contract output, else MOCK_WORLD", async () => {
+  it("takes world tools from the contract output, and carries none without one", async () => {
     getHarnessJob.mockResolvedValue(COMPLETED_JOB);
     const { Wrapper } = makeWrapper();
     const parsed = renderHook(() => useEnvironment("job-done"), {
@@ -171,17 +171,22 @@ describe("useEnvironment resolution order", () => {
       "issue_refund",
     ]);
 
+    // RUNNING_JOB has no parseable stage output. A real environment must not be
+    // filled in from the "Customer Support Line" fixture world.
     getHarnessJob.mockResolvedValue(RUNNING_JOB);
-    const overlaid = renderHook(() => useEnvironment("job-run"), {
+    const unparseable = renderHook(() => useEnvironment("job-run"), {
       wrapper: Wrapper,
     });
-    await waitFor(() => expect(overlaid.result.current.source).toBe("harness"));
-    expect(overlaid.result.current.env.tools.map((t) => t.name)).toEqual(
-      MOCK_WORLD.tools.map((t) => t.name),
-    );
+    await waitFor(() => expect(unparseable.result.current.source).toBe("harness"));
+    const env = unparseable.result.current.env;
+    expect(env.tools).toBeUndefined();
+    expect(env.rules).toBeUndefined();
+    expect(env.seed).toBeUndefined();
+    expect(env.description).toBeUndefined();
+    expect(env.name).not.toBe(MOCK_WORLD.name);
   });
 
-  it("bootstraps an endpoint agent and scenario_count scenarios", async () => {
+  it("bootstraps an endpoint agent and no scenarios until the run emits them", async () => {
     getHarnessJob.mockResolvedValue(COMPLETED_JOB);
     const { Wrapper } = makeWrapper();
     const { result } = renderHook(() => useEnvironment("job-done"), {
@@ -190,9 +195,9 @@ describe("useEnvironment resolution order", () => {
 
     await waitFor(() => expect(result.current.source).toBe("harness"));
     expect(result.current.bootstrapState.agent.via).toBe("endpoint");
-    expect(result.current.bootstrapState.scenarios).toHaveLength(
-      COMPLETED_JOB.job.scenario_count,
-    );
+    // The job declares scenario_count 3 but emits no scenarios output; the
+    // derived fixture pool must not stand in for scenarios the run never made.
+    expect(result.current.bootstrapState.scenarios).toEqual([]);
   });
 
   it("enables canRunHeader for a completed harness job", async () => {
