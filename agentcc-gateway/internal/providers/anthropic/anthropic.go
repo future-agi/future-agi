@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -213,11 +212,8 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 			chunk, done, err := state.parseSSELine(currentEvent, data)
 			if err != nil {
-				slog.Warn("anthropic: error parsing stream event",
-					"error", err,
-					"provider", p.id,
-				)
-				continue
+				errs <- err
+				return
 			}
 
 			if chunk != nil {
