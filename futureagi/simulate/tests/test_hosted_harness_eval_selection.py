@@ -1740,7 +1740,7 @@ def test_a_switch_lookup_failure_never_loses_the_receipt(
 
     with (
         patch(
-            "simulate.services.hosted_harness_ingestion._tool_evaluation_on",
+            "simulate.services.harness_evals._tool_evaluation_on",
             side_effect=OperationalError("connection reset"),
         ),
         django_capture_on_commit_callbacks(execute=True),

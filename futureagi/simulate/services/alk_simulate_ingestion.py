@@ -326,6 +326,11 @@ def provision_alk_sim_run_test(
     from django.db import transaction
 
     with transaction.atomic():
+        # Resolved before the agent definition so a bad scenario id is still
+        # the first thing reported (everything here is inside one
+        # transaction, so the ordering buys error precedence, not less
+        # rollback).
+        scenarios: list[Scenarios] = []
         if scenario_ids:
             scenarios = list(
                 Scenarios.objects.filter(
@@ -341,23 +346,29 @@ def provision_alk_sim_run_test(
                 raise ALKSimulateIngestionError(
                     f"scenario(s) not found: {', '.join(missing)}"
                 )
-            agent_definition = _provision_agent_definition(
-                organization,
-                agent_definition_id,
-                agent_name,
-                description,
-                modality,
-                workspace,
+
+        agent_definition = _provision_agent_definition(
+            organization,
+            agent_definition_id,
+            agent_name,
+            description,
+            modality,
+            workspace,
+        )
+        # Both provisioning shapes refuse the same thing on the same terms, so
+        # the refusal is stated once, here, rather than once per shape: a voice
+        # agent with no version yet exposes no credentials for the tool-call
+        # judge to read, so the switch cannot be honoured for it.
+        if (
+            enable_tool_evaluation
+            and agent_definition.agent_type == AgentDefinition.AgentTypeChoices.VOICE
+            and agent_definition.latest_version is None
+        ):
+            raise ALKSimulateIngestionError(
+                "Tool-call evaluation is not available for a voice environment yet"
             )
-            if (
-                enable_tool_evaluation
-                and agent_definition.agent_type
-                == AgentDefinition.AgentTypeChoices.VOICE
-                and agent_definition.latest_version is None
-            ):
-                raise ALKSimulateIngestionError(
-                    "Tool-call evaluation is not available for a voice environment yet"
-                )
+
+        if scenario_ids:
             simulator_agent = next(
                 (s.simulator_agent for s in scenarios if s.simulator_agent), None
             )
@@ -382,23 +393,6 @@ def provision_alk_sim_run_test(
             )
             run_test.scenarios.set(scenarios)
             return run_test, scenarios, agent_definition
-
-        agent_definition = _provision_agent_definition(
-            organization,
-            agent_definition_id,
-            agent_name,
-            description,
-            modality,
-            workspace,
-        )
-        if (
-            enable_tool_evaluation
-            and agent_definition.agent_type == AgentDefinition.AgentTypeChoices.VOICE
-            and agent_definition.latest_version is None
-        ):
-            raise ALKSimulateIngestionError(
-                "Tool-call evaluation is not available for a voice environment yet"
-            )
 
         scenarios = _create_persona_scenarios(
             organization,
@@ -888,6 +882,8 @@ def ingest_alk_sim_result(
     Idempotent for evaluation dispatch: a second call updates fields but does
     not dispatch a second evaluation (guarded by `call_metadata['eval_started']`).
     """
+    from simulate.services.harness_evals import _tool_evaluation_on
+
     if call_execution.simulation_call_type not in (
         CallExecution.SimulationCallType.VOICE,
         CallExecution.SimulationCallType.TEXT,
@@ -1844,21 +1840,6 @@ def _selected_eval_config_ids(call_execution: CallExecution) -> list[str]:
     if not run_test_id:
         return []
     return runnable_eval_config_ids(run_test_id)
-
-
-def _tool_evaluation_on(run_test_id) -> bool:
-    """Whether ``run_test_id``'s tool-call judge switch is on.
-
-    Callers OR this in with their own catalogue-eval check so the switch
-    alone can still trigger dispatch when zero evals are selected.
-    """
-    if not run_test_id:
-        return False
-    return bool(
-        RunTest.objects.filter(id=run_test_id)
-        .values_list("enable_tool_evaluation", flat=True)
-        .first()
-    )
 
 
 def _dispatch_evaluations_once(

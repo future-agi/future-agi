@@ -483,6 +483,23 @@ class TestProvisionRunTest:
         assert resp.status_code == 400, resp.content
         assert not RunTest.objects.filter(enable_tool_evaluation=True).exists()
 
+    def test_a_bad_scenario_id_is_reported_before_the_voice_refusal(
+        self, auth_client
+    ):
+        """Error precedence: an unknown scenario id is what a request with both
+        faults hears about, not the tool-evaluation refusal -- the scenario
+        lookup runs before the agent definition is resolved."""
+        resp = self._provision(
+            auth_client,
+            name="voice-tool-eval-bad-scenario",
+            modality="voice",
+            enable_tool_evaluation=True,
+            scenario_ids=[str(uuid.uuid4())],
+        )
+        assert resp.status_code == 400, resp.content
+        assert "scenario(s) not found" in json.dumps(resp.json()).lower()
+        assert not RunTest.objects.filter(enable_tool_evaluation=True).exists()
+
     def test_scenario_id_provisioning_also_carries_the_switch(
         self, auth_client, scenario
     ):

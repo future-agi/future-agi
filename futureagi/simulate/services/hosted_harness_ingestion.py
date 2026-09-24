@@ -980,7 +980,10 @@ def _apply_receipt_to_call(
         _dispatch_csat_once,
         _dispatch_evaluations_once,
     )
-    from simulate.services.harness_evals import runnable_eval_config_ids
+    from simulate.services.harness_evals import (
+        _tool_evaluation_on,
+        runnable_eval_config_ids,
+    )
 
     _apply_harness_evaluation_outputs(call)
     update_fields.append("eval_outputs")
@@ -1050,23 +1053,6 @@ def _apply_receipt_to_call(
                     eval_config_ids=selected,  # [] stays [], never None
                 )
             )
-
-
-def _tool_evaluation_on(run_test_id) -> bool:
-    """Whether ``run_test_id``'s tool-call judge switch is on.
-
-    Callers OR this in with their own catalogue-eval check so the switch
-    alone can still trigger dispatch when zero evals are selected.
-    """
-    from simulate.models import RunTest
-
-    if not run_test_id:
-        return False
-    return bool(
-        RunTest.objects.filter(id=run_test_id)
-        .values_list("enable_tool_evaluation", flat=True)
-        .first()
-    )
 
 
 def _ensure_run_agent_is_voice(job: HostedHarnessJob) -> None:
