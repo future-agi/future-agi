@@ -153,18 +153,7 @@ except Exception:
 
 
 def _get_metadata(saml_metadata_model):
-    meta_dir = os.path.join(
-        BASE_DIR,
-        "metadata",
-    )
-    if not os.path.exists(meta_dir):
-        os.makedirs(meta_dir)
-    meta_file_path = os.path.join(meta_dir, f"{saml_metadata_model.relay_state}.xml")
-    if not os.path.isfile(meta_file_path):
-        with open(meta_file_path, "w") as fh:
-            fh.write(saml_metadata_model.meta)
-
-    return {"local": [meta_file_path]}, saml_metadata_model.identity_type
+    return {"inline": [saml_metadata_model.meta]}, saml_metadata_model.identity_type
 
 
 def _get_saml_client(saml_metadata_model, acs_url):

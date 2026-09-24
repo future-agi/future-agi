@@ -65,3 +65,35 @@ func TestKeyAuthAcceptsValidKeyOnMCP(t *testing.T) {
 		t.Fatalf("expected authenticated MCP request to pass, got %d", response.Code)
 	}
 }
+
+func TestKeyAuthAcceptsValidGeminiAPIKey(t *testing.T) {
+	keyStore := auth.NewKeyStore(config.AuthConfig{Keys: []config.AuthKeyConfig{{
+		Name: "test",
+		Key:  "valid-key",
+	}}})
+	handler := KeyAuth(keyStore, true)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	for _, test := range []struct {
+		name   string
+		path   string
+		header string
+		apiKey string
+	}{
+		{name: "x-goog-api-key header", path: "/v1beta/models/gemini", header: "x-goog-api-key", apiKey: "valid-key"},
+		{name: "key query parameter", path: "/v1beta/models/gemini?key=valid-key"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, test.path, nil)
+			if test.header != "" {
+				request.Header.Set(test.header, test.apiKey)
+			}
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != http.StatusNoContent {
+				t.Fatalf("expected authenticated Gemini request to pass, got %d", response.Code)
+			}
+		})
+	}
+}
