@@ -26,19 +26,20 @@ const renderPanel = (props = {}) =>
   );
 
 describe("OverviewPanel", () => {
-  it("shows the description and the three facts (Channel, Domain, Connector)", () => {
+  it("shows the description and the two facts (Channel, Connector)", () => {
     renderPanel();
 
     expect(screen.getByText(MOCK_WORLD.description)).toBeInTheDocument();
     expect(screen.getByText("Channel")).toBeInTheDocument();
-    expect(screen.getByText("Domain")).toBeInTheDocument();
     expect(screen.getByText("Connector")).toBeInTheDocument();
-    // The invented Transports + Scenario-packs facts are gone.
+    // The invented Transports + Scenario-packs facts are gone, and so is
+    // Domain: it read a fixture lookup table, not anything the backend sends.
     expect(screen.queryByText("Transports")).toBeNull();
     expect(screen.queryByText("Scenario packs")).toBeNull();
-    // fact values: channel + domain from fixtures, connector from agent.typeId.
+    expect(screen.queryByText("Domain")).toBeNull();
+    expect(screen.queryByText("E-commerce")).toBeNull();
+    // fact values: channel from the surface, connector from agent.typeId.
     expect(screen.getByText("Voice")).toBeInTheDocument();
-    expect(screen.getByText("E-commerce")).toBeInTheDocument();
     expect(screen.getByText("LiveKit")).toBeInTheDocument();
   });
 
@@ -47,16 +48,18 @@ describe("OverviewPanel", () => {
   // ToolsCard/HardRulesCard are still exercised where they render (the direct
   // HardRulesCard test below; ToolsCard on the Contract tab).
 
-  it("renders each hard rule with its provenance origin chip", () => {
-    // Scoped to the card: SourceToSandboxMap re-lists the same rules on the
-    // panel with mapped origins (code→POLICY.YAML), so a panel-wide count would
-    // double these. This test is about HardRulesCard's own chips.
+  it("renders each hard rule as text, with no invented origin chip", () => {
     render(<HardRulesCard env={MOCK_WORLD} />);
 
-    // MOCK_WORLD's five rules map to CODE, CODE, PROMPT, PROMPT, PROSE
-    expect(screen.getAllByText("CODE")).toHaveLength(2);
-    expect(screen.getAllByText("PROMPT")).toHaveLength(2);
-    expect(screen.getByText("PROSE")).toBeInTheDocument();
+    // Every rule is listed…
+    MOCK_WORLD.rules.forEach((rule) =>
+      expect(screen.getByText(rule)).toBeInTheDocument(),
+    );
+    // …but ALK reports no per-rule origin, and the chips used to be derived by
+    // position (first two CODE, last PROSE, rest PROMPT). None of them ship.
+    expect(screen.queryByText("CODE")).toBeNull();
+    expect(screen.queryByText("PROMPT")).toBeNull();
+    expect(screen.queryByText("PROSE")).toBeNull();
   });
 
   it("renders real §6 world content for a backed env: empty states + real deps", () => {
@@ -70,9 +73,11 @@ describe("OverviewPanel", () => {
       },
     });
 
-    // Empty §6 arrays render honest empty states, not fixture rows.
+    // Empty §6 arrays render honest empty states, not fixture rows. The stores
+    // read-out went with SourceToSandboxMap, whose origins and sandbox targets
+    // were derived by position and keyword rather than reported by ALK.
     expect(screen.getByText(/No amendments/)).toBeInTheDocument();
-    expect(screen.getByText(/No stores seeded/)).toBeInTheDocument();
+    expect(screen.queryByText(/No stores seeded/)).toBeNull();
     // "What it depends on" populates from real contract.dependencies.
     expect(screen.getByText("postgres")).toBeInTheDocument();
     expect(screen.getByText("Stores rider rows")).toBeInTheDocument();

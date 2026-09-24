@@ -184,9 +184,12 @@ describe("MyEnvironmentsTable", () => {
     expect(screen.queryByText("Dummy")).toBeNull();
 
     const row = within(rowFor("Customer Support Line"));
-    // Real description, domain, sub-goals count and run state for the first row.
+    // Real description, sub-goals count and run state for the first row. The
+    // Domain column is gone: §1 sends `domain` verbatim from the submitter's
+    // metadata and it is null for nearly every environment.
     expect(row.getByText("Handles inbound billing calls")).toBeInTheDocument();
-    expect(row.getByText("Logistics")).toBeInTheDocument();
+    expect(screen.queryByText("Domain")).toBeNull();
+    expect(row.queryByText("Logistics")).toBeNull();
     expect(row.getByText("12")).toBeInTheDocument();
     // runs_count 1 → the Runs column shows the number.
     expect(row.getByText("1")).toBeInTheDocument();

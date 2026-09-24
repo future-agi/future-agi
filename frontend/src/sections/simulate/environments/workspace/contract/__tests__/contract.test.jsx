@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import RlContractPanel from "../RlContractPanel";
 
-// A voice environment with two tools (one read, one write by verb heuristic),
-// two hard rules and a seeded table — enough to exercise the world (capability
-// graph), the internals (schema + tool code + check code) and the run-end card.
+// A voice environment with two tools, two hard rules and a seeded table —
+// enough to exercise the world (capability graph), the internals (tables +
+// tools) and the run-end card.
 const voiceEnv = {
   name: "Refund Copilot",
   surface: "voice",
@@ -34,11 +34,15 @@ describe("RlContractPanel", () => {
     expect(screen.getByText(/What this environment is made of/)).toBeInTheDocument();
   });
 
-  it("renders the world-internals cards: schema, tool code and check code", () => {
+  it("renders the world-internals cards over real data only: tables and tools", () => {
     renderPanel();
-    expect(screen.getByText("World state · database schema")).toBeInTheDocument();
-    expect(screen.getByText("Tool implementations")).toBeInTheDocument();
-    expect(screen.getByText("Check implementations")).toBeInTheDocument();
+    expect(screen.getByText("World state · database")).toBeInTheDocument();
+    expect(screen.getAllByText("Tools").length).toBeGreaterThan(0);
+    // The synthesised handler/check source cards are gone: their bodies were
+    // generated from the env manifest by _fixtures/envInternals, not read from
+    // the job.
+    expect(screen.queryByText("Tool implementations")).toBeNull();
+    expect(screen.queryByText("Check implementations")).toBeNull();
   });
 
   it("renders the run end conditions — terminate, truncate, clock and seed", () => {
@@ -50,23 +54,30 @@ describe("RlContractPanel", () => {
     expect(screen.getByText("Deterministic seed")).toBeInTheDocument();
   });
 
-  it("classifies tool effects by verb heuristic (read-only vs writes), marked inferred", () => {
+  it("lists each declared tool with its description and no inferred effect chip", () => {
     renderPanel();
-    // lookup_* → read-only; refund → writes; neither overridden yet → "· inferred".
-    expect(screen.getByText("read-only · inferred")).toBeInTheDocument();
-    expect(screen.getByText("writes · inferred")).toBeInTheDocument();
+    expect(screen.getAllByText("lookup_account").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("issue_refund").length).toBeGreaterThan(0);
+    expect(screen.getByText("Reads the caller's account.")).toBeInTheDocument();
+    // The read-only/writes classification came from a verb heuristic over the
+    // tool name, so the chip and its override picker were dropped.
+    expect(screen.queryByText("read-only · inferred")).toBeNull();
+    expect(screen.queryByText("writes · inferred")).toBeNull();
+    expect(screen.queryByText("Writes data")).toBeNull();
   });
 
-  it("records a tool-effect override on the Contract tab via patch (singular kind)", () => {
-    const patch = vi.fn();
-    renderPanel({ patch });
-    // Open the read tool's effect picker and switch it to Writes data.
-    fireEvent.click(screen.getByText("read-only · inferred"));
-    fireEvent.click(screen.getByText("Writes data"));
-    expect(patch).toHaveBeenCalledTimes(1);
-    expect(patch.mock.calls[0][0]).toEqual({
-      toolResolutions: { lookup_account: "write" },
+  it("shows where a tool runs only when ALK reported an entrypoint for it", () => {
+    renderPanel({
+      env: {
+        ...voiceEnv,
+        toolEntrypoints: [
+          { tool: "issue_refund", module: "billing", callable: "refund" },
+        ],
+      },
     });
+    expect(screen.getByText("billing.refund")).toBeInTheDocument();
+    // lookup_account has no entrypoint, so it carries no invented location.
+    expect(screen.queryByText(/lookup_account\./)).toBeNull();
   });
 
   it("no longer mounts the dummy Actors section (commented out, to be picked up later)", () => {
@@ -77,26 +88,16 @@ describe("RlContractPanel", () => {
   describe("template lock (read-only until forked)", () => {
     const LOCK_TOOLTIP = "Fork this environment to edit.";
 
-    it("renders the tool-effect chip as a static read-out — no override menu, no patch", () => {
+    it("renders the tool list as a static read-out — no override menu, no patch", () => {
       const patch = vi.fn();
       renderPanel({ patch, locked: true });
 
-      // The chip still shows the effect, but clicking it opens nothing.
-      fireEvent.click(screen.getByText("read-only · inferred"));
+      // With the effect override gone there is nothing on this card to lock,
+      // and nothing that can reach patch.
+      expect(screen.getAllByText("lookup_account").length).toBeGreaterThan(0);
       expect(screen.queryByText("Writes data")).toBeNull();
-      expect(patch).not.toHaveBeenCalled();
-
-      // The locked chip carries the fork tooltip (one per tool).
-      expect(screen.getAllByLabelText(LOCK_TOOLTIP).length).toBeGreaterThan(0);
-    });
-
-    it("keeps the override menu interactive when not locked", () => {
-      const patch = vi.fn();
-      renderPanel({ patch, locked: false });
-
-      fireEvent.click(screen.getByText("read-only · inferred"));
-      expect(screen.getByText("Writes data")).toBeInTheDocument();
       expect(screen.queryByLabelText(LOCK_TOOLTIP)).toBeNull();
+      expect(patch).not.toHaveBeenCalled();
     });
   });
 });

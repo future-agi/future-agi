@@ -48,16 +48,25 @@ const COMPLETED_JOB = {
   ],
 };
 
+// A job whose calls are running: "running" is stage 10 of 14, past
+// connecting_agent, so the environment itself is already built.
 const RUNNING_JOB = {
   job: {
     job_id: "job-run",
-    metadata: { name: "Building Environment" },
+    metadata: { name: "Running Environment" },
     scenario_count: 5,
     agent: { connector: "livekit" },
   },
   status: { stage: "running", updated_at: "2026-09-15T09:00:00Z" },
   credentials: { detected_connectors: ["livekit"] },
   stage_outputs: [],
+};
+
+// A job still assembling its world — the stage the build experience renders on.
+const BUILDING_JOB = {
+  ...RUNNING_JOB,
+  job: { ...RUNNING_JOB.job, job_id: "job-building", metadata: { name: "Building Environment" } },
+  status: { stage: "generating_environment", updated_at: "2026-09-15T09:00:00Z" },
 };
 
 // A completed job that also carries top-level registered scenarios, to exercise
@@ -324,13 +333,19 @@ describe("harnessJobToEnvironment", () => {
   });
 
   it("exposes buildProgress as { done, total } so the building banner can count", () => {
-    const { env } = harnessJobToEnvironment(RUNNING_JOB);
+    const { env } = harnessJobToEnvironment(BUILDING_JOB);
     expect(env.buildStatus).toBe("building");
     expect(env.buildProgress).toEqual({
       done: expect.any(Number),
       total: expect.any(Number),
     });
     expect(env.buildProgress.total).toBeGreaterThan(0);
+  });
+
+  // "running" is past connecting_agent in the pipeline, so the world is derived
+  // and the build experience must give way to the workspace.
+  it("reads a running job as a built environment, not one still building", () => {
+    expect(harnessJobToEnvironment(RUNNING_JOB).env.buildStatus).toBe("ready");
   });
 
   it("marks a terminal-failed job as failed (not building) and carries the failure", () => {
