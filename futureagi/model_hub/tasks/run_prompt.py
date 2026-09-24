@@ -26,7 +26,12 @@ STUCK_RUNNING_THRESHOLD_HOURS = 1
 LEASE_RENEW_INTERVAL_SECONDS = 60
 LEASE_TTL_SECONDS = 300  # ~ Temporal heartbeat_timeout (5 min)
 LEASE_FRESH_SECONDS = 3 * LEASE_RENEW_INTERVAL_SECONDS
-LOCK_TTL_SECONDS = 600  # lock auto-expiry; renewed alongside the lease
+# Lock auto-expiry, renewed alongside the lease. Must expire before Temporal's
+# retry arrives (heartbeat_timeout = 5 min, drop_in/workflow.py) or a crashed
+# worker's lock locks out its own retry and the prompt sits stuck until the
+# hourly sweep. Four renewal intervals, so a brief Redis blip can't drop a
+# live worker's lock either.
+LOCK_TTL_SECONDS = 4 * LEASE_RENEW_INTERVAL_SECONDS  # 240s
 
 # Distributed tracker for run prompts (separate key prefix from evaluations).
 run_prompt_tracker = DistributedEvaluationTracker(default_ttl=LEASE_TTL_SECONDS)
@@ -48,9 +53,14 @@ class OwnershipLease:
 
     A daemon thread renews the distributed tracker entry (liveness lease) and
     extends the Redis lock every LEASE_RENEW_INTERVAL_SECONDS. Without
-    renewal the fixed TTLs (tracker 5 min, lock 10 min) are shorter than a
+    renewal the fixed TTLs (tracker 5 min, lock 4 min) are shorter than a
     legitimate run, so both must be kept alive for as long as the worker
     actually is.
+
+    The lock MUST be acquired with ``thread_local=False``: redis-py keeps the
+    ownership token in thread-local storage by default, so ``extend()`` from
+    this renewer thread would raise every time and the lock would silently
+    lapse mid-run.
     """
 
     def __init__(self, prompt_id, lock=None):
@@ -178,6 +188,9 @@ def process_not_started_prompt(run_prompt_id):
             f"run_prompt:{run_prompt_id}",
             timeout=LOCK_TTL_SECONDS,  # renewed by OwnershipLease below
             blocking_timeout=10,
+            # OwnershipLease renews from its own thread; a thread-local token
+            # would be invisible there and every extend() would fail.
+            thread_local=False,
         ) as lock:
             # Double-check after acquiring lock
             if _held_by_other_live_instance(run_prompt_id):
@@ -277,6 +290,9 @@ def process_editing_prompt(run_prompt_id):
             f"run_prompt:{run_prompt_id}",
             timeout=LOCK_TTL_SECONDS,  # renewed by OwnershipLease below
             blocking_timeout=30,  # Wait longer for edit as we may be waiting for cancel
+            # See process_not_started_prompt: the renewer thread needs a
+            # non-thread-local token to extend this lock.
+            thread_local=False,
         ) as lock:
             _claim_prompt(
                 run_prompt_id,

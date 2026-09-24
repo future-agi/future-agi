@@ -96,7 +96,8 @@ class TestProcessNotStartedPrompt:
         self, mock_close, mock_runner_class, mock_lock_mgr, mock_tracker
     ):
         """The lock uses the short renewable TTL (extended by the lease
-        renewer), not a fixed lifetime longer than the work."""
+        renewer), not a fixed lifetime longer than the work, and is acquired
+        with a non-thread-local token so the renewer thread can extend it."""
         from model_hub.tasks.run_prompt import (
             LOCK_TTL_SECONDS,
             process_not_started_prompt,
@@ -112,6 +113,7 @@ class TestProcessNotStartedPrompt:
         mock_lock_mgr.lock.assert_called_once()
         call_kwargs = mock_lock_mgr.lock.call_args[1]
         assert call_kwargs["timeout"] == LOCK_TTL_SECONDS
+        assert call_kwargs["thread_local"] is False
 
 
 class TestProcessEditingPrompt:
@@ -552,6 +554,64 @@ class TestOwnershipLease:
         with lease:
             assert lease._thread.is_alive()
         assert not lease._thread.is_alive()
+
+    def test_renewer_thread_extends_a_real_redis_lock(self):
+        """The renewer runs on its own thread, and redis-py keeps the lock's
+        ownership token in thread-local storage by default — so extend()
+        raises there and the lock lapses mid-run. A MagicMock lock called on
+        the main thread cannot catch that; this uses a real lock and a real
+        thread."""
+        import threading
+
+        from tfc.utils.distributed_locks import distributed_lock_manager
+
+        from model_hub.tasks.run_prompt import LOCK_TTL_SECONDS, OwnershipLease
+
+        if not distributed_lock_manager._redis_available:
+            pytest.skip("redis not available")
+
+        name = "run_prompt:lease-renew-test"
+        key = distributed_lock_manager._get_lock_key(name)
+        client = distributed_lock_manager._redis_client
+
+        with distributed_lock_manager.lock(
+            name, timeout=LOCK_TTL_SECONDS, blocking_timeout=5, thread_local=False
+        ) as lock:
+            # Wind the TTL down so a successful extend is unambiguous.
+            client.pexpire(key, 5000)
+
+            renewer = threading.Thread(
+                target=OwnershipLease("prompt-real", lock=lock).renew_once
+            )
+            renewer.start()
+            renewer.join(timeout=10)
+
+            assert client.pttl(key) > 100_000, "lock TTL was not extended"
+
+
+class TestLeaseTimingInvariants:
+    """A crashed worker's lock must expire before Temporal's retry arrives,
+    or the retry dies on LockAcquisitionError and the prompt sits stuck until
+    the hourly sweep."""
+
+    # tfc/temporal/drop_in/workflow.py sets heartbeat_timeout=5min on every
+    # activity; that is when Temporal gives up on a silent worker and retries.
+    TEMPORAL_HEARTBEAT_TIMEOUT_SECONDS = 300
+
+    def test_lock_expires_before_temporal_retry_arrives(self):
+        from model_hub.tasks.run_prompt import LOCK_TTL_SECONDS
+
+        assert LOCK_TTL_SECONDS < self.TEMPORAL_HEARTBEAT_TIMEOUT_SECONDS
+
+    def test_lock_ttl_leaves_slack_for_transient_redis_failures(self):
+        """At least 4 renewal attempts must fit inside the lock's lifetime so
+        a brief Redis blip can't drop a live worker's lock mid-run."""
+        from model_hub.tasks.run_prompt import (
+            LEASE_RENEW_INTERVAL_SECONDS,
+            LOCK_TTL_SECONDS,
+        )
+
+        assert LOCK_TTL_SECONDS / LEASE_RENEW_INTERVAL_SECONDS >= 4
 
 
 @pytest.mark.django_db

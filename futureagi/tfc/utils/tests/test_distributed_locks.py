@@ -30,6 +30,22 @@ class TestDistributedLockManager:
         # Should either connect to Redis or fall back
         assert manager._instance_id is not None
 
+    def test_thread_local_defaults_to_config_when_omitted(self):
+        """The new per-call override must not change any existing caller."""
+        from tfc.utils.distributed_locks import DistributedLockManager
+
+        manager = DistributedLockManager(fallback_to_local=True)
+        if not manager.is_distributed:
+            pytest.skip("redis not available")
+
+        with patch.object(
+            manager._redis_client, "lock", wraps=manager._redis_client.lock
+        ) as spy:
+            with manager.lock("tl_default", timeout=60):
+                pass
+
+        assert spy.call_args.kwargs["thread_local"] is manager.config.thread_local
+
     def test_context_manager_lock(self):
         """Test basic context manager lock usage."""
         from tfc.utils.distributed_locks import DistributedLockManager

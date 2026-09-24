@@ -440,6 +440,7 @@ class TestDistributedLockingE2E:
         mock_lock_mgr.lock.assert_called_once()
         call_kwargs = mock_lock_mgr.lock.call_args[1]
         assert call_kwargs["timeout"] == LOCK_TTL_SECONDS
+        assert call_kwargs["thread_local"] is False
 
 
 # =============================================================================

@@ -133,6 +133,7 @@ class DistributedLockManager:
         timeout: Optional[int] = None,
         blocking_timeout: Optional[int] = None,
         blocking: bool = True,
+        thread_local: Optional[bool] = None,
     ):
         """
         Acquire a distributed lock as a context manager.
@@ -142,6 +143,12 @@ class DistributedLockManager:
             timeout: Lock auto-expiration in seconds. Defaults to config.default_timeout.
             blocking_timeout: Max time to wait for lock. Defaults to config.default_blocking_timeout.
             blocking: If False, raise immediately if lock is not available.
+            thread_local: Override config.thread_local for this lock only.
+                redis-py stores the ownership token in thread-local storage by
+                default, which makes ``extend()``/``release()`` fail from any
+                thread other than the acquirer. Pass False when a helper
+                thread must renew the lock (see run_prompt's OwnershipLease).
+                Only safe when a single thread acquires this Lock instance.
 
         Yields:
             The lock object (can be used to extend the lock if needed).
@@ -168,7 +175,9 @@ class DistributedLockManager:
                 lock_key,
                 timeout=timeout,
                 blocking_timeout=blocking_timeout,
-                thread_local=self.config.thread_local,
+                thread_local=(
+                    self.config.thread_local if thread_local is None else thread_local
+                ),
             )
 
             acquired = False
