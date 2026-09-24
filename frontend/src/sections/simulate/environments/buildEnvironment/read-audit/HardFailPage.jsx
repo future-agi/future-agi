@@ -13,7 +13,7 @@ import { READ_AUDIT_COPY } from "../readAudit.constants";
 // escape hatch. Ported verbatim from the designer's AgentReadReceipt.jsx
 // HardFailPage — red hexes from BUILD_TONES, copy from READ_AUDIT_COPY, and the
 // icon-only back button given an explicit tooltip + aria-label.
-export default function HardFailPage({ agentRef, reason, onRetry, onChangeSource, onContinueWithDefaults }) {
+export default function HardFailPage({ agentRef, reason, onRetry, onChangeSource, onContinueWithDefaults, busy }) {
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, bgcolor: "background.paper" }}>
       <Stack
@@ -50,10 +50,11 @@ export default function HardFailPage({ agentRef, reason, onRetry, onChangeSource
           <Button
             variant="contained" color="primary"
             onClick={onRetry}
+            disabled={busy}
             startIcon={<Iconify icon="solar:refresh-linear" width={15} />}
             sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
           >
-            {READ_AUDIT_COPY.retry}
+            {busy ? READ_AUDIT_COPY.retrying : READ_AUDIT_COPY.retry}
           </Button>
           <Button
             variant="outlined"
@@ -81,4 +82,5 @@ HardFailPage.propTypes = {
   onRetry: PropTypes.func,
   onChangeSource: PropTypes.func,
   onContinueWithDefaults: PropTypes.func,
+  busy: PropTypes.bool,
 };

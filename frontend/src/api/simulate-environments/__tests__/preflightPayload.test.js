@@ -38,12 +38,16 @@ describe("PREFLIGHT_CONNECTOR / PROVIDER_TO_CONNECTOR", () => {
   });
 });
 
+// `HarnessAgent.secret_refs` values are SecretReference objects, not strings —
+// the preflight request is runtime-validated, so the fixtures use the real shape.
+const SECRET_REF = (key) => ({ manager: "platform-vault", key, purpose: "target_provider" });
+
 describe("draftToPreflightPayload — repo", () => {
   it("carries the exchanged secret refs from a pasted .env", () => {
     const { payload } = draftToPreflightPayload(
-      repoDraft({ secret_refs: { OPENAI_API_KEY: "sref-3" } }),
+      repoDraft({ secret_refs: { OPENAI_API_KEY: SECRET_REF("k3") } }),
     );
-    expect(payload.agent.secret_refs).toStrictEqual({ OPENAI_API_KEY: "sref-3" });
+    expect(payload.agent.secret_refs).toStrictEqual({ OPENAI_API_KEY: SECRET_REF("k3") });
   });
 
   it("maps the canonical owner/repo draft to the §5.1 example", () => {
@@ -150,9 +154,9 @@ describe("draftToPreflightPayload — platform", () => {
 
   it("carries the exchanged secret refs so the backend can resolve the key", () => {
     const { payload } = draftToPreflightPayload(
-      platformDraft({ secret_refs: { VAPI_API_KEY: "sref-1" } }),
+      platformDraft({ secret_refs: { VAPI_API_KEY: SECRET_REF("k1") } }),
     );
-    expect(payload.agent.secret_refs).toStrictEqual({ VAPI_API_KEY: "sref-1" });
+    expect(payload.agent.secret_refs).toStrictEqual({ VAPI_API_KEY: SECRET_REF("k1") });
   });
 
   it("maps retell and livekit to agent_id", () => {
@@ -191,9 +195,9 @@ describe("draftToPreflightPayload — upload", () => {
       archive_artifact_id: "art_1",
       entry: "agent.py",
       files: [{ name: "agent.py" }],
-      secret_refs: { OPENAI_API_KEY: "sref-2" },
+      secret_refs: { OPENAI_API_KEY: SECRET_REF("k2") },
     });
-    expect(payload.agent.secret_refs).toStrictEqual({ OPENAI_API_KEY: "sref-2" });
+    expect(payload.agent.secret_refs).toStrictEqual({ OPENAI_API_KEY: SECRET_REF("k2") });
   });
 
   it("skips an upload draft without an archive id", () => {

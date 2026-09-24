@@ -105,6 +105,20 @@ describe("preflightToReadAudit — backend checks[]", () => {
     expect(audit.status).toBe("warning");
   });
 
+  it("a skipped check alone is not a blocker", () => {
+    // `provider_target` is skipped for a repo draft with connector `auto`, and
+    // the backend still says ready_to_submit — so a skip must not read as a
+    // failure the user has to clear.
+    const response = happyResponse({
+      checks: [
+        { id: "provider_target", label: "Provider target", status: "skipped", detail: "Not probed", missing: [], fix: null },
+      ],
+    });
+    const audit = preflightToReadAudit({ response, draft: repoDraft });
+    expect(audit.status).toBe("healthy");
+    expect(audit.checks).toHaveLength(1);
+  });
+
   it("all-passed checks stay healthy", () => {
     const response = happyResponse({
       checks: [

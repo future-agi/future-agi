@@ -68,6 +68,7 @@ export default function ReadAudit({ audit, onBuild, onBack, onRetryRead, isRerea
         onRetry={urlOverride ? () => dispatch({ type: "demoRetry" }) : onRetryRead}
         onChangeSource={onBack}
         onContinueWithDefaults={() => onBuild?.({ __skippedRead: true })}
+        busy={isRereading}
       />
     );
   }

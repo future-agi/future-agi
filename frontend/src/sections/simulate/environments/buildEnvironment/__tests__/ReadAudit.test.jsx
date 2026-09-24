@@ -230,6 +230,19 @@ describe("ReadAudit", () => {
     expect(await screen.findByText(/2 skipped/)).toBeInTheDocument();
   });
 
+  it("marks the hard-fail retry busy while the re-read is in flight", () => {
+    // After a hard fail this is the only retry on screen, so it is the one that
+    // has to show it is working.
+    const audit = preflightToReadAudit({ response: HARDFAIL, draft: DRAFT });
+    renderAt(
+      <ReadAudit audit={audit} onBuild={vi.fn()} onBack={vi.fn()} onRetryRead={vi.fn()} isRereading />,
+    );
+
+    const retry = screen.getByRole("button", { name: READ_AUDIT_COPY.retrying });
+    expect(retry).toBeDisabled();
+    expect(screen.queryByRole("button", { name: READ_AUDIT_COPY.retry })).toBeNull();
+  });
+
   it("shows the hard-fail page and changes source", async () => {
     const user = userEvent.setup();
     const { onBack } = renderHarness({ response: HARDFAIL });
@@ -313,6 +326,14 @@ describe("ReadAudit", () => {
             missing: [],
             fix: null,
           },
+          {
+            id: "provider_target",
+            label: "Provider target",
+            status: "skipped",
+            detail: "Not applicable to an auto connector",
+            missing: [],
+            fix: null,
+          },
         ],
       },
     });
@@ -324,8 +345,9 @@ describe("ReadAudit", () => {
     expect(screen.getByText(/No value supplied for the target provider/)).toBeInTheDocument();
     expect(screen.getByText(/VAPI_API_KEY/)).toBeInTheDocument();
     expect(screen.getByText(/Add the key on the hosted-platform form/)).toBeInTheDocument();
-    // A passed check is not a gap — it is not listed.
+    // Neither a passed nor a skipped check is something to clear.
     expect(screen.queryByText("Source")).not.toBeInTheDocument();
+    expect(screen.queryByText("Provider target")).not.toBeInTheDocument();
   });
 
   it("lists no checks section when every check passed", () => {

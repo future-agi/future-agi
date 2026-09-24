@@ -66,9 +66,9 @@ describe("useBuildHandoff", () => {
   };
 
   it("exchanges a hosted API key for an opaque secret ref the preflight can read", async () => {
-    storeHarnessSecretValues.mockResolvedValue({
-      secret_refs: { VAPI_API_KEY: "sref-vapi-1" },
-    });
+    // The endpoint returns SecretReference objects, not bare strings.
+    const ref = { manager: "platform-vault", key: "vapi-1", purpose: "target_provider" };
+    storeHarnessSecretValues.mockResolvedValue({ secret_refs: { VAPI_API_KEY: ref } });
 
     await handoff({
       kind: "platform",
@@ -79,7 +79,7 @@ describe("useBuildHandoff", () => {
 
     expect(storeHarnessSecretValues).toHaveBeenCalledWith({ VAPI_API_KEY: "sk-secret" });
     const draft = useEnvironmentsStore.getState().draft;
-    expect(draft.secret_refs).toEqual({ VAPI_API_KEY: "sref-vapi-1" });
+    expect(draft.secret_refs).toEqual({ VAPI_API_KEY: ref });
     expect(draft).not.toHaveProperty("apiKey");
     expect(navigate).toHaveBeenCalled();
   });

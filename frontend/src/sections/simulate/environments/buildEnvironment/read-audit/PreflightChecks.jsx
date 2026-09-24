@@ -6,12 +6,7 @@ import { READ_AUDIT_COPY } from "../readAudit.constants";
 import SectionHead from "./SectionHead";
 import SectionIssue from "./SectionIssue";
 
-// Icons per check verdict: a failure is a blocker, a skipped check just did not
-// run (usually because an earlier one failed).
-const CHECK_ICON = {
-  failed: "solar:close-circle-linear",
-  skipped: "solar:minus-circle-linear",
-};
+const FAILED_ICON = "solar:close-circle-linear";
 
 // The backend's own verdicts, rendered one card per check so simultaneous
 // failures all stay visible. `detail`, the missing aliases and `fix` are the
@@ -29,7 +24,7 @@ function checkToIssue(check) {
 
   return {
     severity: "warning",
-    icon: CHECK_ICON[check.status] || CHECK_ICON.skipped,
+    icon: FAILED_ICON,
     message: check.label,
     hint,
     retryLabel: null,
@@ -37,7 +32,10 @@ function checkToIssue(check) {
 }
 
 export default function PreflightChecks({ checks }) {
-  const failing = (checks || []).filter((check) => check.status !== "passed");
+  // `failed` only: a `skipped` check did not run (provider_target never does for
+  // an `auto` connector), so listing it under "did not pass" would invent a
+  // blocker the backend never reported.
+  const failing = (checks || []).filter((check) => check.status === "failed");
   if (!failing.length) return null;
 
   return (

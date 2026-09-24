@@ -177,7 +177,10 @@ export function preflightToReadAudit(
   }
 
   const hasIssue = Object.keys(sectionIssues).length > 0;
-  const checkFailed = checks.some((check) => check.status !== "passed");
+  // Only a `failed` check is a blocker. `skipped` means the check did not run
+  // (provider_target never does for an `auto` connector), which is not a gap —
+  // treating it as one would contradict the backend's own ready_to_submit.
+  const checkFailed = checks.some((check) => check.status === "failed");
   const status =
     hasIssue || notReady || checkFailed ? READER_STATUS.WARNING : READER_STATUS.HEALTHY;
 
