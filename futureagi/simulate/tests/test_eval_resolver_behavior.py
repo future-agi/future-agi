@@ -10,7 +10,10 @@ resolver produced the correct values) and the persisted
 `SimulateEvalConfig.status` (proving the model save happens).
 """
 
+import copy
+import inspect
 import uuid
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -24,7 +27,12 @@ from simulate.models.eval_config import SimulateEvalConfig
 from simulate.models.run_test import RunTest
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import CallExecution, TestExecution
-from simulate.services.test_executor import TestExecutor
+from simulate.services.test_executor import (
+    TestExecutor,
+    _run_simulate_evaluations_task,
+)
+from simulate.utils.eval_summary import derive_kpi_output_type
+from simulate.utils.verdicts import has_stored_verdict
 
 
 @pytest.fixture
@@ -1026,6 +1034,84 @@ class TestSubjectDispatchRobustness:
 
 
 @pytest.mark.django_db
+@patch("simulate.temporal.activities.xl.close_old_connections", lambda: None)
+def test_xl_error_write_stamps_failed_status(
+    run_test, call_execution, transcript_data, eval_template
+):
+    """``xl.py::_run_single_evaluation``'s generic-exception write actually
+    runs and stamps ``"status": StatusType.FAILED.value`` on the row it
+    writes -- and that row does not seal under ``has_stored_verdict``. This
+    drives the real function through its real error path, so the writer and
+    the predicate are tied together by a test that can go red if either
+    drifts.
+    """
+    from model_hub.views.utils import evals as evals_mod
+
+    ec = _make_eval({"x": "call.transcript"}, run_test, eval_template)
+    with patch.object(evals_mod, "run_eval_func", side_effect=RuntimeError("boom")):
+        with pytest.raises(RuntimeError):
+            _run_xl(ec, call_execution, transcript_data)
+
+    call_execution.refresh_from_db()
+    row = call_execution.eval_outputs[str(ec.id)]
+    assert row["status"] == StatusType.FAILED.value
+    assert has_stored_verdict(call_execution, ec.id) is False
+
+
+@pytest.mark.django_db
+@patch("simulate.temporal.activities.xl.close_old_connections", lambda: None)
+def test_xl_mismatch_error_write_stamps_failed_status(
+    run_test, call_execution, transcript_data, eval_template
+):
+    """``xl.py::_run_single_evaluation``'s column-mismatch write also stamps
+    ``"status": StatusType.FAILED.value``, but its ``raise ValueError`` is
+    inside the same ``try`` the generic-exception ``except`` wraps, so
+    whatever it writes is immediately overwritten by that second write on
+    the way out -- the final persisted row alone can't show whether the
+    first write's stamp existed. A spy on ``call_execution.save`` (wraps the
+    real save) captures a deep copy of ``eval_outputs`` at each save call, so
+    the first snapshot is exactly what the mismatch branch wrote, before the
+    second write clobbers it.
+
+    A mapping value that is a syntactically valid UUID but matches no real
+    ``Column`` reaches the "not available in the test scenario(s)" message
+    without raising anywhere upstream.
+    """
+    ec = _make_eval({"x": str(uuid.uuid4())}, run_test, eval_template)
+
+    saved_snapshots = []
+    real_save = call_execution.save
+
+    def _spy_save(*args, **kwargs):
+        saved_snapshots.append(copy.deepcopy(call_execution.eval_outputs))
+        return real_save(*args, **kwargs)
+
+    with patch.object(call_execution, "save", side_effect=_spy_save):
+        with pytest.raises(ValueError):
+            _run_xl(ec, call_execution, transcript_data)
+
+    assert len(saved_snapshots) == 2, (
+        "expected exactly two call_execution.save() calls: the mismatch "
+        "branch's write (xl.py:959) and the generic-exception write "
+        "(xl.py:1091) that re-raises and overwrites it"
+    )
+    mismatch_row = saved_snapshots[0][str(ec.id)]
+    assert mismatch_row["status"] == StatusType.FAILED.value
+    assert (
+        has_stored_verdict(SimpleNamespace(eval_outputs=saved_snapshots[0]), ec.id)
+        is False
+    )
+
+    # The final, persisted row (the second, generic-exception write) also
+    # stamps status and also does not seal -- proves xl.py:1091 independently
+    # of test_xl_error_write_stamps_failed_status's success-path setup.
+    call_execution.refresh_from_db()
+    final_row = call_execution.eval_outputs[str(ec.id)]
+    assert final_row["status"] == StatusType.FAILED.value
+    assert has_stored_verdict(call_execution, ec.id) is False
+
+
+@pytest.mark.django_db
 @patch("simulate.services.test_executor.close_old_connections", lambda: None)
 class TestComputedSerializerFieldsInContext:
     """FE-dropdown vs BE-resolver parity for computed / aliased serializer fields."""
@@ -1484,3 +1570,767 @@ class TestLegacyTranscriptRecordingResolution:
             transcript_data["stereo_recording"]
             == call_execution.stereo_recording_url
         )
+
+
+# ---------------------------------------------------------------------------
+# TH-8045 -- sealed verdicts.
+# ---------------------------------------------------------------------------
+
+_STORED_VERDICT = {
+    "name": "Sealed Eval",
+    "output": "Passed",
+    "output_type": "Pass/Fail",
+    "reason": "the judge said so",
+    "status": "completed",
+}
+
+_SKIP_REASON = "We could not find enough agent conversation to process this call."
+_NO_TRANSCRIPT_REASON = "Call transcript is unavailable, so processing was skipped."
+
+
+class _NoSkip:
+    processing_skipped = False
+    processing_skip_reason = ""
+
+
+class _Skip:
+    processing_skipped = True
+    processing_skip_reason = _SKIP_REASON
+
+
+def _seal(call_execution, eval_config):
+    """Store a verdict for this config on the call and return a deep copy of it."""
+    call_execution.eval_outputs = dict(call_execution.eval_outputs or {})
+    call_execution.eval_outputs[str(eval_config.id)] = dict(_STORED_VERDICT)
+    call_execution.call_metadata = dict(call_execution.call_metadata or {})
+    call_execution.call_metadata["eval_completed"] = True
+    call_execution.save(update_fields=["eval_outputs", "call_metadata"])
+    return copy.deepcopy(call_execution.eval_outputs[str(eval_config.id)])
+
+
+def _no_tool_eval(run_test):
+    run_test.enable_tool_evaluation = False
+    run_test.save(update_fields=["enable_tool_evaluation"])
+
+
+def _graded_config_ids(mock_single):
+    """The eval configs handed to the judge, as a set of ids."""
+    return {call.args[0].id for call in mock_single.call_args_list}
+
+
+def _skipped_payload(eval_config, reason):
+    """The exact payload simulate/utils/processing_outcomes.py writes."""
+    return {
+        "output": None,
+        "reason": reason,
+        "output_type": None,
+        "name": eval_config.name,
+        "status": "skipped",
+        "skipped": True,
+    }
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+@patch("simulate.services.test_executor.decide_processing_skip", lambda **_: _NoSkip)
+@patch.object(TestExecutor, "_get_call_transcript_data")
+@patch.object(TestExecutor, "_run_single_simulate_evaluation")
+def test_task_skip_existing_honours_config_id(
+    mock_single,
+    mock_transcript,
+    run_test,
+    call_execution,
+    transcript_data,
+    eval_template,
+):
+    """skip-existing on: the sealed config is not graded and not rewritten;
+    a sibling config with no verdict still is."""
+    _no_tool_eval(run_test)
+    mock_transcript.return_value = transcript_data
+    sealed = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
+    fresh = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
+    before = _seal(call_execution, sealed)
+
+    TestExecutor()._run_simulate_evaluations(call_execution, skip_existing=True)
+
+    assert _graded_config_ids(mock_single) == {fresh.id}
+    call_execution.refresh_from_db()
+    assert call_execution.eval_outputs[str(sealed.id)] == before
+
+
+_HAS_STORED_VERDICT_CFG_ID = "abc12300-0000-0000-0000-000000000000"
+
+
+@pytest.mark.parametrize(
+    "eval_outputs, expected",
+    [
+        pytest.param(
+            {_HAS_STORED_VERDICT_CFG_ID: {"status": "completed", "output": "Passed"}},
+            True,
+            id="completed_row_seals",
+        ),
+        pytest.param(
+            {
+                _HAS_STORED_VERDICT_CFG_ID: {
+                    "status": StatusType.COMPLETED.value,
+                    "output": "Passed",
+                }
+            },
+            True,
+            id="completed_row_seals_real_status_type_value",
+        ),
+        pytest.param(
+            {_HAS_STORED_VERDICT_CFG_ID: {"status": "pending"}},
+            False,
+            id="pending_placeholder_does_not_seal",
+        ),
+        pytest.param(
+            {
+                _HAS_STORED_VERDICT_CFG_ID: {
+                    "status": "skipped",
+                    "skipped": True,
+                    "output": None,
+                }
+            },
+            False,
+            id="skipped_payload_does_not_seal",
+        ),
+        pytest.param(
+            {_HAS_STORED_VERDICT_CFG_ID: {"status": StatusType.FAILED.value}},
+            False,
+            id="failed_row_does_not_seal",
+        ),
+        pytest.param(
+            {_HAS_STORED_VERDICT_CFG_ID: {}},
+            False,
+            id="empty_dict_row_does_not_seal",
+        ),
+        pytest.param(
+            {_HAS_STORED_VERDICT_CFG_ID: None},
+            False,
+            id="none_row_does_not_seal",
+        ),
+        pytest.param({}, False, id="missing_config_key_does_not_seal"),
+        pytest.param(None, False, id="eval_outputs_itself_none_does_not_seal"),
+        pytest.param(
+            {_HAS_STORED_VERDICT_CFG_ID: {"output": "Passed"}},
+            True,
+            id="status_less_non_empty_row_seals_conservative_form",
+        ),
+        pytest.param(
+            {
+                _HAS_STORED_VERDICT_CFG_ID: {
+                    "reason": "Column mapping mismatch: ...",
+                    "error": "error",
+                    "name": "x",
+                    "timestamp": "2026-09-23T00:00:00+00:00",
+                    "output": None,
+                    "output_type": "score",
+                    "status": StatusType.FAILED.value,
+                }
+            },
+            False,
+            id="xl_shaped_errored_row_with_status_does_not_seal",
+        ),
+        pytest.param(
+            {
+                _HAS_STORED_VERDICT_CFG_ID: {
+                    "reason": "Evaluation failed. Please contact Future AGI support.",
+                    "error": "error",
+                    "name": "x",
+                    "timestamp": "2026-09-23T00:00:00+00:00",
+                    "output": None,
+                    "output_type": "score",
+                }
+            },
+            True,
+            id="legacy_status_less_errored_row_seals",
+        ),
+        # The isinstance(row, dict) guard exists to make a truthy non-dict
+        # row not crash; these pin what it returns for those shapes -- a
+        # non-dict row can never carry a "status" key, so it always seals
+        # when truthy.
+        pytest.param(
+            {_HAS_STORED_VERDICT_CFG_ID: "Passed"},
+            True,
+            id="non_dict_str_row_seals",
+        ),
+        pytest.param(
+            {_HAS_STORED_VERDICT_CFG_ID: ["x"]},
+            True,
+            id="non_dict_list_row_seals",
+        ),
+        pytest.param(
+            {_HAS_STORED_VERDICT_CFG_ID: 1},
+            True,
+            id="non_dict_int_row_seals",
+        ),
+        pytest.param(
+            {_HAS_STORED_VERDICT_CFG_ID: {"status": 123}},
+            True,
+            id="dict_with_non_string_status_seals",
+        ),
+    ],
+)
+def test_has_stored_verdict_edge_shapes(eval_outputs, expected):
+    """``has_stored_verdict`` returns False only for a pending placeholder, a
+    skipped payload, or a ``Failed`` grading -- any other non-empty row
+    seals, including a status-less one. Also covers a legacy status-less
+    errored/no-transcript row (still seals, indistinguishable from a real
+    completed row) and a truthy non-dict row (always seals, since it can
+    never carry a "status" key)."""
+    call_execution = SimpleNamespace(eval_outputs=eval_outputs)
+
+    assert has_stored_verdict(call_execution, _HAS_STORED_VERDICT_CFG_ID) is expected
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+@patch("simulate.services.test_executor.decide_processing_skip", lambda **_: _NoSkip)
+@patch.object(TestExecutor, "_get_call_transcript_data")
+@patch.object(TestExecutor, "_run_single_simulate_evaluation")
+def test_a_pending_placeholder_row_does_not_seal(
+    mock_single,
+    mock_transcript,
+    run_test,
+    call_execution,
+    transcript_data,
+    eval_template,
+):
+    """A ``{"status": "pending"}`` placeholder is written by the bulk rerun
+    paths before grading starts (not a verdict), so it does not seal under
+    skip-existing: the pending config is graded like a fresh one, and grading
+    replaces its row with the real verdict.
+
+    The final assertion checks ``call_metadata["eval_completed"]`` rather
+    than only re-comparing ``eval_outputs`` to the mock's own write: that
+    flag is set by ``_check_and_update_eval_completion``, which re-reads
+    ``eval_outputs`` from the database, so this proves the production
+    completion check itself saw the row as no longer pending."""
+    _no_tool_eval(run_test)
+    mock_transcript.return_value = transcript_data
+    pending_config = _make_eval(
+        {"conversation": "call.transcript"}, run_test, eval_template
+    )
+    call_execution.eval_outputs = {str(pending_config.id): {"status": "pending"}}
+    call_execution.save(update_fields=["eval_outputs"])
+
+    def _grade(eval_config, call_exec, _transcript_data):
+        call_exec.eval_outputs = dict(call_exec.eval_outputs or {})
+        call_exec.eval_outputs[str(eval_config.id)] = dict(_STORED_VERDICT)
+        call_exec.save(update_fields=["eval_outputs"])
+
+    mock_single.side_effect = _grade
+
+    TestExecutor()._run_simulate_evaluations(call_execution, skip_existing=True)
+
+    assert pending_config.id in _graded_config_ids(mock_single)
+    call_execution.refresh_from_db()
+    assert call_execution.eval_outputs[str(pending_config.id)] == _STORED_VERDICT
+    assert call_execution.call_metadata["eval_completed"] is True
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+@patch("simulate.services.test_executor.decide_processing_skip", lambda **_: _NoSkip)
+@patch.object(TestExecutor, "_get_call_transcript_data")
+@patch.object(TestExecutor, "_run_single_simulate_evaluation")
+def test_a_skipped_payload_row_does_not_seal(
+    mock_single,
+    mock_transcript,
+    run_test,
+    call_execution,
+    transcript_data,
+    eval_template,
+):
+    """A stored skipped payload (``build_skipped_eval_output_payload``'s
+    shape, ``status`` ``"skipped"``) is not a verdict -- it is what the
+    "conversation too short" / "no transcript" branches write before the
+    per-eval loop, for a call whose inputs can change later. So the config
+    is graded exactly like a fresh one."""
+    _no_tool_eval(run_test)
+    mock_transcript.return_value = transcript_data
+    skipped_config = _make_eval(
+        {"conversation": "call.transcript"}, run_test, eval_template
+    )
+    call_execution.eval_outputs = {
+        str(skipped_config.id): _skipped_payload(skipped_config, _SKIP_REASON)
+    }
+    call_execution.save(update_fields=["eval_outputs"])
+
+    TestExecutor()._run_simulate_evaluations(call_execution, skip_existing=True)
+
+    assert skipped_config.id in _graded_config_ids(mock_single)
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+@patch("simulate.services.test_executor.decide_processing_skip", lambda **_: _NoSkip)
+@patch.object(TestExecutor, "_get_call_transcript_data")
+@patch.object(TestExecutor, "_run_single_simulate_evaluation")
+def test_an_errored_grading_row_does_not_seal(
+    mock_single,
+    mock_transcript,
+    run_test,
+    call_execution,
+    transcript_data,
+    eval_template,
+):
+    """An errored grading row (``status`` ``StatusType.FAILED.value``, the
+    shape ``_run_single_simulate_evaluation``'s ``except`` branch writes) is
+    not a verdict either -- a judge outage during a run-level add must not
+    permanently seal the call for this config."""
+    _no_tool_eval(run_test)
+    mock_transcript.return_value = transcript_data
+    errored_config = _make_eval(
+        {"conversation": "call.transcript"}, run_test, eval_template
+    )
+    call_execution.eval_outputs = {
+        str(errored_config.id): {
+            "reason": "Evaluation failed. Please contact Future AGI support.",
+            "error": "error",
+            "name": errored_config.name,
+            "timestamp": "2026-09-23T00:00:00+00:00",
+            "output": None,
+            "output_type": None,
+            "status": StatusType.FAILED.value,
+        }
+    }
+    call_execution.save(update_fields=["eval_outputs"])
+
+    TestExecutor()._run_simulate_evaluations(call_execution, skip_existing=True)
+
+    assert errored_config.id in _graded_config_ids(mock_single)
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+@patch("simulate.services.test_executor.decide_processing_skip", lambda **_: _NoSkip)
+@patch.object(TestExecutor, "_get_call_transcript_data")
+@patch.object(TestExecutor, "_run_single_simulate_evaluation")
+def test_skip_existing_off_still_regrades_a_stored_verdict(
+    mock_single,
+    mock_transcript,
+    run_test,
+    call_execution,
+    transcript_data,
+    eval_template,
+):
+    """skip-existing off is exactly today's behaviour -- the receipt path and
+    the eval-only re-run keep overwriting. Documented on purpose so nobody
+    "fixes" it silently."""
+    _no_tool_eval(run_test)
+    mock_transcript.return_value = transcript_data
+    sealed = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
+    _seal(call_execution, sealed)
+
+    TestExecutor()._run_simulate_evaluations(call_execution, skip_existing=False)
+
+    assert sealed.id in _graded_config_ids(mock_single)
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+@patch("simulate.services.test_executor.decide_processing_skip", lambda **_: _Skip)
+@patch.object(TestExecutor, "_run_single_simulate_evaluation")
+def test_skipped_branch_never_replaces_a_real_verdict(
+    mock_single,
+    run_test,
+    call_execution,
+    eval_template,
+):
+    """ "Conversation too short" with skip-existing on: the sealed config
+    keeps its verdict byte-for-byte, a config with no verdict gets the
+    skipped payload."""
+    _no_tool_eval(run_test)
+    sealed = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
+    empty = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
+    before = _seal(call_execution, sealed)
+
+    TestExecutor()._run_simulate_evaluations(call_execution, skip_existing=True)
+
+    call_execution.refresh_from_db()
+    assert call_execution.eval_outputs[str(sealed.id)] == before
+    assert call_execution.eval_outputs[str(empty.id)] == _skipped_payload(
+        empty, _SKIP_REASON
+    )
+    mock_single.assert_not_called()
+    assert call_execution.call_metadata["processing_skipped"] is True
+    assert call_execution.call_metadata["eval_completed"] is True
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+@patch("simulate.services.test_executor.decide_processing_skip", lambda **_: _Skip)
+@patch.object(TestExecutor, "_run_single_simulate_evaluation")
+def test_skipped_branch_overwrites_when_skip_existing_is_off(
+    mock_single,
+    run_test,
+    call_execution,
+    eval_template,
+):
+    """With the flag off the skipped payload still lands on every config --
+    today's behaviour, unchanged."""
+    _no_tool_eval(run_test)
+    sealed = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
+    _seal(call_execution, sealed)
+
+    TestExecutor()._run_simulate_evaluations(call_execution, skip_existing=False)
+
+    call_execution.refresh_from_db()
+    assert call_execution.eval_outputs[str(sealed.id)] == _skipped_payload(
+        sealed, _SKIP_REASON
+    )
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+@patch("simulate.services.test_executor.decide_processing_skip", lambda **_: _NoSkip)
+@patch.object(TestExecutor, "_get_call_transcript_data")
+@patch.object(TestExecutor, "_run_single_simulate_evaluation")
+def test_no_transcript_branch_never_replaces_a_real_verdict(
+    mock_single,
+    mock_transcript,
+    run_test,
+    call_execution,
+    transcript_data,
+    eval_template,
+):
+    """The "no transcript" branch routes through the same helper, so it is
+    guarded too -- it swallows any read error into an empty transcript."""
+    _no_tool_eval(run_test)
+    mock_transcript.return_value = {**transcript_data, "transcript": ""}
+    sealed = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
+    empty = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
+    before = _seal(call_execution, sealed)
+
+    TestExecutor()._run_simulate_evaluations(call_execution, skip_existing=True)
+
+    call_execution.refresh_from_db()
+    assert call_execution.eval_outputs[str(sealed.id)] == before
+    assert call_execution.eval_outputs[str(empty.id)] == _skipped_payload(
+        empty, _NO_TRANSCRIPT_REASON
+    )
+    mock_single.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# xl.py's standalone (Temporal) evaluation orchestrator mirrors the same
+# skip-existing guards as TestExecutor._run_simulate_evaluations.
+# ---------------------------------------------------------------------------
+
+
+def _xl_graded_config_ids(mock_single):
+    """The eval configs handed to the judge via xl.py's ``_run_single_evaluation``."""
+    return {call.args[0].id for call in mock_single.call_args_list}
+
+
+@pytest.mark.django_db
+@patch("simulate.temporal.activities.xl.close_old_connections", lambda: None)
+@patch("simulate.temporal.activities.xl._build_transcript_data")
+@patch("simulate.temporal.activities.xl._run_single_evaluation")
+def test_xl_standalone_honours_skip_existing(
+    mock_single,
+    mock_transcript,
+    run_test,
+    call_execution,
+    transcript_data,
+    eval_template,
+):
+    """skip-existing on: the sealed config is not re-graded by xl.py's
+    standalone orchestrator and its row is not rewritten; a sibling config
+    with no verdict still is graded."""
+    from simulate.temporal.activities.xl import _run_evaluations_standalone
+
+    _no_tool_eval(run_test)
+    mock_transcript.return_value = transcript_data
+    sealed = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
+    fresh = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
+    before = _seal(call_execution, sealed)
+
+    _run_evaluations_standalone(call_execution, skip_existing=True)
+
+    assert _xl_graded_config_ids(mock_single) == {fresh.id}
+    call_execution.refresh_from_db()
+    assert call_execution.eval_outputs[str(sealed.id)] == before
+
+
+@pytest.mark.django_db
+@patch("simulate.temporal.activities.xl.close_old_connections", lambda: None)
+@patch("simulate.temporal.activities.xl._build_transcript_data")
+@patch("simulate.temporal.activities.xl._run_single_evaluation")
+def test_xl_standalone_skip_existing_off_still_regrades_a_stored_verdict(
+    mock_single,
+    mock_transcript,
+    run_test,
+    call_execution,
+    transcript_data,
+    eval_template,
+):
+    """skip-existing off is exactly today's behaviour on the xl.py path too --
+    every config in the batch is (re)graded."""
+    from simulate.temporal.activities.xl import _run_evaluations_standalone
+
+    _no_tool_eval(run_test)
+    mock_transcript.return_value = transcript_data
+    sealed = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
+    _seal(call_execution, sealed)
+
+    _run_evaluations_standalone(call_execution, skip_existing=False)
+
+    assert sealed.id in _xl_graded_config_ids(mock_single)
+
+
+@pytest.mark.django_db
+@patch("simulate.temporal.activities.xl.close_old_connections", lambda: None)
+@patch("simulate.temporal.activities.xl._build_transcript_data")
+@patch("simulate.temporal.activities.xl._run_single_evaluation")
+def test_xl_standalone_no_transcript_branch_never_replaces_a_real_verdict(
+    mock_single,
+    mock_transcript,
+    run_test,
+    call_execution,
+    transcript_data,
+    eval_template,
+):
+    """The "no transcript" branch is reachable in isolation on the xl.py path
+    (it does not route through a shared helper, so it needed its own guard)
+    -- with skip-existing on, the sealed config keeps its verdict
+    byte-for-byte and a config with no verdict gets the "no transcript"
+    payload, in ``build_skipped_eval_output_payload``'s shape except for
+    ``output_type``, which this write restores to the derived KPI type
+    instead of the builder's ``None`` (see
+    ``test_xl_standalone_no_transcript_write_keeps_derived_output_type``)."""
+    from simulate.temporal.activities.xl import _run_evaluations_standalone
+
+    _no_tool_eval(run_test)
+    mock_transcript.return_value = {**transcript_data, "transcript": ""}
+    sealed = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
+    empty = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
+    before = _seal(call_execution, sealed)
+
+    _run_evaluations_standalone(call_execution, skip_existing=True)
+
+    call_execution.refresh_from_db()
+    assert call_execution.eval_outputs[str(sealed.id)] == before
+    expected_empty = _skipped_payload(empty, "No transcript data available")
+    expected_empty["output_type"] = derive_kpi_output_type(eval_template)
+    assert call_execution.eval_outputs[str(empty.id)] == expected_empty
+    mock_single.assert_not_called()
+
+
+@pytest.mark.django_db
+@patch("simulate.temporal.activities.xl.close_old_connections", lambda: None)
+@patch("simulate.temporal.activities.xl._build_transcript_data")
+@patch("simulate.temporal.activities.xl._run_single_evaluation")
+def test_xl_standalone_no_transcript_write_keeps_derived_output_type(
+    mock_single,
+    mock_transcript,
+    run_test,
+    call_execution,
+    transcript_data,
+    eval_template,
+):
+    """The no-transcript write in ``_run_evaluations_standalone`` switched to
+    ``build_skipped_eval_output_payload``, but that builder always sets
+    ``output_type`` to ``None``. ``get_kpi_eval_metrics_query``'s ``WHERE
+    output_type IN (...)`` filter needs the derived KPI type to keep the row
+    instead of silently dropping the metric, so the write restores that
+    derivation on top of the skipped-payload shape."""
+    from simulate.temporal.activities.xl import _run_evaluations_standalone
+
+    _no_tool_eval(run_test)
+    mock_transcript.return_value = {**transcript_data, "transcript": ""}
+    config = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
+
+    _run_evaluations_standalone(call_execution, skip_existing=True)
+
+    call_execution.refresh_from_db()
+    row = call_execution.eval_outputs[str(config.id)]
+    assert row["status"] == "skipped"
+    assert row["skipped"] is True
+    assert row["output_type"] == derive_kpi_output_type(eval_template)
+    mock_single.assert_not_called()
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+@patch("simulate.services.test_executor.decide_processing_skip", lambda **_: _NoSkip)
+@patch.object(TestExecutor, "_get_call_transcript_data")
+@patch.object(TestExecutor, "_run_single_simulate_evaluation")
+def test_task_an_xl_shaped_errored_row_with_status_does_not_seal(
+    mock_single,
+    mock_transcript,
+    run_test,
+    call_execution,
+    transcript_data,
+    eval_template,
+):
+    """The exact row shape ``xl.py::_run_single_evaluation`` now writes on an
+    error (``status`` ``StatusType.FAILED.value``) does not seal on the
+    ``TestExecutor`` loop either -- the two write paths must agree, since
+    both go through the same predicate."""
+    _no_tool_eval(run_test)
+    mock_transcript.return_value = transcript_data
+    errored_config = _make_eval(
+        {"conversation": "call.transcript"}, run_test, eval_template
+    )
+    call_execution.eval_outputs = {
+        str(errored_config.id): {
+            "reason": "Evaluation failed. Please contact Future AGI support.",
+            "error": "error",
+            "name": errored_config.name,
+            "timestamp": "2026-09-23T00:00:00+00:00",
+            "output": None,
+            "output_type": None,
+            "status": StatusType.FAILED.value,
+        }
+    }
+    call_execution.save(update_fields=["eval_outputs"])
+
+    TestExecutor()._run_simulate_evaluations(call_execution, skip_existing=True)
+
+    assert errored_config.id in _graded_config_ids(mock_single)
+
+
+@pytest.mark.django_db
+@patch("simulate.temporal.activities.xl.close_old_connections", lambda: None)
+@patch("simulate.temporal.activities.xl._build_transcript_data")
+@patch("simulate.temporal.activities.xl._run_single_evaluation")
+def test_xl_standalone_an_errored_grading_row_does_not_seal(
+    mock_single,
+    mock_transcript,
+    run_test,
+    call_execution,
+    transcript_data,
+    eval_template,
+):
+    """An errored grading row as ``xl.py::_run_single_evaluation`` now writes
+    it (``status`` ``StatusType.FAILED.value``) is not a verdict on the
+    standalone/Temporal path either: a judge outage during a run-level add
+    must not permanently seal the call for this config."""
+    from simulate.temporal.activities.xl import _run_evaluations_standalone
+
+    _no_tool_eval(run_test)
+    mock_transcript.return_value = transcript_data
+    errored_config = _make_eval(
+        {"conversation": "call.transcript"}, run_test, eval_template
+    )
+    call_execution.eval_outputs = {
+        str(errored_config.id): {
+            "reason": "Evaluation failed. Please contact Future AGI support.",
+            "error": "error",
+            "name": errored_config.name,
+            "timestamp": "2026-09-23T00:00:00+00:00",
+            "output": None,
+            "output_type": None,
+            "status": StatusType.FAILED.value,
+        }
+    }
+    call_execution.save(update_fields=["eval_outputs"])
+
+    _run_evaluations_standalone(call_execution, skip_existing=True)
+
+    assert errored_config.id in _xl_graded_config_ids(mock_single)
+
+
+@pytest.mark.django_db
+@patch("simulate.temporal.activities.xl.close_old_connections", lambda: None)
+@patch("simulate.temporal.activities.xl._build_transcript_data")
+@patch("simulate.temporal.activities.xl._run_single_evaluation")
+def test_xl_standalone_legacy_status_less_errored_row_seals(
+    mock_single,
+    mock_transcript,
+    run_test,
+    call_execution,
+    transcript_data,
+    eval_template,
+):
+    """A row written by the code as it stood before this fix -- an errored
+    grading with no ``status`` key at all -- is indistinguishable from any
+    other status-less completed row, so it still seals. It is treated as a
+    verdict and is not re-graded even with ``skip_existing`` on; the
+    eval-only re-run (which wipes ``eval_outputs`` wholesale) is the only
+    way to clear it. This is the intended, documented consequence of the
+    conservative predicate form, not a bug."""
+    from simulate.temporal.activities.xl import _run_evaluations_standalone
+
+    _no_tool_eval(run_test)
+    mock_transcript.return_value = transcript_data
+    legacy_errored_config = _make_eval(
+        {"conversation": "call.transcript"}, run_test, eval_template
+    )
+    legacy_row = {
+        "reason": "Evaluation failed. Please contact Future AGI support.",
+        "error": "error",
+        "name": legacy_errored_config.name,
+        "timestamp": "2026-09-23T00:00:00+00:00",
+        "output": None,
+        "output_type": None,
+    }
+    call_execution.eval_outputs = {str(legacy_errored_config.id): dict(legacy_row)}
+    call_execution.save(update_fields=["eval_outputs"])
+
+    _run_evaluations_standalone(call_execution, skip_existing=True)
+
+    assert legacy_errored_config.id not in _xl_graded_config_ids(mock_single)
+    call_execution.refresh_from_db()
+    assert call_execution.eval_outputs[str(legacy_errored_config.id)] == legacy_row
+
+
+def test_task_signature_supports_the_run_level_add_kwargs():
+    """The task's call id is bound positionally, so ``call_execution_id``
+    being the first parameter is load-bearing. Pins that the three names
+    exist with the right defaults -- not the whole parameter list, so an
+    unrelated new keyword-only parameter doesn't fail this test -- and binds
+    through the real signature to assert the id lands on
+    ``call_execution_id``, since a membership-only check would stay green
+    even if the parameters were reordered and the call id silently bound to
+    the wrong name."""
+    params = inspect.signature(_run_simulate_evaluations_task).parameters
+    assert "call_execution_id" in params
+    assert "eval_config_ids" in params
+    assert "skip_existing" in params
+    assert params["eval_config_ids"].default is None
+    assert params["skip_existing"].default is False
+
+    bound = inspect.signature(_run_simulate_evaluations_task).bind(
+        "cid", eval_config_ids=["x"], skip_existing=True
+    )
+    assert bound.arguments["call_execution_id"] == "cid"
+
+
+@pytest.mark.django_db
+def test_receipt_dispatch_binds_skip_existing_false(
+    run_test, call_execution, eval_template
+):
+    """The receipt path regrades, on purpose: whatever shape it calls
+    ``apply_async`` with, the effective ``skip_existing`` the task receives is
+    False. Bound through the real signature rather than a pinned call shape,
+    so a behaviour-identical refactor of the dispatch call (e.g. moving the
+    positional args into kwargs) does not fail this test. Documenting today's
+    behaviour so nobody "fixes" it silently."""
+    from simulate.services.alk_simulate_ingestion import _dispatch_evaluations_once
+
+    config = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
+    call_execution.call_metadata = {}
+    call_execution.save(update_fields=["call_metadata"])
+
+    with patch(
+        "simulate.services.test_executor._run_simulate_evaluations_task.apply_async"
+    ) as spy:
+        assert (
+            _dispatch_evaluations_once(call_execution, eval_config_ids=[str(config.id)])
+            is True
+        )
+
+    call_args = spy.call_args
+    task_args = call_args.kwargs.get("args", call_args.args)
+    task_kwargs = call_args.kwargs.get("kwargs", {})
+    bound = inspect.signature(_run_simulate_evaluations_task).bind(
+        *task_args, **task_kwargs
+    )
+    bound.apply_defaults()
+    assert bound.arguments["call_execution_id"] == str(call_execution.id)
+    assert bound.arguments["eval_config_ids"] == [str(config.id)]
+    assert bound.arguments.get("skip_existing", False) is False

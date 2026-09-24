@@ -519,6 +519,15 @@ def _build_persona_scenario_dataset(
         )
         for col_name, data_type in column_specs
     }
+    # The dotted-path walker's no-context branch reads only `column_order`;
+    # without it `scenario_columns.situation.value` resolves to an empty
+    # string on every harness call, silently.
+    dataset.column_order = [
+        str(columns[col_name].id) for col_name, _type in column_specs
+    ]
+    # `updated_at` alongside the field that actually changed: a save that
+    # omits it leaves `updated_at` silently stale on a row that did change.
+    dataset.save(update_fields=["column_order", "updated_at"])
     rows = _append_persona_dataset_rows(dataset, personas, columns=columns)
     return dataset, rows
 

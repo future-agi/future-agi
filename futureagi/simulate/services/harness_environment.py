@@ -526,26 +526,63 @@ def eval_modality(job: HostedHarnessJob) -> str:
 
 
 def _selected_evals(job: HostedHarnessJob) -> list[dict[str, Any]]:
-    """The platform evals bound to this environment's run test, in the order chosen."""
-    from simulate.models.eval_config import SimulateEvalConfig
+    """The platform evals bound to this environment's run test, in the order chosen.
 
-    if not job.run_test_id:
+    Only the rows that carry a mapping. A row with an empty mapping is one
+    ingestion made for one of the harness's own result columns: it is bound to
+    the run, but nobody selected it, it is not a "selected eval", and it does
+    not count toward the cap of 8.
+
+    Each row is the same entry the picker shows, built from the mapping that is
+    actually stored — so what was shown when it was added is what runs — plus
+    its `id`, which is what remove addresses, and `runnable`, true by
+    construction here.
+    """
+    from simulate.services.harness_evals import (
+        _required_keys,
+        eval_entry,
+        selected_eval_configs,
+    )
+
+    run_test = job.run_test if job.run_test_id else None
+    if run_test is None:
         return []
-    return [
-        {
-            "id": str(config.id),
-            "name": config.name or getattr(config.eval_template, "name", "") or "",
-            "description": str(getattr(config.eval_template, "description", "") or "")[
-                :500
-            ],
-            "runnable": bool(config.mapping),
-        }
-        for config in SimulateEvalConfig.objects.filter(
-            run_test_id=job.run_test_id, deleted=False
+    modality = eval_modality(job)
+    rows: list[dict[str, Any]] = []
+    for config in selected_eval_configs(run_test, mapping_only=True):
+        # `eval_template` is a non-nullable FK joined by `select_related`, so
+        # this is never `None` regardless of the template's own soft-delete
+        # state.
+        template = config.eval_template
+        # `inputs` must be built from the mapping narrowed to the template's
+        # live `required_keys`, not the raw stored mapping — otherwise, if the
+        # template later drops a required key, `inputs` ends up with more
+        # rows than `required_keys` has names.
+        required_keys = set(_required_keys(template))
+        entry = eval_entry(
+            template,
+            {
+                key: value
+                for key, value in (config.mapping or {}).items()
+                if key in required_keys
+            },
+            modality,
         )
-        .select_related("eval_template")
-        .order_by("created_at")
-    ]
+        # The name a person added is the config's own, which is what add and
+        # remove address; for a row this endpoint created the two are equal.
+        entry["name"] = str(config.name or entry["name"])
+        # Realigned to the stored mapping's own keys rather than the
+        # template's current `required_keys`: the mapping is a snapshot taken
+        # when the eval was added, so `inputs` (built from it) and a live
+        # `required_keys` could otherwise diverge if the template changes
+        # afterwards. Intersected against the template's own stored order,
+        # not `sorted(mapping)`, since `required_keys` and `inputs` carry
+        # different orders on purpose.
+        entry["required_keys"] = [
+            key for key in _required_keys(template) if key in (config.mapping or {})
+        ]
+        rows.append({**entry, "id": str(config.id), "runnable": True})
+    return rows
 
 
 def _results(receipts: dict[str, HostedHarnessReceipt]) -> list[dict[str, Any]]:
