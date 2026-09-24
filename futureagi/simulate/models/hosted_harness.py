@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import uuid
 
+from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 
 from accounts.models import Organization
 from accounts.models.workspace import Workspace
 from tfc.utils.base_model import BaseModel
+
+# Ceiling on one hosted run; enforced by the DB constraint below and reused by request validation.
+MAX_SCENARIOS_PER_JOB = 5000
 
 
 class HostedHarnessJob(BaseModel):
@@ -43,6 +47,10 @@ class HostedHarnessJob(BaseModel):
         help_text="Authored environment reused by this simulation-only job",
     )
     run_id = models.UUIDField(unique=True)
+    # The name a person gave this environment, which outranks every value
+    # derived from the submitted request. Empty means nobody has renamed it, so
+    # the derived name still applies.
+    name = models.CharField(max_length=255, blank=True, default="")
     idempotency_key = models.CharField(max_length=255)
     request_digest = models.CharField(max_length=71)
     schema_version = models.CharField(max_length=64)
@@ -63,6 +71,7 @@ class HostedHarnessJob(BaseModel):
     cancel_requested_at = models.DateTimeField(null=True, blank=True)
     cancel_reason = models.CharField(max_length=32, null=True, blank=True)
     terminal_at = models.DateTimeField(null=True, blank=True)
+    content_updated_at = models.DateTimeField(null=True, blank=True)
     failure = models.JSONField(null=True, blank=True)
     # Secret-safe presentation snapshots produced as each ALK authoring stage
     # completes.  Keep these separate from the submitted payload: the payload is
@@ -92,8 +101,10 @@ class HostedHarnessJob(BaseModel):
                 name="uniq_harness_job_org_idempotency",
             ),
             models.CheckConstraint(
-                condition=models.Q(scenario_count__gte=1, scenario_count__lte=200),
-                name="harness_job_scenario_count_1_200",
+                condition=models.Q(
+                    scenario_count__gte=1, scenario_count__lte=MAX_SCENARIOS_PER_JOB
+                ),
+                name="harness_job_scenario_count_1_5000",
             ),
         ]
         indexes = [
@@ -190,6 +201,9 @@ class HostedHarnessScenario(BaseModel):
         "simulate.Scenarios",
         on_delete=models.CASCADE,
         related_name="hosted_registrations",
+        # Set only when a call is prepared; authored rows exist before that.
+        null=True,
+        blank=True,
     )
     dataset_row = models.ForeignKey(
         "model_hub.Row",
@@ -209,6 +223,20 @@ class HostedHarnessScenario(BaseModel):
         blank=True,
         related_name="hosted_registration",
     )
+    # The authored scenario, stored as columns so the suite can be queried.
+    number = models.PositiveIntegerField(null=True, blank=True)
+    name = models.CharField(max_length=255, blank=True, default="")
+    instruction = models.TextField(blank=True, default="")
+    use_case = models.CharField(max_length=255, blank=True, default="")
+    branch = models.TextField(blank=True, default="")
+    tests = models.TextField(blank=True, default="")
+    folder = models.CharField(max_length=512, blank=True, default="")
+    persona = models.JSONField(null=True, blank=True)
+    coverage = models.JSONField(null=True, blank=True)
+    sub_goals = models.JSONField(null=True, blank=True)
+    keywords = models.JSONField(null=True, blank=True)
+    background_noise = models.CharField(max_length=64, blank=True, default="")
+    max_turns = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
         db_table = "simulate_hosted_harness_scenario"
@@ -216,6 +244,12 @@ class HostedHarnessScenario(BaseModel):
             models.UniqueConstraint(
                 fields=["job", "scenario_key"], name="uniq_harness_scenario_key"
             )
+        ]
+        indexes = [
+            models.Index(fields=["job", "number"], name="idx_harness_scenario_order"),
+            GinIndex(fields=["persona"], name="idx_harness_scenario_persona"),
+            GinIndex(fields=["coverage"], name="idx_harness_scenario_coverage"),
+            GinIndex(fields=["keywords"], name="idx_harness_scenario_keywords"),
         ]
 
 

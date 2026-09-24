@@ -1,234 +1,129 @@
-from __future__ import annotations
+from uuid import UUID
 
-import math
-
-from django.db import transaction
+from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from simulate.models import HostedHarnessJob, HostedHarnessScenario
+from simulate.models import HostedHarnessJob
 from simulate.serializers.harness_environment import (
+    HarnessEnvironmentAddEvaluationSerializer,
+    HarnessEnvironmentAvailableEvalsSerializer,
     HarnessEnvironmentDetailSerializer,
+    HarnessEnvironmentListQuerySerializer,
     HarnessEnvironmentListResponseSerializer,
     HarnessEnvironmentRenameSerializer,
+)
+from simulate.serializers.harness_job import (
     HarnessRunCreateResponseSerializer,
     HarnessRunCreateSerializer,
 )
+from simulate.services.harness_environment import (
+    annotate_for_list,
+    environment_detail,
+    environment_row,
+    eval_modality,
+)
 from simulate.services.harness_provider import (
-    _organization,
-    _scope_jobs,
     get_harness_provider,
+    request_organization,
+    scope_jobs,
 )
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.pagination import ExtendedPageNumberPagination
 
 
-class HarnessEnvironmentPagination(PageNumberPagination):
-    page_size = 25
-    page_size_query_param = "limit"
-    max_page_size = 100
+def _touch_content(job):
+    """Record that the environment's content changed, for the list's clock.
 
-    def get_paginated_response(self, data):
-        count = self.page.paginator.count
-        return Response(
-            {
-                "count": count,
-                "next": self.get_next_link(),
-                "previous": self.get_previous_link(),
-                "total_pages": math.ceil(count / self.get_page_size(self.request))
-                if count
-                else 0,
-                "current_page": self.page.number,
-                "results": data,
-            }
-        )
+    Which evals grade an environment is part of what the environment is, so
+    binding or removing one moves the row the same way a pipeline stage does.
+    """
+    job.content_updated_at = timezone.now()
+    job.save(update_fields=["content_updated_at", "updated_at"])
 
 
-def _outputs(job: HostedHarnessJob) -> dict[str, object]:
-    rows = list(job.normalized_stage_outputs.order_by("created_at"))
-    if rows:
-        return {row.kind: row.data for row in rows}
-    return {
-        row.get("kind"): row.get("data")
-        for row in (job.stage_outputs or [])
-        if isinstance(row, dict) and row.get("kind")
-    }
+def _uuid_or_none(value):
+    """The id as a UUID, or ``None`` when it is not one.
 
-
-def _environment_name(job: HostedHarnessJob) -> str:
-    metadata = (job.payload or {}).get("metadata") or {}
-    return str(
-        metadata.get("name")
-        or metadata.get("agent_name")
-        or (job.run_test.name if job.run_test_id else "")
-        or f"Environment {str(job.id)[:8]}"
-    )
-
-
-def _environment_status(job: HostedHarnessJob) -> str:
-    if job.state == HostedHarnessJob.State.COMPLETED:
-        return "ready"
-    if job.state in {HostedHarnessJob.State.FAILED, HostedHarnessJob.State.CANCELED}:
-        return "failed"
-    return "building"
-
-
-def _agent_type(job: HostedHarnessJob, contract: dict | None = None) -> str:
-    modality = str((contract or {}).get("modality") or "").lower()
-    connector = str(((job.payload or {}).get("agent") or {}).get("connector") or "")
-    return (
-        "voice"
-        if modality == "voice" or connector in {"livekit", "vapi", "retell"}
-        else "chat"
-    )
-
-
-def _list_row(job: HostedHarnessJob) -> dict:
-    outputs = _outputs(job)
-    contract = (
-        outputs.get("contract") if isinstance(outputs.get("contract"), dict) else {}
-    )
-    return {
-        "id": str(job.id),
-        "name": _environment_name(job),
-        "description": contract.get("one_liner"),
-        "domain": contract.get("domain"),
-        "status": _environment_status(job),
-        "agent_type": _agent_type(job, contract),
-        "tools_count": len(contract.get("tools") or []),
-        "scenario_count": job.scenario_registrations.filter(deleted=False).count(),
-        "sub_goals_count": len(contract.get("sub_goals") or []),
-        "runs_count": job.simulation_runs.filter(deleted=False).count(),
-        "created_at": job.created_at,
-        "last_updated": job.updated_at,
-    }
-
-
-def _detail(job: HostedHarnessJob) -> dict:
-    outputs = _outputs(job)
-    contract = (
-        outputs.get("contract") if isinstance(outputs.get("contract"), dict) else None
-    )
-    world = (
-        outputs.get("environment")
-        if isinstance(outputs.get("environment"), dict)
-        else None
-    )
-    authored = (
-        outputs.get("scenarios") if isinstance(outputs.get("scenarios"), list) else []
-    )
-    authored_by_key = {
-        str(item.get("scenario_key")): item
-        for item in authored
-        if isinstance(item, dict) and item.get("scenario_key")
-    }
-    registrations = list(
-        HostedHarnessScenario.no_workspace_objects.filter(job=job)
-        .select_related("scenario", "dataset_row")
-        .order_by("created_at", "id")
-    )
-    scenarios = []
-    for registration in registrations:
-        item = dict(authored_by_key.get(registration.scenario_key) or {})
-        item.update(
-            {
-                "scenario_key": registration.scenario_key,
-                "scenario_id": str(registration.scenario_id),
-                "name": item.get("name") or getattr(registration.scenario, "name", ""),
-                "status": "registered",
-                "call_execution_id": None,
-            }
-        )
-        scenarios.append(item)
-
-    evals = []
-    if job.run_test_id:
-        evals = [
-            {
-                "id": str(config.id),
-                "name": config.name or config.eval_template.name,
-                "description": getattr(config.eval_template, "description", "") or "",
-                "runnable": True,
-            }
-            for config in job.run_test.simulate_eval_configs.filter(
-                deleted=False
-            ).select_related("eval_template")
-        ]
-    latest_run = (
-        job.simulation_runs.filter(deleted=False).order_by("-created_at").first()
-    )
-    overview = {
-        "id": str(job.id),
-        "name": _environment_name(job),
-        "description": (contract or {}).get("one_liner"),
-        "domain": (contract or {}).get("domain"),
-        "status": job.current_stage,
-        "agent_type": _agent_type(job, contract),
-        "scenario_count": len(scenarios),
-        "tools_count": len((contract or {}).get("tools") or []),
-        "sub_goals_count": len((contract or {}).get("sub_goals") or []),
-        "runs_count": job.simulation_runs.filter(deleted=False).count(),
-        "evaluations_count": len(evals),
-        "created_at": job.created_at.isoformat(),
-        "last_updated": job.updated_at.isoformat(),
-        "run": {
-            "run_test_id": str(job.run_test_id) if job.run_test_id else None,
-            "test_execution_id": (
-                str(latest_run.test_execution_id)
-                if latest_run and latest_run.test_execution_id
-                else None
-            ),
-            "simulation_url": None,
-        },
-    }
-    return {
-        "id": str(job.id),
-        "overview": overview,
-        "contract": contract,
-        "world": world,
-        "scenarios": scenarios,
-        "evaluations": {"selected": evals},
-        "settings": {
-            "source": (job.payload or {}).get("source") or {},
-            "agent": (job.payload or {}).get("agent") or {},
-            "runtime": (job.payload or {}).get("runtime") or {},
-        },
-    }
+    The router matches any segment without a slash or dot, so a hand-edited URL
+    reaches the view as a string the column cannot hold. Filtering on it raises
+    a Django ``ValidationError``, which DRF's handler does not translate and
+    which therefore surfaces as a 500. A miss is the honest answer: the caller
+    named something that cannot exist.
+    """
+    try:
+        return UUID(str(value))
+    except (AttributeError, TypeError, ValueError):
+        return None
 
 
 class HarnessEnvironmentViewSet(viewsets.ViewSet):
+    """The environments surface: list, delete, and start a simulation.
+
+    An environment is the job that built it (the world itself lives in object
+    storage, addressed from the job's metadata), so these endpoints project the
+    same rows the harness-jobs API serves. They exist separately because the
+    list needs a row, not a run: the jobs list returns every event, receipt and
+    stage-output payload for up to a hundred jobs, which is a detail document
+    repeated a hundred times.
+
+    Running and grading a simulation are deliberately not here. ``run`` starts
+    one and returns 202; progress is read from the job.
+    """
+
     permission_classes = [IsAuthenticated]
-    pagination_class = HarnessEnvironmentPagination
+    pagination_class = ExtendedPageNumberPagination
 
     def _queryset(self, request):
-        queryset = HostedHarnessJob.no_workspace_objects.filter(
-            organization=_organization(request),
-            environment__isnull=True,
-            deleted=False,
-        ).select_related("run_test")
-        return _scope_jobs(queryset, request)
+        return annotate_for_list(
+            scope_jobs(
+                HostedHarnessJob.no_workspace_objects.filter(
+                    organization=request_organization(request),
+                    environment__isnull=True,
+                    deleted=False,
+                ),
+                request,
+            )
+        )
 
-    def _environment(self, request, pk):
-        return self._queryset(request).filter(id=pk).first()
+    def _job(self, request, pk):
+        identifier = _uuid_or_none(pk)
+        if identifier is None:
+            return None
+        return self._queryset(request).filter(id=identifier).first()
 
-    @swagger_auto_schema(responses={200: HarnessEnvironmentListResponseSerializer})
+    @validated_request(
+        query_serializer=HarnessEnvironmentListQuerySerializer,
+        responses={200: HarnessEnvironmentListResponseSerializer},
+    )
     def list(self, request):
+        organization = request_organization(request)
+        if organization is None:
+            return Response(
+                {"detail": "an organization is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         paginator = self.pagination_class()
-        queryset = self._queryset(request).order_by("-created_at")
-        page = paginator.paginate_queryset(queryset, request, view=self)
-        return paginator.get_paginated_response([_list_row(job) for job in page])
+        page = paginator.paginate_queryset(self._queryset(request), request, view=self)
+        return paginator.get_paginated_response([environment_row(job) for job in page])
 
     @swagger_auto_schema(responses={200: HarnessEnvironmentDetailSerializer})
     def retrieve(self, request, pk=None):
-        job = self._environment(request, pk)
+        """One environment: overview, contract, world, scenarios, evaluations, settings.
+
+        Same shape whichever door built it. A section the pipeline has not reached
+        yet is null, so the client renders "building" rather than an empty pane.
+        """
+        job = self._job(request, pk)
         if job is None:
             return Response(
-                {"detail": "Environment not found"}, status=status.HTTP_404_NOT_FOUND
+                {"detail": "Environment not found"},
+                status=status.HTTP_404_NOT_FOUND,
             )
-        return Response(_detail(job))
+        return Response(environment_detail(job))
 
     @validated_request(
         request_serializer=HarnessEnvironmentRenameSerializer,
@@ -236,46 +131,45 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         reject_unknown_fields=True,
     )
     def partial_update(self, request, pk=None):
-        with transaction.atomic():
-            job = self._environment(request, pk)
-            if job is None:
-                return Response(
-                    {"detail": "Environment not found"},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
-            payload = dict(job.payload or {})
-            metadata = dict(payload.get("metadata") or {})
-            metadata["name"] = request.validated_data["name"]
-            payload["metadata"] = metadata
-            job.payload = payload
-            job.save(update_fields=["payload", "updated_at"])
-            if job.run_test_id:
-                job.run_test.name = request.validated_data["name"]
-                job.run_test.save(update_fields=["name", "updated_at"])
-        return Response(_detail(job))
+        """Rename an environment.
 
-    def destroy(self, request, pk=None):
-        job = self._environment(request, pk)
+        The name is the only editable field: everything else on an environment
+        records how it was built, and editing that would make the provenance the
+        contract tab shows a claim rather than a record.
+        """
+        job = self._job(request, pk)
         if job is None:
             return Response(
-                {"detail": "Environment not found"}, status=status.HTTP_404_NOT_FOUND
+                {"detail": "Environment not found"},
+                status=status.HTTP_404_NOT_FOUND,
             )
-        terminal = {
-            HostedHarnessJob.State.COMPLETED,
-            HostedHarnessJob.State.FAILED,
-            HostedHarnessJob.State.CANCELED,
-        }
-        if (
-            job.state not in terminal
-            or job.simulation_runs.exclude(state__in=terminal).exists()
-        ):
+        job.name = request.validated_data["name"]
+        # The list sorts and reports "last updated" from this column, so a
+        # rename that left it alone would show a stale time on the row it just
+        # changed.
+        job.content_updated_at = timezone.now()
+        job.save(update_fields=["name", "content_updated_at", "updated_at"])
+        return Response(environment_detail(job))
+
+    @swagger_auto_schema(responses={204: "Deleted"})
+    def destroy(self, request, pk=None):
+        """Soft-delete an environment, cancelling its run first if one is live.
+
+        Deleting while a sandbox is running would leave that sandbox billing
+        against a row nobody can see, so cancellation is requested before the
+        row disappears. The authoring archive and the organization's secrets are
+        left in place: neither is owned by this row, and other environments may
+        reference the same credentials.
+        """
+        from simulate.services.hosted_harness import delete_environment
+
+        job = self._job(request, pk)
+        if job is None:
             return Response(
-                {
-                    "detail": "Cancel active authoring and Runs before deleting the environment"
-                },
-                status=status.HTTP_409_CONFLICT,
+                {"detail": "Environment not found"},
+                status=status.HTTP_404_NOT_FOUND,
             )
-        job.delete()
+        delete_environment(job)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @validated_request(
@@ -285,4 +179,119 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     )
     @action(detail=True, methods=["post"])
     def run(self, request, pk=None):
+        """Create one new Run for the selected scenarios and trial count."""
         return get_harness_provider().run(request, pk)
+
+    def _run_test_job(self, request, pk):
+        """The environment and its run test, or the response that refuses the call.
+
+        Evaluations hang off the run test, which authoring creates when it
+        registers scenarios, so every evaluation endpoint has the same two ways
+        of having nothing to act on.
+        """
+        job = self._job(request, pk)
+        if job is None:
+            return None, Response(
+                {"detail": "Environment not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        if not job.run_test_id:
+            return None, Response(
+                {"detail": "Environment has no evaluations until it finishes building"},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return job, None
+
+    @swagger_auto_schema(responses={200: HarnessEnvironmentAvailableEvalsSerializer})
+    @action(detail=True, methods=["get"], url_path="evaluations/available")
+    def available_evaluations(self, request, pk=None):
+        """The evals this environment could still be graded by.
+
+        The same catalogue authoring chose from, filtered to this environment's
+        modality and to the templates the organization can see, minus what is
+        already selected. Every entry is addable as it stands: an eval whose
+        inputs this modality does not produce is left out rather than offered
+        and then refused.
+        """
+        from simulate.services.harness_evals import addable_evals
+
+        job, refusal = self._run_test_job(request, pk)
+        if refusal is not None:
+            return refusal
+        return Response(
+            {"evaluations": addable_evals(job.run_test, eval_modality(job))}
+        )
+
+    @validated_request(
+        request_serializer=HarnessEnvironmentAddEvaluationSerializer,
+        responses={201: HarnessEnvironmentDetailSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="evaluations")
+    def add_evaluation(self, request, pk=None):
+        """Grade this environment by one more eval from the catalogue.
+
+        Applies to scenarios graded from here on. Calls that already ran keep
+        the verdicts they were given, so adding an eval does not backfill a
+        column onto past results.
+        """
+        from simulate.services.harness_evals import (
+            EvalSelectionFull,
+            EvalSelectionRefused,
+            add_selected_eval,
+        )
+
+        job, refusal = self._run_test_job(request, pk)
+        if refusal is not None:
+            return refusal
+        try:
+            add_selected_eval(
+                job.run_test, request.validated_data["name"], eval_modality(job)
+            )
+        except EvalSelectionFull as full:
+            return Response({"detail": str(full)}, status=status.HTTP_409_CONFLICT)
+        except EvalSelectionRefused as refused:
+            return Response(
+                {"detail": str(refused)}, status=status.HTTP_400_BAD_REQUEST
+            )
+        _touch_content(job)
+        return Response(environment_detail(job), status=status.HTTP_201_CREATED)
+
+    @swagger_auto_schema(responses={204: "Removed"})
+    @action(
+        detail=True,
+        methods=["delete"],
+        url_path=r"evaluations/(?P<eval_config_id>[0-9a-fA-F-]{36})",
+    )
+    def remove_evaluation(self, request, pk=None, eval_config_id=None):
+        """Stop running one eval against this environment.
+
+        Soft-delete only. The verdicts an eval already produced live on the call
+        executions and in their receipts, not on this row, so a hard delete would
+        leave past runs showing scores for something the environment no longer
+        lists. Removing it stops future scenarios being graded by it and leaves
+        the history it already wrote intact.
+        """
+        from simulate.models.eval_config import SimulateEvalConfig
+
+        job, refusal = self._run_test_job(request, pk)
+        if refusal is not None:
+            return refusal
+        config_id = _uuid_or_none(eval_config_id)
+        config = (
+            SimulateEvalConfig.objects.filter(
+                id=config_id, run_test_id=job.run_test_id, deleted=False
+            ).first()
+            if config_id is not None
+            else None
+        )
+        if config is None:
+            return Response(
+                {"detail": "Evaluation not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        config.deleted = True
+        config.deleted_at = timezone.now()
+        config.save(update_fields=["deleted", "deleted_at", "updated_at"])
+        _touch_content(job)
+        return Response(status=status.HTTP_204_NO_CONTENT)

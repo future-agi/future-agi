@@ -16,7 +16,9 @@ from simulate.serializers.harness_job import (
     HarnessJobAdjustmentSerializer,
     HarnessJobCreateSerializer,
     HarnessJobExtendSerializer,
+    HarnessScenarioAmendSerializer,
     HarnessJobReadSerializer,
+    HarnessPreflightResponseSerializer,
     HarnessPreflightSerializer,
     HarnessRunCreateResponseSerializer,
     HarnessRunCreateSerializer,
@@ -30,6 +32,7 @@ from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
 from simulate.services.harness_credentials import (
+    HOSTED_FILE_KEY_PREFIX,
     credential_file_ref,
     request_scope,
     store_credential_file,
@@ -179,7 +182,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
 
             from simulate.models import HostedHarnessSecret
 
-            key = f"harness-google-adc-{uuid.uuid4().hex}"
+            key = f"{HOSTED_FILE_KEY_PREFIX}{uuid.uuid4().hex}"
             HostedHarnessSecret.objects.create(
                 organization=organization,
                 name=key,
@@ -254,6 +257,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
 
     @validated_request(
         request_serializer=HarnessPreflightSerializer,
+        responses={200: HarnessPreflightResponseSerializer},
         reject_unknown_fields=True,
     )
     @action(detail=False, methods=["post"])
@@ -289,6 +293,21 @@ class HarnessJobViewSet(viewsets.ViewSet):
     def extend(self, request, pk=None):
         return get_harness_provider().extend(request, pk)
 
+    @action(detail=True, methods=["get"], url_path="scenarios")
+    def scenarios(self, request, pk=None):
+        return get_harness_provider().list_scenarios(request, pk)
+
+    @action(detail=True, methods=["get"], url_path="scenarios/coverage")
+    def scenario_coverage(self, request, pk=None):
+        return get_harness_provider().scenario_coverage(request, pk)
+
+    @validated_request(
+        request_serializer=HarnessScenarioAmendSerializer,
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="scenarios/amend")
+    def amend_scenarios(self, request, pk=None):
+        return get_harness_provider().amend_scenarios(request, pk)
     @validated_request(
         request_serializer=HarnessRunCreateSerializer,
         responses={202: HarnessRunCreateResponseSerializer},

@@ -32,7 +32,25 @@ from tfc.utils.api_errors import build_error_envelope
 
 logger = logging.getLogger(__name__)
 
-_E164_PHONE = re.compile(r"^\+[1-9]\d{1,14}$")
+_SOURCE_ARCHIVE_SUFFIXES = (".zip", ".tar", ".tar.gz", ".tgz", ".rar", ".7z")
+_SOURCE_ARCHIVE_DETAIL = (
+    "upload the expanded project folder; archives are not supported"
+)
+
+
+def _rejected_archive_upload(files) -> Response | None:
+    """Refuse a lone archive: nothing unpacks it, so it would ship as an opaque blob."""
+    if len(files) == 1 and str(files[0].name).lower().endswith(
+        _SOURCE_ARCHIVE_SUFFIXES
+    ):
+        return Response(
+            {"detail": _SOURCE_ARCHIVE_DETAIL},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return None
+
+
+_E164_PHONE = re.compile(r"^\+[1-9]\d{6,14}$")
 
 
 def _validate_phone_connectivity(payload) -> None:
@@ -87,12 +105,12 @@ def _usage_limit_response(exc: Exception) -> Response | None:
     return GeneralMethods().usage_limit_response(exc.check_result)
 
 
-def _organization(request):
+def request_organization(request):
     user = getattr(request, "user", None)
     return getattr(request, "organization", None) or getattr(user, "organization", None)
 
 
-def _workspace(request):
+def request_workspace(request):
     workspace = getattr(request, "workspace", None)
     if workspace is not None:
         return workspace
@@ -109,7 +127,7 @@ def _workspace(request):
 
     from accounts.models.workspace import Workspace
 
-    organization = _organization(request)
+    organization = request_organization(request)
     workspace = (
         Workspace.no_workspace_objects.select_related("organization")
         .filter(id=workspace_id, organization=organization, is_active=True)
@@ -120,12 +138,27 @@ def _workspace(request):
     return workspace
 
 
-def _scope_jobs(queryset, request):
+def scope_jobs(queryset, request):
     """Apply the exact tenant scope captured by the submitting request."""
-    workspace = _workspace(request)
+    workspace = request_workspace(request)
     if workspace is None:
         return queryset.filter(workspace__isnull=True)
     return queryset.filter(workspace=workspace)
+
+
+def _scoped_job(request, pk):
+    """One job, or None, resolved under the caller's organization and workspace."""
+    organization = request_organization(request)
+    if organization is None:
+        return None
+    return (
+        scope_jobs(
+            HostedHarnessJob.no_workspace_objects.filter(organization=organization),
+            request,
+        )
+        .filter(id=pk)
+        .first()
+    )
 
 
 def _validate_secret_refs_hosted(secret_refs: dict) -> None:
@@ -468,7 +501,8 @@ def _connector_credential_readiness(
             set() if remote or complete_provider_families(agent) else set(detected)
         )
     else:
-        families = {connector: CONNECTOR_ALIASES[connector]}
+        # ``get`` -- a phone target has no credential family, so it asks for nothing.
+        families = {connector: CONNECTOR_ALIASES.get(connector, ())}
         required = set() if remote else {connector}
 
     def _status(name, alias):
@@ -536,7 +570,9 @@ def _preflight_source_connectors(request, payload):
     # the repository source scanner with a synthetic source.
     if payload["source"]["kind"] in {"remote", "provider"}:
         return [], [], 0
-    probe = HostedHarnessJob(organization=_organization(request), payload=payload)
+    probe = HostedHarnessJob(
+        organization=request_organization(request), payload=payload
+    )
     archive, _commit = HostedSourceAcquirer().acquire(probe)
     detected, required_files, scanned = detect_source_credentials(archive)
     if payload["agent"]["connector"] != "auto":
@@ -605,6 +641,397 @@ def _preflight_credential_probe(payload) -> list[dict[str, Any]]:
     return [result.as_dict() for result in results]
 
 
+_SOURCE_FIX_HINTS = {
+    "github_repository_invalid": (
+        "Use the owner/repository form, for example acme/support-agent"
+    ),
+    "github_ref_invalid": "Use a branch, tag or commit SHA for ref",
+    "github_repository_not_found": (
+        "Check the owner/repository spelling; for a private repository, choose "
+        "Private and install the GitHub App on it"
+    ),
+    "github_clone_failed": (
+        "Check the repository exists and, for a private repository, that the "
+        "GitHub App is installed on it"
+    ),
+    "github_installation_token_failed": (
+        "Reinstall the GitHub App on this repository and retry"
+    ),
+    "github_installation_token_missing": (
+        "Reinstall the GitHub App on this repository and retry"
+    ),
+    "github_commit_mismatch": "Use a commit SHA that exists on the selected ref",
+    "archive_artifact_missing": "Upload the project folder again, then retry",
+    "archive_source_not_found": "Upload the project folder again, then retry",
+    "source_archive_too_large": (
+        "Remove dependencies, build output and recordings from the upload"
+    ),
+}
+
+
+def _check(check_id, label, status, detail, *, missing=(), fix=None):
+    return {
+        "id": check_id,
+        "label": label,
+        "status": status,
+        "detail": detail,
+        "missing": list(missing),
+        "fix": fix,
+    }
+
+
+def _probe_check(check_id, label, results, skipped_detail, fix_template):
+    if not results:
+        return _check(check_id, label, "skipped", skipped_detail)
+    failed = [item for item in results if not item.get("ok")]
+    if not failed:
+        detail = "; ".join(str(item.get("message") or "") for item in results)
+        return _check(check_id, label, "passed", detail)
+    aliases = sorted({alias for item in failed for alias in item.get("aliases") or []})
+    return _check(
+        check_id,
+        label,
+        "failed",
+        "; ".join(str(item.get("message") or "") for item in failed),
+        missing=aliases,
+        fix=fix_template.format(aliases=", ".join(aliases)),
+    )
+
+
+def _dialer_check(connector):
+    """Whether the platform can dial a phone target, which only it can supply.
+
+    The customer provides no LiveKit or SIP credential for this lane, so an absent dialer is a
+    deployment fault rather than something they can fix by filling the form in. Naming it here
+    keeps a run that could only ever fail to dial out of the queue.
+    """
+    from simulate.services.hosted_harness_gateway import platform_dialer_status
+
+    if connector != "phone":
+        return _check(
+            "platform_dialer",
+            "Outbound dialer",
+            "skipped",
+            "only a phone target is dialled by the platform",
+        )
+    status = platform_dialer_status()
+    if status["available"]:
+        return _check(
+            "platform_dialer",
+            "Outbound dialer",
+            "passed",
+            "the platform outbound dialer is configured",
+        )
+    return _check(
+        "platform_dialer",
+        "Outbound dialer",
+        "failed",
+        "the platform outbound dialer is not configured on this deployment",
+        missing=status["missing"],
+        fix=(
+            "Contact your Future AGI administrator: phone targets need the "
+            "platform SIP trunk and simulator LiveKit credentials configured"
+        ),
+    )
+
+
+def _preflight_checks(
+    source_kind,
+    source_error,
+    scanned_files,
+    missing,
+    required_files,
+    probe,
+    connector="",
+):
+    checks = []
+    if source_kind in {"remote", "provider"}:
+        checks.append(
+            _check(
+                "source",
+                "Source reachable",
+                "skipped",
+                f"{source_kind} targets have no source tree to read",
+            )
+        )
+    elif source_error is not None:
+        checks.append(
+            _check(
+                "source",
+                "Source reachable",
+                "failed",
+                source_error.message,
+                fix=_SOURCE_FIX_HINTS.get(source_error.code, source_error.message),
+            )
+        )
+    else:
+        checks.append(
+            _check(
+                "source",
+                "Source reachable",
+                "passed",
+                f"{scanned_files} files scanned",
+            )
+        )
+    file_aliases = set(required_files)
+    files_missing = [alias for alias in missing if alias in file_aliases]
+    creds_missing = [alias for alias in missing if alias not in file_aliases]
+    if source_kind == "remote":
+        checks.append(
+            _check(
+                "credentials_present",
+                "Target credentials",
+                "skipped",
+                "remote targets own their credentials",
+            )
+        )
+    elif creds_missing:
+        checks.append(
+            _check(
+                "credentials_present",
+                "Target credentials",
+                "failed",
+                f"{len(creds_missing)} required credential(s) not provided",
+                missing=creds_missing,
+                fix="Add " + ", ".join(creds_missing) + " under target credentials",
+            )
+        )
+    else:
+        checks.append(
+            _check(
+                "credentials_present",
+                "Target credentials",
+                "passed",
+                "every required credential is referenced",
+            )
+        )
+    if not required_files:
+        checks.append(
+            _check(
+                "credential_files",
+                "Credential files",
+                "skipped",
+                "the source does not require a credential file",
+            )
+        )
+    elif files_missing:
+        checks.append(
+            _check(
+                "credential_files",
+                "Credential files",
+                "failed",
+                "the source requires a credential file that has not been uploaded",
+                missing=files_missing,
+                fix="Upload the JSON credential file for " + ", ".join(files_missing),
+            )
+        )
+    else:
+        checks.append(
+            _check(
+                "credential_files",
+                "Credential files",
+                "passed",
+                "required credential files are uploaded",
+            )
+        )
+    target_probes = []
+    key_probes = []
+    for item in probe:
+        if str(item.get("provider") or "").endswith("_target"):
+            target_probes.append(item)
+        else:
+            key_probes.append(item)
+    checks.append(
+        _probe_check(
+            "credentials_valid",
+            "Credentials accepted by provider",
+            key_probes,
+            "no credential values were submitted to verify",
+            "Replace {aliases} with a key the provider accepts",
+        )
+    )
+    checks.append(
+        _probe_check(
+            "provider_target",
+            "Provider agent reachable",
+            target_probes,
+            "no hosted provider agent to look up",
+            "Check the agent ID belongs to the account behind {aliases}",
+        )
+    )
+    checks.append(_dialer_check(connector))
+    return checks
+
+
+def _sandbox_preflight_body(payload, report):
+    """The declared preflight shape, rebuilt from what the sandbox server reports.
+
+    Both providers answer the same endpoint, so they owe the same body. The
+    sandbox already discovers credentials and inspects packaging; it just
+    reports them in its own envelope, so its findings are mapped onto the
+    declared shape rather than passed through. ``probe`` is empty because the
+    sandbox holds no provider keys to try, and the snapshot names no image:
+    those are Daytona facts, and inventing them here would make the readiness
+    panel state something untrue.
+    """
+    from simulate.services.hosted_harness_gateway import (
+        HOSTED_ENGINE_CATALOG,
+        HOSTED_RUNTIME_CATALOG,
+    )
+
+    credentials = dict(report.get("credentials") or {})
+    requirements = [
+        item for item in credentials.get("requirements") or [] if isinstance(item, dict)
+    ]
+    missing = [
+        str(item.get("environment_name") or item.get("id") or "")
+        for item in requirements
+        if item.get("required") and item.get("status") == "missing"
+    ]
+    required_files = [
+        str(item.get("environment_name") or item.get("id") or "")
+        for item in requirements
+        if item.get("kind") == "file"
+    ]
+    checks = _preflight_checks(
+        payload["source"]["kind"],
+        None,
+        int(credentials.get("scanned_files") or 0),
+        missing,
+        required_files,
+        [],
+        str((payload.get("agent") or {}).get("connector") or ""),
+    )
+    packaging = report.get("packaging") or {}
+    checks.append(_packaging_check(packaging))
+    # The sandbox decides readiness from packaging as well as credentials, so
+    # its verdict leads and the checks explain it. Deriving the state from the
+    # checks alone could report "connected" for a source the sandbox has
+    # already refused to run.
+    ready = bool(report.get("ready_to_submit"))
+    credentials["probe"] = []
+    return {
+        "ready_to_submit": ready,
+        "state": "connected" if ready else "failed",
+        "checks": checks,
+        "credentials": credentials,
+        "parallelism_enabled": False,
+        "effective_parallelism": payload["runtime"]["parallelism"],
+        "resource_profile": None,
+        "snapshot": {
+            "name": None,
+            "digest": None,
+            "engines": HOSTED_ENGINE_CATALOG,
+            "runtimes": HOSTED_RUNTIME_CATALOG,
+        },
+    }
+
+
+def _packaging_check(packaging):
+    """Whether the sandbox can build the source, which only it inspects."""
+    if not packaging:
+        return _check(
+            "packaging",
+            "Source is buildable",
+            "skipped",
+            "the sandbox reported no packaging analysis",
+        )
+    if packaging.get("ready") and packaging.get("agent_runtime_packaged", True):
+        selected = str(packaging.get("selected_path") or "").strip()
+        return _check(
+            "packaging",
+            "Source is buildable",
+            "passed",
+            f"building from {selected}" if selected else "a build was found",
+        )
+    notes = [str(note) for note in packaging.get("notes") or [] if str(note).strip()]
+    return _check(
+        "packaging",
+        "Source is buildable",
+        "failed",
+        notes[0] if notes else "no Dockerfile or compose file packages the agent",
+        fix="Add a Dockerfile that runs the agent, or a compose file that starts it",
+    )
+
+
+_ORDINAL_WORDS = {
+    word: number
+    for number, word in enumerate(
+        (
+            "first second third fourth fifth sixth seventh eighth ninth tenth "
+            "eleventh twelfth thirteenth fourteenth fifteenth sixteenth seventeenth "
+            "eighteenth nineteenth twentieth"
+        ).split(),
+        start=1,
+    )
+}
+
+
+def scenarios_meant(
+    said: Any, suite: list[dict], numbering: dict[int, str] | None = None
+) -> list[str]:
+    """Scenario names from "4", "12-30", "12, 15, 18" or a name; `numbering` maps stored numbers."""
+    by_number = numbering or {
+        position: str(one.get("name") or "") for position, one in enumerate(suite, 1)
+    }
+    known = {str(one.get("name") or "") for one in suite}
+    keys = {
+        str(one.get("scenario_key") or ""): str(one.get("name") or "") for one in suite
+    }
+    found: list[str] = []
+
+    def take(name: str) -> None:
+        if name and name not in found:
+            found.append(name)
+
+    for piece in said if isinstance(said, (list, tuple)) else [said]:
+        for part in re.split(r"[,\s]+(?:and\s+)?", str(piece or "").strip()):
+            part = part.strip().strip(".")
+            if not part:
+                continue
+            if part in known:
+                take(part)
+                continue
+            if part in keys:
+                take(keys[part])
+                continue
+            span = re.fullmatch(r"(\d+)\s*(?:-|–|to|through)\s*(\d+)", part)
+            if span:
+                low, high = sorted((int(span.group(1)), int(span.group(2))))
+                for number in range(low, high + 1):
+                    take(by_number.get(number, ""))
+                continue
+            # "#4", "4th", "the fourth".
+            plain = re.sub(r"^(?:the|scenario|no\.?|#)\s*", "", part, flags=re.IGNORECASE)
+            plain = re.sub(r"(?<=\d)(?:st|nd|rd|th)$", "", plain, flags=re.IGNORECASE)
+            if plain.isdigit():
+                take(by_number.get(int(plain), ""))
+                continue
+            if plain.lower() in _ORDINAL_WORDS:
+                take(by_number.get(_ORDINAL_WORDS[plain.lower()], ""))
+    return found
+
+
+def _scenario_row(reg, number: int | None = None) -> dict:
+    """One registered scenario; ``number`` is its one-based place in its own suite."""
+    return {
+        "number": number,
+        "scenario_key": reg.scenario_key,
+        "scenario_id": str(reg.scenario_id),
+        "name": getattr(reg.scenario, "name", "") if reg.scenario else "",
+        "instruction": (getattr(reg.scenario, "prompt", None) or "")
+        if reg.scenario
+        else None,
+        "use_case": (getattr(reg.scenario, "use_case", None) or "")
+        if reg.scenario
+        else None,
+        "call_execution_id": str(reg.call_execution_id)
+        if reg.call_execution_id
+        else None,
+        "status": _scenario_status(reg),
+    }
+
+
 class HostedHarnessProvider:
     """Persist jobs and drive the configured managed sandbox through Temporal."""
 
@@ -617,7 +1044,7 @@ class HostedHarnessProvider:
         )
         from simulate.temporal.client import start_hosted_harness_gateway_workflow
 
-        organization = _organization(request)
+        organization = request_organization(request)
         if organization is None:
             return Response(
                 {"detail": "Organization not found"},
@@ -660,7 +1087,7 @@ class HostedHarnessProvider:
                 organization,
                 payload,
                 idempotency_key=idempotency_key,
-                workspace=_workspace(request),
+                workspace=request_workspace(request),
             )
             retry_cfg = job.payload["retry"]
             start_hosted_harness_gateway_workflow(
@@ -680,8 +1107,8 @@ class HostedHarnessProvider:
         return Response(serialize_job(job), status=status.HTTP_202_ACCEPTED)
 
     def list(self, request) -> Response:
-        organization = _organization(request)
-        jobs = _scope_jobs(
+        organization = request_organization(request)
+        jobs = scope_jobs(
             HostedHarnessJob.no_workspace_objects.filter(organization=organization),
             request,
         ).order_by("-created_at")[:100]
@@ -709,10 +1136,12 @@ class HostedHarnessProvider:
         from simulate.services.hosted_harness import clamp_parallelism
 
         runtime = payload["runtime"]
+        source_error = None
         try:
             source_analysis = _preflight_source_connectors(request, payload)
         except HostedHarnessError as exc:
-            return Response(exc.as_dict(), status=exc.status_code)
+            source_error = exc
+            source_analysis = ([], [], 0)
         # Keep two-item patched return values compatible with tests and custom
         # providers written before credential-file discovery was added.
         if len(source_analysis) == 2:
@@ -725,9 +1154,16 @@ class HostedHarnessProvider:
         )
         probe = _preflight_credential_probe(payload)
         credentials["report"]["probe"] = probe
-        # Every submitted key must be accepted: a wrong model key beside a valid transport
-        # key still ends in a run that cannot speak.
-        probe_failed = any(not item["ok"] for item in probe)
+        checks = _preflight_checks(
+            payload["source"]["kind"],
+            source_error,
+            scanned,
+            credentials["missing"],
+            required_files,
+            probe,
+            str(payload["agent"].get("connector") or ""),
+        )
+        failed = any(check["status"] == "failed" for check in checks)
         runtime_name, runtime_digest = sandbox_runtime_reference()
         # Continuous advisory surface (C4 §4 pin ii / §5). ``parallelism_enabled``
         # reflects the same flag-AND-digest state the register_attempt guard
@@ -764,27 +1200,35 @@ class HostedHarnessProvider:
         admitted = min(admitted, capacity.parallelism)
         parallel_digest = parallel_capacity.snapshot_digest or runtime_digest
         _, denied_at_2 = clamp_parallelism(2, parallel_digest)
-        return Response(
-            {
-                "ready_to_submit": not credentials["missing"] and not probe_failed,
-                "credentials": credentials["report"],
-                "parallelism_enabled": not denied_at_2
-                and parallel_capacity.parallelism > 1,
-                "effective_parallelism": admitted,
-                "resource_profile": {
-                    "name": capacity.name,
-                    "cpu_units": capacity.cpu_units,
-                    "memory_mb": capacity.memory_mb,
-                    "disk_gb": capacity.disk_gb,
-                },
-                "snapshot": {
-                    "name": capacity.snapshot_name or runtime_name or None,
-                    "digest": digest,
-                    "engines": HOSTED_ENGINE_CATALOG,
-                    "runtimes": HOSTED_RUNTIME_CATALOG,
-                },
-            }
-        )
+        body = {
+            "ready_to_submit": not failed,
+            "state": "failed" if failed else "connected",
+            "checks": checks,
+            "credentials": credentials["report"],
+            "parallelism_enabled": not denied_at_2
+            and parallel_capacity.parallelism > 1,
+            "effective_parallelism": admitted,
+            "resource_profile": {
+                "name": capacity.name,
+                "cpu_units": capacity.cpu_units,
+                "memory_mb": capacity.memory_mb,
+                "disk_gb": capacity.disk_gb,
+            },
+            "snapshot": {
+                "name": capacity.snapshot_name or runtime_name or None,
+                "digest": digest or None,
+                "engines": HOSTED_ENGINE_CATALOG,
+                "runtimes": HOSTED_RUNTIME_CATALOG,
+            },
+        }
+        # A source that cannot be read keeps its error status: callers that key on
+        # the HTTP status still see the message, and the checks ride along for
+        # callers that render them.
+        if source_error is not None:
+            return Response(
+                {**source_error.as_dict(), **body}, status=source_error.status_code
+            )
+        return Response(body)
 
     def retrieve(self, request, pk) -> Response:
         job = self._job(request, pk)
@@ -823,7 +1267,55 @@ class HostedHarnessProvider:
                 trials=request.validated_data["trials"],
                 idempotency_key=idempotency_key,
             )
-            if created:
+            retry_dispatch = False
+            if (
+                not created
+                and child.state == HostedHarnessJob.State.FAILED
+                and (child.failure or {}).get("code") == "scheduler_unavailable"
+            ):
+                with transaction.atomic():
+                    child = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                        id=child.id
+                    )
+                    if (
+                        child.state == HostedHarnessJob.State.FAILED
+                        and (child.failure or {}).get("code") == "scheduler_unavailable"
+                    ):
+                        now = timezone.now()
+                        child.state = HostedHarnessJob.State.QUEUED
+                        child.current_stage = "queued"
+                        child.completed_count = 0
+                        child.failed_count = 0
+                        child.uploaded_artifact_bytes = 0
+                        child.terminal_at = None
+                        child.failure = None
+                        child.content_updated_at = now
+                        child.save(
+                            update_fields=[
+                                "state",
+                                "current_stage",
+                                "completed_count",
+                                "failed_count",
+                                "uploaded_artifact_bytes",
+                                "terminal_at",
+                                "failure",
+                                "content_updated_at",
+                                "updated_at",
+                            ]
+                        )
+                        TestExecution.no_workspace_objects.filter(
+                            id=child.test_execution_id
+                        ).update(
+                            status=TestExecution.ExecutionStatus.PENDING,
+                            started_at=now,
+                            completed_at=None,
+                            completed_calls=0,
+                            failed_calls=0,
+                            error_reason=None,
+                        )
+                        retry_dispatch = True
+
+            if created or retry_dispatch:
                 base_url = (
                     getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
                     or request.build_absolute_uri("/")
@@ -843,28 +1335,48 @@ class HostedHarnessProvider:
                 "selected harness Run dispatch failed environment=%s", environment.id
             )
             if "child" in locals():
-                HostedHarnessJob.no_workspace_objects.filter(id=child.id).update(
-                    state=HostedHarnessJob.State.FAILED,
-                    current_stage="failed",
-                    terminal_at=timezone.now(),
-                    failure={
-                        "domain": "infrastructure",
-                        "stage": "queued",
-                        "code": "scheduler_unavailable",
-                        "message": "Selected harness Run could not be scheduled",
-                    },
+                failure = {
+                    "domain": "infrastructure",
+                    "stage": "queued",
+                    "code": "scheduler_unavailable",
+                    "message": "Selected harness Run could not be scheduled",
+                }
+                with transaction.atomic():
+                    marked_failed = HostedHarnessJob.no_workspace_objects.filter(
+                        id=child.id,
+                        state=HostedHarnessJob.State.QUEUED,
+                    ).update(
+                        state=HostedHarnessJob.State.FAILED,
+                        current_stage="failed",
+                        terminal_at=timezone.now(),
+                        failure=failure,
+                    )
+                    if marked_failed:
+                        TestExecution.no_workspace_objects.filter(
+                            id=child.test_execution_id
+                        ).update(
+                            status=TestExecution.ExecutionStatus.FAILED,
+                            completed_at=timezone.now(),
+                            error_reason=failure["message"],
+                        )
+                        return Response(
+                            {"detail": "Hosted harness scheduler is unavailable"},
+                            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        )
+                child.refresh_from_db()
+                if (
+                    child.state == HostedHarnessJob.State.FAILED
+                    and (child.failure or {}).get("code") == "scheduler_unavailable"
+                ):
+                    return Response(
+                        {"detail": "Hosted harness scheduler is unavailable"},
+                        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    )
+            else:
+                return Response(
+                    {"detail": "Hosted harness scheduler is unavailable"},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
                 )
-                TestExecution.no_workspace_objects.filter(
-                    id=child.test_execution_id
-                ).update(
-                    status=TestExecution.ExecutionStatus.FAILED,
-                    completed_at=timezone.now(),
-                    error_reason="Selected harness Run could not be scheduled",
-                )
-            return Response(
-                {"detail": "Hosted harness scheduler is unavailable"},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
 
         manifest = list(
             (child.payload.get("metadata") or {}).get("execution_manifest") or []
@@ -1144,6 +1656,360 @@ class HostedHarnessProvider:
         child.refresh_from_db()
         return serialize_job(child)
 
+    # Editable fields; all but `tests` are refused when the caller declines a re-proof.
+    _DESCRIPTIVE_FIELDS = frozenset({"tests"})
+    _BEHAVIOURAL_FIELDS = frozenset({"max_turns", "background_noise", "keywords"})
+    _PERSONA_FIELDS = frozenset(
+        {
+            "personality",
+            "communication_style",
+            "accent",
+            "languages",
+            "occupation",
+            "location",
+        }
+    )
+
+    def _editing_contract(self) -> dict[str, list[str]]:
+        """Which fields an amend will take, and which of them cannot be taken without a re-proof."""
+        return {
+            "editable_fields": sorted(self._DESCRIPTIVE_FIELDS | self._BEHAVIOURAL_FIELDS),
+            "persona_fields": sorted(self._PERSONA_FIELDS),
+            "rework_fields": sorted(self._BEHAVIOURAL_FIELDS | self._PERSONA_FIELDS),
+        }
+
+    def list_scenarios(self, request, pk) -> Response:
+        """One page of a run's authored scenarios, in the order they were written."""
+        from tfc.utils.pagination import ExtendedPageNumberPagination
+
+        job = _scoped_job(request, pk)
+        if job is None:
+            return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        from simulate.services.harness_scenarios import (
+            apply_filters,
+            apply_ordering,
+            apply_search,
+            field_catalogue,
+            group_counts,
+            grouped,
+            index_scenarios,
+            scenario_row,
+        )
+
+        queryset = HostedHarnessScenario.no_workspace_objects.filter(
+            job=job
+        ).select_related("scenario", "call_execution")
+        if not queryset.filter(number__isnull=False).exists():
+            # Runs from before indexing: index from the stage output or the unpacked archive.
+            artefact = (
+                HostedHarnessStageOutput.no_workspace_objects.filter(
+                    job=job, kind="scenarios"
+                )
+                .values_list("data", flat=True)
+                .first()
+            )
+            if not artefact:
+                artefact = next(
+                    (
+                        one.get("data")
+                        for one in (job.stage_outputs or [])
+                        if isinstance(one, dict) and one.get("kind") == "scenarios"
+                    ),
+                    None,
+                )
+            if isinstance(artefact, list) and artefact:
+                index_scenarios(job, artefact)
+                queryset = HostedHarnessScenario.no_workspace_objects.filter(
+                    job=job
+                ).select_related("scenario", "call_execution")
+        # Filter choices are counted before filtering, or picking one value would hide the others.
+        queryset = apply_search(queryset, request.query_params.get("search", ""))
+        offerable = queryset
+        queryset = apply_filters(queryset, request.query_params)
+        queryset = apply_ordering(queryset, request.query_params.get("ordering", ""))
+
+        paginator = ExtendedPageNumberPagination()
+        page = paginator.paginate_queryset(queryset, request)
+        from simulate.services.harness_scenarios import DEFAULT_GROUP_BY
+
+        asked = request.query_params.get("group_by")
+        group_by = DEFAULT_GROUP_BY if asked is None else asked
+        rows = grouped([scenario_row(one) for one in page or []], group_by)
+        response = paginator.get_paginated_response(rows)
+        response.data["groups"] = group_counts(rows, queryset, group_by)
+        response.data["group_by"] = group_by
+        response.data["fields"] = field_catalogue(offerable)
+        response.data["scenario_editing"] = self._editing_contract()
+        from simulate.services.harness_scenarios import GROUPINGS
+
+        response.data["groupings"] = [dict(one) for one in GROUPINGS]
+        from simulate.services.harness_scenarios import level_labels_for
+        response.data["level_labels"] = level_labels_for(rows)
+        return response
+
+    def scenario_coverage(self, request, pk) -> Response:
+        """The suite's coverage grid, over the filtered suite rather than a page."""
+        job = _scoped_job(request, pk)
+        if job is None:
+            return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        from simulate.services.harness_scenarios import (
+            DEFAULT_COL_AXIS,
+            DEFAULT_ROW_AXIS,
+            apply_filters,
+            apply_search,
+            coverage_grid,
+        )
+
+        queryset = HostedHarnessScenario.no_workspace_objects.filter(job=job)
+        queryset = apply_search(queryset, request.query_params.get("search", ""))
+        queryset = apply_filters(queryset, request.query_params)
+        return Response(
+            coverage_grid(
+                queryset,
+                request.query_params.get("row_axis") or DEFAULT_ROW_AXIS,
+                request.query_params.get("col_axis") or DEFAULT_COL_AXIS,
+            )
+        )
+
+    def amend_scenarios(self, request, pk) -> Response:
+        """Edit a finished run's authored suite, one receipt per requested change."""
+        from simulate.services.hosted_harness_gateway import (
+            push_scenarios_into_live_sandbox,
+            rewrite_authoring_scenarios,
+        )
+
+        changes = request.validated_data["changes"]
+        rework = bool(request.validated_data.get("rework", True))
+        with transaction.atomic():
+            # Scope before locking, so a busy lock never reveals a job outside the caller's scope.
+            scoped = _scoped_job(request, pk)
+            if scoped is None:
+                return Response(
+                    {"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND
+                )
+            job = (
+                HostedHarnessJob.no_workspace_objects.select_for_update()
+                .filter(id=scoped.id)
+                .first()
+            )
+            if job is None:
+                return Response(
+                    {"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND
+                )
+            output = (
+                HostedHarnessStageOutput.no_workspace_objects.select_for_update()
+                .filter(job=job, kind="scenarios")
+                .first()
+            )
+            suite = list(output.data or []) if output is not None else None
+            if suite is None:
+                suite = [
+                    dict(one)
+                    for one in next(
+                        (
+                            item.get("data") or []
+                            for item in (job.stage_outputs or [])
+                            if item.get("kind") == "scenarios"
+                        ),
+                        [],
+                    )
+                ]
+            if not suite:
+                return Response(
+                    {
+                        "error": "no_authored_suite",
+                        "message": "this run has no authored scenarios to amend",
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+            by_name = {str(one.get("name") or ""): one for one in suite}
+            receipts = []
+            touched = False
+            # One change may name many scenarios; each gets its own receipt.
+            spread = []
+            for change in changes:
+                said = change.get("scenarios") or change.get("scenario")
+                # Resolve numbers against stored numbering, not list position.
+                numbering = {
+                    row.number: row.name or row.scenario_key
+                    for row in HostedHarnessScenario.no_workspace_objects.filter(
+                        job=job, number__isnull=False
+                    )
+                }
+                meant = scenarios_meant(said, suite, numbering or None)
+                if not meant:
+                    receipts.append(
+                        {
+                            "scenario": str(change.get("scenario") or ""),
+                            "outcome": "refused",
+                            "why": "nothing in this suite answers to that",
+                        }
+                    )
+                    continue
+                spread.extend({**change, "scenario": name} for name in meant)
+            for change in spread:
+                name = str(change.get("scenario") or "")
+                target = by_name.get(name)
+                if target is None:
+                    receipts.append(
+                        {
+                            "scenario": name,
+                            "outcome": "refused",
+                            "why": "no scenario of that name in this suite",
+                        }
+                    )
+                    continue
+                op = str(change.get("op") or "")
+                if op == "drop":
+                    if not rework:
+                        receipts.append(
+                            {
+                                "scenario": name,
+                                "outcome": "refused",
+                                "why": "dropping a scenario changes the suite, so it needs a re-proof",
+                            }
+                        )
+                        continue
+                    suite = [one for one in suite if one is not target]
+                    by_name.pop(name, None)
+                    touched = True
+                    receipts.append(
+                        {"scenario": name, "outcome": "applied", "why": "dropped"}
+                    )
+                    continue
+                if op == "set_field":
+                    field = str(change.get("field") or "")
+                    if field in self._DESCRIPTIVE_FIELDS:
+                        pass
+                    elif field in self._BEHAVIOURAL_FIELDS:
+                        if not rework:
+                            receipts.append(
+                                {
+                                    "scenario": name,
+                                    "outcome": "refused",
+                                    "why": f"{field} changes what the run does, so it needs a re-proof",
+                                }
+                            )
+                            continue
+                    else:
+                        receipts.append(
+                            {
+                                "scenario": name,
+                                "outcome": "refused",
+                                "why": f"{field} is not editable: it is proved, not described",
+                            }
+                        )
+                        continue
+                    target[field] = change.get("value")
+                    touched = True
+                    receipts.append(
+                        {"scenario": name, "outcome": "applied", "why": f"{field} updated"}
+                    )
+                    continue
+                if op == "set_persona":
+                    if not rework:
+                        receipts.append(
+                            {
+                                "scenario": name,
+                                "outcome": "refused",
+                                "why": "the persona is what the agent hears, so it needs a re-proof",
+                            }
+                        )
+                        continue
+                    given = dict(change.get("persona") or {})
+                    unknown = sorted(set(given) - self._PERSONA_FIELDS)
+                    if unknown:
+                        receipts.append(
+                            {
+                                "scenario": name,
+                                "outcome": "refused",
+                                "why": f"not editable on a persona: {', '.join(unknown)}",
+                            }
+                        )
+                        continue
+                    persona = dict(target.get("persona") or {})
+                    persona.update(
+                        {key: value for key, value in given.items() if value is not None}
+                    )
+                    target["persona"] = persona
+                    touched = True
+                    receipts.append(
+                        {"scenario": name, "outcome": "applied", "why": "persona updated"}
+                    )
+                    continue
+                receipts.append(
+                    {"scenario": name, "outcome": "refused", "why": f"unknown change {op!r}"}
+                )
+            # Edits pass the same gates as a written scenario.
+            if touched:
+                try:
+                    from fi.alk.harness.scenario import Scenario, scenario_edit_problems
+                except ImportError:  # the harness package ships in the runner image, not the web backend
+                    scenario_edit_problems = None
+
+                rejected = []
+                for one in suite if scenario_edit_problems else ():
+                    try:
+                        problems = scenario_edit_problems(Scenario.model_validate(one))
+                    except Exception:  # noqa: BLE001 - a document we cannot read is the edit's fault
+                        problems = ["the edited scenario could not be read"]
+                    if problems:
+                        rejected.append((str(one.get("name") or ""), problems))
+                if rejected:
+                    named = {name for name, _ in rejected}
+                    return Response(
+                        {
+                            "receipts": [
+                                {
+                                    "scenario": name,
+                                    "outcome": "refused",
+                                    "why": "; ".join(problems),
+                                }
+                                for name, problems in rejected
+                            ]
+                            + [
+                                one
+                                for one in receipts
+                                if one.get("scenario") not in named
+                                and one.get("outcome") == "refused"
+                            ]
+                        }
+                    )
+            if touched:
+                if output is not None:
+                    output.data = suite
+                    output.summary = f"{len(suite)} pre-authored scenarios"
+                    output.save(update_fields=["data", "summary", "updated_at"])
+                else:
+                    job.stage_outputs = [
+                        {**item, "data": suite}
+                        if item.get("kind") == "scenarios"
+                        else item
+                        for item in (job.stage_outputs or [])
+                    ]
+                    job.save(update_fields=["stage_outputs", "updated_at"])
+                # Write to the archive, the live guest and the index, or the edit reverts or hides.
+                try:
+                    from simulate.services.harness_scenarios import index_scenarios
+
+                    index_scenarios(job, suite, prune=True)
+                except Exception:  # noqa: BLE001 - the edit itself applied; the index can lag
+                    logger.warning(
+                        "harness_scenario_reindex_failed job_id=%s", job.id, exc_info=True
+                    )
+                rewrite_authoring_scenarios(job, suite)
+                delivered = push_scenarios_into_live_sandbox(job, suite)
+                if delivered:
+                    receipts = [
+                        {**one, "outcome": "queued"}
+                        if one.get("outcome") == "applied"
+                        else one
+                        for one in receipts
+                    ]
+        return Response({"receipts": receipts})
+
     def extend(self, request, pk) -> Response:
         """Chat 'Add scenarios' on a finished RL environment: add ``count`` new scenarios,
         steered by optional guidance, replaying the authored world. Rerun is a separate action."""
@@ -1152,8 +2018,8 @@ class HostedHarnessProvider:
 
         from simulate.services.hosted_harness import HostedHarnessError
 
-        organization = _organization(request)
-        workspace = _workspace(request)
+        organization = request_organization(request)
+        workspace = request_workspace(request)
         if organization is None:
             return Response(
                 {"detail": "Organization not found"},
@@ -1262,7 +2128,7 @@ class HostedHarnessProvider:
         from simulate.services.hosted_harness import HostedHarnessError
         from simulate.services.hosted_harness_gateway import store_source_archive
 
-        organization = _organization(request)
+        organization = request_organization(request)
         if organization is None:
             return Response(
                 {"detail": "Organization not found"},
@@ -1275,6 +2141,9 @@ class HostedHarnessProvider:
                 {"detail": "one relative path is required per file"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        rejected = _rejected_archive_upload(files)
+        if rejected is not None:
+            return rejected
         if len(files) > 5_000:
             return Response(
                 {"detail": "source may contain at most 5000 files"},
@@ -1324,8 +2193,8 @@ class HostedHarnessProvider:
         }
 
     def _job(self, request, pk):
-        organization = _organization(request)
-        return _scope_jobs(
+        organization = request_organization(request)
+        return scope_jobs(
             HostedHarnessJob.no_workspace_objects.filter(
                 id=pk, organization=organization
             ),
@@ -1383,13 +2252,41 @@ class SandboxHarnessProvider:
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+    def list_scenarios(self, request, pk) -> Response:
+        return Response(
+            {
+                "error": "scenarios_not_supported",
+                "message": "reading an authored suite is only available on the hosted provider",
+            },
+            status=status.HTTP_501_NOT_IMPLEMENTED,
+        )
+
+    def scenario_coverage(self, request, pk) -> Response:
+        return Response(
+            {
+                "error": "scenarios_not_supported",
+                "message": "reading an authored suite is only available on the hosted provider",
+            },
+            status=status.HTTP_501_NOT_IMPLEMENTED,
+        )
+
+    def amend_scenarios(self, request, pk) -> Response:
+        return Response(
+            {
+                "error": "amend_not_supported",
+                "message": "editing an authored suite is only available on the hosted provider",
+            },
+            status=status.HTTP_501_NOT_IMPLEMENTED,
+        )
+
     def extend(self, request, pk) -> Response:
         return Response(
-            build_error_envelope(
-                "adding scenarios is only available on the hosted (daytona) provider",
-                status_code=status.HTTP_400_BAD_REQUEST,
-                code="extend_not_supported",
-            ),
+            {
+                "error": "extend_not_supported",
+                "message": (
+                    "adding scenarios is only available on the hosted (daytona) provider"
+                ),
+            },
             status=status.HTTP_400_BAD_REQUEST,
         )
 
@@ -1466,7 +2363,7 @@ class SandboxHarnessProvider:
 
         try:
             payload = self._flatten_source(request.validated_data)
-            return Response(self._client().preflight(payload))
+            report = self._client().preflight(payload)
         except _SandboxMappingError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except HarnessSandboxRejected as exc:
@@ -1475,6 +2372,7 @@ class SandboxHarnessProvider:
             return Response(
                 {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
             )
+        return Response(_sandbox_preflight_body(request.validated_data, report))
 
     def retrieve(self, request, pk) -> Response:
         from simulate.services.harness_sandbox import (
@@ -1551,6 +2449,9 @@ class SandboxHarnessProvider:
                 {"detail": "one relative path is required per file"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        rejected = _rejected_archive_upload(files)
+        if rejected is not None:
+            return rejected
         try:
             result = self._client().upload_source(
                 files, paths, str(request.data.get("name") or "uploaded-agent")

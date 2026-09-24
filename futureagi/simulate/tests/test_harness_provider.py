@@ -17,6 +17,7 @@ from simulate.models import (
     HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessReceipt,
+    TestExecution as SimulationTestExecution,
 )
 from simulate.models.run_test import RunTest
 from simulate.serializers.harness_job import (
@@ -150,12 +151,13 @@ def test_daytona_health_preserves_public_provider_name(settings):
     }
 
 
-def test_hosted_job_scenario_count_is_bounded_at_two_hundred():
+def test_hosted_job_scenario_count_is_bounded_at_the_admission_ceiling():
     accepted = HarnessJobCreateSerializer(data=_v1_payload(scenario_count=200))
     assert accepted.is_valid(), accepted.errors
     assert accepted.validated_data["runtime"]["max_duration_seconds"] == 72_000
+    assert HarnessJobCreateSerializer(data=_v1_payload(scenario_count=1000)).is_valid()
 
-    rejected = HarnessJobCreateSerializer(data=_v1_payload(scenario_count=201))
+    rejected = HarnessJobCreateSerializer(data=_v1_payload(scenario_count=1001))
     assert not rejected.is_valid()
     assert "scenario_count" in rejected.errors
 
@@ -333,15 +335,40 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
         "scenario-b",
     ]
     assert detail.json()["overview"]["runs_count"] == 2
+    latest_run = environment.simulation_runs.filter(deleted=False).order_by(
+        "-created_at", "-id"
+    ).first()
+    assert (
+        detail.json()["overview"]["run"]["test_execution_id"]
+        == str(latest_run.test_execution_id)
+    )
+    assert detail.json()["overview"]["run"]["simulation_url"].endswith(
+        f"/runs/{environment.run_test_id}/{latest_run.test_execution_id}"
+    )
     listing = client.get(
         "/simulate/api/harness-environments/",
         HTTP_X_WORKSPACE_ID=str(workspace.id),
     )
     assert listing.status_code == 200, listing.content
     assert listing.json()["results"][0]["id"] == str(environment.id)
+    assert listing.json()["count"] == 1
     with patch(
         "simulate.temporal.client.start_hosted_harness_gateway_workflow"
     ) as start:
+        start.side_effect = RuntimeError("scheduler unavailable")
+        failed_dispatch = client.post(
+            f"/simulate/api/harness-environments/{environment.id}/run/",
+            {"scenario_ids": ["scenario-b"], "trials": 2},
+            format="json",
+            HTTP_IDEMPOTENCY_KEY="submission-three",
+            HTTP_X_WORKSPACE_ID=str(workspace.id),
+        )
+        assert failed_dispatch.status_code == 503
+        child = environment.simulation_runs.get(scenario_count=2)
+        assert child.state == HostedHarnessJob.State.FAILED
+        assert child.test_execution.status == SimulationTestExecution.ExecutionStatus.FAILED
+
+        start.side_effect = None
         response = client.post(
             f"/simulate/api/harness-environments/{environment.id}/run/",
             {"scenario_ids": ["scenario-b"], "trials": 2},
@@ -349,20 +376,29 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
             HTTP_IDEMPOTENCY_KEY="submission-three",
             HTTP_X_WORKSPACE_ID=str(workspace.id),
         )
-    assert response.status_code == 202, response.content
-    assert response.json()["scenario_count"] == 1
-    assert response.json()["trials"] == 2
-    assert response.json()["total_calls"] == 2
-    start.assert_called_once()
-    duplicate = client.post(
-        f"/simulate/api/harness-environments/{environment.id}/run/",
-        {"scenario_ids": ["scenario-b"], "trials": 2},
-        format="json",
-        HTTP_IDEMPOTENCY_KEY="submission-three",
-        HTTP_X_WORKSPACE_ID=str(workspace.id),
-    )
-    assert duplicate.status_code == 202
-    assert duplicate.json()["test_execution_id"] == response.json()["test_execution_id"]
+        assert response.status_code == 202, response.content
+        assert response.json()["scenario_count"] == 1
+        assert response.json()["trials"] == 2
+        assert response.json()["total_calls"] == 2
+        assert start.call_count == 2
+        assert start.call_args_list[0].args[0] == str(child.id)
+        assert start.call_args_list[1].args == start.call_args_list[0].args
+        child.refresh_from_db()
+        child.test_execution.refresh_from_db()
+        assert child.state == HostedHarnessJob.State.QUEUED
+        assert child.test_execution.status == SimulationTestExecution.ExecutionStatus.PENDING
+
+        duplicate = client.post(
+            f"/simulate/api/harness-environments/{environment.id}/run/",
+            {"scenario_ids": ["scenario-b"], "trials": 2},
+            format="json",
+            HTTP_IDEMPOTENCY_KEY="submission-three",
+            HTTP_X_WORKSPACE_ID=str(workspace.id),
+        )
+        assert duplicate.status_code == 202
+        assert duplicate.json()["job_id"] == response.json()["job_id"]
+        assert duplicate.json()["test_execution_id"] == response.json()["test_execution_id"]
+        assert start.call_count == 2
     for payload in (
         {"scenario_ids": [], "trials": 1},
         {"scenario_ids": ["not-from-this-environment"], "trials": 1},
@@ -1458,3 +1494,177 @@ def test_harness_job_adjustment_rejects_empty_instruction(user):
     )
 
     assert response.status_code == 400
+
+
+@override_settings(HARNESS_PROVIDER="daytona")
+def test_daytona_preflight_source_failure_keeps_status_and_reports_check(settings):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
+    payload = _v1_payload()
+    payload["agent"] = {"connector": "auto", "config": {}, "secret_refs": {}}
+    request = SimpleNamespace(
+        validated_data=payload,
+        build_absolute_uri=lambda _path: "https://harness.example.test/",
+    )
+    clone_failed = HostedHarnessError(
+        "github_clone_failed",
+        "fatal: repository not found",
+        status_code=502,
+        retryable=True,
+    )
+
+    with patch(
+        "simulate.services.harness_provider._preflight_source_connectors",
+        side_effect=clone_failed,
+    ):
+        response = HostedHarnessProvider().preflight(request)
+
+    assert response.status_code == 502
+    assert response.data["error"] == "github_clone_failed"
+    assert response.data["state"] == "failed"
+    assert response.data["ready_to_submit"] is False
+    source = next(item for item in response.data["checks"] if item["id"] == "source")
+    assert source["status"] == "failed"
+    assert source["detail"] == "fatal: repository not found"
+    assert "GitHub App" in source["fix"]
+
+
+def test_daytona_preflight_lists_six_checks_in_order(settings):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
+    payload = _v1_payload()
+    payload["agent"] = {"connector": "auto", "config": {}, "secret_refs": {}}
+    request = SimpleNamespace(
+        validated_data=payload,
+        build_absolute_uri=lambda _path: "https://harness.example.test/",
+    )
+
+    with patch(
+        "simulate.services.harness_provider._preflight_source_connectors",
+        return_value=(["livekit"], [], 12),
+    ):
+        response = HostedHarnessProvider().preflight(request)
+
+    assert response.status_code == 200
+    assert response.data["state"] == "failed"
+    assert [item["id"] for item in response.data["checks"]] == [
+        "source",
+        "credentials_present",
+        "credential_files",
+        "credentials_valid",
+        "provider_target",
+        "platform_dialer",
+    ]
+    by_id = {item["id"]: item for item in response.data["checks"]}
+    assert by_id["source"]["status"] == "passed"
+    assert by_id["credentials_present"]["status"] == "failed"
+    assert by_id["credentials_present"]["missing"] == [
+        "LIVEKIT_URL",
+        "LIVEKIT_API_KEY",
+        "LIVEKIT_API_SECRET",
+    ]
+    assert by_id["credentials_valid"]["status"] == "skipped"
+
+
+@pytest.mark.django_db
+def test_source_upload_rejects_a_lone_archive(user):
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.post(
+        "/simulate/api/harness-jobs/sources/",
+        {
+            "files": [SimpleUploadedFile("agent.zip", b"PK\x03\x04")],
+            "paths": ["agent.zip"],
+            "name": "agent",
+        },
+        format="multipart",
+    )
+
+    assert response.status_code == 400
+    assert "archives are not supported" in response.json()["detail"]
+
+
+@pytest.mark.django_db
+@override_settings(HARNESS_PROVIDER="daytona")
+def test_environments_list_reports_absent_contract_as_null(user, workspace):
+    create_hosted_job(
+        user.organization,
+        _v1_payload(),
+        idempotency_key="env-list-1",
+        workspace=workspace,
+    )
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.get(
+        "/simulate/api/harness-environments/",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+
+    assert response.status_code == 200
+    row = response.json()["results"][0]
+    assert row["name"] == "agent"
+    assert row["source_kind"] == "github"
+    assert row["status"] == "building"
+    assert row["tools_count"] is None
+    assert row["description"] is None
+    assert row["scenario_count"] == 10
+
+
+@pytest.mark.django_db
+@override_settings(HARNESS_PROVIDER="daytona")
+def test_environments_list_sorts_undated_rows_last(user, workspace):
+    undated, _ = create_hosted_job(
+        user.organization,
+        _v1_payload(),
+        idempotency_key="env-list-undated",
+        workspace=workspace,
+    )
+    dated, _ = create_hosted_job(
+        user.organization,
+        _v1_payload(),
+        idempotency_key="env-list-dated",
+        workspace=workspace,
+    )
+    undated.content_updated_at = None
+    undated.save(update_fields=["content_updated_at", "updated_at"])
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    response = client.get(
+        "/simulate/api/harness-environments/",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+
+    assert [row["id"] for row in response.json()["results"]] == [
+        str(dated.id),
+        str(undated.id),
+    ]
+
+
+@pytest.mark.django_db
+@override_settings(HARNESS_PROVIDER="daytona")
+def test_environments_delete_hides_the_row(user, workspace):
+    job, _ = create_hosted_job(
+        user.organization,
+        _v1_payload(),
+        idempotency_key="env-delete",
+        workspace=workspace,
+    )
+    job.state = job.State.COMPLETED
+    job.save(update_fields=["state", "updated_at"])
+    client = APIClient()
+    client.force_authenticate(user=user)
+
+    deleted = client.delete(
+        f"/simulate/api/harness-environments/{job.id}/",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+    listed = client.get(
+        "/simulate/api/harness-environments/",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+
+    assert deleted.status_code == 204
+    assert listed.json()["count"] == 0

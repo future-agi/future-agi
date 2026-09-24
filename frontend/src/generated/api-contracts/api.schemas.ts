@@ -16857,6 +16857,447 @@ export interface CallExecutionErrorResponseApi {
   details?: CallExecutionErrorResponseApiDetails;
 }
 
+export type HarnessEnvironmentApiAgentType =
+  (typeof HarnessEnvironmentApiAgentType)[keyof typeof HarnessEnvironmentApiAgentType];
+
+export const HarnessEnvironmentApiAgentType = {
+  voice: "voice",
+  chat: "chat",
+} as const;
+
+export type HarnessEnvironmentApiStatus =
+  (typeof HarnessEnvironmentApiStatus)[keyof typeof HarnessEnvironmentApiStatus];
+
+export const HarnessEnvironmentApiStatus = {
+  building: "building",
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export interface HarnessEnvironmentApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  description: string;
+  /** @minLength 1 */
+  domain: string;
+  /** @minLength 1 */
+  source_kind: string;
+  agent_type: HarnessEnvironmentApiAgentType;
+  status: HarnessEnvironmentApiStatus;
+  /** @minLength 1 */
+  stage: string;
+  scenario_count: number;
+  sub_goals_count: number;
+  tools_count: number;
+  runs_count: number;
+  last_updated: string;
+  created_at: string;
+}
+
+export interface HarnessEnvironmentListResponseApi {
+  count: number;
+  /** @minLength 1 */
+  next: string;
+  /** @minLength 1 */
+  previous: string;
+  total_pages: number;
+  current_page: number;
+  results: HarnessEnvironmentApi[];
+}
+
+export type HarnessEnvironmentOverviewApiAgentType =
+  (typeof HarnessEnvironmentOverviewApiAgentType)[keyof typeof HarnessEnvironmentOverviewApiAgentType];
+
+export const HarnessEnvironmentOverviewApiAgentType = {
+  voice: "voice",
+  chat: "chat",
+} as const;
+
+export type HarnessEnvironmentOverviewApiStatus =
+  (typeof HarnessEnvironmentOverviewApiStatus)[keyof typeof HarnessEnvironmentOverviewApiStatus];
+
+export const HarnessEnvironmentOverviewApiStatus = {
+  building: "building",
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export interface HarnessEnvironmentRunLinkApi {
+  run_test_id: string;
+  test_execution_id: string;
+  /** @minLength 1 */
+  simulation_url: string;
+}
+
+export interface HarnessEnvironmentAgentApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  provider: string;
+  versions_count: number;
+  /** @minLength 1 */
+  active_version: string;
+}
+
+export interface HarnessEnvironmentOverviewApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  description: string;
+  /** @minLength 1 */
+  domain: string;
+  /** @minLength 1 */
+  source_kind: string;
+  agent_type: HarnessEnvironmentOverviewApiAgentType;
+  status: HarnessEnvironmentOverviewApiStatus;
+  /** @minLength 1 */
+  stage: string;
+  scenario_count: number;
+  sub_goals_count: number;
+  tools_count: number;
+  runs_count: number;
+  last_updated: string;
+  created_at: string;
+  flows_count: number;
+  guardrails_count: number;
+  personas_count: number;
+  evaluations_count: number;
+  run: HarnessEnvironmentRunLinkApi;
+  agent: HarnessEnvironmentAgentApi;
+}
+
+export interface HarnessEnvironmentAmendmentApi {
+  subject: string;
+  /** @minLength 1 */
+  note: string;
+}
+
+export type HarnessEnvironmentCatalogueSubGoalApiKind =
+  (typeof HarnessEnvironmentCatalogueSubGoalApiKind)[keyof typeof HarnessEnvironmentCatalogueSubGoalApiKind];
+
+export const HarnessEnvironmentCatalogueSubGoalApiKind = {
+  checkpoint: "checkpoint",
+  judge: "judge",
+} as const;
+
+export interface HarnessEnvironmentCatalogueSubGoalApi {
+  /** @minLength 1 */
+  name: string;
+  what: string;
+  kind: HarnessEnvironmentCatalogueSubGoalApiKind;
+  claim: string;
+  check: string;
+}
+
+export type HarnessEnvironmentEndConditionsApiClock =
+  (typeof HarnessEnvironmentEndConditionsApiClock)[keyof typeof HarnessEnvironmentEndConditionsApiClock];
+
+export const HarnessEnvironmentEndConditionsApiClock = {
+  "real-time": "real-time",
+  stepped: "stepped",
+} as const;
+
+export interface HarnessEnvironmentEndConditionsApi {
+  max_turns: number;
+  max_duration_seconds: number;
+  clock: HarnessEnvironmentEndConditionsApiClock;
+  ended_reasons: string[];
+}
+
+export type HarnessEnvironmentProvenanceApiBuiltBy =
+  (typeof HarnessEnvironmentProvenanceApiBuiltBy)[keyof typeof HarnessEnvironmentProvenanceApiBuiltBy];
+
+export const HarnessEnvironmentProvenanceApiBuiltBy = {
+  alk: "alk",
+  repository: "repository",
+} as const;
+
+export type HarnessEnvironmentProvenanceApiSource = { [key: string]: string };
+
+export type HarnessEnvironmentProvenanceApiDigests = { [key: string]: string };
+
+export type HarnessEnvironmentProvenanceApiAuthoredAt = {
+  [key: string]: string;
+};
+
+export interface HarnessEnvironmentProvenanceApi {
+  source: HarnessEnvironmentProvenanceApiSource;
+  built_by: HarnessEnvironmentProvenanceApiBuiltBy;
+  attempt: number;
+  /** @minLength 1 */
+  snapshot: string;
+  digests: HarnessEnvironmentProvenanceApiDigests;
+  authored_at: HarnessEnvironmentProvenanceApiAuthoredAt;
+}
+
+export type HarnessEnvironmentContractApiToolsItem = { [key: string]: unknown };
+
+export type HarnessEnvironmentContractApiRuntime = { [key: string]: unknown };
+
+export type HarnessEnvironmentContractApiDependenciesItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentContractApiRuntimeDependenciesItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentContractApiToolEntrypointsItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentContractApiDataStore = { [key: string]: unknown };
+
+export interface HarnessEnvironmentContractApi {
+  agent?: string;
+  one_liner?: string;
+  modality?: string;
+  call_direction?: string;
+  system_prompt_excerpt?: string;
+  tools?: HarnessEnvironmentContractApiToolsItem[];
+  real_use_cases?: string[];
+  hard_constraints?: string[];
+  runtime?: HarnessEnvironmentContractApiRuntime;
+  dependencies?: HarnessEnvironmentContractApiDependenciesItem[];
+  runtime_dependencies?: HarnessEnvironmentContractApiRuntimeDependenciesItem[];
+  implementation?: string;
+  tool_entrypoints?: HarnessEnvironmentContractApiToolEntrypointsItem[];
+  data_store?: HarnessEnvironmentContractApiDataStore;
+  open_questions?: string[];
+  amendments: HarnessEnvironmentAmendmentApi[];
+  sub_goals: HarnessEnvironmentCatalogueSubGoalApi[];
+  end_conditions: HarnessEnvironmentEndConditionsApi;
+  notes?: string;
+  chosen_evals?: string[];
+  provenance: HarnessEnvironmentProvenanceApi;
+}
+
+export interface HarnessEnvironmentPersonaApi {
+  name?: string;
+  scenario_keys: string[];
+}
+
+export interface HarnessEnvironmentStoreTableApi {
+  /** @minLength 1 */
+  name: string;
+  rows: number;
+}
+
+export interface HarnessEnvironmentStoreApi {
+  capability: string;
+  engine: string;
+  strategy: string;
+  tables: HarnessEnvironmentStoreTableApi[];
+  total_rows: number;
+}
+
+export type HarnessEnvironmentWorldApiRuntime = { [key: string]: string };
+
+export interface HarnessEnvironmentWorldApi {
+  runtime: HarnessEnvironmentWorldApiRuntime;
+  personas: HarnessEnvironmentPersonaApi[];
+  stores: HarnessEnvironmentStoreApi[];
+}
+
+export type HarnessEnvironmentSubGoalApiKind =
+  (typeof HarnessEnvironmentSubGoalApiKind)[keyof typeof HarnessEnvironmentSubGoalApiKind];
+
+export const HarnessEnvironmentSubGoalApiKind = {
+  checkpoint: "checkpoint",
+  judge: "judge",
+} as const;
+
+export interface HarnessEnvironmentSubGoalApi {
+  /** @minLength 1 */
+  name: string;
+  what?: string;
+  kind?: HarnessEnvironmentSubGoalApiKind;
+  claim?: string;
+}
+
+export type HarnessEnvironmentScenarioApiFixture = { [key: string]: string };
+
+export type HarnessEnvironmentScenarioApiPersona = { [key: string]: string };
+
+export interface HarnessEnvironmentScenarioApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  scenario_id: string;
+  name: string;
+  instruction: string;
+  /** @minLength 1 */
+  use_case: string;
+  /** @minLength 1 */
+  branch: string;
+  /** @minLength 1 */
+  tests: string;
+  fixture: HarnessEnvironmentScenarioApiFixture;
+  steps: number;
+  sub_goals: HarnessEnvironmentSubGoalApi[];
+  persona: HarnessEnvironmentScenarioApiPersona;
+  /** @minLength 1 */
+  situation: string;
+  /** @minLength 1 */
+  outcome: string;
+  /** @minLength 1 */
+  status: string;
+  call_execution_id: string;
+}
+
+export interface HarnessEnvironmentSelectedEvalApi {
+  id: string;
+  name: string;
+  description: string;
+  runnable: boolean;
+}
+
+export type HarnessEnvironmentResultApiEvaluationsItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentResultApiCoverage = { [key: string]: string };
+
+export interface HarnessEnvironmentResultApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  /** @minLength 1 */
+  status: string;
+  attempt_number: number;
+  evaluations: HarnessEnvironmentResultApiEvaluationsItem[];
+  coverage: HarnessEnvironmentResultApiCoverage;
+}
+
+export interface HarnessEnvironmentEvaluationsApi {
+  selected: HarnessEnvironmentSelectedEvalApi[];
+  results: HarnessEnvironmentResultApi[];
+}
+
+export interface HarnessEnvironmentCredentialFileApi {
+  /** @minLength 1 */
+  environment_name: string;
+}
+
+export type HarnessEnvironmentAgentSettingsApiConfig = {
+  [key: string]: string;
+};
+
+export interface HarnessEnvironmentAgentSettingsApi {
+  /** @minLength 1 */
+  connector: string;
+  /** @minLength 1 */
+  mode: string;
+  /** @minLength 1 */
+  call_direction: string;
+  config: HarnessEnvironmentAgentSettingsApiConfig;
+  secret_refs: string[];
+  secrets: string[];
+  credential_files: HarnessEnvironmentCredentialFileApi[];
+}
+
+export type HarnessEnvironmentSettingsApiSource = { [key: string]: string };
+
+export type HarnessEnvironmentSettingsApiRuntime = { [key: string]: string };
+
+export type HarnessEnvironmentSettingsApiSecurity = { [key: string]: string };
+
+export type HarnessEnvironmentSettingsApiArtifacts = { [key: string]: string };
+
+export interface HarnessEnvironmentSettingsApi {
+  /** @minLength 1 */
+  schema_version: string;
+  source: HarnessEnvironmentSettingsApiSource;
+  agent: HarnessEnvironmentAgentSettingsApi;
+  runtime: HarnessEnvironmentSettingsApiRuntime;
+  security: HarnessEnvironmentSettingsApiSecurity;
+  artifacts: HarnessEnvironmentSettingsApiArtifacts;
+  scenario_count: number;
+  seed: number;
+}
+
+export interface HarnessEnvironmentDetailApi {
+  id: string;
+  overview: HarnessEnvironmentOverviewApi;
+  contract: HarnessEnvironmentContractApi;
+  world: HarnessEnvironmentWorldApi;
+  scenarios: HarnessEnvironmentScenarioApi[];
+  evaluations: HarnessEnvironmentEvaluationsApi;
+  settings: HarnessEnvironmentSettingsApi;
+}
+
+export interface HarnessEnvironmentRenameApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+}
+
+export interface HarnessEnvironmentAddEvaluationApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+}
+
+export type HarnessEnvironmentOfferedEvalApiModality =
+  (typeof HarnessEnvironmentOfferedEvalApiModality)[keyof typeof HarnessEnvironmentOfferedEvalApiModality];
+
+export const HarnessEnvironmentOfferedEvalApiModality = {
+  voice: "voice",
+  text: "text",
+  any: "any",
+} as const;
+
+export interface HarnessEnvironmentOfferedEvalApi {
+  /** @minLength 1 */
+  name: string;
+  description: string;
+  required_keys: string[];
+  modality: HarnessEnvironmentOfferedEvalApiModality;
+}
+
+export interface HarnessEnvironmentAvailableEvalsApi {
+  evaluations: HarnessEnvironmentOfferedEvalApi[];
+}
+
+export interface HarnessRunCreateApi {
+  /** @maxItems 1000 */
+  scenario_ids: string[];
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials?: number;
+}
+
+export interface HarnessRunCreateResponseApi {
+  environment_id: string;
+  job_id: string;
+  run_id: string;
+  run_test_id: string;
+  test_execution_id: string;
+  /** @minimum 1 */
+  scenario_count: number;
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials: number;
+  /** @minimum 1 */
+  total_calls: number;
+  /** @minLength 1 */
+  state: string;
+  /** @minLength 1 */
+  stage: string;
+}
+
 export type HarnessJobReadApiReceiptsItem = { [key: string]: unknown };
 
 export type HarnessJobReadApiUsageLimit = { [key: string]: unknown };
@@ -17158,6 +17599,7 @@ export const HarnessAgentApiConnector = {
   vapi: "vapi",
   retell: "retell",
   retell_chat: "retell_chat",
+  phone: "phone",
   auto: "auto",
 } as const;
 
@@ -17168,6 +17610,17 @@ export const HarnessAgentApiMode = {
   connect_only: "connect_only",
   environment_backed: "environment_backed",
   provider_import: "provider_import",
+} as const;
+
+/**
+ * inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.
+ */
+export type HarnessAgentApiCallDirection =
+  (typeof HarnessAgentApiCallDirection)[keyof typeof HarnessAgentApiCallDirection];
+
+export const HarnessAgentApiCallDirection = {
+  inbound: "inbound",
+  outbound: "outbound",
 } as const;
 
 export type SecretReferenceApiManager =
@@ -17209,6 +17662,8 @@ export type HarnessAgentApiSecretRefs = { [key: string]: SecretReferenceApi };
 export interface HarnessAgentApi {
   connector: HarnessAgentApiConnector;
   mode?: HarnessAgentApiMode;
+  /** inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only. */
+  call_direction?: HarnessAgentApiCallDirection;
   config?: HarnessAgentApiConfig;
   secret_refs?: HarnessAgentApiSecretRefs;
 }
@@ -17316,7 +17771,7 @@ export interface HarnessJobCreateApi {
   agent: HarnessAgentApi;
   /**
    * @minimum 1
-   * @maximum 200
+   * @maximum 1000
    */
   scenario_count?: number;
   seed?: number;
@@ -17353,7 +17808,7 @@ export interface HarnessPreflightApi {
   agent: HarnessAgentApi;
   /**
    * @minimum 1
-   * @maximum 200
+   * @maximum 1000
    */
   scenario_count?: number;
   seed?: number;
@@ -17369,6 +17824,72 @@ export interface HarnessPreflightApi {
   metadata?: HarnessPreflightApiMetadata;
   /** Target-provider values to verify live; used for this check only. */
   credential_values?: HarnessPreflightApiCredentialValues;
+}
+
+export type HarnessPreflightResponseApiState =
+  (typeof HarnessPreflightResponseApiState)[keyof typeof HarnessPreflightResponseApiState];
+
+export const HarnessPreflightResponseApiState = {
+  connected: "connected",
+  failed: "failed",
+} as const;
+
+export type HarnessPreflightResponseApiResourceProfile = {
+  [key: string]: unknown;
+};
+
+export type HarnessPreflightResponseApiSnapshot = { [key: string]: unknown };
+
+export type HarnessPreflightCheckApiStatus =
+  (typeof HarnessPreflightCheckApiStatus)[keyof typeof HarnessPreflightCheckApiStatus];
+
+export const HarnessPreflightCheckApiStatus = {
+  passed: "passed",
+  failed: "failed",
+  skipped: "skipped",
+} as const;
+
+export interface HarnessPreflightCheckApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  label: string;
+  status: HarnessPreflightCheckApiStatus;
+  detail: string;
+  missing: string[];
+  /** @minLength 1 */
+  fix: string;
+}
+
+export type HarnessPreflightCredentialsApiRequirementsItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessPreflightCredentialsApiCredentialChoicesItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessPreflightCredentialsApiProbeItem = {
+  [key: string]: unknown;
+};
+
+export interface HarnessPreflightCredentialsApi {
+  scanned_files: number;
+  detected_connectors: string[];
+  requirements: HarnessPreflightCredentialsApiRequirementsItem[];
+  credential_choices: HarnessPreflightCredentialsApiCredentialChoicesItem[];
+  probe: HarnessPreflightCredentialsApiProbeItem[];
+}
+
+export interface HarnessPreflightResponseApi {
+  ready_to_submit: boolean;
+  state: HarnessPreflightResponseApiState;
+  checks: HarnessPreflightCheckApi[];
+  credentials: HarnessPreflightCredentialsApi;
+  parallelism_enabled: boolean;
+  effective_parallelism: number;
+  resource_profile: HarnessPreflightResponseApiResourceProfile;
+  snapshot: HarnessPreflightResponseApiSnapshot;
 }
 
 export interface HarnessSecretFileUploadResponseApi {
@@ -17470,6 +17991,39 @@ export interface HarnessJobExtendApi {
    * @maxLength 128
    */
   client_request_id?: string;
+}
+
+export type HarnessScenarioChangeApiOp =
+  (typeof HarnessScenarioChangeApiOp)[keyof typeof HarnessScenarioChangeApiOp];
+
+export const HarnessScenarioChangeApiOp = {
+  drop: "drop",
+  set_field: "set_field",
+  set_persona: "set_persona",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type HarnessScenarioChangeApiValue = { [key: string]: unknown };
+
+export type HarnessScenarioChangeApiPersona = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export interface HarnessScenarioChangeApi {
+  op: HarnessScenarioChangeApiOp;
+  scenario?: string;
+  scenarios?: string[];
+  field?: string;
+  /** Any valid JSON value. */
+  value?: HarnessScenarioChangeApiValue;
+  persona?: HarnessScenarioChangeApiPersona;
+}
+
+export interface HarnessScenarioAmendApi {
+  changes: HarnessScenarioChangeApi[];
+  rework?: boolean;
 }
 
 export type HarnessManifestApiSchemaVersion =
@@ -19164,6 +19718,9 @@ export interface CallExecutionDetailApi {
   readonly recordings?: string;
   readonly test_execution_id?: string;
   readonly scenario_id?: string;
+  readonly source_scenario_key?: string;
+  readonly trial_index?: string;
+  readonly harness_outcome_status?: string;
   readonly scenario_graph?: string;
   readonly scenario_graph_id?: string;
   readonly avg_agent_latency?: number;
@@ -20129,6 +20686,18 @@ export interface TestExecutionItemResponseApi {
   readonly total_number_of_fagi_agent_turns?: number;
   /** @minLength 1 */
   readonly source_type?: string;
+  readonly scenario_keys?: readonly string[];
+  readonly selected_scenarios?: number;
+  readonly trials?: number;
+  readonly total_calls?: number;
+  readonly completed_calls?: number;
+  readonly failed_calls?: number;
+  readonly pending_calls?: number;
+  /** @minLength 1 */
+  readonly completed_at?: string;
+  readonly outcome_passed?: number;
+  readonly outcome_failed?: number;
+  readonly outcome_skipped?: number;
 }
 
 export interface RunTestExecutionsResponseApi {
@@ -21077,6 +21646,831 @@ export interface TestExecutionTranscriptsResponseApi {
   readonly calls?: readonly TestExecutionTranscriptCallApi[];
   readonly total_calls?: number;
   readonly total_transcripts?: number;
+}
+
+/**
+ * Current status of the call
+ */
+export type CallExecutionV3DetailResponseApiStatus =
+  (typeof CallExecutionV3DetailResponseApiStatus)[keyof typeof CallExecutionV3DetailResponseApiStatus];
+
+export const CallExecutionV3DetailResponseApiStatus = {
+  pending: "pending",
+  queued: "queued",
+  ongoing: "ongoing",
+  completed: "completed",
+  failed: "failed",
+  analyzing: "analyzing",
+  cancelled: "cancelled",
+} as const;
+
+/**
+ * Get evaluation metrics in a format suitable for the UI
+ */
+export type CallExecutionV3DetailResponseApiEvalMetrics = {
+  [key: string]: CallExecutionEvalMetricApi;
+};
+
+/**
+ * Tool evaluation output - separate from standard evaluations
+ */
+export type CallExecutionV3DetailResponseApiToolOutputs = {
+  [key: string]: unknown;
+};
+
+/**
+ * Detailed cost breakdown from customer call data
+ */
+export type CallExecutionV3DetailResponseApiCustomerCostBreakdown = {
+  [key: string]: unknown;
+};
+
+/**
+ * Latency metrics from customer call data
+ */
+export type CallExecutionV3DetailResponseApiCustomerLatencyMetrics = {
+  [key: string]: unknown;
+};
+
+/**
+ * Type of simulation call
+ */
+export type CallExecutionV3DetailResponseApiSimulationCallType =
+  (typeof CallExecutionV3DetailResponseApiSimulationCallType)[keyof typeof CallExecutionV3DetailResponseApiSimulationCallType];
+
+export const CallExecutionV3DetailResponseApiSimulationCallType = {
+  voice: "voice",
+  text: "text",
+} as const;
+
+export type CallExecutionV3DetailResponseApiOutcome =
+  (typeof CallExecutionV3DetailResponseApiOutcome)[keyof typeof CallExecutionV3DetailResponseApiOutcome];
+
+export const CallExecutionV3DetailResponseApiOutcome = {
+  passed: "passed",
+  failed: "failed",
+  error: "error",
+  inconclusive: "inconclusive",
+} as const;
+
+export interface PersonaDetailsApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  voice: string;
+  /** @minLength 1 */
+  age: string;
+  traits: string[];
+}
+
+export interface CostBreakdownApi {
+  stt: number;
+  llm: number;
+  tts: number;
+  storage: number;
+  customer: number;
+}
+
+export type SimulateRunV3EvaluationResultApiValue = { [key: string]: unknown };
+
+export interface SimulateRunV3EvaluationResultApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  type: string;
+  value: SimulateRunV3EvaluationResultApiValue;
+  score: number;
+  passed: boolean;
+  reason: string;
+  /** @minLength 1 */
+  status: string;
+}
+
+export type SimulateRunV3FunctionCallApiArguments = { [key: string]: unknown };
+
+export type SimulateRunV3FunctionCallApiResult = { [key: string]: unknown };
+
+export type SimulateRunV3FunctionCallApiOutput = { [key: string]: unknown };
+
+export interface SimulateRunV3FunctionCallApi {
+  /** @minLength 1 */
+  id?: string;
+  /** @minLength 1 */
+  name?: string;
+  arguments?: SimulateRunV3FunctionCallApiArguments;
+  result?: SimulateRunV3FunctionCallApiResult;
+  output?: SimulateRunV3FunctionCallApiOutput;
+  duration_ms?: number;
+}
+
+export interface CallExecutionV3DetailResponseApi {
+  readonly id?: string;
+  /** @minLength 1 */
+  readonly service_provider_call_id?: string;
+  readonly session_id?: string;
+  readonly timestamp?: string;
+  readonly call_type?: string;
+  /** Current status of the call */
+  status?: CallExecutionV3DetailResponseApiStatus;
+  readonly duration?: string;
+  /**
+   * Duration of the call in seconds
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  duration_seconds?: number;
+  readonly start_time?: string;
+  readonly transcript?: string;
+  /** @minLength 1 */
+  readonly scenario?: string;
+  readonly overall_score?: string;
+  readonly response_time?: string;
+  /**
+   * Average response time in milliseconds
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  response_time_ms?: number;
+  /** @minLength 1 */
+  readonly audio_url?: string;
+  /** @minLength 1 */
+  readonly customer_name?: string;
+  readonly eval_outputs?: string;
+  /** Get evaluation metrics in a format suitable for the UI */
+  readonly eval_metrics?: CallExecutionV3DetailResponseApiEvalMetrics;
+  readonly scenario_columns?: string;
+  /**
+   * Reason why the call ended
+   * @maxLength 10000
+   */
+  ended_reason?: string;
+  /** @minLength 1 */
+  readonly simulator_agent_name?: string;
+  readonly simulator_agent_id?: string;
+  /** @minLength 1 */
+  readonly agent_definition_used_name?: string;
+  readonly agent_definition_used_id?: string;
+  /** Call summary from the service */
+  call_summary?: string;
+  readonly recordings?: string;
+  readonly test_execution_id?: string;
+  readonly scenario_id?: string;
+  readonly source_scenario_key?: string;
+  readonly trial_index?: string;
+  readonly harness_outcome_status?: string;
+  readonly scenario_graph?: string;
+  readonly scenario_graph_id?: string;
+  readonly avg_agent_latency?: number;
+  /**
+   * Average agent latency in milliseconds (time taken by agent to respond after user's pause)
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  avg_agent_latency_ms?: number;
+  /**
+   * Number of times user interrupted the AI
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  user_interruption_count?: number;
+  /** Rate of user interruptions (interruptions per minute) */
+  user_interruption_rate?: number;
+  /** User's words per minute */
+  user_wpm?: number;
+  /** Bot's words per minute */
+  bot_wpm?: number;
+  /** Ratio of bot speaking time to user speaking time */
+  talk_ratio?: number;
+  /**
+   * Number of times AI interrupted the user
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  ai_interruption_count?: number;
+  /** Rate of AI interruptions (interruptions per minute) */
+  ai_interruption_rate?: number;
+  readonly avg_stop_time_after_interruption?: number;
+  readonly total_tokens?: string;
+  readonly input_tokens?: string;
+  readonly output_tokens?: string;
+  readonly avg_latency_ms?: string;
+  readonly turn_count?: string;
+  readonly agent_talk_percentage?: string;
+  readonly csat_score?: string;
+  readonly processing_skipped?: string;
+  readonly processing_skip_reason?: string;
+  readonly rerun_snapshots?: string;
+  readonly is_snapshot?: string;
+  readonly snapshot_timestamp?: string;
+  readonly rerun_type?: string;
+  readonly original_call_execution_id?: string;
+  /** Tool evaluation output - separate from standard evaluations */
+  tool_outputs?: CallExecutionV3DetailResponseApiToolOutputs;
+  /**
+   * Cost of the call in cents
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  cost_cents?: number;
+  /**
+   * Total customer-reported cost in cents
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  customer_cost_cents?: number;
+  /** Detailed cost breakdown from customer call data */
+  customer_cost_breakdown?: CallExecutionV3DetailResponseApiCustomerCostBreakdown;
+  /** Latency metrics from customer call data */
+  customer_latency_metrics?: CallExecutionV3DetailResponseApiCustomerLatencyMetrics;
+  /**
+   * Customer call ID if available
+   * @maxLength 255
+   */
+  customer_call_id?: string;
+  /** Type of simulation call */
+  simulation_call_type?: CallExecutionV3DetailResponseApiSimulationCallType;
+  readonly provider?: string;
+  /**
+   * Phone number called (null for TEXT/chat simulations)
+   * @maxLength 20
+   */
+  phone_number?: string;
+  /** @minLength 1 */
+  goal: string;
+  /** @minLength 1 */
+  scenario_details: string;
+  /** @minLength 1 */
+  ideal_outcome: string;
+  /** @minLength 1 */
+  conversation_branch: string;
+  /** @minLength 1 */
+  persona: string;
+  persona_details: PersonaDetailsApi;
+  sub_goals: string[];
+  outcome: CallExecutionV3DetailResponseApiOutcome;
+  cost_breakdown_cents: CostBreakdownApi;
+  evaluations: SimulateRunV3EvaluationResultApi[];
+  function_calls: SimulateRunV3FunctionCallApi[];
+}
+
+export type RunDashboardMetricApiUnit =
+  (typeof RunDashboardMetricApiUnit)[keyof typeof RunDashboardMetricApiUnit];
+
+export const RunDashboardMetricApiUnit = {
+  number: "number",
+  percent: "percent",
+  ms: "ms",
+  seconds: "seconds",
+  ratio: "ratio",
+  cents: "cents",
+} as const;
+
+export interface RunDashboardMetricApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  label: string;
+  value: number;
+  unit: RunDashboardMetricApiUnit;
+  measured: number;
+  total: number;
+  note: string;
+}
+
+export interface RunDashboardSegmentApi {
+  /** @minLength 1 */
+  label: string;
+  count: number;
+  share: number;
+  statuses?: string[];
+}
+
+export interface RunDashboardBreakdownApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  label: string;
+  total: number;
+  segments: RunDashboardSegmentApi[];
+  headline: RunDashboardSegmentApi;
+}
+
+export interface RunDashboardSloApi {
+  /** @minLength 1 */
+  key: string;
+  average: number;
+  measured: number;
+  max: number;
+  p50: number;
+  p90: number;
+  p99: number;
+  /** @minLength 1 */
+  label: string;
+}
+
+export interface RunDashboardInterruptionsApi {
+  total: number;
+  measured: number;
+  average: number;
+}
+
+export interface RunDashboardSeriesApi {
+  /** @minLength 1 */
+  label: string;
+  started_at: string;
+  calls: number;
+  duration_ms: number;
+  llm_cents: number;
+  tts_cents: number;
+  stt_cents: number;
+  storage_cents: number;
+}
+
+export type RunDashboardV3ApiSeriesMode =
+  (typeof RunDashboardV3ApiSeriesMode)[keyof typeof RunDashboardV3ApiSeriesMode];
+
+export const RunDashboardV3ApiSeriesMode = {
+  calls: "calls",
+  time_buckets: "time_buckets",
+} as const;
+
+export interface RunDashboardPercentileApi {
+  percentile: number;
+  value: number;
+}
+
+export interface RunDashboardDistributionApi {
+  /** @minLength 1 */
+  key: string;
+  average: number;
+  measured: number;
+  max: number;
+  p50: number;
+  p90: number;
+  p99: number;
+}
+
+export interface RunDashboardHistogramBinApi {
+  /** @minLength 1 */
+  label: string;
+  lower: number;
+  upper: number;
+  count: number;
+  danger: boolean;
+}
+
+export interface RunDashboardAgreementApi {
+  compared: number;
+  agreed: number;
+  percent: number;
+}
+
+export interface RunDashboardCsatApi {
+  bins: RunDashboardHistogramBinApi[];
+  measured: number;
+  total: number;
+  agreement: RunDashboardAgreementApi;
+}
+
+export interface RunDashboardResponseTimeApi {
+  bins: RunDashboardHistogramBinApi[];
+  measured: number;
+  total: number;
+  target_ms: number;
+  p50: number;
+  p95: number;
+  at_or_above_target: number;
+  at_or_above_target_percent: number;
+}
+
+export interface RunDashboardPipelineCostApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  label: string;
+  total_cents: number;
+  share: number;
+}
+
+export interface RunDashboardToolApi {
+  /** @minLength 1 */
+  name: string;
+  invocations: number;
+  measured: number;
+  failures: number;
+  failure_rate: number;
+  /** @minLength 1 */
+  failure_label: string;
+}
+
+export interface RunDashboardToolsApi {
+  total_invocations: number;
+  total_tools: number;
+  volume: RunDashboardToolApi[];
+  failures: RunDashboardToolApi[];
+}
+
+export interface RunDashboardTaskApi {
+  rank: number;
+  id: string;
+  /** @minLength 1 */
+  label: string;
+  /** @minLength 1 */
+  axis_label: string;
+  value: number;
+  /** @minLength 1 */
+  modality: string;
+  /** @minLength 1 */
+  provider: string;
+}
+
+export interface RunDashboardUnavailableApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  reason: string;
+}
+
+export interface RunDashboardEvaluationSummaryApi {
+  graders: number;
+  passed: number;
+  measured: number;
+  pass_rate: number;
+}
+
+export interface RunDashboardRiskApi {
+  /** @minLength 1 */
+  goal: string;
+  passed: number;
+  failed: number;
+  error: number;
+  inconclusive: number;
+}
+
+export interface RunDashboardV3Api {
+  metrics: RunDashboardMetricApi[];
+  breakdowns: RunDashboardBreakdownApi[];
+  voice_slos: RunDashboardSloApi[];
+  interruptions: RunDashboardInterruptionsApi;
+  series: RunDashboardSeriesApi[];
+  series_limit: number;
+  series_mode: RunDashboardV3ApiSeriesMode;
+  latency_percentiles: RunDashboardPercentileApi[];
+  distributions: RunDashboardDistributionApi[];
+  csat: RunDashboardCsatApi;
+  agent_response_time: RunDashboardResponseTimeApi;
+  pipeline_cost: RunDashboardPipelineCostApi[];
+  tools: RunDashboardToolsApi;
+  slowest_tasks: RunDashboardTaskApi[];
+  most_expensive_tasks: RunDashboardTaskApi[];
+  unavailable_features: RunDashboardUnavailableApi[];
+  evaluation_summary: RunDashboardEvaluationSummaryApi;
+  use_case_risk: RunDashboardRiskApi[];
+  goal_count: number;
+}
+
+export interface AnalyticsExecutionApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  started_at: string;
+  completed_at: string;
+}
+
+export interface OutcomeCountsApi {
+  passed: number;
+  failed: number;
+  error: number;
+  inconclusive: number;
+}
+
+export interface MetricStatsApi {
+  average: number;
+  p50: number;
+  p75: number;
+  p90: number;
+  p95: number;
+  p99: number;
+  measured: number;
+  total: number;
+}
+
+export interface TotalMetricStatsApi {
+  average: number;
+  p50: number;
+  p75: number;
+  p90: number;
+  p95: number;
+  p99: number;
+  measured: number;
+  total: number;
+  total_value: number;
+}
+
+export interface AnalyticsSummaryApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  evaluators: number;
+}
+
+export interface RiskApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  /** @minLength 1 */
+  goal: string;
+}
+
+export interface TurnDistributionApi {
+  passed: number;
+  failed: number;
+  error: number;
+  inconclusive: number;
+  turn_count: number;
+}
+
+export interface EvaluationSummaryApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  passed: number;
+  failed: number;
+  measured: number;
+  missing: number;
+  pass_rate: number;
+  average_score: number;
+}
+
+export interface FailureBreakdownApi {
+  /** @minLength 1 */
+  reason: string;
+  failures: number;
+  share: number;
+}
+
+export interface DistributionsApi {
+  duration_seconds: MetricStatsApi;
+  latency_ms: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+}
+
+export interface CostComponentApi {
+  total: number;
+  measured: number;
+  calls: number;
+}
+
+export interface CostComponentsApi {
+  stt: CostComponentApi;
+  llm: CostComponentApi;
+  tts: CostComponentApi;
+  storage: CostComponentApi;
+  customer: CostComponentApi;
+}
+
+export interface ProviderBreakdownApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  /** @minLength 1 */
+  provider: string;
+}
+
+export interface ModalityBreakdownApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  /** @minLength 1 */
+  modality: string;
+}
+
+export interface TrendApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  execution_id: string;
+  started_at: string;
+}
+
+export interface RunAnalyticsV3ResponseApi {
+  dashboard: RunDashboardV3Api;
+  execution: AnalyticsExecutionApi;
+  summary: AnalyticsSummaryApi;
+  scenario_risk: RiskApi[];
+  turn_distribution: TurnDistributionApi[];
+  evaluations: EvaluationSummaryApi[];
+  failure_breakdown: FailureBreakdownApi[];
+  distributions: DistributionsApi;
+  cost_breakdown_cents: CostComponentsApi;
+  provider_breakdown: ProviderBreakdownApi[];
+  modality_breakdown: ModalityBreakdownApi[];
+  trends: TrendApi[];
+}
+
+export interface RunSummaryApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+}
+
+export interface RunExecutionApi {
+  id: string;
+  run_test_id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  status: string;
+  started_at: string;
+  completed_at: string;
+  ordinal: number;
+  /** @minLength 1 */
+  agent_version: string;
+  selected_scenario_keys?: string[];
+  /** @minimum 1 */
+  trials?: number;
+  /** @minLength 1 */
+  agent_type: string;
+  summary: RunSummaryApi;
+}
+
+export type RunCallApiOutcome =
+  (typeof RunCallApiOutcome)[keyof typeof RunCallApiOutcome];
+
+export const RunCallApiOutcome = {
+  passed: "passed",
+  failed: "failed",
+  error: "error",
+  inconclusive: "inconclusive",
+} as const;
+
+export interface RunCallApi {
+  id: string;
+  /** @minLength 1 */
+  scenario: string;
+  /** @minLength 1 */
+  scenario_details: string;
+  /** @minLength 1 */
+  goal: string;
+  /** @minLength 1 */
+  ideal_outcome: string;
+  /** @minLength 1 */
+  conversation_branch: string;
+  /** @minLength 1 */
+  persona: string;
+  persona_details: PersonaDetailsApi;
+  sub_goals: string[];
+  /** @minLength 1 */
+  harness_outcome_status: string;
+  /** @minLength 1 */
+  source_scenario_key: string;
+  trial_index: number;
+  outcome: RunCallApiOutcome;
+  /** @minLength 1 */
+  execution_status: string;
+  /** @minLength 1 */
+  modality: string;
+  /** @minLength 1 */
+  provider: string;
+  started_at: string;
+  completed_at: string;
+  duration_seconds: number;
+  latency_ms: number;
+  turn_count: number;
+  tokens: number;
+  cost_cents: number;
+  cost_breakdown_cents: CostBreakdownApi;
+  csat: number;
+  /** @minLength 1 */
+  ended_reason: string;
+  /** @minLength 1 */
+  error_message: string;
+  evaluations: SimulateRunV3EvaluationResultApi[];
+}
+
+export type GroupAggregatesApiEvaluations = { [key: string]: unknown };
+
+export interface GroupAggregatesApi {
+  csat: number;
+  turns: number;
+  latency_ms: number;
+  tokens: number;
+  evaluations: GroupAggregatesApiEvaluations;
+}
+
+export interface RunGroupApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  label: string;
+  result_ids: string[];
+  aggregates: GroupAggregatesApi;
+}
+
+export interface FacetValueApi {
+  /** @minLength 1 */
+  value: string;
+  count: number;
+}
+
+export interface RunFacetsApi {
+  goal: FacetValueApi[];
+  sub_goal: FacetValueApi[];
+  status: FacetValueApi[];
+}
+
+export interface EvaluationColumnApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
+export interface RunCallsV3ResponseApi {
+  execution: RunExecutionApi;
+  summary: RunSummaryApi;
+  count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  results: RunCallApi[];
+  groups: RunGroupApi[];
+  facets: RunFacetsApi;
+  evaluation_columns: EvaluationColumnApi[];
+}
+
+export type RunExportV3RequestApiFilters = { [key: string]: unknown };
+
+export type RunExportV3RequestApiOrdering =
+  (typeof RunExportV3RequestApiOrdering)[keyof typeof RunExportV3RequestApiOrdering];
+
+export const RunExportV3RequestApiOrdering = {
+  started_at: "started_at",
+  "-started_at": "-started_at",
+  duration_seconds: "duration_seconds",
+  "-duration_seconds": "-duration_seconds",
+  latency_ms: "latency_ms",
+  "-latency_ms": "-latency_ms",
+  turn_count: "turn_count",
+  "-turn_count": "-turn_count",
+  tokens: "tokens",
+  "-tokens": "-tokens",
+  cost_cents: "cost_cents",
+  "-cost_cents": "-cost_cents",
+  scenario: "scenario",
+  "-scenario": "-scenario",
+  goal: "goal",
+  "-goal": "-goal",
+  outcome: "outcome",
+  "-outcome": "-outcome",
+} as const;
+
+export interface RunExportV3RequestApi {
+  search?: string;
+  filters?: RunExportV3RequestApiFilters;
+  ordering?: RunExportV3RequestApiOrdering;
 }
 
 export interface DeploymentHeartbeatApi {
@@ -28392,149 +29786,6 @@ export interface ActivationResponseApi {
   scope: ActivationResponseApiScope;
 }
 
-export type HarnessEnvironmentListItemApiStatus =
-  (typeof HarnessEnvironmentListItemApiStatus)[keyof typeof HarnessEnvironmentListItemApiStatus];
-
-export const HarnessEnvironmentListItemApiStatus = {
-  building: "building",
-  ready: "ready",
-  failed: "failed",
-} as const;
-
-export type HarnessEnvironmentListItemApiAgentType =
-  (typeof HarnessEnvironmentListItemApiAgentType)[keyof typeof HarnessEnvironmentListItemApiAgentType];
-
-export const HarnessEnvironmentListItemApiAgentType = {
-  voice: "voice",
-  chat: "chat",
-} as const;
-
-export interface HarnessEnvironmentListItemApi {
-  id: string;
-  /** @minLength 1 */
-  name: string;
-  description: string;
-  domain: string;
-  status: HarnessEnvironmentListItemApiStatus;
-  agent_type: HarnessEnvironmentListItemApiAgentType;
-  /** @minimum 0 */
-  tools_count: number;
-  /** @minimum 0 */
-  scenario_count: number;
-  /** @minimum 0 */
-  sub_goals_count: number;
-  /** @minimum 0 */
-  runs_count: number;
-  created_at: string;
-  last_updated: string;
-}
-
-export interface HarnessEnvironmentListResponseApi {
-  /** @minimum 0 */
-  count: number;
-  /** @minLength 1 */
-  next: string;
-  /** @minLength 1 */
-  previous: string;
-  /** @minimum 0 */
-  total_pages: number;
-  /** @minimum 1 */
-  current_page: number;
-  results: HarnessEnvironmentListItemApi[];
-}
-
-export type HarnessEnvironmentDetailApiOverview = { [key: string]: unknown };
-
-export type HarnessEnvironmentDetailApiContract = { [key: string]: unknown };
-
-export type HarnessEnvironmentDetailApiWorld = { [key: string]: unknown };
-
-export type HarnessEnvironmentDetailApiScenariosItem = {
-  [key: string]: unknown;
-};
-
-export type HarnessEnvironmentDetailApiEvaluations = { [key: string]: unknown };
-
-export type HarnessEnvironmentDetailApiSettings = { [key: string]: unknown };
-
-export interface HarnessEnvironmentDetailApi {
-  id: string;
-  overview: HarnessEnvironmentDetailApiOverview;
-  contract: HarnessEnvironmentDetailApiContract;
-  world: HarnessEnvironmentDetailApiWorld;
-  scenarios: HarnessEnvironmentDetailApiScenariosItem[];
-  evaluations: HarnessEnvironmentDetailApiEvaluations;
-  settings: HarnessEnvironmentDetailApiSettings;
-}
-
-export interface HarnessEnvironmentRenameApi {
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  name: string;
-}
-
-export interface HarnessRunCreateApi {
-  /** @maxItems 1000 */
-  scenario_ids: string[];
-  /**
-   * @minimum 1
-   * @maximum 20
-   */
-  trials?: number;
-}
-
-export interface HarnessRunCreateResponseApi {
-  environment_id: string;
-  job_id: string;
-  run_id: string;
-  run_test_id: string;
-  test_execution_id: string;
-  /** @minimum 1 */
-  scenario_count: number;
-  /**
-   * @minimum 1
-   * @maximum 20
-   */
-  trials: number;
-  /** @minimum 1 */
-  total_calls: number;
-  /** @minLength 1 */
-  state: string;
-  /** @minLength 1 */
-  stage: string;
-}
-
-export interface HarnessEnvironmentAddEvaluationApi {
-  /**
-   * @minLength 1
-   * @maxLength 255
-   */
-  name: string;
-}
-
-export type HarnessEnvironmentOfferedEvalApiModality =
-  (typeof HarnessEnvironmentOfferedEvalApiModality)[keyof typeof HarnessEnvironmentOfferedEvalApiModality];
-
-export const HarnessEnvironmentOfferedEvalApiModality = {
-  voice: "voice",
-  text: "text",
-  any: "any",
-} as const;
-
-export interface HarnessEnvironmentOfferedEvalApi {
-  /** @minLength 1 */
-  name: string;
-  description: string;
-  required_keys: string[];
-  modality: HarnessEnvironmentOfferedEvalApiModality;
-}
-
-export interface HarnessEnvironmentAvailableEvalsApi {
-  evaluations: HarnessEnvironmentOfferedEvalApi[];
-}
-
 export type AccountsAwsMarketplaceLaunchSoftwareCreateBody = {
   "x-amzn-marketplace-token": string;
   "x-amzn-marketplace-product-id"?: string;
@@ -30983,6 +32234,18 @@ export type SimulateApiCallExecutionsListParams = {
   limit?: number;
 };
 
+export type SimulateApiHarnessEnvironmentsListParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
+
 export type SimulateApiHarnessJobsSecretFileUploadBody = {
   /** Credential file; transferred without entering job JSON. */
   file: Blob;
@@ -31294,6 +32557,55 @@ export type SimulateTestExecutionsPreviewCallsListParams = {
    */
   run_test_id: string;
 };
+
+export type SimulateV3TestExecutionCallsParams = {
+  search?: string;
+  filters?: string;
+  ordering?: SimulateV3TestExecutionCallsOrdering;
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  page_size?: number;
+  group_by?: SimulateV3TestExecutionCallsGroupBy;
+  group_key?: string;
+};
+
+export type SimulateV3TestExecutionCallsOrdering =
+  (typeof SimulateV3TestExecutionCallsOrdering)[keyof typeof SimulateV3TestExecutionCallsOrdering];
+
+export const SimulateV3TestExecutionCallsOrdering = {
+  started_at: "started_at",
+  "-started_at": "-started_at",
+  duration_seconds: "duration_seconds",
+  "-duration_seconds": "-duration_seconds",
+  latency_ms: "latency_ms",
+  "-latency_ms": "-latency_ms",
+  turn_count: "turn_count",
+  "-turn_count": "-turn_count",
+  tokens: "tokens",
+  "-tokens": "-tokens",
+  cost_cents: "cost_cents",
+  "-cost_cents": "-cost_cents",
+  scenario: "scenario",
+  "-scenario": "-scenario",
+  goal: "goal",
+  "-goal": "-goal",
+  outcome: "outcome",
+  "-outcome": "-outcome",
+} as const;
+
+export type SimulateV3TestExecutionCallsGroupBy =
+  (typeof SimulateV3TestExecutionCallsGroupBy)[keyof typeof SimulateV3TestExecutionCallsGroupBy];
+
+export const SimulateV3TestExecutionCallsGroupBy = {
+  goal: "goal",
+  status: "status",
+} as const;
 
 export type TracerChartsFetchGraphParams = {
   /**

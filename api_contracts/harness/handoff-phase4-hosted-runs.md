@@ -81,7 +81,7 @@ environments, parallel runs" becomes literally true.
    `ready → in_call` and records `world_copy_missing`;
    `ingest_alk_sim_result` calls `/internal/grade` after storing the result
    and reports verdicts; failures land in
-   `call_metadata["harness_error"]` (never `error_message` — 
+   `call_metadata["harness_error"]` (never `error_message` —
    `_apply_payload` clobbers it). Grade failure must never block result
    ingestion.
 3. **Terminal sweep** — `finalize_hosted_execution` sweeps every remaining

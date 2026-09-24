@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1024,
+  endpointCount: 1031,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -863,6 +863,9 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/harness-jobs/{id}/conversation/messages/": ["post"],
       "/simulate/api/harness-jobs/{id}/extend/": ["post"],
       "/simulate/api/harness-jobs/{id}/runs/": ["post"],
+      "/simulate/api/harness-jobs/{id}/scenarios/": ["get"],
+      "/simulate/api/harness-jobs/{id}/scenarios/amend/": ["post"],
+      "/simulate/api/harness-jobs/{id}/scenarios/coverage/": ["get"],
       "/simulate/api/harness/attempts/{id}/artifacts/manifest/": ["post"],
       "/simulate/api/harness/attempts/{id}/artifacts/{artifact_digest}/": [
         "put",
@@ -1006,6 +1009,10 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/test-executions/{test_execution_id}/preview-calls/": ["get"],
       "/simulate/test-executions/{test_execution_id}/rerun-calls/": ["post"],
       "/simulate/test-executions/{test_execution_id}/transcripts/": ["get"],
+      "/simulate/v3/call-executions/{call_execution_id}/": ["get"],
+      "/simulate/v3/test-executions/{test_execution_id}/analytics/": ["get"],
+      "/simulate/v3/test-executions/{test_execution_id}/calls/": ["get"],
+      "/simulate/v3/test-executions/{test_execution_id}/export/": ["post"],
     },
     telemetry: {
       "/telemetry/heartbeat/": ["post"],
@@ -2084,6 +2091,9 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/harness-jobs/{id}/conversation/messages/": ["post"],
   "/simulate/api/harness-jobs/{id}/extend/": ["post"],
   "/simulate/api/harness-jobs/{id}/runs/": ["post"],
+  "/simulate/api/harness-jobs/{id}/scenarios/": ["get"],
+  "/simulate/api/harness-jobs/{id}/scenarios/amend/": ["post"],
+  "/simulate/api/harness-jobs/{id}/scenarios/coverage/": ["get"],
   "/simulate/api/harness/attempts/{id}/artifacts/manifest/": ["post"],
   "/simulate/api/harness/attempts/{id}/artifacts/{artifact_digest}/": ["put"],
   "/simulate/api/harness/attempts/{id}/events/": ["post"],
@@ -2219,6 +2229,10 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/test-executions/{test_execution_id}/preview-calls/": ["get"],
   "/simulate/test-executions/{test_execution_id}/rerun-calls/": ["post"],
   "/simulate/test-executions/{test_execution_id}/transcripts/": ["get"],
+  "/simulate/v3/call-executions/{call_execution_id}/": ["get"],
+  "/simulate/v3/test-executions/{test_execution_id}/analytics/": ["get"],
+  "/simulate/v3/test-executions/{test_execution_id}/calls/": ["get"],
+  "/simulate/v3/test-executions/{test_execution_id}/export/": ["post"],
   "/telemetry/heartbeat/": ["post"],
   "/telemetry/register/": ["post"],
   "/tracer/bulk-annotation/": ["post"],

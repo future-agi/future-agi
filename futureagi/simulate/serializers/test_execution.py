@@ -306,6 +306,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         source="customer_call_id", read_only=True
     )
     source_scenario_key = serializers.SerializerMethodField()
+    harness_outcome_status = serializers.SerializerMethodField()
     trial_index = serializers.SerializerMethodField()
 
     # New fields for simulator and agent definition used in this execution
@@ -397,6 +398,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             "scenario_id",
             "source_scenario_key",
             "trial_index",
+            "harness_outcome_status",
             "scenario_graph",
             "scenario_graph_id",
             # Conversation metrics fields
@@ -441,6 +443,10 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
 
     def get_source_scenario_key(self, obj):
         return (obj.call_metadata or {}).get("harness_scenario_key")
+
+    def get_harness_outcome_status(self, obj):
+        metadata = obj.call_metadata if isinstance(obj.call_metadata, dict) else {}
+        return metadata.get("harness_outcome_status")
 
     def get_trial_index(self, obj):
         return (obj.call_metadata or {}).get("harness_trial_index")

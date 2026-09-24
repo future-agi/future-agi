@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import structlog
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
@@ -35,6 +36,8 @@ from simulate.services.alk_simulate_ingestion import (
 _CAPABILITY_SCHEMA_VERSION = "futureagi.harness-capabilities.v1"
 _JOB_SCHEMA_VERSION = "futureagi.harness-job.v1"
 _TOKEN_TAIL_SECONDS = 120 + 300
+
+logger = structlog.get_logger(__name__)
 
 
 def _active_attempt_budget_seconds(job: HostedHarnessJob) -> int:
@@ -207,6 +210,7 @@ def create_hosted_job(
             artifact_level=normalized["artifacts"]["level"],
             max_artifact_bytes=normalized["artifacts"]["max_artifact_bytes"],
             deadline_at=now + timedelta(seconds=duration),
+            content_updated_at=now,
         )
         normalized["job_id"] = str(job.id)
         job.payload = normalized
@@ -645,6 +649,66 @@ def activate_attempt_capability(capability: AttemptCapability) -> AttemptCapabil
     )
 
 
+_TERMINAL_STATES = frozenset(
+    {
+        HostedHarnessJob.State.COMPLETED,
+        HostedHarnessJob.State.FAILED,
+        HostedHarnessJob.State.CANCELED,
+    }
+)
+
+
+DELETE_CANCEL_REASON = "environment_deleted"
+
+
+def delete_environment(job: HostedHarnessJob) -> None:
+    """Soft-delete an environment, cancelling its run first if one is live.
+
+    A live run keeps its row until sandbox cleanup has finished: the cleanup
+    path reads the job through the soft-delete manager, so hiding the row
+    first would strand the sandbox until its TTL. The row is hidden by
+    ``finish_deferred_delete`` when the run reaches a terminal state. The
+    authoring archive and the organization's secrets are left in place:
+    neither is owned by this row, and other environments may reference the
+    same credentials.
+    """
+    from simulate.temporal.client import cancel_hosted_harness_gateway_workflow
+
+    if job.state in _TERMINAL_STATES:
+        _soft_delete(job)
+        return
+    locked = request_cancellation(job, DELETE_CANCEL_REASON)
+    if locked.state in _TERMINAL_STATES:
+        _soft_delete(locked)
+        return
+    try:
+        cancel_hosted_harness_gateway_workflow(str(job.id))
+    except Exception:
+        # Fail open: a scheduler that cannot be reached must not strand the
+        # user with an environment they cannot remove. The workflow is bounded
+        # by the job deadline and its sandbox by its own TTL.
+        logger.exception("hosted_harness_delete_cancel_failed", job_id=str(job.id))
+        _soft_delete(locked)
+
+
+def _soft_delete(job: HostedHarnessJob) -> None:
+    job.deleted = True
+    job.deleted_at = timezone.now()
+    job.save(update_fields=["deleted", "deleted_at", "updated_at"])
+
+
+def finish_deferred_delete(job: HostedHarnessJob) -> list[str]:
+    """Hide a job its owner deleted while it ran, now that the run is over.
+
+    Returns the fields set, for the caller's ``update_fields``.
+    """
+    if job.cancel_reason != DELETE_CANCEL_REASON or job.deleted:
+        return []
+    job.deleted = True
+    job.deleted_at = timezone.now()
+    return ["deleted", "deleted_at"]
+
+
 def request_cancellation(job: HostedHarnessJob, reason: str) -> HostedHarnessJob:
     with transaction.atomic():
         locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
@@ -772,12 +836,11 @@ def provision_scenarios(
         with transaction.atomic():
             for persona, (scenario, row) in zip(new_personas, bindings, strict=True):
                 registrations.append(
-                    HostedHarnessScenario.no_workspace_objects.create(
+                    HostedHarnessScenario.no_workspace_objects.update_or_create(
                         job=job,
                         scenario_key=persona["scenario_key"],
-                        scenario=scenario,
-                        dataset_row=row,
-                    )
+                        defaults={"scenario": scenario, "dataset_row": row},
+                    )[0]
                 )
         return _provision_response(job, registrations)
 
@@ -834,23 +897,57 @@ def provision_scenarios(
         locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
             id=job.id
         )
-        if locked.run_test_id and locked.run_test_id != run_test.id:
+        existing_registrations = list(
+            HostedHarnessScenario.no_workspace_objects.select_for_update()
+            .filter(job=locked)
+            .order_by("created_at")
+        )
+        requested_keys = [persona["scenario_key"] for persona in payload["personas"]]
+        existing_by_key = {
+            registration.scenario_key: registration
+            for registration in existing_registrations
+        }
+        if locked.run_test_id:
+            if set(existing_by_key) == set(requested_keys):
+                # A concurrent request already provisioned this suite; return it.
+                return _provision_response(locked, existing_registrations)
             raise HostedHarnessError(
                 "scenario_registration_conflict",
                 "another attempt registered scenarios first",
                 status_code=409,
             )
         locked.run_test = run_test
-        locked.save(update_fields=["run_test", "updated_at"])
-        registrations = [
-            HostedHarnessScenario.no_workspace_objects.create(
-                job=locked,
-                scenario_key=persona["scenario_key"],
-                scenario=scenarios[0],
-                dataset_row=row,
+        locked.content_updated_at = timezone.now()
+        locked.save(update_fields=["run_test", "content_updated_at", "updated_at"])
+        if existing_registrations:
+            if set(existing_by_key) != set(requested_keys):
+                raise HostedHarnessError(
+                    "scenario_registration_conflict",
+                    "the indexed authored suite differs from the provision request",
+                    status_code=409,
+                )
+            registrations = []
+            bound_at = timezone.now()
+            for persona, row in zip(payload["personas"], dataset_rows, strict=True):
+                registration = existing_by_key[persona["scenario_key"]]
+                registration.scenario = scenarios[0]
+                registration.dataset_row = row
+                registration.updated_at = bound_at
+                registrations.append(registration)
+            HostedHarnessScenario.no_workspace_objects.bulk_update(
+                registrations,
+                ["scenario", "dataset_row", "updated_at"],
             )
-            for persona, row in zip(payload["personas"], dataset_rows, strict=True)
-        ]
+        else:
+            registrations = [
+                HostedHarnessScenario.no_workspace_objects.create(
+                    job=locked,
+                    scenario_key=persona["scenario_key"],
+                    scenario=scenarios[0],
+                    dataset_row=row,
+                )
+                for persona, row in zip(payload["personas"], dataset_rows, strict=True)
+            ]
         _record_target_agent_facts(locked, agent_definition, payload)
         _select_platform_evals(locked, run_test, payload, modality)
     return _provision_response(locked, registrations)
@@ -912,12 +1009,14 @@ def _record_target_agent_facts(
     if named and agent_definition.agent_name == "alk-sdk-agent":
         agent_definition.agent_name = named[:255]
         changed.append("agent_name")
-    agent_config = (job.payload.get("agent") or {}).get("config") or {}
+    agent = job.payload.get("agent") or {}
+    agent_config = agent.get("config") or {}
     explicit_inbound = agent_config.get("inbound")
-    direction = str(authored.get("call_direction") or "").strip().lower()
+    declared = str(agent.get("call_direction") or "").strip().lower()
+    direction = declared or str(authored.get("call_direction") or "").strip().lower()
     if isinstance(explicit_inbound, bool) or direction in {"inbound", "outbound"}:
-        # The user's RL Environment selection is authoritative. The authored
-        # contract remains the fallback for older jobs that predate the field.
+        # The user's RL Environment selection is authoritative: the explicit
+        # boolean first, then the submitted direction, then the authored guess.
         inbound = (
             explicit_inbound
             if isinstance(explicit_inbound, bool)
@@ -1089,7 +1188,15 @@ def begin_scenarios(
             )
         locked.test_execution = test_execution
         locked.state = HostedHarnessJob.State.RUNNING
-        locked.save(update_fields=["test_execution", "state", "updated_at"])
+        locked.content_updated_at = timezone.now()
+        locked.save(
+            update_fields=[
+                "test_execution",
+                "state",
+                "content_updated_at",
+                "updated_at",
+            ]
+        )
         for registration, call in zip(registrations, mapped_calls, strict=True):
             registration.call_execution = call
             registration.save(update_fields=["call_execution", "updated_at"])
@@ -1190,13 +1297,16 @@ def record_cleanup(
             if snapshot_missing
             else attempt.terminal_failure
         )
+        job.content_updated_at = now
         job.save(
             update_fields=[
                 "state",
                 "terminal_at",
                 "current_stage",
                 "failure",
+                "content_updated_at",
                 "updated_at",
+                *finish_deferred_delete(job),
             ]
         )
         if job.test_execution_id:
@@ -1272,9 +1382,15 @@ def update_execution_counts(job: HostedHarnessJob) -> None:
             completed_calls=calls_completed,
             failed_calls=calls_failed,
         )
-        HostedHarnessJob.no_workspace_objects.filter(id=locked_job.id).update(
+        # A queryset update bypasses ``auto_now``, so the content timestamp is set
+        # explicitly here: scenarios finishing is exactly the kind of progress the
+        # environments list means by "last updated".
+        HostedHarnessJob.no_workspace_objects.filter(id=locked_job.id).exclude(
+            completed_count=scenario_completed, failed_count=scenario_failed
+        ).update(
             completed_count=scenario_completed,
             failed_count=scenario_failed,
+            content_updated_at=timezone.now(),
         )
 
 

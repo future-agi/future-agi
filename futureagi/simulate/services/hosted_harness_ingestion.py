@@ -620,7 +620,10 @@ def _store_event(
     )
     if rejection is None and event["type"] == "stage_changed":
         attempt.job.current_stage = event["payload"]["to"]
-        attempt.job.save(update_fields=["current_stage", "updated_at"])
+        attempt.job.content_updated_at = timezone.now()
+        attempt.job.save(
+            update_fields=["current_stage", "content_updated_at", "updated_at"]
+        )
     if rejection is None and event["type"] == "scenario_started":
         scenario_key = event["payload"]["scenario_key"]
         execution = HostedHarnessExecution.no_workspace_objects.filter(

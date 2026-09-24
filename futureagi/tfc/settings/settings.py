@@ -943,6 +943,10 @@ ALK_HOSTED_SIMULATOR_SECRET_ENV = {
     "SIMULATOR_TTS_PROVIDER": "SIMULATOR_TTS_PROVIDER",
     "SIMULATOR_TTS_MODEL": "SIMULATOR_TTS_MODEL",
 }
+# The platform's own outbound dialer: the LiveKit SIP trunk that places the PSTN call for a
+# phone target. Platform configuration, never customer input, so an empty value means no phone
+# run can be started and preflight says so rather than the run failing after authoring is paid for.
+ALK_HOSTED_SIP_OUTBOUND_TRUNK_ID = os.getenv("ALK_HOSTED_SIP_OUTBOUND_TRUNK_ID", "")
 ALK_HOSTED_AUTHORING_CLAUDE_REGION = os.getenv("CLOUD_ML_REGION", "us-east5")
 ALK_HOSTED_AUTHORING_GEMINI_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
 ALK_HOSTED_WEBRTC_EGRESS_CIDRS = [
@@ -1000,6 +1004,9 @@ ALK_E2B_TEMPLATE_CPU_UNITS = int(os.getenv("ALK_E2B_TEMPLATE_CPU_UNITS", "4"))
 ALK_E2B_TEMPLATE_MEMORY_MB = int(os.getenv("ALK_E2B_TEMPLATE_MEMORY_MB", "8192"))
 ALK_E2B_TEMPLATE_DISK_GB = int(os.getenv("ALK_E2B_TEMPLATE_DISK_GB", "10"))
 ALK_E2B_MAX_TTL_SECONDS = int(os.getenv("ALK_E2B_MAX_TTL_SECONDS", "0"))
+ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS = int(
+    os.getenv("ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS", "180")
+)
 
 # Scenario parallelism (W>1) admission belt (C4 §5, decisions D12/D23/D24).
 # W>1 is admitted only when this flag is truthy AND the selected guest runtime

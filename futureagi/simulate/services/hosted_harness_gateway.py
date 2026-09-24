@@ -37,6 +37,7 @@ from simulate.models import (
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     activate_attempt_capability,
+    finish_deferred_delete,
     record_cleanup,
     register_attempt,
     request_cancellation,
@@ -172,6 +173,13 @@ def _execution_ttl_seconds(
     )
 
 
+def _claude_code_use_vertex(gateway_ready: bool) -> str:
+    """Must be an explicit "0" behind the gateway: the CLI treats an empty value as set."""
+    if gateway_ready:
+        return "0"
+    return str(os.environ.get("CLAUDE_CODE_USE_VERTEX") or "1")
+
+
 def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
     """Return control-process-only simulator config and optional Vertex ADC bytes.
 
@@ -249,7 +257,7 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
     values = {
         "ALK_HARNESS": backend,
         "ALK_HARNESS_MODEL": authoring_model,
-        "CLAUDE_CODE_USE_VERTEX": str(os.environ.get("CLAUDE_CODE_USE_VERTEX") or "1"),
+        "CLAUDE_CODE_USE_VERTEX": _claude_code_use_vertex(agentcc_ready),
         "CLOUD_ML_REGION": claude_region,
         "ALK_VERTEX_LOCATION": location,
         "GOOGLE_CLOUD_LOCATION": location,
@@ -286,6 +294,8 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "HARNESS_BACKGROUND_NOISE_VOLUME",
         # Off has to travel: decided here, enforced inside the sandbox.
         "ALK_VOICEMAIL_SCENARIOS",
+        "ALK_HARNESS_WORKERS_AT_ONCE",
+        "ALK_VALIDATION_INSTANCES",
     ):
         value = str(os.environ.get(name) or "").strip()
         if value:
@@ -750,6 +760,17 @@ class HostedSourceAcquirer:
                     detail = completed.stderr or completed.stdout or "git failed"
                     if token:
                         detail = detail.replace(token, "[REDACTED]")
+                    lowered = detail.lower()
+                    if (
+                        "repository not found" in lowered
+                        or "could not read username" in lowered
+                    ):
+                        raise HostedHarnessError(
+                            "github_repository_not_found",
+                            f"repository {source.get('repository')} was not found, or it is "
+                            "private and the GitHub App is not installed on it",
+                            status_code=422,
+                        )
                     raise HostedHarnessError(
                         "github_clone_failed",
                         detail.strip()[:500],
@@ -850,6 +871,20 @@ def resolve_platform_simulator_secrets() -> dict[str, str]:
     return resolved
 
 
+def platform_dialer_status() -> dict[str, Any]:
+    """Whether the platform can place an outbound PSTN call, and what is absent if not.
+
+    A phone target is reached by dialling it over the platform's own LiveKit SIP trunk, so
+    every input here is platform configuration the customer cannot supply or observe. Resolved
+    through the same telephony map the launch sends to the guest, so readiness cannot claim a
+    dialer the run will not find, nor deny one it will.
+    """
+    from simulate.services.phone_telephony import platform_phone_telephony
+
+    missing = [name for name, value in platform_phone_telephony().items() if not value]
+    return {"available": not missing, "missing": missing}
+
+
 def attach_platform_simulator_secret_refs(
     payload: dict[str, Any], simulator_secrets: dict[str, str]
 ) -> dict[str, Any]:
@@ -917,7 +952,8 @@ def _mark_stage(job: HostedHarnessJob, stage: str) -> None:
     if job.current_stage == stage or job.current_stage not in _PRE_RUNTIME_STAGES:
         return
     job.current_stage = stage
-    job.save(update_fields=["current_stage", "updated_at"])
+    job.content_updated_at = timezone.now()
+    job.save(update_fields=["current_stage", "content_updated_at", "updated_at"])
 
 
 def _hostname_from_url(value: Any) -> str | None:
@@ -1369,6 +1405,19 @@ def _persist_bundle_stage_outputs(
                     data=scenario_data,
                 )
             )
+    if "sub_goals" not in existing:
+        catalogue = _load_bundle_file(manifest, "sub_goals.json", job)
+        if isinstance(catalogue, dict):
+            goals = catalogue.get("sub_goals") or []
+            outputs.append(
+                HostedHarnessStageOutput(
+                    job=job,
+                    title="Sub-goal catalogue",
+                    summary=f"{len(goals)} sub-goals",
+                    kind="sub_goals",
+                    data=catalogue,
+                )
+            )
     if outputs:
         HostedHarnessStageOutput.no_workspace_objects.bulk_create(outputs)
 
@@ -1509,8 +1558,8 @@ class HostedHarnessGateway:
                 for name, value in simulator_env.items()
                 if name not in {"LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"}
             },
-            "CLAUDE_CODE_USE_VERTEX": (
-                "" if simulator_env.get("ALK_CLAUDE_GATEWAY_URL") else "1"
+            "CLAUDE_CODE_USE_VERTEX": _claude_code_use_vertex(
+                bool(simulator_env.get("ALK_CLAUDE_GATEWAY_URL"))
             ),
             "GOOGLE_GENAI_USE_VERTEXAI": "True",
             "CLOUD_ML_REGION": getattr(
@@ -1975,6 +2024,7 @@ class HostedHarnessGateway:
                     "ALK_HARNESS",
                     "ALK_SIMULATOR_FUNDING",
                     "ALK_HARNESS_MODEL",
+                    "ALK_HARNESS_WORKERS_AT_ONCE",
                     "ALK_CLAUDE_GATEWAY_URL",
                     "ALK_CLAUDE_GATEWAY_API_KEY",
                     "ALK_VERTEX_LOCATION",
@@ -2971,9 +3021,16 @@ class HostedHarnessGateway:
             )
         authored_bundle = _json("/work/authoring/environment-bundle/manifest.json")
         scenarios = _json("/work/authoring/scenarios.json")
+        sub_goals = _json("/work/authoring/sub_goals.json")
         bundle = _json("/work/bundle/manifest.json")
+        # Written when the world is sealed, so it appears later than the authoring
+        # documents above and only once a store has actually been built.
+        build_output = _json("/work/artifacts/build.json")
         # Read on every poll, so a sandbox deleted later still leaves its last known total.
         spend = _json("/work/authoring/cost.json")
+        coverage = _json("/work/authoring/coverage.json")
+        invariants = _json("/work/authoring/source-data-invariants.json")
+        certified = _json("/work/authoring/generic-harness/certification.json")
         _read_harness_usage(attempt, sandbox)
         job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
         metadata = (job.payload or {}).get("metadata") or {}
@@ -3036,17 +3093,40 @@ class HostedHarnessGateway:
             environment,
             scenarios,
             bundle if isinstance(bundle, dict) else authored_bundle,
+            sub_goals=sub_goals,
+            build_output=build_output,
+            coverage=coverage,
         )
         activities = _activity_events()
         if activities:
             outputs.append({"kind": "activity", "events": activities})
+        if isinstance(scenarios, list) and scenarios:
+            from simulate.services.harness_scenarios import index_scenarios
+
+            try:
+                index_scenarios(
+                    job,
+                    scenarios,
+                    prune=authoring_complete
+                    or isinstance(invariants, dict)
+                    or isinstance(certified, dict),
+                )
+            except Exception:  # noqa: BLE001 - indexing must never stop a run
+                logger.exception("could not index authored scenarios job=%s", job.id)
         stage = "understanding_agent"
         if isinstance(contract, dict):
             stage = "generating_environment"
         if isinstance(environment, dict):
             stage = "generating_scenarios"
         if isinstance(scenarios, list):
-            stage = "validating_environment"
+            written = len(scenarios) >= (job.scenario_count or len(scenarios))
+            world_ir = _json("/work/authoring/generic-harness/world-ir.json")
+            if certified is not None:
+                stage = "validating_scenarios"
+            elif invariants is not None or (written and world_ir is not None):
+                stage = "validating_environment"
+            else:
+                stage = "generating_scenarios"
         HostedHarnessGateway._sync_adjustment_progress(job, sandbox)
         if not outputs:
             return
@@ -3064,6 +3144,8 @@ class HostedHarnessGateway:
         # scenarios.json.  ``store_authoring_archive`` has already materialized
         # that snapshot, so a later heartbeat must enrich the visible stages
         # instead of deleting stages whose source file is not present here.
+        previous_stage = job.current_stage
+        previous_outputs = job.stage_outputs
         merged = {
             item.get("kind"): item
             for item in (job.stage_outputs or [])
@@ -3074,7 +3156,15 @@ class HostedHarnessGateway:
         job.stage_outputs = sorted(
             merged.values(), key=lambda item: order.get(item.get("kind"), 99)
         )
-        job.save(update_fields=["current_stage", "stage_outputs", "updated_at"])
+        update_fields = ["current_stage", "stage_outputs", "updated_at"]
+        # This runs on every poll tick and re-reads the same files, so the common
+        # case is that nothing moved. Only a real change counts as the
+        # environment being updated; otherwise the list would report a fresh
+        # timestamp every fifteen seconds for a run sitting still.
+        if job.current_stage != previous_stage or job.stage_outputs != previous_outputs:
+            job.content_updated_at = timezone.now()
+            update_fields.append("content_updated_at")
+        job.save(update_fields=update_fields)
 
     @staticmethod
     def _sync_adjustment_progress(job: HostedHarnessJob, sandbox) -> None:
@@ -3240,7 +3330,13 @@ class HostedHarnessGateway:
         return True
 
     def cancel(self, job: HostedHarnessJob, *, reason: str) -> HostedHarnessJob:
-
+        settled = HostedHarnessAttempt.no_workspace_objects.filter(
+            job=job,
+            attempt_number=job.current_attempt_number,
+            cleanup_verified_at__isnull=False,
+        ).exists()
+        if settled:
+            return job
         job = request_cancellation(job, reason)
         attempt = HostedHarnessAttempt.no_workspace_objects.filter(
             job=job, attempt_number=job.current_attempt_number
@@ -3271,7 +3367,13 @@ class HostedHarnessGateway:
             job.current_stage = HostedHarnessJob.State.CANCELED
             job.terminal_at = timezone.now()
             job.save(
-                update_fields=["state", "current_stage", "terminal_at", "updated_at"]
+                update_fields=[
+                    "state",
+                    "current_stage",
+                    "terminal_at",
+                    "updated_at",
+                    *finish_deferred_delete(job),
+                ]
             )
             if job.test_execution_id:
                 TestExecution.no_workspace_objects.filter(
@@ -4254,9 +4356,12 @@ def authoring_stage_outputs(
     environment: Any,
     scenarios: Any,
     bundle: Any = None,
+    sub_goals: Any = None,
+    build_output: Any = None,
     certification: Any = None,
     repair_history: Any = None,
     action_certification: Any = None,
+    coverage: Any = None,
 ) -> list[dict[str, Any]]:
     """Build the complete, secret-safe snapshots shown by the hosted-run UI."""
     outputs: list[dict[str, Any]] = []
@@ -4297,6 +4402,43 @@ def authoring_stage_outputs(
                 "data": _secret_safe(scenarios),
             }
         )
+    if isinstance(sub_goals, dict):
+        goals = sub_goals.get("sub_goals") or []
+        suite = sub_goals.get("suite_evals") or []
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000004",
+                "kind": "sub_goals",
+                "title": "Sub-goal catalogue",
+                "summary": f"{len(goals)} sub-goals · {len(suite)} suite evals",
+                "data": _secret_safe(sub_goals),
+            }
+        )
+    stores = _seeded_stores(build_output)
+    if stores:
+        tables = sum(len(store["tables"]) for store in stores)
+        rows = sum(store["total_rows"] for store in stores)
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000005",
+                "kind": "stores",
+                "title": "Seeded world state",
+                "summary": f"{tables} tables · {rows} rows",
+                "data": stores,            }
+        )
+    if isinstance(coverage, dict):
+        placed = coverage.get("placed")
+        total = coverage.get("scenarios")
+        axes = coverage.get("axes") or {}
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000006",
+                "kind": "coverage",
+                "title": "Coverage",
+                "summary": f"{placed} of {total} placed across {len(axes)} axes",
+                "data": _secret_safe(coverage),
+            }
+        )
     if isinstance(certification, dict):
         status = str(certification.get("status") or "unknown")
         repairs = (
@@ -4311,7 +4453,7 @@ def authoring_stage_outputs(
         )
         outputs.append(
             {
-                "id": "00000000-0000-0000-0000-000000000004",
+                "id": "00000000-0000-0000-0000-000000000006",
                 "kind": "certification",
                 "title": "Environment certification",
                 "summary": f"{status} · {len(repairs or [])} repairs · {len(actions or [])} action probes",
@@ -4327,6 +4469,40 @@ def authoring_stage_outputs(
     return outputs
 
 
+def _seeded_stores(build_output: Any) -> list[dict[str, Any]]:
+    """The tables each built store holds, from the sealed build output.
+
+    ``build.json`` records a baseline per store, and ``row_counts`` is populated
+    for postgres stores only, so a store backed by anything else contributes no
+    tables rather than a row of zeroes. Only identifiers and counts are carried;
+    the digests and baseline references stay in the artifact, since nothing in
+    the UI reads them and they say where the sealed data lives.
+    """
+    records = build_output.get("stores") if isinstance(build_output, dict) else None
+    stores: list[dict[str, Any]] = []
+    for record in records or []:
+        if not isinstance(record, dict):
+            continue
+        counts = record.get("row_counts")
+        tables = [
+            {"name": str(name), "rows": int(rows)}
+            for name, rows in sorted((counts or {}).items())
+            if isinstance(rows, int)
+        ]
+        if not tables:
+            continue
+        stores.append(
+            {
+                "capability": str(record.get("capability") or ""),
+                "engine": str(record.get("engine") or ""),
+                "strategy": str(record.get("strategy") or ""),
+                "tables": tables,
+                "total_rows": sum(table["rows"] for table in tables),
+            }
+        )
+    return stores
+
+
 def authoring_stage_outputs_from_archive(
     body: bytes, *, scenario_limit: int | None = None
 ) -> list[dict[str, Any]]:
@@ -4337,9 +4513,11 @@ def authoring_stage_outputs_from_archive(
         "contract.json",
         "environment.json",
         "scenarios.json",
+        "sub_goals.json",
         "certification.json",
         "repair-history.json",
         "action-certification.json",
+        "coverage.json",
     }
     with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
         for member in archive.getmembers():
@@ -4381,10 +4559,127 @@ def authoring_stage_outputs_from_archive(
         documents.get("contract.json"),
         documents.get("environment.json"),
         scenarios,
+        sub_goals=documents.get("sub_goals.json"),
         certification=documents.get("certification.json"),
         repair_history=documents.get("repair-history.json"),
         action_certification=documents.get("action-certification.json"),
+        coverage=documents.get("coverage.json"),
     )
+
+
+def push_scenarios_into_live_sandbox(job: HostedHarnessJob, suite: list[dict]) -> bool:
+    """Land an edited suite on the running guest, which would otherwise re-pack its own copy."""
+    attempt = (
+        HostedHarnessAttempt.no_workspace_objects.filter(
+            job=job, attempt_number=job.current_attempt_number
+        )
+        .exclude(provider_ref__isnull=True)
+        .first()
+    )
+    if attempt is None or not attempt.provider_ref:
+        return False
+    if attempt.state in {
+        HostedHarnessAttempt.State.FAILED,
+        HostedHarnessAttempt.State.SUPERSEDED,
+        HostedHarnessAttempt.State.CLEANING_UP,
+    }:
+        return False
+    try:
+        sandbox = HostedHarnessGateway().client.get(
+            str(attempt.provider_ref), request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
+        )
+    except Exception:  # noqa: BLE001 - no live guest is the ordinary case, not a failure
+        return False
+    keep = {str(one.get("scenario_key") or one.get("name") or "") for one in suite}
+    try:
+        listed = sandbox.process.exec(
+            "ls -1 /work/authoring/scenarios 2>/dev/null", timeout=60
+        )
+        present = {name for name in (listed.result or "").split() if name}
+        for folder in sorted(present - keep):
+            sandbox.process.exec(
+                f"rm -rf /work/authoring/scenarios/{folder}", timeout=60
+            )
+        for one in suite:
+            folder = str(one.get("scenario_key") or one.get("name") or "")
+            if not folder or folder not in present:
+                continue
+            sandbox.fs.upload_file(
+                json.dumps(one, indent=2).encode("utf-8"),
+                f"/work/authoring/scenarios/{folder}/scenario.json",
+            )
+        sandbox.fs.upload_file(
+            json.dumps(suite, indent=2).encode("utf-8"),
+            "/work/authoring/scenarios.json",
+        )
+    except Exception:  # noqa: BLE001 - the archive is still the durable record
+        logger.exception("could not deliver edited suite to the live guest job=%s", job.id)
+        return False
+    return True
+
+
+def rewrite_authoring_scenarios(job: HostedHarnessJob, suite: list[dict]) -> str | None:
+    """Write an edited suite back into the sealed archive a rerun replays."""
+    metadata = (job.payload or {}).get("metadata") or {}
+    object_key = str(metadata.get("authoring_object_key") or "").strip()
+    if not object_key:
+        return None
+    client = get_storage_client()
+    response = None
+    try:
+        response = client.get_object(UPLOAD_BUCKET_NAME, object_key)
+        body = response.read()
+    except Exception:  # noqa: BLE001 - an unreadable archive leaves the stage output as the record
+        logger.exception("could not read authoring archive for amend job=%s", job.id)
+        return None
+    finally:
+        if response is not None:
+            response.close()
+            response.release_conn()
+
+    edited = {str(one.get("name") or ""): one for one in suite}
+    keys = {str(one.get("scenario_key") or one.get("name") or "") for one in suite}
+    out = io.BytesIO()
+    with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as source, tarfile.open(
+        fileobj=out, mode="w:gz"
+    ) as target:
+        for member in source.getmembers():
+            path = Path(member.name)
+            in_scenarios = "scenarios" in path.parts
+            folder = path.parts[path.parts.index("scenarios") + 1] if in_scenarios and len(
+                path.parts
+            ) > path.parts.index("scenarios") + 1 else ""
+            if folder and folder not in keys:
+                continue
+            handle = source.extractfile(member) if member.isfile() else None
+            if handle is None:
+                target.addfile(member)
+                continue
+            payload = handle.read()
+            if path.name == "scenario.json" and folder:
+                document = json.loads(payload.decode("utf-8"))
+                replacement = edited.get(str(document.get("name") or "")) or edited.get(folder)
+                if replacement is not None:
+                    document.update(
+                        {
+                            key: value
+                            for key, value in replacement.items()
+                            if key not in {"scenario_key", "scenario_id"}
+                        }
+                    )
+                    payload = json.dumps(document, indent=2).encode("utf-8")
+            elif path.name == "scenarios.json":
+                payload = json.dumps(suite, indent=2).encode("utf-8")
+            member.size = len(payload)
+            target.addfile(member, io.BytesIO(payload))
+    client.put_object(
+        bucket_name=UPLOAD_BUCKET_NAME,
+        object_name=object_key,
+        data=io.BytesIO(out.getvalue()),
+        length=len(out.getvalue()),
+        content_type="application/gzip",
+    )
+    return object_key
 
 
 def store_authoring_archive(
@@ -4411,7 +4706,8 @@ def store_authoring_archive(
     metadata.pop("scenario_extend", None)
     payload["metadata"] = metadata
     job.payload = payload
-    update_fields = ["payload", "updated_at"]
+    job.content_updated_at = timezone.now()
+    update_fields = ["payload", "content_updated_at", "updated_at"]
     if advance_lifecycle:
         job.stage_outputs = authoring_stage_outputs_from_archive(
             body, scenario_limit=job.scenario_count

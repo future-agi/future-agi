@@ -6,22 +6,25 @@ import userEvent from "@testing-library/user-event";
 // against a fixed CallDetail rather than the network. `isVoiceCall` (the routing
 // decision under test) stays real — it lives in its own `callRouting` module.
 const useCallDetail = vi.fn();
+const useCallExecutionV3Detail = vi.fn();
 vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
   const actual = await importOriginal();
-  return { ...actual, useCallDetail: (...a) => useCallDetail(...a) };
+  return {
+    ...actual,
+    useCallDetail: (...a) => useCallDetail(...a),
+    useCallExecutionV3Detail: (...a) => useCallExecutionV3Detail(...a),
+  };
 });
 
 // The voice branch reuses the real product drawer; stub it to a marker so the
 // test proves the routing without mounting the heavy component (imagine store,
 // saved views, share dialog).
 vi.mock("src/components/VoiceDetailDrawerV2", () => ({
-  default: ({ data }) => <div data-testid="voice-drawer">voice:{data?.id}</div>,
-}));
-
-// The voice wrapper reads the product call-execution hook; feed it real-shaped data.
-const useCallExecutionDetail = vi.fn();
-vi.mock("src/sections/agents/helper", () => ({
-  useCallExecutionDetail: (...a) => useCallExecutionDetail(...a),
+  default: ({ data }) => (
+    <div data-testid="voice-drawer">
+      voice:{data?.id}:{data?.transcript?.map((turn) => turn.content).join("|")}
+    </div>
+  ),
 }));
 
 const { default: CallDrawer } = await import("../CallDrawer");
@@ -33,14 +36,35 @@ const CHAT_DETAIL = {
   provider: "openai",
   durationS: 30,
   turns: [
-    { role: "agent", text: "Refund issued.", toolCalls: [{ function: { name: "issue_refund" } }] },
+    {
+      role: "agent",
+      text: "Refund issued.",
+      toolCalls: [{ function: { name: "issue_refund" } }],
+    },
     { role: "customer", text: "thanks" },
   ],
-  stats: { turnCount: 2, latencyMs: 800, aiPct: 50, userPct: 50, words: 3, silenceS: null, ttfwMs: null, toolCalls: 1 },
+  stats: {
+    turnCount: 2,
+    latencyMs: 800,
+    aiPct: 50,
+    userPct: 50,
+    words: 3,
+    silenceS: null,
+    ttfwMs: null,
+    toolCalls: 1,
+  },
   tokens: 1200,
   cost: null,
   summary: "ok",
-  evalResults: [{ id: "e1", name: "Refund correctness", score: 0, passed: false, reason: "wrong amount" }],
+  evalResults: [
+    {
+      id: "e1",
+      name: "Refund correctness",
+      score: 0,
+      passed: false,
+      reason: "wrong amount",
+    },
+  ],
 };
 
 const chatTask = {
@@ -65,7 +89,10 @@ describe("isVoiceCall", () => {
 
 describe("CallDrawer — chat branch", () => {
   it("renders the ported drawer with transcript, analytics and the failed-eval banner", async () => {
-    useCallDetail.mockReturnValue({ callDetail: CHAT_DETAIL, isLoading: false });
+    useCallDetail.mockReturnValue({
+      callDetail: CHAT_DETAIL,
+      isLoading: false,
+    });
     render(<CallDrawer task={chatTask} agentType="text" onClose={() => {}} />);
 
     // Header paints from the row.
@@ -80,7 +107,10 @@ describe("CallDrawer — chat branch", () => {
   });
 
   it("shows the per-eval score + reason on the Evals tab", async () => {
-    useCallDetail.mockReturnValue({ callDetail: CHAT_DETAIL, isLoading: false });
+    useCallDetail.mockReturnValue({
+      callDetail: CHAT_DETAIL,
+      isLoading: false,
+    });
     const user = userEvent.setup();
     render(<CallDrawer task={chatTask} agentType="text" onClose={() => {}} />);
 
@@ -92,7 +122,10 @@ describe("CallDrawer — chat branch", () => {
   });
 
   it("does not mount the product voice drawer for a chat call", () => {
-    useCallDetail.mockReturnValue({ callDetail: CHAT_DETAIL, isLoading: false });
+    useCallDetail.mockReturnValue({
+      callDetail: CHAT_DETAIL,
+      isLoading: false,
+    });
     render(<CallDrawer task={chatTask} agentType="text" onClose={() => {}} />);
     expect(screen.queryByTestId("voice-drawer")).toBeNull();
   });
@@ -100,7 +133,22 @@ describe("CallDrawer — chat branch", () => {
 
 describe("CallDrawer — voice branch", () => {
   it("routes a voice call to the real product voice drawer, fed the call detail", () => {
-    useCallExecutionDetail.mockReturnValue({ data: { id: "voice-1", scenario_id: "s1" }, isPending: false });
+    useCallExecutionV3Detail.mockReturnValue({
+      data: {
+        id: "voice-1",
+        scenario_id: "s1",
+        transcript: [],
+        function_calls: [
+          {
+            name: "lookup_order",
+            arguments: { order_id: "AB-1" },
+            result: { status: "shipped" },
+            duration_ms: 309,
+          },
+        ],
+      },
+      isPending: false,
+    });
     render(
       <CallDrawer
         task={{ id: "voice-1", simulationCallType: "voice" }}
@@ -108,6 +156,17 @@ describe("CallDrawer — voice branch", () => {
         onClose={() => {}}
       />,
     );
-    expect(screen.getByTestId("voice-drawer")).toHaveTextContent("voice:voice-1");
+    expect(screen.getByTestId("voice-drawer")).toHaveTextContent(
+      "voice:voice-1",
+    );
+    expect(screen.getByTestId("voice-drawer")).toHaveTextContent(
+      "Function call · lookup_order · 309ms",
+    );
+    expect(screen.getByTestId("voice-drawer")).toHaveTextContent(
+      'args: {"order_id":"AB-1"}',
+    );
+    expect(screen.getByTestId("voice-drawer")).toHaveTextContent(
+      'result: {"status":"shipped"}',
+    );
   });
 });

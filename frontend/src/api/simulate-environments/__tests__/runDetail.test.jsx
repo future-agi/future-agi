@@ -14,8 +14,13 @@ const axiosMod = await import("src/utils/axios");
 const axios = axiosMod.default;
 const { endpoints } = axiosMod;
 const { mapExecutions } = await import("../runs");
-const { buildRunIdentity, buildRunStats, useRunDetail, mapCallDetail, useCallDetail } =
-  await import("../runDetail");
+const {
+  buildRunIdentity,
+  buildRunStats,
+  useRunDetail,
+  mapCallDetail,
+  useCallDetail,
+} = await import("../runDetail");
 const { RUN_COLORS } = await import(
   "src/sections/simulate/environments/workspace/runs/runs.constants"
 );
@@ -165,8 +170,16 @@ const callDetailPayload = () => ({
   provider: "vapi",
   duration: 42.5,
   transcript: [
-    { speaker_role: "assistant", content: "Hi, how can I help you today?", start_time_seconds: 0 },
-    { speaker_role: "user", content: "I want a refund please", start_time_seconds: 3.2 },
+    {
+      speaker_role: "assistant",
+      content: "Hi, how can I help you today?",
+      start_time_seconds: 0,
+    },
+    {
+      speaker_role: "user",
+      content: "I want a refund please",
+      start_time_seconds: 3.2,
+    },
   ],
   turn_count: 4,
   avg_agent_latency: 320,
@@ -176,8 +189,22 @@ const callDetailPayload = () => ({
   call_summary: "Customer asked for a refund.",
   recordings: { combined: "https://cdn.example.com/rec.mp3" },
   eval_metrics: {
-    "eval-1": { id: "eval-1", name: "Refund correctness", value: "Passed", type: "Pass/Fail", reason: "policy match", status: "completed" },
-    "eval-2": { id: "eval-2", name: "Tone", value: 0.4, type: "score", reason: "curt", status: "completed" },
+    "eval-1": {
+      id: "eval-1",
+      name: "Refund correctness",
+      value: "Passed",
+      type: "Pass/Fail",
+      reason: "policy match",
+      status: "completed",
+    },
+    "eval-2": {
+      id: "eval-2",
+      name: "Tone",
+      value: 0.4,
+      type: "score",
+      reason: "curt",
+      status: "completed",
+    },
     "eval-3": {},
   },
 });
@@ -194,7 +221,11 @@ describe("mapCallDetail", () => {
 
     // Transcript: roles normalised (assistant→agent, user→customer), timestamps kept.
     expect(d.turns).toHaveLength(2);
-    expect(d.turns[0]).toMatchObject({ role: "agent", text: "Hi, how can I help you today?", at: 0 });
+    expect(d.turns[0]).toMatchObject({
+      role: "agent",
+      text: "Hi, how can I help you today?",
+      at: 0,
+    });
     expect(d.turns[1]).toMatchObject({ role: "customer", at: 3.2 });
 
     // Stats from the real conversation metrics; words derived from the transcript.
@@ -216,7 +247,11 @@ describe("mapCallDetail", () => {
     expect(d.evalResults).toHaveLength(2);
     const e1 = d.evalResults.find((e) => e.id === "eval-1");
     const e2 = d.evalResults.find((e) => e.id === "eval-2");
-    expect(e1).toMatchObject({ score: 1, passed: true, reason: "policy match" });
+    expect(e1).toMatchObject({
+      score: 1,
+      passed: true,
+      reason: "policy match",
+    });
     expect(e2).toMatchObject({ score: 0.4, passed: false });
   });
 
@@ -225,7 +260,11 @@ describe("mapCallDetail", () => {
       id: "chat-1",
       simulation_call_type: "text",
       transcript: [
-        { role: "assistant", content: "Refund issued.", tool_calls: [{ function: { name: "issue_refund" } }] },
+        {
+          role: "assistant",
+          content: "Refund issued.",
+          tool_calls: [{ function: { name: "issue_refund" } }],
+        },
         { role: "user", content: "thanks" },
       ],
       recordings: {},
@@ -236,6 +275,32 @@ describe("mapCallDetail", () => {
     expect(d.turns[0].toolCalls).toHaveLength(1);
     expect(d.stats.toolCalls).toBe(1);
     expect(d.recordings).toEqual({});
+  });
+
+  it("adds top-level v3 function calls to the transcript and tool count", () => {
+    const d = mapCallDetail({
+      id: "chat-with-tool",
+      simulation_call_type: "text",
+      transcript: [{ role: "assistant", content: "Let me check." }],
+      function_calls: [
+        {
+          name: "lookup_order",
+          arguments: { order_id: "AB-1" },
+          result: { status: "shipped" },
+          duration_ms: 309,
+        },
+      ],
+      eval_metrics: {},
+    });
+
+    expect(d.turns).toHaveLength(2);
+    expect(d.turns[1]).toMatchObject({
+      role: "tool",
+      text: expect.stringContaining("Function call · lookup_order · 309ms"),
+    });
+    expect(d.turns[1].text).toContain('→ args: {"order_id":"AB-1"}');
+    expect(d.turns[1].text).toContain('← result: {"status":"shipped"}');
+    expect(d.stats.toolCalls).toBe(1);
   });
 
   it("returns null for a missing payload", () => {
@@ -261,19 +326,24 @@ describe("useCallDetail", () => {
   });
 
   it("reads the real call-executions detail endpoint and maps it", async () => {
-    const { result } = renderHook(() => useCallDetail("call-1"), { wrapper: makeWrapper() });
+    const { result } = renderHook(() => useCallDetail("call-1"), {
+      wrapper: makeWrapper(),
+    });
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
+    expect(result.current.error).toBeNull();
     expect(result.current.callDetail.id).toBe("call-1");
     expect(result.current.callDetail.type).toBe("voice");
     expect(axios.get).toHaveBeenCalledWith(
-      endpoints.runTests.callExecutionDetail("call-1"),
+      endpoints.runResultsV3.callDetail("call-1"),
     );
   });
 
   it("stays idle with no id", () => {
-    const { result } = renderHook(() => useCallDetail(null), { wrapper: makeWrapper() });
+    const { result } = renderHook(() => useCallDetail(null), {
+      wrapper: makeWrapper(),
+    });
     expect(result.current.callDetail).toBeNull();
     expect(result.current.isLoading).toBe(false);
     expect(axios.get).not.toHaveBeenCalled();
@@ -283,17 +353,29 @@ describe("useCallDetail", () => {
 describe("useRunDetail", () => {
   beforeEach(() => {
     axios.get.mockReset();
-    axios.get.mockImplementation((url) => {
-      if (url === endpoints.runTests.detailExecutions("rt1")) {
-        return Promise.resolve({ data: executionsPayload() });
-      }
-      if (url === endpoints.testExecutions.kpis("ex-new")) {
-        return Promise.resolve({ data: kpisPayload() });
-      }
-      if (url === endpoints.testExecutions.executionPerformanceSummary("ex-new")) {
-        return Promise.resolve({ data: perfPayload() });
-      }
-      return Promise.resolve({ data: {} });
+    axios.get.mockResolvedValue({
+      data: {
+        execution: {
+          id: "ex-new",
+          ordinal: 2,
+          agent_version: "v2",
+          agent_type: "VOICE",
+          status: "completed",
+          started_at: "2026-01-14T09:12:00.000Z",
+          completed_at: "2026-01-14T09:22:00.000Z",
+          selected_scenario_keys: ["scenario-a", "scenario-b"],
+          trials: 3,
+          summary: {
+            total: 12,
+            measured: 12,
+            pass_rate: 74,
+            outcomes: { passed: 9, failed: 3, error: 0, inconclusive: 0 },
+            duration: { average: 50 },
+            tokens: { total_value: 2000 },
+            cost_cents: { total_value: 120 },
+          },
+        },
+      },
     });
   });
 
@@ -305,12 +387,66 @@ describe("useRunDetail", () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
+    expect(result.current.identity.status).toBe("passed");
     expect(result.current.identity.ordinal).toBe(2);
     expect(result.current.identity.name).toBe("Refund Copilot");
+    expect(result.current.identity.scenarioIds).toEqual([
+      "scenario-a",
+      "scenario-b",
+    ]);
+    expect(result.current.identity.trials).toBe(3);
     expect(result.current.stats.total).toBe(12);
     expect(result.current.stats.passRate).toBe(74);
     expect(axios.get).toHaveBeenCalledWith(
-      endpoints.testExecutions.kpis("ex-new"),
+      endpoints.runResultsV3.calls("ex-new"),
+      { params: { page: 1, page_size: 1 } },
     );
+  });
+
+  it("polls the Run summary while active and stops when it completes", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    axios.get.mockResolvedValue({
+      data: {
+        execution: {
+          id: "ex-new",
+          status: "evaluating",
+          summary: { total: 0, outcomes: {} },
+        },
+      },
+    });
+
+    const { result, unmount } = renderHook(() => useRunDetail("rt1", "ex-new"), {
+      wrapper: Wrapper,
+    });
+    await waitFor(() =>
+      expect(
+        queryClient.getQueryData([
+          "simulation-run-results-v3",
+          "ex-new",
+          "summary",
+        ])?.execution?.status,
+      ).toBe("evaluating"),
+    );
+    expect(result.current.identity.status).toBe("running");
+    const query = queryClient.getQueryCache().find({
+      queryKey: ["simulation-run-results-v3", "ex-new", "summary"],
+    });
+
+    expect(query.options.refetchInterval(query)).toBe(3000);
+    queryClient.setQueryData(query.queryKey, {
+      execution: {
+        id: "ex-new",
+        status: "completed",
+        summary: { total: 0, outcomes: {} },
+      },
+    });
+    expect(query.options.refetchInterval(query)).toBe(false);
+    unmount();
   });
 });

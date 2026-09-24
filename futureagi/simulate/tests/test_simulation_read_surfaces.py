@@ -288,6 +288,20 @@ def test_explicit_voice_call_type_wins_over_stale_text_agent_definition(simulati
     }
 
 
+
+@pytest.mark.django_db
+def test_call_detail_exposes_harness_outcome_separately_from_transport(
+    simulation_tree,
+):
+    call_execution = simulation_tree["call_execution"]
+    call_execution.call_metadata = {"harness_outcome_status": "error"}
+    call_execution.save(update_fields=["call_metadata"])
+
+    data = CallExecutionDetailSerializer(call_execution).data
+
+    assert data["status"] == CallExecution.CallStatus.COMPLETED
+    assert data["harness_outcome_status"] == "error"
+
 @pytest.mark.django_db
 def test_get_eval_metrics_skips_missing_config(simulation_tree, eval_configs):
     live, deleted = eval_configs["live"], eval_configs["deleted"]
