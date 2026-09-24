@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import re
 import traceback
 import uuid
@@ -43,7 +44,9 @@ class AgentLoop:
     def __init__(self, tool_context: ToolContext, conversation):
         self.tool_context = tool_context
         self.conversation = conversation
-        self.llm_client = FalconLLMClient()
+        self.llm_client = FalconLLMClient(
+            provider=os.environ.get("FALCON_AI_PROVIDER") or None
+        )
         self.prompt_builder = PromptBuilder()
         self.context_manager = ContextManager()
         self.tools = []
