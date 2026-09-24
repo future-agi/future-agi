@@ -16,28 +16,36 @@ from simulate.serializers.harness_job import (
     HarnessJobAdjustmentSerializer,
     HarnessJobCreateSerializer,
     HarnessJobExtendSerializer,
+    HarnessScenarioAmendSerializer,
     HarnessJobReadSerializer,
+    HarnessPreflightResponseSerializer,
     HarnessPreflightSerializer,
     HarnessSecretFileUploadResponseSerializer,
     HarnessSecretValuesResponseSerializer,
     HarnessSecretValuesSerializer,
     HarnessSourceUploadResponseSerializer,
 )
+from simulate.serializers.hosted_harness_conversation import (
+    HarnessConversationMessageCreateSerializer,
+    HarnessConversationReadSerializer,
+)
 from simulate.services.harness_credentials import (
+    HOSTED_FILE_KEY_PREFIX,
     credential_file_ref,
     request_scope,
     store_credential_file,
 )
 from simulate.services.harness_provider import get_harness_provider
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.api_contracts import validated_request
 
 
 class HarnessJobViewSet(viewsets.ViewSet):
     """Provider-neutral control plane for hosted ALK harness jobs.
 
-    Validates the v1.6 request contract and delegates execution to the backend
-    selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
-    ``sandbox``). See ``simulate.services.harness_provider``.
+    Validates the v1.6 request contract and delegates execution to the public backend selected by
+    ``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+    selects its managed sandbox runtime.
     """
 
     permission_classes = [IsAuthenticated]
@@ -132,11 +140,10 @@ class HarnessJobViewSet(viewsets.ViewSet):
                 {"detail": "an organization is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # Daytona cannot dereference the local-sandbox
-        # ``harness_environment_file`` manager. Google ADC crosses the hosted
-        # seam as encrypted JSON; the guest recreates the 0600 file and exports
-        # GOOGLE_APPLICATION_CREDENTIALS inside the sandbox.
-        if get_harness_provider().name == "daytona":
+        # Managed sandboxes cannot dereference the local-sandbox
+        # ``harness_environment_file`` manager. Google ADC crosses the hosted seam as encrypted
+        # JSON; the guest recreates the 0600 file and exports GOOGLE_APPLICATION_CREDENTIALS.
+        if get_harness_provider().name == "hosted":
             if environment_name != "GOOGLE_APPLICATION_CREDENTIALS":
                 return Response(
                     {
@@ -173,7 +180,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
 
             from simulate.models import HostedHarnessSecret
 
-            key = f"harness-google-adc-{uuid.uuid4().hex}"
+            key = f"{HOSTED_FILE_KEY_PREFIX}{uuid.uuid4().hex}"
             HostedHarnessSecret.objects.create(
                 organization=organization,
                 name=key,
@@ -248,6 +255,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
 
     @validated_request(
         request_serializer=HarnessPreflightSerializer,
+        responses={200: HarnessPreflightResponseSerializer},
         reject_unknown_fields=True,
     )
     @action(detail=False, methods=["post"])
@@ -282,6 +290,33 @@ class HarnessJobViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["post"])
     def extend(self, request, pk=None):
         return get_harness_provider().extend(request, pk)
+
+    @action(detail=True, methods=["get"], url_path="scenarios")
+    def scenarios(self, request, pk=None):
+        return get_harness_provider().list_scenarios(request, pk)
+
+    @action(detail=True, methods=["get"], url_path="scenarios/coverage")
+    def scenario_coverage(self, request, pk=None):
+        return get_harness_provider().scenario_coverage(request, pk)
+
+    @validated_request(
+        request_serializer=HarnessScenarioAmendSerializer,
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="scenarios/amend")
+    def amend_scenarios(self, request, pk=None):
+        return get_harness_provider().amend_scenarios(request, pk)
+    @validated_request(
+        request_serializer=HarnessConversationMessageCreateSerializer,
+        responses={
+            202: HarnessConversationReadSerializer,
+            409: ApiTextErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path=r"conversation/messages")
+    def conversation_message(self, request, pk=None):
+        return get_harness_provider().send_message(request, pk)
 
     @action(detail=False, methods=["get"])
     def health(self, request):

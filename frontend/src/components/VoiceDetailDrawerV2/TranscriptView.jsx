@@ -22,6 +22,7 @@ import { ShowComponent } from "src/components/show";
 import useVoiceAudioStore from "./voiceAudioStore";
 import { computeTotals, enrichTurns, formatClock } from "./transcriptUtils";
 import { DEFAULT_ROLE_LABELS } from "./constants";
+import FunctionCallContent from "./FunctionCallContent";
 
 // Highlight query matches in a string — returns React nodes.
 const highlightMatches = (text, query) => {
@@ -294,6 +295,7 @@ const TurnRow = React.forwardRef(
     ref,
   ) => {
     const color = colors[turn.role] || colors.unknown;
+    const isFunctionCall = turn.role === "tool" && turn.toolCalls?.length > 0;
 
     return (
       <Box
@@ -313,13 +315,17 @@ const TurnRow = React.forwardRef(
             ? "rgba(123, 86, 219, 0.08)"
             : isFocused
               ? "action.hover"
-              : "transparent",
+              : isFunctionCall
+                ? "background.neutral"
+                : "transparent",
           transition: "background-color 80ms",
           "&:hover": {
             bgcolor: isPlaying ? "rgba(123, 86, 219, 0.12)" : "action.hover",
           },
           "&:hover .turn-actions": { opacity: 1 },
+          "&:focus-within .turn-actions": { opacity: 1 },
           "&::before": {
+            display: isFunctionCall ? "none" : "block",
             content: '""',
             position: "absolute",
             left: 0,
@@ -416,6 +422,7 @@ const TurnRow = React.forwardRef(
           >
             <Tooltip title="Copy turn" arrow>
               <IconButton
+                aria-label={isFunctionCall ? "Copy function call" : "Copy turn"}
                 size="small"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -455,7 +462,12 @@ const TurnRow = React.forwardRef(
             wordBreak: "break-word",
           }}
         >
-          {query ? (
+          {isFunctionCall ? (
+            <FunctionCallContent
+              calls={turn.toolCalls}
+              renderText={(text) => highlightMatches(text, query)}
+            />
+          ) : query ? (
             <Typography
               sx={{ fontSize: 12.5, lineHeight: 1.45, whiteSpace: "pre-wrap" }}
             >

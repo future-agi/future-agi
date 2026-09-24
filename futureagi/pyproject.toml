@@ -41,10 +41,10 @@ dependencies = [
     "pyjwt",
     "stripe",
     "daytona==0.207.0",
-    # daytona 0.207.0 transitively needs httpx-ws (which uses
-    # anyio.AsyncContextManagerMixin, absent from the pinned anyio) and
-    # urllib3>=2.1 (PoolKey.key_ca_cert_data). Constrain both so the resolved
-    # image can import the sync Daytona client.
+    "e2b==2.37.1",
+    # Daytona transitively needs httpx-ws (which uses anyio.AsyncContextManagerMixin) and
+    # urllib3>=2.1 (PoolKey.key_ca_cert_data). Keep both constrained so the resolved image can
+    # import the synchronous provider adapter.
     "httpx-ws==0.7.2",
     "urllib3>=2.1,<3",
     # OpenTelemetry core
@@ -127,6 +127,9 @@ dependencies = [
     "google-api-python-client",
     "google-auth",  # imported directly to verify the Marketplace sign-up JWT
     "anthropic[vertex]",
+    # Match the ALK harness runtime; includes the Claude Code executable.
+    "claude-agent-sdk==0.2.139",
+    "aiohttp>=3.13.3",  # Per-run AgentCC multimodal transport for the SDK
     "rouge-score",
     "python-levenshtein",
     "scipy",
@@ -151,7 +154,7 @@ dependencies = [
     "webauthn>=2.2.0",  # WebAuthn server-side (py_webauthn by Duo Labs)
     "django-stubs>=5.2.8",
     "djangorestframework-stubs>=3.16.7",
-    "mcp>=1.26.0",  # Model Context Protocol SDK (Anthropic)
+    "mcp>=1.26.0,<2",  # Claude Agent SDK uses the MCP v1 server API
     "restrictedpython>=8.0",
     # Explicit pins — previously transitive via packages now in extras:
     "scikit-learn",  # TF-IDF in tracer/queries/feed.py (was via hdbscan)
@@ -159,6 +162,7 @@ dependencies = [
     # Deepgram STT (a base feature) segments audio with pydub — pure Python,
     # pairs with the ffmpeg binary kept in the runtime image stage.
     "pydub",
+    "audioop-lts>=0.2.2; python_version >= '3.13'",  # pydub on newer Python
 ]
 
 [project.optional-dependencies]

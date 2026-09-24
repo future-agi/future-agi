@@ -17,6 +17,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Server.Port != 8080 {
 		t.Errorf("default port = %d, want 8080", cfg.Server.Port)
 	}
+	if cfg.Server.ReadHeaderTimeout != 5*time.Second || cfg.Server.ReadTimeout != 60*time.Second {
+		t.Errorf("default read timeouts = (%v, %v), want (5s, 60s)", cfg.Server.ReadHeaderTimeout, cfg.Server.ReadTimeout)
+	}
 	if cfg.Server.DefaultRequestTimeout != 60*time.Second {
 		t.Errorf("default timeout = %v, want 60s", cfg.Server.DefaultRequestTimeout)
 	}
@@ -50,6 +53,11 @@ func TestValidate(t *testing.T) {
 		{
 			name:    "invalid read timeout",
 			modify:  func(c *Config) { c.Server.ReadTimeout = 0 },
+			wantErr: true,
+		},
+		{
+			name:    "invalid read header timeout",
+			modify:  func(c *Config) { c.Server.ReadHeaderTimeout = 0 },
 			wantErr: true,
 		},
 		{
@@ -383,6 +391,9 @@ func TestLoadFromEnvAuthFailsClosedWhenKeyPresent(t *testing.T) {
 	// the global providers, so the backend would authenticate then 403 its own route.
 	if seeded.KeyType != "internal" {
 		t.Fatalf("seeded key KeyType = %q, want \"internal\"", seeded.KeyType)
+	}
+	if seeded.Metadata["access_groups"] != "internal" {
+		t.Fatalf("seeded key access group = %q, want internal", seeded.Metadata["access_groups"])
 	}
 }
 

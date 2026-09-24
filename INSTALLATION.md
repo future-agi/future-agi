@@ -54,6 +54,10 @@ Useful flags:
 | `--skip-user-creation` | Skip the first-user prompt. Run the `create_user` command later. |
 | `--no-up`              | Bootstrap `.env` only; don't start the stack.                    |
 
+`bin/install` exits `1` when the stack came up but your first account could not
+be created, so an unattended run fails loudly instead of pointing you at a login
+you cannot use. Skipping user creation still exits `0`.
+
 When the backend logs `Application startup complete`, open:
 
 - **Frontend**: <http://localhost:3000>

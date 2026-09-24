@@ -100,8 +100,13 @@ from .views.agent_version import (
     RestoreAgentVersionView,
 )
 from .views.alk_simulate_ingestion import ALKSimulateIngestionViewSet
+from .views.harness_environment import HarnessEnvironmentViewSet
 from .views.harness_job import HarnessJobViewSet
-from .views.hosted_harness import HostedHarnessAttemptViewSet
+from .views.hosted_harness import (
+    HostedHarnessAttemptViewSet,
+    HostedHarnessIngressProxyView,
+)
+from .views.hosted_harness_conversation import HostedHarnessConversationViewSet
 from .views.livekit_api import (
     CallConfigView,
     CallExecutionUpdateView,
@@ -113,6 +118,12 @@ from .views.livekit_api import (
     ValidateLiveKitCredentialsView,
 )
 from .views.persona import PersonaDuplicateView, PersonaViewSet
+from .views.run_results_v3 import (
+    CallExecutionV3DetailView,
+    RunAnalyticsV3View,
+    RunCallsV3View,
+    RunExportV3View,
+)
 from .views.scenarios import EditScenarioPromptsView
 
 app_name = "simulate"
@@ -131,13 +142,53 @@ router.register(
 )
 router.register(r"harness-jobs", HarnessJobViewSet, basename="harness-job")
 router.register(
+    r"harness-environments",
+    HarnessEnvironmentViewSet,
+    basename="harness-environment",
+)
+router.register(
     r"harness/attempts",
     HostedHarnessAttemptViewSet,
     basename="hosted-harness-attempt",
 )
+router.register(
+    r"harness/conversations",
+    HostedHarnessConversationViewSet,
+    basename="hosted-harness-conversation",
+)
 
 urlpatterns = [
     path("api/", include(router.urls)),
+    path(
+        "v3/test-executions/<uuid:test_execution_id>/calls/",
+        RunCallsV3View.as_view(),
+        name="v3-test-execution-calls",
+    ),
+    path(
+        "v3/call-executions/<uuid:call_execution_id>/",
+        CallExecutionV3DetailView.as_view(),
+        name="v3-call-execution-detail",
+    ),
+    path(
+        "v3/test-executions/<uuid:test_execution_id>/analytics/",
+        RunAnalyticsV3View.as_view(),
+        name="v3-test-execution-analytics",
+    ),
+    path(
+        "v3/test-executions/<uuid:test_execution_id>/export/",
+        RunExportV3View.as_view(),
+        name="v3-test-execution-export",
+    ),
+    path(
+        "api/harness/ingress/<str:token>/",
+        HostedHarnessIngressProxyView.as_view(),
+        name="hosted-harness-ingress-proxy",
+    ),
+    path(
+        "api/harness/ingress/<str:token>/<path:target_path>",
+        HostedHarnessIngressProxyView.as_view(),
+        name="hosted-harness-ingress-proxy-path",
+    ),
     # Persona duplicate endpoint with custom URL pattern
     path(
         "api/personas/duplicate/<uuid:persona_id>/",
