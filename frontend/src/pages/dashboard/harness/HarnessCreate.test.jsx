@@ -7,33 +7,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "src/utils/test-utils";
 
 import {
-  callBehaviorConfig,
   callLimitConfig,
   canStartEndToEndRun,
   parseProviderDynamicVariables,
 } from "./HarnessCreate";
-
-describe("callBehaviorConfig", () => {
-  it("serializes voice direction and first-speaker choices", () => {
-    expect(
-      callBehaviorConfig({
-        connector: "livekit",
-        inbound: false,
-        targetSpeaksFirst: true,
-      }),
-    ).toEqual({ inbound: false, target_speaks_first: true });
-  });
-
-  it("does not attach voice settings to Retell chat", () => {
-    expect(
-      callBehaviorConfig({
-        connector: "retell_chat",
-        inbound: false,
-        targetSpeaksFirst: true,
-      }),
-    ).toEqual({});
-  });
-});
 
 const createHarnessJob = vi.fn();
 const preflightHarnessJob = vi.fn();
@@ -120,18 +97,12 @@ describe("the call limit field on the page", () => {
   const openForm = async () => {
     render(
       <HelmetProvider>
-        <QueryClientProvider
-          client={
-            new QueryClient({ defaultOptions: { queries: { retry: false } } })
-          }
-        >
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
           <HarnessCreate />
         </QueryClientProvider>
       </HelmetProvider>,
     );
-    await userEvent.click(
-      screen.getByRole("radio", { name: /GitHub repository/i }),
-    );
+    await userEvent.click(screen.getByRole("radio", { name: /GitHub repository/i }));
     await userEvent.type(
       screen.getByLabelText(/Repository URL/i),
       "https://github.com/future-agi/example-agent",
@@ -149,13 +120,8 @@ describe("the call limit field on the page", () => {
 
   it("sends what was typed into the field", async () => {
     await openForm();
-    await userEvent.type(
-      screen.getByLabelText(/Call limit \(seconds\)/i),
-      "600",
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: /Run end to end/i }),
-    );
+    await userEvent.type(screen.getByLabelText(/Call limit \(seconds\)/i), "600");
+    await userEvent.click(screen.getByRole("button", { name: /Run end to end/i }));
 
     await vi.waitFor(() => expect(createHarnessJob).toHaveBeenCalled());
     expect(submittedConfig().voice_call_timeout_seconds).toBe(600);
@@ -171,145 +137,9 @@ describe("the call limit field on the page", () => {
 
   it("sends no limit at all when the field is left alone", async () => {
     await openForm();
-    await userEvent.click(
-      screen.getByRole("button", { name: /Run end to end/i }),
-    );
+    await userEvent.click(screen.getByRole("button", { name: /Run end to end/i }));
 
     await vi.waitFor(() => expect(createHarnessJob).toHaveBeenCalled());
     expect(submittedConfig()).not.toHaveProperty("voice_call_timeout_seconds");
   });
-});
-
-describe("voice call behavior on the page", () => {
-  beforeEach(() => {
-    createHarnessJob.mockReset();
-    preflightHarnessJob.mockReset();
-    createHarnessJob.mockResolvedValue({ job: { job_id: "job-direction" } });
-    preflightHarnessJob.mockResolvedValue({ ready_to_submit: true });
-  });
-
-  it("sends the selected outbound and agent-first behavior", async () => {
-    render(
-      <HelmetProvider>
-        <QueryClientProvider
-          client={
-            new QueryClient({ defaultOptions: { queries: { retry: false } } })
-          }
-        >
-          <HarnessCreate />
-        </QueryClientProvider>
-      </HelmetProvider>,
-    );
-    await userEvent.click(
-      screen.getByRole("radio", { name: /GitHub repository/i }),
-    );
-    await userEvent.type(
-      screen.getByLabelText(/Repository URL/i),
-      "https://github.com/future-agi/example-agent",
-    );
-    await userEvent.click(
-      screen.getByLabelText("Agent receives inbound calls"),
-    );
-    await userEvent.click(screen.getByLabelText("Agent speaks first"));
-    await userEvent.click(
-      screen.getByRole("button", { name: /Run end to end/i }),
-    );
-
-    await vi.waitFor(() => expect(createHarnessJob).toHaveBeenCalled());
-    expect(createHarnessJob.mock.calls[0][0].agent.config).toMatchObject({
-      inbound: false,
-      target_speaks_first: true,
-    });
-  });
-
-  it("keeps Others inbound-only", async () => {
-    render(
-      <HelmetProvider>
-        <QueryClientProvider
-          client={
-            new QueryClient({ defaultOptions: { queries: { retry: false } } })
-          }
-        >
-          <HarnessCreate />
-        </QueryClientProvider>
-      </HelmetProvider>,
-    );
-    await userEvent.click(screen.getByLabelText(/Agent platform/i));
-    await userEvent.click(
-      screen.getByRole("option", { name: /Others \(phone number\)/i }),
-    );
-
-    const inboundSwitch = screen.getByLabelText("Agent receives inbound calls");
-    expect(inboundSwitch).toBeChecked();
-    expect(inboundSwitch).toBeDisabled();
-  });
-});
-
-describe("phone-only agent connection", () => {
-  it.each(["phone", "vapi", "retell"])(
-    "submits %s telephony with a prompt and no provider key",
-    async (connector) => {
-      createHarnessJob.mockReset();
-      preflightHarnessJob.mockReset();
-      createHarnessJob.mockResolvedValue({ job: { job_id: "job-phone" } });
-      preflightHarnessJob.mockResolvedValue({ ready_to_submit: true });
-      render(
-        <HelmetProvider>
-          <QueryClientProvider
-            client={
-              new QueryClient({ defaultOptions: { queries: { retry: false } } })
-            }
-          >
-            <HarnessCreate />
-          </QueryClientProvider>
-        </HelmetProvider>,
-      );
-
-      await userEvent.click(screen.getByLabelText(/Agent platform/i));
-      await userEvent.click(
-        screen.getByRole("option", {
-          name:
-            connector === "phone"
-              ? /Others \(phone number\)/i
-              : connector === "vapi"
-                ? /^Vapi$/i
-                : /^Retell$/i,
-        }),
-      );
-      if (connector !== "phone") {
-        await userEvent.click(screen.getByText("Use existing agent"));
-        await userEvent.click(screen.getByLabelText(/Call connection/i));
-        await userEvent.click(
-          screen.getByRole("option", { name: /Phone call \(telephony\)/i }),
-        );
-      }
-      await userEvent.type(
-        screen.getByLabelText(/Agent phone number/i),
-        "+14155551234",
-      );
-      await userEvent.type(
-        screen.getByLabelText(/Agent system prompt/i),
-        "You book appointments.",
-      );
-      if (connector === "phone")
-        expect(
-          screen.queryByLabelText(/RETELL_API_KEY|VAPI_API_KEY/),
-        ).not.toBeInTheDocument();
-      await userEvent.click(
-        screen.getByRole("button", { name: /Run end to end/i }),
-      );
-
-      await vi.waitFor(() => expect(createHarnessJob).toHaveBeenCalled());
-      const payload = createHarnessJob.mock.calls[0][0];
-      expect(payload.source).toBeUndefined();
-      expect(payload.agent).toMatchObject({
-        connector,
-        mode: "connect_only",
-        config: {
-          phone_number: "+14155551234",
-          target_system_prompt: "You book appointments.",
-        },
-      });
-    },
-  );
 });

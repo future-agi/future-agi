@@ -37,6 +37,7 @@ from simulate.models import (
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     activate_attempt_capability,
+    finish_deferred_delete,
     record_cleanup,
     register_attempt,
     request_cancellation,
@@ -759,6 +760,17 @@ class HostedSourceAcquirer:
                     detail = completed.stderr or completed.stdout or "git failed"
                     if token:
                         detail = detail.replace(token, "[REDACTED]")
+                    lowered = detail.lower()
+                    if (
+                        "repository not found" in lowered
+                        or "could not read username" in lowered
+                    ):
+                        raise HostedHarnessError(
+                            "github_repository_not_found",
+                            f"repository {source.get('repository')} was not found, or it is "
+                            "private and the GitHub App is not installed on it",
+                            status_code=422,
+                        )
                     raise HostedHarnessError(
                         "github_clone_failed",
                         detail.strip()[:500],
@@ -859,6 +871,20 @@ def resolve_platform_simulator_secrets() -> dict[str, str]:
     return resolved
 
 
+def platform_dialer_status() -> dict[str, Any]:
+    """Whether the platform can place an outbound PSTN call, and what is absent if not.
+
+    A phone target is reached by dialling it over the platform's own LiveKit SIP trunk, so
+    every input here is platform configuration the customer cannot supply or observe. Resolved
+    through the same telephony map the launch sends to the guest, so readiness cannot claim a
+    dialer the run will not find, nor deny one it will.
+    """
+    from simulate.services.phone_telephony import platform_phone_telephony
+
+    missing = [name for name, value in platform_phone_telephony().items() if not value]
+    return {"available": not missing, "missing": missing}
+
+
 def attach_platform_simulator_secret_refs(
     payload: dict[str, Any], simulator_secrets: dict[str, str]
 ) -> dict[str, Any]:
@@ -926,7 +952,8 @@ def _mark_stage(job: HostedHarnessJob, stage: str) -> None:
     if job.current_stage == stage or job.current_stage not in _PRE_RUNTIME_STAGES:
         return
     job.current_stage = stage
-    job.save(update_fields=["current_stage", "updated_at"])
+    job.content_updated_at = timezone.now()
+    job.save(update_fields=["current_stage", "content_updated_at", "updated_at"])
 
 
 def _hostname_from_url(value: Any) -> str | None:
@@ -1376,6 +1403,19 @@ def _persist_bundle_stage_outputs(
                     summary=f"{len(scenario_data)} pre-authored scenarios",
                     kind="scenarios",
                     data=scenario_data,
+                )
+            )
+    if "sub_goals" not in existing:
+        catalogue = _load_bundle_file(manifest, "sub_goals.json", job)
+        if isinstance(catalogue, dict):
+            goals = catalogue.get("sub_goals") or []
+            outputs.append(
+                HostedHarnessStageOutput(
+                    job=job,
+                    title="Sub-goal catalogue",
+                    summary=f"{len(goals)} sub-goals",
+                    kind="sub_goals",
+                    data=catalogue,
                 )
             )
     if outputs:
@@ -2969,7 +3009,11 @@ class HostedHarnessGateway:
             )
         authored_bundle = _json("/work/authoring/environment-bundle/manifest.json")
         scenarios = _json("/work/authoring/scenarios.json")
+        sub_goals = _json("/work/authoring/sub_goals.json")
         bundle = _json("/work/bundle/manifest.json")
+        # Written when the world is sealed, so it appears later than the authoring
+        # documents above and only once a store has actually been built.
+        build_output = _json("/work/artifacts/build.json")
         # Read on every poll, so a sandbox deleted later still leaves its last known total.
         spend = _json("/work/authoring/cost.json")
         coverage = _json("/work/authoring/coverage.json")
@@ -3033,6 +3077,8 @@ class HostedHarnessGateway:
             environment,
             scenarios,
             bundle if isinstance(bundle, dict) else authored_bundle,
+            sub_goals=sub_goals,
+            build_output=build_output,
             coverage=coverage,
         )
         activities = _activity_events()
@@ -3082,6 +3128,8 @@ class HostedHarnessGateway:
         # scenarios.json.  ``store_authoring_archive`` has already materialized
         # that snapshot, so a later heartbeat must enrich the visible stages
         # instead of deleting stages whose source file is not present here.
+        previous_stage = job.current_stage
+        previous_outputs = job.stage_outputs
         merged = {
             item.get("kind"): item
             for item in (job.stage_outputs or [])
@@ -3092,7 +3140,15 @@ class HostedHarnessGateway:
         job.stage_outputs = sorted(
             merged.values(), key=lambda item: order.get(item.get("kind"), 99)
         )
-        job.save(update_fields=["current_stage", "stage_outputs", "updated_at"])
+        update_fields = ["current_stage", "stage_outputs", "updated_at"]
+        # This runs on every poll tick and re-reads the same files, so the common
+        # case is that nothing moved. Only a real change counts as the
+        # environment being updated; otherwise the list would report a fresh
+        # timestamp every fifteen seconds for a run sitting still.
+        if job.current_stage != previous_stage or job.stage_outputs != previous_outputs:
+            job.content_updated_at = timezone.now()
+            update_fields.append("content_updated_at")
+        job.save(update_fields=update_fields)
 
     @staticmethod
     def _sync_adjustment_progress(job: HostedHarnessJob, sandbox) -> None:
@@ -3258,7 +3314,13 @@ class HostedHarnessGateway:
         return True
 
     def cancel(self, job: HostedHarnessJob, *, reason: str) -> HostedHarnessJob:
-
+        settled = HostedHarnessAttempt.no_workspace_objects.filter(
+            job=job,
+            attempt_number=job.current_attempt_number,
+            cleanup_verified_at__isnull=False,
+        ).exists()
+        if settled:
+            return job
         job = request_cancellation(job, reason)
         attempt = HostedHarnessAttempt.no_workspace_objects.filter(
             job=job, attempt_number=job.current_attempt_number
@@ -3289,7 +3351,13 @@ class HostedHarnessGateway:
             job.current_stage = HostedHarnessJob.State.CANCELED
             job.terminal_at = timezone.now()
             job.save(
-                update_fields=["state", "current_stage", "terminal_at", "updated_at"]
+                update_fields=[
+                    "state",
+                    "current_stage",
+                    "terminal_at",
+                    "updated_at",
+                    *finish_deferred_delete(job),
+                ]
             )
             if job.test_execution_id:
                 TestExecution.no_workspace_objects.filter(
@@ -4267,6 +4335,8 @@ def authoring_stage_outputs(
     environment: Any,
     scenarios: Any,
     bundle: Any = None,
+    sub_goals: Any = None,
+    build_output: Any = None,
     certification: Any = None,
     repair_history: Any = None,
     action_certification: Any = None,
@@ -4311,13 +4381,37 @@ def authoring_stage_outputs(
                 "data": _secret_safe(scenarios),
             }
         )
+    if isinstance(sub_goals, dict):
+        goals = sub_goals.get("sub_goals") or []
+        suite = sub_goals.get("suite_evals") or []
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000004",
+                "kind": "sub_goals",
+                "title": "Sub-goal catalogue",
+                "summary": f"{len(goals)} sub-goals · {len(suite)} suite evals",
+                "data": _secret_safe(sub_goals),
+            }
+        )
+    stores = _seeded_stores(build_output)
+    if stores:
+        tables = sum(len(store["tables"]) for store in stores)
+        rows = sum(store["total_rows"] for store in stores)
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000005",
+                "kind": "stores",
+                "title": "Seeded world state",
+                "summary": f"{tables} tables · {rows} rows",
+                "data": stores,            }
+        )
     if isinstance(coverage, dict):
         placed = coverage.get("placed")
         total = coverage.get("scenarios")
         axes = coverage.get("axes") or {}
         outputs.append(
             {
-                "id": "00000000-0000-0000-0000-000000000005",
+                "id": "00000000-0000-0000-0000-000000000006",
                 "kind": "coverage",
                 "title": "Coverage",
                 "summary": f"{placed} of {total} placed across {len(axes)} axes",
@@ -4338,7 +4432,7 @@ def authoring_stage_outputs(
         )
         outputs.append(
             {
-                "id": "00000000-0000-0000-0000-000000000004",
+                "id": "00000000-0000-0000-0000-000000000006",
                 "kind": "certification",
                 "title": "Environment certification",
                 "summary": f"{status} · {len(repairs or [])} repairs · {len(actions or [])} action probes",
@@ -4354,6 +4448,40 @@ def authoring_stage_outputs(
     return outputs
 
 
+def _seeded_stores(build_output: Any) -> list[dict[str, Any]]:
+    """The tables each built store holds, from the sealed build output.
+
+    ``build.json`` records a baseline per store, and ``row_counts`` is populated
+    for postgres stores only, so a store backed by anything else contributes no
+    tables rather than a row of zeroes. Only identifiers and counts are carried;
+    the digests and baseline references stay in the artifact, since nothing in
+    the UI reads them and they say where the sealed data lives.
+    """
+    records = build_output.get("stores") if isinstance(build_output, dict) else None
+    stores: list[dict[str, Any]] = []
+    for record in records or []:
+        if not isinstance(record, dict):
+            continue
+        counts = record.get("row_counts")
+        tables = [
+            {"name": str(name), "rows": int(rows)}
+            for name, rows in sorted((counts or {}).items())
+            if isinstance(rows, int)
+        ]
+        if not tables:
+            continue
+        stores.append(
+            {
+                "capability": str(record.get("capability") or ""),
+                "engine": str(record.get("engine") or ""),
+                "strategy": str(record.get("strategy") or ""),
+                "tables": tables,
+                "total_rows": sum(table["rows"] for table in tables),
+            }
+        )
+    return stores
+
+
 def authoring_stage_outputs_from_archive(
     body: bytes, *, scenario_limit: int | None = None
 ) -> list[dict[str, Any]]:
@@ -4364,6 +4492,7 @@ def authoring_stage_outputs_from_archive(
         "contract.json",
         "environment.json",
         "scenarios.json",
+        "sub_goals.json",
         "certification.json",
         "repair-history.json",
         "action-certification.json",
@@ -4409,6 +4538,7 @@ def authoring_stage_outputs_from_archive(
         documents.get("contract.json"),
         documents.get("environment.json"),
         scenarios,
+        sub_goals=documents.get("sub_goals.json"),
         certification=documents.get("certification.json"),
         repair_history=documents.get("repair-history.json"),
         action_certification=documents.get("action-certification.json"),
@@ -4554,7 +4684,8 @@ def store_authoring_archive(
     metadata.pop("scenario_extend", None)
     payload["metadata"] = metadata
     job.payload = payload
-    update_fields = ["payload", "updated_at"]
+    job.content_updated_at = timezone.now()
+    update_fields = ["payload", "content_updated_at", "updated_at"]
     if advance_lifecycle:
         job.stage_outputs = authoring_stage_outputs_from_archive(
             body, scenario_limit=job.scenario_count

@@ -8,6 +8,18 @@ from simulate.models import HarnessCredentialFile, HarnessEnvironmentCredentials
 
 
 PLATFORM_FILE_MANAGER = "harness_environment_file"
+# A hosted credential file crosses as an encrypted JSON secret, so its ref is
+# indistinguishable from a value ref except by this key prefix.
+HOSTED_FILE_KEY_PREFIX = "harness-google-adc-"
+
+
+def is_credential_file_ref(ref) -> bool:
+    """Whether this ref addresses an uploaded file rather than a typed value."""
+    if not isinstance(ref, dict):
+        return False
+    if ref.get("manager") == PLATFORM_FILE_MANAGER:
+        return True
+    return str(ref.get("key") or "").startswith(HOSTED_FILE_KEY_PREFIX)
 
 
 def request_scope(request) -> tuple[Any, Any]:

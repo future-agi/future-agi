@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import copy
 import logging
-import os
 import re
 from typing import Any
 
@@ -33,7 +32,25 @@ from tfc.utils.api_errors import build_error_envelope
 
 logger = logging.getLogger(__name__)
 
-_E164_PHONE = re.compile(r"^\+[1-9]\d{1,14}$")
+_SOURCE_ARCHIVE_SUFFIXES = (".zip", ".tar", ".tar.gz", ".tgz", ".rar", ".7z")
+_SOURCE_ARCHIVE_DETAIL = (
+    "upload the expanded project folder; archives are not supported"
+)
+
+
+def _rejected_archive_upload(files) -> Response | None:
+    """Refuse a lone archive: nothing unpacks it, so it would ship as an opaque blob."""
+    if len(files) == 1 and str(files[0].name).lower().endswith(
+        _SOURCE_ARCHIVE_SUFFIXES
+    ):
+        return Response(
+            {"detail": _SOURCE_ARCHIVE_DETAIL},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    return None
+
+
+_E164_PHONE = re.compile(r"^\+[1-9]\d{6,14}$")
 
 
 def _validate_phone_connectivity(payload) -> None:
@@ -88,13 +105,13 @@ def _usage_limit_response(exc: Exception) -> Response | None:
     return GeneralMethods().usage_limit_response(exc.check_result)
 
 
-def _organization(request):
+def request_organization(request):
     return getattr(request, "organization", None) or getattr(
         request.user, "organization", None
     )
 
 
-def _workspace(request):
+def request_workspace(request):
     workspace = getattr(request, "workspace", None)
     if workspace is not None:
         return workspace
@@ -111,7 +128,7 @@ def _workspace(request):
 
     from accounts.models.workspace import Workspace
 
-    organization = _organization(request)
+    organization = request_organization(request)
     workspace = (
         Workspace.no_workspace_objects.select_related("organization")
         .filter(id=workspace_id, organization=organization, is_active=True)
@@ -122,9 +139,9 @@ def _workspace(request):
     return workspace
 
 
-def _scope_jobs(queryset, request):
+def scope_jobs(queryset, request):
     """Apply the exact tenant scope captured by the submitting request."""
-    workspace = _workspace(request)
+    workspace = request_workspace(request)
     if workspace is None:
         return queryset.filter(workspace__isnull=True)
     return queryset.filter(workspace=workspace)
@@ -132,11 +149,11 @@ def _scope_jobs(queryset, request):
 
 def _scoped_job(request, pk):
     """One job, or None, resolved under the caller's organization and workspace."""
-    organization = _organization(request)
+    organization = request_organization(request)
     if organization is None:
         return None
     return (
-        _scope_jobs(
+        scope_jobs(
             HostedHarnessJob.no_workspace_objects.filter(organization=organization),
             request,
         )
@@ -485,7 +502,8 @@ def _connector_credential_readiness(
             set() if remote or complete_provider_families(agent) else set(detected)
         )
     else:
-        families = {connector: CONNECTOR_ALIASES[connector]}
+        # ``get`` -- a phone target has no credential family, so it asks for nothing.
+        families = {connector: CONNECTOR_ALIASES.get(connector, ())}
         required = set() if remote else {connector}
 
     def _status(name, alias):
@@ -553,7 +571,9 @@ def _preflight_source_connectors(request, payload):
     # the repository source scanner with a synthetic source.
     if payload["source"]["kind"] in {"remote", "provider"}:
         return [], [], 0
-    probe = HostedHarnessJob(organization=_organization(request), payload=payload)
+    probe = HostedHarnessJob(
+        organization=request_organization(request), payload=payload
+    )
     archive, _commit = HostedSourceAcquirer().acquire(probe)
     detected, required_files, scanned = detect_source_credentials(archive)
     if payload["agent"]["connector"] != "auto":
@@ -608,7 +628,8 @@ def _preflight_credential_probe(payload) -> list[dict[str, Any]]:
     connector = str(agent.get("connector") or "").strip().lower()
     mode = str(agent.get("mode") or "").strip().lower()
     if connector in {"vapi", "retell", "retell_chat"} and mode in {
-        "connect_only", "provider_import"
+        "connect_only",
+        "provider_import",
     }:
         target_field = "assistant_id" if connector == "vapi" else "agent_id"
         target = probe_provider_target(
@@ -619,6 +640,319 @@ def _preflight_credential_probe(payload) -> list[dict[str, Any]]:
         if target is not None:
             results.append(target)
     return [result.as_dict() for result in results]
+
+
+_SOURCE_FIX_HINTS = {
+    "github_repository_invalid": (
+        "Use the owner/repository form, for example acme/support-agent"
+    ),
+    "github_ref_invalid": "Use a branch, tag or commit SHA for ref",
+    "github_repository_not_found": (
+        "Check the owner/repository spelling; for a private repository, choose "
+        "Private and install the GitHub App on it"
+    ),
+    "github_clone_failed": (
+        "Check the repository exists and, for a private repository, that the "
+        "GitHub App is installed on it"
+    ),
+    "github_installation_token_failed": (
+        "Reinstall the GitHub App on this repository and retry"
+    ),
+    "github_installation_token_missing": (
+        "Reinstall the GitHub App on this repository and retry"
+    ),
+    "github_commit_mismatch": "Use a commit SHA that exists on the selected ref",
+    "archive_artifact_missing": "Upload the project folder again, then retry",
+    "archive_source_not_found": "Upload the project folder again, then retry",
+    "source_archive_too_large": (
+        "Remove dependencies, build output and recordings from the upload"
+    ),
+}
+
+
+def _check(check_id, label, status, detail, *, missing=(), fix=None):
+    return {
+        "id": check_id,
+        "label": label,
+        "status": status,
+        "detail": detail,
+        "missing": list(missing),
+        "fix": fix,
+    }
+
+
+def _probe_check(check_id, label, results, skipped_detail, fix_template):
+    if not results:
+        return _check(check_id, label, "skipped", skipped_detail)
+    failed = [item for item in results if not item.get("ok")]
+    if not failed:
+        detail = "; ".join(str(item.get("message") or "") for item in results)
+        return _check(check_id, label, "passed", detail)
+    aliases = sorted({alias for item in failed for alias in item.get("aliases") or []})
+    return _check(
+        check_id,
+        label,
+        "failed",
+        "; ".join(str(item.get("message") or "") for item in failed),
+        missing=aliases,
+        fix=fix_template.format(aliases=", ".join(aliases)),
+    )
+
+
+def _dialer_check(connector):
+    """Whether the platform can dial a phone target, which only it can supply.
+
+    The customer provides no LiveKit or SIP credential for this lane, so an absent dialer is a
+    deployment fault rather than something they can fix by filling the form in. Naming it here
+    keeps a run that could only ever fail to dial out of the queue.
+    """
+    from simulate.services.hosted_harness_gateway import platform_dialer_status
+
+    if connector != "phone":
+        return _check(
+            "platform_dialer",
+            "Outbound dialer",
+            "skipped",
+            "only a phone target is dialled by the platform",
+        )
+    status = platform_dialer_status()
+    if status["available"]:
+        return _check(
+            "platform_dialer",
+            "Outbound dialer",
+            "passed",
+            "the platform outbound dialer is configured",
+        )
+    return _check(
+        "platform_dialer",
+        "Outbound dialer",
+        "failed",
+        "the platform outbound dialer is not configured on this deployment",
+        missing=status["missing"],
+        fix=(
+            "Contact your Future AGI administrator: phone targets need the "
+            "platform SIP trunk and simulator LiveKit credentials configured"
+        ),
+    )
+
+
+def _preflight_checks(
+    source_kind,
+    source_error,
+    scanned_files,
+    missing,
+    required_files,
+    probe,
+    connector="",
+):
+    checks = []
+    if source_kind in {"remote", "provider"}:
+        checks.append(
+            _check(
+                "source",
+                "Source reachable",
+                "skipped",
+                f"{source_kind} targets have no source tree to read",
+            )
+        )
+    elif source_error is not None:
+        checks.append(
+            _check(
+                "source",
+                "Source reachable",
+                "failed",
+                source_error.message,
+                fix=_SOURCE_FIX_HINTS.get(source_error.code, source_error.message),
+            )
+        )
+    else:
+        checks.append(
+            _check(
+                "source",
+                "Source reachable",
+                "passed",
+                f"{scanned_files} files scanned",
+            )
+        )
+    file_aliases = set(required_files)
+    files_missing = [alias for alias in missing if alias in file_aliases]
+    creds_missing = [alias for alias in missing if alias not in file_aliases]
+    if source_kind == "remote":
+        checks.append(
+            _check(
+                "credentials_present",
+                "Target credentials",
+                "skipped",
+                "remote targets own their credentials",
+            )
+        )
+    elif creds_missing:
+        checks.append(
+            _check(
+                "credentials_present",
+                "Target credentials",
+                "failed",
+                f"{len(creds_missing)} required credential(s) not provided",
+                missing=creds_missing,
+                fix="Add " + ", ".join(creds_missing) + " under target credentials",
+            )
+        )
+    else:
+        checks.append(
+            _check(
+                "credentials_present",
+                "Target credentials",
+                "passed",
+                "every required credential is referenced",
+            )
+        )
+    if not required_files:
+        checks.append(
+            _check(
+                "credential_files",
+                "Credential files",
+                "skipped",
+                "the source does not require a credential file",
+            )
+        )
+    elif files_missing:
+        checks.append(
+            _check(
+                "credential_files",
+                "Credential files",
+                "failed",
+                "the source requires a credential file that has not been uploaded",
+                missing=files_missing,
+                fix="Upload the JSON credential file for " + ", ".join(files_missing),
+            )
+        )
+    else:
+        checks.append(
+            _check(
+                "credential_files",
+                "Credential files",
+                "passed",
+                "required credential files are uploaded",
+            )
+        )
+    target_probes = []
+    key_probes = []
+    for item in probe:
+        if str(item.get("provider") or "").endswith("_target"):
+            target_probes.append(item)
+        else:
+            key_probes.append(item)
+    checks.append(
+        _probe_check(
+            "credentials_valid",
+            "Credentials accepted by provider",
+            key_probes,
+            "no credential values were submitted to verify",
+            "Replace {aliases} with a key the provider accepts",
+        )
+    )
+    checks.append(
+        _probe_check(
+            "provider_target",
+            "Provider agent reachable",
+            target_probes,
+            "no hosted provider agent to look up",
+            "Check the agent ID belongs to the account behind {aliases}",
+        )
+    )
+    checks.append(_dialer_check(connector))
+    return checks
+
+
+def _sandbox_preflight_body(payload, report):
+    """The declared preflight shape, rebuilt from what the sandbox server reports.
+
+    Both providers answer the same endpoint, so they owe the same body. The
+    sandbox already discovers credentials and inspects packaging; it just
+    reports them in its own envelope, so its findings are mapped onto the
+    declared shape rather than passed through. ``probe`` is empty because the
+    sandbox holds no provider keys to try, and the snapshot names no image:
+    those are Daytona facts, and inventing them here would make the readiness
+    panel state something untrue.
+    """
+    from simulate.services.hosted_harness_gateway import (
+        HOSTED_ENGINE_CATALOG,
+        HOSTED_RUNTIME_CATALOG,
+    )
+
+    credentials = dict(report.get("credentials") or {})
+    requirements = [
+        item for item in credentials.get("requirements") or [] if isinstance(item, dict)
+    ]
+    missing = [
+        str(item.get("environment_name") or item.get("id") or "")
+        for item in requirements
+        if item.get("required") and item.get("status") == "missing"
+    ]
+    required_files = [
+        str(item.get("environment_name") or item.get("id") or "")
+        for item in requirements
+        if item.get("kind") == "file"
+    ]
+    checks = _preflight_checks(
+        payload["source"]["kind"],
+        None,
+        int(credentials.get("scanned_files") or 0),
+        missing,
+        required_files,
+        [],
+        str((payload.get("agent") or {}).get("connector") or ""),
+    )
+    packaging = report.get("packaging") or {}
+    checks.append(_packaging_check(packaging))
+    # The sandbox decides readiness from packaging as well as credentials, so
+    # its verdict leads and the checks explain it. Deriving the state from the
+    # checks alone could report "connected" for a source the sandbox has
+    # already refused to run.
+    ready = bool(report.get("ready_to_submit"))
+    credentials["probe"] = []
+    return {
+        "ready_to_submit": ready,
+        "state": "connected" if ready else "failed",
+        "checks": checks,
+        "credentials": credentials,
+        "parallelism_enabled": False,
+        "effective_parallelism": payload["runtime"]["parallelism"],
+        "resource_profile": None,
+        "snapshot": {
+            "name": None,
+            "digest": None,
+            "engines": HOSTED_ENGINE_CATALOG,
+            "runtimes": HOSTED_RUNTIME_CATALOG,
+        },
+    }
+
+
+def _packaging_check(packaging):
+    """Whether the sandbox can build the source, which only it inspects."""
+    if not packaging:
+        return _check(
+            "packaging",
+            "Source is buildable",
+            "skipped",
+            "the sandbox reported no packaging analysis",
+        )
+    if packaging.get("ready") and packaging.get("agent_runtime_packaged", True):
+        selected = str(packaging.get("selected_path") or "").strip()
+        return _check(
+            "packaging",
+            "Source is buildable",
+            "passed",
+            f"building from {selected}" if selected else "a build was found",
+        )
+    notes = [str(note) for note in packaging.get("notes") or [] if str(note).strip()]
+    return _check(
+        "packaging",
+        "Source is buildable",
+        "failed",
+        notes[0] if notes else "no Dockerfile or compose file packages the agent",
+        fix="Add a Dockerfile that runs the agent, or a compose file that starts it",
+    )
 
 
 _ORDINAL_WORDS = {
@@ -711,7 +1045,7 @@ class HostedHarnessProvider:
         )
         from simulate.temporal.client import start_hosted_harness_gateway_workflow
 
-        organization = _organization(request)
+        organization = request_organization(request)
         if organization is None:
             return Response(
                 {"detail": "Organization not found"},
@@ -751,7 +1085,7 @@ class HostedHarnessProvider:
                 organization,
                 payload,
                 idempotency_key=idempotency_key,
-                workspace=_workspace(request),
+                workspace=request_workspace(request),
             )
             retry_cfg = job.payload["retry"]
             start_hosted_harness_gateway_workflow(
@@ -771,8 +1105,8 @@ class HostedHarnessProvider:
         return Response(serialize_job(job), status=status.HTTP_202_ACCEPTED)
 
     def list(self, request) -> Response:
-        organization = _organization(request)
-        jobs = _scope_jobs(
+        organization = request_organization(request)
+        jobs = scope_jobs(
             HostedHarnessJob.no_workspace_objects.filter(organization=organization),
             request,
         ).order_by("-created_at")[:100]
@@ -800,10 +1134,12 @@ class HostedHarnessProvider:
         from simulate.services.hosted_harness import clamp_parallelism
 
         runtime = payload["runtime"]
+        source_error = None
         try:
             source_analysis = _preflight_source_connectors(request, payload)
         except HostedHarnessError as exc:
-            return Response(exc.as_dict(), status=exc.status_code)
+            source_error = exc
+            source_analysis = ([], [], 0)
         # Keep two-item patched return values compatible with tests and custom
         # providers written before credential-file discovery was added.
         if len(source_analysis) == 2:
@@ -816,9 +1152,16 @@ class HostedHarnessProvider:
         )
         probe = _preflight_credential_probe(payload)
         credentials["report"]["probe"] = probe
-        # Every submitted key must be accepted: a wrong model key beside a valid transport
-        # key still ends in a run that cannot speak.
-        probe_failed = any(not item["ok"] for item in probe)
+        checks = _preflight_checks(
+            payload["source"]["kind"],
+            source_error,
+            scanned,
+            credentials["missing"],
+            required_files,
+            probe,
+            str(payload["agent"].get("connector") or ""),
+        )
+        failed = any(check["status"] == "failed" for check in checks)
         runtime_name, runtime_digest = sandbox_runtime_reference()
         # Continuous advisory surface (C4 §4 pin ii / §5). ``parallelism_enabled``
         # reflects the same flag-AND-digest state the register_attempt guard
@@ -855,27 +1198,35 @@ class HostedHarnessProvider:
         admitted = min(admitted, capacity.parallelism)
         parallel_digest = parallel_capacity.snapshot_digest or runtime_digest
         _, denied_at_2 = clamp_parallelism(2, parallel_digest)
-        return Response(
-            {
-                "ready_to_submit": not credentials["missing"] and not probe_failed,
-                "credentials": credentials["report"],
-                "parallelism_enabled": not denied_at_2
-                and parallel_capacity.parallelism > 1,
-                "effective_parallelism": admitted,
-                "resource_profile": {
-                    "name": capacity.name,
-                    "cpu_units": capacity.cpu_units,
-                    "memory_mb": capacity.memory_mb,
-                    "disk_gb": capacity.disk_gb,
-                },
-                "snapshot": {
-                    "name": capacity.snapshot_name or runtime_name or None,
-                    "digest": digest,
-                    "engines": HOSTED_ENGINE_CATALOG,
-                    "runtimes": HOSTED_RUNTIME_CATALOG,
-                },
-            }
-        )
+        body = {
+            "ready_to_submit": not failed,
+            "state": "failed" if failed else "connected",
+            "checks": checks,
+            "credentials": credentials["report"],
+            "parallelism_enabled": not denied_at_2
+            and parallel_capacity.parallelism > 1,
+            "effective_parallelism": admitted,
+            "resource_profile": {
+                "name": capacity.name,
+                "cpu_units": capacity.cpu_units,
+                "memory_mb": capacity.memory_mb,
+                "disk_gb": capacity.disk_gb,
+            },
+            "snapshot": {
+                "name": capacity.snapshot_name or runtime_name or None,
+                "digest": digest or None,
+                "engines": HOSTED_ENGINE_CATALOG,
+                "runtimes": HOSTED_RUNTIME_CATALOG,
+            },
+        }
+        # A source that cannot be read keeps its error status: callers that key on
+        # the HTTP status still see the message, and the checks ride along for
+        # callers that render them.
+        if source_error is not None:
+            return Response(
+                {**source_error.as_dict(), **body}, status=source_error.status_code
+            )
+        return Response(body)
 
     def retrieve(self, request, pk) -> Response:
         job = self._job(request, pk)
@@ -1124,6 +1475,7 @@ class HostedHarnessProvider:
             job.cancel_reason = None
             job.terminal_at = None
             job.failure = None
+            job.content_updated_at = timezone.now()
             job.save(
                 update_fields=[
                     "payload",
@@ -1137,6 +1489,7 @@ class HostedHarnessProvider:
                     "cancel_reason",
                     "terminal_at",
                     "failure",
+                    "content_updated_at",
                     "updated_at",
                 ]
             )
@@ -1543,8 +1896,8 @@ class HostedHarnessProvider:
 
         from simulate.services.hosted_harness import HostedHarnessError
 
-        organization = _organization(request)
-        workspace = _workspace(request)
+        organization = request_organization(request)
+        workspace = request_workspace(request)
         if organization is None:
             return Response(
                 {"detail": "Organization not found"},
@@ -1653,7 +2006,7 @@ class HostedHarnessProvider:
         from simulate.services.hosted_harness import HostedHarnessError
         from simulate.services.hosted_harness_gateway import store_source_archive
 
-        organization = _organization(request)
+        organization = request_organization(request)
         if organization is None:
             return Response(
                 {"detail": "Organization not found"},
@@ -1666,6 +2019,9 @@ class HostedHarnessProvider:
                 {"detail": "one relative path is required per file"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        rejected = _rejected_archive_upload(files)
+        if rejected is not None:
+            return rejected
         if len(files) > 5_000:
             return Response(
                 {"detail": "source may contain at most 5000 files"},
@@ -1715,8 +2071,8 @@ class HostedHarnessProvider:
         }
 
     def _job(self, request, pk):
-        organization = _organization(request)
-        return _scope_jobs(
+        organization = request_organization(request)
+        return scope_jobs(
             HostedHarnessJob.no_workspace_objects.filter(
                 id=pk, organization=organization
             ),
@@ -1875,7 +2231,7 @@ class SandboxHarnessProvider:
 
         try:
             payload = self._flatten_source(request.validated_data)
-            return Response(self._client().preflight(payload))
+            report = self._client().preflight(payload)
         except _SandboxMappingError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except HarnessSandboxRejected as exc:
@@ -1884,6 +2240,7 @@ class SandboxHarnessProvider:
             return Response(
                 {"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE
             )
+        return Response(_sandbox_preflight_body(request.validated_data, report))
 
     def retrieve(self, request, pk) -> Response:
         from simulate.services.harness_sandbox import (
@@ -1960,6 +2317,9 @@ class SandboxHarnessProvider:
                 {"detail": "one relative path is required per file"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        rejected = _rejected_archive_upload(files)
+        if rejected is not None:
+            return rejected
         try:
             result = self._client().upload_source(
                 files, paths, str(request.data.get("name") or "uploaded-agent")

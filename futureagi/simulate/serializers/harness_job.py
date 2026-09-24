@@ -18,7 +18,6 @@ from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 # in-sandbox), so the match is any port on localhost / 127.0.0.1 / [::1].
 
 _LOOPBACK_ENDPOINT_RE = re.compile(r"(?:localhost|127\.0\.0\.1|\[::1\]):\d+")
-_E164_PHONE = re.compile(r"^\+[1-9]\d{1,14}$")
 
 RUNNER_RESERVED_ENVIRONMENT = {
     "DOCKER_HOST",
@@ -90,6 +89,19 @@ class HarnessSourceSerializer(serializers.Serializer):
         return attrs
 
 
+# Connectors whose transport carries audio. ``auto`` is unresolved at admission
+# time, so it is permitted here and settled during authoring.
+VOICE_CONNECTORS = ("livekit", "vapi", "retell", "phone")
+
+# Connectors that reach an already-running agent, so the run carries no source tree.
+PROVIDER_TARGET_CONNECTORS = {"vapi", "retell", "retell_chat", "phone"}
+
+# Mirrors the SDK's own E.164 rule so a malformed number is refused at admission.
+_E164 = re.compile(r"^\+[1-9]\d{6,14}$")
+
+TARGET_SYSTEM_PROMPT_MAX_CHARS = 65_536
+
+
 class HarnessAgentSerializer(serializers.Serializer):
     connector = serializers.ChoiceField(
         choices=("livekit", "vapi", "retell", "retell_chat", "phone", "auto")
@@ -98,6 +110,18 @@ class HarnessAgentSerializer(serializers.Serializer):
         choices=("connect_only", "environment_backed", "provider_import"),
         required=False,
         allow_null=True,
+    )
+    # Who places the call. Declared on the agent rather than left to an
+    # ``config`` scalar so an unsupported value is refused at admission instead
+    # of riding to the guest and being ignored there.
+    call_direction = serializers.ChoiceField(
+        choices=("inbound", "outbound"),
+        required=False,
+        allow_null=True,
+        help_text=(
+            "inbound: the simulated caller dials the agent. outbound: the agent "
+            "dials the simulated caller. Voice connectors only."
+        ),
     )
     config = serializers.DictField(default=dict)
     secret_refs = serializers.DictField(
@@ -156,6 +180,21 @@ class HarnessAgentSerializer(serializers.Serializer):
         mode = attrs.get("mode")
         config = attrs.get("config") or {}
         provider_connector = "retell" if connector == "retell_chat" else connector
+        # A chat target has no call to place in either direction, so a direction
+        # here means the caller has the wrong connector rather than a preference
+        # worth silently dropping.
+        if attrs.get("call_direction") and connector not in (
+            *VOICE_CONNECTORS,
+            "auto",
+        ):
+            raise serializers.ValidationError(
+                {
+                    "call_direction": (
+                        "call_direction applies to voice connectors "
+                        f"({', '.join(VOICE_CONNECTORS)}); {connector} is chat"
+                    )
+                }
+            )
         if "phone_number" in config and connector != "phone":
             if connector not in {"vapi", "retell"} or mode != "connect_only":
                 raise serializers.ValidationError(
@@ -163,7 +202,7 @@ class HarnessAgentSerializer(serializers.Serializer):
                         "config": "phone_number is supported only for connect-only Vapi or Retell voice agents"
                     }
                 )
-            if not _E164_PHONE.fullmatch(str(config.get("phone_number") or "").strip()):
+            if not _E164.fullmatch(str(config.get("phone_number") or "").strip()):
                 raise serializers.ValidationError(
                     {"config": "phone_number must be in E.164 format"}
                 )
@@ -203,7 +242,7 @@ class HarnessAgentSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     {"config": "phone dialer and LiveKit settings are platform-owned"}
                 )
-            if not _E164_PHONE.fullmatch(str(config.get("phone_number") or "").strip()):
+            if not _E164.fullmatch(str(config.get("phone_number") or "").strip()):
                 raise serializers.ValidationError(
                     {
                         "config": "phone_number must be in E.164 format, e.g. +14155551234"
@@ -588,6 +627,11 @@ def missing_provider_credentials(agent, detected_connectors=()):
     """
     present = present_provider_aliases(agent)
     connector = agent["connector"]
+    # The platform dials a phone target with its own dialler, so the run needs no
+    # target-provider credential at all. Kept out of ``CONNECTOR_ALIASES`` so an empty
+    # family cannot satisfy ``complete_provider_families`` for every other connector.
+    if connector == "phone":
+        return []
     if connector != "auto":
         return [alias for alias in CONNECTOR_ALIASES[connector] if alias not in present]
     detected = [name for name in detected_connectors if name in CONNECTOR_ALIASES]
@@ -617,6 +661,34 @@ class HarnessPreflightSerializer(HarnessJobCreateSerializer):
         write_only=True,
         help_text="Target-provider values to verify live; used for this check only.",
     )
+
+
+class HarnessPreflightCheckSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    label = serializers.CharField()
+    status = serializers.ChoiceField(choices=("passed", "failed", "skipped"))
+    detail = serializers.CharField(allow_blank=True)
+    missing = serializers.ListField(child=serializers.CharField())
+    fix = serializers.CharField(allow_null=True)
+
+
+class HarnessPreflightCredentialsSerializer(serializers.Serializer):
+    scanned_files = serializers.IntegerField()
+    detected_connectors = serializers.ListField(child=serializers.CharField())
+    requirements = serializers.ListField(child=serializers.JSONField())
+    credential_choices = serializers.ListField(child=serializers.JSONField())
+    probe = serializers.ListField(child=serializers.JSONField())
+
+
+class HarnessPreflightResponseSerializer(serializers.Serializer):
+    ready_to_submit = serializers.BooleanField()
+    state = serializers.ChoiceField(choices=("connected", "failed"))
+    checks = HarnessPreflightCheckSerializer(many=True)
+    credentials = HarnessPreflightCredentialsSerializer()
+    parallelism_enabled = serializers.BooleanField()
+    effective_parallelism = serializers.IntegerField()
+    resource_profile = serializers.JSONField(allow_null=True)
+    snapshot = serializers.JSONField()
 
 
 class HarnessJobAdjustmentSerializer(serializers.Serializer):

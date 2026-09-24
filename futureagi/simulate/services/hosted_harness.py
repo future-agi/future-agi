@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import structlog
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
@@ -33,6 +34,8 @@ from simulate.services.alk_simulate_ingestion import (
 _CAPABILITY_SCHEMA_VERSION = "futureagi.harness-capabilities.v1"
 _JOB_SCHEMA_VERSION = "futureagi.harness-job.v1"
 _TOKEN_TAIL_SECONDS = 120 + 300
+
+logger = structlog.get_logger(__name__)
 
 
 def _active_attempt_budget_seconds(job: HostedHarnessJob) -> int:
@@ -205,6 +208,7 @@ def create_hosted_job(
             artifact_level=normalized["artifacts"]["level"],
             max_artifact_bytes=normalized["artifacts"]["max_artifact_bytes"],
             deadline_at=now + timedelta(seconds=duration),
+            content_updated_at=now,
         )
         normalized["job_id"] = str(job.id)
         job.payload = normalized
@@ -409,6 +413,66 @@ def activate_attempt_capability(capability: AttemptCapability) -> AttemptCapabil
         },
         admitted_parallelism=capability.admitted_parallelism,
     )
+
+
+_TERMINAL_STATES = frozenset(
+    {
+        HostedHarnessJob.State.COMPLETED,
+        HostedHarnessJob.State.FAILED,
+        HostedHarnessJob.State.CANCELED,
+    }
+)
+
+
+DELETE_CANCEL_REASON = "environment_deleted"
+
+
+def delete_environment(job: HostedHarnessJob) -> None:
+    """Soft-delete an environment, cancelling its run first if one is live.
+
+    A live run keeps its row until sandbox cleanup has finished: the cleanup
+    path reads the job through the soft-delete manager, so hiding the row
+    first would strand the sandbox until its TTL. The row is hidden by
+    ``finish_deferred_delete`` when the run reaches a terminal state. The
+    authoring archive and the organization's secrets are left in place:
+    neither is owned by this row, and other environments may reference the
+    same credentials.
+    """
+    from simulate.temporal.client import cancel_hosted_harness_gateway_workflow
+
+    if job.state in _TERMINAL_STATES:
+        _soft_delete(job)
+        return
+    locked = request_cancellation(job, DELETE_CANCEL_REASON)
+    if locked.state in _TERMINAL_STATES:
+        _soft_delete(locked)
+        return
+    try:
+        cancel_hosted_harness_gateway_workflow(str(job.id))
+    except Exception:
+        # Fail open: a scheduler that cannot be reached must not strand the
+        # user with an environment they cannot remove. The workflow is bounded
+        # by the job deadline and its sandbox by its own TTL.
+        logger.exception("hosted_harness_delete_cancel_failed", job_id=str(job.id))
+        _soft_delete(locked)
+
+
+def _soft_delete(job: HostedHarnessJob) -> None:
+    job.deleted = True
+    job.deleted_at = timezone.now()
+    job.save(update_fields=["deleted", "deleted_at", "updated_at"])
+
+
+def finish_deferred_delete(job: HostedHarnessJob) -> list[str]:
+    """Hide a job its owner deleted while it ran, now that the run is over.
+
+    Returns the fields set, for the caller's ``update_fields``.
+    """
+    if job.cancel_reason != DELETE_CANCEL_REASON or job.deleted:
+        return []
+    job.deleted = True
+    job.deleted_at = timezone.now()
+    return ["deleted", "deleted_at"]
 
 
 def request_cancellation(job: HostedHarnessJob, reason: str) -> HostedHarnessJob:
@@ -619,7 +683,8 @@ def provision_scenarios(
                 status_code=409,
             )
         locked.run_test = run_test
-        locked.save(update_fields=["run_test", "updated_at"])
+        locked.content_updated_at = timezone.now()
+        locked.save(update_fields=["run_test", "content_updated_at", "updated_at"])
         if existing_registrations:
             if set(existing_by_key) != set(requested_keys):
                 raise HostedHarnessError(
@@ -710,12 +775,14 @@ def _record_target_agent_facts(
     if named and agent_definition.agent_name == "alk-sdk-agent":
         agent_definition.agent_name = named[:255]
         changed.append("agent_name")
-    agent_config = (job.payload.get("agent") or {}).get("config") or {}
+    agent = job.payload.get("agent") or {}
+    agent_config = agent.get("config") or {}
     explicit_inbound = agent_config.get("inbound")
-    direction = str(authored.get("call_direction") or "").strip().lower()
+    declared = str(agent.get("call_direction") or "").strip().lower()
+    direction = declared or str(authored.get("call_direction") or "").strip().lower()
     if isinstance(explicit_inbound, bool) or direction in {"inbound", "outbound"}:
-        # The user's RL Environment selection is authoritative. The authored
-        # contract remains the fallback for older jobs that predate the field.
+        # The user's RL Environment selection is authoritative: the explicit
+        # boolean first, then the submitted direction, then the authored guess.
         inbound = (
             explicit_inbound
             if isinstance(explicit_inbound, bool)
@@ -887,7 +954,15 @@ def begin_scenarios(
             )
         locked.test_execution = test_execution
         locked.state = HostedHarnessJob.State.RUNNING
-        locked.save(update_fields=["test_execution", "state", "updated_at"])
+        locked.content_updated_at = timezone.now()
+        locked.save(
+            update_fields=[
+                "test_execution",
+                "state",
+                "content_updated_at",
+                "updated_at",
+            ]
+        )
         for registration, call in zip(registrations, mapped_calls, strict=True):
             registration.call_execution = call
             registration.save(update_fields=["call_execution", "updated_at"])
@@ -965,13 +1040,16 @@ def record_cleanup(
         # status.failure and status.stage are authoritative in the read DTO.
         job.current_stage = attempt.terminal_stage or job.current_stage
         job.failure = attempt.terminal_failure
+        job.content_updated_at = now
         job.save(
             update_fields=[
                 "state",
                 "terminal_at",
                 "current_stage",
                 "failure",
+                "content_updated_at",
                 "updated_at",
+                *finish_deferred_delete(job),
             ]
         )
         if job.test_execution_id:
@@ -1047,9 +1125,15 @@ def update_execution_counts(job: HostedHarnessJob) -> None:
             completed_calls=calls_completed,
             failed_calls=calls_failed,
         )
-        HostedHarnessJob.no_workspace_objects.filter(id=locked_job.id).update(
+        # A queryset update bypasses ``auto_now``, so the content timestamp is set
+        # explicitly here: scenarios finishing is exactly the kind of progress the
+        # environments list means by "last updated".
+        HostedHarnessJob.no_workspace_objects.filter(id=locked_job.id).exclude(
+            completed_count=scenario_completed, failed_count=scenario_failed
+        ).update(
             completed_count=scenario_completed,
             failed_count=scenario_failed,
+            content_updated_at=timezone.now(),
         )
 
 

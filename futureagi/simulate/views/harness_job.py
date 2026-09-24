@@ -18,6 +18,7 @@ from simulate.serializers.harness_job import (
     HarnessJobExtendSerializer,
     HarnessScenarioAmendSerializer,
     HarnessJobReadSerializer,
+    HarnessPreflightResponseSerializer,
     HarnessPreflightSerializer,
     HarnessSecretFileUploadResponseSerializer,
     HarnessSecretValuesResponseSerializer,
@@ -29,6 +30,7 @@ from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
 from simulate.services.harness_credentials import (
+    HOSTED_FILE_KEY_PREFIX,
     credential_file_ref,
     request_scope,
     store_credential_file,
@@ -178,7 +180,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
 
             from simulate.models import HostedHarnessSecret
 
-            key = f"harness-google-adc-{uuid.uuid4().hex}"
+            key = f"{HOSTED_FILE_KEY_PREFIX}{uuid.uuid4().hex}"
             HostedHarnessSecret.objects.create(
                 organization=organization,
                 name=key,
@@ -253,6 +255,7 @@ class HarnessJobViewSet(viewsets.ViewSet):
 
     @validated_request(
         request_serializer=HarnessPreflightSerializer,
+        responses={200: HarnessPreflightResponseSerializer},
         reject_unknown_fields=True,
     )
     @action(detail=False, methods=["post"])

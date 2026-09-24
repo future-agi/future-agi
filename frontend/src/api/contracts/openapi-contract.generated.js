@@ -18419,6 +18419,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
+          created_at: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          status: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          dataset_id: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
           ordering: {
             required: false,
             schema: {
@@ -18579,6 +18597,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
+          created_at: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          status: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          dataset_id: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
           search: {
             required: false,
             schema: {
@@ -21269,6 +21305,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
+          optimize_type: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          status: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
           search: {
             required: false,
             schema: {
@@ -22770,6 +22818,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
+          name: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
           search: {
             required: false,
             schema: {
@@ -22983,6 +23037,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
+          template_name: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          template_version: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          created_at: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
           search: {
             required: false,
             schema: {
@@ -23048,6 +23120,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
+          template_name: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          template_version: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          created_at: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
           search: {
             required: false,
             schema: {
@@ -23655,6 +23745,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
+          name: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          version: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          created_at: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
           search: {
             required: false,
             schema: {
@@ -23866,6 +23974,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: false,
         requestBody: null,
         queryParameters: {
+          name: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          version: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          created_at: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
           search: {
             required: false,
             schema: {
@@ -27786,9 +27912,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessPreflightResponse",
-          },
-          201: {
-            $ref: "#/definitions/HarnessPreflight",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -45691,7 +45814,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         livekit_max_concurrency: {
           title: "Livekit max concurrency",
           type: "integer",
-          maximum: 5,
+          maximum: 25,
           minimum: 1,
           "x-nullable": true,
         },
@@ -45845,7 +45968,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         livekit_max_concurrency: {
           title: "Livekit max concurrency",
           type: "integer",
-          maximum: 5,
+          maximum: 25,
           minimum: 1,
           "x-nullable": true,
         },
@@ -46836,7 +46959,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         livekit_max_concurrency: {
           title: "Livekit max concurrency",
           type: "integer",
-          maximum: 5,
+          maximum: 25,
           minimum: 1,
         },
         commit_message: {
@@ -61140,7 +61263,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "state",
         "checks",
         "credentials",
+        "parallelism_enabled",
         "effective_parallelism",
+        "resource_profile",
         "snapshot",
       ],
       type: "object",
@@ -61163,9 +61288,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         credentials: {
           $ref: "#/definitions/HarnessPreflightCredentials",
         },
+        parallelism_enabled: {
+          title: "Parallelism enabled",
+          type: "boolean",
+        },
         effective_parallelism: {
           title: "Effective parallelism",
           type: "integer",
+        },
+        resource_profile: {
+          title: "Resource profile",
+          type: "object",
+          "x-nullable": true,
         },
         snapshot: {
           title: "Snapshot",
@@ -70134,6 +70268,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     RunAnalyticsV3Response: {
       required: [
+        "dashboard",
         "execution",
         "summary",
         "scenario_risk",
@@ -70145,10 +70280,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "provider_breakdown",
         "modality_breakdown",
         "trends",
-        "dashboard",
       ],
       type: "object",
       properties: {
+        dashboard: {
+          $ref: "#/definitions/RunDashboardV3",
+        },
         execution: {
           $ref: "#/definitions/AnalyticsExecution",
         },
@@ -70202,9 +70339,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/Trend",
           },
-        },
-        dashboard: {
-          $ref: "#/definitions/RunDashboardV3",
         },
       },
     },
@@ -88413,6 +88547,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "personas_count",
         "evaluations_count",
         "run",
+        "agent",
       ],
       type: "object",
       properties: {
@@ -88508,6 +88643,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         run: {
           $ref: "#/definitions/HarnessEnvironmentRunLink",
+        },
+        agent: {
+          $ref: "#/definitions/HarnessEnvironmentAgent",
         },
       },
     },
@@ -104769,6 +104907,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
         },
       },
+    },
+    HarnessEnvironmentAgent: {
+      required: ["id", "name", "provider", "versions_count", "active_version"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        provider: {
+          title: "Provider",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        versions_count: {
+          title: "Versions count",
+          type: "integer",
+        },
+        active_version: {
+          title: "Active version",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
     },
     HarnessEnvironmentRunLink: {
       required: ["run_test_id", "test_execution_id", "simulation_url"],

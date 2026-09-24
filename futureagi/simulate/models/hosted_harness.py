@@ -39,6 +39,10 @@ class HostedHarnessJob(BaseModel):
         blank=True,
     )
     run_id = models.UUIDField(unique=True)
+    # The name a person gave this environment, which outranks every value
+    # derived from the submitted request. Empty means nobody has renamed it, so
+    # the derived name still applies.
+    name = models.CharField(max_length=255, blank=True, default="")
     idempotency_key = models.CharField(max_length=255)
     request_digest = models.CharField(max_length=71)
     schema_version = models.CharField(max_length=64)
@@ -59,6 +63,7 @@ class HostedHarnessJob(BaseModel):
     cancel_requested_at = models.DateTimeField(null=True, blank=True)
     cancel_reason = models.CharField(max_length=32, null=True, blank=True)
     terminal_at = models.DateTimeField(null=True, blank=True)
+    content_updated_at = models.DateTimeField(null=True, blank=True)
     failure = models.JSONField(null=True, blank=True)
     # Secret-safe presentation snapshots produced as each ALK authoring stage
     # completes.  Keep these separate from the submitted payload: the payload is
