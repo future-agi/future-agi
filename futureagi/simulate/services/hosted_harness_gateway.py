@@ -150,8 +150,7 @@ def _authoring_ttl_seconds(provider_name: str | None = None) -> int:
 def _execution_ttl_seconds(
     runtime: Mapping[str, Any], provider_name: str | None = None
 ) -> int:
-    # One sandbox authors and then runs, so its lifetime is the granted window plus launch
-    # overhead. Reserving the authoring budget on top asked for a box no provider would sell.
+    # One sandbox authors and then runs, so its lifetime is the granted window plus launch overhead.
     runtime_seconds = int(runtime["max_duration_seconds"])
     if provider_name == "e2b":
         max_ttl_seconds = int(getattr(settings, "ALK_E2B_MAX_TTL_SECONDS", 0))
@@ -165,12 +164,7 @@ def _execution_ttl_seconds(
 
 
 def _claude_code_use_vertex(gateway_ready: bool) -> str:
-    """Whether the Claude CLI talks to Vertex directly or through our gateway.
-
-    With the gateway in play this must be an explicit "0". An empty value is not the same thing:
-    the CLI reads the variable as set and routes to Vertex, which then rejects the gateway's
-    `vertex_ai/`-prefixed model id as a model that does not exist.
-    """
+    """Must be an explicit "0" behind the gateway: the CLI treats an empty value as set."""
     if gateway_ready:
         return "0"
     return str(os.environ.get("CLAUDE_CODE_USE_VERTEX") or "1")
@@ -290,10 +284,7 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "HARNESS_BACKGROUND_NOISE_VOLUME",
         # Off has to travel: decided here, enforced inside the sandbox.
         "ALK_VOICEMAIL_SCENARIOS",
-        # How many scenario writers the orchestrator may run at once. Authoring is the expensive
-        # half of a run, so this is the lever that decides whether a large suite fits the hour.
         "ALK_HARNESS_WORKERS_AT_ONCE",
-        # Validation lanes; unset, the guest checks the suite one scenario at a time.
         "ALK_VALIDATION_INSTANCES",
     ):
         value = str(os.environ.get(name) or "").strip()
@@ -1694,9 +1685,11 @@ class HostedHarnessGateway:
                 )
             # Pack the authoring directory whole rather than an allow-list of file names: the
             # guest decides what a saved world consists of (world.sqlite today, world.py +
-            # state.json + manifest.json on newer guests), and an allow-list here silently drops
-            # the marker the next reuse needs. Only the sealed bundle is left out: it is large and
-            # bundle_author_v2 regenerates it from this directory on every launch.
+            # state.json + manifest.json on newer guests), and an allow-list here silently
+            # drops the marker the next reuse needs. Only the sealed bundle is left out: it is
+            # large and bundle_author_v2 regenerates it from this directory on every launch.
+            # cost.json is this run's bill, not part of a saved world: left in, every reuse
+            # reads the first run's authoring cost back as its own.
             packed = sandbox.process.exec(
                 "cd /work/authoring && tar -czf /tmp/authoring.tar.gz "
                 "--exclude=./environment-bundle --exclude=__pycache__ "
@@ -1987,7 +1980,6 @@ class HostedHarnessGateway:
                     "ALK_HARNESS",
                     "ALK_SIMULATOR_FUNDING",
                     "ALK_HARNESS_MODEL",
-                    # Authoring is where the writers fan out, so the ceiling belongs here.
                     "ALK_HARNESS_WORKERS_AT_ONCE",
                     "ALK_CLAUDE_GATEWAY_URL",
                     "ALK_CLAUDE_GATEWAY_API_KEY",
@@ -2972,7 +2964,6 @@ class HostedHarnessGateway:
         # Read on every poll, so a sandbox deleted later still leaves its last known total.
         spend = _json("/work/authoring/cost.json")
         coverage = _json("/work/authoring/coverage.json")
-        # Validation writes these in order, and their presence is what says it has begun.
         invariants = _json("/work/authoring/source-data-invariants.json")
         certified = _json("/work/authoring/generic-harness/certification.json")
         _read_harness_usage(attempt, sandbox)
@@ -3039,8 +3030,6 @@ class HostedHarnessGateway:
         if activities:
             outputs.append({"kind": "activity", "events": activities})
         if isinstance(scenarios, list) and scenarios:
-            # Index the suite as rows as it is written, not when a call registers one. The tab
-            # exists to read the suite before anything is called, and a filter needs SQL.
             from simulate.services.harness_scenarios import index_scenarios
 
             try:
@@ -3059,7 +3048,6 @@ class HostedHarnessGateway:
         if isinstance(environment, dict):
             stage = "generating_scenarios"
         if isinstance(scenarios, list):
-            # scenarios.json exists from the first save, so it cannot mean checking has begun.
             written = len(scenarios) >= (job.scenario_count or len(scenarios))
             world_ir = _json("/work/authoring/generic-harness/world-ir.json")
             if certified is not None:
@@ -4420,11 +4408,7 @@ def authoring_stage_outputs_from_archive(
 
 
 def push_scenarios_into_live_sandbox(job: HostedHarnessJob, suite: list[dict]) -> bool:
-    """Land an edited suite on the running guest as well as in the sealed archive.
-
-    A live attempt re-packs `/work/authoring` on a later poll, so an edit that only reached the
-    archive would be overwritten by the sandbox's own copy.
-    """
+    """Land an edited suite on the running guest, which would otherwise re-pack its own copy."""
     attempt = (
         HostedHarnessAttempt.no_workspace_objects.filter(
             job=job, attempt_number=job.current_attempt_number
@@ -4475,11 +4459,7 @@ def push_scenarios_into_live_sandbox(job: HostedHarnessJob, suite: list[dict]) -
 
 
 def rewrite_authoring_scenarios(job: HostedHarnessJob, suite: list[dict]) -> str | None:
-    """Write an edited suite back into the sealed archive a rerun replays.
-
-    Scenarios dropped from the suite lose their folder; the rest keep everything the guest wrote
-    and take only the edited fields, so an edit cannot quietly discard a proof.
-    """
+    """Write an edited suite back into the sealed archive a rerun replays."""
     metadata = (job.payload or {}).get("metadata") or {}
     object_key = str(metadata.get("authoring_object_key") or "").strip()
     if not object_key:

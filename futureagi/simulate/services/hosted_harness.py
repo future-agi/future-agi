@@ -611,9 +611,7 @@ def provision_scenarios(
         }
         if locked.run_test_id:
             if set(existing_by_key) == set(requested_keys):
-                # Another request may have completed provisioning while this one was
-                # building the same suite. Registration is an idempotent callback, so
-                # return the sealed result instead of inserting duplicate job/key rows.
+                # A concurrent request already provisioned this suite; return it.
                 return _provision_response(locked, existing_registrations)
             raise HostedHarnessError(
                 "scenario_registration_conflict",

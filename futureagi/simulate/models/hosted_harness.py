@@ -9,9 +9,7 @@ from accounts.models import Organization
 from accounts.models.workspace import Workspace
 from tfc.utils.base_model import BaseModel
 
-# The ceiling on one hosted run, enforced by the DB constraint below and reused wherever a request
-# is validated so the surfaces cannot drift apart. A migration carries its own literal because
-# migrations are frozen.
+# Ceiling on one hosted run; enforced by the DB constraint below and reused by request validation.
 MAX_SCENARIOS_PER_JOB = 5000
 
 
@@ -190,9 +188,7 @@ class HostedHarnessScenario(BaseModel):
         "simulate.Scenarios",
         on_delete=models.CASCADE,
         related_name="hosted_registrations",
-        # An authored scenario is a row from the moment it is written. The platform Scenarios
-        # record is minted when a call is prepared, which is far later, and the suite has to be
-        # readable long before anything is called.
+        # Set only when a call is prepared; authored rows exist before that.
         null=True,
         blank=True,
     )
@@ -214,10 +210,7 @@ class HostedHarnessScenario(BaseModel):
         blank=True,
         related_name="hosted_registration",
     )
-    # The authored scenario, stored so it can be queried. It reached the front end only as a JSON
-    # stage artefact, which is why every filter, every dropdown's options and every keyword count
-    # was computed in the browser over whatever had been downloaded. None of that can move to SQL
-    # until the fields are columns.
+    # The authored scenario, stored as columns so the suite can be queried.
     number = models.PositiveIntegerField(null=True, blank=True)
     name = models.CharField(max_length=255, blank=True, default="")
     instruction = models.TextField(blank=True, default="")
@@ -228,9 +221,6 @@ class HostedHarnessScenario(BaseModel):
     persona = models.JSONField(null=True, blank=True)
     coverage = models.JSONField(null=True, blank=True)
     sub_goals = models.JSONField(null=True, blank=True)
-    # How somebody finds a scenario in a large suite. A column of its own because they describe the
-    # situation, not the caller: reading them out of the persona document tied them to a field that
-    # a suite without callers does not have.
     keywords = models.JSONField(null=True, blank=True)
     background_noise = models.CharField(max_length=64, blank=True, default="")
     max_turns = models.PositiveIntegerField(null=True, blank=True)
@@ -243,7 +233,6 @@ class HostedHarnessScenario(BaseModel):
             )
         ]
         indexes = [
-            # The suite is read in its own order, and filtered on the two JSON documents.
             models.Index(fields=["job", "number"], name="idx_harness_scenario_order"),
             GinIndex(fields=["persona"], name="idx_harness_scenario_persona"),
             GinIndex(fields=["coverage"], name="idx_harness_scenario_coverage"),

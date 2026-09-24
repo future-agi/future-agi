@@ -46,10 +46,7 @@ SUITE = [
 
 
 def _client(user, job):
-    """A caller scoped the way the UI is: a job belongs to a workspace, and the scope is the pair.
-
-    Sending no workspace is a different caller, not a lenient one, and it is answered 404.
-    """
+    """A caller scoped to the job's workspace, as the UI is."""
     client = APIClient()
     client.force_authenticate(user=user)
     client.credentials(HTTP_X_WORKSPACE_ID=str(job.workspace_id))
@@ -140,7 +137,6 @@ def test_the_suite_is_read_a_page_at_a_time(user, workspace):
     )
     assert response.status_code == 200, response.content
     body = response.json()
-    # The platform's own page shape, so the table reads this the way it reads every other list.
     assert set(body) >= {
         "count",
         "next",
@@ -153,11 +149,7 @@ def test_the_suite_is_read_a_page_at_a_time(user, workspace):
 
 
 class TestScenarioNumbersSurviveADeletion:
-    """A number is how a person names a scenario, from the table and from chat alike.
-
-    It has to mean the same scenario before and after a deletion, or "12-30" quietly points at a
-    different set the moment anything is removed.
-    """
+    """A scenario keeps its number across deletions."""
 
     def _numbers(self, job):
         from simulate.models import HostedHarnessScenario
@@ -175,8 +167,6 @@ class TestScenarioNumbersSurviveADeletion:
         index_scenarios(job, suite)
         assert self._numbers(job) == {"one": 1, "two": 2, "three": 3, "four": 4}
 
-        # "two" is dropped. Everything below it keeps the number it already answered to, so the
-        # suite reads 1, 3, 4 with a gap rather than silently resequencing.
         index_scenarios(job, [one for one in suite if one["name"] != "two"], prune=True)
         assert self._numbers(job) == {"one": 1, "three": 3, "four": 4}
 
@@ -196,7 +186,6 @@ class TestScenarioNumbersSurviveADeletion:
         job = _job(user, workspace, suite)
         index_scenarios(job, suite)
         index_scenarios(job, [suite[0], suite[2], {"name": "four", "tests": "t"}], prune=True)
-        # "two" is gone, so 2 is spent. The new one is 4, never a reused 2.
         assert self._numbers(job) == {"one": 1, "three": 3, "four": 4}
 
     def test_a_number_means_the_row_the_table_shows(self, user, workspace):
@@ -211,15 +200,11 @@ class TestScenarioNumbersSurviveADeletion:
 
         numbering = self._numbers(job)
         by_number = {number: key for key, number in numbering.items()}
-        # Position would make "4" the third surviving row, which the table calls 4 only by luck.
-        # Resolving against the stored numbering keeps the two agreeing.
         assert scenarios_meant("4", left, by_number) == ["four"]
         assert scenarios_meant("3-4", left, by_number) == ["three", "four"]
 
 
 def test_a_short_suite_on_a_poll_never_deletes_a_row(user, workspace):
-    """Indexing runs on every poll. A suite that arrives short there means the artefact is still
-    being written, so it must not be read as "these were removed"."""
     from simulate.models import HostedHarnessScenario
     from simulate.services.harness_scenarios import index_scenarios
 

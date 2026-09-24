@@ -739,19 +739,14 @@ class HarnessJobEventSerializer(serializers.Serializer):
 
 class HarnessScenarioChangeSerializer(serializers.Serializer):
     op = serializers.ChoiceField(choices=["drop", "set_field", "set_persona"])
-    # A name, a scenario key, a number, a range ("12-30") or a comma list; `scenarios` carries a
-    # selection sent from the table.
+    # A name, a scenario key, a number, a range ("12-30") or a comma list.
     scenario = serializers.CharField(required=False, allow_blank=True)
     scenarios = serializers.ListField(
         child=serializers.CharField(), required=False, allow_empty=False
     )
     field = serializers.CharField(required=False, allow_blank=True)
-    # A field's new value is whatever that field holds: `tests` is a string, `max_turns` a number,
-    # `background_noise` a place name or false. A plain JSONField is published as `type: object`,
-    # which made the contract reject every real edit before it left the browser.
+    # Any JSON type: a plain JSONField is published as `type: object`.
     value = JsonValueField(required=False, allow_null=True)
-    # Persona values are strings except `keywords` and `languages`, which are lists. A bare
-    # DictField publishes its values as strings, so those two were rejected the same way.
     persona = serializers.DictField(
         required=False, child=JsonValueField(allow_null=True)
     )
