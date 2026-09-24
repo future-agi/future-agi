@@ -19,6 +19,7 @@ import SectionCard from "../../../components/SectionCard";
 import EmptyState from "../../../components/EmptyState";
 import { BUILD_TONES } from "../../../buildEnvironment/buildTones";
 import StatusChip from "../StatusChip";
+import AddEvaluationDrawer from "../../evals/AddEvaluationDrawer";
 import AddEvalsDrawer from "../../evals/AddEvalsDrawer";
 import RunTraceTable from "./trace/RunTraceTable";
 import CallDrawer from "./CallDrawer";
@@ -47,7 +48,7 @@ function headerStatus(identity, stats) {
  * is a placeholder until the per-call table lands (Phase 2); Analytics is a
  * deferred "coming soon"; Trials and the Debug-failures drawer are Phase 4.
  */
-export default function RunDetail({ env, envState, testId, executionId }) {
+export default function RunDetail({ env, envState, backed = false, testId, executionId }) {
   const navigate = useNavigate();
   const [tab, setTab] = useState("tasks");
   const [addingEvals, setAddingEvals] = useState(false);
@@ -261,14 +262,31 @@ export default function RunDetail({ env, envState, testId, executionId }) {
         </Box>
       </Box>
 
-      <AddEvalsDrawer
-        open={addingEvals}
-        onClose={() => setAddingEvals(false)}
-        env={env}
-        envState={envState}
-        existingIds={new Set((envState?.evals || []).map((e) => (typeof e === "string" ? e : e?.id)))}
-        onAdd={() => setAddingEvals(false)}
-      />
+      {/* §6: the same picker the Evaluations tab opens. Adding from here binds
+          the eval to the environment exactly as the tab's add does and then
+          queues this run's finished calls that hold no verdict for it; the
+          drawer shows the counts the 202 returns. Only a backed environment has
+          a §2/§6 backend to call — a client/template env (reachable here via the
+          `?mockRuns=1` QA switch, L6) gets the same store-only picker the
+          Evaluations tab falls back to. */}
+      {backed ? (
+        <AddEvaluationDrawer
+          open={addingEvals}
+          env={env}
+          executionId={executionId}
+          completedCallsCount={stats.completed}
+          onClose={() => setAddingEvals(false)}
+        />
+      ) : (
+        <AddEvalsDrawer
+          open={addingEvals}
+          onClose={() => setAddingEvals(false)}
+          env={env}
+          envState={envState}
+          existingIds={new Set((envState?.evals || []).map((e) => (typeof e === "string" ? e : e?.id)))}
+          onAdd={() => setAddingEvals(false)}
+        />
+      )}
 
       <CallDrawer
         task={openCall}
@@ -309,9 +327,17 @@ RunDetail.propTypes = {
       testExecutionId: PropTypes.string,
     }),
   }).isRequired,
+  // Client store state — only read for a non-backed env (L6), to drive the
+  // fixture-only `AddEvalsDrawer` fallback the same way it always has.
   envState: PropTypes.shape({
     evals: PropTypes.array,
   }),
+  // Whether this environment has a real backend (`source === "harness"`,
+  // computed once by EnvironmentWorkspace and threaded down through the same
+  // Outlet-context route `envState` already takes). Gates which "Add evals"
+  // drawer renders (L6): the real API picker for a backed env, the client-store
+  // picker otherwise.
+  backed: PropTypes.bool,
   testId: PropTypes.string,
   executionId: PropTypes.string,
 };
