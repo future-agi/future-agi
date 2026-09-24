@@ -1,6 +1,7 @@
 package anthropic
 
 import (
+	"bytes"
 	"encoding/json"
 	"reflect"
 	"strings"
@@ -464,6 +465,79 @@ func TestTranslateRequest_ToolChoiceNone(t *testing.T) {
 	}
 	if string(forwarded["tool_choice"]) != `{"type":"none"}` {
 		t.Errorf("forwarded tool_choice = %s, want none", forwarded["tool_choice"])
+	}
+}
+
+func TestTranslateRequest_AllowedToolsRestrictsDeclarations(t *testing.T) {
+	for _, tc := range []struct {
+		mode       string
+		wantChoice string
+	}{
+		{mode: "auto", wantChoice: "auto"},
+		{mode: "required", wantChoice: "any"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			body := []byte(`{"model":"claude-sonnet-4-20250514","messages":[{"role":"user","content":"Hi"}],` +
+				`"tools":[{"type":"function","function":{"name":"tool_a"}},{"type":"function","function":{"name":"tool_b"}}],` +
+				`"tool_choice":{"type":"allowed_tools","allowed_tools":{"mode":"` + tc.mode + `","tools":[{"type":"function","function":{"name":"tool_b"}}]}}}`)
+			var req models.ChatCompletionRequest
+			if err := json.Unmarshal(body, &req); err != nil {
+				t.Fatal(err)
+			}
+			ar, err := translateRequest(&req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(ar.Tools) != 1 || decodeTool(t, ar.Tools[0]).Name != "tool_b" {
+				t.Fatalf("forwarded tools = %s, want only tool_b", ar.Tools)
+			}
+			if ar.ToolChoice == nil || ar.ToolChoice.Type != tc.wantChoice {
+				t.Fatalf("tool_choice = %+v, want %s", ar.ToolChoice, tc.wantChoice)
+			}
+		})
+	}
+}
+
+func TestTranslateRequest_DisablesParallelToolUse(t *testing.T) {
+	body := []byte(`{"model":"claude-sonnet-4-20250514","messages":[{"role":"user","content":"Hi"}],` +
+		`"tools":[{"type":"function","function":{"name":"tool_b"}}],` +
+		`"tool_choice":{"type":"function","function":{"name":"tool_b"}},"parallel_tool_calls":false}`)
+	var req models.ChatCompletionRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Fatal(err)
+	}
+	ar, err := translateRequest(&req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ar.ToolChoice == nil || ar.ToolChoice.Type != "tool" || ar.ToolChoice.Name != "tool_b" || !ar.ToolChoice.DisableParallelToolUse {
+		t.Fatalf("tool_choice = %+v, want tool_b with disable_parallel_tool_use", ar.ToolChoice)
+	}
+	encoded, err := json.Marshal(ar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid(encoded) || !bytes.Contains(encoded, []byte(`"disable_parallel_tool_use":true`)) {
+		t.Fatalf("forwarded request lacks disable_parallel_tool_use: %s", encoded)
+	}
+}
+
+func TestTranslateRequest_PreservesAllowedCallersForAnthropic(t *testing.T) {
+	req := &models.ChatCompletionRequest{
+		Model:    "claude-sonnet-4-20250514",
+		Messages: []models.Message{{Role: "user", Content: json.RawMessage(`"Hi"`)}},
+		Tools: []models.Tool{{
+			Type:           "function",
+			Function:       models.ToolFunction{Name: "tool_a", Parameters: json.RawMessage(`{"type":"object"}`)},
+			AllowedCallers: []string{"code_execution_20260120"},
+		}},
+	}
+	ar, err := translateRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ar.Tools) != 1 || !bytes.Contains(ar.Tools[0], []byte(`"allowed_callers":["code_execution_20260120"]`)) {
+		t.Fatalf("forwarded tools lost allowed_callers: %s", ar.Tools)
 	}
 }
 

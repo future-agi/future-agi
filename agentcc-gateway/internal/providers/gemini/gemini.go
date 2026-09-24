@@ -114,8 +114,34 @@ func (p *Provider) releaseSemaphore() {
 	<-p.semaphore
 }
 
+// Gemini cannot enforce a single call per turn or Anthropic's caller contexts.
+// Reject those restrictions before contacting the upstream provider.
+func validateToolPolicy(req *models.ChatCompletionRequest) error {
+	if req.ParallelToolCalls != nil && !*req.ParallelToolCalls && len(req.Tools) > 0 {
+		return models.ErrBadRequest("unsupported_tool_policy", "gemini cannot enforce parallel_tool_calls=false")
+	}
+	for _, tool := range req.Tools {
+		if tool.AllowedCallers != nil && (len(tool.AllowedCallers) != 1 || tool.AllowedCallers[0] != "direct") {
+			return models.ErrBadRequest("unsupported_tool_policy", "gemini cannot enforce allowed_callers")
+		}
+	}
+	allowed, err := models.ParseAllowedToolsChoice(req.ToolChoice)
+	if err != nil {
+		return models.ErrBadRequest("invalid_tool_choice", err.Error())
+	}
+	if allowed != nil {
+		if _, err := allowed.Filter(req.Tools); err != nil {
+			return models.ErrBadRequest("invalid_tool_choice", err.Error())
+		}
+	}
+	return nil
+}
+
 // ChatCompletion sends a non-streaming request to Gemini.
 func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletionRequest) (*models.ChatCompletionResponse, error) {
+	if err := validateToolPolicy(req); err != nil {
+		return nil, err
+	}
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, models.ErrGatewayTimeout("gemini: concurrency limit reached")
 	}
@@ -185,6 +211,10 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 	go func() {
 		defer close(chunks)
 		defer close(errs)
+		if err := validateToolPolicy(req); err != nil {
+			errs <- err
+			return
+		}
 
 		if err := p.acquireSemaphore(ctx); err != nil {
 			errs <- models.ErrGatewayTimeout("gemini: concurrency limit reached")

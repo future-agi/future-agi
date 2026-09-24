@@ -266,6 +266,38 @@ func TestTranslateRequest_Tools(t *testing.T) {
 	}
 }
 
+func TestTranslateRequest_AllowedToolsRestrictsDeclarations(t *testing.T) {
+	for _, tc := range []struct {
+		mode     string
+		wantMode string
+	}{
+		{mode: "auto", wantMode: "AUTO"},
+		{mode: "required", wantMode: "ANY"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			req := &models.ChatCompletionRequest{
+				Model:    "gemini-1.5-pro",
+				Messages: []models.Message{{Role: "user", Content: mustJSON("Hi")}},
+				Tools: []models.Tool{
+					{Type: "function", Function: models.ToolFunction{Name: "tool_a"}},
+					{Type: "function", Function: models.ToolFunction{Name: "tool_b"}},
+				},
+				ToolChoice: json.RawMessage(`{"type":"allowed_tools","allowed_tools":{"mode":"` + tc.mode + `","tools":[{"type":"function","function":{"name":"tool_b"}}]}}`),
+			}
+			if err := validateToolPolicy(req); err != nil {
+				t.Fatal(err)
+			}
+			gr, _ := translateRequest(req)
+			if len(gr.Tools) != 1 || len(gr.Tools[0].FunctionDeclarations) != 1 || gr.Tools[0].FunctionDeclarations[0].Name != "tool_b" {
+				t.Fatalf("forwarded tools = %+v, want only tool_b", gr.Tools)
+			}
+			if gr.ToolConfig == nil || gr.ToolConfig.FunctionCallingConfig == nil || gr.ToolConfig.FunctionCallingConfig.Mode != tc.wantMode {
+				t.Fatalf("toolConfig = %+v, want %s", gr.ToolConfig, tc.wantMode)
+			}
+		})
+	}
+}
+
 func TestTranslateRequest_NormalizesJSONToolSchemaForGemini(t *testing.T) {
 	params := json.RawMessage(`{
 		"$schema": "https://json-schema.org/draft/2020-12/schema",

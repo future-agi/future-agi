@@ -62,14 +62,16 @@ type imageSource struct {
 }
 
 type anthropicTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name           string          `json:"name"`
+	Description    string          `json:"description,omitempty"`
+	InputSchema    json.RawMessage `json:"input_schema"`
+	AllowedCallers []string        `json:"allowed_callers,omitempty"`
 }
 
 type anthropicToolChoice struct {
-	Type string `json:"type"`
-	Name string `json:"name,omitempty"`
+	Type                   string `json:"type"`
+	Name                   string `json:"name,omitempty"`
+	DisableParallelToolUse bool   `json:"disable_parallel_tool_use,omitempty"`
 }
 
 type anthropicResponse struct {
@@ -170,18 +172,31 @@ func translateRequest(req *models.ChatCompletionRequest) (*anthropicRequest, err
 		ar.System = system
 	}
 
+	allowed, err := models.ParseAllowedToolsChoice(req.ToolChoice)
+	if err != nil {
+		return nil, models.ErrBadRequest("invalid_tool_choice", err.Error())
+	}
+	tools := req.Tools
+	if allowed != nil {
+		tools, err = allowed.Filter(tools)
+		if err != nil {
+			return nil, models.ErrBadRequest("invalid_tool_choice", err.Error())
+		}
+	}
+
 	// Translate tools.  A function tool is rebuilt in Anthropic's shape; a
 	// server tool — web_search_20250305 and its successors, code_execution,
 	// anything Anthropic runs itself — is forwarded byte for byte, because its
 	// fields (max_uses, allowed_domains, user_location, allowed_callers) have
 	// nowhere to live on the canonical struct.  Dropping it, which is what this
 	// did before, left the model with no tool and no error to explain why.
-	for _, t := range req.Tools {
+	for _, t := range tools {
 		if t.Type == "function" {
 			encoded, err := json.Marshal(anthropicTool{
-				Name:        t.Function.Name,
-				Description: t.Function.Description,
-				InputSchema: t.Function.Parameters,
+				Name:           t.Function.Name,
+				Description:    t.Function.Description,
+				InputSchema:    t.Function.Parameters,
+				AllowedCallers: t.AllowedCallers,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("encoding tool %q: %w", t.Function.Name, err)
@@ -194,11 +209,26 @@ func translateRequest(req *models.ChatCompletionRequest) (*anthropicRequest, err
 		}
 	}
 
-	// Translate tool_choice.
-	if len(req.ToolChoice) > 0 {
+	// Restrict the declarations as well as the choice for allowed_tools.
+	if allowed != nil {
+		choiceType := "auto"
+		if allowed.Mode == "required" {
+			choiceType = "any"
+		}
+		ar.ToolChoice = &anthropicToolChoice{Type: choiceType}
+	} else if len(req.ToolChoice) > 0 {
 		tc, err := translateToolChoice(req.ToolChoice)
-		if err == nil && tc != nil {
-			ar.ToolChoice = tc
+		if err != nil {
+			return nil, models.ErrBadRequest("invalid_tool_choice", err.Error())
+		}
+		ar.ToolChoice = tc
+	}
+	if req.ParallelToolCalls != nil && !*req.ParallelToolCalls && len(ar.Tools) > 0 {
+		if ar.ToolChoice == nil {
+			ar.ToolChoice = &anthropicToolChoice{Type: "auto"}
+		}
+		if ar.ToolChoice.Type != "none" {
+			ar.ToolChoice.DisableParallelToolUse = true
 		}
 	}
 

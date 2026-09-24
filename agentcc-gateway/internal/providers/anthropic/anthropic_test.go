@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,6 +33,38 @@ func newTestProvider(t *testing.T, baseURL string) *Provider {
 		t.Fatalf("failed to create provider: %v", err)
 	}
 	return p
+}
+
+func TestAllowedToolsUnknownNameFailsBeforeAnthropicRequest(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	p := newTestProvider(t, server.URL)
+	defer p.Close()
+	req := &models.ChatCompletionRequest{
+		Model:      "claude-sonnet-4-20250514",
+		Messages:   []models.Message{{Role: "user", Content: json.RawMessage(`"Hi"`)}},
+		Tools:      []models.Tool{{Type: "function", Function: models.ToolFunction{Name: "tool_a"}}},
+		ToolChoice: json.RawMessage(`{"type":"allowed_tools","allowed_tools":{"mode":"auto","tools":[{"type":"function","name":"missing"}]}}`),
+	}
+	_, err := p.ChatCompletion(context.Background(), req)
+	if apiErr, ok := err.(*models.APIError); !ok || apiErr.Status != http.StatusBadRequest || !strings.Contains(apiErr.Message, "allowed_tools") {
+		t.Fatalf("non-streaming error = %v, want 400 naming allowed_tools", err)
+	}
+	chunks, errs := p.StreamChatCompletion(context.Background(), req)
+	for range chunks {
+		t.Fatal("unexpected streaming chunk")
+	}
+	streamErr := <-errs
+	if apiErr, ok := streamErr.(*models.APIError); !ok || apiErr.Status != http.StatusBadRequest || !strings.Contains(apiErr.Message, "allowed_tools") {
+		t.Fatalf("streaming error = %v, want 400 naming allowed_tools", streamErr)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("sent %d requests despite invalid policy", calls.Load())
+	}
 }
 
 // ---------------------------------------------------------------------------
