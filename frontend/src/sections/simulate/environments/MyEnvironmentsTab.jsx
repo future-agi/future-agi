@@ -29,10 +29,12 @@ export default function MyEnvironmentsTab() {
   const { setTab } = useEnvironmentsTab();
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
-  const { data, isLoading, isPending } = useMyEnvironments({ page, pageSize });
+  const { data, isLoading, isPending, isError } = useMyEnvironments({ page, pageSize });
   const rows = data?.rows || [];
   const total = data?.total || 0;
   const loading = isLoading || isPending;
+  // A failed list must read as an error, not as "no environments yet".
+  const showError = isError && !loading && total === 0;
 
   const deleteEnvironment = useDeleteEnvironment();
 
@@ -67,7 +69,25 @@ export default function MyEnvironmentsTab() {
         pb: 2,
       }}
     >
-      {!loading && total === 0 ? (
+      {showError ? (
+        <Box
+          sx={{
+            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Stack spacing={0.5} alignItems="center">
+            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+              Couldn&apos;t load your environments.
+            </Typography>
+            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+              Something went wrong. Try again.
+            </Typography>
+          </Stack>
+        </Box>
+      ) : !loading && total === 0 ? (
         <Box
           sx={{
             flex: 1,
