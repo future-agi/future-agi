@@ -60475,6 +60475,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtime: {
           $ref: "#/definitions/HarnessRuntimeRead",
         },
+        parallelism: {
+          $ref: "#/definitions/HarnessParallelism",
+        },
         conversation: {
           $ref: "#/definitions/HarnessConversationRead",
         },
@@ -60617,7 +60620,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "state",
         "checks",
         "credentials",
+        "parallelism_enabled",
         "effective_parallelism",
+        "resource_profile",
         "snapshot",
       ],
       type: "object",
@@ -60640,9 +60645,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
         credentials: {
           $ref: "#/definitions/HarnessPreflightCredentials",
         },
+        parallelism_enabled: {
+          title: "Parallelism enabled",
+          type: "boolean",
+        },
         effective_parallelism: {
           title: "Effective parallelism",
           type: "integer",
+        },
+        resource_profile: {
+          title: "Resource profile",
+          type: "object",
         },
         snapshot: {
           title: "Snapshot",
@@ -88307,6 +88320,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           enum: ["public", "private"],
           default: "public",
         },
+        environment_values: {
+          title: "Environment values",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            maxLength: 65536,
+            minLength: 1,
+          },
+        },
       },
     },
     HarnessConsumption: {
@@ -88421,6 +88443,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "x-nullable": true,
           },
         },
+        runtime: {
+          title: "Runtime",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
         run_test_id: {
           title: "Run test id",
           type: "string",
@@ -88476,6 +88506,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Failed scenarios",
           type: "integer",
         },
+        active_scenarios: {
+          title: "Active scenarios",
+          type: "integer",
+        },
+        queued_scenarios: {
+          title: "Queued scenarios",
+          type: "integer",
+        },
         total_scenarios: {
           title: "Total scenarios",
           type: "integer",
@@ -88489,6 +88527,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Failure",
           type: "object",
           "x-nullable": true,
+        },
+      },
+    },
+    HarnessParallelism: {
+      required: ["requested", "admitted", "effective", "degrade_reasons"],
+      type: "object",
+      properties: {
+        requested: {
+          title: "Requested",
+          type: "integer",
+        },
+        admitted: {
+          title: "Admitted",
+          type: "integer",
+        },
+        effective: {
+          title: "Effective",
+          type: "integer",
+        },
+        degrade_reasons: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },

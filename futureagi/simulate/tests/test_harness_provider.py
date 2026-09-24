@@ -252,6 +252,48 @@ def test_e2b_preflight_rejects_resources_larger_than_template(settings):
         _validate_known_hosted_egress(_v1_payload(), "https://harness.example.test/")
 
 
+def test_e2b_serializer_uses_fixed_template_resources_and_lifetime(settings):
+    settings.HOSTED_SANDBOX_PROVIDER = "e2b"
+    settings.ALK_E2B_TEMPLATE_REFERENCE = "alk-hosted-e2b:build-123"
+    settings.ALK_E2B_TEMPLATE_BUILD_ID = "build-123"
+    settings.ALK_E2B_TEMPLATE_CPU_UNITS = 2
+    settings.ALK_E2B_TEMPLATE_MEMORY_MB = 4096
+    settings.ALK_E2B_TEMPLATE_DISK_GB = 12
+    settings.ALK_E2B_MAX_TTL_SECONDS = 3600
+    settings.ALK_HOSTED_AUTHORING_TIMEOUT = 900
+    settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 600
+    settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 3600
+
+    payload = _v1_payload()
+    payload["runtime"].update(
+        cpu_units=4,
+        memory_mb=8192,
+        max_duration_seconds=3600,
+    )
+    serializer = HarnessPreflightSerializer(data=payload)
+
+    assert serializer.is_valid(), serializer.errors
+    runtime = serializer.validated_data["runtime"]
+    assert runtime["cpu_units"] == 2
+    assert runtime["memory_mb"] == 4096
+    assert runtime["max_duration_seconds"] == 2880
+    _validate_known_hosted_egress(
+        serializer.validated_data, "https://harness.example.test/"
+    )
+
+
+def test_e2b_serializer_rejects_impossible_configured_lifetime(settings):
+    settings.HOSTED_SANDBOX_PROVIDER = "e2b"
+    settings.ALK_E2B_MAX_TTL_SECONDS = 3600
+    settings.ALK_HOSTED_AUTHORING_TIMEOUT = 900
+    settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
+
+    serializer = HarnessPreflightSerializer(data=_v1_payload())
+
+    assert not serializer.is_valid()
+    assert "configured sandbox lifetime exceeds" in str(serializer.errors)
+
+
 def test_daytona_preflight_rejects_known_egress_overflow(settings):
     settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = [
         f"base-{index}.example.com" for index in range(19)

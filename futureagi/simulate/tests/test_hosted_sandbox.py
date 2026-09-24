@@ -108,6 +108,10 @@ def test_daytona_adapter_maps_provider_neutral_launch_spec(settings, monkeypatch
     assert not hasattr(params, "network_allow_list")
     assert provider.runtime_digest == "sha256:digest"
 
+    provider.create(_spec(runtime_name="alk-hosted-certified-large"), timeout=300)
+    params, _ = _DaytonaClient.created
+    assert params.snapshot == "alk-hosted-certified-large"
+
 
 def test_daytona_adapter_ignores_cidrs_for_restricted_empty_policy(
     settings, monkeypatch

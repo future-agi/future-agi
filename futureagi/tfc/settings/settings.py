@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
+import json
 import os
 import re
 from datetime import datetime, timedelta
@@ -1003,6 +1004,31 @@ ALK_E2B_TEMPLATE_CPU_UNITS = int(os.getenv("ALK_E2B_TEMPLATE_CPU_UNITS", "4"))
 ALK_E2B_TEMPLATE_MEMORY_MB = int(os.getenv("ALK_E2B_TEMPLATE_MEMORY_MB", "8192"))
 ALK_E2B_TEMPLATE_DISK_GB = int(os.getenv("ALK_E2B_TEMPLATE_DISK_GB", "10"))
 ALK_E2B_MAX_TTL_SECONDS = int(os.getenv("ALK_E2B_MAX_TTL_SECONDS", "0"))
+
+# Scenario parallelism (W>1) admission belt (C4 §5, decisions D12/D23/D24).
+# W>1 is admitted only when this flag is truthy AND the selected guest runtime
+# digest (Daytona snapshot digest or E2B template build ID) is certified. Both
+# default to the fail-closed state (disabled / empty) so an unset digest never
+# admits W>1. Production keeps the flag OFF until the deployed snapshot carries
+# the world-unique preflight guard and C1 port model; dev/E2E sets it ON. In the
+# dockerfile-mode dev lane (ALK_DAYTONA_DOCKERFILE set) the guard is flag-only —
+# the digest half is skipped because that lane carries no meaningful digest.
+HARNESS_PARALLELISM_ENABLED = os.getenv("HARNESS_PARALLELISM_ENABLED", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+HARNESS_MAX_WORLD_SLOTS = int(os.getenv("HARNESS_MAX_WORLD_SLOTS", "8"))
+# Each profile is an operator-certified size/connector/snapshot combination.
+HARNESS_RESOURCE_PROFILES = json.loads(os.getenv("HARNESS_RESOURCE_PROFILES", "[]"))
+# Comma-separated allowlist of provider runtime identifiers certified for W>1.
+# For Daytona these are snapshot digests; for E2B they are template build IDs.
+# Empty (the default) fails closed for pinned runtimes.
+HARNESS_PARALLEL_SNAPSHOT_DIGESTS = [
+    digest.strip()
+    for digest in os.getenv("HARNESS_PARALLEL_SNAPSHOT_DIGESTS", "").split(",")
+    if digest.strip()
+]
 
 # LiveKit credentials (used for webhook verification and API calls)
 LIVEKIT_URL = os.getenv("LIVEKIT_URL", "")

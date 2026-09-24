@@ -13,6 +13,7 @@ import pytest
 from django.utils import timezone
 
 from simulate.models import HostedHarnessAttempt, HostedHarnessJob
+from simulate.services.harness_capacity import SandboxCapacity
 from simulate.services.harness_provider import serialize_job
 from simulate.services.hosted_harness import (
     HostedHarnessError,
@@ -240,7 +241,7 @@ def test_provider_egress_includes_scoped_claude_gateway():
 
 def test_provider_egress_includes_vapi_and_retell_call_hosts():
     assert _provider_egress_domains({"VAPI_API_KEY": "opaque"}) == {
-        "api.vapi.ai",
+        "*.vapi.ai",
     }
 
 
@@ -468,10 +469,30 @@ def test_vapi_connector_adds_static_and_configured_endpoint_hosts():
     }
 
     assert _connector_egress_domains(payload, {}) == {
-        "api.vapi.ai",
+        "*.vapi.ai",
         "call.example.test",
         "proxy.example.test",
     }
+
+
+@pytest.mark.parametrize("connector", ["vapi", "livekit"])
+def test_vapi_call_control_hosts_survive_resolved_restricted_egress(
+    settings, connector
+):
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
+    payload = {
+        "agent": {"connector": connector, "config": {}},
+        "security": {"allowed_egress_domains": ["api.vapi.ai"]},
+    }
+    domains = _resolved_egress_domains(payload, {"VAPI_API_KEY": "opaque"})
+    assert domains == {"*.vapi.ai"}
+    _validate_resolved_egress_domains(domains)
+    control_host = "aws-us-west-2-production1-phone-call-websocket.vapi.ai"
+    assert any(
+        domain.startswith("*.") and control_host.endswith(domain[1:])
+        for domain in domains
+    )
+    assert "*" not in domains
 
 
 def test_livekit_futureagi_eu_connector_adds_coturn_host():
@@ -1069,6 +1090,43 @@ class _Daytona:
         self.deleted = True
 
 
+def test_authoring_launch_uses_requested_resources(monkeypatch):
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job = SimpleNamespace(id="job-1", payload=payload)
+    client = _Daytona()
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway._mark_stage", lambda *_: None
+    )
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        lambda *_: (b"source", None),
+    )
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway._provider_import_authoring_material",
+        lambda *_: ({}, ""),
+    )
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway._platform_simulator_material",
+        lambda: ({}, None),
+    )
+
+    def capture_launch(spec, **_kwargs):
+        assert (spec.cpu_units, spec.memory_mb, spec.disk_gb) == (2, 4096, 10)
+        assert {"pypi.org", "files.pythonhosted.org"} <= set(spec.allowed_domains)
+        raise RuntimeError("stop after resource admission")
+
+    client.create = capture_launch
+    with pytest.raises(RuntimeError, match="stop after resource admission"):
+        gateway.author(job)
+
+
 class _FailingDaytonaCreate(_Daytona):
     def create(self, params, **kwargs):
         self.params = params
@@ -1316,10 +1374,27 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         lambda: (simulator_values, b'{"project_id":"platform-simulator-project"}'),
     )
 
-    attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    selected_capacity = SandboxCapacity("selected", 6, 12_288, 20, 1)
+    with patch(
+        "simulate.services.harness_capacity.configured_capacity",
+        return_value=selected_capacity,
+    ):
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
 
     assert attempt.state == HostedHarnessAttempt.State.RUNNING
     assert attempt.provider_ref == "sandbox-1"
+    assert (
+        client.params.cpu_units,
+        client.params.memory_mb,
+        client.params.disk_gb,
+    ) == (
+        6,
+        12_288,
+        20,
+    )
+    dispatched = json.loads(client.sandbox.fs.uploads["/work/job.json"])
+    assert dispatched["runtime"]["cpu_units"] == client.params.cpu_units
+    assert dispatched["runtime"]["memory_mb"] == client.params.memory_mb
     assert set(client.sandbox.fs.uploads) >= {
         "/work/source.tar.gz",
         "/work/job.json",
@@ -1355,13 +1430,125 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "aiplatform.googleapis.com",
         "agent.example.com",
         "api.deepgram.com",
-        "api.vapi.ai",
+        "*.vapi.ai",
         "global-aiplatform.googleapis.com",
         "ingest.example.com",
         "oauth2.googleapis.com",
         "platform.example.com",
         "us-east5-aiplatform.googleapis.com",
     }
+
+
+def _launch_and_read_job_json(
+    organization, settings, *, requested_parallelism, provider_name="daytona"
+):
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    payload["runtime"]["parallelism"] = requested_parallelism
+    payload["scenario_count"] = requested_parallelism
+    payload["runtime"].update(
+        cpu_units=4 if provider_name == "e2b" else 8,
+        memory_mb=8192,
+        disk_gb=10,
+    )
+    job, _ = create_hosted_job(
+        organization, payload, idempotency_key=f"parallelism-{requested_parallelism}"
+    )
+    client = _Daytona()
+    if provider_name == "e2b":
+        client.name = "e2b"
+        client.runtime_name = settings.ALK_E2B_TEMPLATE_REFERENCE
+        client.runtime_digest = settings.ALK_E2B_TEMPLATE_BUILD_ID
+        client.max_egress_domains = None
+    else:
+        client.runtime_digest = "sha256:good"
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = "sha256:good"
+    settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
+    settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
+    settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
+    # The platform simulator credential is deployment material; these tests are
+    # about the admitted parallelism the guest receives, not credential loading.
+    simulator_values = {
+        "ALK_HARNESS": "vertex-gemini",
+        "ALK_HARNESS_MODEL": "gemini-2.5-flash",
+        "GOOGLE_APPLICATION_CREDENTIALS": _SIMULATOR_VERTEX_CREDENTIALS_PATH,
+        "GOOGLE_CLOUD_PROJECT": "platform-simulator-project",
+        "GOOGLE_CLOUD_LOCATION": "global",
+    }
+    with patch(
+        "simulate.services.hosted_harness_gateway._platform_simulator_material",
+        return_value=(
+            simulator_values,
+            b'{"project_id":"platform-simulator-project"}',
+        ),
+    ):
+        gateway.launch(job, endpoint_base_url="https://platform.example.com")
+
+    job.refresh_from_db()
+    dispatched = json.loads(client.sandbox.fs.uploads["/work/job.json"])
+    return job, dispatched, client
+
+
+@pytest.mark.django_db
+def test_daytona_launch_clamps_guest_parallelism_when_disabled(organization, settings):
+    # Flag off => W>1 is denied by the shared guard. The guest must be launched at
+    # the ADMITTED W=1 even though the requested value stays on job.payload so a
+    # later rerun re-evaluates against the then-current flag/digest.
+    settings.HARNESS_PARALLELISM_ENABLED = False
+    settings.HARNESS_PARALLEL_SNAPSHOT_DIGESTS = ["sha256:good"]
+    settings.ALK_DAYTONA_DOCKERFILE = ""
+
+    job, dispatched, _client = _launch_and_read_job_json(
+        organization, settings, requested_parallelism=4
+    )
+
+    assert dispatched["runtime"]["parallelism"] == 1
+    assert job.payload["runtime"]["parallelism"] == 4
+
+
+@pytest.mark.django_db
+def test_daytona_launch_passes_admitted_parallelism_when_enabled(
+    organization, settings
+):
+    # Flag on and the registered digest is allowlisted => W>1 is admitted, so the
+    # guest receives the requested W unchanged.
+    settings.HARNESS_PARALLELISM_ENABLED = True
+    settings.HARNESS_PARALLEL_SNAPSHOT_DIGESTS = ["sha256:good"]
+    settings.ALK_DAYTONA_DOCKERFILE = ""
+
+    job, dispatched, _client = _launch_and_read_job_json(
+        organization, settings, requested_parallelism=4
+    )
+
+    assert dispatched["runtime"]["parallelism"] == 4
+    assert job.payload["runtime"]["parallelism"] == 4
+
+
+@pytest.mark.django_db
+def test_e2b_standard_resources_reach_guest_admission(organization, settings):
+    settings.HOSTED_SANDBOX_PROVIDER = "e2b"
+    settings.HARNESS_PARALLELISM_ENABLED = True
+    settings.HARNESS_RESOURCE_PROFILES = []
+    settings.HARNESS_PARALLEL_SNAPSHOT_DIGESTS = ["build-123"]
+    settings.ALK_E2B_TEMPLATE_REFERENCE = "alk-hosted-e2b:build-123"
+    settings.ALK_E2B_TEMPLATE_BUILD_ID = "build-123"
+    settings.ALK_E2B_TEMPLATE_CPU_UNITS = 4
+    settings.ALK_E2B_TEMPLATE_MEMORY_MB = 8192
+    settings.ALK_E2B_TEMPLATE_DISK_GB = 10
+
+    job, dispatched, _client = _launch_and_read_job_json(
+        organization, settings, requested_parallelism=2, provider_name="e2b"
+    )
+
+    assert job.payload["runtime"]["parallelism"] == 2
+    assert dispatched["runtime"]["parallelism"] == 2
 
 
 @pytest.mark.django_db

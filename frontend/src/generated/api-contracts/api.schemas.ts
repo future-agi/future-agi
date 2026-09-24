@@ -17277,11 +17277,14 @@ export type HarnessJobInfoApiSource = { [key: string]: string };
 
 export type HarnessJobInfoApiMetadata = { [key: string]: string };
 
+export type HarnessJobInfoApiRuntime = { [key: string]: string };
+
 export interface HarnessJobInfoApi {
   job_id: string;
   run_id: string;
   source: HarnessJobInfoApiSource;
   metadata: HarnessJobInfoApiMetadata;
+  runtime?: HarnessJobInfoApiRuntime;
   run_test_id: string;
   test_execution_id: string;
 }
@@ -17298,6 +17301,8 @@ export interface HarnessJobStatusApi {
   attempt: number;
   completed_scenarios: number;
   failed_scenarios: number;
+  active_scenarios?: number;
+  queued_scenarios?: number;
   total_scenarios: number;
   /** @minLength 1 */
   deadline_at: string;
@@ -17366,6 +17371,13 @@ export interface HarnessRuntimeReadApi {
   /** @minLength 1 */
   sandbox_id?: string;
   diagnostics?: HarnessDiagnosticsApi;
+}
+
+export interface HarnessParallelismApi {
+  requested: number;
+  admitted: number;
+  effective: number;
+  degrade_reasons: string[];
 }
 
 export type HarnessConversationMessageApiRole =
@@ -17486,6 +17498,7 @@ export interface HarnessJobReadApi {
   receipts: HarnessJobReadApiReceiptsItem[];
   platform: HarnessPlatformApi;
   runtime?: HarnessRuntimeReadApi;
+  parallelism?: HarnessParallelismApi;
   conversation?: HarnessConversationReadApi;
   consumption?: HarnessConsumptionApi;
   usage_limit?: HarnessJobReadApiUsageLimit;
@@ -17518,6 +17531,8 @@ export const HarnessSourceApiVisibility = {
   private: "private",
 } as const;
 
+export type HarnessSourceApiEnvironmentValues = { [key: string]: string };
+
 export interface HarnessSourceApi {
   kind: HarnessSourceApiKind;
   /**
@@ -17544,6 +17559,7 @@ export interface HarnessSourceApi {
   /** @minLength 1 */
   endpoint?: string;
   visibility?: HarnessSourceApiVisibility;
+  environment_values?: HarnessSourceApiEnvironmentValues;
 }
 
 export type HarnessAgentApiConnector =
@@ -17789,6 +17805,10 @@ export const HarnessPreflightResponseApiState = {
   failed: "failed",
 } as const;
 
+export type HarnessPreflightResponseApiResourceProfile = {
+  [key: string]: unknown;
+};
+
 export type HarnessPreflightResponseApiSnapshot = { [key: string]: unknown };
 
 export type HarnessPreflightCheckApiStatus =
@@ -17837,7 +17857,9 @@ export interface HarnessPreflightResponseApi {
   state: HarnessPreflightResponseApiState;
   checks: HarnessPreflightCheckApi[];
   credentials: HarnessPreflightCredentialsApi;
+  parallelism_enabled: boolean;
   effective_parallelism: number;
+  resource_profile: HarnessPreflightResponseApiResourceProfile;
   snapshot: HarnessPreflightResponseApiSnapshot;
 }
 
