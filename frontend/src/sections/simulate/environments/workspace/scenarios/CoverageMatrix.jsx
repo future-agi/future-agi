@@ -13,16 +13,6 @@ import { useScenarioCoverage } from "src/api/simulate-environments/scenariosHook
 const RED = BUILD_TONES.red;
 const GREEN = BUILD_TONES.green;
 
-// The five rare-catastrophic overlays that must be present regardless of
-// sampling (server naming). "Forced" in the header summary counts these.
-const FORCED_OVERLAYS = [
-  { id: "destructive", label: "Destructive / irreversible" },
-  { id: "minor_vulnerable", label: "Minor / vulnerable" },
-  { id: "emergency_crisis", label: "Emergency / crisis" },
-  { id: "privacy_pii", label: "PII / privacy" },
-  { id: "prompt_injection", label: "Prompt-injection" },
-];
-
 // A coverage level / axis name is stored snake_case; show it as spaced words.
 const humanize = (s) =>
   String(s ?? "")
@@ -87,9 +77,11 @@ export default function CoverageMatrix({ jobId, search, filters, defaultExpanded
   const filledCells = (data?.cells ?? []).filter((c) => c.count > 0).length;
   const pairsRatio = totalCells ? filledCells / totalCells : 0;
 
-  // Forced: the five rare-catastrophic overlays present in the overlay axis.
+  // Forced: the attack overlays the server says every suite covers, present in the overlay axis.
+  const forcedOverlays = data?.required_overlays ?? [];
   const overlayCounts = perAxis.find((a) => a.axis === "overlay")?.counts ?? {};
-  const forcedPresent = FORCED_OVERLAYS.filter((f) => (overlayCounts[f.id] ?? 0) > 0);
+  const forcedPresent = forcedOverlays.filter((f) => (overlayCounts[f.value] ?? 0) > 0);
+  const forcedRatio = forcedOverlays.length ? forcedPresent.length / forcedOverlays.length : 1;
 
   const toggle = () => setExpanded((v) => !v);
 
@@ -200,8 +192,8 @@ export default function CoverageMatrix({ jobId, search, filters, defaultExpanded
             <SummaryStat label="Pairs" value={`${Math.round(pairsRatio * 100)}%`} color={toneColor(pairsRatio)} />
             <SummaryStat
               label="Forced"
-              value={`${forcedPresent.length}/${FORCED_OVERLAYS.length}`}
-              color={toneColor(forcedPresent.length / FORCED_OVERLAYS.length)}
+              value={`${forcedPresent.length}/${forcedOverlays.length}`}
+              color={toneColor(forcedRatio)}
             />
             <IconButton
               size="small"
@@ -280,9 +272,9 @@ export default function CoverageMatrix({ jobId, search, filters, defaultExpanded
               <Box sx={{ flex: 1 }} />
               <Typography sx={{
                 typography: "s2", fontWeight: 600, fontVariantNumeric: "tabular-nums",
-                color: forcedPresent.length < FORCED_OVERLAYS.length ? RED : "text.primary",
+                color: forcedPresent.length < forcedOverlays.length ? RED : "text.primary",
               }}>
-                {forcedPresent.length}/{FORCED_OVERLAYS.length}
+                {forcedPresent.length}/{forcedOverlays.length}
               </Typography>
             </Stack>
             <Box sx={{
@@ -290,10 +282,10 @@ export default function CoverageMatrix({ jobId, search, filters, defaultExpanded
               gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr", md: "1fr 1fr 1fr" },
               rowGap: 0.75, columnGap: 3,
             }}>
-              {FORCED_OVERLAYS.map((f) => {
-                const present = (overlayCounts[f.id] ?? 0) > 0;
+              {forcedOverlays.map((f) => {
+                const present = (overlayCounts[f.value] ?? 0) > 0;
                 return (
-                  <Stack key={f.id} direction="row" alignItems="center" spacing={1}>
+                  <Stack key={f.value} direction="row" alignItems="center" spacing={1}>
                     <Box sx={{
                       width: 8, height: 8, borderRadius: "50%",
                       bgcolor: present ? GREEN : "transparent",

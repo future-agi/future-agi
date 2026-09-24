@@ -30,7 +30,10 @@ import {
   useHarnessScenarioCoverage,
   useHarnessScenarios,
 } from "src/api/harness/scenarios";
-import { noiseValue } from "src/sections/simulate/environments/workspace/scenarios/scenarioEditor.constants";
+import {
+  filterParamKey,
+  noiseValue,
+} from "src/sections/simulate/environments/workspace/scenarios/scenarioEditor.constants";
 import ScenarioEditForm from "./ScenarioEditForm";
 
 const selectableCheckboxSx = {
@@ -76,9 +79,7 @@ const toQueryParams = (result) => {
       ? token.value
       : [token.value].filter(Boolean);
     if (!held.length) return;
-    const negated =
-      token.operator === "is_not" || token.operator === "not_equals";
-    const key = negated ? `${token.field}_not` : token.field;
+    const key = filterParamKey(token.field, token.operator);
     flat[key] = [...(flat[key] || []), ...held];
   });
   return flat;

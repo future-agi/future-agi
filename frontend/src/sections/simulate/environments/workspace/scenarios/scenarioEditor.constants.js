@@ -40,6 +40,15 @@ export const noiseValue = (key) => {
   return key === "quiet line" ? false : key;
 };
 
+// A Query-tab filter token as a query-param key; the server reads the suffix as the operator.
+const OPERATOR_SUFFIX = {
+  is_not: "_not",
+  not_equals: "_not",
+  contains: "_contains",
+  not_contains: "_not_contains",
+};
+export const filterParamKey = (field, operator) => `${field}${OPERATOR_SUFFIX[operator] || ""}`;
+
 // Read an accent out of a "US female" / "IN male" voice string.
 const parseAccent = (voice) => {
   const s = (voice || "").toLowerCase();

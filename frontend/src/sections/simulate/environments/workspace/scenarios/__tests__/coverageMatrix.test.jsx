@@ -11,9 +11,18 @@ vi.mock("src/api/simulate-environments/scenariosHooks", () => ({
 }));
 const { useScenarioCoverage } = await import("src/api/simulate-environments/scenariosHooks");
 
+const requiredOverlays = [
+  { value: "destructive", label: "Destructive request" },
+  { value: "minor_vulnerable", label: "Vulnerable caller" },
+  { value: "emergency_crisis", label: "Emergency" },
+  { value: "privacy_pii", label: "Personal data" },
+];
+
 beforeEach(() => {
   useScenarioCoverage.mockReset();
-  useScenarioCoverage.mockReturnValue({ data: coverageSample });
+  useScenarioCoverage.mockReturnValue({
+    data: { ...coverageSample, required_overlays: requiredOverlays },
+  });
 });
 
 describe("CoverageMatrix", () => {
@@ -21,8 +30,8 @@ describe("CoverageMatrix", () => {
     render(<CoverageMatrix jobId="job-1" search="" filters={{}} />);
     // All 8 axes are varied (levels > 1) in the sample.
     expect(screen.getByText("8/8")).toBeInTheDocument();
-    // All five forced overlays are present in the overlay axis.
-    expect(screen.getByText("5/5")).toBeInTheDocument();
+    // Every overlay the server lists as required is present in the overlay axis.
+    expect(screen.getByText("4/4")).toBeInTheDocument();
     // Subtitle scenario count comes off per_axis, not envState.
     expect(screen.getByText(/20 scenarios/)).toBeInTheDocument();
   });
@@ -43,8 +52,8 @@ describe("CoverageMatrix", () => {
     // Row-axis levels (humanized) and column-axis levels render as the grid axes.
     expect(screen.getByText("Authenticate Otp")).toBeInTheDocument();
     expect(screen.getByText("Prompt Injection")).toBeInTheDocument();
-    // The forced-overlays checklist reads from per_axis.overlay.counts.
-    expect(screen.getByText("Destructive / irreversible")).toBeInTheDocument();
+    // The forced-overlays checklist names the server's list and reads per_axis.overlay.counts.
+    expect(screen.getByText("Destructive request")).toBeInTheDocument();
   });
 
   it("shows an error state instead of a zero-coverage grid when the request fails", () => {

@@ -22,6 +22,7 @@ import {
 import { SCENARIOS_COPY } from "./scenarios.constants";
 import { ENV_SHAPE, ENV_STATE_SHAPE } from "./scenarios.shapes";
 import useScenarioPage, { PAGE_SIZE } from "./useScenarioPage";
+import { filterParamKey } from "./scenarioEditor.constants";
 import { isScenarioSampleMode, SAMPLE_PAGE_SIZE } from "src/api/simulate-environments/scenariosSampleMode";
 import { useHarnessScenarios } from "src/api/simulate-environments/scenariosHooks";
 import { useDebounce } from "src/hooks/use-debounce";
@@ -206,7 +207,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
       result.forEach((r) => {
         const values = Array.isArray(r.value) ? r.value : (r.value != null ? [r.value] : []);
         if (!values.length) return;
-        const key = r.operator === "is_not" || r.operator === "not_equals" ? `${r.field}_not` : r.field;
+        const key = filterParamKey(r.field, r.operator);
         flat[key] = [...(flat[key] || []), ...values];
       });
       setFilters(flat);
