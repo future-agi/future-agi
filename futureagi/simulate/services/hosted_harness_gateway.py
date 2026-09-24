@@ -150,16 +150,25 @@ def _authoring_ttl_seconds(provider_name: str | None = None) -> int:
 def _execution_ttl_seconds(
     runtime: Mapping[str, Any], provider_name: str | None = None
 ) -> int:
-    # One sandbox authors and then runs, so its lifetime is the granted window plus launch overhead.
     runtime_seconds = int(runtime["max_duration_seconds"])
     if provider_name == "e2b":
         max_ttl_seconds = int(getattr(settings, "ALK_E2B_MAX_TTL_SECONDS", 0))
         if max_ttl_seconds > 0 and runtime_seconds <= max_ttl_seconds:
             return max_ttl_seconds
         return runtime_seconds + 120
+    authoring_seconds = max(
+        0,
+        int(
+            getattr(
+                settings,
+                "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
+                3600,
+            )
+        ),
+    )
     return max(
         int(getattr(settings, "ALK_HOSTED_SANDBOX_TTL_SECONDS", 7200)),
-        runtime_seconds + 120,
+        authoring_seconds + runtime_seconds + 120,
     )
 
 

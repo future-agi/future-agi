@@ -1469,10 +1469,13 @@ class HostedHarnessProvider:
                 )
             # Edits pass the same gates as a written scenario.
             if touched:
-                from fi.alk.harness.scenario import Scenario, scenario_edit_problems
+                try:
+                    from fi.alk.harness.scenario import Scenario, scenario_edit_problems
+                except ImportError:  # the harness package ships in the runner image, not the web backend
+                    scenario_edit_problems = None
 
                 rejected = []
-                for one in suite:
+                for one in suite if scenario_edit_problems else ():
                     try:
                         problems = scenario_edit_problems(Scenario.model_validate(one))
                     except Exception:  # noqa: BLE001 - a document we cannot read is the edit's fault
