@@ -186,6 +186,22 @@ describe("mapCallRow", () => {
     expect(t.durationMs).toBeNull();
   });
 
+  it("carries a removed eval's marker", () => {
+    const row = {
+      id: "c4",
+      status: "completed",
+      eval_metrics: {
+        "cfg-gone": { name: "no_misselling", value: "Failed", type: "Pass/Fail", removed: true },
+      },
+    };
+    const t = mapCallRow(row, [{ id: "cfg-gone", type: "evaluation" }]);
+    expect(t.evalResults).toHaveLength(1);
+    expect(t.evalResults[0].removed).toBe(true);
+    // A live eval's cell carries no such key (falsy, never merely absent).
+    const live = mapCallRow(payload().results[0], evalCols);
+    expect(live.evalResults.every((e) => e.removed === false)).toBe(true);
+  });
+
   it("surfaces source scenario and trial identity for repeated executions", () => {
     const t = mapCallRow(
       {

@@ -151,6 +151,18 @@ describe("WorkspaceHeader", () => {
     expect(screen.queryByRole("button", { name: "More actions" })).toBeNull();
   });
 
+  it("shows Cancel build (by Run simulation) only while the env is building", () => {
+    render(withRouter(<WorkspaceHeader {...baseProps} />));
+    expect(screen.queryByRole("button", { name: /Cancel build/ })).toBeNull();
+
+    render(
+      withRouter(
+        <WorkspaceHeader {...baseProps} env={{ ...ENV, buildStatus: "building" }} canRun={false} locked />,
+      ),
+    );
+    expect(screen.getByRole("button", { name: /Cancel build/ })).toBeInTheDocument();
+  });
+
   it("does not render the mock env-version pin (hidden until the contract has a real version)", () => {
     render(withRouter(<WorkspaceHeader {...baseProps} />));
     expect(screen.queryByText(/env v3/i)).toBeNull();
@@ -185,16 +197,15 @@ describe("WorkspaceHeader", () => {
     expect(screen.getByText("Delete environment?")).toBeInTheDocument();
   });
 
-  it("omits Delete for a non-backed env (nothing to remove on the server)", async () => {
-    const user = userEvent.setup();
+  it("hides the overflow menu for a non-backed env (Delete absent, Fork disabled → no empty menu)", () => {
+    // A non-backed env has nothing to delete on the server and Fork is currently
+    // commented out, so the kebab must not render (opening an empty menu).
     render(withRouter(<WorkspaceHeader {...baseProps} />));
-
-    await user.click(screen.getByRole("button", { name: "More actions" }));
-    expect(screen.queryByRole("menuitem", { name: /Delete environment/ })).toBeNull();
-    expect(screen.getByRole("menuitem", { name: /Fork environment/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "More actions" })).toBeNull();
   });
 
-  it("forks from the overflow menu when unlocked", async () => {
+  // Fork is temporarily commented out in ForkMenu — re-enable this with it.
+  it.skip("forks from the overflow menu when unlocked", async () => {
     const user = userEvent.setup();
     const onFork = vi.fn();
     render(withRouter(<WorkspaceHeader {...baseProps} onFork={onFork} locked={false} />));

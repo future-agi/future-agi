@@ -25,6 +25,8 @@ export default function EnvironmentValues({
   // Never read the file's bytes into the browser — the raw File goes to the upload
   // endpoint and only the returned reference is kept; contents are mounted per run.
   // `environment_name` rides along: that alias is the key `secret_refs` needs.
+  // The mutation is `meta.errorHandled`; a rejection shows through the
+  // `upload.error` Alert below.
   const onFile = (file) => {
     if (!file) return;
     upload.mutate(

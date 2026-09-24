@@ -18,6 +18,11 @@ export function forkEnvironment(env, envState, now) {
       custom: true,
       forkedFrom: env.id,
       buildProgress: undefined,
+      // The parent's run links must not come along: `platform` is how the Runs
+      // tab and the header's Run action locate an environment's executions, so a
+      // copied one opens a brand-new fork on the parent's run history and makes
+      // "Run again" re-run the parent.
+      platform: undefined,
       adoptedAt: now,
     },
     // A fork inherits the world but becomes editable: the template sticker is

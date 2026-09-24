@@ -8,7 +8,6 @@ const base = () => ({
   count: 3,
   onClear: vi.fn(),
   onDelete: vi.fn(),
-  onEdit: vi.fn(),
   onRun: vi.fn(),
   trials: 1,
   onTrialsChange: vi.fn(),
@@ -27,12 +26,13 @@ describe("SelectionBar", () => {
     expect(props.onClear).toHaveBeenCalledTimes(1);
   });
 
-  it("wires Edit and Delete to their handlers", () => {
+  it("wires Delete to its handler and shows no Edit button", () => {
     const props = base();
     render(<SelectionBar {...props} />);
 
-    fireEvent.click(screen.getByText("Edit"));
-    expect(props.onEdit).toHaveBeenCalledTimes(1);
+    // Editing is per-row (the pencil drawer), not a bulk action — the bar
+    // carries no Edit button.
+    expect(screen.queryByText("Edit")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByText("Delete"));
     expect(props.onDelete).toHaveBeenCalledTimes(1);
@@ -94,11 +94,10 @@ describe("SelectionBar", () => {
     expect(screen.queryByRole("button", { name: /Select all/ })).not.toBeInTheDocument();
   });
 
-  it("hides Edit / Repeats / Run when their handlers are absent", () => {
+  it("hides Repeats / Run when their handlers are absent", () => {
     render(
       <SelectionBar count={2} onClear={vi.fn()} onDelete={vi.fn()} />,
     );
-    expect(screen.queryByText("Edit")).not.toBeInTheDocument();
     expect(screen.queryByText(/Repeats:/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Run simulation/)).not.toBeInTheDocument();
     // Delete + Clear are always available.

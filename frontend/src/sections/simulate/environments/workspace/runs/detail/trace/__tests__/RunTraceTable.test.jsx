@@ -327,4 +327,20 @@ describe("RunTraceTable", () => {
     renderTable();
     expect(screen.getByText(/No calls match that filter/)).toBeInTheDocument();
   });
+
+  it("shows an error state, not the empty filter state, when the calls request fails", () => {
+    useRunCalls.mockReturnValue({
+      tasks: [],
+      columns: [],
+      groups: [],
+      facets: {},
+      count: 0,
+      totalPages: 1,
+      isLoading: false,
+      error: new Error("boom"),
+    });
+    renderTable();
+    expect(screen.getByText(/Couldn't load calls/i)).toBeInTheDocument();
+    expect(screen.queryByText(/No calls match that filter/)).toBeNull();
+  });
 });

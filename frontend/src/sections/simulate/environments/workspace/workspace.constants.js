@@ -72,6 +72,7 @@ export const WORKSPACE_COPY = {
   failedLabel: "Failed",
   liveTooltip: "Environment is live. You can edit via the builder or inline.",
   buildingTooltip: "Environment is still being built…",
+  runningTooltip: "A simulation is running. Results land under Runs when it finishes.",
   failedTooltip: "This environment failed to build.",
   run: "Run simulation",
   moreActions: "More actions",

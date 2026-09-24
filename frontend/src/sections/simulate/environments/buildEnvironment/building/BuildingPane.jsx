@@ -91,7 +91,11 @@ export default function BuildingPane({
       {/* body */}
       <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto" }}>
         <DerivingAnimation
-          label={failure ? DERIVING_LABEL.failed : derivingLabel(done)}
+          label={
+            failure
+              ? (failure.canceled ? DERIVING_LABEL.canceled : DERIVING_LABEL.failed)
+              : derivingLabel(done)
+          }
           source={source}
           world={world}
           failed={!!failure}

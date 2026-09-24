@@ -106,7 +106,6 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove, onH
     ...(locked ? [] : ["select"]),
     "#", "Scenario", "Persona", "Situation", "Sub-goals", "Ideal outcome", "",
   ];
-  let counter = 0;
 
   return (
     // No own scroll wrapper: the parent (PagedScenarioViews) owns the scroll
@@ -215,8 +214,9 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove, onH
               )}
 
               {section.rows.map((row) => {
-                counter += 1;
-                const idx = counter;
+                // The scenario's stable place in the whole suite, minted server
+                // side — not a per-page counter (it survives filters and paging).
+                const idx = row.number;
                 const p = row.persona;
                 const subTasks = row.subTasks?.length ? row.subTasks : subTasksFor(row, env);
                 const personaSubline = [

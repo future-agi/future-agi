@@ -15,6 +15,9 @@ export const DERIVING_LABEL = {
   // Terminal-failed build: the hero reads as failed (the specific reason shows
   // on the failed pipeline step below), not the raw stage name.
   failed: "Build failed — the environment couldn’t be assembled",
+  // Terminal-canceled build: the user stopped it, so it reads as stopped rather
+  // than failed (no step is at fault).
+  canceled: "Build canceled — you stopped it before it finished",
   // Fallback for the source-panel header before a source label is known.
   readingSource: "reading source…",
 };

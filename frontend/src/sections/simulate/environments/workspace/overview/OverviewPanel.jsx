@@ -1,19 +1,20 @@
 import PropTypes from "prop-types";
 import { Box, Stack, Typography, Grid } from "@mui/material";
-import { getSurface, getDomain } from "src/api/simulate-environments/_fixtures/surfaces";
+import { getSurface } from "src/api/simulate-environments/_fixtures/surfaces";
 import { contractFor } from "src/api/simulate-environments/_fixtures/contract";
 import { ENV_SHAPE, ENV_STATE_SHAPE, OVERVIEW_COPY } from "./overview.constants";
+import { PARALLELISM_COPY, degradeReasonCopy } from "../../parallelism.constants";
 // Manage-versions (the agent "test subject" card + its version drawer) is
 // commented out below, to be picked up later — its imports go with it:
 // import Iconify from "src/components/iconify";
 // import SideDrawer from "../../components/SideDrawer";
 // import AgentsPanel from "../agents/AgentsPanel";
-// import AgentSummarySection from "./AgentSummarySection";
 // (AGENT_SUMMARY_COPY dropped from the overview.constants import with it)
 import { GroupHeading, Fact } from "./OverviewPrimitives";
+import AgentSummarySection from "./AgentSummarySection";
+import SourceReadCard from "./SourceReadCard";
 import AgentRefreshBanner from "./AgentRefreshBanner";
 import NextStepsChecklist from "./NextStepsChecklist";
-import SourceToSandboxMap from "./SourceToSandboxMap";
 import StateSummary from "./StateSummary";
 import { UseCasesCard, AmendmentsCard } from "./OverviewCards";
 import { DependsOnCard } from "./WorldCards";
@@ -62,7 +63,6 @@ export default function OverviewPanel({ env, envState, patch, onGo, agentConnect
   // const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
   // const [nestedAgentDrawer, setNestedAgentDrawer] = useState(false);
   const surface = getSurface(env.surface);
-  const domain = getDomain(env.domain);
   const contract = contractFor(env);
   // The real connector for a backed env (envState.agent.typeId = the job poll's
   // detected connector, e.g. "livekit"). No transports field is served, so this
@@ -70,10 +70,12 @@ export default function OverviewPanel({ env, envState, patch, onGo, agentConnect
   const connector = envState?.agent?.typeId;
   const connectorLabel = connector ? CONNECTOR_LABEL[connector] || connector : "—";
 
+  const parallelism = env.parallelism;
+  const degradeReasons = parallelism?.degrade_reasons || [];
+
   const hasDerivedWorld = (env.rules?.length || 0) > 0
     || (envState?.scenarios?.length || 0) > 0
     || (env.tools?.length || 0) > 0;
-  const showRichOverview = agentConnected || hasDerivedWorld;
 
   return (
     <Box sx={{ p: 2 }}>
@@ -87,22 +89,30 @@ export default function OverviewPanel({ env, envState, patch, onGo, agentConnect
       <Stack
         direction="row"
         flexWrap="wrap"
-        divider={<Box sx={{ width: "1px", bgcolor: "divider", alignSelf: "stretch", mx: 2 }} />}
-        sx={{ my: 2, py: 1.25, px: 2, border: "1px solid", borderColor: "divider", borderRadius: 1.5, rowGap: 1 }}
+        divider={<Box sx={{ width: "1px", bgcolor: "divider", mx: 2 }} />}
+        sx={{ my: 2, py: 1.25, px: 2, border: "1px solid", borderColor: "divider", borderRadius: 1.5, rowGap: 1, width: "fit-content", maxWidth: "100%" }}
       >
         <Fact label={OVERVIEW_COPY.facts.channel} value={surface.label} />
-        <Fact label={OVERVIEW_COPY.facts.domain} value={domain?.label || "—"} />
         <Fact label={OVERVIEW_COPY.facts.connector} value={connectorLabel} />
+        {parallelism?.requested ? (
+          <Fact label={PARALLELISM_COPY.fact} value={PARALLELISM_COPY.factValue(parallelism)} />
+        ) : null}
       </Stack>
 
-      {/* Manage-versions container (agent "test subject" card + "Manage
-          versions") — commented out, to be picked up later.
-      <AgentSummarySection
-        envState={envState}
-        agentConnected={agentConnected}
-        locked={locked}
-        onManageVersions={() => setAgentDrawerOpen(true)}
-      /> */}
+      {degradeReasons.length > 0 && (
+        <Box sx={{ mb: 2, py: 1.25, px: 2, border: "1px solid", borderColor: "divider", borderRadius: 1.5, bgcolor: "background.neutral" }}>
+          <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>
+            {PARALLELISM_COPY.degradedTitle(parallelism.effective, parallelism.requested)}
+          </Typography>
+          {degradeReasons.map((reason) => (
+            <Typography key={reason} sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}>
+              {degradeReasonCopy(reason, parallelism.effective)}
+            </Typography>
+          ))}
+        </Box>
+      )}
+
+      <AgentSummarySection subject={env.testSubject} />
 
       {/* Optional re-derive prompt when the attached agent has moved ahead of
           the world; only an unlocked env can re-derive. */}
@@ -124,12 +134,7 @@ export default function OverviewPanel({ env, envState, patch, onGo, agentConnect
           the environment belongs. Overview keeps the summary, not the definition. */}
       <GroupHeading>{OVERVIEW_COPY.capabilities}</GroupHeading>
 
-      {/* The reviewability record: every derived fact with its origin and its
-          sandbox target, side by side, with unresolved rows carrying an inline
-          resolve control. */}
-      {showRichOverview && (
-        <SourceToSandboxMap env={env} envState={envState} patch={patch} stores={backedWorld?.stores} />
-      )}
+      <SourceReadCard tools={env.tools} rules={env.rules} />
 
       {/* Tools and Hard rules cards were here — removed as duplicates of the
           Contract tab, which owns the tool inventory and the hard-rule list. */}

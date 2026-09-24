@@ -9,7 +9,10 @@ import PlatformLogo from "../components/PlatformLogo";
 import { PLATFORM_LOGOS } from "../components/platformLogos";
 import { COUNTRY_BY_ISO } from "../components/countryCodes";
 import ContactInformation from "./ContactInformation";
+import ScenarioCount from "./ScenarioCount";
+import { DEFAULT_SCENARIOS, isValidScenarioCount } from "./scenarioCountRules";
 import RuntimePreflight from "./RuntimePreflight";
+import ParallelismField from "./ParallelismField";
 import usePanelBuild from "../hooks/usePanelBuild";
 import { ENTRY_AGENT_TYPES } from "../agentTypes";
 import { HOSTED_PLATFORMS_BY_TYPE, HOSTED_EMPTY_ROSTER_COPY } from "../hostedPlatforms";
@@ -32,6 +35,7 @@ const initial = {
   inboundCalls: true,
   agentSpeaksFirst: false,
   otherPrompt: "",
+  scenarioCount: DEFAULT_SCENARIOS,
 };
 
 function reducer(s, a) {
@@ -51,8 +55,14 @@ export default function PanelHostedPlatform() {
   const {
     agentType, platform, id, key, repoUrl,
     simMode, countryIso, contactNumber, inboundCalls, agentSpeaksFirst, otherPrompt,
+    scenarioCount,
   } = form;
   const platforms = HOSTED_PLATFORMS_BY_TYPE[agentType] || [];
+  // Coming-soon (not-yet-a-connector) platforms sort to the end, so the
+  // selectable ones lead the row. Stable, so each group keeps its roster order.
+  const orderedPlatforms = [...platforms].sort(
+    (a, b) => Number(!!a.comingSoon) - Number(!!b.comingSoon),
+  );
 
   /* When agent type flips, snap to the first platform of the new type and clear
      the credentials so we do not carry a key into another provider's form. */
@@ -79,6 +89,7 @@ export default function PanelHostedPlatform() {
     kind: "platform",
     agentType,
     provider: chosen?.id,
+    scenarioCount: Number(scenarioCount) || undefined,
     ...(isOther
       ? { agentMode: "prompt", prompt: otherPrompt.trim() }
       : { agentId: id.trim(), apiKey: key.trim() }),
@@ -87,10 +98,11 @@ export default function PanelHostedPlatform() {
       ? (() => {
           const contactMode = isOther ? "phone" : simMode;
           return {
-            callDirection: inboundCalls ? "inbound" : "outbound",
+            // Others is always inbound; its toggle is locked on.
+            callDirection: isOther || inboundCalls ? "inbound" : "outbound",
             contact: {
               mode: contactMode,
-              inboundCalls,
+              inboundCalls: isOther || inboundCalls,
               agentSpeaksFirst,
               ...(contactMode === "phone"
                 ? {
@@ -130,7 +142,7 @@ export default function PanelHostedPlatform() {
           </Typography>
         ) : (
           <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, mt: 0.75 }}>
-            {platforms.map((p) => (
+            {orderedPlatforms.map((p) => (
               <ChipCard
                 key={p.id}
                 /* "Others" has no brand logo — render its Solar icon instead. */
@@ -138,6 +150,7 @@ export default function PanelHostedPlatform() {
                 logo={p.isOther ? undefined : <PlatformLogo id={p.id} name={p.name} brand={p.brand} />}
                 /* Wordmark logos already spell the name — don't repeat it. */
                 label={PLATFORM_LOGOS[p.id]?.type === "wordmark" ? null : p.name}
+                comingSoon={p.comingSoon}
                 on={platform === p.id}
                 onClick={() => set("platform")(p.id)}
               />
@@ -154,7 +167,7 @@ export default function PanelHostedPlatform() {
               placeholder="You are a friendly returns agent for Acme…"
               value={otherPrompt} onChange={set("otherPrompt")}
               multiline
-              helper="We seed matching scenarios from the prompt and run it against the LLM directly — no external endpoint or API key needed."
+              helper="The platform dials the number below with its own telephony. The prompt only seeds scenarios; it never changes the live agent."
             />
           ) : (
             <>
@@ -196,6 +209,14 @@ export default function PanelHostedPlatform() {
           />
         </>
       )}
+      <ScenarioCount value={scenarioCount} onChange={set("scenarioCount")} />
+      <ParallelismField
+        value={build.parallelism}
+        input={build.parallelismInput}
+        onChange={build.setParallelism}
+        enabled={build.parallelismEnabled}
+        admitted={build.admittedParallelism}
+      />
       <RuntimePreflight
         status={build.status}
         canRun={canGo}
@@ -204,7 +225,7 @@ export default function PanelHostedPlatform() {
         error={build.error}
       />
       <ContinueRow
-        disabled={!build.readyToSubmit}
+        disabled={!build.readyToSubmit || !isValidScenarioCount(scenarioCount)}
         busy={build.committing}
         hint={build.status === "done" ? "Resolve the checks above" : "Run preflight to continue"}
         onClick={build.commitBuild}

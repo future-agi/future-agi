@@ -13,7 +13,11 @@ import RunDetail from "./detail/RunDetail";
 // backwards-compatible deep links (they render nothing without an Outlet here)
 // and can be removed in a follow-up.
 export default function WorkspaceExecutionDetail() {
-  const { env, envState, onStartRun } = useOutletContext() || {};
+  // `envState`, `backed` and `onStartRun` ride the same Outlet context `env`
+  // does (see EnvironmentWorkspace's executionMatch branch) — RunDetail needs
+  // `backed` to decide which "Add evals" drawer a non-backed env gets, and
+  // `onStartRun` to launch a re-run from the run view.
+  const { env, envState, backed, onStartRun } = useOutletContext() || {};
   const { testId, executionId } = useParams();
 
   if (!env) return null;
@@ -22,6 +26,7 @@ export default function WorkspaceExecutionDetail() {
     <RunDetail
       env={env}
       envState={envState}
+      backed={backed}
       testId={testId}
       executionId={executionId}
       onStartRun={onStartRun}

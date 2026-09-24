@@ -5,7 +5,6 @@ import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import SectionCard from "../../components/SectionCard";
-import OriginChip from "../../components/OriginChip";
 import MockBadge from "../../components/MockBadge";
 import { ENV_SHAPE, OVERVIEW_COPY, ruleRowsFor } from "./overview.constants";
 
@@ -63,10 +62,8 @@ export function ToolsCard({ env, agentConnected }) {
 }
 ToolsCard.propTypes = { env: ENV_SHAPE.isRequired, agentConnected: PropTypes.bool };
 
-// The hard rules told to the agent and graded afterwards, each carrying an
-// origin chip for where it was read. The designer's "N held" review action
-// routed to a non-ported review deep-link (onGo("build")); the PROSE origin chip
-// already surfaces the held state here, so the action stays omitted.
+// The hard rules told to the agent and graded afterwards. ALK reports the rule
+// text only; where each rule was read from is not sent yet, so no origin is shown.
 export function HardRulesCard({ env }) {
   const rules = ruleRowsFor(env);
   return (
@@ -86,7 +83,6 @@ export function HardRulesCard({ env }) {
           <Stack key={r.id} direction="row" spacing={1.25} alignItems="flex-start">
             <Iconify icon="solar:shield-check-linear" width={15} sx={{ color: "primary.main", flexShrink: 0, mt: "1px" }} />
             <Typography sx={{ typography: "s2", color: "text.secondary", flex: 1, minWidth: 0 }}>{r.subject}</Typography>
-            <OriginChip origin={r.origin} file={r.file} line={r.line} showPath={false} />
           </Stack>
         ))}
       </Stack>

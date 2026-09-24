@@ -29,15 +29,20 @@ export const stageToStatus = (stage) => {
 // terminal-failed job as still building (the header stuck on "Building" with the
 // animation never stopping). A failed/canceled stage is now BUILD_STATUS.FAILED.
 export const buildStatusFor = (stage) => {
-  if (stage === HARNESS_STAGE.COMPLETED) return BUILD_STATUS.READY;
+  if (stage === HARNESS_STAGE.COMPLETED || stage === HARNESS_STAGE.RUNNING) return BUILD_STATUS.READY;
   if (stage === HARNESS_STAGE.FAILED || stage === HARNESS_STAGE.CANCELED) return BUILD_STATUS.FAILED;
   return BUILD_STATUS.BUILDING;
 };
 
-const agentTypeFor = (connectors = []) =>
-  connectors.some((name) => VOICE_CONNECTORS.includes(name))
+// A voice transport in the detected connectors wins; any other detected
+// connector is a chat agent. With NOTHING detected we can't tell — return null
+// so the table shows "Not identified" rather than misreporting the env as Chat.
+const agentTypeFor = (connectors = []) => {
+  if (!connectors?.length) return null;
+  return connectors.some((name) => VOICE_CONNECTORS.includes(name))
     ? AGENT_TYPES.VOICE
     : AGENT_TYPES.CHAT;
+};
 
 // Map one harness-jobs list item ({ job, status, credentials }) to the flat row
 // the My Environments table reads. The list payload carries no description,

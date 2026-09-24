@@ -39,11 +39,16 @@ describe("harnessJobToRow", () => {
     ).toBe("voice");
   });
 
-  it("falls back to text when no voice connector is detected", () => {
+  it("reads text from a detected non-voice connector", () => {
     expect(harnessJobToRow(item({ connectors: ["http"] })).agentType).toBe(
       "text",
     );
-    expect(harnessJobToRow(item({ connectors: [] })).agentType).toBe("text");
+  });
+
+  it("leaves the agent type unidentified (null) when nothing is detected", () => {
+    // Nothing detected — we can't tell the modality, so don't misreport it as
+    // Chat. The table renders null as "Not identified".
+    expect(harnessJobToRow(item({ connectors: [] })).agentType).toBeNull();
   });
 
   it("supplies null/zero placeholders for the fields the list cannot fill", () => {
@@ -60,7 +65,7 @@ describe("harnessJobToRow", () => {
     const row = harnessJobToRow(undefined);
     expect(row.id).toBeUndefined();
     expect(row.status).toBe(ENV_STATUS.BUILDING);
-    expect(row.agentType).toBe("text");
+    expect(row.agentType).toBeNull();
     expect(row.updatedAt).toBeNull();
   });
 });
@@ -147,9 +152,18 @@ describe("buildStatusFor", () => {
     expect(buildStatusFor("canceled")).toBe(BUILD_STATUS.FAILED);
   });
 
-  it("maps every in-progress stage → building", () => {
-    ["queued", "running", "generating_environment", undefined].forEach((s) =>
-      expect(buildStatusFor(s)).toBe(BUILD_STATUS.BUILDING),
+  // "running" is stage 10 of 14 in `stages` — after validating_scenarios and
+  // connecting_agent — so by then the world is fully derived and the agent is
+  // attached; what is running is the calls. The backend agrees: status_for()
+  // reports RUNNING/FINALIZING/CLEANING_UP as "running" and only the states
+  // before them as "building". A build spinner here would never stop.
+  it("maps running → ready: the environment is built, the calls are running", () => {
+    expect(buildStatusFor("running")).toBe(BUILD_STATUS.READY);
+  });
+
+  it("maps every stage before the agent connects → building", () => {
+    ["queued", "acquiring_source", "generating_environment", "generating_scenarios", undefined].forEach(
+      (s) => expect(buildStatusFor(s)).toBe(BUILD_STATUS.BUILDING),
     );
   });
 });

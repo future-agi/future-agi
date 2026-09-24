@@ -28,6 +28,18 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       keyLabel: "Retell API key",
     },
     {
+      // "Others" — an agent that already answers a phone number. The platform
+      // dials it; the pasted system prompt only seeds scenarios. Backend
+      // connector `phone`. Rendered with a Solar icon, not a brand logo.
+      id: "other",
+      name: "Others",
+      isOther: true,
+      icon: "solar:dialog-2-linear",
+      idLabel: "Phone number",
+      idPlaceholder: "+1 415 555 1234",
+      keyLabel: "API key",
+    },
+    {
       id: "bland",
       name: "Bland.ai",
       icon: "solar:phone-linear",
@@ -35,6 +47,8 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       idLabel: "Pathway ID",
       idPlaceholder: "pathway_9f2c…",
       keyLabel: "Bland API key",
+      // Not a real connector yet (submit would 400) — surfaced but not selectable.
+      comingSoon: true,
     },
     {
       id: "elevenlabs",
@@ -44,6 +58,8 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       idLabel: "Agent ID",
       idPlaceholder: "agent_9f2c…",
       keyLabel: "ElevenLabs API key",
+      // Not a real connector yet (submit would 400) — surfaced but not selectable.
+      comingSoon: true,
     },
     {
       id: "livekit",
@@ -53,21 +69,22 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       idLabel: "Agent name",
       idPlaceholder: "returns-line-agent",
       keyLabel: "LiveKit API key",
-    },
-    {
-      // "Others" — describe the agent by a system prompt and run it against the
-      // LLM directly (no endpoint/key). Rendered with a Solar icon, not a brand
-      // logo. NOTE: no backend connector exists for this path yet (see plan).
-      id: "other",
-      name: "Others",
-      isOther: true,
-      icon: "solar:dialog-2-linear",
-      idLabel: "Endpoint URL",
-      idPlaceholder: "https://your-agent.example.com",
-      keyLabel: "API key",
+      comingSoon: true,
     },
   ],
   [AGENT_TYPES.CHAT]: [
+    {
+      // The only real chat connector today (maps to `retell_chat`); listed first
+      // so it's the default when Chat is selected. The rest are not connectors
+      // yet, so they're surfaced coming-soon (not selectable).
+      id: "retell_chat",
+      name: "Retell AI",
+      icon: "solar:chat-round-line-linear",
+      brand: "#635BFF",
+      idLabel: "Chat agent ID",
+      idPlaceholder: "agent_9f2c…",
+      keyLabel: "Retell API key",
+    },
     {
       id: "openai_assistants",
       name: "OpenAI Assistants",
@@ -75,6 +92,7 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       idLabel: "Assistant ID",
       idPlaceholder: "asst_9f2c…",
       keyLabel: "OpenAI API key",
+      comingSoon: true,
     },
     {
       id: "langgraph",
@@ -83,6 +101,7 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       idLabel: "Deployment URL",
       idPlaceholder: "https://…",
       keyLabel: "LangSmith API key",
+      comingSoon: true,
     },
     {
       id: "crewai",
@@ -91,6 +110,7 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       idLabel: "Crew ID",
       idPlaceholder: "crew_9f2c…",
       keyLabel: "CrewAI API key",
+      comingSoon: true,
     },
     {
       id: "claude_agents",
@@ -99,6 +119,7 @@ export const HOSTED_PLATFORMS_BY_TYPE = {
       idLabel: "Agent name",
       idPlaceholder: "support-agent",
       keyLabel: "Anthropic API key",
+      comingSoon: true,
     },
   ],
 };

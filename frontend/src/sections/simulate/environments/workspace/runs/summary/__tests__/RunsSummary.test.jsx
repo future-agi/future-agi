@@ -66,10 +66,11 @@ describe("RunsSummary", () => {
     expect(screen.getByText("28%")).toBeInTheDocument(); // Run 1 policy_adherence
   });
 
-  it("marks the un-backed columns as Dummy rather than inventing values", () => {
+  it("shows a plain dash for the un-backed columns rather than inventing values", () => {
     renderSummary();
-    // Tokens / Cost / Said not done / Mean return each carry a Dummy tag.
-    expect(screen.getAllByText("Dummy").length).toBe(4);
+    // Tokens / Cost / Said not done / Mean return have no backend field, so they
+    // render a dashed cell with no "Dummy" tag.
+    expect(screen.queryByText("Dummy")).toBeNull();
   });
 
   it("defers Choose winner behind a disabled 'coming soon' control", () => {
@@ -93,6 +94,22 @@ describe("RunsSummary", () => {
         </QueryClientProvider>,
       ),
     ).not.toThrow();
+  });
+
+  it("labels the duration column as the run total, not an average", () => {
+    renderSummary();
+    // The column shows the run's total wall-clock (executionToRun.durationS), so
+    // it must not claim to be an average.
+    expect(screen.getByText("Duration")).toBeInTheDocument();
+    expect(screen.queryByText("Avg duration")).toBeNull();
+  });
+
+  it("shows each run's own agent version, not the current environment version", () => {
+    renderSummary();
+    // Every run previously carried "× env <current>" — the same fixture version
+    // for all of them, which misrepresents what each run actually ran against.
+    expect(screen.getByText(/Run 2 · agent v2/)).toBeInTheDocument();
+    expect(screen.queryByText(/× env/)).toBeNull();
   });
 
   it("opens a run when its row is clicked", () => {

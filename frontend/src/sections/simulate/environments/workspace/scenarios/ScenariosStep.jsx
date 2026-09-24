@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { useLocation } from "react-router-dom";
-import { Box, Stack, Typography, Button } from "@mui/material";
+import { Alert, Box, Stack, Typography, Button } from "@mui/material";
 import { useSnackbar } from "notistack";
 
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
-import { subTasksFor } from "src/api/simulate-environments/_fixtures/contract";
+import { ConfirmDialog } from "src/components/custom-dialog";
+import { resolveScenarioSelection } from "src/api/simulate-environments/scenarioSelection";
+import { useAmendScenarios } from "src/api/simulate-environments/scenariosHooks";
 import SectionCard from "../../components/SectionCard";
 import EmptyState from "../../components/EmptyState";
 import ScenarioToolbar from "./ScenarioToolbar";
@@ -18,12 +19,13 @@ import {
   publishScenarioSelection,
   clearScenarioSelection,
 } from "../../buildEnvironment/console/scenarioSelectionBus";
-import { injectComposerScaffold } from "../../buildEnvironment/console/composerScaffoldBus";
-import { SCENARIOS_COPY, deriveUseCase } from "./scenarios.constants";
+import { SCENARIOS_COPY } from "./scenarios.constants";
 import { ENV_SHAPE, ENV_STATE_SHAPE } from "./scenarios.shapes";
 import useScenarioPage, { PAGE_SIZE } from "./useScenarioPage";
+import { isScenarioSampleMode, SAMPLE_PAGE_SIZE } from "src/api/simulate-environments/scenariosSampleMode";
+import { useHarnessScenarios } from "src/api/simulate-environments/scenariosHooks";
+import { useDebounce } from "src/hooks/use-debounce";
 import useSelection from "./useSelection";
-import { inflateScenarios, demoScaleFromSearch } from "./demoScenarios";
 import PagedScenarioViews from "./PagedScenarioViews";
 
 // A seeded-from-template env is read-only until forked; every mutating control
@@ -78,7 +80,8 @@ RoutePlaceholder.propTypes = { onAdd: PropTypes.func, locked: PropTypes.bool };
 // same rows share one toolbar so filters survive a view switch, and the coverage
 // matrix below reads the live rows.
 export default function ScenariosStep({ env, envState, patch, locked = false, onStartRun, canRun = false }) {
-  const { enqueueSnackbar, closeSnackbar } = useSnackbar();
+  const { enqueueSnackbar } = useSnackbar();
+  const amend = useAmendScenarios(env?.id);
   const [view, setView] = useState("table");
   // Repeats (k) for a selection run — how many times each selected scenario is
   // re-run. Lives here (the selection bar is presentational) and rides the run
@@ -88,14 +91,22 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   const [filters, setFilters] = useState({});
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(null);
+  // A pending delete awaiting confirmation. Server deletes have no undo (there is
+  // no create route to restore from), so a drop is confirmed first, then run.
+  // { count, resolve: () => Promise<string[]> } — resolve yields the names to drop.
+  const [pendingDelete, setPendingDelete] = useState(null);
   // Grouping axis. Users read the scenarios differently depending on what
   // they're after: by goal for coverage, by persona to spot a caller type the
-  // agent handles badly, by sub-goal to see which step everyone lands on.
-  const [groupBy, setGroupByRaw] = useState("goal");
+  // agent handles badly, by sub-goal to see which step everyone lands on. Left
+  // undefined until the user picks one, so the server's default (goal) drives
+  // the initial view without writing that choice into local state (which would
+  // trip the query-reset effect below on first load).
+  const [groupBy, setGroupByRaw] = useState(undefined);
   // Hidden groups — click-to-hide directly on the group header. IDs are
   // dimension-specific, so switching the axis clears the hidden set.
   const [hiddenGroupIds, setHiddenGroupIds] = useState([]);
-  const setGroupBy = (next) => { setGroupByRaw(next); setHiddenGroupIds([]); };
+  const setGroupBy = (next) => { setGroupByRaw(next); setHiddenGroupIds([]); resetView(); };
+  const handleQueryChange = (next) => { setQuery(next); resetView(); };
   const toggleGroupHidden = (id) => setHiddenGroupIds((prev) => (
     prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]
   ));
@@ -103,63 +114,74 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   const selected = useMemo(() => envState?.scenarios || [], [envState?.scenarios]);
 
   // ── Server-side pagination + predicate selection ─────────────────────────
-  // The list is paged one page at a time through useScenarioPage — the seam a
-  // real list endpoint drops into — and selection is a predicate (useSelection)
-  // so "select all N matching" never needs every id loaded. `?scnDemo=<count>`
-  // inflates the client rows to N synthetic ones so paging/select-all can be
-  // exercised at scale (and turns on the request/payload inspector); a normal
-  // env just pages its real rows with no simulated latency.
-  const location = useLocation();
-  const demoScale = demoScaleFromSearch(location.search);
-  const allRows = useMemo(() => inflateScenarios(selected, demoScale), [selected, demoScale]);
+  // The list is read one page at a time from the harness scenarios endpoint
+  // through useScenarioPage — search, filters, grouping and page are all query
+  // params the server answers — and selection is a predicate (useSelection) so
+  // "select all N matching" never needs every id loaded.
   const [page, setPage] = useState(0);
-  const pageData = useScenarioPage(
-    allRows,
-    { search: query, filters, groupBy, env, page },
-    { limit: PAGE_SIZE, latencyMs: demoScale > 0 ? 400 : 0 },
-  );
+  // Debounce the term that drives the fetch so typing doesn't fire a request
+  // per keystroke; the input itself stays on the immediate `query` state.
+  const debouncedQuery = useDebounce(query, 300);
+  // Sample mode (?scnSample) pages the 20-row captured suite in smaller pages so
+  // the pager is exercisable; the live default is PAGE_SIZE (25).
+  const pageSize = isScenarioSampleMode() ? SAMPLE_PAGE_SIZE : PAGE_SIZE;
+  const pageData = useScenarioPage({
+    jobId: env?.id,
+    search: debouncedQuery,
+    filters,
+    groupBy,
+    page,
+    pageSize,
+  });
+  // The grouping the server actually applied (its default until the user picks).
+  const activeGroupBy = groupBy ?? pageData.groupBy;
   const sel = useSelection(pageData.total);
-  // A changed query moves the matching set, invalidating both the page position
-  // and the selection predicate — reset both when it changes.
-  const queryKey = JSON.stringify({ query, filters, groupBy });
-  useEffect(() => {
+  // The unfiltered suite size. The heading, the empty-state gate and the
+  // toolbar's "N of M" want the whole suite — the filtered list `total` shrinks
+  // under a search/filter, and the bootstrap `envState.scenarios` goes stale
+  // after an amend. A tiny page-0/limit-1 query with no search/filters returns
+  // just the count and refetches with the list after an amend (shared key
+  // prefix). Falls back to the bootstrap length until it resolves.
+  const suiteQuery = useHarnessScenarios({ jobId: env?.id, page: 0, pageSize: 1 });
+  const suiteTotal = suiteQuery.data?.total ?? selected.length;
+  // The list polls every 15s. A failed first load takes the whole tab; a failed
+  // background refetch keeps the rows already on screen and says so inline.
+  const loadFailed = pageData.isError || suiteQuery.isError;
+  const retryLoad = () => {
+    if (pageData.isError) pageData.refetch();
+    if (suiteQuery.isError) suiteQuery.refetch();
+  };
+  const hasScenarios = suiteTotal > 0;
+  // A change to the search, the filters or the grouping moves the matching set,
+  // so the page position and the selection predicate are reset in each change
+  // handler below (resetView) — not in an effect, which needed an exhaustive-deps
+  // disable and reset a tick late.
+  const resetView = () => {
     setPage(0);
     sel.clearRef.current();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryKey]);
+  };
 
-  // filterFields — the shape the shared FilterPanel wants. Every dimension is an
-  // enum whose choices come from the actual scenarios, so a template's own
-  // personas / sub-goals show up rather than a hard-coded list. Use case reuses
-  // the same derivation the table and coverage matrix read; its choices are the
-  // opaque slug ids, surfaced through choiceLabels so the user only sees the
-  // sentence.
-  const useCaseOptions = useMemo(() => {
-    const map = new Map();
-    selected.forEach((r) => {
-      const uc = deriveUseCase(r);
-      if (!map.has(uc.id)) map.set(uc.id, uc.label);
-    });
-    return map;
-  }, [selected]);
-  const personaChoices = useMemo(
-    () => [...new Set(selected.map((r) => r?.persona?.name).filter(Boolean))].sort(),
-    [selected],
+  // Deleting the last rows of the last page shrinks the suite, so the current
+  // page can fall past the new last page — the server then 404s that page and
+  // the pager loops. Clamp back onto the last real page once the refetched
+  // count is in.
+  useEffect(() => {
+    if (!pageData.loading && page > 0 && page >= pageData.pageCount) {
+      setPage(Math.max(0, pageData.pageCount - 1));
+    }
+  }, [page, pageData.pageCount, pageData.loading]);
+
+  // The filter catalogue comes straight from the server (`fields`), counted
+  // over the searched suite so an OR stays buildable; it drops into the shared
+  // FilterPanel unchanged.
+  const filterFields = pageData.fields;
+  // The editor's background-noise choices come from the server field catalogue
+  // (the values the agent actually uses), not a hardcoded list — so the picker
+  // matches the suite and follows any backend vocabulary change automatically.
+  const noiseOptions = useMemo(
+    () => (pageData.fields || []).find((f) => f.value === "background_noise")?.choices ?? [],
+    [pageData.fields],
   );
-  const subgoalChoices = useMemo(() => {
-    const s = new Set();
-    selected.forEach((r) => subTasksFor(r, env).forEach((sg) => s.add(sg.label)));
-    return [...s].sort();
-  }, [selected, env]);
-  const filterFields = useMemo(() => [
-    {
-      value: "useCase", label: "Use case", type: "enum",
-      choices: [...useCaseOptions.keys()],
-      choiceLabels: Object.fromEntries(useCaseOptions),
-    },
-    { value: "persona", label: "Persona", type: "enum", choices: personaChoices },
-    { value: "subgoal", label: "Sub-goal", type: "enum", choices: subgoalChoices },
-  ], [useCaseOptions, personaChoices, subgoalChoices]);
 
   const filterCount = Object.values(filters).reduce(
     (sum, arr) => sum + (Array.isArray(arr) ? arr.length : 0),
@@ -171,6 +193,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   // [{ field, operator, value }] (Query tab). Flatten both to the
   // { field: [values] } shape the predicate below reads.
   const applyFilters = (result) => {
+    resetView();
     if (!result) { setFilters({}); return; }
     if (Array.isArray(result)) {
       const flat = {};
@@ -186,71 +209,67 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
     }
   };
 
-  const matchesFilters = (r) => {
-    const uc = deriveUseCase(r).id;
-    if (filters.useCase?.length && !filters.useCase.includes(uc)) return false;
-    if (filters.useCase_not?.length && filters.useCase_not.includes(uc)) return false;
-    const persona = r?.persona?.name || null;
-    if (filters.persona?.length && !filters.persona.includes(persona)) return false;
-    if (filters.persona_not?.length && filters.persona_not.includes(persona)) return false;
-    if (filters.subgoal?.length || filters.subgoal_not?.length) {
-      const subgoals = subTasksFor(r, env).map((s) => s.label);
-      if (filters.subgoal?.length && !filters.subgoal.some((s) => subgoals.includes(s))) return false;
-      if (filters.subgoal_not?.length && filters.subgoal_not.some((s) => subgoals.includes(s))) return false;
-    }
-    return true;
-  };
-
-  const q = query.trim().toLowerCase();
-  const shown = selected.filter((r) => {
-    if (!matchesFilters(r)) return false;
-    if (!q) return true;
-    const hay = `${r.name || ""} ${r.summary || ""} ${r.title || ""} ${r.task || ""} ${r.useCase || ""}`.toLowerCase();
-    return hay.includes(q);
-  });
-  // `shown` is the full matching set (client-side today; the backend's job
-  // tomorrow). It feeds the all-mode bulk delete below; the visible page comes
-  // from useScenarioPage. Hiding groups is a page-local visual toggle.
+  // Hiding groups is a page-local visual toggle.
   const hiddenCount = pageData.pageGroups.filter((g) => hiddenGroupIds.includes(g.id)).length;
 
-  const clearFilters = () => { setQuery(""); setFilters({}); setHiddenGroupIds([]); };
-  const removeScenario = (id) => patch({ scenarios: selected.filter((s) => s.id !== id) });
+  const clearFilters = () => { setQuery(""); setFilters({}); setHiddenGroupIds([]); resetView(); };
 
-  // The concrete id list a bulk action targets — the same predicate bulkDelete
-  // resolves: include-mode is the picked ids; all-mode is every matching id
-  // minus the user's exceptions.
-  const selectedIdsForAction = () => (
-    sel.mode === "all"
-      ? shown.filter((s) => !sel.idList.includes(s.id)).map((s) => s.id)
-      : sel.idList
-  );
-
-  // Edit → hand the selection to the builder chat as a pinned scaffold, so the
-  // user can add an instruction and send it as a bulk edit against those rows.
-  const handleEditSelected = () => {
-    const n = sel.count;
-    injectComposerScaffold(
-      `Edit the ${n} selected ${n === 1 ? "scenario" : "scenarios"}: `,
-    );
+  // Surface an amend's receipts: a refusal (a field that is proved, not
+  // described) wins the message with its `why`; otherwise the success label.
+  const surfaceReceipts = (data, successLabel) => {
+    const refused = (data?.receipts || []).filter((r) => r.outcome === "refused");
+    if (refused.length) {
+      enqueueSnackbar(refused[0].why || `${refused.length} change(s) refused`, {
+        variant: "warning",
+        autoHideDuration: 8000,
+      });
+      return;
+    }
+    enqueueSnackbar(successLabel, { variant: "success", autoHideDuration: 4000 });
   };
 
-  // Run → start a run scoped to the selection × k. The target rides ?only=…&
-  // trials=k; the product run page doesn't honour those yet (honest gap).
-  const handleRunSelected = (k) => {
-    onStartRun?.(selectedIdsForAction(), k || trials);
+  // Row trash → confirm, then drop that one scenario by name.
+  const removeScenario = (id) => {
+    const name = pageData.rows.find((r) => r.id === id)?.name;
+    if (!name) return;
+    setPendingDelete({ count: 1, resolve: async () => [name] });
+  };
+
+  // Resolve the selection against the current filter, server-side. The
+  // selection holds row ids; `pick` projects each taken row.
+  const resolveSelection = (pick) =>
+    resolveScenarioSelection(env?.id, {
+      search: debouncedQuery,
+      filters,
+      mode: sel.mode,
+      marked: sel.idList,
+      pick,
+    });
+
+  // Run → start a run scoped to the selection × k. The run route reads
+  // scenario keys, not row ids, so the selection is resolved to keys first.
+  const handleRunSelected = async (k) => {
+    let keys;
+    try {
+      keys = await resolveSelection((r) => r.scenario_key);
+    } catch {
+      enqueueSnackbar("Couldn't start the run — try again", { variant: "error" });
+      return;
+    }
+    if (keys.length) onStartRun?.(keys, k || trials);
   };
 
   // Mirror the predicate selection into the workspace builder chat. include-mode
-  // names the picked rows (looked up in allRows); all-mode can't enumerate the
-  // match cheaply, so it publishes just the count and the chip reads
-  // "all N matching". Keyed on a signature so it only fires on a real change.
+  // names the picked rows; all-mode can't enumerate the match cheaply, so it
+  // publishes just the count and the chip reads "all N matching". Keyed on a
+  // signature so it only fires on a real change.
   const selSig = `${sel.mode}:${sel.count}:${sel.idList.join(",")}`;
   useEffect(() => {
     if (sel.count === 0) { clearScenarioSelection(); return; }
     if (sel.mode === "all") {
       publishScenarioSelection({ ids: [], rows: [], count: sel.count, all: true });
     } else {
-      const rows = allRows.filter((s) => sel.idList.includes(s.id));
+      const rows = selected.filter((s) => sel.idList.includes(s.id));
       publishScenarioSelection({ ids: sel.idList, rows, count: sel.count });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -259,51 +278,42 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   // "N selected" chip hanging in the chat.
   useEffect(() => () => clearScenarioSelection(), []);
 
+  // The scenario names a bulk delete targets. Names — not ids — because the
+  // amend route resolves drops by name.
+  const resolveSelectionNames = () => resolveSelection((r) => r.name);
+
+  // Bulk delete → confirm, then one drop naming the whole selection.
   const bulkDelete = () => {
     if (sel.count === 0) return;
-    // Demo rows are synthetic and not in the store, so a scale-harness delete
-    // reports the request rather than mutating — the payload is what the real
-    // backend deletes by (see the inspector).
-    if (demoScale > 0) {
-      const noun = sel.count === 1 ? "scenario" : "scenarios";
-      enqueueSnackbar(
-        `Would delete ${sel.count.toLocaleString()} ${noun} · POST /scenarios/bulk-delete`,
-        { variant: "info", autoHideDuration: 5000 },
-      );
-      sel.clear();
+    setPendingDelete({ count: sel.count, resolve: resolveSelectionNames });
+  };
+
+  // Run the confirmed delete: resolve the names, then a single amend `drop`.
+  const confirmDelete = async () => {
+    const pending = pendingDelete;
+    setPendingDelete(null);
+    if (!pending) return;
+    let names;
+    try {
+      names = await pending.resolve();
+    } catch {
+      enqueueSnackbar("Couldn't delete — try again", { variant: "error" });
       return;
     }
-    const priorScenarios = selected;
-    // include-mode: the picked ids. all-mode: every matching id minus the user's
-    // exceptions — computed client-side here, but the identical predicate is
-    // what a backend bulk-delete would run.
-    const removedIds = sel.mode === "all"
-      ? new Set(shown.filter((s) => !sel.idList.includes(s.id)).map((s) => s.id))
-      : new Set(sel.idList);
-    const removed = priorScenarios.filter((s) => removedIds.has(s.id));
-    patch({ scenarios: priorScenarios.filter((s) => !removedIds.has(s.id)) });
-    sel.clear();
-    const label = removed.length === 1
-      ? `Removed "${removed[0].name || removed[0].title || "scenario"}"`
-      : `Removed ${removed.length} scenarios`;
-    const key = enqueueSnackbar(label, {
-      variant: "info",
-      autoHideDuration: 6000,
-      action: (id) => (
-        <Button
-          size="small"
-          sx={{ color: "common.white", fontWeight: 700, typography: "s2" }}
-          onClick={() => {
-            // Restore the exact pre-delete list captured in the closure, so the
-            // rows come back in the order the user was looking at.
-            patch({ scenarios: priorScenarios });
-            closeSnackbar(id || key);
-          }}
-        >
-          Undo
-        </Button>
-      ),
-    });
+    if (!names.length) return;
+    amend.mutate(
+      { rework: true, changes: [{ op: "drop", scenarios: names }] },
+      {
+        onSuccess: (data) => {
+          sel.clear();
+          surfaceReceipts(
+            data,
+            names.length === 1 ? "Deleted 1 scenario" : `Deleted ${names.length} scenarios`,
+          );
+        },
+        onError: () => enqueueSnackbar("Couldn't delete — try again", { variant: "error" }),
+      },
+    );
   };
 
   // Adds dedupe against what is already on the environment, so re-adding a row
@@ -314,10 +324,19 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
     if (fresh.length) patch({ scenarios: [...selected, ...fresh] });
   };
 
-  // Edits replace the row in place, so a scenario keeps its id and everything
-  // keyed off it — coverage, run history, the evals mapped to it.
-  const saveScenario = (row) =>
-    patch({ scenarios: selected.map((s) => (s.id === row.id ? row : s)) });
+  // Edits route through the amend route as set_field / set_persona ops (the
+  // editor emits only the changed writable fields). A refused receipt surfaces
+  // its `why`; a success invalidates the list + coverage so the row updates.
+  const saveScenario = ({ changes, rework }) => {
+    if (!changes?.length) return;
+    amend.mutate(
+      { rework, changes },
+      {
+        onSuccess: (data) => surfaceReceipts(data, "Saved"),
+        onError: () => enqueueSnackbar("Couldn't save — try again", { variant: "error" }),
+      },
+    );
+  };
 
   return (
     <Box sx={{ p: 2 }}>
@@ -332,9 +351,9 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
             <Typography sx={{ typography: "m2", fontWeight: "fontWeightSemiBold" }}>
               {SCENARIOS_COPY.heading}
             </Typography>
-            {selected.length > 0 && (
+            {hasScenarios && (
               <Typography sx={{ typography: "s1", fontWeight: "fontWeightMedium", color: "text.subtitle", fontVariantNumeric: "tabular-nums" }}>
-                {`(${allRows.length.toLocaleString()})`}
+                {`(${suiteTotal.toLocaleString()})`}
               </Typography>
             )}
           </Stack>
@@ -342,18 +361,37 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
             {SCENARIOS_COPY.subtitle}
           </Typography>
         </Box>
-        {selected.length > 0 && <AddButton onClick={() => setAdding(true)} contained locked={locked} />}
+        {hasScenarios && <AddButton onClick={() => setAdding(true)} contained locked={locked} />}
       </Stack>
 
-      {selected.length === 0 ? (
+      {loadFailed && !pageData.rows.length ? (
+        <EmptyState
+          icon="solar:danger-triangle-linear"
+          title="Couldn't load scenarios"
+          body="Something went wrong loading this environment's scenarios. Try again."
+        />
+      ) : !hasScenarios ? (
         <RoutePlaceholder onAdd={() => setAdding(true)} locked={locked} />
       ) : (
         <>
           {/* Coverage leads the tab, collapsed — the summary numbers (Axes /
               Pairs / Forced) are visible on landing without scrolling past the
               list; the chevron unfurls the full breakdown. */}
+          {loadFailed && (
+            <Alert
+              severity="error"
+              sx={{ mb: 2, typography: "s3" }}
+              action={(
+                <Button color="inherit" size="small" onClick={retryLoad}>
+                  Retry
+                </Button>
+              )}
+            >
+              Couldn&apos;t refresh the scenarios. Showing the last loaded list.
+            </Alert>
+          )}
           <Box sx={{ mb: 2 }}>
-            <CoverageMatrix scenarios={selected} env={env} />
+            <CoverageMatrix jobId={env?.id} search={debouncedQuery} filters={filters} />
           </Box>
 
           <SectionCard sx={{ mb: 2 }}>
@@ -366,17 +404,18 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
               <Box aria-hidden={!locked && sel.count > 0 ? true : undefined}>
                 <ScenarioToolbar
                   query={query}
-                  onQueryChange={setQuery}
+                  onQueryChange={handleQueryChange}
                   view={view}
                   onViewChange={setView}
-                  groupBy={groupBy}
+                  groupBy={activeGroupBy}
                   onGroupByChange={setGroupBy}
+                  groupings={pageData.groupings}
                   filterFields={filterFields}
                   filters={filters}
                   onApplyFilters={applyFilters}
                   filterCount={filterCount}
                   shownCount={pageData.total}
-                  totalCount={allRows.length}
+                  totalCount={suiteTotal}
                   hiddenCount={hiddenCount}
                   onClear={clearFilters}
                 />
@@ -384,8 +423,11 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
               {!locked && sel.count > 0 && (
                 <Box
                   sx={{
+                    // No horizontal padding here — SelectionBar owns its own
+                    // inset so the chip's left edge lines up with the table's
+                    // checkbox column below (an extra px here double-padded it).
                     position: "absolute", inset: 0, zIndex: 2,
-                    display: "flex", alignItems: "center", px: 2.5,
+                    display: "flex", alignItems: "center",
                     bgcolor: "background.paper",
                     borderBottom: "1px solid", borderColor: "divider",
                   }}
@@ -395,7 +437,6 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
                       count={sel.count}
                       onDelete={bulkDelete}
                       onClear={sel.clear}
-                      onEdit={handleEditSelected}
                       onRun={canRun && onStartRun ? handleRunSelected : undefined}
                       trials={trials}
                       onTrialsChange={setTrials}
@@ -424,8 +465,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
               onPageChange={setPage}
               query={query}
               filters={filters}
-              groupBy={groupBy}
-              showInspector={demoScale > 0}
+              groupBy={activeGroupBy}
               locked={locked}
             />
           </SectionCard>
@@ -443,8 +483,26 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
         open={!!editing}
         onClose={() => setEditing(null)}
         row={editing}
-        env={env}
         onSave={saveScenario}
+        scenarioEditing={pageData.scenarioEditing}
+        noiseOptions={noiseOptions}
+      />
+      <ConfirmDialog
+        open={!!pendingDelete}
+        onClose={() => setPendingDelete(null)}
+        title="Delete scenarios?"
+        content={
+          <Typography component="span" sx={{ typography: "s2" }}>
+            {pendingDelete?.count === 1
+              ? "This scenario will be permanently removed. This can't be undone."
+              : `${pendingDelete?.count ?? 0} scenarios will be permanently removed. This can't be undone.`}
+          </Typography>
+        }
+        action={
+          <Button size="small" variant="contained" color="error" onClick={confirmDelete}>
+            Delete
+          </Button>
+        }
       />
     </Box>
   );

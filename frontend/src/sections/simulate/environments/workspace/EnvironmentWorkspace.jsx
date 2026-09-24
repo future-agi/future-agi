@@ -1,8 +1,6 @@
-import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
-import { alpha } from "@mui/material/styles";
 import { enqueueSnackbar } from "notistack";
-import { Box, Button, Stack, Typography, IconButton } from "@mui/material";
+import { Box, Button, Stack } from "@mui/material";
 import {
   useNavigate,
   useParams,
@@ -10,9 +8,7 @@ import {
   Outlet,
 } from "react-router-dom";
 
-import Iconify from "src/components/iconify";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
-import CustomTooltip from "src/components/tooltip";
 import { paths } from "src/routes/paths";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -26,6 +22,7 @@ import { useWorkspaceChat } from "src/api/simulate-environments/workspaceChat";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
 import { runHarnessEnvironment } from "src/api/simulate-environments/harnessEnvironments";
 import { runSimulationTarget } from "src/api/simulate-environments/runs";
+import { listAllScenarioKeys } from "src/api/simulate-environments/scenarioSelection";
 
 import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
 import { useEnvState } from "../store/envState";
@@ -34,10 +31,7 @@ import SectionCard from "../components/SectionCard";
 import EmptyState from "../components/EmptyState";
 import BuilderConsole from "../buildEnvironment/console/BuilderConsole";
 import { CONSOLE_COPY } from "../buildEnvironment/build.constants";
-import {
-  subscribeScenarioSelection,
-  clearScenarioSelection,
-} from "../buildEnvironment/console/scenarioSelectionBus";
+import { subscribeScenarioSelection } from "../buildEnvironment/console/scenarioSelectionBus";
 import BuildingStage from "../buildEnvironment/building/BuildingStage";
 import WorkspaceHeader from "./WorkspaceHeader";
 import SystemBanners from "./SystemBanners";
@@ -79,16 +73,19 @@ export default function EnvironmentWorkspace() {
   const navigate = useNavigate();
   const { envId } = useParams();
   const { env, source, bootstrapState, notFound, error, refetch } = useEnvironment(envId);
-  // A real (backed) env's applied evals live on §6 (evaluations.selected), not
+  // A real (backed) env's applied evals live on the environment detail
+  // (evaluations.selected), not
   // the client store — so the Evaluations tab count + the "no evals" gap must
-  // read §6, or they'd disagree with the panel and never clear after an add.
+  // read that detail, or they'd disagree with the panel and never clear after
+  // an add.
   // Shares the ["harness-environment", id] cache the Evals tab already uses.
   const backed = source === "harness";
   const evalDetailQuery = useQuery(harnessEnvironmentQuery(envId, { enabled: backed }));
   // While the job is still deriving, the harness bootstrap is only a placeholder
-  // (generated-pool scenarios, a v1 stub) — and useEnvState seeds byEnv once, so
-  // seeding it now would lock that placeholder in even after the real world lands.
-  // Seed only once the env is ready; the build view below never reads envState.
+  // (an endpoint-agent stub with whatever scenarios the run has emitted so far, if
+  // any) — and useEnvState seeds byEnv once, so seeding it now would freeze that
+  // early state in even after the real scenarios land on a later poll. Seed only
+  // once the env is ready; the build view below never reads envState.
   const building = !!env && env.buildStatus === BUILD_STATUS.BUILDING;
   const buildFailed = !!env && env.buildStatus === BUILD_STATUS.FAILED;
   const { envState, patch, canRun } = useEnvState(
@@ -102,10 +99,10 @@ export default function EnvironmentWorkspace() {
   const queryClient = useQueryClient();
   const pendingSubmission = useRef(null);
   const runMutation = useMutation({
-    mutationFn: ({ ids, trials }) => {
-      const scenarioIds = ids === undefined
-        ? (envState?.scenarios || []).map((scenario) => scenario.id).filter(Boolean)
-        : ids;
+    mutationFn: async ({ ids, trials }) => {
+      // Run-all reads the keys from the server list: the bootstrap
+      // `envState.scenarios` is seeded once and keeps a key an amend dropped.
+      const scenarioIds = ids === undefined ? await listAllScenarioKeys(env.id) : ids;
       const selection = JSON.stringify([env.id, scenarioIds, trials || 1]);
       if (pendingSubmission.current?.selection !== selection) {
         pendingSubmission.current = {
@@ -162,7 +159,7 @@ export default function EnvironmentWorkspace() {
   // Real derived world from the running job's stage outputs (never the MOCK_WORLD
   // overlay) — the sandbox hero shows real tools/rules/tables as they land, a
   // neutral skeleton before.
-  const derivedWorld = stageOutputsToWorld(progress.job?.stage_outputs || []).world;
+  const derivedWorld = stageOutputsToWorld(progress.job?.stage_outputs || []);
 
   const executionMatch = useMatch(EXECUTION_PATTERN);
 
@@ -263,7 +260,13 @@ export default function EnvironmentWorkspace() {
   if (executionMatch) {
     return (
       <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-        <Outlet context={{ env, envState, onStartRun: startRun }} />
+        {/* A client/template env (no backend) can still reach this route — e.g.
+            the `?mockRuns=1` QA switch mints run history for any env. `env`
+            alone doesn't say whether a backend exists, so `backed` (same
+            `source === "harness"` test WorkspacePanels/EvalsStep use) rides
+            along the same context route, so RunDetail can gate the real API
+            picker on it. */}
+        <Outlet context={{ env, envState, backed, onStartRun: startRun }} />
       </Box>
     );
   }
@@ -292,26 +295,30 @@ export default function EnvironmentWorkspace() {
   // the console freezes until it goes Live. SystemBanners reads the same value.
   const envLive = env.buildStatus === BUILD_STATUS.READY;
 
-  // The tab count + "no evals" gap read the applied eval set. For a backed env
-  // that set is §6 evaluations.selected (what the Evals panel shows), not the
-  // client store — so overlay it here so the badge matches the panel and clears
+  // The tab count, the "no evals" gap and the Runs pre-flight tile read the
+  // applied eval set. For a backed env that set is the detail's
+  // evaluations.selected
+  // (what the Evals panel shows), not the client store — so overlay it here so
+  // the badge, the gap and the pre-flight count all match the panel and clear
   // after an add. Scenarios/runs keep their existing sources.
   const backedSelected = evalDetailQuery.data?.evaluations?.selected;
-  const badgeEnvState =
+  const serverEnvState =
     backed && Array.isArray(backedSelected)
       ? { ...envState, evals: backedSelected }
       : envState;
 
-  // A §8 rename writes the fresh detail back into the §6 cache, but `env` here
+  // A rename writes the fresh detail back into the detail cache, but `env` here
   // is derived from the job poll (name from job metadata), so it would keep the
-  // old name in the header. Overlay §6's name for a backed env so a rename shows
+  // old name in the header. Overlay the detail's name for a backed env so a
+  // rename shows
   // everywhere the moment it lands, not only in the Settings field.
   const backedName = evalDetailQuery.data?.overview?.name;
   const displayEnv = env && backed && backedName ? { ...env, name: backedName } : env;
 
-  // Overview summary tiles need the real §6 counts: the job poll (which drives
+  // Overview summary tiles need the detail's real counts: the job poll (which
+  // drives
   // env/envState here) carries the scenarios list but not the eval or run
-  // counts. Reuse the §6 detail already fetched above rather than a second read.
+  // counts. Reuse the detail already fetched above rather than a second read.
   const backedDetail = evalDetailQuery.data;
   const overviewCounts =
     backed && backedDetail
@@ -323,7 +330,7 @@ export default function EnvironmentWorkspace() {
           hardRules: backedDetail.contract?.hard_constraints?.length,
         }
       : undefined;
-  // Real §6 world content for the Overview (stores/amendments/dependencies),
+  // Real world content for the Overview (stores/amendments/dependencies),
   // so those cards render live data and an honest empty state instead of the
   // fixture. Undefined for a non-backed env.
   const overviewWorld =
@@ -334,7 +341,7 @@ export default function EnvironmentWorkspace() {
           dependencies: backedDetail.contract?.dependencies ?? [],
         }
       : undefined;
-  // Real §6 capability-graph branches for a backed env: tools names,
+  // Real capability-graph branches for a backed env: tools names,
   // real_use_cases (flows), world.personas names, hard_constraints (guardrails).
   // Empty arrays render the graph's honest "none yet" instead of a fixture.
   const graphData =
@@ -392,16 +399,6 @@ export default function EnvironmentWorkspace() {
             canStop={chat.inFlight}
             frozen={!envLive || chat.frozen}
             frozenReason={!envLive ? CONSOLE_COPY.frozen : chat.frozenReason}
-            preComposer={
-              (selection.count ?? selection.ids.length) > 0 ? (
-                <SelectionContextChip
-                  count={selection.count ?? selection.ids.length}
-                  rows={selection.rows}
-                  all={selection.all}
-                  onClear={clearScenarioSelection}
-                />
-              ) : null
-            }
           />
         </SectionCard>
 
@@ -421,14 +418,15 @@ export default function EnvironmentWorkspace() {
           <WorkspacePanels
             env={displayEnv}
             envState={envState}
+            serverEnvState={serverEnvState}
             patch={patch}
             tab={activeTab}
             onTabChange={onTabChange}
             locked={locked}
             backed={source === "harness"}
             onFork={onFork}
-            gapsByTab={gapsByTab(env, badgeEnvState)}
-            counts={counts(badgeEnvState)}
+            gapsByTab={gapsByTab(env, serverEnvState)}
+            counts={counts(serverEnvState)}
             overviewCounts={overviewCounts}
             overviewWorld={overviewWorld}
             graphData={graphData}
@@ -441,48 +439,11 @@ export default function EnvironmentWorkspace() {
   );
 }
 
-// Mirror the module-level scenario selection into component state so the
-// console's pre-composer chip re-renders when rows are checked or cleared on
-// the Scenarios tab. The bus fires the current value on subscribe.
+// Mirror the module-level scenario selection into component state so the header
+// yields its primary Run to the Scenarios tab's selection bar while rows are
+// checked (selectionActive). The bus fires the current value on subscribe.
 function useScenarioSelection() {
   const [selection, setSelection] = useState({ ids: [], rows: [], count: 0, all: false });
   useEffect(() => subscribeScenarioSelection(setSelection), []);
   return selection;
 }
-
-// Shown above the console composer when the user has scenarios checked on the
-// Scenarios tab. Turns an implicit selection into an explicit "you are editing
-// N rows" status so the next send doesn't feel like it came from nowhere.
-function SelectionContextChip({ count, rows, all = false, onClear }) {
-  const preview = (rows || []).slice(0, 2).map((r) => r.name || r.title || "scenario").join(", ");
-  const rest = count > 2 ? ` +${count - 2}` : "";
-  return (
-    <Stack
-      direction="row" alignItems="center" spacing={1}
-      sx={{
-        px: 1.5, py: 1,
-        borderBottom: "1px solid", borderColor: "divider",
-        bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.06 : 0.03),
-      }}
-    >
-      <Iconify icon="solar:layers-minimalistic-linear" width={14} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-      <Typography sx={{ typography: "s3", color: "text.secondary", flex: 1, minWidth: 0 }} noWrap>
-        {/* all-mode (select-all-matching) can't name the rows — the match may run
-            to thousands and none may be on the current page — so it states the
-            count alone. */}
-        Editing <b>{count}</b> scenario{count === 1 ? "" : "s"}{all ? " matching" : ` — ${preview}${rest}`}
-      </Typography>
-      <CustomTooltip show title="Clear selection" size="small" arrow>
-        <IconButton size="small" aria-label="Clear selection" onClick={onClear} sx={{ p: 0.25 }}>
-          <Iconify icon="solar:close-circle-linear" width={14} sx={{ color: "text.subtitle" }} />
-        </IconButton>
-      </CustomTooltip>
-    </Stack>
-  );
-}
-SelectionContextChip.propTypes = {
-  count: PropTypes.number,
-  rows: PropTypes.array,
-  all: PropTypes.bool,
-  onClear: PropTypes.func,
-};

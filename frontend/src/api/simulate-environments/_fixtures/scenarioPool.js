@@ -32,7 +32,7 @@ const derivedPacks = (env) => [
     id: `${env.id}::core`,
     name: "Core tasks",
     blurb: `Everyday work in ${env.name} — one task per available tool.`,
-    count: env.tools.length,
+    count: (env.tools || []).length,
     difficulty: "Starter",
     tags: ["baseline"],
   },
@@ -40,7 +40,7 @@ const derivedPacks = (env) => [
     id: `${env.id}::rules`,
     name: "Rule probes",
     blurb: "One scenario per business rule, each written to break it.",
-    count: env.rules.length,
+    count: (env.rules || []).length,
     difficulty: "Advanced",
     tags: ["policy", "critical"],
   },
@@ -122,7 +122,7 @@ function derivedRows(env, packId) {
       return `${label} ${state}`;
     };
 
-    return env.tools.flatMap((tool, i) => CORE_VARIANTS.map((v, vi) => {
+    return (env.tools || []).flatMap((tool, i) => CORE_VARIANTS.map((v, vi) => {
       const persona = personaFor(env, i * 4 + vi);
       const short = kebab(tool.name).replace(/-of$|-the$/, "");
       return {
@@ -157,7 +157,7 @@ function derivedRows(env, packId) {
       return `Rule Enforcement — ${map[v.suffix] || v.suffix}`;
     };
 
-    return env.rules.flatMap((rule, i) => RULE_VARIANTS.map((v, vi) => {
+    return (env.rules || []).flatMap((rule, i) => RULE_VARIANTS.map((v, vi) => {
       const persona = personaFor(env, (i * 3 + vi) + 3);
       return {
         id: `${env.id}-rule-${i}-${v.suffix}`,

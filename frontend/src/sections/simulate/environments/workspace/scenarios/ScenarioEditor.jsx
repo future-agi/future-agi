@@ -1,20 +1,15 @@
 import PropTypes from "prop-types";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
 import {
   Box, Stack, Typography, Button, TextField, Slider,
-  MenuItem, Select, InputLabel, FormControl, ToggleButton, ToggleButtonGroup,
+  ToggleButton, ToggleButtonGroup,
 } from "@mui/material";
 
-import { subTasksFor } from "src/api/simulate-environments/_fixtures/contract";
 import SideDrawer from "../../components/SideDrawer";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
-import { ENV_SHAPE, SCENARIO_SHAPE } from "./scenarios.shapes";
-import {
-  EDITOR_COPY, CONVERSATIONAL_SURFACES, VOICE_ONLY_SURFACES,
-  TONE_OPTIONS, STYLE_OPTIONS, ACCENT_OPTIONS, LANGUAGE_OPTIONS, NOISE_OPTIONS,
-  deriveCaller, deriveNoise, subTasksToText, textToSubTasks,
-} from "./scenarioEditor.constants";
+import { SCENARIO_SHAPE } from "./scenarios.shapes";
+import { EDITOR_COPY, NOISE_OPTIONS, subTasksToText } from "./scenarioEditor.constants";
 
 const fieldSx = { typography: "s2" };
 const selectedToggleSx = (t) => ({
@@ -23,47 +18,137 @@ const selectedToggleSx = (t) => ({
   borderColor: BUILD_TONES.accent,
 });
 
-// Edit one scenario, in place, on this environment's copy. The parts here are
-// the ones safe to change directly — name, use case, branch, task, passes-when,
-// sub-goals, the persona, and (on conversational / voice surfaces) the caller
-// and call constraints. Saving writes the whole draft back through `onSave`.
-export default function ScenarioEditor({ open, onClose, row, env, onSave }) {
-  // The normalised opening state, once per row. Caller / noise / sub-goals are
-  // filled from the row's own data (sub-goals through the same derivation the
-  // table renders), so the drawer opens populated and `dirty` compares against
-  // this, not the raw row — otherwise Save would be enabled before any edit.
+// The server names which fields may be written, in `scenario_editing`
+// (editable_fields + persona_fields), and which force a re-proof (rework_fields).
+// The drawer renders every field but disables the ones the server does not name,
+// so the read-only set is the server's answer, never a hardcoded list.
+const READ_ONLY_HINT = "Proved, not editable — this was verified when the scenario was generated.";
+const REPROOF_HINT = "Editing this re-proves the scenario.";
+
+export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEditing, noiseOptions = [] }) {
+  const editableFields = useMemo(
+    () => scenarioEditing?.editable_fields ?? [],
+    [scenarioEditing],
+  );
+  // Background-noise choices come from the server field catalogue (the values
+  // the agent actually uses); fall back to the abstract levels only if the
+  // catalogue is absent, and always include the current value so it stays
+  // selectable even if it's outside the server's list.
+  const noiseChoices = useMemo(() => {
+    const base = noiseOptions.length ? noiseOptions : NOISE_OPTIONS;
+    const current = row?.backgroundNoise;
+    return current && !base.includes(current) ? [...base, current] : base;
+  }, [noiseOptions, row?.backgroundNoise]);
+  const personaFields = useMemo(
+    () => scenarioEditing?.persona_fields ?? [],
+    [scenarioEditing],
+  );
+  const reworkFields = useMemo(
+    () => scenarioEditing?.rework_fields ?? [],
+    [scenarioEditing],
+  );
+
+  const canEdit = useCallback((field) => editableFields.includes(field), [editableFields]);
+  const canEditPersona = useCallback(
+    (field) => personaFields.includes(field),
+    [personaFields],
+  );
+
+  // The normalised opening state, seeded from the row (persona values come off
+  // `_raw.persona`, since the mapped shape drops keywords/languages). `dirty`
+  // and the emitted ops compare against this.
   const base = useMemo(() => {
     if (!row) return null;
-    const subTasks = row.subTasks?.length ? row.subTasks : subTasksFor(row, env);
+    const p = row._raw?.persona || {};
+    const asList = (v) => (Array.isArray(v) ? v.join(", ") : (v ?? ""));
     return {
-      ...row,
-      caller: row.caller || deriveCaller(row.persona),
-      backgroundNoise: row.backgroundNoise || deriveNoise(row.persona),
-      subGoalsText: subTasksToText(subTasks),
+      name: row.name ?? "",
+      useCase: row.useCase ?? "",
+      branch: row.conversationBranch ?? "",
+      instruction: row.situation ?? "",
+      tests: row.expected ?? "",
+      subGoalsText: subTasksToText(row.subTasks),
+      maxTurns: row.maxTurns ?? "",
+      backgroundNoise: row.backgroundNoise ?? "",
+      persona: {
+        name: p.name ?? "",
+        ageGroup: p.age_group ?? "",
+        gender: p.gender ?? "",
+        accent: p.accent ?? "",
+        communicationStyle: p.communication_style ?? "",
+        personality: p.personality ?? "",
+        occupation: p.occupation ?? "",
+        location: p.location ?? "",
+        languages: asList(p.languages),
+        keywords: asList(p.keywords),
+      },
     };
-  }, [row, env]);
+  }, [row]);
 
   const [draft, setDraft] = useState(base || {});
   useEffect(() => { if (base) setDraft(base); }, [base]);
 
+  // The amend ops for the fields that actually changed AND are writable, plus
+  // whether any of them forces a re-proof. Drives both the Save-enabled state and
+  // the emitted body.
+  const { changes, rework } = useMemo(() => {
+    if (!base) return { changes: [], rework: false };
+    const ops = [];
+    const changedFields = [];
+
+    const setField = (field, value) => {
+      ops.push({ op: "set_field", scenario: base.name, field, value });
+      changedFields.push(field);
+    };
+
+    if (canEdit("tests") && draft.tests !== base.tests) setField("tests", draft.tests);
+    if (canEdit("max_turns") && String(draft.maxTurns) !== String(base.maxTurns)) {
+      setField("max_turns", Number(draft.maxTurns) || 0);
+    }
+    if (canEdit("background_noise") && draft.backgroundNoise !== base.backgroundNoise) {
+      setField("background_noise", draft.backgroundNoise);
+    }
+
+    // Persona: one set_persona op carrying only the changed, writable fields.
+    const PERSONA_MAP = {
+      accent: "accent",
+      communicationStyle: "communication_style",
+      personality: "personality",
+      occupation: "occupation",
+      location: "location",
+      languages: "languages",
+      keywords: "keywords",
+    };
+    const LIST_KEYS = new Set(["languages", "keywords"]);
+    const persona = {};
+    for (const [draftKey, serverKey] of Object.entries(PERSONA_MAP)) {
+      if (!canEditPersona(serverKey)) continue;
+      const dv = draft.persona?.[draftKey];
+      const bv = base.persona?.[draftKey];
+      if (dv === bv) continue;
+      persona[serverKey] = LIST_KEYS.has(draftKey)
+        ? String(dv || "").split(",").map((s) => s.trim()).filter(Boolean)
+        : dv;
+      changedFields.push(serverKey);
+    }
+    if (Object.keys(persona).length) {
+      ops.push({ op: "set_persona", scenario: base.name, persona });
+    }
+
+    return {
+      changes: ops,
+      rework: changedFields.some((f) => reworkFields.includes(f)),
+    };
+  }, [draft, base, canEdit, canEditPersona, reworkFields]);
+
   if (!row) return null;
 
   const set = (k) => (v) => setDraft((d) => ({ ...d, [k]: v }));
-  const setCaller = (k) => (v) => setDraft((d) => ({ ...d, caller: { ...(d.caller || {}), [k]: v } }));
   const setPersona = (k) => (v) => setDraft((d) => ({ ...d, persona: { ...(d.persona || {}), [k]: v } }));
 
-  const isConversational = CONVERSATIONAL_SURFACES.includes(env?.surface);
-  const isVoice = VOICE_ONLY_SURFACES.includes(env?.surface);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(base);
-
   const save = () => {
-    const { subGoalsText, ...rest } = draft;
-    // Only rewrite sub-goals if they were actually touched; an untouched row
-    // keeps its original value rather than growing a copy of derived data.
-    if (subGoalsText !== base.subGoalsText) rest.subTasks = textToSubTasks(subGoalsText);
-    else if (row.subTasks !== undefined) rest.subTasks = row.subTasks;
-    else delete rest.subTasks;
-    onSave(rest);
+    if (!changes.length) return;
+    onSave({ changes, rework });
     onClose();
   };
 
@@ -82,118 +167,104 @@ export default function ScenarioEditor({ open, onClose, row, env, onSave }) {
         <Stack spacing={2.5} sx={{ flex: 1, overflow: "auto", p: 2.5 }}>
           <SectionHeader title={EDITOR_COPY.scenarioSection} />
           <TextField
-            size="small" label="Name" value={draft.name || ""}
-            onChange={(e) => set("name")(e.target.value)}
-            helperText="Kebab-case identifier — e.g. polite-senior-verify-identity."
+            size="small" label="Name" value={draft.name || ""} disabled
+            helperText={READ_ONLY_HINT}
             InputProps={{ sx: { ...fieldSx, fontFamily: "ui-monospace, Menlo, monospace" } }}
           />
           <TextField
-            size="small" label="Use case" value={draft.useCase || ""}
-            onChange={(e) => set("useCase")(e.target.value)}
-            helperText="The sentence describing what this group of scenarios tests."
+            size="small" label="Use case" value={draft.useCase || ""} disabled
+            helperText={READ_ONLY_HINT}
             InputProps={{ sx: fieldSx }}
           />
           <TextField
-            size="small" label="Branch" value={draft.branchCategory || ""}
-            onChange={(e) => set("branchCategory")(e.target.value)}
-            helperText="What makes this one different from its siblings."
+            size="small" label="Branch" value={draft.branch || ""} disabled
+            helperText={READ_ONLY_HINT}
             InputProps={{ sx: fieldSx }}
           />
           <TextField
             size="small" label="What the caller wants" multiline minRows={2}
-            value={draft.task || ""}
-            onChange={(e) => set("task")(e.target.value)}
-            helperText="The task the agent has to complete in this run."
+            value={draft.instruction || ""} disabled
+            helperText={READ_ONLY_HINT}
             InputProps={{ sx: fieldSx }}
           />
           <TextField
             size="small" label="Passes when" multiline minRows={2}
-            value={draft.expected || ""}
-            onChange={(e) => set("expected")(e.target.value)}
-            helperText="What a pass looks like. Evals grade against this."
+            value={draft.tests || ""}
+            disabled={!canEdit("tests")}
+            onChange={(e) => set("tests")(e.target.value)}
+            helperText={canEdit("tests")
+              ? "What a pass looks like. Evals grade against this."
+              : READ_ONLY_HINT}
             InputProps={{ sx: fieldSx }}
           />
           <TextField
             size="small" label="Sub-goals" multiline minRows={3}
-            value={draft.subGoalsText || ""}
-            onChange={(e) => set("subGoalsText")(e.target.value)}
-            helperText="One per line — the steps the runner watches for."
+            value={draft.subGoalsText || ""} disabled
+            helperText={READ_ONLY_HINT}
             InputProps={{ sx: fieldSx }}
           />
 
           <SectionHeader title={EDITOR_COPY.personaSection} hint="Who is on the other end of the run." />
-          <TextField
-            size="small" label="Name" value={draft.persona?.name || ""}
-            onChange={(e) => setPersona("name")(e.target.value)}
-            helperText="Display name for the caller — e.g. The Polite Senior Caller."
-            InputProps={{ sx: fieldSx }}
-          />
           <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
             <TextField
-              size="small" label="Age group" fullWidth
-              value={draft.persona?.ageGroup || draft.persona?.age || ""}
-              onChange={(e) => setPersona("ageGroup")(e.target.value)}
-              helperText="Range — e.g. 60-70."
+              size="small" label="Name" fullWidth value={draft.persona?.name || ""} disabled
+              helperText={READ_ONLY_HINT}
               InputProps={{ sx: fieldSx }}
             />
             <TextField
-              size="small" label="Voice" fullWidth value={draft.persona?.voice || ""}
-              onChange={(e) => setPersona("voice")(e.target.value)}
-              helperText="Accent + gender — e.g. US female."
+              size="small" label="Age group" fullWidth value={draft.persona?.ageGroup || ""} disabled
+              helperText={READ_ONLY_HINT}
+              InputProps={{ sx: fieldSx }}
+            />
+            <TextField
+              size="small" label="Gender" fullWidth value={draft.persona?.gender || ""} disabled
+              helperText={READ_ONLY_HINT}
               InputProps={{ sx: fieldSx }}
             />
           </Stack>
-          <TextField
-            size="small" label="Traits"
-            value={Array.isArray(draft.persona?.traits) ? draft.persona.traits.join(", ") : (draft.persona?.traits || "")}
-            onChange={(e) => setPersona("traits")(e.target.value.split(",").map((t) => t.trim()).filter(Boolean))}
-            helperText="Comma-separated — e.g. polite, elderly, hard of hearing."
-            InputProps={{ sx: fieldSx }}
-          />
+          <PersonaField label="Accent" k="accent" draft={draft} onChange={setPersona} canEditPersona={canEditPersona} reworkFields={reworkFields} serverKey="accent" />
+          <PersonaField label="Communication style" k="communicationStyle" draft={draft} onChange={setPersona} canEditPersona={canEditPersona} reworkFields={reworkFields} serverKey="communication_style" />
+          <PersonaField label="Personality" k="personality" draft={draft} onChange={setPersona} canEditPersona={canEditPersona} reworkFields={reworkFields} serverKey="personality" />
+          <PersonaField label="Occupation" k="occupation" draft={draft} onChange={setPersona} canEditPersona={canEditPersona} reworkFields={reworkFields} serverKey="occupation" />
+          <PersonaField label="Location" k="location" draft={draft} onChange={setPersona} canEditPersona={canEditPersona} reworkFields={reworkFields} serverKey="location" />
+          <PersonaField label="Languages" k="languages" draft={draft} onChange={setPersona} canEditPersona={canEditPersona} reworkFields={reworkFields} serverKey="languages" hint="Comma-separated." />
+          <PersonaField label="Keywords" k="keywords" draft={draft} onChange={setPersona} canEditPersona={canEditPersona} reworkFields={reworkFields} serverKey="keywords" hint="Comma-separated — how the scenario is found." />
 
-          {isConversational && (
+          {(canEdit("max_turns") || canEdit("background_noise")) && (
             <>
-              <SectionHeader title={EDITOR_COPY.callerSection} hint="How the caller comes across. Voice / chat surfaces only." />
-              <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-                <PickField label="Tone" value={draft.caller?.tone || "neutral"} options={TONE_OPTIONS} onChange={setCaller("tone")} />
-                <PickField label="Style" value={draft.caller?.style || "casual"} options={STYLE_OPTIONS} onChange={setCaller("style")} />
-              </Stack>
-              <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-                <PickField label="Accent" value={draft.caller?.accent || "US"} options={ACCENT_OPTIONS} onChange={setCaller("accent")} />
-                <PickField label="Language" value={draft.caller?.language || "English"} options={LANGUAGE_OPTIONS} onChange={setCaller("language")} />
-              </Stack>
-            </>
-          )}
-
-          {isVoice && (
-            <>
-              <SectionHeader title={EDITOR_COPY.constraintsSection} hint="Voice-agent specific — every generated scenario carries defaults." />
-              <Box>
-                <Stack direction="row" alignItems="center" spacing={1}>
-                  <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold", flex: 1 }}>Max turns</Typography>
-                  <Typography sx={{ typography: "s2", fontVariantNumeric: "tabular-nums" }}>~{draft.turns || 0}</Typography>
-                </Stack>
-                <Slider size="small" min={2} max={20} value={draft.turns || 0} onChange={(_, v) => set("turns")(v)} />
-                <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                  How long the run is allowed to go before it is called off.
-                </Typography>
-              </Box>
-              <Box>
-                <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold", mb: 0.75 }}>Background noise</Typography>
-                <ToggleButtonGroup
-                  size="small" exclusive value={draft.backgroundNoise || "none"}
-                  onChange={(_, v) => v && set("backgroundNoise")(v)}
-                  sx={{
-                    "& .MuiToggleButton-root": {
-                      typography: "s2", fontWeight: "fontWeightSemiBold", textTransform: "none",
-                      px: 1.5, py: 0.375, color: "text.secondary", borderColor: "divider",
-                      "&.Mui-selected": selectedToggleSx,
-                    },
-                  }}
-                >
-                  {NOISE_OPTIONS.map((n) => <ToggleButton key={n} value={n}>{n}</ToggleButton>)}
-                </ToggleButtonGroup>
-              </Box>
+              <SectionHeader title={EDITOR_COPY.constraintsSection} hint="Editing these re-proves the scenario." />
+              {canEdit("max_turns") && (
+                <Box>
+                  <Stack direction="row" alignItems="center" spacing={1}>
+                    <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold", flex: 1 }}>Max turns</Typography>
+                    <Typography sx={{ typography: "s2", fontVariantNumeric: "tabular-nums" }}>~{draft.maxTurns || 0}</Typography>
+                  </Stack>
+                  <Slider size="small" min={2} max={20} value={Number(draft.maxTurns) || 0} onChange={(_, v) => set("maxTurns")(v)} />
+                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                    How long the run is allowed to go before it is called off. {REPROOF_HINT}
+                  </Typography>
+                </Box>
+              )}
+              {canEdit("background_noise") && (
+                <Box>
+                  <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold", mb: 0.75 }}>Background noise</Typography>
+                  <ToggleButtonGroup
+                    size="small" exclusive value={draft.backgroundNoise || ""}
+                    onChange={(_, v) => v && set("backgroundNoise")(v)}
+                    sx={{
+                      flexWrap: "wrap", gap: 0.75,
+                      "& .MuiToggleButton-root": {
+                        typography: "s2", fontWeight: "fontWeightSemiBold", textTransform: "none",
+                        px: 1.5, py: 0.375, color: "text.secondary", borderColor: "divider",
+                        borderRadius: 1,
+                        "&.Mui-selected": selectedToggleSx,
+                      },
+                    }}
+                  >
+                    {noiseChoices.map((n) => <ToggleButton key={n} value={n}>{n}</ToggleButton>)}
+                  </ToggleButtonGroup>
+                </Box>
+              )}
             </>
           )}
         </Stack>
@@ -206,7 +277,7 @@ export default function ScenarioEditor({ open, onClose, row, env, onSave }) {
             {EDITOR_COPY.cancel}
           </Button>
           <Button
-            variant="contained" color="primary" size="small" disabled={!dirty}
+            variant="contained" color="primary" size="small" disabled={!changes.length}
             onClick={save}
             sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
           >
@@ -222,8 +293,45 @@ ScenarioEditor.propTypes = {
   open: PropTypes.bool,
   onClose: PropTypes.func,
   row: SCENARIO_SHAPE,
-  env: ENV_SHAPE,
+  // Receives { changes, rework } — the amend ops for the changed writable fields.
   onSave: PropTypes.func,
+  // The server's editability block; gates which fields are writable.
+  scenarioEditing: PropTypes.shape({
+    editable_fields: PropTypes.arrayOf(PropTypes.string),
+    persona_fields: PropTypes.arrayOf(PropTypes.string),
+    rework_fields: PropTypes.arrayOf(PropTypes.string),
+  }),
+  // Background-noise choices from the server field catalogue (values the agent
+  // uses). Falls back to the abstract levels when absent.
+  noiseOptions: PropTypes.arrayOf(PropTypes.string),
+};
+
+// One persona text field, gated by the server's persona_fields. Read-only when
+// the server does not name it; otherwise editable with a re-proof hint (persona
+// edits force a re-proof).
+function PersonaField({ label, k, serverKey, draft, onChange, canEditPersona, reworkFields, hint }) {
+  const editable = canEditPersona(serverKey);
+  const reproof = reworkFields.includes(serverKey);
+  return (
+    <TextField
+      size="small" label={label}
+      value={draft.persona?.[k] || ""}
+      disabled={!editable}
+      onChange={(e) => onChange(k)(e.target.value)}
+      helperText={editable ? [hint, reproof ? REPROOF_HINT : null].filter(Boolean).join(" ") : READ_ONLY_HINT}
+      InputProps={{ sx: fieldSx }}
+    />
+  );
+}
+PersonaField.propTypes = {
+  label: PropTypes.string,
+  k: PropTypes.string,
+  serverKey: PropTypes.string,
+  draft: PropTypes.object,
+  onChange: PropTypes.func,
+  canEditPersona: PropTypes.func,
+  reworkFields: PropTypes.arrayOf(PropTypes.string),
+  hint: PropTypes.string,
 };
 
 function SectionHeader({ title, hint }) {
@@ -237,20 +345,3 @@ function SectionHeader({ title, hint }) {
   );
 }
 SectionHeader.propTypes = { title: PropTypes.string, hint: PropTypes.string };
-
-function PickField({ label, value, options, onChange }) {
-  return (
-    <FormControl size="small" fullWidth>
-      <InputLabel>{label}</InputLabel>
-      <Select label={label} value={value} onChange={(e) => onChange(e.target.value)} sx={fieldSx}>
-        {options.map((o) => <MenuItem key={o} value={o} sx={fieldSx}>{o}</MenuItem>)}
-      </Select>
-    </FormControl>
-  );
-}
-PickField.propTypes = {
-  label: PropTypes.string,
-  value: PropTypes.string,
-  options: PropTypes.arrayOf(PropTypes.string),
-  onChange: PropTypes.func,
-};

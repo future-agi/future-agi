@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { MODALITY, DEFAULT_MODALITY } from "../agentTypes";
+import { MODALITY, UNIDENTIFIED_MODALITY } from "../agentTypes";
 
 const NUM_SX = {
   typography: "s2",
@@ -29,7 +29,7 @@ export const NumberCell = ({ getValue }) => {
 NumberCell.propTypes = { getValue: PropTypes.func };
 
 export const AgentTypeCell = ({ getValue }) => {
-  const m = MODALITY[getValue?.()] || DEFAULT_MODALITY;
+  const m = MODALITY[getValue?.()] || UNIDENTIFIED_MODALITY;
   return (
     <Stack
       direction="row"

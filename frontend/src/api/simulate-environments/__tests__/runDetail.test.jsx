@@ -30,17 +30,10 @@ const { RUN_COLORS } = await import(
   "src/sections/simulate/environments/workspace/runs/runs.constants"
 );
 
-// One completed, one failed row, out of order so the ordinal reflects the sort.
+// One completed, one failed row, in the server's newest-first order, with
+// `count` = the run-test total — so `ex-new` is ordinal 2 and `ex-old` is 1.
 const executionsPayload = () => ({
   results: [
-    {
-      id: "ex-old",
-      status: "Failed",
-      start_time: "2026-01-12T11:05:00.000Z",
-      agent_version: "v1",
-      total_chats: 10,
-      success_rate: 60,
-    },
     {
       id: "ex-new",
       status: "Completed",
@@ -48,6 +41,14 @@ const executionsPayload = () => ({
       agent_version: "v2",
       total_chats: 12,
       success_rate: 100,
+    },
+    {
+      id: "ex-old",
+      status: "Failed",
+      start_time: "2026-01-12T11:05:00.000Z",
+      agent_version: "v1",
+      total_chats: 10,
+      success_rate: 60,
     },
   ],
   count: 2,
@@ -164,6 +165,80 @@ describe("buildRunStats", () => {
     expect(stats.passRate).toBe(60);
     expect(stats.durationS).toBeNull();
     expect(stats.avgDurationMs).toBeNull();
+  });
+
+  // `completed` (status = completed) is a different number from `total`
+  // (every status). It must never fall back to `total` — a caller that needs
+  // "the run's completed calls" and gets the wrong number is worse than one
+  // told the number isn't known yet. The KPI body carries `completed_calls`
+  // for both modalities, not the chat-only `connected_calls` borrow.
+  it("reads `completed` from kpis.completed_calls on a chat run", () => {
+    const stats = buildRunStats(
+      { agent_type: "text", completed_calls: 12, connected_calls: 12, total_calls: 16 },
+      null,
+      null,
+    );
+    expect(stats.completed).toBe(12);
+    expect(stats.total).toBe(16);
+  });
+
+  // Voice's `connected_calls` is `connected_voice_calls`
+  // (`duration_seconds > 0`), a different filter and a different number —
+  // reading it would be wrong. The fixture makes the two differ on purpose,
+  // so borrowing it again fails this case.
+  it("reads `completed` from kpis.completed_calls on a voice run too, never from connected_calls", () => {
+    const stats = buildRunStats(
+      { agent_type: "voice", completed_calls: 12, connected_calls: 9, total_calls: 16 },
+      null,
+      null,
+    );
+    expect(stats.completed).toBe(12);
+    expect(stats.total).toBe(16);
+  });
+
+  it("leaves `completed` null (never 0, never `total`) while kpis hasn't loaded yet", () => {
+    const rows = mapExecutions(executionsPayload());
+    const row = rows.find((r) => r.executionId === "ex-old");
+    const stats = buildRunStats(null, null, row);
+    expect(stats.completed).toBeNull();
+    expect(stats.completed).not.toBe(stats.total);
+  });
+
+  // A KPI body that has loaded may still have no `completed_calls` (an older
+  // backend). That must read as "not known yet", not a zero and not `total`.
+  it("leaves `completed` null when a loaded kpis payload carries no completed_calls", () => {
+    const stats = buildRunStats(
+      { agent_type: "voice", connected_calls: 9, total_calls: 16 },
+      null,
+      null,
+    );
+    expect(stats.completed).toBeNull();
+    expect(stats.completed).not.toBe(stats.total);
+  });
+
+  // `completed_calls` is a call count, not a verdict — `DETAILS_KEYS`
+  // (common.js) must file it as a run detail, never an eval metric, or every
+  // run grows a fake "Completed calls" eval.
+  it("never files completed_calls as an eval score (it is a call count, not a verdict)", () => {
+    const stats = buildRunStats(
+      { agent_type: "text", completed_calls: 12, total_calls: 16, task_success: 49 },
+      null,
+      null,
+    );
+    expect(stats.completed).toBe(12);
+    expect(stats.scores).toEqual({ task_success: 49 });
+    expect(stats.scores).not.toHaveProperty("completed_calls");
+  });
+
+  it("never files completed_calls as an eval score on a voice run either", () => {
+    const stats = buildRunStats(
+      { agent_type: "voice", completed_calls: 12, total_calls: 16, task_success: 49 },
+      null,
+      null,
+    );
+    expect(stats.completed).toBe(12);
+    expect(stats.scores).toEqual({ task_success: 49 });
+    expect(stats.scores).not.toHaveProperty("completed_calls");
   });
 });
 
@@ -312,6 +387,68 @@ describe("mapCallDetail", () => {
 
   it("returns null for a missing payload", () => {
     expect(mapCallDetail(null)).toBeNull();
+  });
+
+  it("keeps a removed eval's verdict and carries its marker", () => {
+    const d = mapCallDetail({
+      id: "call-2",
+      simulation_call_type: "text",
+      transcript: [],
+      recordings: {},
+      eval_metrics: {
+        "cfg-live": { name: "Tone", value: "Passed", type: "Pass/Fail", reason: "fine" },
+        "cfg-gone": {
+          name: "no_misselling",
+          value: "Failed",
+          type: "Pass/Fail",
+          reason: "oversold",
+          removed: true,
+        },
+      },
+    });
+
+    expect(d.evalResults).toHaveLength(2);
+    expect(d.evalResults.find((e) => e.id === "cfg-gone")).toMatchObject({
+      name: "no_misselling",
+      passed: false,
+      removed: true,
+    });
+    // A live eval's verdict carries no marker.
+    expect(d.evalResults.find((e) => e.id === "cfg-live").removed).toBe(false);
+  });
+
+  it("drops a removed eval's stored row when it carries no value, but keeps one that does", () => {
+    // "removed" marks a VERDICT — a pending, skipped or errored row is a
+    // stored row, not a verdict, and is never rendered, live or removed.
+    // `norm.kind === "empty"` already enforces this; this test pins it.
+    const d = mapCallDetail({
+      id: "call-3",
+      simulation_call_type: "text",
+      transcript: [],
+      recordings: {},
+      eval_metrics: {
+        // Removed AND pending — serialises as `{}` plus the marker. Not a
+        // verdict, so it must not appear at all.
+        "cfg-gone-empty": { removed: true },
+        // Removed AND holds a value — a real verdict: still shown, still
+        // marked.
+        "cfg-gone-valued": {
+          name: "no_misselling",
+          value: "Failed",
+          type: "Pass/Fail",
+          reason: "oversold",
+          removed: true,
+        },
+      },
+    });
+
+    expect(d.evalResults).toHaveLength(1);
+    expect(d.evalResults.find((e) => e.id === "cfg-gone-empty")).toBeUndefined();
+    expect(d.evalResults.find((e) => e.id === "cfg-gone-valued")).toMatchObject({
+      name: "no_misselling",
+      passed: false,
+      removed: true,
+    });
   });
 });
 
@@ -511,6 +648,30 @@ describe("useRunDetail", () => {
       endpoints.runResultsV3.calls("ex-new"),
       { params: { page: 1, page_size: 1 } },
     );
+  });
+
+  // `useKpis` and `useRunsSummary` share the query key
+  // `["test-execution-detail", "KPIS", id]` and must cache the same shape
+  // (the plain body), or whichever one mounts second reads the wrong shape
+  // off the shared cache entry. Seed the cache the way `useRunsSummary` does
+  // and confirm `useRunDetail` still gets a number.
+  it("still reads the KPI body when the Runs summary primed the same cache key first", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(
+      ["test-execution-detail", "KPIS", "ex-new"],
+      { agent_type: "text", total_calls: 16, completed_calls: 12 },
+    );
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+
+    const { result } = renderHook(
+      () => useRunDetail("rt1", "ex-new", { envName: "Refund Copilot" }),
+      { wrapper: Wrapper },
+    );
+
+    await waitFor(() => expect(result.current.stats.completed).toBe(12));
   });
 
   it("keeps terminal Run failure when some calls already passed", async () => {

@@ -26,14 +26,17 @@ describe("PREFLIGHT_CONNECTOR / PROVIDER_TO_CONNECTOR", () => {
       RETELL: "retell",
       RETELL_CHAT: "retell_chat",
       LIVEKIT: "livekit",
+      PHONE: "phone",
     });
   });
 
-  it("maps only the reachable Phase-1 providers to a connector", () => {
+  it("maps the roster providers to a connector (retell_chat is the chat one)", () => {
     expect(PROVIDER_TO_CONNECTOR).toEqual({
       vapi: "vapi",
       retell: "retell",
+      retell_chat: "retell_chat",
       livekit: "livekit",
+      other: "phone",
     });
   });
 });
@@ -60,6 +63,11 @@ describe("draftToPreflightPayload — repo", () => {
       },
       metadata: { name: "support-bot", authoring_key: "support-bot" },
     });
+  });
+
+  it("uses the draft's scenarioCount when set, else defaults to 10", () => {
+    expect(draftToPreflightPayload(repoDraft({ scenarioCount: 25 })).payload.scenario_count).toBe(25);
+    expect(draftToPreflightPayload(repoDraft()).payload.scenario_count).toBe(10);
   });
 
   it("lets a pasted tree URL ref win over the panel's default main", () => {
@@ -167,6 +175,77 @@ describe("draftToPreflightPayload — platform", () => {
     expect(livekit.agent.config).toStrictEqual({ agent_id: "asst_1" });
   });
 
+  const phoneDraft = (contact) =>
+    platformDraft({
+      provider: "other",
+      agentType: "voice",
+      prompt: "You are a helpful phone agent.",
+      contact,
+    });
+
+  it("prefixes a national number with the selected dial code", () => {
+    // India +91 with a national number that happens to begin with 91 must not
+    // be mistaken for an already-international number.
+    const { payload } = draftToPreflightPayload(
+      phoneDraft({ countryCode: "+91", number: "9123456789" }),
+    );
+    expect(payload.agent.config.phone_number).toBe("+919123456789");
+  });
+
+  it("keeps an already-international (+ prefixed) number as written", () => {
+    const { payload } = draftToPreflightPayload(
+      phoneDraft({ countryCode: "+1", number: "+919123456789" }),
+    );
+    expect(payload.agent.config.phone_number).toBe("+919123456789");
+  });
+
+  it("drops the national trunk 0 once a dial code is applied", () => {
+    const uk = draftToPreflightPayload(phoneDraft({ countryCode: "+44", number: "07911 123456" }));
+    expect(uk.payload.agent.config.phone_number).toBe("+447911123456");
+    const india = draftToPreflightPayload(phoneDraft({ countryCode: "+91", number: "09123456789" }));
+    expect(india.payload.agent.config.phone_number).toBe("+919123456789");
+  });
+
+  it("keeps Italy's leading 0, which stays in international form", () => {
+    const { payload } = draftToPreflightPayload(
+      phoneDraft({ countryCode: "+39", number: "06 1234 5678" }),
+    );
+    expect(payload.agent.config.phone_number).toBe("+390612345678");
+  });
+
+  it("sends an Others phone call as inbound even when the toggle says outbound", () => {
+    const { payload } = draftToPreflightPayload({
+      ...phoneDraft({
+        mode: "phone",
+        countryCode: "+1",
+        number: "4155550100",
+        inboundCalls: false,
+        agentSpeaksFirst: true,
+      }),
+      callDirection: "outbound",
+    });
+    expect(payload.agent.config.inbound).toBe(true);
+    expect(payload.agent.config.target_speaks_first).toBe(true);
+    expect(payload.agent.call_direction).toBe("inbound");
+  });
+
+  it("Vapi in phone mode keeps the toggle's direction (only Others is locked)", () => {
+    const { payload } = draftToPreflightPayload(
+      platformDraft({
+        contact: {
+          mode: "phone",
+          countryCode: "+1",
+          number: "4155550100",
+          inboundCalls: false,
+          agentSpeaksFirst: false,
+        },
+        callDirection: "outbound",
+      }),
+    );
+    expect(payload.agent.config.inbound).toBe(false);
+    expect(payload.agent.call_direction).toBe("outbound");
+  });
+
   it("skips a provider outside the connector enum", () => {
     const { payload, skipped } = draftToPreflightPayload(platformDraft({ provider: "bland" }));
     expect(payload).toBeUndefined();
@@ -253,5 +332,29 @@ describe("environmentNameFor", () => {
   it("falls back to agent", () => {
     expect(environmentNameFor(null)).toBe("agent");
     expect(environmentNameFor({ kind: "mystery" })).toBe("agent");
+  });
+});
+
+describe("draftToPreflightPayload — parallelism ceiling", () => {
+  // HarnessRuntimeSerializer rejects "voice parallelism must not exceed
+  // cpu_units" for livekit, vapi, retell, phone and auto — and every repo /
+  // upload source is "auto". The payload never sends cpu_units, so the value
+  // that applies is the serializer default of 4 (Daytona has no fixed_resources;
+  // E2B's ALK_E2B_TEMPLATE_CPU_UNITS also defaults to 4). Anything above that
+  // is a guaranteed 400.
+  const runtimeFor = (parallelism) =>
+    draftToPreflightPayload(repoDraft({ parallelism })).payload.runtime;
+
+  it("clamps a requested parallelism to the backend's cpu_units", () => {
+    expect(runtimeFor(8).parallelism).toBe(4);
+  });
+
+  it("passes a request at or under the ceiling through unchanged", () => {
+    expect(runtimeFor(4).parallelism).toBe(4);
+    expect(runtimeFor(2).parallelism).toBe(2);
+  });
+
+  it("omits runtime entirely for a single world", () => {
+    expect(runtimeFor(1)).toBeUndefined();
   });
 });

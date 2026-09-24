@@ -24,6 +24,7 @@ const {
 const { useEnvironmentsStore, resetEnvironmentsStore } = await import(
   "src/sections/simulate/environments/store/useEnvironmentsStore"
 );
+const { MOCK_WORLD } = await import("../_fixtures/world");
 
 // A completed harness job detail. `platform` sits at the TOP LEVEL, sibling of
 // `job`/`status`/`stage_outputs` — `status` deliberately carries no platform, so
@@ -53,16 +54,25 @@ const COMPLETED_JOB = {
   ],
 };
 
+// A job whose calls are running: "running" is stage 10 of 14, past
+// connecting_agent, so the environment itself is already built.
 const RUNNING_JOB = {
   job: {
     job_id: "job-run",
-    metadata: { name: "Building Environment" },
+    metadata: { name: "Running Environment" },
     scenario_count: 5,
     agent: { connector: "livekit" },
   },
   status: { stage: "running", updated_at: "2026-09-15T09:00:00Z" },
   credentials: { detected_connectors: ["livekit"] },
   stage_outputs: [],
+};
+
+// A job still assembling its world — the stage the build experience renders on.
+const BUILDING_JOB = {
+  ...RUNNING_JOB,
+  job: { ...RUNNING_JOB.job, job_id: "job-building", metadata: { name: "Building Environment" } },
+  status: { stage: "generating_environment", updated_at: "2026-09-15T09:00:00Z" },
 };
 
 // A completed job that also carries top-level registered scenarios, to exercise
@@ -169,7 +179,7 @@ describe("useEnvironment resolution order", () => {
     expect(doneQuery.options.refetchInterval(doneQuery)).toBe(false);
   });
 
-  it("uses authored tools and leaves unavailable tools empty", async () => {
+  it("takes world tools from the contract output, and carries none without one", async () => {
     getHarnessJob.mockResolvedValue(COMPLETED_JOB);
     const { Wrapper } = makeWrapper();
     const parsed = renderHook(() => useEnvironment("job-done"), {
@@ -181,15 +191,24 @@ describe("useEnvironment resolution order", () => {
       "issue_refund",
     ]);
 
+    // RUNNING_JOB carries no parseable stage output. A real environment must not
+    // be filled in from the "Customer Support Line" fixture world.
     getHarnessJob.mockResolvedValue(RUNNING_JOB);
-    const overlaid = renderHook(() => useEnvironment("job-run"), {
+    const unparseable = renderHook(() => useEnvironment("job-run"), {
       wrapper: Wrapper,
     });
-    await waitFor(() => expect(overlaid.result.current.source).toBe("harness"));
-    expect(overlaid.result.current.env.tools).toBeUndefined();
+    await waitFor(() =>
+      expect(unparseable.result.current.source).toBe("harness"),
+    );
+    const env = unparseable.result.current.env;
+    expect(env.tools).toBeUndefined();
+    expect(env.rules).toBeUndefined();
+    expect(env.seed).toBeUndefined();
+    expect(env.description).toBeUndefined();
+    expect(env.name).not.toBe(MOCK_WORLD.name);
   });
 
-  it("bootstraps only real registered scenarios", async () => {
+  it("bootstraps an endpoint agent and no scenarios until the run emits them", async () => {
     getHarnessJob.mockResolvedValue(COMPLETED_JOB);
     const { Wrapper } = makeWrapper();
     const { result } = renderHook(() => useEnvironment("job-done"), {
@@ -198,6 +217,9 @@ describe("useEnvironment resolution order", () => {
 
     await waitFor(() => expect(result.current.bootstrapState).toBeDefined());
     expect(result.current.bootstrapState.agent.via).toBe("endpoint");
+    // COMPLETED_JOB declares scenario_count but emits no scenarios output and
+    // registers none; the derived fixture pool must not stand in for scenarios
+    // the run never made.
     expect(result.current.bootstrapState.scenarios).toEqual([]);
   });
 
@@ -237,8 +259,8 @@ describe("useEnvironment resolution order", () => {
 });
 
 describe("stageOutputsToWorld", () => {
-  it("parses a contract output into world fields and marks them real", () => {
-    const { world, real } = stageOutputsToWorld(COMPLETED_JOB.stage_outputs);
+  it("parses a contract output into world fields", () => {
+    const world = stageOutputsToWorld(COMPLETED_JOB.stage_outputs);
     expect(world.tools.map((t) => t.name)).toEqual([
       "lookup_order",
       "issue_refund",
@@ -246,17 +268,14 @@ describe("stageOutputsToWorld", () => {
     expect(world.rules).toEqual([
       "Verify identity before changing an account.",
     ]);
-    // Contract + environment.services are real; there are no real seed tables.
-    expect(real.has("tools")).toBe(true);
-    expect(real.has("rules")).toBe(true);
-    expect(real.has("seedServices")).toBe(true);
-    expect(real.has("seedTables")).toBe(false);
+    // environment.services surface; the output carries no seed tables.
+    expect(world.seed.services).toEqual(["postgres", "redis"]);
+    expect(world.seed.tables).toEqual([]);
   });
 
-  it("returns a null world when nothing is parseable", () => {
-    expect(stageOutputsToWorld([]).world).toBeNull();
-    expect(stageOutputsToWorld([{ kind: "runs", data: {} }]).world).toBeNull();
-    expect(stageOutputsToWorld([]).real.size).toBe(0);
+  it("returns null when nothing is parseable", () => {
+    expect(stageOutputsToWorld([])).toBeNull();
+    expect(stageOutputsToWorld([{ kind: "runs", data: {} }])).toBeNull();
   });
 
   it("maps scenario output rows into table-ready scenarios", () => {
@@ -270,7 +289,7 @@ describe("stageOutputsToWorld", () => {
     ];
     const state = harnessEnvState(
       { job: { job_id: "j", scenario_count: 1 }, status: {} },
-      stageOutputsToWorld(outputs).world,
+      stageOutputsToWorld(outputs),
     );
     expect(state.scenarios[0]).toMatchObject({
       id: "happy_path",
@@ -283,35 +302,33 @@ describe("stageOutputsToWorld", () => {
   it("falls back to the job's registered scenarios when outputs carry none", () => {
     const { world } = harnessJobToEnvironment(JOB_WITH_SCENARIOS);
     const state = harnessEnvState(JOB_WITH_SCENARIOS, world);
-    // Neither stage_outputs scenarios nor a pool — the two registered scenarios win.
+    // Neither stage_outputs scenarios nor a fixture pool — the two registered
+    // scenarios win.
     expect(state.scenarios.map((s) => s.id)).toEqual(["sk1", "sk2"]);
   });
 });
 
-describe("harnessJobToEnvironment — real-first provenance", () => {
-  it("surfaces real services without fabricating unavailable tables", () => {
+describe("harnessJobToEnvironment — only the real world, no fixture fill", () => {
+  it("surfaces parsed world fields and carries the real seed verbatim", () => {
     const { env } = harnessJobToEnvironment(COMPLETED_JOB);
+    expect(env.tools.map((t) => t.name)).toEqual(["lookup_order", "issue_refund"]);
     expect(env.seed.services).toEqual(["postgres", "redis"]);
+    // The run emitted no seed tables, so none are shown — the "Customer Support
+    // Line" fixture tables must not fill the gap.
     expect(env.seed.tables).toEqual([]);
+    // No provenance is produced: without the overlay every present field is real,
+    // and an absent one renders its own empty state rather than a Sample badge.
+    expect(env.provenance).toBeUndefined();
   });
 
-  it("marks each field real or mock in env.provenance", () => {
-    const { env } = harnessJobToEnvironment(COMPLETED_JOB);
-    expect(env.provenance).toMatchObject({
-      tools: "real",
-      rules: "real",
-      description: "real",
-      seedServices: "real",
-      seedTables: "mock", // backend gave no tables → mock-filled
-    });
-
-    // A job with no parseable outputs is all mock.
-    const { env: mock } = harnessJobToEnvironment(RUNNING_JOB);
-    expect(mock.provenance).toMatchObject({
-      tools: "mock",
-      rules: "mock",
-      seedTables: "mock",
-    });
+  it("leaves every world field absent when the run parses nothing", () => {
+    const { env } = harnessJobToEnvironment(RUNNING_JOB);
+    expect(env.tools).toBeUndefined();
+    expect(env.rules).toBeUndefined();
+    expect(env.seed).toBeUndefined();
+    expect(env.description).toBeUndefined();
+    expect(env.evalPreset).toBeUndefined();
+    expect(env.name).not.toBe(MOCK_WORLD.name);
   });
 });
 
@@ -324,13 +341,19 @@ describe("harnessJobToEnvironment", () => {
   });
 
   it("exposes buildProgress as { done, total } so the building banner can count", () => {
-    const { env } = harnessJobToEnvironment(RUNNING_JOB);
+    const { env } = harnessJobToEnvironment(BUILDING_JOB);
     expect(env.buildStatus).toBe("building");
     expect(env.buildProgress).toEqual({
       done: expect.any(Number),
       total: expect.any(Number),
     });
     expect(env.buildProgress.total).toBeGreaterThan(0);
+  });
+
+  // "running" is past connecting_agent in the pipeline, so the world is derived
+  // and the build experience must give way to the workspace.
+  it("reads a running job as a built environment, not one still building", () => {
+    expect(harnessJobToEnvironment(RUNNING_JOB).env.buildStatus).toBe("ready");
   });
 
   it("marks a terminal-failed job as failed (not building) and carries the failure", () => {

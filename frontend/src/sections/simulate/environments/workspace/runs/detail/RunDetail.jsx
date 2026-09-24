@@ -18,6 +18,7 @@ import { exportRunResults } from "src/api/simulate-environments/runAnalytics";
 
 import SectionCard from "../../../components/SectionCard";
 import StatusChip from "../StatusChip";
+import AddEvaluationDrawer from "../../evals/AddEvaluationDrawer";
 import AddEvalsDrawer from "../../evals/AddEvalsDrawer";
 import RunTraceTable from "./trace/RunTraceTable";
 import CallDrawer from "./CallDrawer";
@@ -29,8 +30,11 @@ import RunAnalytics from "./RunAnalytics";
 // Terminal execution failures/cancellations outrank call-level outcomes.
 // Otherwise mixed pass/fail results are a completed run with findings.
 function headerStatus(identity, stats) {
-  if (identity?.status === "running") return "running";
-  if (identity?.status === "failed" || identity?.status === "cancelled") {
+  // No verdict until the run resolves: while loading, identity is null and the
+  // zeroed stats would otherwise read as "Failed".
+  if (!identity) return null;
+  if (identity.status === "running") return "running";
+  if (identity.status === "failed" || identity.status === "cancelled") {
     return identity.status;
   }
   if (stats.passed === 0) return "failed";
@@ -49,6 +53,7 @@ function headerStatus(identity, stats) {
 export default function RunDetail({
   env,
   envState,
+  backed = false,
   testId,
   executionId,
   onStartRun,
@@ -71,7 +76,9 @@ export default function RunDetail({
   const { runs: optimizationRuns, isLoading: optimizationsLoading } =
     useOptimizationRuns(executionId);
   const hasTrials = optimizationRuns.length > 0;
-  const refetchOptimizations = useQueryClient().invalidateQueries;
+  // Keep the client bound: `useQueryClient().invalidateQueries` detached from
+  // the client throws on `this.#queryCache` in react-query v5.
+  const queryClient = useQueryClient();
 
   const openOptimization = (row) =>
     navigate(
@@ -160,7 +167,7 @@ export default function RunDetail({
                 ? `Run ${identity.ordinal} · agent ${identity.agentVersion ?? "—"}`
                 : "Run complete"}
             </Typography>
-            <StatusChip status={status} />
+            {status && <StatusChip status={status} />}
           </Stack>
           <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
             {env.name} · {stats.total} tasks
@@ -319,20 +326,31 @@ export default function RunDetail({
         </Box>
       </Box>
 
-      <AddEvalsDrawer
-        open={addingEvals}
-        onClose={() => setAddingEvals(false)}
-        env={env}
-        envState={envState}
-        existingIds={
-          new Set(
-            (envState?.evals || []).map((e) =>
-              typeof e === "string" ? e : e?.id,
-            ),
-          )
-        }
-        onAdd={() => setAddingEvals(false)}
-      />
+      {/* The same picker the Evaluations tab opens. Adding from here binds
+          the eval to the environment exactly as the tab's add does and then
+          queues this run's finished calls that hold no verdict for it; the
+          drawer shows the counts the 202 returns. Only a backed environment
+          has a backend to call — a client/template env (reachable here
+          via the `?mockRuns=1` QA switch) gets the same store-only picker the
+          Evaluations tab falls back to. */}
+      {backed ? (
+        <AddEvaluationDrawer
+          open={addingEvals}
+          env={env}
+          executionId={executionId}
+          completedCallsCount={stats.completed}
+          onClose={() => setAddingEvals(false)}
+        />
+      ) : (
+        <AddEvalsDrawer
+          open={addingEvals}
+          onClose={() => setAddingEvals(false)}
+          env={env}
+          envState={envState}
+          existingIds={new Set((envState?.evals || []).map((e) => (typeof e === "string" ? e : e?.id)))}
+          onAdd={() => setAddingEvals(false)}
+        />
+      )}
 
       <CallDrawer
         task={openCall}
@@ -355,7 +373,7 @@ export default function RunDetail({
         open={launching}
         onClose={() => setLaunching(false)}
         onLaunched={() => {
-          refetchOptimizations({
+          queryClient.invalidateQueries({
             queryKey: ["agent-optimization-runs", executionId],
           });
           // Land on the run just started — the tab appears once the list refetches.
@@ -375,9 +393,17 @@ RunDetail.propTypes = {
       testExecutionId: PropTypes.string,
     }),
   }).isRequired,
+  // Client store state — only read for a non-backed env, to drive the
+  // fixture-only `AddEvalsDrawer` fallback the same way it always has.
   envState: PropTypes.shape({
     evals: PropTypes.array,
   }),
+  // Whether this environment has a real backend (`source === "harness"`,
+  // computed once by EnvironmentWorkspace and threaded down through the same
+  // Outlet-context route `envState` already takes). Gates which "Add evals"
+  // drawer renders: the real API picker for a backed env, the client-store
+  // picker otherwise.
+  backed: PropTypes.bool,
   testId: PropTypes.string,
   executionId: PropTypes.string,
   onStartRun: PropTypes.func,

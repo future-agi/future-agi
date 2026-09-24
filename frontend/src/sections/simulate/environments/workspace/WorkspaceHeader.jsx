@@ -10,7 +10,8 @@ import { paths } from "src/routes/paths";
 import { useDeleteEnvironment } from "src/api/simulate-environments/environments";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { ENTRY_TAB } from "../environmentOptions";
-import { DELETE_DIALOG_COPY, DELETE_TONE } from "../myEnvironments.constants";
+import { DELETE_DIALOG_COPY, DELETE_TONE, BUILD_STATUS } from "../myEnvironments.constants";
+import CancelBuildControl from "../buildEnvironment/building/CancelBuildControl";
 import SurfaceIcon from "../components/SurfaceIcon";
 import LivePill from "./LivePill";
 import RenameEnvironmentDialog from "./RenameEnvironmentDialog";
@@ -51,6 +52,9 @@ export default function WorkspaceHeader({
   const [headerTrials, setHeaderTrials] = useState(1);
   const [runConfigOpen, setRunConfigOpen] = useState(false);
   const scenarioCount = envState?.scenarios?.length ?? 0;
+  // Cancel is offered only while the build is actually running (not once it has
+  // failed/canceled). CancelBuildControl self-hides otherwise.
+  const building = env?.buildStatus === BUILD_STATUS.BUILDING;
   const deleteEnv = useDeleteEnvironment();
   // Rename (§8) is live for a real backend-backed env. Its response is the §6
   // body, which the mutation writes back into the §6 cache; the workspace
@@ -144,6 +148,10 @@ export default function WorkspaceHeader({
         </Stack>
       )}
 
+      {/* Cancel build sits to the right of Run simulation while building; it
+          self-hides once the build is no longer running. */}
+      <CancelBuildControl envId={env?.id} building={building} />
+
       {!locked && (
         <ForkMenu
           onFork={onFork}
@@ -171,6 +179,7 @@ export default function WorkspaceHeader({
           }
           action={
             <Button
+              size="small"
               variant="contained"
               disabled={deleteEnv.isPending}
               onClick={() => {
@@ -179,9 +188,11 @@ export default function WorkspaceHeader({
               }}
               sx={{
                 bgcolor: DELETE_TONE.main,
+                color: "common.white",
                 "&:hover": { bgcolor: DELETE_TONE.hover },
                 typography: "s2",
                 fontWeight: "fontWeightBold",
+                paddingX: "24px",
               }}
             >
               {DELETE_DIALOG_COPY.confirm}
