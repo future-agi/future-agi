@@ -130,12 +130,13 @@ def test_daytona_health_preserves_public_provider_name(settings):
     }
 
 
-def test_hosted_job_scenario_count_is_bounded_at_two_hundred():
+def test_hosted_job_scenario_count_is_bounded_at_the_admission_ceiling():
     accepted = HarnessJobCreateSerializer(data=_v1_payload(scenario_count=200))
     assert accepted.is_valid(), accepted.errors
     assert accepted.validated_data["runtime"]["max_duration_seconds"] == 72_000
+    assert HarnessJobCreateSerializer(data=_v1_payload(scenario_count=1000)).is_valid()
 
-    rejected = HarnessJobCreateSerializer(data=_v1_payload(scenario_count=201))
+    rejected = HarnessJobCreateSerializer(data=_v1_payload(scenario_count=1001))
     assert not rejected.is_valid()
     assert "scenario_count" in rejected.errors
 
@@ -250,6 +251,48 @@ def test_e2b_preflight_rejects_resources_larger_than_template(settings):
 
     with pytest.raises(HostedHarnessError, match="requires 4 vCPU"):
         _validate_known_hosted_egress(_v1_payload(), "https://harness.example.test/")
+
+
+def test_e2b_serializer_uses_fixed_template_resources_and_lifetime(settings):
+    settings.HOSTED_SANDBOX_PROVIDER = "e2b"
+    settings.ALK_E2B_TEMPLATE_REFERENCE = "alk-hosted-e2b:build-123"
+    settings.ALK_E2B_TEMPLATE_BUILD_ID = "build-123"
+    settings.ALK_E2B_TEMPLATE_CPU_UNITS = 2
+    settings.ALK_E2B_TEMPLATE_MEMORY_MB = 4096
+    settings.ALK_E2B_TEMPLATE_DISK_GB = 12
+    settings.ALK_E2B_MAX_TTL_SECONDS = 3600
+    settings.ALK_HOSTED_AUTHORING_TIMEOUT = 900
+    settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 600
+    settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 3600
+
+    payload = _v1_payload()
+    payload["runtime"].update(
+        cpu_units=4,
+        memory_mb=8192,
+        max_duration_seconds=3600,
+    )
+    serializer = HarnessPreflightSerializer(data=payload)
+
+    assert serializer.is_valid(), serializer.errors
+    runtime = serializer.validated_data["runtime"]
+    assert runtime["cpu_units"] == 2
+    assert runtime["memory_mb"] == 4096
+    assert runtime["max_duration_seconds"] == 2880
+    _validate_known_hosted_egress(
+        serializer.validated_data, "https://harness.example.test/"
+    )
+
+
+def test_e2b_serializer_rejects_impossible_configured_lifetime(settings):
+    settings.HOSTED_SANDBOX_PROVIDER = "e2b"
+    settings.ALK_E2B_MAX_TTL_SECONDS = 3600
+    settings.ALK_HOSTED_AUTHORING_TIMEOUT = 900
+    settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
+
+    serializer = HarnessPreflightSerializer(data=_v1_payload())
+
+    assert not serializer.is_valid()
+    assert "configured sandbox lifetime exceeds" in str(serializer.errors)
 
 
 def test_daytona_preflight_rejects_known_egress_overflow(settings):
@@ -559,7 +602,7 @@ def test_repository_source_remains_required_for_environment_backed_provider():
     serializer = HarnessJobCreateSerializer(data=payload)
 
     assert not serializer.is_valid()
-    assert "existing provider agent ID" in str(serializer.errors)
+    assert "hosted agent ID or phone number" in str(serializer.errors)
 
 
 @pytest.mark.django_db
@@ -1155,7 +1198,7 @@ def test_daytona_preflight_source_failure_keeps_status_and_reports_check(setting
     assert "GitHub App" in source["fix"]
 
 
-def test_daytona_preflight_lists_five_checks_in_order(settings):
+def test_daytona_preflight_lists_six_checks_in_order(settings):
     settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = []
     settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
     payload = _v1_payload()
@@ -1179,6 +1222,7 @@ def test_daytona_preflight_lists_five_checks_in_order(settings):
         "credential_files",
         "credentials_valid",
         "provider_target",
+        "platform_dialer",
     ]
     by_id = {item["id"]: item for item in response.data["checks"]}
     assert by_id["source"]["status"] == "passed"

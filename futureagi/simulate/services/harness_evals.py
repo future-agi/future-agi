@@ -533,6 +533,7 @@ def bind_eval_config(
             mapping=mapping,
             run_test=run_test,
             filters={},
+            error_localizer=True,
             model=template.model
             or getattr(settings, "HARNESS_EVAL_MODEL", FALLBACK_EVAL_MODEL),
         )
@@ -543,6 +544,7 @@ def bind_eval_config(
         # the first binding stored: the run's modality decides the sources, and
         # a contract authored since then can have changed it.
         existing.mapping = mapping
+        existing.error_localizer = True
         existing.save(update_fields=["deleted", "deleted_at", "mapping", "updated_at"])
     return existing
 
@@ -810,7 +812,9 @@ def add_selected_eval(
     # both see room and both bind. The run row is the thing they contend for,
     # so it is the thing to hold.
     with transaction.atomic():
-        type(run_test).objects.select_for_update(of=("self",)).filter(pk=run_test.pk).first()
+        type(run_test).objects.select_for_update(of=("self",)).filter(
+            pk=run_test.pk
+        ).first()
         current = selected_eval_configs(run_test)
         for config in current:
             if wanted in {

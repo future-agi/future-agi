@@ -13,6 +13,7 @@ new is computed at read time, and no field is invented when its source is absent
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from django.db.models import Count, Prefetch, Q, QuerySet
@@ -49,7 +50,7 @@ _RUN_STATES = frozenset(
 # Transports that carry audio. A source that serves both voice and HTTP lists
 # both connectors, and voice wins: the recording is the thing that would be lost
 # if the environment were rendered as chat.
-_VOICE_CONNECTORS = frozenset({"livekit", "vapi", "retell"})
+_VOICE_CONNECTORS = frozenset({"livekit", "vapi", "retell", "phone"})
 
 AGENT_TYPE_VOICE = "voice"
 AGENT_TYPE_CHAT = "chat"
@@ -346,6 +347,7 @@ def environment_detail(job: HostedHarnessJob) -> dict[str, Any]:
             "personas_count": len(personas) if personas else None,
             "evaluations_count": len(selected),
             "run": _run_link(job),
+            "agent": _agent(job),
         }
     )
     return {
@@ -441,6 +443,11 @@ def _status_of(reg, receipt: HostedHarnessReceipt | None) -> str:
     return receipt.status if receipt is not None else "running"
 
 
+def _registration_key(value: Any) -> str:
+    """The key the runner registers a scenario under: its name slugged to ASCII."""
+    return re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
+
+
 def _scenarios(
     registrations: list,
     docs: Any,
@@ -451,14 +458,15 @@ def _scenarios(
     by_key: dict[str, dict[str, Any]] = {}
     for doc in docs if isinstance(docs, list) else []:
         if isinstance(doc, dict):
-            key = str(doc.get("scenario_key") or doc.get("name") or "")
-            if key:
-                by_key[key] = doc
+            for key in (doc.get("scenario_key"), doc.get("name")):
+                normalized = _registration_key(key)
+                if normalized:
+                    by_key.setdefault(normalized, doc)
     goals = _catalogue_index(catalogue)
     scenarios: list[dict[str, Any]] = []
     for reg in registrations:
         platform_name = getattr(reg.scenario, "name", "") or ""
-        doc = by_key.get(reg.scenario_key) or by_key.get(platform_name) or {}
+        doc = by_key.get(_registration_key(reg.scenario_key)) or {}
         cells = rows.get(str(reg.dataset_row_id), {}) if reg.dataset_row_id else {}
         fixture = doc.get("fixture")
         steps = doc.get("steps")
@@ -753,6 +761,30 @@ def _world_section(
         "runtime": runtime,
         "personas": personas,
         "stores": stores if isinstance(stores, list) else [],
+    }
+
+
+def _agent(job: HostedHarnessJob) -> dict[str, Any] | None:
+    """The agent under test, as the platform recorded it for this environment's run."""
+    from simulate.models import RunTest
+
+    if not job.run_test_id:
+        return None
+    run_test = (
+        RunTest.objects.filter(id=job.run_test_id, deleted=False)
+        .select_related("agent_definition")
+        .first()
+    )
+    definition = getattr(run_test, "agent_definition", None)
+    if definition is None:
+        return None
+    latest = definition.latest_version
+    return {
+        "id": str(definition.id),
+        "name": definition.agent_name or None,
+        "provider": definition.provider or None,
+        "versions_count": definition.version_count,
+        "active_version": f"v{latest.version_number}" if latest else None,
     }
 
 

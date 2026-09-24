@@ -422,6 +422,83 @@ class TestCallExecutionRerunView:
 
 @pytest.mark.integration
 @pytest.mark.api
+class TestRerunParallelismAdmission:
+    """A saved W>1 job must re-cross the register_attempt admission gate on rerun.
+
+    register_attempt is the single chokepoint every re-admission path shares
+    (C4 §4 pin ii / §5, decision D23): a saved W=4 job reruns at W=1 whenever the
+    flag/digest no longer qualify, and the stored requested value is preserved so
+    a later rerun re-evaluates honestly against the then-current flag/digest.
+    """
+
+    @staticmethod
+    def _saved_w4_job(organization, workspace):
+        return HostedHarnessJob.no_workspace_objects.create(
+            id=uuid.uuid4(),
+            organization=organization,
+            workspace=workspace,
+            run_id=uuid.uuid4(),
+            idempotency_key=f"parallel-{uuid.uuid4()}",
+            request_digest=f"sha256:{'0' * 64}",
+            schema_version="futureagi.harness-job.v1",
+            payload={
+                "source": {"kind": "remote", "endpoint": "https://agent.example.com"},
+                "runtime": {
+                    "parallelism": 4,
+                    "cpu_units": 8,
+                    "max_duration_seconds": 600,
+                },
+                "metadata": {},
+            },
+            state=HostedHarnessJob.State.COMPLETED,
+            seed=1,
+            scenario_count=1,
+            artifact_level="standard",
+            max_artifact_bytes=1,
+            deadline_at=timezone.now() + timedelta(hours=1),
+        )
+
+    @override_settings(
+        HARNESS_PARALLELISM_ENABLED=False,
+        HARNESS_PARALLEL_SNAPSHOT_DIGESTS=[],
+        ALK_DAYTONA_DOCKERFILE="",
+    )
+    def test_saved_w4_job_reruns_at_w1_when_flag_off(
+        self, db, organization, workspace
+    ):
+        from simulate.services.hosted_harness import register_attempt
+
+        job = self._saved_w4_job(organization, workspace)
+        # A rerun re-registers an attempt through the SAME chokepoint.
+        register_attempt(job.id, endpoint_base_url="https://platform.example")
+        job.refresh_from_db()
+        assert job.payload["metadata"]["parallelism_clamped"] == {"requested": 4}
+        # Requested value preserved -> a later rerun can re-qualify.
+        assert job.payload["runtime"]["parallelism"] == 4
+
+    @override_settings(
+        HARNESS_PARALLELISM_ENABLED=True,
+        HARNESS_PARALLEL_SNAPSHOT_DIGESTS=["sha256:certified"],
+        ALK_DAYTONA_DOCKERFILE="",
+    )
+    def test_saved_w4_job_reruns_at_w4_when_flag_and_digest_qualify(
+        self, db, organization, workspace
+    ):
+        from simulate.services.hosted_harness import register_attempt
+
+        job = self._saved_w4_job(organization, workspace)
+        register_attempt(
+            job.id,
+            endpoint_base_url="https://platform.example",
+            snapshot_digest="sha256:certified",
+        )
+        job.refresh_from_db()
+        assert "parallelism_clamped" not in job.payload["metadata"]
+        assert job.payload["runtime"]["parallelism"] == 4
+
+
+@pytest.mark.integration
+@pytest.mark.api
 class TestRepositoryRunAgainView:
     """The simulation header and grid must share the repository lifecycle."""
 

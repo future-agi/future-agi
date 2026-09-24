@@ -1065,7 +1065,6 @@ def test_selecting_another_tenants_template_is_refused(organization, workspace):
     """Multi-tenancy: an invisible name must not resolve to that tenant's
     template and must not be silently dropped either."""
     from accounts.models import Organization
-
     from simulate.services.alk_simulate_ingestion import provision_alk_sim_run_test
 
     other = Organization.objects.create(name="other-tenant-selection")
@@ -1112,8 +1111,13 @@ def test_selection_is_capped_and_idempotent(organization, workspace):
         with capture_logs() as logs:
             first = create_selected_eval_configs(run_test, names, "voice")
         assert len(first) == MOST_SELECTED_EVALS
+        assert all(config.error_localizer for config in first)
+        # Defaults apply at creation; reprovisioning must preserve an opt-out.
+        first[0].error_localizer = False
+        first[0].save(update_fields=["error_localizer"])
         again = create_selected_eval_configs(run_test, names, "voice")
         assert {config.id for config in again} == {config.id for config in first}
+        assert next(config for config in again if config.id == first[0].id).error_localizer is False
     assert (
         SimulateEvalConfig.objects.filter(run_test=run_test).count()
         == MOST_SELECTED_EVALS
@@ -1142,7 +1146,8 @@ def test_only_mapped_configs_are_runnable(organization, workspace):
         modality="voice",
     )
     create_selected_eval_configs(run_test, [selected.name], "voice")
-    _get_or_create_harness_eval_config(run_test, column, "booking_created")
+    column_config = _get_or_create_harness_eval_config(run_test, column, "booking_created")
+    assert column_config.error_localizer is True
 
     runnable = runnable_eval_config_ids(run_test.id)
     assert len(runnable) == 1
@@ -1292,6 +1297,45 @@ def test_provision_falls_back_to_the_authored_contract_excerpt(organization, wor
     # Base derives human-readable names, so the snake_case value arrives title-cased.
     assert agent.agent_name == "Uber Voice Agent"
     assert agent.inbound is True
+
+
+@pytest.mark.django_db
+def test_provision_records_explicit_rl_call_behavior_over_authored_direction(
+    organization, workspace
+):
+    payload = _payload()
+    payload["agent"] = {
+        **payload["agent"],
+        "config": {"inbound": False, "target_speaks_first": True},
+    }
+    job, _ = create_hosted_job(
+        organization,
+        payload,
+        idempotency_key="explicit-call-behavior",
+        workspace=workspace,
+    )
+    job.stage_outputs = [
+        {
+            "kind": "contract",
+            "data": {
+                "modality": "voice",
+                "call_direction": "inbound",
+                "system_prompt_excerpt": "Book rides safely.",
+            },
+        }
+    ]
+    job.save(update_fields=["stage_outputs"])
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+
+    response = _provision(APIClient(), capability)
+    assert response.status_code == 200, response.content
+
+    job.refresh_from_db()
+    agent = job.run_test.agent_definition
+    assert agent.inbound is False
+    assert agent.target_speaks_first is True
+    assert agent.latest_version.configuration_snapshot["inbound"] is False
+    assert agent.latest_version.configuration_snapshot["target_speaks_first"] is True
 
 
 # --- The hand list is gone --------------------------------------------------------

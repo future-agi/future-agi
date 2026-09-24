@@ -760,13 +760,10 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             if hasattr(self, "context") and self.context
             else None
         )
-        # ``mark_removed_only`` (whole-change review round 3, M3): the
-        # caller wants only the removed-marker stamped, with every other
-        # effect of an ``eval_configs`` context switched off -- so this
-        # surface's shape stays byte-identical to the no-context branch
-        # except for the added ``"removed": true`` keys. In particular,
-        # ``iter_live_eval_outputs`` is not used here, so a key with no
-        # config row is still returned, exactly as it was with no context.
+        # ``mark_removed_only``: the caller wants only the removed-marker
+        # stamped, with every other effect of an ``eval_configs`` context
+        # switched off, so ``iter_live_eval_outputs`` is skipped and a key
+        # with no config row is still returned, as with no context at all.
         mark_removed_only = bool(
             self.context.get("mark_removed_only")
             if hasattr(self, "context") and self.context
@@ -809,11 +806,11 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     "skipped": bool(eval_data.get("skipped", False))
                     or eval_data.get("status") == "skipped",
                 }
-                # The eval was removed from the environment after this verdict
-                # was stored. The verdict is shown, marked -- never hidden,
-                # never rewritten. Contract v1.6 P23; a live eval's verdict
-                # carries no "removed" key at all. ``getattr`` also covers the
-                # harness-native rows, which have no config object.
+                # The eval was removed from the environment after this
+                # verdict was stored; the verdict is shown, marked, never
+                # hidden or rewritten. A live eval's verdict carries no
+                # "removed" key. ``getattr`` also covers harness-native rows,
+                # which have no config object.
                 if getattr(eval_config, "deleted", False):
                     structured_outputs[eval_id]["removed"] = True
 
@@ -847,11 +844,8 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         # See ``get_eval_outputs``'s ``mark_removed_only`` comment: this
         # surface needs the marker only, with ``template_type``, the
         # error-localizer lookup, and the ``eval_config.name`` fallback all
-        # switched off (whole-change review round 4, L1 -- a status-less row
-        # with no stored ``name`` used to fall back to the real config's
-        # name here, breaking the "byte-identical except for the added
-        # ``removed`` keys" claim), so it stays byte-identical to the
-        # no-context branch except for the added ``"removed": true`` keys.
+        # switched off, so it stays unchanged from the no-context branch
+        # except for the added ``"removed": true`` keys.
         mark_removed_only = bool(
             self.context.get("mark_removed_only")
             if hasattr(self, "context") and self.context
@@ -918,8 +912,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                         else error_localizer_enabled(eval_config)
                     ),
                 }
-                # Same marker on the eval_metrics projection -- lld-1: "removed
-                # is carried on both eval_outputs and eval_metrics".
+                # Same marker as the eval_outputs projection above.
                 if getattr(eval_config, "deleted", False):
                     metrics[eval_id]["removed"] = True
 
