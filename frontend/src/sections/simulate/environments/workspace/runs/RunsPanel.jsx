@@ -7,9 +7,8 @@ import SectionCard from "../../components/SectionCard";
 import EmptyState from "../../components/EmptyState";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import PreflightItem from "./PreflightItem";
-import EstimateRow from "./EstimateRow";
 import RunHistoryRow from "./RunHistoryRow";
-import { RUNS_COPY, estimatedMinutes, estimatedCost } from "./runs.constants";
+import { RUNS_COPY } from "./runs.constants";
 
 // Pre-flight + run history.
 //
@@ -22,13 +21,78 @@ import { RUNS_COPY, estimatedMinutes, estimatedCost } from "./runs.constants";
 // is dead code (the component returns RunsSummary the moment a run exists), so
 // it is not ported. The history below is a deliberately minimal, real-data list
 // (see RunHistoryRow), not a RunsSummary port.
-export default function RunsPanel({ env, envState, runs, onStart, onOpenRun, onGo }) {
+export default function RunsPanel({
+  env,
+  envState,
+  runs,
+  total,
+  isLoading = false,
+  isError = false,
+  hasMore = false,
+  isFetchingMore = false,
+  fetchMore,
+  onStart,
+  onOpenRun,
+  onGo,
+}) {
   const surface = getSurface(env.surface);
   const agent = envState.agent;
   const scenarioCount = envState.scenarios.length;
   const criticalCount = envState.scenarios.filter((s) => s.critical).length;
   const evalCount = envState.evals.length;
   const ready = !!agent && scenarioCount > 0;
+
+  // Loading and failure are not "no runs yet" — an environment whose history is
+  // still in flight, or whose executions request failed, used to read as one
+  // that had never been run.
+  const renderHistory = () => {
+    if (isLoading) {
+      return (
+        <Stack alignItems="center" sx={{ py: 4 }}>
+          <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+            {RUNS_COPY.loading}
+          </Typography>
+        </Stack>
+      );
+    }
+    if (isError) {
+      return (
+        <EmptyState
+          icon="solar:danger-triangle-linear"
+          title={RUNS_COPY.error.title}
+          body={RUNS_COPY.error.body}
+        />
+      );
+    }
+    if (runs.length === 0) {
+      return (
+        <EmptyState
+          icon="solar:play-circle-linear"
+          title={RUNS_COPY.empty.title}
+          body={RUNS_COPY.empty.body}
+        />
+      );
+    }
+    return (
+      <>
+        <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
+          {runs.map((run) => (
+            <RunHistoryRow key={run.id} run={run} onOpenRun={onOpenRun} />
+          ))}
+        </Stack>
+        {hasMore && (
+          <Stack
+            alignItems="center"
+            sx={{ py: 1.5, borderTop: "1px solid", borderColor: "divider" }}
+          >
+            <Button size="small" disabled={isFetchingMore} onClick={() => fetchMore?.()}>
+              {isFetchingMore ? RUNS_COPY.loadingMore : RUNS_COPY.loadMore}
+            </Button>
+          </Stack>
+        )}
+      </>
+    );
+  };
 
   const evalSub = evalCount
     ? envState.evals
@@ -80,7 +144,7 @@ export default function RunsPanel({ env, envState, runs, onStart, onOpenRun, onG
             md={3}
             label={RUNS_COPY.labels.agent}
             value={agent ? agent.name || RUNS_COPY.agentConnected : RUNS_COPY.agentNotConnected}
-            sub={agent ? RUNS_COPY.connectionVerified : RUNS_COPY.required}
+            sub={agent ? RUNS_COPY.agentEndpoint : RUNS_COPY.required}
             icon="solar:cpu-bolt-linear"
             color={BUILD_TONES.accent}
             ok={!!agent}
@@ -110,53 +174,11 @@ export default function RunsPanel({ env, envState, runs, onStart, onOpenRun, onG
             onFix={() => onGo("evals")}
           />
         </Grid>
-
-        <Stack
-          direction="row"
-          spacing={2}
-          sx={{
-            px: 2.5,
-            py: 2,
-            borderTop: "1px solid",
-            borderColor: "divider",
-            bgcolor: "background.neutral",
-          }}
-        >
-          <EstimateRow
-            icon="solar:clock-circle-linear"
-            label={RUNS_COPY.estimate.duration}
-            value={`~${estimatedMinutes(scenarioCount)} min`}
-          />
-          <EstimateRow
-            icon="solar:bolt-circle-linear"
-            label={RUNS_COPY.estimate.concurrency}
-            value={RUNS_COPY.estimate.parallel}
-          />
-          <EstimateRow
-            icon="solar:dollar-minimalistic-linear"
-            label={RUNS_COPY.estimate.cost}
-            value={`$${estimatedCost(scenarioCount)}`}
-          />
-        </Stack>
       </SectionCard>
 
       <Box sx={{ mt: 3 }}>
-        <SectionCard title={RUNS_COPY.history(runs.length)}>
-          {runs.length === 0 ? (
-            <EmptyState
-              icon="solar:play-circle-linear"
-              title={RUNS_COPY.empty.title}
-              body={RUNS_COPY.empty.body}
-            />
-          ) : (
-            <Stack
-              divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}
-            >
-              {runs.map((run) => (
-                <RunHistoryRow key={run.id} run={run} onOpenRun={onOpenRun} />
-              ))}
-            </Stack>
-          )}
+        <SectionCard title={RUNS_COPY.history(total ?? runs.length)}>
+          {renderHistory()}
         </SectionCard>
       </Box>
     </Box>
@@ -181,6 +203,12 @@ RunsPanel.propTypes = {
   }).isRequired,
   runs: PropTypes.arrayOf(PropTypes.shape({ id: PropTypes.string, status: PropTypes.string }))
     .isRequired,
+  total: PropTypes.number,
+  isLoading: PropTypes.bool,
+  isError: PropTypes.bool,
+  hasMore: PropTypes.bool,
+  isFetchingMore: PropTypes.bool,
+  fetchMore: PropTypes.func,
   onStart: PropTypes.func,
   onOpenRun: PropTypes.func,
   onGo: PropTypes.func,

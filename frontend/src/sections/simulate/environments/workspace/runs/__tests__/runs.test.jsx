@@ -59,12 +59,15 @@ describe("RunsPanel pre-flight", () => {
 });
 
 describe("RunsPanel estimates", () => {
-  it("renders duration, concurrency and cost for 12 scenarios", () => {
+  it("states nothing it has not computed", () => {
     renderPanel();
-    // Designer formula max(2, ceil(12 * 0.7)) = 9; flat 4-parallel; 12 * 0.08.
-    expect(screen.getByText("~9 min")).toBeInTheDocument();
-    expect(screen.getByText("4 parallel")).toBeInTheDocument();
-    expect(screen.getByText("$0.96")).toBeInTheDocument();
+    // The duration/concurrency/cost strip was a designer placeholder: a fixed
+    // per-scenario rate and a fixed parallelism nothing in the product reads.
+    expect(screen.queryByText("~9 min")).toBeNull();
+    expect(screen.queryByText("4 parallel")).toBeNull();
+    expect(screen.queryByText("$0.96")).toBeNull();
+    // Nothing verifies the agent connection either — it is a stored endpoint.
+    expect(screen.queryByText(/Connection verified/)).toBeNull();
   });
 });
 
@@ -105,6 +108,31 @@ describe("RunsPanel run history", () => {
     renderPanel({ runs: [] });
     expect(screen.getByText(RUNS_COPY.empty.title)).toBeInTheDocument();
     expect(screen.getByText(RUNS_COPY.empty.body)).toBeInTheDocument();
+  });
+
+  it("says it is loading rather than that there are no runs", () => {
+    renderPanel({ runs: [], isLoading: true });
+    expect(screen.getByText(RUNS_COPY.loading)).toBeInTheDocument();
+    expect(screen.queryByText(RUNS_COPY.empty.title)).toBeNull();
+  });
+
+  it("says the history could not be loaded rather than that there are no runs", () => {
+    renderPanel({ runs: [], isError: true });
+    expect(screen.getByText(RUNS_COPY.error.title)).toBeInTheDocument();
+    expect(screen.queryByText(RUNS_COPY.empty.title)).toBeNull();
+  });
+
+  it("counts the whole history, not just the loaded page, and offers the rest", () => {
+    const fetchMore = vi.fn();
+    renderPanel({ runs: [passedRun], total: 12, hasMore: true, fetchMore });
+    expect(screen.getByText(RUNS_COPY.history(12))).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: RUNS_COPY.loadMore }));
+    expect(fetchMore).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers no more pages once the whole history is loaded", () => {
+    renderPanel({ runs: [passedRun], total: 1, hasMore: false });
+    expect(screen.queryByRole("button", { name: RUNS_COPY.loadMore })).toBeNull();
   });
 
   it("renders a row with label, timestamp, pass % and status chip", () => {

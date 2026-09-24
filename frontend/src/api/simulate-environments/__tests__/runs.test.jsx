@@ -16,22 +16,15 @@ const axios = axiosMod.default;
 const { endpoints } = axiosMod;
 const { paths } = await import("src/routes/paths");
 const { MOCK_RUNS } = await import("../_fixtures/runs");
-const { useEnvironmentRuns, executionToRun, runSimulationTarget } =
+const { useEnvironmentRuns, executionToRun, runSimulationTarget, RUNS_PAGE_SIZE } =
   await import("../runs");
 
 // Raw executions payload (the product's `results[]` shape) — capitalised
-// product statuses, `success_rate` on the 0–100 scale, out of chronological
-// order on purpose so the "newest first" assertion actually proves the sort.
+// product statuses, `success_rate` on the 0–100 scale. RunTestExecutionsView
+// orders by -created_at, so the payload arrives newest-first and the hook keeps
+// that order.
 const rawExecutions = () => ({
   results: [
-    {
-      id: "ex-old",
-      status: "Failed",
-      start_time: "2026-01-12T11:05:00.000Z",
-      agent_version: "v1",
-      total_chats: 10,
-      success_rate: 70,
-    },
     {
       id: "ex-new",
       status: "Completed",
@@ -48,8 +41,28 @@ const rawExecutions = () => ({
       total_chats: 12,
       success_rate: 50,
     },
+    {
+      id: "ex-old",
+      status: "Failed",
+      start_time: "2026-01-12T11:05:00.000Z",
+      agent_version: "v1",
+      total_chats: 10,
+      success_rate: 70,
+    },
   ],
   count: 3,
+});
+
+// A history longer than one page: `count` is 12 while a page carries 10.
+const pageOf = (ids, count) => ({
+  results: ids.map((id, i) => ({
+    id,
+    status: "Completed",
+    start_time: `2026-01-${String(28 - i).padStart(2, "0")}T09:00:00.000Z`,
+    total_chats: 4,
+    success_rate: 100,
+  })),
+  count,
 });
 
 const makeWrapper = (initialEntries = ["/"]) => {
@@ -119,7 +132,7 @@ describe("executionToRun", () => {
 });
 
 describe("useEnvironmentRuns", () => {
-  it("fetches executions when the env carries platform.runTestId and maps + sorts them newest-first", async () => {
+  it("fetches executions when the env carries platform.runTestId, newest first", async () => {
     const env = { id: "env-1", platform: { runTestId: "rt1", testExecutionId: "ex1" } };
     const { result } = renderHook(() => useEnvironmentRuns(env, { runs: [] }), {
       wrapper: makeWrapper(),
@@ -130,6 +143,7 @@ describe("useEnvironmentRuns", () => {
     expect(axios.get).toHaveBeenCalledTimes(1);
     expect(axios.get).toHaveBeenCalledWith(
       endpoints.runTests.detailExecutions("rt1"),
+      { params: { page: 1, limit: RUNS_PAGE_SIZE } },
     );
 
     const [first, second, third] = result.current.runs;
@@ -142,6 +156,61 @@ describe("useEnvironmentRuns", () => {
     // Newest → highest ordinal label.
     expect(first.label).toBe("Run 3");
     expect(third.label).toBe("Run 1");
+  });
+
+  it("exposes the total and a next page when the history is longer than one page", async () => {
+    const env = { id: "env-1", platform: { runTestId: "rt1" } };
+    const first = pageOf(
+      Array.from({ length: 10 }, (_, i) => `ex-${12 - i}`),
+      12,
+    );
+    const second = pageOf(["ex-2", "ex-1"], 12);
+    axios.get.mockReset();
+    axios.get
+      .mockResolvedValueOnce({ data: first })
+      .mockResolvedValueOnce({ data: second });
+
+    const { result } = renderHook(() => useEnvironmentRuns(env, { runs: [] }), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.runs.length).toBe(10));
+    expect(result.current.total).toBe(12);
+    expect(result.current.hasMore).toBe(true);
+    // Ordinals come from the full count, not from the rows on screen.
+    expect(result.current.runs[0].label).toBe("Run 12");
+    expect(result.current.runs[9].label).toBe("Run 3");
+
+    result.current.fetchMore();
+
+    await waitFor(() => expect(result.current.runs.length).toBe(12));
+    expect(result.current.hasMore).toBe(false);
+    expect(result.current.runs[11].label).toBe("Run 1");
+    expect(axios.get).toHaveBeenNthCalledWith(
+      2,
+      endpoints.runTests.detailExecutions("rt1"),
+      { params: { page: 2, limit: RUNS_PAGE_SIZE } },
+    );
+  });
+
+  it("keeps polling while a loaded execution is still running", async () => {
+    const env = { id: "env-1", platform: { runTestId: "rt1" } };
+    const { result } = renderHook(() => useEnvironmentRuns(env, { runs: [] }), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.runs.length).toBe(3));
+    expect(result.current.isPolling).toBe(true);
+  });
+
+  it("stops polling once every loaded execution is terminal", async () => {
+    const env = { id: "env-1", platform: { runTestId: "rt1" } };
+    axios.get.mockReset();
+    axios.get.mockResolvedValue({ data: pageOf(["ex-2", "ex-1"], 2) });
+    const { result } = renderHook(() => useEnvironmentRuns(env, { runs: [] }), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.runs.length).toBe(2));
+    expect(result.current.isPolling).toBe(false);
   });
 
   it("returns envState.runs with no fetch when the env has no platform", () => {

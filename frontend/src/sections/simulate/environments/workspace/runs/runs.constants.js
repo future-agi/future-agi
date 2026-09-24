@@ -27,20 +27,6 @@ export const STATUS_META = {
   cancelled: { color: BUILD_TONES.zinc, label: "Cancelled" },
 };
 
-// Pre-flight estimate model. Ported verbatim from the designer's RunsPanel:
-// duration grows with the scenario count (floored so a tiny suite still reads
-// as a couple of minutes), concurrency is fixed, cost is a flat per-scenario
-// rate. Kept as named constants so the arithmetic is not buried inline.
-export const MINUTES_PER_SCENARIO = 0.7;
-export const MIN_DURATION_MINUTES = 2;
-export const RUN_CONCURRENCY = 4;
-export const COST_PER_SCENARIO = 0.08;
-
-export const estimatedMinutes = (count) =>
-  Math.max(MIN_DURATION_MINUTES, Math.ceil(count * MINUTES_PER_SCENARIO));
-
-export const estimatedCost = (count) => (count * COST_PER_SCENARIO).toFixed(2);
-
 // The colour a pre-flight item's status line takes: green when satisfied, amber
 // when satisfied-but-worth-a-look (an optional slot left empty), red when it
 // blocks the run.
@@ -70,22 +56,23 @@ export const RUNS_COPY = {
   },
   agentConnected: "Connected agent",
   agentNotConnected: "Not connected",
-  connectionVerified: "Connection verified",
+  agentEndpoint: "Endpoint on file",
   required: "Required",
   optional: "Optional",
   tasks: (n) => `${n} tasks`,
   critical: (n) => `${n} critical`,
   applied: (n) => `${n} applied`,
-  estimate: {
-    duration: "Est. duration",
-    concurrency: "Concurrency",
-    cost: "Est. cost",
-    parallel: `${RUN_CONCURRENCY} parallel`,
-  },
   history: (n) => `Run history (${n})`,
   started: "Started",
+  loading: "Loading run history…",
+  loadMore: "Load older runs",
+  loadingMore: "Loading…",
   empty: {
     title: "No runs yet",
     body: "Start a simulation above and you'll be able to watch every task execute live.",
+  },
+  error: {
+    title: "Couldn't load the run history",
+    body: "The executions for this environment didn't come back. Reload the page to try again.",
   },
 };

@@ -38,7 +38,8 @@ export default function WorkspacePanels({
   executionOutlet,
 }) {
   const navigate = useNavigate();
-  const { runs } = useEnvironmentRuns(env, envState);
+  const runHistory = useEnvironmentRuns(env, envState);
+  const runs = runHistory.runs;
 
   // Default landing is the summary, not the first tab in the rail — the rail
   // order is Contract-first but the env opens on its summary.
@@ -62,7 +63,7 @@ export default function WorkspacePanels({
   // `counts` (builder still streaming) hides every numeric badge.
   const badgeCount = (badge) => {
     if (!counts) return null;
-    if (badge === "runs") return runs.length;
+    if (badge === "runs") return runHistory.total ?? runs.length;
     return counts[badge] ?? 0;
   };
 
@@ -81,6 +82,12 @@ export default function WorkspacePanels({
             env={env}
             envState={envState}
             runs={runs}
+            total={runHistory.total}
+            isLoading={runHistory.isLoading}
+            isError={runHistory.isError}
+            hasMore={runHistory.hasMore}
+            isFetchingMore={runHistory.isFetchingMore}
+            fetchMore={runHistory.fetchMore}
             onStart={() => navigate(runSimulationTarget(env))}
             onOpenRun={openRun}
             onGo={go}
