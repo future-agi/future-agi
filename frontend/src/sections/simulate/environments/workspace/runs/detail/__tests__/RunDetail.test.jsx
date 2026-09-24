@@ -158,6 +158,17 @@ describe("RunDetail", () => {
     ).toBeInTheDocument();
   });
 
+  it("does not show a Failed verdict while the run is still loading", () => {
+    // Loading: identity null and zeroed stats must not read as "Failed".
+    useRunDetail.mockReturnValue({
+      identity: null,
+      stats: { total: 0, passed: 0, failed: 0, passRate: 0, scores: {} },
+      isLoading: true,
+    });
+    renderDetail();
+    expect(screen.queryByText("Failed")).toBeNull();
+  });
+
   it("opens the Add-evals drawer from the header action", async () => {
     useRunDetail.mockReturnValue({
       identity: IDENTITY,

@@ -32,7 +32,10 @@ import RunAnalytics from "./RunAnalytics";
 // run with findings — calling that "Failed" would bury the ones that passed. A
 // run still in flight stays "running".
 function headerStatus(identity, stats) {
-  if (identity?.status === "running") return "running";
+  // No verdict until the run resolves: while loading, identity is null and the
+  // zeroed stats would otherwise read as "Failed".
+  if (!identity) return null;
+  if (identity.status === "running") return "running";
   if (stats.passed === 0) return "failed";
   if (stats.failed === 0) return "passed";
   return "completed";
@@ -154,7 +157,7 @@ export default function RunDetail({ env, envState, testId, executionId }) {
                 ? `Run ${identity.ordinal} · agent ${identity.agentVersion ?? "—"}`
                 : "Run complete"}
             </Typography>
-            <StatusChip status={status} />
+            {status && <StatusChip status={status} />}
           </Stack>
           <Typography noWrap sx={{ typography: "s2", color: "text.subtitle" }}>
             {env.name} · {stats.total} tasks
