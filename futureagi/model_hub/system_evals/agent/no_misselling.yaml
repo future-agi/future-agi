@@ -21,6 +21,8 @@ eval_tags:
 - Conversation
 - Voice
 - Insurance
+- Compliance
+- Sales
 visible_ui: true
 permissions:
   allow_edit: false

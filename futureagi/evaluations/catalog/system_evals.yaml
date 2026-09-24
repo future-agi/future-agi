@@ -1550,7 +1550,7 @@ evaluate_function_calling:
   output: Pass/Fail
   required_keys: [input, output]
   description: Evaluates function call correctness
-  tags: [Code, Function Calling]
+  tags: [Code, Function Calling, Tools]
   rule_prompt: |
     You are evaluating whether the model correctly selects and invokes functions with appropriate arguments.
 
@@ -1897,7 +1897,7 @@ customer_agent_objection_handling:
   output: choices
   required_keys: [conversation]
   description: Evaluates objection handling
-  tags: [Agents, Voice]
+  tags: [Agents, Voice, Sales]
   rule_prompt: |
     You are evaluating whether the agent effectively handles customer objections, hesitations, or refusals.
 
@@ -2314,7 +2314,7 @@ ASR/STT_accuracy:
   output: score
   required_keys: [audio, generated_transcript]
   description: Evaluates speech-to-text accuracy
-  tags: [Audio, Transcription]
+  tags: [Audio, Transcription, Voice]
   rule_prompt: |
     You are evaluating the accuracy of an automatic speech recognition transcription against the source audio.
 
@@ -2353,7 +2353,7 @@ TTS_accuracy:
   output: score
   required_keys: [text, generated_audio]
   description: Evaluates text-to-speech accuracy
-  tags: [Audio, TTS]
+  tags: [Audio, TTS, Voice]
   rule_prompt: |
     You are evaluating whether text-to-speech audio output accurately conveys the intended text message.
 

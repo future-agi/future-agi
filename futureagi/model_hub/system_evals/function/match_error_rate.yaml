@@ -4,6 +4,7 @@ description: "Computes Match Error Rate (MER) for speech recognition. MER = edit
 eval_tags:
 - NLP Metrics
 - Audio
+- Voice
 visible_ui: true
 permissions: {allow_edit: false, allow_copy: true}
 output_type_normalized: percentage

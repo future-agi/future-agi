@@ -4,6 +4,7 @@ description: "Computes Word Information Preserved (WIP) for speech. WIP = (hits/
 eval_tags:
 - NLP Metrics
 - Audio
+- Voice
 visible_ui: true
 permissions: {allow_edit: false, allow_copy: true}
 output_type_normalized: percentage

@@ -1,0 +1,81 @@
+eval_id: 216
+name: call_opening_handling
+description: 'Evaluates the first moments of a call: whether the agent handles varied greetings (''who is this?'', silence,
+  wrong person), confirms the right party before anything person-specific, and introduces itself clearly. Stating the reason
+  for the call may wait until the right party is confirmed, and must on sensitive calls.'
+criteria: "You are evaluating how the agent handles the opening of the call, which is where many voice calls are lost. The\
+  \ agent prompt, if provided, may define the required opening and what may be said before the right party is confirmed.\n\
+  \n## Criteria\n1. Greeting variance: The agent responds appropriately to whatever opening it gets: a name, 'hello?', 'who\
+  \ is this?', silence, or a hostile challenge, without freezing, restarting its script, or answering a question that was\
+  \ not asked.\n2. Right-party check: On an outbound call, before discussing anything specific to the intended person, the\
+  \ agent confirms it is speaking with them, or handles a wrong party or gatekeeper as the prompt directs.\n3. Clear introduction:\
+  \ Within the first exchange the listener knows who is calling: at least a name, and the organisation unless the agent prompt\
+  \ or a sensitive topic requires withholding it until the right party is confirmed. The reason for the call is stated once\
+  \ the right party is confirmed, or earlier if the agent chooses; on sensitive topics (debt, health, finances, legal matters)\
+  \ it must wait until confirmation.\n\n## Anti-bias Rules\n- If the call goes to voicemail or an IVR, this eval does not\
+  \ apply: return PASS and begin the explanation with 'Not applicable: voicemail or IVR'.\n- On an inbound call the caller\
+  \ chose to call and holds the reason, so criterion 2 and the reason-for-call clause do not apply unless the agent prompt\
+  \ requires identifying the caller first; judge greeting handling and a clear introduction only.\n- Withholding the reason\
+  \ for the call until the right party is confirmed is always acceptable, and is required on sensitive topics; it is not an\
+  \ unclear purpose.\n- A customer hanging up immediately despite a correct opening is NOT the agent's failure.\n- Brevity\
+  \ in the opening is good; do not penalise a short, complete introduction.\n- If the agent prompt specifies the opening wording\
+  \ or order, judge against it.\n\n## Scoring\n- Return PASS if the agent adapts to the customer's opening, confirms the right\
+  \ party before anything person-specific, and makes clear who is calling, stating the reason once the right party is confirmed.\n\
+  - Return FAIL if it mishandles the greeting, discusses person-specific or sensitive matters before confirming the party,\
+  \ leaves who is calling unclear, or on an outbound call never states the reason after the right party is confirmed.\n\n\
+  ## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n<conversation>{{conversation}}</conversation>"
+eval_tags:
+- Agents
+- Conversation
+- Voice
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+choices:
+- Passed
+- Failed
+output_type_normalized: pass_fail
+pass_threshold: 0.5
+config:
+  required_keys:
+  - agent_prompt
+  - conversation
+  optional_keys:
+  - agent_prompt
+  output: Pass/Fail
+  eval_type_id: AgentEvaluator
+  config: {}
+  config_params_desc:
+    agent_prompt: 'The agent''s system prompt (persona, script and behavioural instructions). Optional: leave unmapped if
+      not available'
+    conversation: The full conversation (user and agent turns), as transcript text or call audio
+  param_modalities:
+    agent_prompt:
+    - TEXT
+    conversation:
+    - TEXT
+    - AUDIO
+    - JSON
+    - LIST
+  rule_prompt: "You are evaluating how the agent handles the opening of the call, which is where many voice calls are lost.\
+    \ The agent prompt, if provided, may define the required opening and what may be said before the right party is confirmed.\n\
+    \n## Criteria\n1. Greeting variance: The agent responds appropriately to whatever opening it gets: a name, 'hello?', 'who\
+    \ is this?', silence, or a hostile challenge, without freezing, restarting its script, or answering a question that was\
+    \ not asked.\n2. Right-party check: On an outbound call, before discussing anything specific to the intended person, the\
+    \ agent confirms it is speaking with them, or handles a wrong party or gatekeeper as the prompt directs.\n3. Clear introduction:\
+    \ Within the first exchange the listener knows who is calling: at least a name, and the organisation unless the agent\
+    \ prompt or a sensitive topic requires withholding it until the right party is confirmed. The reason for the call is stated\
+    \ once the right party is confirmed, or earlier if the agent chooses; on sensitive topics (debt, health, finances, legal\
+    \ matters) it must wait until confirmation.\n\n## Anti-bias Rules\n- If the call goes to voicemail or an IVR, this eval\
+    \ does not apply: return PASS and begin the explanation with 'Not applicable: voicemail or IVR'.\n- On an inbound call\
+    \ the caller chose to call and holds the reason, so criterion 2 and the reason-for-call clause do not apply unless the\
+    \ agent prompt requires identifying the caller first; judge greeting handling and a clear introduction only.\n- Withholding\
+    \ the reason for the call until the right party is confirmed is always acceptable, and is required on sensitive topics;\
+    \ it is not an unclear purpose.\n- A customer hanging up immediately despite a correct opening is NOT the agent's failure.\n\
+    - Brevity in the opening is good; do not penalise a short, complete introduction.\n- If the agent prompt specifies the\
+    \ opening wording or order, judge against it.\n\n## Scoring\n- Return PASS if the agent adapts to the customer's opening,\
+    \ confirms the right party before anything person-specific, and makes clear who is calling, stating the reason once the\
+    \ right party is confirmed.\n- Return FAIL if it mishandles the greeting, discusses person-specific or sensitive matters\
+    \ before confirming the party, leaves who is calling unclear, or on an outbound call never states the reason after the\
+    \ right party is confirmed.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n<conversation>{{conversation}}</conversation>"

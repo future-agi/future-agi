@@ -1,0 +1,84 @@
+eval_id: 213
+name: persona_consistency
+description: Checks that the agent keeps a stable identity (name, company), register, and behavioural pattern within the conversation,
+  judged against the persona it establishes in its opening turns. Honest disclosure of being a virtual assistant is not a
+  break.
+criteria: "You are evaluating whether the agent maintains a stable identity, personality, and vocabulary WITHIN the conversation.\
+  \ Judge consistency relative to the persona the agent establishes in its own opening turns, not against any external instruction\
+  \ or expected script.\n\n## Criteria\n1. Identity consistency: The agent keeps the same name and company from start to finish\
+  \ and does not contradict an earlier self-reference. Honestly disclosing that it is a virtual assistant/agent — proactively\
+  \ or when the customer asks (\"Are you a real person?\") — is acceptable and is NOT a persona break, as long as the name,\
+  \ company, and tone stay consistent. Only flag identity drift such as changing the name or company mid-call.\n2. Register\
+  \ and vocabulary stability: The agent's word choice, formality, and tone stay consistent with the register it established\
+  \ at the start of the call, no unexplained mid-call shifts (e.g. warm/casual → flat/formal) that aren't a direct response\
+  \ to a customer cue.\n3. Behavioral consistency: Acknowledgment style, energy level, and empathy patterns remain stable\
+  \ across turns regardless of conversation length.\n4. No tone/register breaks from script intrusions: Judge whether the\
+  \ agent's tone and register stay conversationally consistent. A canned voicemail/IVR line fails ONLY when it is delivered\
+  \ in a clashing robotic/automated register that breaks the conversational tone. If the agent merely seems confused about\
+  \ the call context (e.g. treats a live call like a voicemail or phone screening) but keeps a consistent conversational tone,\
+  \ that is NOT a persona break — context confusion is out of scope.\n\n## Anti-bias Rules\n- Short calls where persona is\
+  \ consistent CAN pass.\n- Long calls maintaining persona through multi-turn complexity SHOULD pass.\n- Evaluate persona\
+  \ stability only, NOT task success, NOT whether the agent followed any procedure.\n- A register change that is a natural,\
+  \ proportionate response to a clear customer cue (e.g. customer becomes upset) is NOT drift.\n- Honest disclosure of being\
+  \ a virtual assistant/agent is NOT a character break — evaluate tone consistency, not whether the agent admits being automated.\n\
+  - Confusion about call context (live call vs. voicemail / phone screening) is out of scope — only fail if the tone/register\
+  \ actually breaks.\n\n## Scoring\n- Return PASS if the agent maintains a consistent name, company, register/tone, and behavioral\
+  \ patterns throughout the call, judged against the persona it established at the start. Disclosing that it is a virtual\
+  \ assistant and minor context confusion do NOT fail as long as the tone stays consistent.\n- Return FAIL if the agent: shifts\
+  \ register mid-call without a customer cue (e.g. warm → flat after the opening); contradicts an earlier self-reference;\
+  \ uses a different name or company than it started with; or injects voicemail/IVR/robotic script lines delivered in a clashing\
+  \ automated register that breaks the conversational tone.\n\n## Input\n<audio_url>{{conversation}}</audio_url>"
+eval_tags:
+- Agents
+- Conversation
+- Voice
+- Chatbot behaviors
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+choices:
+- Passed
+- Failed
+output_type_normalized: pass_fail
+pass_threshold: 0.5
+config:
+  required_keys:
+  - conversation
+  output: Pass/Fail
+  eval_type_id: AgentEvaluator
+  config: {}
+  config_params_desc:
+    conversation: The full conversation (user and agent turns), as transcript text or call audio
+  param_modalities:
+    conversation:
+    - TEXT
+    - AUDIO
+    - JSON
+    - LIST
+  rule_prompt: "You are evaluating whether the agent maintains a stable identity, personality, and vocabulary WITHIN the conversation.\
+    \ Judge consistency relative to the persona the agent establishes in its own opening turns, not against any external instruction\
+    \ or expected script.\n\n## Criteria\n1. Identity consistency: The agent keeps the same name and company from start to\
+    \ finish and does not contradict an earlier self-reference. Honestly disclosing that it is a virtual assistant/agent —\
+    \ proactively or when the customer asks (\"Are you a real person?\") — is acceptable and is NOT a persona break, as long\
+    \ as the name, company, and tone stay consistent. Only flag identity drift such as changing the name or company mid-call.\n\
+    2. Register and vocabulary stability: The agent's word choice, formality, and tone stay consistent with the register it\
+    \ established at the start of the call, no unexplained mid-call shifts (e.g. warm/casual → flat/formal) that aren't a\
+    \ direct response to a customer cue.\n3. Behavioral consistency: Acknowledgment style, energy level, and empathy patterns\
+    \ remain stable across turns regardless of conversation length.\n4. No tone/register breaks from script intrusions: Judge\
+    \ whether the agent's tone and register stay conversationally consistent. A canned voicemail/IVR line fails ONLY when\
+    \ it is delivered in a clashing robotic/automated register that breaks the conversational tone. If the agent merely seems\
+    \ confused about the call context (e.g. treats a live call like a voicemail or phone screening) but keeps a consistent\
+    \ conversational tone, that is NOT a persona break — context confusion is out of scope.\n\n## Anti-bias Rules\n- Short\
+    \ calls where persona is consistent CAN pass.\n- Long calls maintaining persona through multi-turn complexity SHOULD pass.\n\
+    - Evaluate persona stability only, NOT task success, NOT whether the agent followed any procedure.\n- A register change\
+    \ that is a natural, proportionate response to a clear customer cue (e.g. customer becomes upset) is NOT drift.\n- Honest\
+    \ disclosure of being a virtual assistant/agent is NOT a character break — evaluate tone consistency, not whether the\
+    \ agent admits being automated.\n- Confusion about call context (live call vs. voicemail / phone screening) is out of\
+    \ scope — only fail if the tone/register actually breaks.\n\n## Scoring\n- Return PASS if the agent maintains a consistent\
+    \ name, company, register/tone, and behavioral patterns throughout the call, judged against the persona it established\
+    \ at the start. Disclosing that it is a virtual assistant and minor context confusion do NOT fail as long as the tone\
+    \ stays consistent.\n- Return FAIL if the agent: shifts register mid-call without a customer cue (e.g. warm → flat after\
+    \ the opening); contradicts an earlier self-reference; uses a different name or company than it started with; or injects\
+    \ voicemail/IVR/robotic script lines delivered in a clashing automated register that breaks the conversational tone.\n\
+    \n## Input\n<audio_url>{{conversation}}</audio_url>"

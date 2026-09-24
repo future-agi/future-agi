@@ -17,6 +17,7 @@ criteria: "You are evaluating whether text-to-speech audio output accurately con
 eval_tags:
 - Audio
 - NLP Metrics
+- Voice
 visible_ui: true
 permissions:
   allow_edit: false

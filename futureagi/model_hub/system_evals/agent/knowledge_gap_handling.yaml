@@ -1,0 +1,90 @@
+eval_id: 217
+name: knowledge_gap_handling
+description: 'Classifies how the agent handled questions relative to the knowledge it had: answered from its knowledge, transparently
+  acknowledged a gap, or answered without support. Needs the agent''s knowledge source (context) to separate knowledge-base
+  gaps to fill from bluffing.'
+criteria: "You are classifying how the agent handled the user's questions relative to the knowledge it actually had. Its knowledge\
+  \ is the provided context, the agent prompt if provided, facts the user stated in the conversation, and tool results shown\
+  \ in the conversation.\n\n## Criteria\n1. Supported answers: The agent's factual answers are backed by the context, the\
+  \ agent prompt, the user's own earlier statements, or tool results shown in the conversation.\n2. Transparent gaps: When\
+  \ none of those sources covers a question, the agent says so plainly instead of answering.\n3. Severity ordering: If several\
+  \ behaviours occur, the worst one determines the label.\n\n## Anti-bias Rules\n- Reasonable inference from supported facts\
+  \ is supported, not invented.\n- Restating or using what the user said earlier is supported, even if the context does not\
+  \ mention it.\n- Widely known general facts are supported without a source; claims about the business, its products, prices,\
+  \ or policies need one.\n- Generic conversational content ('happy to help') makes no factual claim and is ignored.\n- Offering\
+  \ a next step after acknowledging a gap is good practice but is not required for 'gap_acknowledged'.\n\n## Scoring\n- Select\
+  \ 'answered_from_knowledge' if every substantive answer is supported.\n- Select 'gap_acknowledged' if the agent honestly\
+  \ acknowledged at least one gap and made no unsupported claims.\n- Select 'unsupported_answer' if the agent made any factual\
+  \ claim that none of the sources supports.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n<conversation>{{conversation}}</conversation>\n\
+  <context>{{context}}</context>"
+eval_tags:
+- Agents
+- Conversation
+- RAG
+- Hallucination
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+choices:
+- answered_from_knowledge
+- gap_acknowledged
+- unsupported_answer
+output_type_normalized: deterministic
+config:
+  required_keys:
+  - agent_prompt
+  - conversation
+  - context
+  optional_keys:
+  - agent_prompt
+  output: choices
+  eval_type_id: AgentEvaluator
+  config: {}
+  config_params_desc:
+    agent_prompt: 'The agent''s system prompt, used as an additional knowledge source when it carries facts (FAQ, policies).
+      Optional: leave unmapped if not available'
+    conversation: The full conversation (user and agent turns), as transcript text or call audio
+    context: 'The knowledge the agent had access to: knowledge base, retrieved documents, or FAQ. If the agent''s knowledge
+      lives only in its system prompt, map the prompt here'
+  param_modalities:
+    agent_prompt:
+    - TEXT
+    conversation:
+    - TEXT
+    - AUDIO
+    - JSON
+    - LIST
+    context:
+    - TEXT
+    - AUDIO
+    - IMAGE
+    - PDF
+    - KNOWLEDGE_BASE
+    - JSON
+    - LIST
+    - NUMBER
+    - BOOLEAN
+    - INTEGER
+    - FLOAT
+    - ARRAY
+    - DATETIME
+    - IMAGES
+  rule_prompt: "You are classifying how the agent handled the user's questions relative to the knowledge it actually had.\
+    \ Its knowledge is the provided context, the agent prompt if provided, facts the user stated in the conversation, and\
+    \ tool results shown in the conversation.\n\n## Criteria\n1. Supported answers: The agent's factual answers are backed\
+    \ by the context, the agent prompt, the user's own earlier statements, or tool results shown in the conversation.\n2.\
+    \ Transparent gaps: When none of those sources covers a question, the agent says so plainly instead of answering.\n3.\
+    \ Severity ordering: If several behaviours occur, the worst one determines the label.\n\n## Anti-bias Rules\n- Reasonable\
+    \ inference from supported facts is supported, not invented.\n- Restating or using what the user said earlier is supported,\
+    \ even if the context does not mention it.\n- Widely known general facts are supported without a source; claims about\
+    \ the business, its products, prices, or policies need one.\n- Generic conversational content ('happy to help') makes\
+    \ no factual claim and is ignored.\n- Offering a next step after acknowledging a gap is good practice but is not required\
+    \ for 'gap_acknowledged'.\n\n## Scoring\n- Select 'answered_from_knowledge' if every substantive answer is supported.\n\
+    - Select 'gap_acknowledged' if the agent honestly acknowledged at least one gap and made no unsupported claims.\n- Select\
+    \ 'unsupported_answer' if the agent made any factual claim that none of the sources supports.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n\
+    <conversation>{{conversation}}</conversation>\n<context>{{context}}</context>"
+choice_scores:
+  answered_from_knowledge: 1.0
+  gap_acknowledged: 0.75
+  unsupported_answer: 0.0

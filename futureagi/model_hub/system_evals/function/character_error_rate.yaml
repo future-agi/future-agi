@@ -6,6 +6,7 @@ criteria: Measures transcription/OCR accuracy at the character level.
 eval_tags:
 - NLP Metrics
 - Audio
+- Voice
 visible_ui: true
 permissions:
   allow_edit: false
