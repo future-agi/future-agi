@@ -11,8 +11,12 @@ from clickhouse_driver.errors import ServerException
 from tracer.services.clickhouse.list_cursor import ListCursor, ListCursorError
 from tracer.services.clickhouse.query_builders.filters import EvalFilterMetadata
 from tracer.services.clickhouse.query_builders.user_list import UserListQueryBuilder
-from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
-from tracer.services.users_list_manager import USER_LIST_CURSOR_ORDER, UsersListManager
+from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
+from tracer.services.users_list_manager import (
+    USER_LIST_CURSOR_ORDER,
+    USER_LIST_PAGE_WALL_MS,
+    UsersListManager,
+)
 from tracer.tests.test_user_latest_window_replay import assert_window_replay, cte
 
 pytestmark = pytest.mark.unit
@@ -56,7 +60,7 @@ def test_exact_candidate_population_window_order_and_scope(workspace, days):
     )
     assert "span_user_rollup" not in sql
     assert "FROM spans AS sp FINAL" not in sql
-    assert_window_replay(sql, params)
+    assert_window_replay(sql, params, unseeded=True)
     assert "count() OVER()" not in sql
     assert params["limit"] == 26
     assert params["before_activity_us"] + 1 == params["user_window_end_us"]
@@ -118,7 +122,7 @@ def test_native_user_id_witness_is_after_latest_replay_before_candidate_limit(
     assert params["candidate_user_label_0"] == (
         ("guest-a",) if op == "equals" else ("guest-a", "guest-b")
     )
-    assert_window_replay(sql, params)
+    assert_window_replay(sql, params, unseeded=True)
 
 
 @pytest.mark.parametrize(
@@ -168,7 +172,11 @@ def test_scalar_witness_narrows_groups_not_activity_or_replacement(workspace):
     )
     assert "SELECT * FROM scalar_witness_identities" in population
     assert "eu_survivor_map" in population
-    assert "scalar_candidate_users" in cte(sql, "filtered_end_users")
+    # The witness population is bound ONCE. A CTE is inlined at every use, so a
+    # second binding on the curated dimension replays the whole witness scan
+    # again; the authoritative INNER JOIN on exact_usage already carries it.
+    assert "scalar_candidate_users" not in cte(sql, "filtered_end_users")
+    assert sql.count("FROM scalar_candidate_users") == 1
     aliases = cte(sql, "candidate_span_identities")
     assert aliases.count("FROM scalar_candidate_users") == 1
     assert "LEFT ALL JOIN" in aliases
@@ -187,7 +195,7 @@ def test_scalar_witness_narrows_groups_not_activity_or_replacement(workspace):
         raw_filter("equals", 0),
         raw_filter("less_than", 1),
         raw_filter("equals", False, "boolean"),
-        raw_filter("equals", "1", "text"),
+        raw_filter("equals", "true", "text"),
         {
             "column_id": "total_cost",
             "filter_config": {
@@ -279,14 +287,20 @@ def test_native_filters_walk_exact_order_and_prove_exhaustion(
         ]
     )
     rows = candidates(253)
+    started: list[int] = []
+    real_start = ReadDeadline.start
     with (
         patch.object(m, "_read_dimension_candidates", side_effect=reader(rows)),
         patch(
             "tracer.services.users_list_manager.ReadDeadline.start",
-            side_effect=AssertionError("no admission wall"),
+            side_effect=lambda total_ms: (
+                started.append(total_ms) or real_start(total_ms)
+            ),
         ),
     ):
         page = m.list_cursor_payload(page_size=2)
+    # No admission wall: the only wall the walk starts is the route's page wall.
+    assert started == [USER_LIST_PAGE_WALL_MS]
     assert [row["total_cost"] for row in page.payload["table"]] == expected
     assert page.payload["query_exact"] is True
     assert page.payload["ordering_exact"] is True
@@ -298,6 +312,12 @@ def test_native_filters_walk_exact_order_and_prove_exhaustion(
 
 
 def test_sparse_raw_numeric_walk_releases_rejected_caches_and_keeps_types():
+    """The seeded page's batch walk over a sparse numeric match.
+
+    A number comparison now takes the matching-activity walk
+    (test_users_matching_walk.py); the seeded page still serves it for a
+    sorted request, and this is that page's cache and type discipline.
+    """
     m = manager([raw_filter()])
     rows = candidates(253)
     calls = []
@@ -327,6 +347,7 @@ def test_sparse_raw_numeric_walk_releases_rejected_caches_and_keeps_types():
             }
 
     with (
+        patch.object(m, "matching_activity_walk_applies", return_value=False),
         patch.object(m, "_read_dimension_candidates", side_effect=reader(rows)),
         patch.object(m, "_enrich_rows", side_effect=enrich),
     ):
@@ -338,21 +359,39 @@ def test_sparse_raw_numeric_walk_releases_rejected_caches_and_keeps_types():
     assert not m._native_filter_values_by_user
 
 
-@pytest.mark.parametrize(
-    "failure", [ReadDeadlineExceeded("memory"), MemoryError("memory")]
-)
-def test_resource_failure_after_rejected_prefix_never_returns_exact_empty(failure):
+def test_resource_failure_after_rejected_prefix_never_returns_exact_empty():
     m = manager()
     with (
         patch.object(
             m,
             "_read_dimension_candidates",
-            side_effect=[candidates(26), failure],
+            side_effect=[candidates(26), MemoryError("memory")],
         ),
         patch.object(m, "_read_exact_candidate_rows", return_value=[]),
     ):
-        with pytest.raises(type(failure)):
+        with pytest.raises(MemoryError):
             m.list_cursor_payload(page_size=25)
+
+
+def test_wall_stop_after_rejected_prefix_publishes_incomplete_page_not_exact_empty():
+    m = manager()
+    with (
+        patch.object(
+            m,
+            "_read_dimension_candidates",
+            side_effect=[candidates(26), ReadDeadlineExceeded("wall")],
+        ),
+        patch.object(m, "_read_exact_candidate_rows", return_value=[]),
+    ):
+        page = m.list_cursor_payload(page_size=25)
+    assert page.payload["table"] == []
+    assert page.has_more is True
+    assert page.payload["has_more"] is True
+    assert page.payload["count_is_lower_bound"] is True
+    assert page.payload["query_complete"] is False
+    assert page.payload["query_status"] == "degraded"
+    assert page.checkpoint_order is not None
+    assert page.checkpoint_order[0] == USER_LIST_CURSOR_ORDER
 
 
 def test_exact_page_does_not_replay_usage_twice_or_leak_private_state():
@@ -744,7 +783,10 @@ def test_cursor_metadata_excludes_successful_attribute_split_and_resets_next_req
 
 
 def test_cursor_metadata_excludes_optional_witness_recovery():
-    m = manager([raw_filter("equals", "yes", "text", key="tag")])
+    # A non-ASCII exact-text value keeps the seeded page and its optional
+    # physical witness; a plain-ASCII value walks newest matching activity
+    # instead (test_users_matching_walk.py) and never reads that witness.
+    m = manager([raw_filter("equals", "yés", "text", key="tag")])
     rows = candidates(2)
     with (
         patch.object(m, "_read_dimension_candidates", side_effect=reader(rows)),

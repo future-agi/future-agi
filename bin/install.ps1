@@ -210,7 +210,6 @@ $persistentVolumeSuffixes = @(
   'peerdb-catalog-data',
   'peerdb-minio-data',
   'property-catalog-kafka-data',
-  'property-catalog-sequencer-data',
   'fi-collector-data'
 )
 $existingVolumes = @()
@@ -335,9 +334,25 @@ if ($NoUp) {
 }
 
 # ---- collect first-user creds (up-front so the rest runs unattended) ----
+# Terminal input carries raw bytes, so a stray escape sequence (Shift+Tab emits
+# ESC [ Z) travels into create_user and the sign-in banner.
+$EmailPattern = '^[A-Za-z0-9.!#$%&''*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$'
+
+function Remove-ControlChars {
+  param([string]$Value)
+  if (-not $Value) { return $Value }
+  return ($Value -replace '[\p{Cc}]', '')
+}
+
 $UserEmail = $null
 $UserName  = $null
 $UserPass  = $null
+$AccountSkipped = 'skipped'
+$AccountCreated = 'created'
+$AccountExists  = 'exists'
+$AccountFailed  = 'failed'
+$GateContainers = 'containers to start'
+$AccountState = $AccountSkipped
 
 function Read-Plain {
   param([string]$Prompt, [switch]$Secret)
@@ -356,15 +371,15 @@ if (-not $SkipUserCreation -and -not $NonInteractive) {
   Say ""
 
   while ($true) {
-    $UserEmail = Read-Plain "  Email"
+    $UserEmail = Remove-ControlChars (Read-Plain "  Email")
     if (-not $UserEmail) { Say "  skipped -- no user will be created"; break }
-    if ($UserEmail -match '^[^@\s]+@[^@\s]+\.[^@\s]+$') { break }
+    if ($UserEmail -match $EmailPattern) { break }
     Warn "  '$UserEmail' doesn't look like an email -- try again"
   }
 
   if ($UserEmail) {
     while (-not $UserName) {
-      $UserName = Read-Plain "  Name"
+      $UserName = Remove-ControlChars (Read-Plain "  Name")
       if (-not $UserName) { Warn "  name can't be empty" }
     }
     while ($true) {
@@ -386,8 +401,8 @@ if (-not $SkipUserCreation -and -not $NonInteractive) {
   }
 } elseif ($NonInteractive) {
   if ($env:FAGI_ADMIN_EMAIL -and $env:FAGI_ADMIN_NAME -and $env:FAGI_ADMIN_PASSWORD) {
-    $UserEmail = $env:FAGI_ADMIN_EMAIL
-    $UserName  = $env:FAGI_ADMIN_NAME
+    $UserEmail = Remove-ControlChars $env:FAGI_ADMIN_EMAIL
+    $UserName  = Remove-ControlChars $env:FAGI_ADMIN_NAME
     $UserPass  = $env:FAGI_ADMIN_PASSWORD
     Step "Using FAGI_ADMIN_* from environment for first-user creation"
   } else {
@@ -405,7 +420,7 @@ if ($pullHelp -match '--ignore-buildable') {
 } else {
   $activeServices = @(& $DcCmd @DcArgs config --services)
   $pullArgs += @($activeServices | Where-Object {
-    $_ -and $_ -notin @('fi-collector', 'fi-property-catalog-sequencer', 'fi-property-catalog-consumer')
+    $_ -and $_ -notin @('fi-collector', 'fi-property-catalog-consumer')
   })
 }
 Append-Log @("running: $DcCmd $($DcArgs -join ' ') $($pullArgs -join ' ')")
@@ -417,16 +432,12 @@ Ok "Images pulled"
 
 # ---- bring up ----
 Step "Starting the stack"
-$attempt = 0
-while ($true) {
-  Invoke-Compose up -d --build --remove-orphans
-  if ($LASTEXITCODE -eq 0) { break }
-  $attempt++
-  if ($attempt -ge 3) {
-    Die "docker compose up failed after $attempt attempts. Check 'docker compose logs'."
-  }
-  Warn "compose up failed (attempt $attempt) -- retrying in 30s..."
-  Start-Sleep -Seconds 30
+# One attempt, as in bin/e2e: replaying compose up can rerun an exited schema
+# or mirror job after an uncertain write. Inspect retained state before resuming.
+# Preserve services omitted by an upgrade; legacy retirement is an explicit step.
+Invoke-Compose up -d --build --wait --wait-timeout 1200
+if ($LASTEXITCODE -ne 0) {
+  Die "docker compose startup failed or timed out; partial state retained, no automatic retry. Inspect 'docker compose ps -a' and 'docker compose logs' before explicitly resuming."
 }
 Ok "Containers started"
 
@@ -484,11 +495,8 @@ function Save-ReadinessDiagnostics {
     'property-catalog-runtime-volume-init',
     'property-catalog-topic-init',
     'property-catalog-clickhouse-bootstrap',
-    'property-catalog-postgres-bootstrap',
     'fi-collector',
-    'fi-property-catalog-sequencer',
     'fi-property-catalog-consumer',
-    'property-catalog-supervisor',
     'backend'
   )
   $psOutput = @(& $DcCmd @DcArgs ps -a 2>&1 | ForEach-Object { [string]$_ })
@@ -503,21 +511,27 @@ $BackendPort = Get-EnvValue 'BACKEND_PORT'
 if (-not $BackendPort) { $BackendPort = 8000 }
 $readyTimeout = Get-BoundedEnvInt 'INSTALL_READY_TIMEOUT_SECONDS' 600 60 1800
 $stabilitySeconds = Get-BoundedEnvInt 'INSTALL_STABILITY_SECONDS' 15 5 120
+$readyMax = Get-BoundedEnvInt 'INSTALL_READY_MAX_SECONDS' 2400 300 7200
+
+function Get-AppliedMigrationCount {
+  $log = (Invoke-Compose logs --tail 2000 backend 2>&1 | Out-String)
+  return @($log -split "`n" | Where-Object { $_ -match 'Applying ' }).Count
+}
 $deadline = (Get-Date).AddSeconds($readyTimeout)
+$hardDeadline = (Get-Date).AddSeconds($readyMax)
 $readySince = $null
+$lastMigrationsApplied = Get-AppliedMigrationCount
+$pendingGate = $GateContainers
 $lastReadySignature = ''
 $catalogJobs = @(
   'property-catalog-kafka-volume-init',
   'property-catalog-runtime-volume-init',
   'property-catalog-topic-init',
-  'property-catalog-clickhouse-bootstrap',
-  'property-catalog-postgres-bootstrap'
+  'property-catalog-clickhouse-bootstrap'
 )
 $catalogServices = @(
   'fi-collector',
-  'fi-property-catalog-sequencer',
-  'fi-property-catalog-consumer',
-  'property-catalog-supervisor'
+  'fi-property-catalog-consumer'
 )
 
 while ($true) {
@@ -525,11 +539,13 @@ while ($true) {
   $allReady = $true
   $fatalReason = $null
   $signatureParts = @()
+  $pendingGate = ''
 
   foreach ($service in $catalogJobs) {
     $snapshot = Get-ComposeServiceSnapshot $service
     if ($snapshot.Status -eq 'exited' -and $snapshot.ExitCode -eq 0) { continue }
     $allReady = $false
+    if (-not $pendingGate) { $pendingGate = "bootstrap job $service" }
     if ($snapshot.Status -eq 'dead' -or ($snapshot.Status -eq 'exited' -and $snapshot.ExitCode -ne 0)) {
       $fatalReason = "$service failed with status=$($snapshot.Status) exit_code=$($snapshot.ExitCode)"
       break
@@ -541,6 +557,7 @@ while ($true) {
     $signatureParts += "kafka:$($kafka.Id):$($kafka.RestartCount):$($kafka.StartedAt)"
     if ($kafka.Status -ne 'running' -or $kafka.Health -ne 'healthy') {
       $allReady = $false
+      if (-not $pendingGate) { $pendingGate = 'property-catalog-kafka to report healthy' }
       if ($kafka.Status -eq 'dead') { $fatalReason = 'property-catalog-kafka entered dead state' }
     }
   }
@@ -549,18 +566,35 @@ while ($true) {
     foreach ($service in $catalogServices) {
       $snapshot = Get-ComposeServiceSnapshot $service
       $signatureParts += "$service`:$($snapshot.Id):$($snapshot.RestartCount):$($snapshot.StartedAt)"
-      if ($snapshot.Status -ne 'running' -or ($service -eq 'property-catalog-supervisor' -and $snapshot.Health -ne 'healthy')) {
+      if ($snapshot.Status -ne 'running') {
         $allReady = $false
+        if (-not $pendingGate) { $pendingGate = "$service to report healthy" }
         if ($snapshot.Status -eq 'dead') { $fatalReason = "$service entered dead state" }
       }
     }
   }
 
+  $backendHealthy = $true
   try {
     $null = Invoke-WebRequest -Uri "http://localhost:$BackendPort/health/" `
       -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
   } catch {
+    $backendHealthy = $false
     $allReady = $false
+    if (-not $pendingGate) { $pendingGate = "backend /health/ on port $BackendPort" }
+  }
+
+  # A first install spends most of its readiness budget applying migrations.
+  # Extend only while the backend is itself the unmet gate and its migration
+  # count is still climbing, so a stuck peer service can never hide behind it.
+  if (-not $backendHealthy) {
+    $migrationsApplied = Get-AppliedMigrationCount
+    if ($migrationsApplied -gt $lastMigrationsApplied) {
+      $lastMigrationsApplied = $migrationsApplied
+      Say "  migrations in progress ($migrationsApplied applied), extending the readiness window"
+      $deadline = $now.AddSeconds($readyTimeout)
+      if ($deadline -gt $hardDeadline) { $deadline = $hardDeadline }
+    }
   }
 
   if ($fatalReason) {
@@ -574,8 +608,8 @@ while ($true) {
       $lastReadySignature = $readySignature
       $readySince = $now
     } elseif ($readySince -and ($now - $readySince).TotalSeconds -ge $stabilitySeconds) {
-      Ok "Kafka healthy; candidate and ordered topics plus catalog bootstraps completed"
-      Ok "Collector, sequencer, property-catalog consumer, and supervisor stable for ${stabilitySeconds}s"
+      Ok "Kafka healthy; observation topic and isolated catalog bootstrap completed"
+      Ok "Collector and observation consumer stable for ${stabilitySeconds}s"
       Ok "Backend healthy at http://localhost:$BackendPort"
       break
     }
@@ -586,7 +620,8 @@ while ($true) {
 
   if ($now -ge $deadline) {
     Save-ReadinessDiagnostics
-    Die "Stack did not become fully ready within ${readyTimeout}s. Relevant service logs were appended to $LogFile"
+    $gate = if ($pendingGate) { $pendingGate } else { $GateContainers }
+    Die "Stack did not become fully ready, still waiting on $gate. Relevant service logs were appended to $LogFile"
   }
   Start-Sleep -Seconds 5
 }
@@ -598,14 +633,15 @@ if ($UserEmail) {
     --email $UserEmail --name $UserName --password $UserPass 2>&1
   $cuRc = $LASTEXITCODE
   if ($cuRc -eq 0) {
+    $AccountState = $AccountCreated
     Ok "Account created for $UserEmail"
   } elseif ($cuOut -match '(?i)already exists|UNIQUE constraint') {
+    $AccountState = $AccountExists
     Ok "Account already exists for $UserEmail -- sign in normally"
   } else {
+    $AccountState = $AccountFailed
     Warn "create_user failed (exit $cuRc). Last 6 lines:"
     ($cuOut | Out-String).Split([char]10) | Select-Object -Last 6 | ForEach-Object { Say "      $_" }
-    Warn "Run it manually after the stack settles:"
-    Warn "  docker exec -it futureagi-backend-1 python manage.py create_user"
   }
 }
 
@@ -629,11 +665,16 @@ if ($Full) {
 Say ""
 Say "  Existing-data catalog backfill"
 Say "    Restarts do not scan historical data automatically. After an upgrade:"
-Say "    .\bin\property-catalog-backfill.ps1 -Execute"
-if ($UserEmail) {
+Say "    See fi-collector/PROPERTY_CATALOG_OSS.md for the bounded backfill command."
+if ($AccountState -eq $AccountCreated -or $AccountState -eq $AccountExists) {
   Say ""
   Say "  Sign in as $UserEmail"
   Say "    ->  http://localhost:$FrontendPort/auth/jwt/login"
+} elseif ($AccountState -eq $AccountFailed) {
+  Say ""
+  Say "  ACTION REQUIRED: no account was created"
+  Say "    The stack is running, but you cannot sign in until you create one:"
+  Say "    docker exec -it futureagi-backend-1 python manage.py create_user"
 }
 Say ""
 Say "  Stop:        $DcCmd $($DcArgs -join ' ') down"
@@ -641,3 +682,6 @@ Say "  Wipe data:   $DcCmd $($DcArgs -join ' ') down -v"
 Say "  Tail logs:   $DcCmd $($DcArgs -join ' ') logs -f"
 Say "  Install log: $LogFile"
 Say ""
+
+if ($AccountState -eq $AccountFailed) { exit 1 }
+exit 0

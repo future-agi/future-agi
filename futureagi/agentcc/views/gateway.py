@@ -1,8 +1,13 @@
 import datetime
+import json
 import os
+import re
 import uuid
 
 import structlog
+from cryptography.exceptions import UnsupportedAlgorithm
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from django.core.cache import cache
 from django.db import transaction
 from django.db.models import Avg, Count, Q
@@ -64,6 +69,56 @@ logger = structlog.get_logger(__name__)
 _GATEWAY_SYNC_WARNING = (
     "Config saved but gateway sync failed. Changes will apply on next gateway restart."
 )
+
+
+def _prepare_vertex_provider_config(provider_config):
+    """Build a Vertex endpoint from validated GCP fields, never from a supplied URL."""
+    config = dict(provider_config)
+    raw_key = config.get("service_account_json")
+    if raw_key is not None:
+        if not isinstance(raw_key, str) or len(raw_key) > 65536:
+            raise ValueError("Paste valid Google service-account JSON (64 KB maximum).")
+        try:
+            key = json.loads(raw_key)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Paste valid Google service-account JSON.") from exc
+        if (
+            not isinstance(key, dict)
+            or key.get("type") != "service_account"
+            or not all(
+                isinstance(key.get(field), str) and key[field]
+                for field in ("client_email", "private_key", "project_id")
+            )
+            or key.get("token_uri") != "https://oauth2.googleapis.com/token"
+        ):
+            raise ValueError("The JSON must be a Google service-account key with a project ID.")
+        try:
+            private_key = serialization.load_pem_private_key(
+                key["private_key"].encode(), password=None
+            )
+        except (TypeError, ValueError, UnsupportedAlgorithm) as exc:
+            raise ValueError("The service-account private key is invalid.") from exc
+        if not isinstance(private_key, rsa.RSAPrivateKey):
+            raise ValueError("The service-account private key must be RSA.")
+        config["service_account_json"] = json.dumps(key, separators=(",", ":"))
+
+    project = str(config.pop("gcp_project", "") or "").strip()
+    location = str(config.pop("gcp_location", "") or "").strip()
+    if not re.fullmatch(r"[a-z][a-z0-9-]{4,62}", project):
+        raise ValueError("Enter a valid Google Cloud project ID.")
+    if not re.fullmatch(r"[a-z][a-z0-9-]{1,62}", location):
+        raise ValueError("Enter a valid Vertex AI location.")
+    host = (
+        "aiplatform.googleapis.com"
+        if location == "global"
+        else f"{location}-aiplatform.googleapis.com"
+    )
+    config["base_url"] = (
+        f"https://{host}/v1beta1/projects/{project}/locations/{location}"
+    )
+    config["api_format"] = "gemini"
+    config.pop("api_key", None)
+    return config
 
 # Public-facing URL shown to users in the dashboard (e.g. https://gateway.futureagi.com).
 # Falls back to AGENTCC_GATEWAY_URL if not set.
@@ -337,6 +392,7 @@ class AgentccGatewayViewSet(ViewSet):
                     "base_url",
                     "api_format",
                     "models_list",
+                    "extra_config",
                     "is_active",
                     "default_timeout_seconds",
                     "max_concurrent",
@@ -346,12 +402,14 @@ class AgentccGatewayViewSet(ViewSet):
             )
             providers_map = {}
             for p in providers:
+                extra_config = p.get("extra_config") or {}
                 providers_map[p["provider_name"]] = {
                     "id": str(p["id"]),
                     "name": p["provider_name"],
                     "display_name": p["display_name"] or p["provider_name"],
                     "base_url": p["base_url"],
                     "api_format": p["api_format"],
+                    "api_path_prefix": extra_config.get("api_path_prefix", "/v1"),
                     "models": p["models_list"] or [],
                     "is_active": p["is_active"],
                     "default_timeout": p["default_timeout_seconds"],
@@ -492,6 +550,12 @@ class AgentccGatewayViewSet(ViewSet):
             provider_config = request.validated_data.get("config")
             if not provider_name or not provider_config:
                 return self._gm.bad_request("name and config are required")
+            if provider_name == "vertex":
+                provider_config = _prepare_vertex_provider_config(provider_config)
+            elif "service_account_json" in provider_config:
+                return self._gm.bad_request(
+                    "Google service-account credentials can only be used with Vertex AI."
+                )
 
             from integrations.services.credentials import CredentialManager
 
@@ -505,6 +569,7 @@ class AgentccGatewayViewSet(ViewSet):
                 "aws_secret_access_key",
                 "aws_region",
                 "aws_session_token",
+                "service_account_json",
             )
             new_cred_values = {
                 k: provider_config.pop(k)
@@ -538,9 +603,11 @@ class AgentccGatewayViewSet(ViewSet):
                         "aws_secret_access_key",
                         "aws_region",
                         "aws_session_token",
+                        "service_account_json",
                         "base_url",
                         "api_format",
                         "models",
+                        "display_name",
                         "default_timeout",
                         "default_timeout_seconds",
                         "max_concurrent",

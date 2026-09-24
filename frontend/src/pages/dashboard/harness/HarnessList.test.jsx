@@ -94,10 +94,10 @@ describe("HarnessList", () => {
     renderList();
 
     expect(
-      await screen.findByText("No RL environments yet"),
+      await screen.findByText("No environments yet"),
     ).toBeInTheDocument();
     const user = userEvent.setup();
-    await user.click(screen.getByText("Create RL environment"));
+    await user.click(screen.getByText("Create environment"));
     expect(navigate).toHaveBeenCalledWith("/dashboard/simulate/harness/new");
   });
 

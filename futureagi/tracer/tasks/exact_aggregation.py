@@ -116,8 +116,6 @@ def _exact_observe_analytics() -> Iterator[Any]:
 
 
 def _observe_payload(namespace: str, identity: dict[str, Any]) -> Any:
-    from django.conf import settings
-
     from tracer.services.clickhouse.exact_graph_reads import (
         read_exact_agent_graph,
         read_exact_all_system_metrics,
@@ -127,7 +125,7 @@ def _observe_payload(namespace: str, identity: dict[str, Any]) -> Any:
         read_exact_user_system_graph,
     )
     from tracer.services.clickhouse.graph_dispatch import (
-        _fetch_direct_raw_system_metric_graph,
+        fetch_background_raw_system_metric_graph,
     )
 
     _reauthorize_exact_observe_project(identity)
@@ -145,11 +143,14 @@ def _observe_payload(namespace: str, identity: dict[str, Any]) -> Any:
             "interval": str(identity["interval"]),
         }
         if namespace == "observe-system-graph":
-            return _fetch_direct_raw_system_metric_graph(
+            # Cost-gated against this worker's own wall. The raw filtered graph
+            # read is the one statement on this surface that can outlast any
+            # wall, and this is the only door it has left; entering it uncosted
+            # is the defect the interactive gate exists to remove.
+            return fetch_background_raw_system_metric_graph(
                 **common,
                 metric_id=str(identity.get("metric_id") or ""),
                 observe_type=str(identity.get("observe_type") or "trace"),
-                timeout_ms=int(settings.GRAPH_BACKGROUND_WALL_MS),
             )
         if namespace == "observe-all-system-graphs":
             return read_exact_all_system_metrics(**common)

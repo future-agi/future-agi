@@ -1346,7 +1346,7 @@ def contains_valid_link(text, **kwargs):
                         "result": False,
                         "reason": f"link {matched_url} found in output but is invalid",
                     }
-            except:
+            except Exception:
                 return {
                     "result": False,
                     "reason": f"link {matched_url} found in output but is invalid",
@@ -1382,7 +1382,7 @@ def no_invalid_links(text, **kwargs):
                         "result": False,
                         "reason": f"link {matched_url} found in output but is invalid",
                     }
-            except:
+            except Exception:
                 return {
                     "result": False,
                     "reason": f"link {matched_url} found in output but is invalid",

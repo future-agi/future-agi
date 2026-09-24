@@ -67,6 +67,9 @@ class FeedListRow:
     trace_id: str | None = None
     external_issue_url: str | None = None
     external_issue_id: str | None = None
+    severity_assessment_status: str = "unassessed"
+    severity_source: str = "default"
+    severity_reason: str = ""
 
 
 @dataclass

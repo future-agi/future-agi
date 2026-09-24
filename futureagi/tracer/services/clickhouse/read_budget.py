@@ -85,12 +85,20 @@ class ReadDeadline:
 
     total_ms: int
     started: float
+    # Whether a statement under this deadline also asks the server to stop at
+    # it (``server_execution_cap_ms``). Off by default: application reads keep
+    # the no-abort policy and use the deadline for admission only.
+    enforce_on_server: bool = False
 
     @classmethod
-    def start(cls, total_ms: int) -> "ReadDeadline":
+    def start(cls, total_ms: int, *, enforce_on_server: bool = False) -> "ReadDeadline":
         if total_ms <= 0:
             raise ValueError("read deadline must be positive")
-        return cls(total_ms=int(total_ms), started=time.monotonic())
+        return cls(
+            total_ms=int(total_ms),
+            started=time.monotonic(),
+            enforce_on_server=enforce_on_server,
+        )
 
     def elapsed_ms(self) -> float:
         return (time.monotonic() - self.started) * 1000

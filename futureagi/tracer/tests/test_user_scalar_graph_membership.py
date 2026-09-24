@@ -75,14 +75,21 @@ def _assert_fused_positive_membership_and_metrics(
     )
     normalized = " ".join(sql.split())
     assert "AS scalar_user_rows" not in sql
-    # The retained span-seeded remap still reads latest_spans. Fusion removes
-    # only the separate attribute-membership consumer, not every extra scan.
-    assert len(re.findall(r"\bFROM latest_spans\b", sql)) == 2
+    # The remap no longer seeds from this population, so the whole window is
+    # read exactly once.
+    assert len(re.findall(r"\bFROM latest_spans\b", sql)) == 1
     for index, row in enumerate(rows):
         suffix = f" AS user_member_match_{index}"
         assert row.endswith(suffix)
         predicate = " ".join(row.removesuffix(suffix).split())
-        assert f"countIf({predicate}) AS user_member_trace_{index}" in normalized
+        # The flag is evaluated on the winning version inside the replay and
+        # projected out, so the consumer counts the replayed column.
+        assert predicate in normalized
+        assert f"AS user_member_match_{index}" in normalized
+        assert (
+            f"countIf(rs.user_member_match_{index}) AS user_member_trace_{index}"
+            in normalized
+        )
         assert (
             f"sum(user_member_trace_{index}) AS user_member_bucket_{index}"
             in normalized
@@ -93,9 +100,14 @@ def _assert_fused_positive_membership_and_metrics(
         ) in normalized
     # No bucket partition, ORDER BY/running frame, or trace-level membership
     # filtering: independent witnesses can occur in different traces/buckets.
-    assert re.findall(r"OVER \(([^)]*)\)", normalized) == [
-        "PARTITION BY end_user_id"
-    ] * len(rows)
+    # The remap's own survivor window is not a membership window; every
+    # membership window is the whole-user partition with no ORDER BY frame.
+    windows = [
+        clause
+        for clause in re.findall(r"OVER \(([^)]*)\)", normalized)
+        if clause != "PARTITION BY new_id"
+    ]
+    assert windows == ["PARTITION BY end_user_id"] * len(rows)
     assert (
         "AS user_window_rows WHERE "
         + " AND ".join(f"user_member_window_{index} > 0" for index in range(len(rows)))
@@ -141,7 +153,8 @@ def test_raw_only_graph_uses_flags_not_user_metrics_and_keeps_all_span_output(
     _assert_fused_positive_membership_and_metrics(
         sql, filters, bucket_fn="toMonday" if days == 365 else "toStartOfDay"
     )
-    assert sql.count("FROM spans FINAL") == 1
+    assert "FROM spans FINAL" not in sql
+    assert sql.count("FROM spans") == 1
     assert len(re.findall(r"\blatest_spans AS \(", sql)) == 1
     assert len(re.findall(r"\beu_survivor_map AS \(", sql)) == 1
     assert "trace_session_id_remap" not in sql
@@ -149,7 +162,7 @@ def test_raw_only_graph_uses_flags_not_user_metrics_and_keeps_all_span_output(
     assert "FROM latest_spans AS rs" in sql
     assert "sum(rs.cost) AS span_total_cost" in sql
     assert "GROUP BY end_user_id, trace_id" in sql
-    assert "WHERE snapshot_spans.is_deleted = 0" in sql
+    assert "HAVING latest_state.2 = 0" in sql
     assert "fromUnixTimestamp64Micro(%(user_snapshot_start_us)s, 'UTC')" in sql
     assert (
         params["start_date"]
@@ -194,8 +207,9 @@ def test_typed_negative_and_null_use_unchanged_entity_flags(
     for index, row in enumerate(rows):
         suffix = f" AS user_member_match_{index}"
         assert row.endswith(suffix)
+        assert row.removesuffix(suffix) in sql
         assert (
-            f"countIf({row.removesuffix(suffix)}) AS user_member_trace_{index}" in sql
+            f"countIf(rs.user_member_match_{index}) AS user_member_trace_{index}" in sql
         )
         assert f"sum(user_member_trace_{index}) AS user_member_bucket_{index}" in sql
         assert (

@@ -41,7 +41,8 @@ def test_all_session_root_attributes_beyond_old_500_row_cutoff(engine, days):
     engine.insert(100, id="outside", start_time=START + timedelta(days=days),
                   attrs_string={"outside_window": "excluded"})
     subject = builder(days=days)
-    rows = engine.execute(*subject.build_span_attributes_query([session_id]))
+    hydrated = engine.execute(*subject.build_page_hydration_query([session_id]))
+    rows = type(subject).expand_page_attribute_rows(hydrated)
     assert len(rows) == 501
     assert {row["session_id"] for row in rows} == {session_id}
     assert {key for row in rows for key in row["attrs_string"]} == {

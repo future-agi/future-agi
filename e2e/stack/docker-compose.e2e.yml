@@ -3,20 +3,54 @@ services:
   clickhouse:
     # Seatbelt on 16GB CI runners: CH is the first OOM-kill victim otherwise.
     mem_limit: 3g
+    volumes:
+      - ./e2e/stack/clickhouse-metric-log.xml:/etc/clickhouse-server/config.d/e2e-metric-log.xml:ro
+  temporal:
+    # Temporal opens a pool per internal service. Its default 20/10 pools can
+    # exhaust the shared 100-connection test Postgres alongside CDC and the API.
+    environment:
+      SQL_MAX_CONNS: "5"
+      SQL_MAX_IDLE_CONNS: "2"
+      SQL_VIS_MAX_CONNS: "2"
+      SQL_VIS_MAX_IDLE_CONNS: "1"
   backend:
     restart: "no"
+    environment:
+      MODEL_SERVING_URL: http://mock-llm:8080
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      # Request logs reach Django over this shared secret; without it the
+      # webhook rejects every batch the gateway sends.
+      AGENTCC_WEBHOOK_SECRET: ${AGENTCC_WEBHOOK_SECRET:-e2e-agentcc-webhook-secret}
   worker:
     restart: "no"
+    environment:
+      MODEL_SERVING_URL: http://mock-llm:8080
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
   fi-collector:
-    # Root compose reuses FUTURE_AGI_VERSION for this image; the e2e stack
-    # decouples it so CI can retag the backend without inventing a
-    # futureagi/fi-collector:e2e-ci that was never built.
+    # Collector and consumer must run the same checked-out transport protocol.
+    image: futureagi/fi-collector:${E2E_FI_COLLECTOR_VERSION:-latest}
+  fi-property-catalog-consumer:
     image: futureagi/fi-collector:${E2E_FI_COLLECTOR_VERSION:-latest}
   peerdb-init:
     environment:
       # Root compose never passes the flag to peerdb-init, so the setup script
       # attempts the retired tracer_observation_span mirror.
       CH25_DROP_LEGACY_CDC_CHAIN: "true"
+  minio:
+    # quay.io/minio/minio refuses anonymous pulls (24 Sep 2026) and Docker Hub
+    # no longer serves minio/minio, so this ephemeral stack uses the pinned
+    # public bitnamilegacy build. Its image runs as uid 1001 and starts through
+    # its own entrypoint; the root file's `server /data` command and its root-
+    # owned volume need the plain binary as root. Ports, credentials, volume
+    # and the `mc ready local` healthcheck come from the root compose file.
+    image: bitnamilegacy/minio:2025.7.23-debian-12-r5
+    user: "0"
+    entrypoint: ["minio"]
+  peerdb-minio:
+    # Same image; its /bin/sh entrypoint in the root file runs minio and mc,
+    # both on this image's PATH.
+    image: bitnamilegacy/minio:2025.7.23-debian-12-r5
+    user: "0"
   mock-llm:
     image: node:22-alpine
     command: ["node", "/srv/server.mjs"]

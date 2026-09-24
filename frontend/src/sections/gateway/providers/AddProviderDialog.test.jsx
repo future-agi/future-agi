@@ -1,7 +1,18 @@
 import React from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
-import { parseTimeoutSeconds } from "./utils";
+import {
+  fireEvent,
+  render,
+  screen,
+  userEvent,
+  waitFor,
+} from "src/utils/test-utils";
+import {
+  DEFAULT_API_PATH_PREFIX,
+  getApiPathPrefix,
+  parseTimeoutSeconds,
+  withApiPathPrefix,
+} from "./utils";
 import AddProviderDialog from "./AddProviderDialog";
 
 const { updateMutate, fetchMutate, fetchState } = vi.hoisted(() => ({
@@ -69,6 +80,45 @@ describe("AddProviderDialog validation", () => {
         opts?.onSuccess?.({ models: ["gpt-4o", "gpt-4o-mini"] }),
       ),
     );
+  });
+
+  it("offers Vertex with pasted service-account JSON, without an API key or model fetch", async () => {
+    renderCreateDialog();
+    await userEvent.click(screen.getByLabelText(/^Provider/));
+    await userEvent.click(
+      screen.getByRole("option", { name: "Google Vertex AI" }),
+    );
+
+    fireEvent.change(screen.getByLabelText(/^Google Cloud project ID/), {
+      target: { value: "demo-project" },
+    });
+    fireEvent.change(screen.getByLabelText(/^Service-account JSON/), {
+      target: {
+        value: JSON.stringify({
+          type: "service_account",
+          project_id: "demo-project",
+          client_email: "demo@example.iam.gserviceaccount.com",
+          private_key: "test-key",
+          token_uri: "https://oauth2.googleapis.com/token",
+        }),
+      },
+    });
+    const modelInput = screen.getByPlaceholderText(/model IDs/i);
+    await userEvent.type(modelInput, "vertex_ai/gemini-3.7-flash{enter}");
+    await userEvent.click(screen.getByRole("button", { name: "Add Provider" }));
+
+    expect(fetchMutate).not.toHaveBeenCalled();
+    expect(updateMutate).toHaveBeenCalledTimes(1);
+    const payload = updateMutate.mock.calls[0][0];
+    expect(payload.name).toBe("vertex");
+    expect(payload.config.api_format).toBe("gemini");
+    expect(payload.config.gcp_project).toBe("demo-project");
+    expect(payload.config.gcp_location).toBe("us-central1");
+    expect(payload.config.models).toContain("vertex_ai/gemini-3.7-flash");
+    expect(payload.config.service_account_json).toContain(
+      '"type":"service_account"',
+    );
+    expect(payload.config).not.toHaveProperty("api_key");
   });
 
   it("saves an edited provider whose stored timeout came back as a number", async () => {
@@ -226,6 +276,7 @@ describe("AddProviderDialog validation", () => {
       baseUrl: "https://api.openai.com/v1",
       apiKey: "sk-good",
       apiFormat: "openai",
+      apiPathPrefix: "/v1",
     });
 
     // Only once it lists models does Save open up.
@@ -486,5 +537,124 @@ describe("AddProviderDialog validation", () => {
 
     const save = await screen.findByRole("button", { name: "Save Changes" });
     expect(save.disabled).toBe(false);
+  });
+});
+
+describe("getApiPathPrefix", () => {
+  it("preserves an explicitly empty prefix", () => {
+    expect(getApiPathPrefix({ api_path_prefix: "" })).toBe("");
+  });
+
+  it("uses the default for providers saved before the field existed", () => {
+    expect(getApiPathPrefix({})).toBe(DEFAULT_API_PATH_PREFIX);
+  });
+
+  it("includes an explicit empty prefix in the saved OpenAI config", () => {
+    expect(
+      withApiPathPrefix(
+        { base_url: "https://api.perplexity.ai" },
+        "openai",
+        "",
+      ),
+    ).toEqual({
+      base_url: "https://api.perplexity.ai",
+      api_path_prefix: "",
+    });
+  });
+
+  it("does not add a path prefix for non-OpenAI formats", () => {
+    // A non-empty prefix, so the branch has a real value to drop rather than a
+    // blank that would look absent either way.
+    const config = { base_url: "https://api.anthropic.com" };
+    expect(withApiPathPrefix(config, "anthropic", "/v1")).toEqual(config);
+    expect(withApiPathPrefix(config, "anthropic", "/v1")).not.toHaveProperty(
+      "api_path_prefix",
+    );
+  });
+});
+
+describe("AddProviderDialog model discovery", () => {
+  beforeEach(() => {
+    updateMutate.mockReset();
+    fetchState.isPending = false;
+    fetchMutate.mockReset();
+    fetchMutate.mockImplementation(
+      deferred((_vars, opts) => opts?.onSuccess?.({ models: ["sonar"] })),
+    );
+  });
+
+  it("lists models against the stored provider's own path prefix", async () => {
+    renderEditDialogFor("perplexity", {
+      base_url: "https://api.perplexity.ai",
+      api_format: "openai",
+      api_path_prefix: "/openai/v1",
+      models: ["sonar"],
+    });
+
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalled());
+    expect(fetchMutate.mock.calls[0][0]).toMatchObject({
+      providerName: "perplexity",
+      apiFormat: "openai",
+      apiPathPrefix: "/openai/v1",
+    });
+  });
+
+  it("lists again when the prefix is edited, with the stored key untouched", async () => {
+    // The debounced key effect returns early on a blank key in edit mode, so
+    // without its own effect this change would never reach the provider.
+    renderEditDialogFor("perplexity", {
+      base_url: "https://api.perplexity.ai",
+      api_format: "openai",
+      api_path_prefix: "/v1",
+      models: ["sonar"],
+    });
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalledTimes(1));
+
+    const prefix = screen.getByLabelText("API Path Prefix");
+    await userEvent.clear(prefix);
+
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalledTimes(2), {
+      timeout: 3000,
+    });
+    expect(fetchMutate.mock.calls[1][0]).toMatchObject({
+      providerName: "perplexity",
+      apiPathPrefix: "",
+    });
+    // A blank key still means "keep the stored one", so none is sent.
+    expect(fetchMutate.mock.calls[1][0].apiKey).toBeUndefined();
+  });
+
+  it("does not list again when the dialog merely hydrates the prefix", async () => {
+    renderEditDialogFor("perplexity", {
+      base_url: "https://api.perplexity.ai",
+      api_format: "openai",
+      api_path_prefix: "/openai/v1",
+      models: ["sonar"],
+    });
+
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 900));
+    expect(fetchMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("carries the prefix on a typed-key fetch", async () => {
+    renderCreateDialog();
+
+    const prefix = screen.getByLabelText("API Path Prefix");
+    await userEvent.clear(prefix);
+    await userEvent.type(prefix, "/openai/v1");
+    fireEvent.change(screen.getByLabelText(/^API Key/), {
+      target: { value: "sk-test" },
+    });
+
+    await waitFor(() => expect(fetchMutate).toHaveBeenCalled(), {
+      timeout: 3000,
+    });
+    const last = fetchMutate.mock.calls[fetchMutate.mock.calls.length - 1][0];
+    expect(last).toMatchObject({
+      apiKey: "sk-test",
+      apiFormat: "openai",
+      apiPathPrefix: "/openai/v1",
+    });
   });
 });
