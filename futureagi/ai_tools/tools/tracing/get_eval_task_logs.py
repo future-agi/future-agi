@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import (
@@ -14,8 +14,47 @@ from ai_tools.formatting import (
 from ai_tools.registry import register_tool
 
 
+EVAL_TASK_ID_FIELD = "eval_task_id"
+EVAL_TASK_ID_ALIAS = "task_id"
+
+
+def _as_uuid(value):
+    """Two spellings of one UUID are the same id; anything unparseable is itself."""
+    try:
+        return UUID(str(value))
+    except (ValueError, AttributeError, TypeError):
+        return value
+
+
 class GetEvalTaskLogsInput(PydanticBaseModel):
-    eval_task_id: UUID = Field(description="The UUID of the eval task to get logs for")
+    eval_task_id: UUID = Field(
+        description=(
+            "The UUID of the eval task to get logs for. "
+            f"Also accepted as `{EVAL_TASK_ID_ALIAS}`, the name the sibling "
+            "eval-task tools use."
+        )
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_sibling_name(cls, values):
+        """Accept either name the eval-task tools use; reject two ids."""
+        if not isinstance(values, dict) or EVAL_TASK_ID_ALIAS not in values:
+            return values
+
+        values = dict(values)
+        alias_value = values.pop(EVAL_TASK_ID_ALIAS)
+        if alias_value is None:
+            return values
+
+        current = values.get(EVAL_TASK_ID_FIELD)
+        if current is not None and _as_uuid(current) != _as_uuid(alias_value):
+            raise ValueError(
+                f"{EVAL_TASK_ID_FIELD} and {EVAL_TASK_ID_ALIAS} name the same "
+                "eval task, so they cannot be different ids. Send one."
+            )
+        values[EVAL_TASK_ID_FIELD] = alias_value
+        return values
 
 
 @register_tool

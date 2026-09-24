@@ -4,7 +4,7 @@ import pytest
 
 from ai_tools.registry import registry
 from ai_tools.tests.conftest import run_tool
-from ai_tools.tests.fixtures import make_project, make_trace
+from ai_tools.tests.fixtures import make_eval_template, make_project, make_trace
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -19,6 +19,18 @@ def project(tool_context):
 @pytest.fixture
 def trace(tool_context, project):
     return make_trace(tool_context, project=project)
+
+
+@pytest.fixture
+def eval_task(tool_context, project):
+    from tracer.models.eval_task import EvalTask
+
+    return EvalTask.objects.create(
+        id=uuid.UUID("f1e2d3c4-b5a6-4789-9abc-def012345678"),
+        project=project,
+        name="Nightly evals",
+        status="completed",
+    )
 
 
 @pytest.fixture
@@ -319,3 +331,103 @@ class TestDeleteProjectTool:
         )
 
         assert result.is_error
+
+
+class TestGetEvalTaskLogsTool:
+    def test_either_name_for_the_task_id_returns_the_logs(
+        self, tool_context, eval_task
+    ):
+        """The sibling eval-task tools call this id `task_id`, and the agent
+        carries that name over."""
+        by_field = run_tool(
+            "get_eval_task_logs", {"eval_task_id": str(eval_task.id)}, tool_context
+        )
+        by_alias = run_tool(
+            "get_eval_task_logs", {"task_id": str(eval_task.id)}, tool_context
+        )
+
+        assert not by_field.is_error
+        assert not by_alias.is_error
+        assert by_alias.data == by_field.data
+        assert by_alias.data["eval_task_id"] == str(eval_task.id)
+
+    def test_both_names_with_different_ids_is_an_error(self, tool_context, eval_task):
+        result = run_tool(
+            "get_eval_task_logs",
+            {"eval_task_id": str(eval_task.id), "task_id": str(uuid.uuid4())},
+            tool_context,
+        )
+
+        assert result.is_error
+
+    def test_an_explicit_null_for_the_other_name_is_not_a_conflict(
+        self, tool_context, eval_task
+    ):
+        """A model filling one name and nulling the other is sending one id."""
+        by_field = run_tool(
+            "get_eval_task_logs",
+            {"eval_task_id": str(eval_task.id), "task_id": None},
+            tool_context,
+        )
+        by_alias = run_tool(
+            "get_eval_task_logs",
+            {"eval_task_id": None, "task_id": str(eval_task.id)},
+            tool_context,
+        )
+
+        assert not by_field.is_error
+        assert not by_alias.is_error
+
+    def test_the_same_id_in_two_spellings_is_one_id(self, tool_context, eval_task):
+        result = run_tool(
+            "get_eval_task_logs",
+            {
+                "eval_task_id": str(eval_task.id),
+                "task_id": str(eval_task.id).upper(),
+            },
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["eval_task_id"] == str(eval_task.id)
+
+    def test_nonexistent_task(self, tool_context):
+        result = run_tool(
+            "get_eval_task_logs", {"task_id": str(uuid.uuid4())}, tool_context
+        )
+
+        assert result.is_error
+        assert "Not Found" in result.content
+
+
+class TestCreateCustomEvalConfigTool:
+    def test_duplicate_name_hands_back_the_existing_config(self, tool_context, project):
+        """Without the conflicting id the caller has to list every config on
+        the project to find the one it just collided with."""
+        from tracer.models.custom_eval_config import CustomEvalConfig
+
+        template = make_eval_template(tool_context)
+        existing = CustomEvalConfig.objects.create(
+            eval_template=template,
+            name="Groundedness",
+            project=project,
+            model="turing_large",
+            mapping={},
+        )
+
+        result = run_tool(
+            "create_custom_eval_config",
+            {
+                "project_id": str(project.id),
+                "eval_template_id": str(template.id),
+                "name": "Groundedness",
+            },
+            tool_context,
+        )
+
+        assert result.is_error
+        assert str(existing.id) in result.content
+        assert result.data["id"] == str(existing.id)
+        assert (
+            CustomEvalConfig.objects.filter(project=project, deleted=False).count() == 1
+        )
