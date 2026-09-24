@@ -15,6 +15,7 @@ from simulate.serializers.harness_environment import (
     HarnessEnvironmentListQuerySerializer,
     HarnessEnvironmentListResponseSerializer,
     HarnessEnvironmentRenameSerializer,
+    HarnessEnvironmentRunEvaluationQueuedSerializer,
     HarnessEnvironmentRunResponseSerializer,
     HarnessEnvironmentRunSerializer,
 )
@@ -286,6 +287,147 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             )
         _touch_content(job)
         return Response(environment_detail(job), status=status.HTTP_201_CREATED)
+
+    @validated_request(
+        request_serializer=HarnessEnvironmentAddEvaluationSerializer,
+        responses={202: HarnessEnvironmentRunEvaluationQueuedSerializer},
+        reject_unknown_fields=True,
+        operation_description=(
+            "Add an eval to the environment and grade this run's "
+            "already-finished calls with it."
+        ),
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"runs/(?P<execution_id>[0-9a-fA-F-]{36})/evaluations",
+    )
+    def add_run_evaluation(self, request, pk=None, execution_id=None):
+        """Add an eval from inside a finished run, and grade that run's calls with it.
+
+        Two things happen inside one ``transaction.atomic()`` block: the eval
+        is bound to the environment exactly as ``add_evaluation`` binds it --
+        same gates, refusals, lock, and idempotency, so adding an
+        already-bound name is not an error and creates no second row -- and
+        this run's finished calls are selected and stamped for grading.
+        Wrapping both together means a failure anywhere in this request rolls
+        the bind and the stamps back together: no grading job is ever
+        dispatched against a bind that did not survive, because
+        ``queue_eval_for_finished_calls`` schedules every dispatch with
+        ``transaction.on_commit``, which this outer block is what actually
+        commits. A refusal from the bind is returned unchanged and nothing is
+        queued or stamped.
+
+        A call is queued for grading unless it already holds a verdict for
+        this eval, its own evaluations have not finished, or it was queued
+        for this eval within the last ten minutes; the rest are stamped and
+        scheduled for dispatch, one grading job each, after this transaction
+        commits. The answer is the five counts, not the environment detail --
+        the client refetches that itself.
+
+        The bind can return an eval config whose ``mapping`` is empty -- one
+        of the harness's own result columns, bound by ingestion under the
+        same name. Such a config is not something this endpoint can grade
+        with: it is refused 400 with its own reason, distinct from the "does
+        not produce" refusal, because the run demonstrably CAN fill this
+        eval's inputs -- the harness already reports it natively. Checked
+        right after the bind and before anything is stamped.
+
+        The run is resolved *before* the eval is bound: a request naming a
+        run that is not this environment's must leave nothing behind. A run
+        that is cancelled or cancelling is refused 409 at the same point: the
+        worker would not grade it, so nothing is bound or stamped.
+        """
+        from django.db import transaction
+
+        from simulate.models import TestExecution
+        from simulate.services.harness_evals import (
+            EvalSelectionFull,
+            EvalSelectionRefused,
+            add_selected_eval,
+        )
+        from simulate.services.harness_run_evals import queue_eval_for_finished_calls
+
+        job, refusal = self._run_test_job(request, pk)
+        if refusal is not None:
+            return refusal
+        identifier = _uuid_or_none(execution_id)
+        # A run of this environment is one of its run test's executions, not
+        # only the latest: `job.test_execution` holds the most recent one,
+        # while a rerun deliberately keeps the same run test
+        # (harness_provider.py:1130-1136), so an older run must still be
+        # addressable.
+        execution = (
+            TestExecution.objects.filter(
+                id=identifier, run_test_id=job.run_test_id
+            ).first()
+            if identifier is not None
+            else None
+        )
+        if execution is None:
+            return Response(
+                {"detail": "Run not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        if execution.status in (
+            TestExecution.ExecutionStatus.CANCELLED,
+            TestExecution.ExecutionStatus.CANCELLING,
+        ):
+            # The eval worker never grades a call whose run is cancelled, so
+            # binding and stamping here would report queued work that will
+            # not happen -- and the stamp would then hide a retry for ten
+            # minutes. Refused before the bind, so nothing is left behind.
+            return Response(
+                {"detail": "Run is cancelled; nothing will be graded"},
+                status=status.HTTP_409_CONFLICT,
+            )
+        modality = eval_modality(job)
+        wanted = request.validated_data["name"]
+        # Captured before the bind, so a freshly bound config's `updated_at`
+        # (set by `auto_now` on insert and on a revived binding's save) reads
+        # as after this timestamp, while an idempotent bind's -- an
+        # already-bound row returned unchanged -- reads as before it. Under
+        # contention, two concurrent clicks can both read
+        # `updated_at >= before_bind`, since the second blocks on the same
+        # row's `select_for_update` and observes the first's write --
+        # harmless, an extra clock bump, never a missed one.
+        before_bind = timezone.now()
+        try:
+            with transaction.atomic():
+                eval_config = add_selected_eval(job.run_test, wanted, modality)
+                if not eval_config.mapping:
+                    # The idempotent name match above can return one of the
+                    # harness's own result-column rows (empty ``mapping``)
+                    # instead of a selected eval -- not the same condition as
+                    # the "does not produce" refusal, since this run
+                    # demonstrably CAN fill the eval's inputs. It gets its
+                    # own reason before anything is stamped.
+                    transaction.set_rollback(True)
+                    return Response(
+                        {
+                            "detail": (
+                                f"{wanted} is bound as a result column and "
+                                "has nothing to grade"
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                counts = queue_eval_for_finished_calls(execution, eval_config)
+        except EvalSelectionFull as full:
+            return Response({"detail": str(full)}, status=status.HTTP_409_CONFLICT)
+        except EvalSelectionRefused as refused:
+            return Response(
+                {"detail": str(refused)}, status=status.HTTP_400_BAD_REQUEST
+            )
+        # Skipped only when the bind wrote nothing (the idempotent name match
+        # returned an already-bound row unchanged) AND nothing was queued --
+        # a genuinely no-op repeat. Any other click, including a repeat that
+        # queues a call newly eligible since the last one, still bumps it: a
+        # click that stamps or dispatches anything is real content movement,
+        # the same as `add_evaluation`'s own touch.
+        if eval_config.updated_at >= before_bind or counts["queued"]:
+            _touch_content(job)
+        return Response(counts, status=status.HTTP_202_ACCEPTED)
 
     @swagger_auto_schema(responses={204: "Removed"})
     @action(

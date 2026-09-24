@@ -133,6 +133,27 @@ class HarnessEnvironmentAddEvaluationSerializer(serializers.Serializer):
     )
 
 
+class HarnessEnvironmentRunEvaluationQueuedSerializer(serializers.Serializer):
+    """What adding an eval from inside a run reports back.
+
+    Not the environment detail -- the client refetches that itself.
+    ``completed_calls`` is the finished calls the endpoint looked at, and the
+    four others always partition it exactly.
+    """
+
+    queued = serializers.IntegerField(
+        help_text=(
+            "Stamped and scheduled for dispatch -- not yet dispatched. A "
+            "call whose stamp committed but whose grading job then failed "
+            "to queue is still counted here, not subtracted."
+        )
+    )
+    skipped_existing = serializers.IntegerField()
+    skipped_in_flight = serializers.IntegerField()
+    skipped_pending = serializers.IntegerField()
+    completed_calls = serializers.IntegerField()
+
+
 class HarnessEnvironmentEvalInputSerializer(serializers.Serializer):
     """Which stored piece of a call fills one of an eval's required keys.
 

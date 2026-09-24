@@ -1345,6 +1345,20 @@ class RunTestKPIsResponseSerializer(serializers.Serializer):
     """Response for GET /simulate/test-executions/{id}/kpis/."""
 
     total_calls = serializers.IntegerField(read_only=True)
+    # The run's COMPLETED-status call count, for both modalities. Distinct
+    # from `total_calls` (every status), `connected_calls`
+    # (`connected_voice_calls` on a voice run), and from
+    # `TestExecution.completed_calls`, an unrelated counter column of the
+    # same name.
+    completed_calls = serializers.IntegerField(
+        read_only=True,
+        help_text=(
+            "Calls with status completed, counted like every other KPI here: "
+            "soft-deleted calls included. The run-level add's 202 counts live "
+            "calls only, so the two can differ for a run with a deleted call "
+            "(TH-8057)."
+        ),
+    )
     avg_score = serializers.FloatField(read_only=True)
     avg_response = serializers.FloatField(read_only=True)
     calls_attempted = serializers.IntegerField(read_only=True)
