@@ -47,6 +47,9 @@ import { listRunTestExecutions, mapExecutions } from "./runs";
  * @property {number} total         Calls/chats run (`kpis.total_calls`).
  * @property {number} passed        `total - failed`.
  * @property {number} failed        `kpis.failed_calls`.
+ * @property {?number} completed    `kpis.completed_calls`, both modalities;
+ *                                  null while the KPIs haven't loaded or the
+ *                                  field is absent — never 0, never `total`.
  * @property {number} passRate      0–100; `performance-summary.pass_rate` when
  *                                  present, else derived `passed/total`.
  * @property {?number} durationS    Total wall-clock seconds (`total_duration`).
@@ -116,6 +119,14 @@ export function buildRunStats(kpis, perf, row) {
         ? Math.round((passed / total) * 100)
         : 0;
 
+  // `completed_calls` is its own KPI field for both modalities — not the chat
+  // branch's `connected_calls` (voice's `connected_voice_calls` uses a
+  // different filter, `duration_seconds > 0`), and not `total`, which counts
+  // every status. Stays `null` — never `0`, never `total` — until the KPIs
+  // load or on an older backend where the field is absent: "not known yet"
+  // must never look like a real number.
+  const completed = kpis?.completed_calls ?? null;
+
   const durationS = kpis?.total_duration ?? null;
   const avgDurationMs =
     durationS != null && total ? Math.round((durationS * 1000) / total) : null;
@@ -131,6 +142,7 @@ export function buildRunStats(kpis, perf, row) {
     total,
     passed,
     failed,
+    completed,
     passRate,
     durationS,
     avgDurationMs,
@@ -268,7 +280,8 @@ export {
  * @property {?string} summary       `call_summary`.
  * @property {Object<string,string>} recordings  `recordings` map (voice audio).
  * @property {Array<{ id: string, name: string, score: ?number,
- *   passed: ?boolean, reason: string }>} evalResults  From `eval_metrics`.
+ *   passed: ?boolean, reason: string, removed: boolean }>} evalResults  From
+ *   `eval_metrics`; `removed` is true for a verdict whose eval was removed.
  */
 
 // Normalise a transcript/chat role to the two the drawer paints. Voice
@@ -315,6 +328,9 @@ function callEvalResult(evalId, data) {
     score,
     passed,
     reason: data.reason || "",
+    // A removed eval's verdict is still returned, carrying `removed: true` —
+    // never hidden or rewritten; the drawer marks it.
+    removed: data.removed === true,
   };
 }
 

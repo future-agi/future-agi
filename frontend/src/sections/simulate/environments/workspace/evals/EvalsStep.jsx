@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Box, Stack, Typography, Button, IconButton, Tooltip, Switch } from "@mui/material";
+import { Alert, Box, CircularProgress, Stack, Typography, Button, IconButton, Tooltip, Switch } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { getEval } from "src/api/simulate-environments/_fixtures/evalCatalog";
 import { useRemoveAppliedEvaluation } from "src/api/simulate-environments/environments";
@@ -10,9 +10,11 @@ import { BUILD_STATUS } from "../../myEnvironments.constants";
 import SectionCard from "../../components/SectionCard";
 import EmptyState from "../../components/EmptyState";
 import EvalRow from "./EvalRow";
+import SelectedEvalRow from "./SelectedEvalRow";
 import AddEvalsDrawer from "./AddEvalsDrawer";
 import AddEvaluationDrawer from "./AddEvaluationDrawer";
 import { useAppliedEvals } from "./useAppliedEvals";
+import { refusalText } from "./refusalText";
 import { EVALS_COPY, ENV_SHAPE, ENV_STATE_SHAPE } from "./evals.constants";
 import PropTypes from "prop-types";
 
@@ -44,25 +46,36 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
   // through a mocked seam until the backend endpoint exists (useToolCallEval).
   const toolCall = useToolCallEval();
 
-  // A real backend-backed env drives its applied set from §6 detail
-  // (evaluations.selected) — the authoritative list the add (§10) and remove
-  // (§9) endpoints mutate. A forked/template env has no backend counterpart, so
-  // it stays store-driven (fixture-seeded preset). The §6 query shares its cache
-  // with useAddEvaluation's setQueryData, so an add/remove reflects immediately.
+  // A real backend-backed env drives its applied set from the environment
+  // detail (evaluations.selected) — the authoritative list the add and remove
+  // endpoints mutate. A forked/template env has no backend counterpart, so it
+  // stays store-driven (fixture-seeded preset). The detail query shares its
+  // cache with useAddEvaluation's setQueryData, so an add reflects immediately.
   const detailQuery = useQuery(harnessEnvironmentQuery(env.id, { enabled: backed }));
+  // Each `selected[]` row is a full catalogue entry plus `id` and
+  // `runnable`. Kept
+  // whole — the tab shows `source`, the cost line (`credits_per_run` /
+  // `charges_judge_tokens`) and `inputs`, which the old {id,name,blurb}
+  // projection threw away.
   const selectedFromDetail = useMemo(() => {
     const selected = detailQuery.data?.evaluations?.selected;
-    return Array.isArray(selected)
-      ? selected.map((e) => ({ id: e.id, name: e.name, blurb: e.description, runnable: e.runnable }))
-      : [];
+    return Array.isArray(selected) ? selected : [];
   }, [detailQuery.data]);
+
+  // A failed or still-running detail read leaves `selectedFromDetail` empty,
+  // which is indistinguishable from an environment that genuinely has no
+  // evals — and the card below would then announce "Added (0)" and "No
+  // evaluations added yet" about an environment that may hold eight. Neither
+  // the count nor the empty state may be drawn until the list is actually
+  // known, so both states are handled before the card.
+  const detailUnknown = backed && (detailQuery.isPending || detailQuery.isError);
 
   const appliedEvals = backed ? selectedFromDetail : store.appliedEvals;
   const appliedIds = store.appliedIds;
   const { add } = store;
 
-  // §9 remove. On a backed env, removal is a server soft-delete of
-  // `evaluations.selected[].id`; the §6 query is invalidated so the real set is
+  // Remove. On a backed env, removal is a server soft-delete of
+  // `evaluations.selected[].id`; the detail query is invalidated so the real set is
   // the source of truth. Disabled while building (409). A forked/template env
   // stays store-only.
   const removeEval = useRemoveAppliedEvaluation();
@@ -75,6 +88,22 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
     }
     removeEval.mutate({ id: env.id, evalConfigId: id });
   };
+
+  // With several rows, one Alert for the whole card doesn't say which one a
+  // failed remove belongs to. `removeEval.variables` is the mutation's own
+  // last input — `{ id, evalConfigId }` — so the failed row is whichever
+  // applied eval still carries that config id.
+  const failedRemoveName = useMemo(() => {
+    if (!removeEval.isError) return null;
+    // An absent `variables` (or one carrying no `evalConfigId`) must not
+    // fall through to `e.id === undefined` — that would match the first
+    // applied eval that happens to carry no `id` and attribute the Alert to
+    // a row the refusal has nothing to do with. Not reachable through the
+    // contract today; the guard is defensive.
+    const failedId = removeEval.variables?.evalConfigId;
+    if (!failedId) return null;
+    return appliedEvals.find((e) => e.id === failedId)?.name || null;
+  }, [removeEval.isError, removeEval.variables, appliedEvals]);
 
   // The env's preset evals, minus anything already added — the set that gets
   // auto-seeded into Added, and the reason the empty state may still appear
@@ -93,7 +122,7 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
   const seededRef = useRef(false);
   useEffect(() => {
     if (seededRef.current) return;
-    // A backed env's applied set is real (§6) — never seed fixtures into it.
+    // A backed env's applied set is real — never seed fixtures into it.
     if (backed) { seededRef.current = true; return; }
     if (needsScenarios) return;
     if (appliedEvals.length > 0) { seededRef.current = true; return; }
@@ -176,11 +205,43 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
         </Tooltip>
       </Stack>
 
+      {/* A failed remove used to change nothing on screen — the row stays
+          (correctly: nothing was removed) but the user was told nothing. The
+          server's sentence is shown exactly as returned: 409 while the
+          environment is still building, 404 if already removed (safe to
+          retry) — prefixed with the eval's own name so it's clear which row
+          it belongs to. */}
+      {backed && removeEval.isError && (
+        <Alert severity="error" sx={{ mb: 2, typography: "s3" }}>
+          {failedRemoveName ? `${failedRemoveName}: ` : ""}
+          {refusalText(removeEval.error, "Couldn’t remove the evaluation. Try again.")}
+        </Alert>
+      )}
+
       <SectionCard
-        title={EVALS_COPY.addedTitle(appliedEvals.length)}
-        subtitle={appliedEvals.length ? EVALS_COPY.addedSubtitle : undefined}
+        title={detailUnknown ? EVALS_COPY.addedTitleUnknown : EVALS_COPY.addedTitle(appliedEvals.length)}
+        subtitle={!detailUnknown && appliedEvals.length ? EVALS_COPY.addedSubtitle : undefined}
       >
-        {appliedEvals.length === 0 ? (
+        {detailUnknown ? (
+          detailQuery.isError ? (
+            <EmptyState
+              icon="solar:danger-triangle-linear"
+              title="Couldn’t load evaluations"
+              // The server's own sentence when it sent one; the fallback is
+              // for a failure with no body at all.
+              body={refusalText(detailQuery.error, EVALS_COPY.addedError)}
+              action={
+                <Button variant="outlined" size="small" onClick={() => detailQuery.refetch()}>
+                  Retry
+                </Button>
+              }
+            />
+          ) : (
+            <Stack alignItems="center" sx={{ py: 5 }}>
+              <CircularProgress size={22} />
+            </Stack>
+          )
+        ) : appliedEvals.length === 0 ? (
           <EmptyState
             icon={
               needsScenarios
@@ -214,41 +275,49 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
           />
         ) : (
           <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
-            {appliedEvals.map((e) => (
-              <EvalRow
-                key={e.id}
-                item={e}
-                action={
-                  // No always-on evals. Every added row is removable — except on
-                  // a locked template, where every edit is gated behind a fork.
-                  <Tooltip
-                    arrow
-                    title={
-                      locked
-                        ? LOCK_TOOLTIP
-                        : backed && building
-                          ? "Available once the environment finishes building."
-                          : ""
-                    }
-                  >
-                    <Box component="span" sx={{ display: "inline-flex" }}>
-                      <IconButton size="small" disabled={removeDisabled} aria-label={EVALS_COPY.remove} onClick={() => onRemove(e.id)}>
-                        <Iconify
-                          icon="solar:trash-bin-trash-linear"
-                          width={16}
-                          sx={{ color: "text.subtitle" }}
-                        />
-                      </IconButton>
-                    </Box>
-                  </Tooltip>
-                }
-              />
-            ))}
+            {appliedEvals.map((e) => {
+              const action = (
+                // No always-on evals. Every added row is removable — except on a
+                // locked template, where every edit is gated behind a fork.
+                <Tooltip
+                  arrow
+                  title={
+                    locked
+                      ? LOCK_TOOLTIP
+                      : backed && building
+                        ? "Available once the environment finishes building."
+                        : ""
+                  }
+                >
+                  <Box component="span" sx={{ display: "inline-flex" }}>
+                    <IconButton
+                      size="small"
+                      disabled={removeDisabled}
+                      aria-label={EVALS_COPY.remove}
+                      onClick={() => onRemove(e.id)}
+                    >
+                      <Iconify
+                        icon="solar:trash-bin-trash-linear"
+                        width={16}
+                        sx={{ color: "text.subtitle" }}
+                      />
+                    </IconButton>
+                  </Box>
+                </Tooltip>
+              );
+              // A backed env's rows are catalogue entries; a forked/template env's rows
+              // are still the fixture catalogue shape the store holds.
+              return backed ? (
+                <SelectedEvalRow key={e.id} item={e} action={action} />
+              ) : (
+                <EvalRow key={e.id} item={e} action={action} />
+              );
+            })}
           </Stack>
         )}
       </SectionCard>
 
-      {/* A backed env adds through the real §10 picker (available list + the
+      {/* A backed env adds through the real backed picker (available list + the
           modality input mapping); a forked/template env keeps the store-only
           product picker. */}
       {backed ? (

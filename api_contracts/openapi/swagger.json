@@ -50401,6 +50401,55 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_runs_add_run_evaluation",
+                "description": "Add an eval to the environment and grade this run's already-finished calls with it.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentAddEvaluation"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentRunEvaluationQueued"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "execution_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-jobs/": {
             "get": {
                 "operationId": "simulate_api_harness-jobs_list",
@@ -120735,25 +120784,87 @@
         },
         "HarnessEnvironmentSelectedEval": {
             "required": [
-                "id",
                 "name",
                 "description",
+                "source",
+                "tags",
+                "required_keys",
+                "agent_type",
+                "modality",
+                "credits_per_run",
+                "charges_judge_tokens",
+                "inputs",
+                "id",
                 "runnable"
             ],
             "type": "object",
             "properties": {
-                "id": {
-                    "title": "Id",
-                    "type": "string",
-                    "format": "uuid"
-                },
                 "name": {
                     "title": "Name",
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 1
                 },
                 "description": {
                     "title": "Description",
                     "type": "string"
+                },
+                "source": {
+                    "title": "Source",
+                    "type": "string",
+                    "enum": [
+                        "system",
+                        "custom"
+                    ]
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "required_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "agent_type": {
+                    "title": "Agent type",
+                    "type": "string",
+                    "enum": [
+                        "voice",
+                        "chat"
+                    ]
+                },
+                "modality": {
+                    "title": "Modality",
+                    "type": "string",
+                    "enum": [
+                        "voice",
+                        "text",
+                        "any"
+                    ]
+                },
+                "credits_per_run": {
+                    "title": "Credits per run",
+                    "type": "number"
+                },
+                "charges_judge_tokens": {
+                    "title": "Charges judge tokens",
+                    "type": "boolean"
+                },
+                "inputs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentEvalInput"
+                    }
+                },
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
                 },
                 "runnable": {
                     "title": "Runnable",
@@ -121036,8 +121147,14 @@
             "required": [
                 "name",
                 "description",
+                "source",
+                "tags",
                 "required_keys",
-                "modality"
+                "agent_type",
+                "modality",
+                "credits_per_run",
+                "charges_judge_tokens",
+                "inputs"
             ],
             "type": "object",
             "properties": {
@@ -121050,12 +121167,35 @@
                     "title": "Description",
                     "type": "string"
                 },
+                "source": {
+                    "title": "Source",
+                    "type": "string",
+                    "enum": [
+                        "system",
+                        "custom"
+                    ]
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
                 "required_keys": {
                     "type": "array",
                     "items": {
                         "type": "string",
                         "minLength": 1
                     }
+                },
+                "agent_type": {
+                    "title": "Agent type",
+                    "type": "string",
+                    "enum": [
+                        "voice",
+                        "chat"
+                    ]
                 },
                 "modality": {
                     "title": "Modality",
@@ -121065,6 +121205,20 @@
                         "text",
                         "any"
                     ]
+                },
+                "credits_per_run": {
+                    "title": "Credits per run",
+                    "type": "number"
+                },
+                "charges_judge_tokens": {
+                    "title": "Charges judge tokens",
+                    "type": "boolean"
+                },
+                "inputs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentEvalInput"
+                    }
                 }
             }
         },
@@ -125784,6 +125938,11 @@
                     "title": "Skipped",
                     "type": "boolean"
                 },
+                "removed": {
+                    "title": "Removed",
+                    "description": "Present and true only when the eval was removed from the environment; a live eval's verdict omits the key entirely.",
+                    "type": "boolean"
+                },
                 "error_localizer": {
                     "title": "Error localizer",
                     "type": "boolean"
@@ -130481,6 +130640,11 @@
             "properties": {
                 "total_calls": {
                     "title": "Total calls",
+                    "type": "integer",
+                    "readOnly": true
+                },
+                "completed_calls": {
+                    "title": "Completed calls",
                     "type": "integer",
                     "readOnly": true
                 },
@@ -151346,6 +151510,69 @@
                         "oss",
                         "enterprise"
                     ]
+                }
+            }
+        },
+        "HarnessEnvironmentEvalInput": {
+            "required": [
+                "key",
+                "source",
+                "label"
+            ],
+            "type": "object",
+            "properties": {
+                "key": {
+                    "title": "Key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "source": {
+                    "title": "Source",
+                    "type": "string",
+                    "enum": [
+                        "voice_recording",
+                        "transcript",
+                        "agent_prompt",
+                        "scenario_columns.situation.value"
+                    ]
+                },
+                "label": {
+                    "title": "Label",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessEnvironmentRunEvaluationQueued": {
+            "required": [
+                "queued",
+                "skipped_existing",
+                "skipped_in_flight",
+                "skipped_pending",
+                "completed_calls"
+            ],
+            "type": "object",
+            "properties": {
+                "queued": {
+                    "title": "Queued",
+                    "description": "Stamped and scheduled for dispatch -- not yet dispatched. A call whose stamp committed but whose grading job then failed to queue is still counted here, not subtracted.",
+                    "type": "integer"
+                },
+                "skipped_existing": {
+                    "title": "Skipped existing",
+                    "type": "integer"
+                },
+                "skipped_in_flight": {
+                    "title": "Skipped in flight",
+                    "type": "integer"
+                },
+                "skipped_pending": {
+                    "title": "Skipped pending",
+                    "type": "integer"
+                },
+                "completed_calls": {
+                    "title": "Completed calls",
+                    "type": "integer"
                 }
             }
         }

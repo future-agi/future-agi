@@ -6,7 +6,7 @@ import { apiPath } from "src/api/contracts/api-surface";
  * List is paginated ({ count, next, previous, total_pages, current_page,
  * results }); delete returns 204 and also cancels a live run server-side.
  *
- * Detail (§6), rename (§8) and remove-evaluation (§9) come from the updated
+ * Detail, rename and remove-evaluation come from the updated
  * contract. Detail and rename reuse the already-contracted
  * `/harness-environments/{id}/` path, so apiPath() accepts them today (the gate
  * validates the path template, not the method). The remove-evaluation path is
@@ -39,31 +39,50 @@ export const listHarnessEnvironments = async ({ page, limit } = {}) => {
 export const deleteHarnessEnvironment = async (id) =>
   (await axios.delete(environmentPath(id))).data;
 
-// §6 detail: the full environment (overview / contract / world / scenarios /
+// Detail: the full environment (overview / contract / world / scenarios /
 // evaluations / settings). Sections are null until the stage that produces them
 // finishes, so every consumer must be null-tolerant.
 export const getHarnessEnvironment = async (id) =>
   (await axios.get(environmentPath(id))).data;
 
-// §8 rename: `name` is the only editable field. The response is the full §6
+// Rename: `name` is the only editable field. The response is the full
 // detail body with `overview.name` updated, so callers can seed the detail
 // cache from it rather than refetching.
 export const renameHarnessEnvironment = async (id, name) =>
   (await axios.patch(environmentPath(id), { name })).data;
 
-// §9 remove an applied evaluation (soft delete). Returns 204; the caller must
-// re-fetch §6 and read `evaluations.selected` rather than removing locally.
+// Remove an applied evaluation (soft delete). Returns 204; the caller must
+// re-fetch the detail and read `evaluations.selected` rather than removing
+// locally.
 export const deleteAppliedEvaluation = async (id, evalConfigId) =>
   (await axios.delete(environmentEvaluationPath(id, evalConfigId))).data;
 
-// §10 the evals this environment can still add — the catalogue filtered to its
-// modality and minus what is already selected. Each: { name, description,
-// required_keys, modality }. Every entry is addable as-is (no client filtering).
+// The evals this environment can still add — the catalogue filtered to its
+// modality and minus what is already selected. Each entry is the full
+// shape (name, description, source, tags, required_keys, agent_type,
+// modality, credits_per_run, charges_judge_tokens, inputs[]). Every entry is
+// addable as-is (no client filtering).
 export const getAvailableEvaluations = async (id) =>
   (await axios.get(environmentEvaluationsAvailablePath(id))).data;
 
-// §10 add one evaluation by name. The body is `{ name }` only — the input
-// mapping is resolved server-side by modality. The 201 body is the full §6
+// Add one evaluation by name. The body is `{ name }` only — the input
+// mapping is resolved server-side by modality. The 201 body is the full
 // detail, already updated, so the caller seeds the detail cache from it.
 export const addEvaluation = async (id, name) =>
   (await axios.post(environmentEvaluationsPath(id), { name })).data;
+
+const runEvaluationsPath = (id, executionId) =>
+  apiPath(
+    "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/",
+    { id, execution_id: executionId },
+  );
+
+// Add one evaluation from inside a run. Same body as the environment-level
+// add (`{ name }`), and does what it does first (same refusals, same
+// idempotency) before queuing grading for the run's finished calls. The 202
+// body is the five counts —
+// { queued, skipped_existing, skipped_in_flight, skipped_pending,
+// completed_calls } — not the environment detail, so there is nothing in
+// this response to seed the applied list from.
+export const addRunEvaluation = async (id, executionId, name) =>
+  (await axios.post(runEvaluationsPath(id, executionId), { name })).data;

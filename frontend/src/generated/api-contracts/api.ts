@@ -574,6 +574,7 @@ import type {
   HarnessEnvironmentListResponseApi,
   HarnessEnvironmentRenameApi,
   HarnessEnvironmentRunApi,
+  HarnessEnvironmentRunEvaluationQueuedApi,
   HarnessEnvironmentRunResponseApi,
   HarnessEventBatchApi,
   HarnessEventBatchResponseApi,
@@ -58595,6 +58596,57 @@ export const simulateApiHarnessEnvironmentsRun = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(harnessEnvironmentRunApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse202 = {
+  data: HarnessEnvironmentRunEvaluationQueuedApi;
+  status: 202;
+};
+
+export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 202>;
+  };
+
+export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseSuccess =
+  simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseError =
+  simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse =
+  | simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseSuccess
+  | simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponseError;
+
+export const getSimulateApiHarnessEnvironmentsRunsAddRunEvaluationUrl = (
+  id: string,
+  executionId: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/runs/${executionId}/evaluations/`;
+};
+
+/**
+ * Add an eval to the environment and grade this run's already-finished calls with it.
+ */
+export const simulateApiHarnessEnvironmentsRunsAddRunEvaluation = async (
+  id: string,
+  executionId: string,
+  harnessEnvironmentAddEvaluationApi: HarnessEnvironmentAddEvaluationApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsRunsAddRunEvaluationResponse>(
+    getSimulateApiHarnessEnvironmentsRunsAddRunEvaluationUrl(id, executionId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessEnvironmentAddEvaluationApi),
     },
   );
 };

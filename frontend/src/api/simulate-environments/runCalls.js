@@ -67,6 +67,11 @@ function evalResultFor(row, col) {
     label,
     reason: data.reason || "",
     threshold: 0.5,
+    // The verdict of a since-removed eval still carries `removed: true` here,
+    // so the chat call drawer's list-derived fallback (while `useCallDetail`
+    // is loading or errored) can mark it too — same expression as
+    // `runDetail.js`'s `callEvalResult`.
+    removed: data.removed === true,
   };
 }
 

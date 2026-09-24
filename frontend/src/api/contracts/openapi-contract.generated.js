@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1030,
+  endpointCount: 1031,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -27849,6 +27849,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/":
+      {
+        post: {
+          operationId:
+            "simulate_api_harness-environments_runs_add_run_evaluation",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/HarnessEnvironmentAddEvaluation",
+          },
+          queryParameters: {},
+          responses: {
+            202: {
+              $ref: "#/definitions/HarnessEnvironmentRunEvaluationQueued",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/simulate/api/harness-jobs/": {
       get: {
         operationId: "simulate_api_harness-jobs_list",
@@ -60839,6 +60860,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
       type: "object",
       properties: {},
     },
+    HarnessEnvironmentRunEvaluationQueued: {
+      required: [
+        "queued",
+        "skipped_existing",
+        "skipped_in_flight",
+        "skipped_pending",
+        "completed_calls",
+      ],
+      type: "object",
+      properties: {
+        queued: {
+          title: "Queued",
+          description:
+            "Stamped and scheduled for dispatch -- not yet dispatched. A call whose stamp committed but whose grading job then failed to queue is still counted here, not subtracted.",
+          type: "integer",
+        },
+        skipped_existing: {
+          title: "Skipped existing",
+          type: "integer",
+        },
+        skipped_in_flight: {
+          title: "Skipped in flight",
+          type: "integer",
+        },
+        skipped_pending: {
+          title: "Skipped pending",
+          type: "integer",
+        },
+        completed_calls: {
+          title: "Completed calls",
+          type: "integer",
+        },
+      },
+    },
     HarnessEnvironmentRunResponse: {
       required: ["environment_id", "job_id", "run_id", "state", "stage"],
       type: "object",
@@ -70872,6 +70927,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       properties: {
         total_calls: {
           title: "Total calls",
+          type: "integer",
+          readOnly: true,
+        },
+        completed_calls: {
+          title: "Completed calls",
           type: "integer",
           readOnly: true,
         },
@@ -82118,6 +82178,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Skipped",
           type: "boolean",
         },
+        removed: {
+          title: "Removed",
+          description:
+            "Present and true only when the eval was removed from the environment; a live eval's verdict omits the key entirely.",
+          type: "boolean",
+        },
         error_localizer: {
           title: "Error localizer",
           type: "boolean",
@@ -88352,7 +88418,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessEnvironmentOfferedEval: {
-      required: ["name", "description", "required_keys", "modality"],
+      required: [
+        "name",
+        "description",
+        "source",
+        "tags",
+        "required_keys",
+        "agent_type",
+        "modality",
+        "credits_per_run",
+        "charges_judge_tokens",
+        "inputs",
+      ],
       type: "object",
       properties: {
         name: {
@@ -88364,6 +88441,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Description",
           type: "string",
         },
+        source: {
+          title: "Source",
+          type: "string",
+          enum: ["system", "custom"],
+        },
+        tags: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
         required_keys: {
           type: "array",
           items: {
@@ -88371,10 +88460,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
           },
         },
+        agent_type: {
+          title: "Agent type",
+          type: "string",
+          enum: ["voice", "chat"],
+        },
         modality: {
           title: "Modality",
           type: "string",
           enum: ["voice", "text", "any"],
+        },
+        credits_per_run: {
+          title: "Credits per run",
+          type: "number",
+        },
+        charges_judge_tokens: {
+          title: "Charges judge tokens",
+          type: "boolean",
+        },
+        inputs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentEvalInput",
+          },
         },
       },
     },
@@ -104718,6 +104826,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentEvalInput: {
+      required: ["key", "source", "label"],
+      type: "object",
+      properties: {
+        key: {
+          title: "Key",
+          type: "string",
+          minLength: 1,
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          enum: [
+            "voice_recording",
+            "transcript",
+            "agent_prompt",
+            "scenario_columns.situation.value",
+          ],
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     HarnessEnvironmentAmendment: {
       required: ["subject", "note"],
       type: "object",
@@ -104886,21 +105020,78 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessEnvironmentSelectedEval: {
-      required: ["id", "name", "description", "runnable"],
+      required: [
+        "name",
+        "description",
+        "source",
+        "tags",
+        "required_keys",
+        "agent_type",
+        "modality",
+        "credits_per_run",
+        "charges_judge_tokens",
+        "inputs",
+        "id",
+        "runnable",
+      ],
       type: "object",
       properties: {
-        id: {
-          title: "Id",
-          type: "string",
-          format: "uuid",
-        },
         name: {
           title: "Name",
           type: "string",
+          minLength: 1,
         },
         description: {
           title: "Description",
           type: "string",
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          enum: ["system", "custom"],
+        },
+        tags: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        required_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        agent_type: {
+          title: "Agent type",
+          type: "string",
+          enum: ["voice", "chat"],
+        },
+        modality: {
+          title: "Modality",
+          type: "string",
+          enum: ["voice", "text", "any"],
+        },
+        credits_per_run: {
+          title: "Credits per run",
+          type: "number",
+        },
+        charges_judge_tokens: {
+          title: "Charges judge tokens",
+          type: "boolean",
+        },
+        inputs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentEvalInput",
+          },
+        },
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
         },
         runnable: {
           title: "Runnable",
