@@ -377,3 +377,46 @@ describe("hydrating multi-value filters", () => {
     expect(onApply).not.toHaveBeenCalled();
   });
 });
+
+describe("FilterPanel operatorSuffixes", () => {
+  const TEXT_FIELDS = [
+    {
+      value: "name",
+      label: "Name",
+      type: "string",
+      operators: ["contains", "not_contains", "equals", "not_equals"],
+    },
+  ];
+  const SUFFIXES = {
+    is_not: "_not",
+    not_equals: "_not",
+    contains: "_contains",
+    not_contains: "_not_contains",
+  };
+
+  it("reads a suffixed key back as its operator and does not re-apply it", async () => {
+    const onApply = vi.fn();
+    renderPanel(TEXT_FIELDS, onApply, {
+      currentFilters: { name_not_contains: ["policy"] },
+      operatorSuffixes: SUFFIXES,
+    });
+
+    expect(screen.getByText("Does not contain")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("policy")).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 800));
+    expect(onApply).not.toHaveBeenCalled();
+  });
+
+  it("applies a text row with its operator in the key", async () => {
+    const user = userEvent.setup();
+    const onApply = vi.fn();
+    renderPanel(TEXT_FIELDS, onApply, { operatorSuffixes: SUFFIXES });
+
+    await user.type(screen.getByRole("textbox"), "refund");
+
+    await waitFor(
+      () => expect(onApply).toHaveBeenLastCalledWith({ name_contains: ["refund"] }),
+      { timeout: 2000 },
+    );
+  });
+});

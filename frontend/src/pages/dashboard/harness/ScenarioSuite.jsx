@@ -31,6 +31,7 @@ import {
   useHarnessScenarios,
 } from "src/api/harness/scenarios";
 import {
+  FILTER_OPERATOR_SUFFIXES,
   filterParamKey,
   noiseValue,
 } from "src/sections/simulate/environments/workspace/scenarios/scenarioEditor.constants";
@@ -804,6 +805,7 @@ export default function ScenarioSuite({
         filterFields={filterFields}
         currentFilters={activeFilters ? filters : null}
         onApply={applyFilters}
+        operatorSuffixes={FILTER_OPERATOR_SUFFIXES}
         aiPlaceholder="e.g. 'Indian accent callers carrying an attack'"
       />
 
