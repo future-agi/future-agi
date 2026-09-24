@@ -918,6 +918,92 @@ class TestRunTestKPIsViewAPI:
         # All 3 calls are completed
         assert data["connected_calls"] == 3
 
+    def test_kpi_exposes_completed_calls_on_a_voice_run(
+        self, auth_client, test_execution, scenario
+    ):
+        """The KPI body names the run's COMPLETED-status call count on a
+        voice run too, where `connected_calls` is a different filter
+        (`connected_voice_calls`) and cannot be used as a stand-in. Built
+        locally, not from the shared fixture, so a connected-but-not-completed
+        row keeps the two counts from accidentally matching."""
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            phone_number="+1300000000",
+            status="completed",
+            duration_seconds=120,
+        )
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            phone_number="+1300000001",
+            status="completed",
+            duration_seconds=150,
+        )
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            phone_number="+1300000002",
+            status="failed",
+            duration_seconds=90,
+        )
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            phone_number="+1300000003",
+            status="pending",
+            duration_seconds=0,
+        )
+
+        response = auth_client.get(
+            f"/simulate/test-executions/{test_execution.id}/kpis/"
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        data = response.json()
+        assert data["agent_type"] == AgentDefinition.AgentTypeChoices.VOICE
+        assert data["completed_calls"] == 2
+        assert (
+            data["connected_calls"] == 3
+        ), "connected_voice_calls counts the failed-but-connected call too"
+        assert data["completed_calls"] != data["connected_calls"], (
+            "the two numbers must differ here, or this test could not catch "
+            '"completed_calls": connected_calls replacing the real column'
+        )
+        assert data["total_calls"] == 4
+
+    def test_kpi_exposes_completed_calls_on_a_chat_run(
+        self,
+        auth_client,
+        chat_call_executions,
+        test_execution,
+        chat_agent_definition,
+        scenario,
+    ):
+        """The same `completed_calls` field, same meaning, on a chat run --
+        where it happens to equal `connected_calls`, but the client should
+        not need to know that."""
+        test_execution.agent_definition = chat_agent_definition
+        test_execution.save()
+        CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=scenario,
+            phone_number="+2000000003",
+            status="failed",
+            duration_seconds=0,
+        )
+
+        response = auth_client.get(
+            f"/simulate/test-executions/{test_execution.id}/kpis/"
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        data = response.json()
+        assert data["agent_type"] == AgentDefinition.AgentTypeChoices.TEXT
+        assert data["completed_calls"] == 3
+        assert data["total_calls"] == 4
+        assert data["completed_calls"] == data["connected_calls"]
+
     def test_kpi_with_eval_outputs(
         self, auth_client, eval_call_executions, test_execution
     ):

@@ -1,5 +1,7 @@
 """Populated-fixture functional tests for analytics + eval-summary read endpoints."""
 
+import csv
+import io
 import json
 import uuid
 
@@ -408,6 +410,618 @@ class TestTestExecutionAnalyticsView:
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
+@pytest.mark.integration
+@pytest.mark.api
+class TestRunResultsV3Views:
+    """The v3 run-results surface remains independent from legacy contracts."""
+
+    @pytest.mark.parametrize(
+        "value,eval_status,expected",
+        [
+            ("Passed", "completed", 1),
+            (" Failed ", None, 0),
+            (True, None, 1),
+            (False, "completed", 0),
+            ("SUCCESSFUL", "completed", 1),
+            (80, "completed", 0.8),
+            (0.6, None, 0.6),
+            (0, "completed", 0),
+            ("Passed", "pending", None),
+            (75, "ERROR", None),
+            ("Failed", "skipped", None),
+            ("NaN", "completed", None),
+        ],
+    )
+    def test_group_evaluation_scores_match_rows(
+        self,
+        auth_client,
+        test_execution,
+        analytics_call_executions,
+        value,
+        eval_status,
+        expected,
+    ):
+        call = analytics_call_executions[0]
+        call.call_metadata = {"use_case": "Aggregation regression"}
+        call.eval_outputs = {
+            "native": {
+                "source": "harness",
+                "name": "Native evaluation",
+                "output": value,
+                "output_type": "Pass/Fail",
+            }
+        }
+        if eval_status is not None:
+            call.eval_outputs["native"]["status"] = eval_status
+        call.save(update_fields=["call_metadata", "eval_outputs"])
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/",
+            {
+                "group_by": "goal",
+                "filters": json.dumps({"goal": ["Aggregation regression"]}),
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["results"][0]["evaluations"][0]["score"] == expected
+        aggregate = body["groups"][0]["aggregates"]["evaluations"]["native"]
+        assert aggregate == {
+            "scored": int(expected is not None),
+            "score_sum": expected or 0,
+        }
+
+    def test_group_aggregates_cover_all_filtered_pages(
+        self,
+        auth_client,
+        test_execution,
+        eval_summary_te1_calls,
+        pass_fail_eval_config,
+        score_eval_config,
+    ):
+        for i, call in enumerate(eval_summary_te1_calls):
+            call.call_metadata = {
+                "use_case": "Refunds" if i < 2 else "Excluded",
+                "persona": {"name": f"Persona {i}"},
+                "row_data": {"situation": f"Situation {i}", "outcome": "Resolved"},
+                "conversation_branch": "same-branch",
+            }
+            call.overall_score = 6 + i * 2
+            call.avg_agent_latency_ms = 100 + i * 100
+            call.conversation_metrics_data = {
+                "turn_count": 2 + i * 2,
+                "total_tokens": 100 + i * 100,
+            }
+            call.save()
+        query = {
+            "group_by": "goal",
+            "page_size": 1,
+            "filters": json.dumps({"goal": ["Refunds"]}),
+        }
+        first = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/", query
+        )
+        second = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/",
+            {**query, "page": 2},
+        )
+        assert first.status_code == second.status_code == 200
+        group = first.json()["groups"][0]
+        assert len(group["result_ids"]) == 1
+        assert group["total"] == 2
+        assert group["aggregates"] == second.json()["groups"][0]["aggregates"]
+        assert group["aggregates"] == {
+            "csat": 7,
+            "turns": 3,
+            "latency_ms": 150,
+            "tokens": 300,
+            "evaluations": {
+                str(pass_fail_eval_config.id): {"scored": 2, "score_sum": 2},
+                str(score_eval_config.id): {
+                    "scored": 2,
+                    "score_sum": pytest.approx(1.4),
+                },
+            },
+        }
+
+    def test_calls_returns_normalized_rows_groups_and_facets(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        test_execution.execution_metadata = {
+            "selected_scenario_keys": ["routine-return"],
+            "trials": 2,
+        }
+        test_execution.trials = 2
+        test_execution.save(update_fields=["execution_metadata", "trials"])
+        passed_call = analytics_call_executions[0]
+        passed_call.call_metadata = {
+            "harness_outcome_status": "passed",
+            "harness_scenario_key": "routine-return",
+            "harness_trial_index": 2,
+            "use_case": "Returns",
+            "row_data": {
+                "persona": json.dumps(
+                    {
+                        "name": "Careful caller",
+                        "voice": "US female",
+                        "age": 68,
+                        "traits": ["polite", "hard of hearing"],
+                        "scripted_caller": None,
+                    }
+                ),
+                "situation": "Caller needs help with a return.",
+                "outcome": "Return is completed",
+            },
+            "hosted_harness_receipt": {
+                "scenario_key": "routine-return",
+                "sub_goals": [{"name": "identity_verified", "held": True}],
+            },
+        }
+        passed_call.conversation_metrics_data = {
+            "total_tokens": 120,
+            "turn_count": 4,
+        }
+        passed_call.avg_agent_latency_ms = 240
+        passed_call.cost_cents = 12
+        passed_call.save()
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/",
+            {"group_by": "goal", "filters": json.dumps({"status": ["passed"]})},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        body = response.json()
+        assert body["count"] == 1
+        row = body["results"][0]
+        assert row["goal"] == "Returns"
+        assert row["persona"] == "Careful caller"
+        assert row["persona_details"] == {
+            "name": "Careful caller",
+            "voice": "US female",
+            "age": "68",
+            "traits": ["polite", "hard of hearing"],
+        }
+        assert row["sub_goals"] == ["identity_verified"]
+        assert row["scenario_details"] == "Caller needs help with a return."
+        assert row["ideal_outcome"] == "Return is completed"
+        assert row["conversation_branch"] == "routine-return"
+        assert row["source_scenario_key"] == "routine-return"
+        assert row["trial_index"] == 2
+        assert row["outcome"] == "passed"
+        assert row["latency_ms"] == 240.0
+        assert row["turn_count"] == 4
+        assert row["tokens"] == 120
+        assert row["cost_cents"] == 12
+        assert body["groups"][0]["key"] == "Returns"
+        assert body["groups"][0]["result_ids"] == [str(passed_call.id)]
+        assert {item["value"] for item in body["facets"]["status"]} == {
+            "passed",
+            "error",
+            "inconclusive",
+        }
+        assert body["facets"]["sub_goal"] == [
+            {"value": "identity_verified", "count": 1}
+        ]
+        assert body["execution"]["id"] == str(test_execution.id)
+        assert body["execution"]["selected_scenario_keys"] == ["routine-return"]
+        assert body["execution"]["trials"] == 2
+
+
+    def test_harness_error_is_not_green_when_transport_completed(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        call = analytics_call_executions[0]
+        call.status = CallExecution.CallStatus.COMPLETED
+        call.call_metadata = {"harness_outcome_status": "error"}
+        call.eval_outputs = {}
+        call.save(update_fields=["status", "call_metadata", "eval_outputs"])
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        row = next(
+            item for item in response.json()["results"] if item["id"] == str(call.id)
+        )
+        assert row["outcome"] == "error"
+        assert row["harness_outcome_status"] == "error"
+        assert row["execution_status"] == "completed"
+
+    def test_persona_is_not_a_grouping_option(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/",
+            {"group_by": "persona"},
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_calls_filter_by_goal_sub_goal_and_status(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        call = analytics_call_executions[0]
+        call.call_metadata = {
+            "harness_outcome_status": "passed",
+            "goal": "Returns",
+            "hosted_harness_receipt": {"sub_goals": [{"name": "identity_verified"}]},
+        }
+        call.save(update_fields=["call_metadata"])
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/",
+            {
+                "filters": json.dumps(
+                    {
+                        "goal": ["Returns"],
+                        "sub_goal": ["identity_verified"],
+                        "status": ["passed"],
+                    }
+                )
+            },
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert [row["id"] for row in response.json()["results"]] == [str(call.id)]
+
+    def test_dataset_goal_is_used_consistently_for_rows_groups_facets_and_filters(
+        self,
+        auth_client,
+        test_execution,
+        analytics_call_executions,
+        dataset_for_scenario,
+    ):
+        goal_column = Column.objects.create(
+            dataset=dataset_for_scenario,
+            name="use_case",
+            data_type="text",
+            source=SourceChoices.OTHERS.value,
+        )
+        row = Row.objects.filter(dataset=dataset_for_scenario).first()
+        Cell.objects.create(
+            dataset=dataset_for_scenario,
+            column=goal_column,
+            row=row,
+            value="Dataset-only goal",
+        )
+        call = analytics_call_executions[0]
+        call.row_id = row.id
+        call.call_metadata = {"harness_outcome_status": "passed"}
+        call.save(update_fields=["row_id", "call_metadata"])
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/",
+            {
+                "group_by": "goal",
+                "filters": json.dumps({"goal": ["Dataset-only goal"]}),
+            },
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        body = response.json()
+        assert [result["id"] for result in body["results"]] == [str(call.id)]
+        assert body["results"][0]["goal"] == "Dataset-only goal"
+        assert body["groups"][0]["key"] == "Dataset-only goal"
+        assert {item["value"] for item in body["facets"]["goal"]} >= {
+            "Dataset-only goal"
+        }
+
+    def test_non_numeric_json_metrics_do_not_break_list_or_analytics(
+        self,
+        auth_client,
+        test_execution,
+        analytics_call_executions,
+        score_eval_config,
+    ):
+        call = analytics_call_executions[0]
+        call.conversation_metrics_data = {
+            "total_tokens": "unknown",
+            "turn_count": "not-a-number",
+            "avg_latency_ms": {},
+        }
+        call.eval_outputs = {
+            str(score_eval_config.id): {
+                "name": "Accuracy Score",
+                "output": "NaN",
+                "output_type": "score",
+            }
+        }
+        call.save(update_fields=["conversation_metrics_data", "eval_outputs"])
+
+        list_response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        )
+        analytics_response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/analytics/"
+        )
+
+        assert list_response.status_code == status.HTTP_200_OK
+        assert analytics_response.status_code == status.HTTP_200_OK
+        result = next(
+            item
+            for item in list_response.json()["results"]
+            if item["id"] == str(call.id)
+        )
+        assert result["tokens"] is None
+        assert result["turn_count"] is None
+        assert result["latency_ms"] is None
+
+    def test_harness_native_evaluations_are_stable_across_list_export_and_analytics(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        call = analytics_call_executions[-1]
+        call.eval_outputs = {
+            "policy-check": {
+                "source": "harness",
+                "name": "Policy check",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            }
+        }
+        call.save(update_fields=["eval_outputs"])
+
+        list_response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/",
+            {"page": 1, "page_size": 1},
+        )
+        export_response = auth_client.post(
+            f"/simulate/v3/test-executions/{test_execution.id}/export/",
+            {},
+            format="json",
+        )
+        analytics_response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/analytics/"
+        )
+
+        assert list_response.status_code == status.HTTP_200_OK
+        assert {
+            column["id"] for column in list_response.json()["evaluation_columns"]
+        } >= {"policy-check"}
+        csv_body = b"".join(export_response.streaming_content).decode()
+        assert "evaluation:Policy check" in csv_body.splitlines()[0]
+        evaluations = {
+            item["id"]: item for item in analytics_response.json()["evaluations"]
+        }
+        assert evaluations["policy-check"]["passed"] == 1
+
+    def test_calls_groups_only_reference_the_requested_page(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/",
+            {"group_by": "goal", "page": 2, "page_size": 1},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        body = response.json()
+        assert body["count"] == len(analytics_call_executions)
+        assert body["page"] == 2
+        assert len(body["results"]) == 1
+        assert body["groups"][0]["result_ids"] == [body["results"][0]["id"]]
+
+    def test_detail_uses_v3_route(self, auth_client, analytics_call_executions):
+        call = analytics_call_executions[0]
+        call.call_metadata = {"harness_outcome_status": "passed", "use_case": "Returns"}
+        call.provider_call_data = {
+            "livekit": {
+                "tool_calls": [
+                    {
+                        "name": "lookup_order",
+                        "arguments": {"order_id": "AB-1"},
+                        "result": {"status": "shipped"},
+                        "duration_ms": 309,
+                    }
+                ]
+            }
+        }
+        call.save(update_fields=["call_metadata", "provider_call_data"])
+
+        response = auth_client.get(f"/simulate/v3/call-executions/{call.id}/")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["outcome"] == "passed"
+        assert response.json()["goal"] == "Returns"
+        assert response.json()["function_calls"] == [
+            {
+                "name": "lookup_order",
+                "arguments": {"order_id": "AB-1"},
+                "result": {"status": "shipped"},
+                "duration_ms": 309,
+            }
+        ]
+
+    def test_analytics_exposes_truthful_coverage(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        call = analytics_call_executions[0]
+        call.call_metadata = {"harness_outcome_status": "passed"}
+        call.avg_agent_latency_ms = 300
+        call.save(update_fields=["call_metadata", "avg_agent_latency_ms"])
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/analytics/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        body = response.json()
+        assert body["summary"]["outcomes"] == {
+            "passed": 1,
+            "failed": 0,
+            "error": 1,
+            "inconclusive": 2,
+        }
+        assert body["summary"]["pass_rate"] == 50.0
+        assert body["summary"]["latency"]["measured"] == 1
+        assert body["summary"]["latency"]["total"] == 4
+        assert "critical_failures" not in body["summary"]
+
+    def test_export_applies_filters_to_underlying_rows(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        call = analytics_call_executions[0]
+        call.call_metadata = {"harness_outcome_status": "passed"}
+        call.save(update_fields=["call_metadata"])
+
+        response = auth_client.post(
+            f"/simulate/v3/test-executions/{test_execution.id}/export/",
+            {"filters": {"status": ["passed"]}},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        csv_body = b"".join(response.streaming_content).decode()
+        assert str(call.id) in csv_body
+        assert str(analytics_call_executions[-1].id) not in csv_body
+
+    def test_dashboard_distinguishes_missing_metrics_and_tool_verdicts(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
+
+        call = analytics_call_executions[0]
+        call.call_metadata = {"harness_outcome_status": "failed"}
+        call.conversation_metrics_data = {"csat_score": 7, "turn_count": 3}
+        call.provider_call_data = {
+            "livekit": {
+                "tool_calls": [
+                    {"name": "lookup", "ok": True},
+                    {"name": "lookup", "ok": False},
+                    {"name": "unclassified", "result": {"order_id": "synthetic-order"}},
+                ]
+            }
+        }
+        call.customer_latency_metrics = {
+            "systemMetrics": {"model": 240, "voice": "unavailable"}
+        }
+        call.simulation_call_type = "voice"
+        call.save()
+        other = analytics_call_executions[1]
+        other.conversation_metrics_data = {"csat_score": "unavailable"}
+        other.save(update_fields=["conversation_metrics_data"])
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/analytics/"
+        )
+        assert response.status_code == 200
+        dashboard = response.json()["dashboard"]
+        serializer = RunDashboardV3Serializer(data=dashboard)
+        assert serializer.is_valid(), serializer.errors
+        metrics = {row["key"]: row for row in dashboard["metrics"]}
+        assert len(metrics) == 14
+        assert metrics["csat"]["value"] == 7
+        assert metrics["csat"]["measured"] == 1
+        tools = {row["name"]: row for row in dashboard["tools"]["failures"]}
+        assert tools["lookup"]["failure_rate"] == 50
+        assert tools["lookup"]["measured"] == 2
+        assert tools["unclassified"]["failure_rate"] is None
+        assert dashboard["series_mode"] == "calls"
+        assert len(dashboard["latency_percentiles"]) == 101
+        assert all(
+            sum(segment["count"] for segment in chart["segments"]) == 4
+            for chart in dashboard["breakdowns"]
+        )
+        assert "failure_attribution" in {
+            row["key"] for row in dashboard["unavailable_features"]
+        }
+
+    def test_dashboard_task_success_is_independent_of_provider_verdict(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        call = analytics_call_executions[0]
+        call.call_metadata = {"harness_outcome_status": "passed"}
+        call.analysis_data = {"call_successful": False, "user_sentiment": "negative"}
+        call.save()
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/analytics/"
+        )
+        assert response.status_code == 200
+        charts = {row["key"]: row for row in response.json()["dashboard"]["breakdowns"]}
+        success = {
+            row["label"]: row["count"] for row in charts["call_success"]["segments"]
+        }
+        goals = {
+            row["label"]: row["count"] for row in charts["goal_outcome"]["segments"]
+        }
+        assert success == {"successful": 1, "unsuccessful": 1, "unknown": 2}
+        assert goals["passed"] == 1
+
+    def test_dashboard_histograms_use_measured_values_and_exact_threshold(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        for call, score, latency in zip(
+            analytics_call_executions, [0, 4, 10, "missing"], [549, 550, 575, None]
+        ):
+            call.conversation_metrics_data = {"csat_score": score}
+            call.avg_agent_latency_ms = latency
+            call.save(
+                update_fields=["conversation_metrics_data", "avg_agent_latency_ms"]
+            )
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/analytics/"
+        )
+        assert response.status_code == 200
+        dashboard = response.json()["dashboard"]
+        assert dashboard["csat"]["measured"] == 3
+        assert len(dashboard["csat"]["bins"]) == 11
+        assert sum(row["count"] for row in dashboard["csat"]["bins"]) == 3
+        assert dashboard["agent_response_time"]["at_or_above_target"] == 2
+        assert dashboard["agent_response_time"]["measured"] == 3
+        assert dashboard["agent_response_time"]["at_or_above_target_percent"] == 66.67
+        assert dashboard["csat"]["agreement"]["percent"] is None
+
+    def test_export_escapes_spreadsheet_formulas(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        call = analytics_call_executions[0]
+        call.call_metadata = {
+            "harness_outcome_status": "passed",
+            "goal": "=SUM(1,1)",
+        }
+        call.save(update_fields=["call_metadata"])
+
+        response = auth_client.post(
+            f"/simulate/v3/test-executions/{test_execution.id}/export/",
+            {"filters": {"status": ["passed"]}},
+            format="json",
+        )
+
+        rows = list(
+            csv.DictReader(io.StringIO(b"".join(response.streaming_content).decode()))
+        )
+        assert rows[0]["goal"] == "'=SUM(1,1)"
+
+    def test_failure_breakdown_counts_each_failed_call_once(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        failed = analytics_call_executions[0]
+        failed.call_metadata = {"harness_outcome_status": "failed"}
+        failed.error_message = "An evaluator failed"
+        failed.save(update_fields=["call_metadata", "error_message"])
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/analytics/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        body = response.json()
+        expected = (
+            body["summary"]["outcomes"]["failed"] + body["summary"]["outcomes"]["error"]
+        )
+        assert sum(item["failures"] for item in body["failure_breakdown"]) == expected
+
+    def test_v3_endpoints_reject_other_workspace(
+        self, auth_client, organization, user, agent_definition, simulator_agent
+    ):
+        _, hidden_execution = _make_other_workspace_test_execution(
+            organization, user, agent_definition, simulator_agent
+        )
+        for suffix in ("calls/", "analytics/"):
+            response = auth_client.get(
+                f"/simulate/v3/test-executions/{hidden_execution.id}/{suffix}"
+            )
+            assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
 # ============================================================================
 # RunTestAnalyticsView
 # ============================================================================
@@ -532,9 +1146,7 @@ class TestTestExecutionOptimiserAnalysisView:
         assert result["last_updated"] is not None
         # last_updated is the run.updated_at isoformat
         run.refresh_from_db()
-        assert result["last_updated"].startswith(
-            run.updated_at.isoformat()[:19]
-        )
+        assert result["last_updated"].startswith(run.updated_at.isoformat()[:19])
 
     def test_optimiser_analysis_other_workspace_returns_404(
         self, auth_client, organization, user, agent_definition, simulator_agent
@@ -620,9 +1232,7 @@ class TestRunTestEvalSummaryView:
             100.0, abs=0.01
         )
         # te2 scores 1.0 + 0.9 -> avg 95.0
-        assert templates_by_type["score"]["total_avg"] == pytest.approx(
-            95.0, abs=0.01
-        )
+        assert templates_by_type["score"]["total_avg"] == pytest.approx(95.0, abs=0.01)
 
     def test_eval_summary_no_eval_configs_returns_empty_list(
         self, auth_client, run_test
