@@ -1,6 +1,8 @@
-// MOCK_WORLD — the v1 world overlay for an environment whose harness
-// stage_outputs carry nothing parseable yet (see environment.js
-// stageOutputsToWorld). It is the full-fidelity version of the same
+// MOCK_WORLD — the fixture world the client-side build flow seeds from (see
+// workspace/helpers/seedEnvState.js) when the read-audit it gets back is only a
+// display projection. It is NOT an overlay for real environments: a harness-backed
+// environment shows only what its own stage outputs carry, so this fixture never
+// fills a gap on one. It is the full-fidelity version of the same
 // customer-support world the v1 read-audit projected
 // (mockReading.js MOCK_READING), plus the designer's `env-voice-support`
 // metadata (id/name/surface/domain/tagline/description/evalPreset).

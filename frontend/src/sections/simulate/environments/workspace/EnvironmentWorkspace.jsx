@@ -75,9 +75,10 @@ export default function EnvironmentWorkspace() {
   const backed = source === "harness";
   const evalDetailQuery = useQuery(harnessEnvironmentQuery(envId, { enabled: backed }));
   // While the job is still deriving, the harness bootstrap is only a placeholder
-  // (generated-pool scenarios, a v1 stub) — and useEnvState seeds byEnv once, so
-  // seeding it now would lock that placeholder in even after the real world lands.
-  // Seed only once the env is ready; the build view below never reads envState.
+  // (an endpoint-agent stub with whatever scenarios the run has emitted so far, if
+  // any) — and useEnvState seeds byEnv once, so seeding it now would freeze that
+  // early state in even after the real scenarios land on a later poll. Seed only
+  // once the env is ready; the build view below never reads envState.
   const building = !!env && env.buildStatus === BUILD_STATUS.BUILDING;
   const buildFailed = !!env && env.buildStatus === BUILD_STATUS.FAILED;
   const { envState, patch, canRun } = useEnvState(
@@ -103,7 +104,7 @@ export default function EnvironmentWorkspace() {
   // Real derived world from the running job's stage outputs (never the MOCK_WORLD
   // overlay) — the sandbox hero shows real tools/rules/tables as they land, a
   // neutral skeleton before.
-  const derivedWorld = stageOutputsToWorld(progress.job?.stage_outputs || []).world;
+  const derivedWorld = stageOutputsToWorld(progress.job?.stage_outputs || []);
 
   const executionMatch = useMatch(EXECUTION_PATTERN);
 

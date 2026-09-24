@@ -285,6 +285,39 @@ describe("EnvironmentWorkspace route shell", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows no fixture world on a real harness env whose outputs are empty", async () => {
+    getHarnessJob.mockResolvedValue(COMPLETED_JOB);
+
+    renderWorkspace("/dashboard/simulate/environments/job-done");
+
+    expect(await screen.findByText("Done Environment", { selector: "p" }))
+      .toBeInTheDocument();
+    // The "Customer Support Line" fixture world (MOCK_WORLD) used to fill every
+    // missing field on a real environment, so its tools, rules and description
+    // rendered as this environment's own. With the overlay gone the sections are
+    // empty, not invented.
+    expect(screen.queryByText(/verify_identity/)).toBeNull();
+    expect(screen.queryByText(/Goodwill credit is capped/)).toBeNull();
+    expect(
+      screen.queryByText(/A returns-and-orders phone line for a mid-size retailer/),
+    ).toBeNull();
+  });
+
+  it("renders the Scenarios tab of an empty-world harness env without crashing", async () => {
+    getHarnessJob.mockResolvedValue(COMPLETED_JOB);
+
+    // The Add-scenarios drawer derives its candidate pool from the env's tools
+    // and rules the moment the tab mounts. The overlay used to guarantee those
+    // arrays existed; on a real env with an empty world they are absent, so the
+    // pool derivation must tolerate it rather than throw.
+    renderWorkspace("/dashboard/simulate/environments/job-done?tab=scenarios");
+
+    expect(await screen.findByText("Done Environment", { selector: "p" }))
+      .toBeInTheDocument();
+    // No fixture scenario content leaked in either.
+    expect(screen.queryByText(/verify_identity/)).toBeNull();
+  });
+
   it("hosts the build experience in place for a still-building job", async () => {
     getHarnessJob.mockResolvedValue(BUILDING_JOB);
 
