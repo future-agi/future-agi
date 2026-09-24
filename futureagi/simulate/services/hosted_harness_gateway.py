@@ -37,6 +37,7 @@ from simulate.models import (
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     activate_attempt_capability,
+    finish_deferred_delete,
     record_cleanup,
     register_attempt,
     request_cancellation,
@@ -3344,7 +3345,13 @@ class HostedHarnessGateway:
             job.current_stage = HostedHarnessJob.State.CANCELED
             job.terminal_at = timezone.now()
             job.save(
-                update_fields=["state", "current_stage", "terminal_at", "updated_at"]
+                update_fields=[
+                    "state",
+                    "current_stage",
+                    "terminal_at",
+                    "updated_at",
+                    *finish_deferred_delete(job),
+                ]
             )
             if job.test_execution_id:
                 TestExecution.no_workspace_objects.filter(

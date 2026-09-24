@@ -424,34 +424,62 @@ _TERMINAL_STATES = frozenset(
 )
 
 
+DELETE_CANCEL_REASON = "environment_deleted"
+
+
 def delete_environment(job: HostedHarnessJob) -> None:
     """Soft-delete an environment, cancelling its run first if one is live.
 
-    Deleting while a sandbox is running would leave that sandbox billing against
-    a row nobody can see, so cancellation is requested before the row disappears.
-    The authoring archive and the organization's secrets are left in place:
-    neither is owned by this row, and other environments may reference the same
-    credentials.
+    A live run keeps its row until sandbox cleanup has finished: the cleanup
+    path reads the job through the soft-delete manager, so hiding the row
+    first would strand the sandbox until its TTL. The row is hidden by
+    ``finish_deferred_delete`` when the run reaches a terminal state. The
+    authoring archive and the organization's secrets are left in place:
+    neither is owned by this row, and other environments may reference the
+    same credentials.
     """
     from simulate.temporal.client import cancel_hosted_harness_gateway_workflow
 
-    if job.state not in _TERMINAL_STATES:
-        request_cancellation(job, "user_canceled")
-        try:
-            cancel_hosted_harness_gateway_workflow(str(job.id))
-        except Exception:
-            # Fail open: a scheduler that cannot be reached must not strand the
-            # user with an environment they cannot remove. The workflow is bounded
-            # by the job deadline and its sandbox by its own TTL.
-            logger.exception("hosted_harness_delete_cancel_failed", job_id=str(job.id))
+    if job.state in _TERMINAL_STATES:
+        _soft_delete(job)
+        return
+    locked = request_cancellation(job, DELETE_CANCEL_REASON)
+    if locked.state in _TERMINAL_STATES:
+        _soft_delete(locked)
+        return
+    try:
+        cancel_hosted_harness_gateway_workflow(str(job.id))
+    except Exception:
+        # Fail open: a scheduler that cannot be reached must not strand the
+        # user with an environment they cannot remove. The workflow is bounded
+        # by the job deadline and its sandbox by its own TTL.
+        logger.exception("hosted_harness_delete_cancel_failed", job_id=str(job.id))
+        _soft_delete(locked)
+
+
+def _soft_delete(job: HostedHarnessJob) -> None:
     job.deleted = True
     job.deleted_at = timezone.now()
     job.save(update_fields=["deleted", "deleted_at", "updated_at"])
 
 
+def finish_deferred_delete(job: HostedHarnessJob) -> list[str]:
+    """Hide a job its owner deleted while it ran, now that the run is over.
+
+    Returns the fields set, for the caller's ``update_fields``.
+    """
+    if job.cancel_reason != DELETE_CANCEL_REASON or job.deleted:
+        return []
+    job.deleted = True
+    job.deleted_at = timezone.now()
+    return ["deleted", "deleted_at"]
+
+
 def request_cancellation(job: HostedHarnessJob, reason: str) -> HostedHarnessJob:
     with transaction.atomic():
-        locked = HostedHarnessJob.all_objects.select_for_update().get(id=job.id)
+        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=job.id
+        )
         if locked.state in {
             HostedHarnessJob.State.COMPLETED,
             HostedHarnessJob.State.FAILED,
@@ -989,7 +1017,9 @@ def record_cleanup(
         record_sandbox_runtime(attempt, final=True)
         # Teardown seals all measured authoring, even when no bundle was produced.
         replay_harness_usage(attempt)
-        job = HostedHarnessJob.all_objects.select_for_update().get(id=attempt.job_id)
+        job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=attempt.job_id
+        )
         if attempt.attempt_number < job.current_attempt_number:
             return job
         if retry_pending:
@@ -1019,6 +1049,7 @@ def record_cleanup(
                 "failure",
                 "content_updated_at",
                 "updated_at",
+                *finish_deferred_delete(job),
             ]
         )
         if job.test_execution_id:
