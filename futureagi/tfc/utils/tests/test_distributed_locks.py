@@ -46,6 +46,35 @@ class TestDistributedLockManager:
 
         assert spy.call_args.kwargs["thread_local"] is manager.config.thread_local
 
+    def test_contention_and_redis_failure_raise_distinct_errors(self):
+        """Callers that treat "held elsewhere" as "someone is doing the work"
+        must be able to tell it from "Redis is down"."""
+        from redis.exceptions import ConnectionError as RedisConnectionError
+
+        from tfc.utils.distributed_locks import (
+            DistributedLockManager,
+            LockAcquisitionError,
+            LockContendedError,
+        )
+
+        manager = DistributedLockManager(fallback_to_local=True)
+        if not manager.is_distributed:
+            pytest.skip("redis not available")
+
+        with manager.lock("split_errors", timeout=30):
+            other = DistributedLockManager(fallback_to_local=True)
+            with pytest.raises(LockContendedError):
+                with other.lock("split_errors", timeout=30, blocking_timeout=0.2):
+                    pass
+
+        broken = MagicMock()
+        broken.acquire.side_effect = RedisConnectionError("down")
+        with patch.object(manager._redis_client, "lock", return_value=broken):
+            with pytest.raises(LockAcquisitionError) as exc:
+                with manager.lock("split_errors", timeout=30):
+                    pass
+        assert not isinstance(exc.value, LockContendedError)
+
     def test_context_manager_lock(self):
         """Test basic context manager lock usage."""
         from tfc.utils.distributed_locks import DistributedLockManager

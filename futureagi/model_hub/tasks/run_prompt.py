@@ -13,7 +13,7 @@ from model_hub.models.develop_dataset import Cell
 from model_hub.models.run_prompt import RunPrompter
 from model_hub.views.run_prompt import RunPrompts
 from tfc.temporal import temporal_activity
-from tfc.utils.distributed_locks import LockAcquisitionError, distributed_lock_manager
+from tfc.utils.distributed_locks import LockContendedError, distributed_lock_manager
 from tfc.utils.distributed_state import DistributedEvaluationTracker
 
 logger = structlog.get_logger(__name__)
@@ -26,12 +26,12 @@ STUCK_RUNNING_THRESHOLD_HOURS = 1
 LEASE_RENEW_INTERVAL_SECONDS = 60
 LEASE_TTL_SECONDS = 300  # ~ Temporal heartbeat_timeout (5 min)
 LEASE_FRESH_SECONDS = 3 * LEASE_RENEW_INTERVAL_SECONDS
-# Lock auto-expiry, renewed alongside the lease. Must expire before Temporal's
-# retry arrives (heartbeat_timeout = 5 min, drop_in/workflow.py) or a crashed
-# worker's lock locks out its own retry and the prompt sits stuck until the
-# hourly sweep. Four renewal intervals, so a brief Redis blip can't drop a
-# live worker's lock either.
+# Renewed every 60s; must be < ACTIVITY_HEARTBEAT_TIMEOUT so a dead worker's lock is gone before its retry.
 LOCK_TTL_SECONDS = 4 * LEASE_RENEW_INTERVAL_SECONDS  # 240s
+
+# Spread crash-reclaim retries over ~12 min instead of the default 15s budget.
+PROCESS_PROMPT_MAX_RETRIES = 5
+PROCESS_PROMPT_RETRY_DELAY_SECONDS = 60
 
 # Distributed tracker for run prompts (separate key prefix from evaluations).
 run_prompt_tracker = DistributedEvaluationTracker(default_ttl=LEASE_TTL_SECONDS)
@@ -39,35 +39,18 @@ run_prompt_tracker.key_prefix = "running_prompt:"
 
 
 class PromptAlreadyRunningElsewhere(Exception):
-    """Another live instance holds the lease on this prompt.
-
-    Raised (not swallowed) so the Temporal attempt is recorded as failed and
-    retried later. Returning success here is a dead-end: Temporal would mark
-    the workflow complete and the prompt would never be reprocessed even
-    after the other owner dies.
-    """
+    """Another live instance holds the lease; raised so Temporal retries instead of recording success."""
 
 
 class OwnershipLease:
-    """Keeps this worker's claim on a run prompt alive while it processes.
-
-    A daemon thread renews the distributed tracker entry (liveness lease) and
-    extends the Redis lock every LEASE_RENEW_INTERVAL_SECONDS. Without
-    renewal the fixed TTLs (tracker 5 min, lock 4 min) are shorter than a
-    legitimate run, so both must be kept alive for as long as the worker
-    actually is.
-
-    The lock MUST be acquired with ``thread_local=False``: redis-py keeps the
-    ownership token in thread-local storage by default, so ``extend()`` from
-    this renewer thread would raise every time and the lock would silently
-    lapse mid-run.
-    """
+    """Daemon thread renewing the tracker lease and extending the lock (needs thread_local=False) every 60s."""
 
     def __init__(self, prompt_id, lock=None):
         self._prompt_id = prompt_id
         self._lock = lock
         self._stop = threading.Event()
         self._thread = None
+        self._extend_failures = 0
 
     def __enter__(self):
         self._thread = threading.Thread(
@@ -89,6 +72,9 @@ class OwnershipLease:
             self.renew_once()
 
     def renew_once(self):
+        # Owner is releasing; a late refresh would resurrect the lease after mark_completed.
+        if self._stop.is_set():
+            return
         try:
             run_prompt_tracker.refresh_running(
                 self._prompt_id, ttl=LEASE_TTL_SECONDS
@@ -103,21 +89,20 @@ class OwnershipLease:
         if self._lock is not None and hasattr(self._lock, "extend"):
             try:
                 self._lock.extend(LOCK_TTL_SECONDS, replace_ttl=True)
+                self._extend_failures = 0
             except Exception as e:
-                logger.warning(
+                # error, not warning: silent extend failures are how the lock lapsed before.
+                self._extend_failures += 1
+                logger.error(
                     "run_prompt_lock_extend_failed",
                     prompt_id=str(self._prompt_id),
+                    consecutive_failures=self._extend_failures,
                     error=str(e),
                 )
 
 
 def _get_fresh_lease(prompt_id):
-    """Return the tracker entry if a live worker holds it, else None.
-
-    A lease is live when its last renewal (or start) is within
-    LEASE_FRESH_SECONDS; owners renew every LEASE_RENEW_INTERVAL_SECONDS, so
-    anything older belongs to a dead worker and is reclaimable.
-    """
+    """Return the tracker entry if renewed within LEASE_FRESH_SECONDS (live worker), else None."""
     info = run_prompt_tracker.get_running_info(prompt_id)
     if not info:
         return None
@@ -138,12 +123,7 @@ def _held_by_other_live_instance(prompt_id) -> bool:
 
 
 def _claim_prompt(run_prompt_id, runner_info):
-    """Take ownership of the prompt in the tracker (caller holds the lock).
-
-    Clears any stale lease left behind by a dead worker first, so a Temporal
-    retry can reclaim a crashed run instead of dead-ending on the leftover
-    entry.
-    """
+    """Take ownership in the tracker (caller holds the lock), reclaiming a dead worker's stale lease first."""
     stale = run_prompt_tracker.get_running_info(run_prompt_id)
     if (
         stale
@@ -157,9 +137,31 @@ def _claim_prompt(run_prompt_id, runner_info):
         )
         run_prompt_tracker.mark_completed(run_prompt_id)
 
-    run_prompt_tracker.mark_running(
+    if not run_prompt_tracker.mark_running(
         run_prompt_id, runner_info=runner_info, ttl=LEASE_TTL_SECONDS
-    )
+    ):
+        # SET NX lost: raise only if a live owner exists (False also means Redis is down).
+        if _held_by_other_live_instance(run_prompt_id):
+            raise PromptAlreadyRunningElsewhere(str(run_prompt_id))
+        logger.warning(
+            "run_prompt_claim_unconfirmed",
+            run_prompt_id=str(run_prompt_id),
+        )
+
+
+def _mark_prompt_failed(run_prompt_id, log_prefix):
+    """Set status FAILED; logs <log_prefix>_marked_failed / <log_prefix>_failed_to_update_status."""
+    try:
+        RunPrompter.objects.filter(id=run_prompt_id).update(
+            status=StatusType.FAILED.value
+        )
+        logger.info(f"{log_prefix}_marked_failed", run_prompt_id=str(run_prompt_id))
+    except Exception as db_error:
+        logger.error(
+            f"{log_prefix}_failed_to_update_status",
+            run_prompt_id=str(run_prompt_id),
+            error=str(db_error),
+        )
 
 
 def process_not_started_prompt(run_prompt_id):
@@ -173,8 +175,7 @@ def process_not_started_prompt(run_prompt_id):
     )
 
     try:
-        # Fail fast (and retryably) if a live instance already owns this
-        # prompt. Stale leases from dead workers do not count.
+        # Fail fast (retryably) if a live instance owns it; stale leases don't count.
         if _held_by_other_live_instance(run_prompt_id):
             logger.warning(
                 "process_not_started_prompt_already_running",
@@ -188,9 +189,7 @@ def process_not_started_prompt(run_prompt_id):
             f"run_prompt:{run_prompt_id}",
             timeout=LOCK_TTL_SECONDS,  # renewed by OwnershipLease below
             blocking_timeout=10,
-            # OwnershipLease renews from its own thread; a thread-local token
-            # would be invisible there and every extend() would fail.
-            thread_local=False,
+            thread_local=False,  # OwnershipLease extends this lock from another thread
         ) as lock:
             # Double-check after acquiring lock
             if _held_by_other_live_instance(run_prompt_id):
@@ -224,10 +223,8 @@ def process_not_started_prompt(run_prompt_id):
                 # Always clean up distributed tracking
                 run_prompt_tracker.mark_completed(run_prompt_id)
 
-    except (PromptAlreadyRunningElsewhere, LockAcquisitionError):
-        # Another live instance owns this prompt. Do NOT mark the prompt
-        # FAILED (it is being processed) and do NOT touch the tracker entry
-        # (we don't own it) — just fail this attempt so Temporal retries.
+    except (PromptAlreadyRunningElsewhere, LockContendedError):
+        # A live owner has it: fail the attempt for Temporal to retry, don't mark FAILED.
         raise
     except Exception as e:
         logger.exception(
@@ -238,21 +235,7 @@ def process_not_started_prompt(run_prompt_id):
         )
         # Clean up distributed tracking on failure
         run_prompt_tracker.mark_completed(run_prompt_id)
-        # Set status to FAILED so it doesn't get stuck in RUNNING
-        try:
-            RunPrompter.objects.filter(id=run_prompt_id).update(
-                status=StatusType.FAILED.value
-            )
-            logger.info(
-                "process_not_started_prompt_marked_failed",
-                run_prompt_id=str(run_prompt_id),
-            )
-        except Exception as db_error:
-            logger.error(
-                "process_not_started_prompt_failed_to_update_status",
-                run_prompt_id=str(run_prompt_id),
-                error=str(db_error),
-            )
+        _mark_prompt_failed(run_prompt_id, "process_not_started_prompt")
         raise
     finally:
         close_old_connections()
@@ -269,8 +252,7 @@ def process_editing_prompt(run_prompt_id):
     )
 
     try:
-        # An edit preempts a live run: request cancellation, then take over
-        # once the lock is released (or expires).
+        # An edit preempts a live run: request cancel, take over once the lock frees.
         if _held_by_other_live_instance(run_prompt_id):
             logger.warning(
                 "process_editing_prompt_already_running",
@@ -290,9 +272,7 @@ def process_editing_prompt(run_prompt_id):
             f"run_prompt:{run_prompt_id}",
             timeout=LOCK_TTL_SECONDS,  # renewed by OwnershipLease below
             blocking_timeout=30,  # Wait longer for edit as we may be waiting for cancel
-            # See process_not_started_prompt: the renewer thread needs a
-            # non-thread-local token to extend this lock.
-            thread_local=False,
+            thread_local=False,  # OwnershipLease extends this lock from another thread
         ) as lock:
             _claim_prompt(
                 run_prompt_id,
@@ -318,10 +298,13 @@ def process_editing_prompt(run_prompt_id):
                 # Always clean up distributed tracking
                 run_prompt_tracker.mark_completed(run_prompt_id)
 
-    except LockAcquisitionError:
-        # The current owner did not release within blocking_timeout. Fail
-        # this attempt (Temporal retries) without marking the prompt FAILED —
-        # the owner is still processing it.
+    except (LockContendedError, PromptAlreadyRunningElsewhere):
+        # Owner won't write a status after an edit (updated_at changed), so FAILED now, not RUNNING for an hour.
+        logger.warning(
+            "process_editing_prompt_preempt_failed",
+            run_prompt_id=str(run_prompt_id),
+        )
+        _mark_prompt_failed(run_prompt_id, "process_editing_prompt")
         raise
     except Exception as e:
         logger.exception(
@@ -332,27 +315,18 @@ def process_editing_prompt(run_prompt_id):
         )
         # Clean up distributed tracking on failure
         run_prompt_tracker.mark_completed(run_prompt_id)
-        # Set status to FAILED so it doesn't get stuck in RUNNING
-        try:
-            RunPrompter.objects.filter(id=run_prompt_id).update(
-                status=StatusType.FAILED.value
-            )
-            logger.info(
-                "process_editing_prompt_marked_failed",
-                run_prompt_id=str(run_prompt_id),
-            )
-        except Exception as db_error:
-            logger.error(
-                "process_editing_prompt_failed_to_update_status",
-                run_prompt_id=str(run_prompt_id),
-                error=str(db_error),
-            )
+        _mark_prompt_failed(run_prompt_id, "process_editing_prompt")
         raise
     finally:
         close_old_connections()
 
 
-@temporal_activity(time_limit=4 * 3600, queue="tasks_l")
+@temporal_activity(
+    time_limit=4 * 3600,
+    queue="tasks_l",
+    max_retries=PROCESS_PROMPT_MAX_RETRIES,
+    retry_delay=PROCESS_PROMPT_RETRY_DELAY_SECONDS,
+)
 def process_prompts_single(prompt):
     """
     Process a single run prompt. This activity is triggered directly from the API
@@ -387,9 +361,7 @@ def process_prompts_single(prompt):
             )
             return
 
-        # If a live instance owns this prompt, fail the attempt so Temporal
-        # retries later. Returning success here would end the workflow while
-        # the prompt might still die unprocessed (retry dead-end).
+        # Raise, don't return: a returned success closes the workflow with the prompt unprocessed.
         if prompt_type != "editing" and _held_by_other_live_instance(prompt_id):
             logger.warning(
                 "process_prompts_single_already_running",
@@ -421,7 +393,7 @@ def process_prompts_single(prompt):
             prompt_id=prompt_id,
             prompt_type=prompt_type,
         )
-    except (PromptAlreadyRunningElsewhere, LockAcquisitionError):
+    except (PromptAlreadyRunningElsewhere, LockContendedError):
         raise
     except Exception as e:
         logger.exception(
@@ -454,11 +426,7 @@ def recover_stuck_run_prompts():
     try:
         threshold = timezone.now() - timedelta(hours=STUCK_RUNNING_THRESHOLD_HOURS)
 
-        # Cell-write liveness is applied in SQL, before the batch slice, so
-        # live long runs cannot crowd dead prompts out of the batch. Oldest
-        # first so the longest-dead prompts are recovered first.
-        # (RunPrompter.updated_at is not refreshed while rows are processed,
-        # so the status/updated_at filter alone would flag healthy long runs.)
+        # Cell-write liveness filtered in SQL before the slice, oldest first, so live runs can't starve dead ones.
         recent_cell_writes = Cell.objects.filter(
             column__source=SourceChoices.RUN_PROMPT.value,
             column__source_id=Cast(OuterRef("id"), output_field=CharField()),
@@ -474,8 +442,7 @@ def recover_stuck_run_prompts():
             .values_list("id", flat=True)[:20]  # Process max 20 at a time
         )
 
-        # Primary liveness signal: the worker's renewed ownership lease.
-        # Cell writes above are the fallback for when Redis is unavailable.
+        # Lease is the primary liveness signal; cell writes above are the Redis-outage fallback.
         stuck_prompts = [
             p for p in candidate_prompts if _get_fresh_lease(p) is None
         ]
@@ -496,9 +463,7 @@ def recover_stuck_run_prompts():
                 status=StatusType.FAILED.value
             )
 
-            # Also flip their cells stuck in RUNNING to ERROR so the UI stops
-            # spinning forever. "Running" (StatusType) is matched too because
-            # older reruns wrote the wrong enum into Cell.status.
+            # Flip stuck cells to ERROR; legacy "Running" matched because older reruns wrote the wrong enum.
             timeout_message = (
                 "Run prompt timed out or was interrupted. Please rerun this cell."
             )
@@ -524,10 +489,7 @@ def recover_stuck_run_prompts():
                 stuck_cells_updated=stuck_cells_updated,
             )
 
-        # Safety net for tracker entries whose TTL somehow failed to fire.
-        # Must exceed the longest legitimate run (activity limit is 4h):
-        # cleanup keys off started_at, and deleting a live long run's lease
-        # would break both dedup and the liveness signal above.
+        # TTL safety net; keyed off started_at so it must exceed the 4h activity limit.
         stale_cleaned = run_prompt_tracker.cleanup_stale(max_age_hours=5)
         if stale_cleaned > 0:
             logger.info(

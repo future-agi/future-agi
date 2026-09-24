@@ -115,6 +115,93 @@ class TestProcessNotStartedPrompt:
         assert call_kwargs["timeout"] == LOCK_TTL_SECONDS
         assert call_kwargs["thread_local"] is False
 
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    @patch("model_hub.tasks.run_prompt.distributed_lock_manager")
+    @patch("model_hub.tasks.run_prompt.RunPrompter")
+    @patch("model_hub.tasks.run_prompt.close_old_connections")
+    def test_lock_contention_fails_retryably_without_marking_failed(
+        self, mock_close, mock_prompter, mock_lock_mgr, mock_tracker
+    ):
+        """Another worker holding the lock means the prompt is being
+        processed: fail the attempt so Temporal retries, but leave the
+        status and the owner's tracker entry alone."""
+        from tfc.utils.distributed_locks import LockContendedError
+
+        from model_hub.tasks.run_prompt import process_not_started_prompt
+
+        mock_tracker.get_running_info.return_value = None
+        mock_tracker.instance_id = "test-instance"
+        mock_lock_mgr.lock.side_effect = LockContendedError("held elsewhere")
+
+        with pytest.raises(LockContendedError):
+            process_not_started_prompt("prompt-123")
+
+        mock_prompter.objects.filter.return_value.update.assert_not_called()
+        mock_tracker.mark_completed.assert_not_called()
+
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    @patch("model_hub.tasks.run_prompt.distributed_lock_manager")
+    @patch("model_hub.tasks.run_prompt.RunPrompter")
+    @patch("model_hub.tasks.run_prompt.close_old_connections")
+    def test_redis_failure_during_lock_marks_failed(
+        self, mock_close, mock_prompter, mock_lock_mgr, mock_tracker
+    ):
+        """A Redis failure while taking the lock is not "someone else has
+        it": nobody is processing the prompt, so it must not be left in
+        RUNNING until the hourly sweep."""
+        from tfc.utils.distributed_locks import LockAcquisitionError
+
+        from model_hub.models.choices import StatusType
+        from model_hub.tasks.run_prompt import process_not_started_prompt
+
+        mock_tracker.get_running_info.return_value = None
+        mock_tracker.instance_id = "test-instance"
+        mock_lock_mgr.lock.side_effect = LockAcquisitionError("Redis error")
+
+        with pytest.raises(LockAcquisitionError):
+            process_not_started_prompt("prompt-123")
+
+        mock_prompter.objects.filter.return_value.update.assert_called_once_with(
+            status=StatusType.FAILED.value
+        )
+
+
+class TestClaimPrompt:
+    """_claim_prompt must not run a prompt it could not register as its own."""
+
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    def test_lost_nx_to_live_owner_raises(self, mock_tracker):
+        """mark_running is SET NX; losing it to a fresh lease elsewhere
+        means a second worker would run with no lease of its own."""
+        from model_hub.tasks.run_prompt import (
+            PromptAlreadyRunningElsewhere,
+            _claim_prompt,
+        )
+
+        mock_tracker.instance_id = "current-instance"
+        live = MagicMock()
+        live.instance_id = "other-instance"
+        # metadata is a MagicMock -> renewal age unknown -> treated as live
+        mock_tracker.get_running_info.return_value = live
+        mock_tracker.mark_running.return_value = False
+
+        with pytest.raises(PromptAlreadyRunningElsewhere):
+            _claim_prompt("prompt-123", runner_info={})
+
+        mock_tracker.mark_completed.assert_not_called()
+
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    def test_lost_nx_with_redis_unavailable_proceeds(self, mock_tracker):
+        """With Redis down mark_running also returns False, but then nobody
+        else can hold a lease either; the prompt must still run."""
+        from model_hub.tasks.run_prompt import _claim_prompt
+
+        mock_tracker.instance_id = "current-instance"
+        mock_tracker.get_running_info.return_value = None
+        mock_tracker.mark_running.return_value = False
+
+        _claim_prompt("prompt-123", runner_info={})  # no raise
+
 
 class TestProcessEditingPrompt:
     """Tests for process_editing_prompt function."""
@@ -184,6 +271,36 @@ class TestProcessEditingPrompt:
         mock_lock_mgr.lock.assert_called_once()
         call_kwargs = mock_lock_mgr.lock.call_args[1]
         assert call_kwargs["blocking_timeout"] == 30  # Longer wait for edit
+
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    @patch("model_hub.tasks.run_prompt.distributed_lock_manager")
+    @patch("model_hub.tasks.run_prompt.RunPrompter")
+    @patch("model_hub.tasks.run_prompt.close_old_connections")
+    def test_marks_failed_when_live_owner_keeps_the_lock(
+        self, mock_close, mock_prompter, mock_lock_mgr, mock_tracker
+    ):
+        """An edit that cannot take the lock has no one to finish it: the
+        original run refuses to write a terminal status once updated_at
+        changed. It must be FAILED now, not RUNNING until the sweep — and
+        the owner's tracker entry must not be deleted (the old bug)."""
+        from tfc.utils.distributed_locks import LockContendedError
+
+        from model_hub.models.choices import StatusType
+        from model_hub.tasks.run_prompt import process_editing_prompt
+
+        mock_tracker.instance_id = "current-instance"
+        live = MagicMock()
+        live.instance_id = "other-instance"
+        mock_tracker.get_running_info.return_value = live
+        mock_lock_mgr.lock.side_effect = LockContendedError("held elsewhere")
+
+        with pytest.raises(LockContendedError):
+            process_editing_prompt("prompt-123")
+
+        mock_prompter.objects.filter.return_value.update.assert_called_once_with(
+            status=StatusType.FAILED.value
+        )
+        mock_tracker.mark_completed.assert_not_called()
 
 
 @pytest.mark.django_db
@@ -535,6 +652,39 @@ class TestOwnershipLease:
         OwnershipLease("prompt-123", lock=mock_lock).renew_once()  # no raise
 
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    def test_extend_failures_are_counted_until_one_succeeds(self, mock_tracker):
+        """Consecutive extend failures are what turn into a lapsed lock; the
+        count must be visible in the log and reset on success."""
+        from model_hub.tasks.run_prompt import OwnershipLease
+
+        mock_lock = MagicMock()
+        lease = OwnershipLease("prompt-123", lock=mock_lock)
+
+        mock_lock.extend.side_effect = Exception("redis down")
+        lease.renew_once()
+        lease.renew_once()
+        assert lease._extend_failures == 2
+
+        mock_lock.extend.side_effect = None
+        lease.renew_once()
+        assert lease._extend_failures == 0
+
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    def test_renew_is_a_noop_once_stopped(self, mock_tracker):
+        """A refresh that lands after mark_completed would write the lease
+        back for another TTL; once the owner is releasing, do nothing."""
+        from model_hub.tasks.run_prompt import OwnershipLease
+
+        mock_lock = MagicMock()
+        lease = OwnershipLease("prompt-123", lock=mock_lock)
+        lease._stop.set()
+
+        lease.renew_once()
+
+        mock_tracker.refresh_running.assert_not_called()
+        mock_lock.extend.assert_not_called()
+
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
     def test_local_lock_without_extend_is_skipped(self, mock_tracker):
         """The local threading-lock fallback has no extend(); the lease must
         still renew the tracker entry."""
@@ -591,17 +741,39 @@ class TestOwnershipLease:
 
 class TestLeaseTimingInvariants:
     """A crashed worker's lock must expire before Temporal's retry arrives,
-    or the retry dies on LockAcquisitionError and the prompt sits stuck until
+    or the retry dies on LockContendedError and the prompt sits stuck until
     the hourly sweep."""
 
-    # tfc/temporal/drop_in/workflow.py sets heartbeat_timeout=5min on every
-    # activity; that is when Temporal gives up on a silent worker and retries.
-    TEMPORAL_HEARTBEAT_TIMEOUT_SECONDS = 300
-
     def test_lock_expires_before_temporal_retry_arrives(self):
+        """Pinned against the workflow's own constant, so a change to the
+        heartbeat timeout fails here rather than in production."""
+        from tfc.temporal.drop_in.workflow import ACTIVITY_HEARTBEAT_TIMEOUT
+
         from model_hub.tasks.run_prompt import LOCK_TTL_SECONDS
 
-        assert LOCK_TTL_SECONDS < self.TEMPORAL_HEARTBEAT_TIMEOUT_SECONDS
+        assert LOCK_TTL_SECONDS < ACTIVITY_HEARTBEAT_TIMEOUT.total_seconds()
+
+    def test_reclaim_retries_are_spread_out(self):
+        """The reclaim rides on the retry after the heartbeat timeout. With
+        the default policy (3 attempts, 5s/10s apart) one transient failure
+        there burns the budget; the activity must declare a wider one."""
+        from tfc.temporal.drop_in.decorator import _ACTIVITY_REGISTRY
+        from tfc.temporal.drop_in.workflow import _resolve_retry_policy, TaskRunnerInput
+
+        import model_hub.tasks.run_prompt  # noqa: F401  (registers the activity)
+
+        meta = _ACTIVITY_REGISTRY["process_prompts_single"]
+        policy = _resolve_retry_policy(
+            TaskRunnerInput(
+                activity_name="process_prompts_single",
+                args=[],
+                kwargs={},
+                max_retries=meta["max_retries"],
+                retry_delay=meta["retry_delay"],
+            )
+        )
+        assert policy.maximum_attempts >= 4
+        assert policy.initial_interval.total_seconds() >= 60
 
     def test_lock_ttl_leaves_slack_for_transient_redis_failures(self):
         """At least 4 renewal attempts must fit inside the lock's lifetime so
