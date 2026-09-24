@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 
 import {
   WORKSPACE_TABS,
-  CHIPS_BY_TAB,
   GAP_AREA_TO_TAB,
   WORKSPACE_COPY,
 } from "../workspace.constants";
@@ -31,15 +30,6 @@ describe("workspace tab constants", () => {
   it("badges the counted tabs with their state key", () => {
     const badged = WORKSPACE_TABS.filter((t) => t.badge);
     expect(badged.map((t) => t.badge)).toEqual(["scenarios", "evals", "runs"]);
-  });
-});
-
-describe("workspace chip prompts", () => {
-  it("offers a non-empty suggestion list for every tab", () => {
-    Object.values(CHIPS_BY_TAB).forEach((chips) => {
-      expect(Array.isArray(chips)).toBe(true);
-      expect(chips.length).toBeGreaterThan(0);
-    });
   });
 });
 

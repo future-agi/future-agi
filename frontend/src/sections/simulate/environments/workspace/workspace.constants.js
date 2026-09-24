@@ -17,44 +17,6 @@ export const WORKSPACE_TABS = [
   { id: "settings", label: "Settings", icon: "solar:settings-linear" },
 ];
 
-// Suggested builder prompts per tab — the same console the build screen uses.
-// The `build` key feeds the build page's in-place workspace before 7/7.
-export const CHIPS_BY_TAB = {
-  overview: [
-    "Summarise what's in this environment",
-    "What's still missing before we can run?",
-    "Explain the tools and rules to me",
-  ],
-  contract: [
-    "Tighten the refund rule",
-    "Add a hard rule about escalations",
-    "Explain the reward function",
-  ],
-  scenarios: [
-    "Add a dispute case",
-    "Add an edge case where a tool fails",
-    "Rewrite the rushed-caller persona",
-  ],
-  evals: [
-    "Add a grader for tool-choice correctness",
-    "Tighten the hand-off quality bar",
-    "Explain what each grader measures",
-  ],
-  build: [
-    "Why was this tool included?",
-    "What did we infer vs read directly?",
-  ],
-  runs: [
-    "Summarise the last run",
-    "Which scenarios fail most often?",
-  ],
-  settings: [
-    "Rotate my OpenAI key",
-    "Which env vars are the grader reading?",
-    "Change the task timeout to 10 minutes",
-  ],
-};
-
 // Setup-gap areas map onto the tab that owns the underlying answer, so a
 // blocking gap surfaces as an amber dot on that tab. Only the areas the user
 // can resolve inside this workspace are routed; the designer's Sandbox/Tools
