@@ -75,3 +75,17 @@ def test_a_chat_reads_its_axes_in_a_chat_s_words():
     assert axis_label("interaction", spoken=False) == "How the chat goes"
     assert axis_label("counterparty", spoken=False) == "Who is asking"
     assert axis_label("task", spoken=False) == axis_label("task")
+
+
+def test_filter_choices_off_the_page_are_labelled_too():
+    labels = level_labels_for(
+        [],
+        [
+            {"value": "background_noise", "choices": ["quiet line", "street"]},
+            {"value": "coverage.overlay", "choices": ["none"]},
+        ],
+    )
+
+    assert labels["quiet line"] == "Quiet line"
+    assert labels["street"] == "Street"
+    assert labels["none"] == "No attack"

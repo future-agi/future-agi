@@ -1755,7 +1755,7 @@ class HostedHarnessProvider:
             dict(one) for one in GROUPINGS if spoken or one["value"] != "accent"
         ]
         from simulate.services.harness_scenarios import level_labels_for
-        response.data["level_labels"] = level_labels_for(rows)
+        response.data["level_labels"] = level_labels_for(rows, response.data["fields"])
         return response
 
     def scenario_coverage(self, request, pk) -> Response:

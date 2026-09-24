@@ -392,10 +392,17 @@ def coverage_grid(
     }
 
 
-def level_labels_for(rows: list[dict[str, Any]]) -> dict[str, str]:
-    """The reader-facing name for every coverage level and noise bed on one page of rows."""
+def level_labels_for(
+    rows: list[dict[str, Any]], fields: list[dict[str, Any]] | None = None
+) -> dict[str, str]:
+    """The reader-facing name for every coverage level and noise bed on a page and in its filters."""
     levels: set[str] = set()
     beds: set[str] = set()
+    for field in fields or []:
+        if field.get("value") == "background_noise":
+            beds.update(str(one) for one in field.get("choices") or [])
+        elif str(field.get("value") or "").startswith("coverage."):
+            levels.update(str(one) for one in field.get("choices") or [])
     for row in rows or []:
         for value in (row.get("coverage") or {}).values():
             said = str(value or "").strip()
