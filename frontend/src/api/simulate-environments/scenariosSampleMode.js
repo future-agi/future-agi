@@ -6,6 +6,9 @@
 // be browsed, filtered, grouped, paged and edited before the backend is
 // reachable. Off by default; it never affects the live path.
 export function isScenarioSampleMode() {
+  // A dev-only switch: in a production build `?scnSample` must do nothing, or
+  // amend would "succeed" against fixtures for a real user.
+  if (!import.meta.env.DEV) return false;
   try {
     return new URLSearchParams(window.location.search).has("scnSample");
   } catch {

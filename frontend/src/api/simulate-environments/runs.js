@@ -80,7 +80,8 @@ export function mapExecutions(payload) {
 
 export function useEnvironmentRuns(env, envState) {
   const [params] = useSearchParams();
-  const mockRuns = params.get("mockRuns") === "1";
+  // Dev-only QA switch — never let it populate fixture runs in a prod build.
+  const mockRuns = import.meta.env.DEV && params.get("mockRuns") === "1";
   const runTestId = env?.platform?.runTestId;
 
   const query = useQuery({
