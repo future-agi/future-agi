@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1011,
+  endpointCount: 1012,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -27829,6 +27829,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/":
+      {
+        post: {
+          operationId:
+            "simulate_api_harness-environments_runs_add_run_evaluation",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/HarnessEnvironmentAddEvaluation",
+          },
+          queryParameters: {},
+          responses: {
+            202: {
+              $ref: "#/definitions/HarnessEnvironmentRunEvaluationQueued",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/simulate/api/harness-jobs/": {
       get: {
         operationId: "simulate_api_harness-jobs_list",
@@ -59570,6 +59591,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
       type: "object",
       properties: {},
     },
+    HarnessEnvironmentRunEvaluationQueued: {
+      required: [
+        "queued",
+        "skipped_existing",
+        "skipped_in_flight",
+        "skipped_pending",
+        "completed_calls",
+      ],
+      type: "object",
+      properties: {
+        queued: {
+          title: "Queued",
+          description:
+            "Stamped and scheduled for dispatch -- not yet dispatched. A call whose stamp committed but whose grading job then failed to queue is still counted here, not subtracted.",
+          type: "integer",
+        },
+        skipped_existing: {
+          title: "Skipped existing",
+          type: "integer",
+        },
+        skipped_in_flight: {
+          title: "Skipped in flight",
+          type: "integer",
+        },
+        skipped_pending: {
+          title: "Skipped pending",
+          type: "integer",
+        },
+        completed_calls: {
+          title: "Completed calls",
+          type: "integer",
+        },
+      },
+    },
     HarnessEnvironmentRunResponse: {
       required: ["environment_id", "job_id", "run_id", "state", "stage"],
       type: "object",
@@ -69311,6 +69366,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       properties: {
         total_calls: {
           title: "Total calls",
+          type: "integer",
+          readOnly: true,
+        },
+        completed_calls: {
+          title: "Completed calls",
           type: "integer",
           readOnly: true,
         },
@@ -80526,6 +80586,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         skipped: {
           title: "Skipped",
+          type: "boolean",
+        },
+        removed: {
+          title: "Removed",
+          description:
+            "Present and true only when the eval was removed from the environment; a live eval's verdict omits the key entirely.",
           type: "boolean",
         },
         error_localizer: {

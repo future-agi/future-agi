@@ -17386,6 +17386,15 @@ export interface HarnessEnvironmentRunResponseApi {
   stage: string;
 }
 
+export interface HarnessEnvironmentRunEvaluationQueuedApi {
+  /** Stamped and scheduled for dispatch -- not yet dispatched. A call whose stamp committed but whose grading job then failed to queue is still counted here, not subtracted. */
+  queued: number;
+  skipped_existing: number;
+  skipped_in_flight: number;
+  skipped_pending: number;
+  completed_calls: number;
+}
+
 export type HarnessJobReadApiReceiptsItem = { [key: string]: unknown };
 
 export type HarnessJobInfoApiSource = { [key: string]: string };
@@ -19233,6 +19242,8 @@ export interface CallExecutionEvalMetricApi {
   error?: boolean;
   status?: string;
   skipped?: boolean;
+  /** Present and true only when the eval was removed from the environment; a live eval's verdict omits the key entirely. */
+  removed?: boolean;
   error_localizer?: boolean;
   error_analysis?: CallExecutionEvalMetricApiErrorAnalysis;
   error_localizer_status?: string;
@@ -21099,6 +21110,7 @@ export type RunTestKPIsResponseApiScenarioGraphs = {
 
 export interface RunTestKPIsResponseApi {
   readonly total_calls?: number;
+  readonly completed_calls?: number;
   readonly avg_score?: number;
   readonly avg_response?: number;
   readonly calls_attempted?: number;

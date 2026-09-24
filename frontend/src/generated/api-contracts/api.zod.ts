@@ -35463,6 +35463,25 @@ export const SimulateApiHarnessEnvironmentsRunBody = zod
   .passthrough();
 
 /**
+ * Add an eval to the environment and grade this run's already-finished calls with it.
+ */
+export const SimulateApiHarnessEnvironmentsRunsAddRunEvaluationParams =
+  zod.object({
+    id: zod.string(),
+    execution_id: zod.string(),
+  });
+
+export const simulateApiHarnessEnvironmentsRunsAddRunEvaluationBodyNameMax = 255;
+
+export const SimulateApiHarnessEnvironmentsRunsAddRunEvaluationBody =
+  zod.object({
+    name: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessEnvironmentsRunsAddRunEvaluationBodyNameMax),
+  });
+
+/**
  * Validates the v1.6 request contract and delegates execution to the backend
 selected by ``settings.HARNESS_PROVIDER`` (``daytona`` default, or
 ``sandbox``). See ``simulate.services.harness_provider``.
@@ -39319,6 +39338,12 @@ export const SimulateCallExecutionsReadResponse = zod.object({
         error: zod.boolean().optional(),
         status: zod.string().optional(),
         skipped: zod.boolean().optional(),
+        removed: zod
+          .boolean()
+          .optional()
+          .describe(
+            "Present and true only when the eval was removed from the environment; a live eval's verdict omits the key entirely.",
+          ),
         error_localizer: zod.boolean().optional(),
         error_analysis: zod.object({}).passthrough().optional(),
         error_localizer_status: zod.string().optional(),
@@ -44616,6 +44641,7 @@ export const SimulateTestExecutionsKpisListParams = zod.object({
 
 export const SimulateTestExecutionsKpisListResponse = zod.object({
   total_calls: zod.number().optional(),
+  completed_calls: zod.number().optional(),
   avg_score: zod.number().optional(),
   avg_response: zod.number().optional(),
   calls_attempted: zod.number().optional(),
