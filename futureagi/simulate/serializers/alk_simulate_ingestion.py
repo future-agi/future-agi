@@ -228,9 +228,7 @@ class ALKSimulateProvisionRunTestRequestSerializer(serializers.Serializer):
     )
     agent_definition_id = serializers.UUIDField(required=False, allow_null=True)
     agent_name = serializers.CharField(required=False, allow_blank=True, max_length=255)
-    # Off unless the caller asks. While it is on, every call the run produces
-    # is read by an extra LLM judge that grades the tools the agent reached
-    # for; that is a cost someone opts into (frontend contract v1.9 P36a).
+    # Off by default; the caller opts in explicitly.
     enable_tool_evaluation = serializers.BooleanField(required=False, default=False)
 
     def validate(self, attrs):

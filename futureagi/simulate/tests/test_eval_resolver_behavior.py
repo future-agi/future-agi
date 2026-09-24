@@ -2511,14 +2511,11 @@ def test_receipt_dispatch_binds_skip_existing_false(
 class TestToolEvaluationGate:
     """The tool-call judge, as a harness environment actually reaches it.
 
-    Contract api_contracts/harness/eval-offer-backend-frontend.md v1.9 §13,
-    TH-8055. No LLM is called: `ToolEvalAgent` is patched at its import site
-    in `test_executor` in every case but one --
+    No LLM is called: `ToolEvalAgent` is patched at its import site in
+    `test_executor` in every case but one --
     `test_harness_tool_call_is_extracted_with_its_result`, which drives
-    `ToolEvalAgent`'s private helpers directly (not through
-    `_run_tool_evaluation`) and so builds the real class with `llm=Mock()`
-    instead. Every case stops at the point the method decides whether to go
-    on.
+    `ToolEvalAgent`'s private helpers directly and builds the real class
+    with `llm=Mock()` instead.
     """
 
     def _chat_agent(self, agent_definition):
@@ -2529,8 +2526,7 @@ class TestToolEvaluationGate:
     def test_the_switch_is_what_decides(
         self, test_execution, chat_call_execution, agent_definition
     ):
-        """The judge is never constructed while the switch is off, and is while
-        it is on. This is the whole product behaviour of the endpoint."""
+        """The judge is never constructed while the switch is off, and is while it is on."""
         self._chat_agent(agent_definition)
         test_execution.run_test.enable_tool_evaluation = False
         test_execution.run_test.save(update_fields=["enable_tool_evaluation"])
@@ -2554,14 +2550,9 @@ class TestToolEvaluationGate:
     def test_a_harness_chat_call_clears_the_call_type_gate(
         self, test_execution, chat_call_execution, agent_definition
     ):
-        """TH-8055: a harness chat call has no `service_provider_call_id`, and
-        `_run_tool_evaluation`'s call-type guard still lets it through,
-        because its `simulation_call_type` is TEXT.
-
-        Failing scenario this catches: change that guard to skip whenever
-        there is no provider call id, and every chat run -- harness or
-        native -- silently stops being tool-graded.
-        """
+        """A harness chat call has no `service_provider_call_id`, and
+        `_run_tool_evaluation`'s call-type guard still lets it through
+        because its `simulation_call_type` is TEXT."""
         self._chat_agent(agent_definition)
         test_execution.run_test.enable_tool_evaluation = True
         test_execution.run_test.save(update_fields=["enable_tool_evaluation"])
@@ -2583,7 +2574,7 @@ class TestToolEvaluationGate:
             chat_call_execution
         )
         # With no tool calls the method records that it looked, and writes
-        # nothing to `tool_outputs` -- F2 holds trivially here.
+        # nothing to `tool_outputs`.
         chat_call_execution.refresh_from_db()
         assert chat_call_execution.evaluation_data["tool_column_order"] == []
         assert not chat_call_execution.tool_outputs
@@ -2591,15 +2582,9 @@ class TestToolEvaluationGate:
     def test_an_agent_definition_with_no_version_still_reaches_the_judge(
         self, test_execution, chat_call_execution, agent_definition, agent_version
     ):
-        """TH-8055: the harness shape -- an AgentDefinition provisioned without
-        any AgentVersion, and a TestExecution carrying none either.
-
-        Before the fix this raised AttributeError on
-        `agent_version.configuration_snapshot`, which the method's own outer
-        `except` swallowed into a log line: the switch appeared to work and
-        graded nothing. Reverting `_run_tool_evaluation`'s defensive
-        `snapshot = agent_version.configuration_snapshot if agent_version else
-        {}` read back to an unguarded attribute access makes this go red.
+        """The harness shape -- an AgentDefinition provisioned without any
+        AgentVersion, and a TestExecution carrying none either -- still
+        reaches the judge instead of crashing on `agent_version.configuration_snapshot`.
         """
         self._chat_agent(agent_definition)
         test_execution.run_test.enable_tool_evaluation = True
@@ -2625,24 +2610,9 @@ class TestToolEvaluationGate:
     def test_tool_judge_runs_when_the_switch_is_on_and_no_eval_configs_exist(
         self, test_execution, chat_call_execution
     ):
-        """TH-8055: the switch is independent of the eval catalogue (contract
-        v1.9 §13) -- an explicit (harness) dispatch with zero
-        `SimulateEvalConfig` rows must still reach the judge when the switch
-        is on.
-
-        Before this fix, `_run_simulate_evaluations`'s `if not
-        eval_configs.exists(): ... return` sat above the
-        `enable_tool_evaluation` read and returned before the judge was ever
-        called.
-
-        The call below passes `eval_config_ids=[]` explicitly -- the shape a
-        harness/hosted dispatch sends now that the switch no longer widens an
-        empty selection to `None`. A bare
-        `_run_simulate_evaluations(chat_call_execution)` (no
-        `eval_config_ids`, i.e. `None`) is the *native* shape, which
-        `test_a_native_run_with_no_configs_and_the_switch_on_does_not_reach_the_judge`
-        below covers on purpose -- and does **not** reach the judge.
-        """
+        """The switch is independent of the eval catalogue -- an explicit
+        (harness) dispatch with zero `SimulateEvalConfig` rows must still
+        reach the judge when the switch is on."""
         test_execution.run_test.enable_tool_evaluation = True
         test_execution.run_test.save(update_fields=["enable_tool_evaluation"])
 
@@ -2657,9 +2627,9 @@ class TestToolEvaluationGate:
     def test_an_explicitly_empty_selection_grades_nothing(
         self, test_execution, chat_call_execution, run_test, eval_template
     ):
-        """TH-8055 P35/F2: `[]` means "grade nothing from the catalogue", never
-        "grade every config on the run test" -- which would re-grade, and on
-        error overwrite, a harness result column's stored verdict."""
+        """`[]` means "grade nothing from the catalogue", never "grade every
+        config on the run test" -- which would re-grade a harness result
+        column's stored verdict."""
         _make_eval({}, run_test, eval_template)  # the harness result-column shape
         test_execution.run_test.enable_tool_evaluation = True
         test_execution.run_test.save(update_fields=["enable_tool_evaluation"])
@@ -2676,18 +2646,10 @@ class TestToolEvaluationGate:
     def test_a_crash_before_the_config_check_still_stamps_completion_on_an_empty_selection(
         self, test_execution, chat_call_execution, run_test, eval_template
     ):
-        """TH-8055: `_check_and_update_eval_completion`'s
-        own `eval_config_ids is not None` is reached from
-        `_run_simulate_evaluations`'s recovery `except` too. A crash before
-        the main "eval configs" check still passes the original
-        `eval_config_ids=[]` through unchanged, so an explicit empty
-        selection stamps `eval_completed=True` immediately -- even though
-        `run_test` carries a live `SimulateEvalConfig` that was never
-        graded. This documents the accepted behaviour (P35: `[]` means
-        "grade nothing from the catalogue"), not a bug: before the `is not
-        None` fix, the same crash would have waited on every config on the
-        run test instead.
-        """
+        """A crash before the main "eval configs" check still passes the
+        original `eval_config_ids=[]` through unchanged, so an explicit
+        empty selection stamps `eval_completed=True` immediately even though
+        `run_test` carries a live `SimulateEvalConfig` that was never graded."""
         _make_eval({}, run_test, eval_template)
         test_execution.run_test.enable_tool_evaluation = True
         test_execution.run_test.save(update_fields=["enable_tool_evaluation"])
@@ -2707,14 +2669,9 @@ class TestToolEvaluationGate:
     def test_a_short_call_with_no_configs_is_tool_graded_on_the_explicit_dispatch_arm(
         self, test_execution, chat_call_execution, run_test, eval_template
     ):
-        """TH-8055 P35: "On the no-catalog-eval arm the judge runs before
-        either check, so such a call is tool-graded there -- an inversion
-        accepted for now rather than reordering the eval task's early
-        returns, which every native run shares." A too-short call on the
-        explicit (harness) dispatch arm with zero `SimulateEvalConfig` rows
-        still reaches the judge, because the new arm sits above
-        `decide_processing_skip` and the empty-transcript check.
-        """
+        """A too-short call on the explicit (harness) dispatch arm with zero
+        `SimulateEvalConfig` rows still reaches the judge, because that arm
+        sits above `decide_processing_skip` and the empty-transcript check."""
         test_execution.run_test.enable_tool_evaluation = True
         test_execution.run_test.save(update_fields=["enable_tool_evaluation"])
         chat_call_execution.duration_seconds = 1
@@ -2727,11 +2684,9 @@ class TestToolEvaluationGate:
 
         assert spy.call_count == 1
 
-        # The negative companion: the
-        # same too-short call, on the same explicit dispatch, with one live
-        # `SimulateEvalConfig` selected instead of zero, is skipped by
-        # `decide_processing_skip` **before** the judge -- only the
-        # zero-config arm above sits ahead of that check.
+        # Negative companion: the same too-short call, with one live config
+        # selected instead of zero, is skipped by `decide_processing_skip`
+        # before the judge -- only the zero-config arm sits ahead of it.
         eval_config = _make_eval({}, run_test, eval_template)
         with patch.object(TestExecutor, "_run_tool_evaluation") as spy:
             TestExecutor()._run_simulate_evaluations(
@@ -2744,19 +2699,10 @@ class TestToolEvaluationGate:
     def test_a_native_run_with_no_configs_and_the_switch_on_does_not_reach_the_judge(
         self, test_execution, chat_call_execution
     ):
-        """TH-8055, scoped: `_run_simulate_evaluations`'s "no eval configs"
-        arm only reaches the judge for an explicit (harness) dispatch,
-        `eval_config_ids is not None`. A *native* run test's undispatched
-        call -- every call site that reaches this method with no
-        `eval_config_ids` argument at all, i.e. `None` -- keeps its
-        pre-TH-8055 behaviour: the switch being on and having zero configs
-        does **not**, by itself, start billing a judge per tool call.
-
-        Failing scenario this catches: revert the `and eval_config_ids is
-        not None` clause on the new arm's `if`, and this goes red -- the
-        judge would be reached for every native run test with the switch on,
-        not only for a harness/hosted dispatch.
-        """
+        """The "no eval configs" arm only reaches the judge for an explicit
+        (harness) dispatch. A native run test's undispatched call
+        (`eval_config_ids is None`) does not, by itself, start billing a
+        judge per tool call just because the switch is on."""
         test_execution.run_test.enable_tool_evaluation = True
         test_execution.run_test.save(update_fields=["enable_tool_evaluation"])
 
@@ -2768,23 +2714,9 @@ class TestToolEvaluationGate:
     def test_versionless_voice_call_skips_without_calling_the_provider(
         self, test_execution, call_execution, agent_definition, agent_version
     ):
-        """TH-8055: a harness voice AgentDefinition provisioned without an
+        """A harness voice AgentDefinition provisioned without an
         AgentVersion must skip cleanly, not turn a crash into a wasted
-        provider call.
-
-        Before the fix, `snapshot = getattr(agent_version, ...)` still let
-        control reach the voice branch with `snapshot == {}` and call
-        `voice_service_manager.get_call(...)` before finding
-        `customer_api_key`/`customer_assistant_id` are `None`. Removing the
-        `if not snapshot: ... return` guard from the voice branch makes this
-        go red.
-
-        `ToolEvalAgent` is patched at its import site so control reaches the
-        guard under test: unpatched, `agent = ToolEvalAgent()` (`:5378`)
-        raises `ValueError` for missing Vertex credentials before the voice
-        branch is ever entered, which would make this test pass for the
-        wrong reason.
-        """
+        provider call."""
         test_execution.run_test.enable_tool_evaluation = True
         test_execution.run_test.save(update_fields=["enable_tool_evaluation"])
         test_execution.agent_version = None
@@ -2815,22 +2747,10 @@ class TestToolEvaluationGate:
         ),
     )
     def test_harness_tool_call_is_extracted_with_its_result(self, chat_call_execution):
-        """TH-8055 (known gap, not fixed here): a harness chat call's tool
-        result never reaches the judge. ALK writes the result as an
-        `{"role": "assistant", "kind": "tool_call_result"}` segment
-        (`alk_simulate_ingestion.py::_store_alk_chat_messages`'s `_row`),
-        never `role == "tool"` with a `tool_call_id`, which is the only shape
-        `_get_chat_data_from_database` (`tool_eval_agent.py:610`) turns into
-        a `tool_call_result` message. `_extract_tool_calls` therefore never
-        fills `result`. This test documents the gap red; a follow-up maps
-        `kind == "tool_call_result"` onto the judge's `tool_call_result`
-        message shape.
-
-        `ToolEvalAgent(llm=Mock())` skips `_init_client` (`tool_eval_agent.py`
-        `__init__`), so this xfails on the documented shape mismatch, not on
-        a missing `GOOGLE_APPLICATION_CREDENTIALS`/`GOOGLE_CLOUD_PROJECT`
-        environment.
-        """
+        """Known gap: a harness chat call's tool result never reaches the
+        judge, because ALK writes it as `kind=tool_call_result` on a
+        `role=assistant` segment, and the judge only reads `role=tool` with
+        a `tool_call_id`."""
         from ee.agenthub.tool_eval_agent.tool_eval_agent import ToolEvalAgent
         from simulate.models.chat_message import ChatMessageModel
 

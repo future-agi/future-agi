@@ -155,11 +155,6 @@ class HarnessEnvironmentRunEvaluationQueuedSerializer(serializers.Serializer):
 class HarnessEnvironmentToolCallEvaluationSerializer(serializers.Serializer):
     """The tool-call judge's switch, sent as a whole state rather than a patch.
 
-    Named after the column it sets, ``RunTest.enable_tool_evaluation``, because
-    every other surface in this codebase already spells it this way;
-    ``grep -rn enable_tool_evaluation`` finds them. A second name for one
-    column is the only thing a grep could not find.
-
     Required, not defaulted: a body that forgets the key is a client bug, and
     silently reading it as ``false`` would turn "I meant to switch this on"
     into "I switched it off".
@@ -436,9 +431,9 @@ class HarnessEnvironmentSettingsSerializer(serializers.Serializer):
 
     Everything but ``enable_tool_evaluation`` is a record of how the
     environment was built and cannot be edited; secrets are names only.
-    ``enable_tool_evaluation`` is the tool-call judge's switch — read here,
-    written by ``PUT evaluations/tool-call/`` (frontend contract v1.9 P31).
-    It is never null: an environment with no run test reads ``false``.
+    ``enable_tool_evaluation`` is the tool-call judge's switch, written by
+    ``PUT evaluations/tool-call/``. Never null: an environment with no run
+    test reads ``false``.
     """
 
     schema_version = serializers.CharField(allow_null=True)

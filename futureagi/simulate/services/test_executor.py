@@ -3968,11 +3968,8 @@ class TestExecutor:
                 run_test = call_execution.test_execution.run_test
 
             # Get expected eval configs - either specific ones or all for the run test.
-            # TH-8055: `is not None`, matching `_run_simulate_evaluations`'s
-            # own arm (P35) -- an explicitly-empty `eval_config_ids=[]` (the
-            # recovery `except` at the bottom of `_run_simulate_evaluations`
-            # can reach here with one) must not widen to "every config on the
-            # run test".
+            # `is not None`: an explicitly-empty `eval_config_ids=[]` must not
+            # widen to "every config on the run test".
             if eval_config_ids is not None:
                 expected_eval_configs = SimulateEvalConfig.objects.filter(
                     id__in=eval_config_ids, deleted=False
@@ -4239,10 +4236,8 @@ class TestExecutor:
             logger.info(f"Starting evaluations for call {call_execution.id}")
 
             # Get eval configs - either specific ones or all for the run test.
-            # TH-8055 P35: `eval_config_ids is not None` (an explicit list,
-            # possibly empty) is distinct from `eval_config_ids is None`
-            # (every config on the run test) -- an explicitly-empty selection
-            # must stay empty, never widen to "every config".
+            # An explicitly-empty selection must stay empty, never widen to
+            # "every config".
             if eval_config_ids is not None:
                 eval_configs = SimulateEvalConfig.objects.filter(
                     id__in=eval_config_ids, deleted=False
@@ -4254,14 +4249,11 @@ class TestExecutor:
 
             if not eval_configs.exists():
                 logger.info(f"No evaluation configs found for run test {run_test.id}")
-                # TH-8055 P35: the tool-call judge switch is independent of
-                # the eval catalogue (contract v1.9 §13), so a run test with
-                # zero SimulateEvalConfig rows must still reach the judge
-                # when enable_tool_evaluation is on -- but only for an
-                # explicit (harness) dispatch: `eval_config_ids is not None`
-                # scopes this to a caller that named a selection, so a native
-                # run test's undispatched call (`eval_config_ids is None`)
-                # keeps its pre-TH-8055 behaviour (P35, harness receipts only).
+                # The tool-call judge switch is independent of the eval
+                # catalogue, so zero SimulateEvalConfig rows must still reach
+                # the judge when enable_tool_evaluation is on -- but only for
+                # an explicit (harness) dispatch, not a native run test's
+                # undispatched call.
                 if run_test.enable_tool_evaluation and eval_config_ids is not None:
                     try:
                         self._run_tool_evaluation(
@@ -5391,10 +5383,9 @@ class TestExecutor:
             else:
                 agent_version = agent_definition.get_version(selected_version.id)
 
-            # A harness `AgentDefinition` has no `AgentVersion`
-            # (`_provision_agent_definition`), so `latest_version` is None.
-            # Only the voice branch reads `snapshot`, and it already treats
-            # `{}` as absent.
+            # A harness `AgentDefinition` has no `AgentVersion`, so
+            # `latest_version` is None. Only the voice branch reads
+            # `snapshot`, and it already treats `{}` as absent.
             snapshot = agent_version.configuration_snapshot if agent_version else {}
             # Check if this is a TEXT (chat) agent
             agent_type = agent_definition.agent_type

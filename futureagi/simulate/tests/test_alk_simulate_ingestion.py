@@ -435,8 +435,7 @@ class TestProvisionRunTest:
         assert resp.status_code == 400, resp.content
 
     def test_provisioned_run_test_defaults_tool_evaluation_off(self, auth_client):
-        """P36: nothing about how an environment was built turns the tool-call
-        judge on. A caller who says nothing gets it off."""
+        """A caller who says nothing gets the tool-call judge off by default."""
         resp = self._provision(
             auth_client,
             name="tool-eval-default",
@@ -454,14 +453,7 @@ class TestProvisionRunTest:
         assert run_test.enable_tool_evaluation is False
 
     def test_provisioned_run_test_accepts_tool_evaluation_on(self, auth_client):
-        """P36's other half: the SDK-first door can start a run test with the
-        judge already on, so a runner that knows it is going to want tool
-        grading does not have to make a second call.
-
-        Failing scenario this catches: accept the field on the serializer and
-        forget to pass it into `RunTest.objects.create` -- the request then
-        succeeds, the column stays False, and nothing complains.
-        """
+        """The SDK-first door can start a run test with the judge already on."""
         resp = self._provision(
             auth_client,
             name="tool-eval-on",
@@ -482,8 +474,7 @@ class TestProvisionRunTest:
     def test_provisioning_refuses_tool_evaluation_for_a_versionless_voice_agent(
         self, auth_client
     ):
-        """P35's invariant is the run test's, not the PUT's: the SDK door must
-        not create the shape the PUT answers 409 for."""
+        """The SDK door must refuse the same shape the PUT endpoint answers 409 for."""
         resp = self._provision(
             auth_client,
             name="voice-tool-eval",
@@ -504,7 +495,7 @@ class TestProvisionRunTest:
     def test_scenario_id_provisioning_also_carries_the_switch(
         self, auth_client, scenario
     ):
-        """P36a's other create: the `scenario_ids` branch writes the column too."""
+        """The `scenario_ids` provisioning branch writes the switch too."""
         resp = self._provision(
             auth_client,
             name="tool-eval-scenarios",
@@ -934,11 +925,8 @@ class TestResultIngest:
     def test_a_harness_receipt_with_the_switch_off_still_short_circuits(
         self, auth_client, run_test
     ):
-        """The switch-off half of the ALK short circuit, pinned directly.
-        `run_test.enable_tool_evaluation` is `False` by default, so a
-        harness receipt with no selected evals must still take the short
-        circuit and never dispatch.
-        """
+        """With the switch off (the default), a harness receipt with no
+        selected evals still takes the short circuit and never dispatches."""
         test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
         assert run_test.enable_tool_evaluation is False
 
@@ -967,12 +955,9 @@ class TestResultIngest:
     def test_a_harness_receipt_with_the_switch_on_dispatches_instead(
         self, auth_client, run_test
     ):
-        """The switch-on half of the same short circuit -- with
-        `enable_tool_evaluation = True` and no selected evals, a harness
-        receipt must take the dispatch arm instead of the short circuit,
-        and the selection it dispatches with must stay `[]` rather than
-        widen to `None`.
-        """
+        """With the switch on, a harness receipt with no selected evals
+        dispatches instead, and the selection stays `[]` rather than widening
+        to `None`."""
         run_test.enable_tool_evaluation = True
         run_test.save(update_fields=["enable_tool_evaluation"])
         test_execution_id, call_ids = _start_and_batch(auth_client, run_test)
@@ -1002,16 +987,10 @@ class TestResultIngest:
     def test_a_switch_on_receipt_leaves_the_call_awaiting_its_grading_job(
         self, auth_client, run_test
     ):
-        """TH-8055 P35, known limit: "With the switch on and no eval
-        selected, a harness run's completion depends on the eval worker
-        running its per-call job (the switch-off short circuit stamped
-        completion synchronously); a job accepted and never executed leaves
-        the call `eval_started` without `eval_completed`, and the run
-        pending." Unlike `test_a_harness_receipt_with_the_switch_on_dispatches_instead`
-        above, `_dispatch_evaluations_once` itself is not mocked here -- only
-        the Celery enqueue at its boundary is a no-op -- so this documents
-        the state the call is actually left in once the receipt is accepted.
-        """
+        """With the switch on and no eval selected, a harness call's
+        completion depends on the eval worker running its per-call job: a
+        job accepted but not yet executed leaves the call `eval_started`
+        without `eval_completed`."""
         run_test.enable_tool_evaluation = True
         run_test.save(update_fields=["enable_tool_evaluation"])
         test_execution_id, call_ids = _start_and_batch(auth_client, run_test)

@@ -1487,14 +1487,8 @@ def test_the_cap_only_drops_survivors_past_the_eighth(organization, workspace):
 def test_receipt_dispatches_evaluations_when_only_the_tool_switch_is_on(
     organization, django_capture_on_commit_callbacks
 ):
-    """TH-8055: the switch is independent of the eval catalogue (contract
-    v1.9 §13) -- a hosted receipt for an environment with zero selected evals
-    must still dispatch when the run test's tool-call judge is on.
-
-    Before the fix, `_apply_receipt_to_call`'s `if selected:` was the only
-    dispatch guard, so a switched-on run with no runnable eval never called
-    `_dispatch_evaluations_once` at all.
-    """
+    """A hosted receipt for an environment with zero selected evals must
+    still dispatch when the run test's tool-call judge is on."""
     from simulate.services.hosted_harness import canonical_digest
     from simulate.services.hosted_harness_ingestion import ingest_result_receipt
 
@@ -1570,12 +1564,9 @@ def test_receipt_dispatches_evaluations_when_only_the_tool_switch_is_on(
 
 @pytest.mark.django_db
 def test_hosted_scenario_provision_leaves_tool_evaluation_off(organization, workspace):
-    """TH-8055: the v3/hosted gateway is not a door for the tool-call switch
-    (contract v1.9 P36a) -- `services/hosted_harness.py::provision_scenarios`
-    never reads `enable_tool_evaluation` off the guest payload it hands to
-    `provision_alk_sim_run_test`, so even a guest payload that carries the key
-    cannot turn the switch on.
-    """
+    """The v3/hosted gateway is not a door for the tool-call switch:
+    `provision_scenarios` never reads `enable_tool_evaluation` off the guest
+    payload, so even a guest payload that carries the key cannot turn it on."""
     from simulate.services.hosted_harness import provision_scenarios
 
     job, _ = create_hosted_job(
@@ -1609,16 +1600,9 @@ def test_hosted_scenario_provision_leaves_tool_evaluation_off(organization, work
 def test_the_tool_switch_does_not_regrade_a_harness_result_column(
     organization, django_capture_on_commit_callbacks
 ):
-    """TH-8055: before this fix, `eval_config_ids=selected or None` let the
-    switch widen an explicit empty selection into "every config on the run
-    test" once it reached `_run_simulate_evaluations` -- including a harness
-    result column's own empty-mapping `SimulateEvalConfig` row, created by
-    `_get_or_create_harness_eval_config` for every `platform_template` the
-    receipt resolves. The platform evaluator would then re-grade (and, on
-    error, overwrite) that column's stored verdict -- the exact waste and
-    risk `_apply_harness_evaluation_outputs`'s own docstring says this path
-    must never cause.
-    """
+    """The switch must not widen an explicit empty selection into "every
+    config on the run test" -- that would re-grade, and on error overwrite,
+    a harness result column's own stored verdict."""
     from model_hub.models.evals_metric import EvalTemplate
     from simulate.models import CallExecution, SimulateEvalConfig
     from simulate.services.hosted_harness import canonical_digest
@@ -1698,9 +1682,7 @@ def test_the_tool_switch_does_not_regrade_a_harness_result_column(
     }
     receipt["digest"] = canonical_digest(receipt)
 
-    # Patched at the call site `_dispatch_evaluations_once` actually uses --
-    # `alk_simulate_ingestion` imports `_run_simulate_evaluations_task` from
-    # `test_executor` at module scope.
+    # Patched at the call site `_dispatch_evaluations_once` actually uses.
     with (
         patch(
             "simulate.services.alk_simulate_ingestion._run_simulate_evaluations_task"
@@ -1716,13 +1698,12 @@ def test_the_tool_switch_does_not_regrade_a_harness_result_column(
     config = SimulateEvalConfig.objects.get(
         run_test_id=job.run_test_id, name="Politeness"
     )
-    # [] -- not None -- is what stops `_run_simulate_evaluations` from
-    # widening the dispatch to "every config on the run test".
+    # [] -- not None -- is what stops the dispatch from widening to "every
+    # config on the run test".
     task.apply_async.assert_called_once_with(args=(str(call.id), []))
 
-    # The harness's own verdict on that column is untouched: it was written
-    # by `_apply_harness_evaluation_outputs` before dispatch, and the mocked
-    # task never ran, so nothing re-graded or overwrote it.
+    # The harness's own verdict on that column is untouched: the mocked task
+    # never ran, so nothing re-graded or overwrote it.
     call.refresh_from_db()
     assert call.eval_outputs[str(config.id)]["source"] == "harness"
 
@@ -1731,15 +1712,8 @@ def test_the_tool_switch_does_not_regrade_a_harness_result_column(
 def test_a_switch_lookup_failure_never_loses_the_receipt(
     organization, django_capture_on_commit_callbacks
 ):
-    """TH-8055: before this fix, `_tool_evaluation_on`'s read sat outside the
-    `try`/`except` and the `isinstance` type guard that already wrap
-    `runnable_eval_config_ids`'s read a few lines above it -- so a transient
-    DB error on that one extra query would propagate out of
-    `_apply_receipt_to_call`, past the receipt writer, and the receipt would
-    be lost. The `# noqa: BLE001` on that `except` already says a receipt
-    must never be lost over what it schedules next; this pins that the
-    switch lookup now honours the same promise.
-    """
+    """A transient DB error on the tool-switch lookup must not propagate out
+    of `_apply_receipt_to_call` and lose the receipt."""
     from django.db.utils import OperationalError
 
     from simulate.models import CallExecution

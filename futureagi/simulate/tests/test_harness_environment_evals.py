@@ -143,10 +143,9 @@ def _set_tool_call(client, job, workspace, enabled):
 
 
 def _text_environment(user, workspace):
-    """A built, TEXT-modality environment -- one the switch can be turned on
-    for. `environment` above is voice-modality with no `AgentVersion`, which
-    the switch's 409 check now refuses to turn on.
-    """
+    """A built, TEXT-modality environment the switch can be turned on for.
+    `environment` above is voice with no `AgentVersion`, which the switch's
+    409 check refuses."""
     job, _ = create_hosted_job(
         user.organization,
         _payload(),
@@ -1660,13 +1659,8 @@ def test_run_add_moves_the_environment_clock_only_when_something_changed(
 
 @pytest.mark.django_db
 def test_tool_call_switch_is_read_from_the_detail(env_client, environment, workspace):
-    """P31: `settings.enable_tool_evaluation` is a boolean on every detail, off
-    by default, and it reports the run test's column rather than a constant.
-
-    Failing scenario this catches: return a hard-coded `False` from `_settings`
-    and every other test in this file still passes while the read surface lies
-    about an environment whose switch is on.
-    """
+    """`settings.enable_tool_evaluation` is a boolean on every detail, off by
+    default, and reports the run test's column rather than a constant."""
     first = _detail(env_client, environment, workspace)
     assert first.status_code == 200, first.content
     assert first.json()["settings"]["enable_tool_evaluation"] is False
@@ -1684,8 +1678,8 @@ def test_tool_call_switch_is_read_from_the_detail(env_client, environment, works
 def test_tool_call_switch_reads_false_before_the_environment_is_built(
     env_client, user, workspace
 ):
-    """P31: never null and never absent — an environment with no run test
-    yet reads `false`, not `null`."""
+    """Never null and never absent — an environment with no run test yet
+    reads `false`, not `null`."""
     unbuilt, _ = create_hosted_job(
         user.organization,
         _payload(),
@@ -1699,13 +1693,8 @@ def test_tool_call_switch_reads_false_before_the_environment_is_built(
 
 @pytest.mark.django_db
 def test_tool_call_switch_toggles(env_client, user, workspace):
-    """P32: PUT sets the column and answers with the whole environment detail,
-    already showing the new value, in both directions.
-
-    Uses a TEXT-modality environment: the shared `environment` fixture is
-    voice-modality with no `AgentVersion`, which the switch now refuses to
-    turn on.
-    """
+    """PUT sets the column and answers with the whole environment detail,
+    already showing the new value, in both directions."""
     environment = _text_environment(user, workspace)
     on = _set_tool_call(env_client, environment, workspace, True)
     assert on.status_code == 200, on.content
@@ -1731,21 +1720,15 @@ def test_tool_call_switch_toggles(env_client, user, workspace):
     environment.run_test.refresh_from_db()
     assert environment.run_test.enable_tool_evaluation is False
 
-    # Turning it on and off again binds no eval and leaves the catalogue lists
-    # alone: this is a switch, not an entry (contract v1.9 §13 opening).
+    # Turning it on and off again binds no eval and leaves the catalogue
+    # lists alone: this is a switch, not an entry.
     assert off.json()["evaluations"]["selected"] == []
 
 
 @pytest.mark.django_db
 def test_tool_call_switch_is_idempotent(env_client, user, workspace):
-    """P34: setting the value it already has is a 200, not an error, and moves
-    only the environment's content clock.
-
-    There is no second row to create, so idempotency here means "the repeat is
-    accepted and changes nothing else" -- including that it does not somehow
-    flip the value back. Uses a TEXT-modality environment for the same reason
-    `test_tool_call_switch_toggles` does.
-    """
+    """Setting the value it already has is a 200, not an error, and moves
+    only the environment's content clock."""
     environment = _text_environment(user, workspace)
     first = _set_tool_call(env_client, environment, workspace, True)
     assert first.status_code == 200, first.content
@@ -1767,8 +1750,8 @@ def test_tool_call_switch_is_idempotent(env_client, user, workspace):
 
 @pytest.mark.django_db
 def test_tool_call_switch_refusals(env_client, environment, user, workspace):
-    """P33: the same 404 and 409 as this endpoint's three siblings, and a 400
-    for a body this switch cannot read."""
+    """The same 404 and 409 as this endpoint's three siblings, and a 400 for
+    a body this switch cannot read."""
     import uuid
 
     missing = _set_tool_call(
@@ -1817,7 +1800,6 @@ def test_tool_call_switch_refusals(env_client, environment, user, workspace):
     )
     assert unknown_field.status_code == 400, unknown_field.content
 
-    # Two more P33 clauses.
     null_value = env_client.put(
         f"{ENVIRONMENTS}/{environment.id}/evaluations/tool-call/",
         {"enable_tool_evaluation": None},
@@ -1843,14 +1825,8 @@ def test_tool_call_switch_refusals(env_client, environment, user, workspace):
 
 @pytest.mark.django_db
 def test_tool_call_switch_not_visible_across_workspaces(env_client, user, workspace):
-    """P33's tenancy half: an environment that exists, but in a workspace the
-    caller did not ask for, is a 404 -- and the write must not land.
-
-    Failing scenario this catches: resolve the job with a bare
-    `HostedHarnessJob.objects.get(id=...)` in the new action instead of going
-    through `_run_test_job`/`_queryset`, and one workspace can switch on a
-    judge that bills another workspace's calls.
-    """
+    """An environment that exists, but in a workspace the caller did not ask
+    for, is a 404 -- and the write must not land."""
     from accounts.models.workspace import Workspace
 
     other_workspace = Workspace.objects.create(
@@ -1869,26 +1845,14 @@ def test_tool_call_switch_not_visible_across_workspaces(env_client, user, worksp
     response = _set_tool_call(env_client, foreign, workspace, True)
     assert response.status_code == 404
     assert response.json()["detail"] == "Environment not found"
-    # The 404 is the whole signal, deliberately. `foreign` came straight from
-    # `create_hosted_job` with no attempt and no scenario registration, so it
-    # has no run test at all -- there is no column for a leaked write to land
-    # in, and an assertion on `foreign.run_test` would pass no matter what the
-    # endpoint did. What this test proves is the refusal itself: a bare
-    # `HostedHarnessJob.objects.get(...)` would answer 409 here (the row
-    # exists, it just has no run test), and 404 is the only answer that says
-    # the caller may not see this environment at all.
+    # `foreign` has no run test, so there is no column for a leaked write to
+    # land in -- the refusal itself, 404 rather than 409, is what's under test.
 
 
 def test_tool_call_switch_does_not_publish_its_internals_to_swagger():
-    """TH-8055: `operation_description` on the PUT's `@validated_request` must
-    exist, or drf-yasg falls back to the action's internal docstring -- which
-    cites an internal file path and the contract's own "never committed"
-    working-file name -- as the published `swagger.json` description.
-
-    Failing scenario this catches: drop the `operation_description` keyword
-    argument and `overrides["operation_description"]` raises `KeyError`
-    instead of holding the one-sentence summary.
-    """
+    """`operation_description` on the PUT's `@validated_request` must exist,
+    or drf-yasg falls back to the action's internal docstring as the
+    published `swagger.json` description."""
     from simulate.views.harness_environment import HarnessEnvironmentViewSet
 
     overrides = HarnessEnvironmentViewSet.set_tool_call_evaluation._swagger_auto_schema
@@ -1903,14 +1867,9 @@ def test_tool_call_switch_does_not_publish_its_internals_to_swagger():
 def test_tool_call_switch_refuses_on_for_a_versionless_voice_environment(
     env_client, environment, workspace
 ):
-    """TH-8055: a hosted voice environment's agent definition has no
-    `AgentVersion` (`_provision_agent_definition` never creates one), so the
-    judge would silently never run. Turning the switch on for that shape is
-    refused, 409; turning it off is always allowed.
-
-    `environment` itself is exactly this shape -- voice, no version -- which
-    is what makes it usable here without any extra setup.
-    """
+    """A hosted voice environment's agent definition has no `AgentVersion`,
+    so the judge would silently never run. Turning the switch on for that
+    shape is refused, 409; turning it off is always allowed."""
     on = _set_tool_call(env_client, environment, workspace, True)
     assert on.status_code == 409, on.content
     assert on.json()["detail"] == (

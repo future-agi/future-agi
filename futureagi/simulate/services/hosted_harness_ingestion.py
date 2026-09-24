@@ -879,24 +879,22 @@ def _apply_receipt_to_call(
                 "harness_eval_selection_lookup_failed for call %s", call_id
             )
             selected, tool_on = [], False
-        # TH-8055 P35: the tool-call judge switch is independent of the eval
-        # catalogue (contract v1.9 §13), so it must still dispatch when this
-        # environment has no runnable eval selected.
+        # The tool-call judge switch is independent of the eval catalogue, so
+        # it must still dispatch when this environment has no runnable eval selected.
         if selected or tool_on:
             transaction.on_commit(
                 lambda: _dispatch_evaluations_once(
                     CallExecution.objects.get(id=call_id),
-                    eval_config_ids=selected,  # [] stays [], never None (TH-8055 P35)
+                    eval_config_ids=selected,  # [] stays [], never None
                 )
             )
 
 
 def _tool_evaluation_on(run_test_id) -> bool:
-    """Whether ``run_test_id``'s tool-call judge switch (P35) is on.
+    """Whether ``run_test_id``'s tool-call judge switch is on.
 
-    One column read, independent of ``runnable_eval_config_ids`` -- callers
-    OR this in with their own catalogue-eval check so the switch alone can
-    still trigger dispatch when zero evals are selected (TH-8055 P35).
+    Callers OR this in with their own catalogue-eval check so the switch
+    alone can still trigger dispatch when zero evals are selected.
     """
     from simulate.models import RunTest
 

@@ -505,37 +505,24 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     def set_tool_call_evaluation(self, request, pk=None):
         """Turn the tool-call judge on or off for this environment.
 
-        Deliberately not an eval. The three endpoints above take a name or an
-        id out of a catalogue; this one takes a boolean, because what it sets
-        is a single column on the run test
-        (``RunTest.enable_tool_evaluation``) that the grading path has read
-        since long before environments existed
-        (``services/test_executor.py``'s ``_run_tool_evaluation``). It is
-        never offered by ``available``, never listed in
-        ``evaluations.selected``, and never counted against the cap of eight.
+        Deliberately not an eval: it sets a single column on the run test
+        (``RunTest.enable_tool_evaluation``), never offered by ``available``,
+        never listed in ``evaluations.selected``, and never counted against
+        the cap of eight.
 
         What "on" costs is worth saying out loud: every call the environment
         produces is read once more by a judge that grades the tools the agent
-        reached for, one grading per tool call, charging that judge's tokens.
-        Its output goes to the call's ``tool_outputs`` column, which is not
-        where verdicts live, so nothing here can touch a stored verdict.
+        reached for. Its output goes to ``tool_outputs``, not where verdicts
+        live, so this can never touch a stored verdict.
 
         ``PUT`` rather than ``PATCH``: the body carries the whole state of the
-        switch, so the same request twice leaves the same result. The answer is
-        the whole environment detail, as the add's 201 is, so the client reads
-        the new value back from the server instead of patching its own copy.
+        switch, so the same request twice leaves the same result, and the
+        response is the whole environment detail so the client doesn't have
+        to refetch.
 
-        Past calls are untouched in both directions -- turning it on grades
-        nothing that already ran, and turning it off erases nothing that was
-        already graded.
-
-        Turning it on is refused, 409, for a hosted voice environment whose
-        agent definition has no version yet -- the judge has nothing to grade
-        against on that shape today (contract v1.9 §13, P35 amended). Turning
-        it off is always allowed.
-
-        Contract api_contracts/harness/eval-offer-backend-frontend.md v1.9 §13
-        (P31-P36), F2.
+        Past calls are untouched either way. Turning it on is refused, 409,
+        for a hosted voice environment whose agent definition has no version
+        yet; turning it off is always allowed.
         """
         from django.db import transaction
 
@@ -557,17 +544,13 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                     },
                     status=status.HTTP_409_CONFLICT,
                 )
-        # `job.run_test` caches the instance on the job, and
-        # `environment_detail` -> `_settings` reads the same attribute below,
-        # so the response reports the value this request just wrote without a
-        # refetch and without a second query.
+        # `job.run_test` caches the instance, so `environment_detail` below
+        # reports the value this request just wrote without a second query.
         run_test = job.run_test
         run_test.enable_tool_evaluation = enable_tool_evaluation
         with transaction.atomic():
             run_test.save(update_fields=["enable_tool_evaluation", "updated_at"])
-            # Unconditional, exactly as the add and the remove are: whether an
-            # environment's tool calls are graded is part of what the environment
-            # is, and one rule for the list's clock beats a special case for the
-            # request that set the value it already had.
+            # Unconditional, like the add and the remove: one rule for the
+            # list's clock beats a special case for a no-op request.
             _touch_content(job)
         return Response(environment_detail(job))

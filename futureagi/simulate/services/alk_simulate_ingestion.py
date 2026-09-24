@@ -315,11 +315,9 @@ def provision_alk_sim_run_test(
       every conversation case is one datapoint.
 
     ``enable_tool_evaluation`` starts the run test with the tool-call judge on.
-    It defaults to off: a run costs an extra judge per call while it is on, and
-    that is a choice someone makes, not a default they inherit. A v3
-    environment leaves it off here and turns it on through
-    ``PUT /simulate/api/harness-environments/{id}/evaluations/tool-call/``
-    (frontend contract v1.9 §13 P36a).
+    Defaults to off, since it costs an extra judge per call. A v3 environment
+    leaves it off here and turns it on later through
+    ``PUT /simulate/api/harness-environments/{id}/evaluations/tool-call/``.
 
     One CallExecution is created per dataset row at batch time, so keep the row
     count (== persona count, or the reused scenarios' rows) equal to the
@@ -921,9 +919,9 @@ def ingest_alk_sim_result(
         call_metadata = call_execution.call_metadata or {}
         # Dispatched only once the row is COMPLETED, with the config ids chosen at provision.
         selected_eval_config_ids = _selected_eval_config_ids(call_execution)
-        # TH-8055 P35: the tool-call judge switch is independent of the eval
-        # catalogue (contract v1.9 §13), so a switched-on run test must still
-        # take the dispatch arm below even with no catalogue eval selected.
+        # The tool-call judge switch is independent of the eval catalogue, so
+        # a switched-on run test must still take the dispatch arm below even
+        # with no catalogue eval selected.
         run_test_id = getattr(call_execution.test_execution, "run_test_id", None)
         if (
             "harness_evaluations" in call_metadata
@@ -940,12 +938,11 @@ def ingest_alk_sim_result(
             call_execution.call_metadata = call_metadata
             call_execution.save(update_fields=["call_metadata"])
         else:
-            # TH-8055 P35: a harness receipt's selection must reach the
-            # dispatcher unchanged -- `[]` stays `[]`, never widened to `None`
-            # ("every config on the run test") -- so a switch-driven dispatch
-            # cannot re-grade a harness result column. A non-harness ALK run
-            # keeps its pre-existing `or None` ("no explicit selection means
-            # every config"), since it was never routed through the switch.
+            # A harness receipt's selection must reach the dispatcher
+            # unchanged -- `[]` stays `[]`, never widened to `None` ("every
+            # config on the run test") -- so a switch-driven dispatch cannot
+            # re-grade a harness result column. A non-harness ALK run keeps
+            # its pre-existing `or None` fallback.
             eval_dispatched = _dispatch_evaluations_once(
                 call_execution,
                 eval_config_ids=(
@@ -1816,11 +1813,10 @@ def _selected_eval_config_ids(call_execution: CallExecution) -> list[str]:
 
 
 def _tool_evaluation_on(run_test_id) -> bool:
-    """Whether ``run_test_id``'s tool-call judge switch (P35) is on.
+    """Whether ``run_test_id``'s tool-call judge switch is on.
 
-    One column read, independent of ``runnable_eval_config_ids`` -- callers
-    OR this in with their own catalogue-eval check so the switch alone can
-    still trigger dispatch when zero evals are selected (TH-8055 P35).
+    Callers OR this in with their own catalogue-eval check so the switch
+    alone can still trigger dispatch when zero evals are selected.
     """
     if not run_test_id:
         return False
