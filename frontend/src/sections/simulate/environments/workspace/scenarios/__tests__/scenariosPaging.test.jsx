@@ -48,10 +48,17 @@ const PAGING_ROWS = makeServerRows(60);
 
 const renderStep = (scenarios = PAGING_ROWS) => {
   const patch = vi.fn();
+  const onStartRun = vi.fn();
   renderWithClient(
-    <ScenariosStep env={TEST_ENV} envState={envStateFor(scenarios)} patch={patch} />,
+    <ScenariosStep
+      env={TEST_ENV}
+      envState={envStateFor(scenarios)}
+      patch={patch}
+      canRun
+      onStartRun={onStartRun}
+    />,
   );
-  return { patch };
+  return { patch, onStartRun };
 };
 
 const headerCheckbox = () => screen.getAllByRole("checkbox")[0];
@@ -187,6 +194,84 @@ describe("ScenariosStep — select all matching", () => {
     // Uncheck the first row checkbox (index 1; 0 is the header).
     fireEvent.click(screen.getAllByRole("checkbox")[1]);
     expect(screen.getByText(/All 59 matching scenarios selected/)).toBeInTheDocument();
+  });
+});
+
+describe("ScenariosStep — run a selection", () => {
+  const runButton = () => screen.getByRole("button", { name: /scenarios? × \d+ repeat/ });
+
+  it("runs the ticked rows by scenario key, not row id", async () => {
+    const { onStartRun } = renderStep();
+    await screen.findByText(/Showing 1–25 of 60/);
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    fireEvent.click(screen.getAllByRole("checkbox")[2]);
+    fireEvent.click(runButton());
+
+    await waitFor(() => expect(onStartRun).toHaveBeenCalledTimes(1));
+    const [keys, trials] = onStartRun.mock.calls[0];
+    // Two scenario keys (the table's default grouping decides which rows lead),
+    // never the row ids (`srv-N`) the selection holds.
+    expect(keys).toHaveLength(2);
+    keys.forEach((k) => expect(k).toMatch(/^key-\d+$/));
+    expect(trials).toBe(1);
+  });
+
+  it("runs every match minus the un-ticked rows, by key", async () => {
+    const { onStartRun } = renderStep();
+    await screen.findByText(/Showing 1–25 of 60/);
+    fireEvent.click(headerCheckbox());
+    fireEvent.click(screen.getByRole("button", { name: /Select all 60 matching/ }));
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    fireEvent.click(runButton());
+
+    await waitFor(() => expect(onStartRun).toHaveBeenCalledTimes(1));
+    const [keys] = onStartRun.mock.calls[0];
+    expect(keys).toHaveLength(59);
+    expect(new Set(keys).size).toBe(59);
+    keys.forEach((k) => expect(k).toMatch(/^key-\d+$/));
+    // Exactly the one un-ticked scenario is left out.
+    const missing = PAGING_ROWS.map((r) => r.scenario_key).filter((k) => !keys.includes(k));
+    expect(missing).toHaveLength(1);
+  });
+
+  it("runs only the filtered match in all-mode, not the whole suite", async () => {
+    const term = PAGING_ROWS[0].name.slice(0, 10);
+    const expected = queryScenarioFixture(
+      { search: term, group_by: "", limit: 1000 },
+      PAGING_ROWS,
+    ).results.map((r) => r.scenario_key);
+    expect(expected.length).toBeGreaterThan(0);
+    expect(expected.length).toBeLessThan(60);
+
+    const { onStartRun } = renderStep();
+    await screen.findByText(/Showing 1–25 of 60/);
+    fireEvent.change(screen.getByPlaceholderText(/Search scenarios/i), {
+      target: { value: term },
+    });
+    await screen.findByText(new RegExp(`of ${expected.length}\\b`));
+    fireEvent.click(headerCheckbox());
+    const escalate = screen.queryByRole("button", { name: /Select all \d+ matching/ });
+    if (escalate) fireEvent.click(escalate);
+    fireEvent.click(runButton());
+
+    await waitFor(() => expect(onStartRun).toHaveBeenCalledTimes(1));
+    expect([...onStartRun.mock.calls[0][0]].sort()).toEqual([...expected].sort());
+  });
+});
+
+describe("ScenariosStep — background refetch failure", () => {
+  it("keeps the loaded rows and offers Retry when a later fetch fails", async () => {
+    renderStep();
+    await screen.findByText(/Showing 1–25 of 60/);
+    listScenarios.mockRejectedValue(new Error("boom"));
+    fireEvent.click(screen.getByLabelText("Go to page 2"));
+
+    expect(await screen.findByText(/Couldn't refresh the scenarios/)).toBeInTheDocument();
+    expect(screen.queryByText(/Couldn't load scenarios/)).toBeNull();
+
+    listScenarios.mockImplementation((jobId, params) => queryScenarioFixture(params, PAGING_ROWS));
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.queryByText(/Couldn't refresh the scenarios/)).toBeNull());
   });
 });
 

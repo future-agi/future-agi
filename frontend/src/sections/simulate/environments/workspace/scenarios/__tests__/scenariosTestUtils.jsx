@@ -24,11 +24,13 @@ export const envStateFor = (rows = SERVER_ROWS) => ({
 });
 
 // A larger server suite for pagination: repeat the samples, re-id and renumber
-// so ids stay unique and `number` is a clean 1..n sequence.
+// so ids stay unique and `number` is a clean 1..n sequence. The row id and the
+// scenario key differ, as they do on the server (a UUID vs a slug), so a path
+// that sends the wrong one fails its test.
 export const makeServerRows = (n) =>
   Array.from({ length: n }, (_, i) => {
     const base = SERVER_ROWS[i % SERVER_ROWS.length];
-    return { ...base, id: `srv-${i}`, scenario_key: `srv-${i}`, number: i + 1 };
+    return { ...base, id: `srv-${i}`, scenario_key: `key-${i}`, number: i + 1 };
   });
 
 export function renderWithClient(ui) {

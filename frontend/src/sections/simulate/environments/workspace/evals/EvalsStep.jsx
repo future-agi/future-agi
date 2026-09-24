@@ -43,8 +43,9 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
   const needsScenarios = (envState?.scenarios?.length || 0) === 0;
 
   const store = useAppliedEvals(envState, patch);
-  // Env-level "enable tool call evaluation" — client state today, persisted
-  // through a mocked seam until the backend endpoint exists (useToolCallEval).
+  // Env-level "enable tool call evaluation". A backed env persists it through
+  // PUT .../evaluations/tool-call/ and reads it back from the detail; a
+  // forked/template env has no server counterpart, so it stays client state.
   const toolCall = useToolCallEval();
 
   // A real backend-backed env drives its applied set from the environment
@@ -70,6 +71,17 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
   // the count nor the empty state may be drawn until the list is actually
   // known, so both states are handled before the card.
   const detailUnknown = backed && (detailQuery.isPending || detailQuery.isError);
+
+  const toolCallOn = backed
+    ? !!detailQuery.data?.settings?.enable_tool_evaluation
+    : !!envState?.toolCallEval;
+  const setToolCall = (enabled) => {
+    if (!backed) {
+      patch({ toolCallEval: enabled });
+      return;
+    }
+    toolCall.mutate({ envId: env.id, enabled });
+  };
 
   const appliedEvals = backed ? selectedFromDetail : store.appliedEvals;
   const appliedIds = store.appliedIds;
@@ -182,9 +194,8 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
         )}
       </Stack>
 
-      {/* Tool-call evaluation. Client state for now; the value rides through the
-          mocked useToolCallEval seam until an env-level API lands. Gated on a
-          connected agent — tool calls are read from it during the run. */}
+      {/* Tool-call evaluation. Gated on a connected agent — tool calls are read
+          from it during the run. */}
       <Stack
         direction="row"
         alignItems="center"
@@ -202,18 +213,19 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
         <Tooltip arrow title={locked ? LOCK_TOOLTIP : !envState?.agent ? EVALS_COPY.toolCall.needsAgent : ""}>
           <span>
             <Switch
-              checked={!!envState?.toolCallEval && !!envState?.agent}
-              disabled={locked || !envState?.agent}
-              onChange={(e) => {
-                const enabled = e.target.checked;
-                patch({ toolCallEval: enabled });
-                toolCall.mutate({ envId: env.id, enabled });
-              }}
+              checked={toolCallOn && !!envState?.agent}
+              disabled={locked || !envState?.agent || (backed && (detailUnknown || toolCall.isPending))}
+              onChange={(e) => setToolCall(e.target.checked)}
               inputProps={{ "aria-label": EVALS_COPY.toolCall.title }}
             />
           </span>
         </Tooltip>
       </Stack>
+      {backed && toolCall.isError && (
+        <Alert severity="error" sx={{ mt: -2, mb: 3, typography: "s3" }}>
+          {refusalText(toolCall.error, "Couldn’t change tool-call evaluation. Try again.")}
+        </Alert>
+      )}
 
       {/* A failed remove used to change nothing on screen — the row stays
           (correctly: nothing was removed) but the user was told nothing. The

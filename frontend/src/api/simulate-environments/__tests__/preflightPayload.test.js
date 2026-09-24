@@ -199,6 +199,56 @@ describe("draftToPreflightPayload — platform", () => {
     expect(payload.agent.config.phone_number).toBe("+919123456789");
   });
 
+  it("drops the national trunk 0 once a dial code is applied", () => {
+    const uk = draftToPreflightPayload(phoneDraft({ countryCode: "+44", number: "07911 123456" }));
+    expect(uk.payload.agent.config.phone_number).toBe("+447911123456");
+    const india = draftToPreflightPayload(phoneDraft({ countryCode: "+91", number: "09123456789" }));
+    expect(india.payload.agent.config.phone_number).toBe("+919123456789");
+  });
+
+  it("keeps Italy's leading 0, which stays in international form", () => {
+    const { payload } = draftToPreflightPayload(
+      phoneDraft({ countryCode: "+39", number: "06 1234 5678" }),
+    );
+    expect(payload.agent.config.phone_number).toBe("+390612345678");
+  });
+
+  it("sends an Others phone call as inbound even when the toggle says outbound", () => {
+    const { payload } = draftToPreflightPayload({
+      ...phoneDraft({
+        mode: "phone",
+        countryCode: "+1",
+        number: "4155550100",
+        inboundCalls: false,
+        agentSpeaksFirst: true,
+      }),
+      callDirection: "outbound",
+    });
+    expect(payload.agent.config.inbound).toBe(true);
+    expect(payload.agent.config.target_speaks_first).toBe(true);
+    expect(payload.agent.call_direction).toBe("inbound");
+  });
+
+  it("sends a Vapi phone-mode call as inbound; web mode keeps the toggle", () => {
+    const contact = {
+      countryCode: "+1",
+      number: "4155550100",
+      inboundCalls: false,
+      agentSpeaksFirst: false,
+    };
+    const phone = draftToPreflightPayload(
+      platformDraft({ contact: { ...contact, mode: "phone" }, callDirection: "outbound" }),
+    ).payload;
+    expect(phone.agent.config.inbound).toBe(true);
+    expect(phone.agent.call_direction).toBe("inbound");
+
+    const web = draftToPreflightPayload(
+      platformDraft({ contact: { ...contact, mode: "web" }, callDirection: "outbound" }),
+    ).payload;
+    expect(web.agent.config.inbound).toBe(false);
+    expect(web.agent.call_direction).toBe("outbound");
+  });
+
   it("skips a provider outside the connector enum", () => {
     const { payload, skipped } = draftToPreflightPayload(platformDraft({ provider: "bland" }));
     expect(payload).toBeUndefined();

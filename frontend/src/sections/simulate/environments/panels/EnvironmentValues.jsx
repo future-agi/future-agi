@@ -19,16 +19,16 @@ export default function EnvironmentValues({
   onSecretFiles,
 }) {
   const [open, setOpen] = useState(false);
-  const [uploadError, setUploadError] = useState(null);
   const fileRef = useRef(null);
   const upload = useUploadSecretFile();
 
   // Never read the file's bytes into the browser — the raw File goes to the upload
   // endpoint and only the returned reference is kept; contents are mounted per run.
   // `environment_name` rides along: that alias is the key `secret_refs` needs.
+  // The mutation is `meta.errorHandled`; a rejection shows through the
+  // `upload.error` Alert below.
   const onFile = (file) => {
     if (!file) return;
-    setUploadError(null);
     upload.mutate(
       { file },
       {
@@ -37,12 +37,6 @@ export default function EnvironmentValues({
             ...(prev ?? []),
             { name, size, secret_ref, environment_name },
           ]),
-        // The mutation is `meta.errorHandled`, so the global toast is suppressed
-        // — surface the rejection here or the user is told nothing at all.
-        onError: (err) =>
-          setUploadError(
-            err?.message || "Upload failed. Check the file and try again.",
-          ),
       },
     );
   };
@@ -88,17 +82,6 @@ export default function EnvironmentValues({
         Google service-account JSON only (up to 5 MiB).
       </Typography>
       {upload.error && <Alert severity="error">{errorMessage(upload.error)}</Alert>}
-
-      {uploadError && (
-        <Alert
-          severity="error"
-          variant="outlined"
-          onClose={() => setUploadError(null)}
-          sx={{ typography: "s3", py: 0.5, mt: 1, alignItems: "center" }}
-        >
-          {uploadError}
-        </Alert>
-      )}
 
       {/* Uploaded files echo here, always visible, so an upload made while the
           body is collapsed still confirms. */}

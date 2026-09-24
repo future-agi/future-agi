@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "src/utils/test-utils";
+import { render, screen, fireEvent } from "src/utils/test-utils";
 
 import coverageSample from "src/api/simulate-environments/_fixtures/scenarioSamples/07-coverage.json";
 import CoverageMatrix from "../CoverageMatrix";
@@ -50,9 +50,20 @@ describe("CoverageMatrix", () => {
   it("shows an error state instead of a zero-coverage grid when the request fails", () => {
     // Without this, a failed request renders 0/8 axes and 0% pairs — falsely
     // telling the user their suite covers nothing.
-    useScenarioCoverage.mockReturnValue({ data: undefined, isError: true });
+    const refetch = vi.fn();
+    useScenarioCoverage.mockReturnValue({ data: undefined, isError: true, refetch });
     render(<CoverageMatrix jobId="job-1" search="" filters={{}} />);
     expect(screen.getByText(/Couldn't load coverage/i)).toBeInTheDocument();
     expect(screen.queryByText("8/8")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a loading state, not zero coverage, while the first response is in flight", () => {
+    useScenarioCoverage.mockReturnValue({ data: undefined, isPending: true });
+    render(<CoverageMatrix jobId="job-1" search="" filters={{}} />);
+    expect(screen.getByLabelText("Loading coverage")).toBeInTheDocument();
+    expect(screen.queryByText(/0 scenarios/)).toBeNull();
+    expect(screen.queryByText("0%")).toBeNull();
   });
 });

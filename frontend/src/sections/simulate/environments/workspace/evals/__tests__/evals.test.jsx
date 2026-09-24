@@ -17,8 +17,9 @@ vi.mock("src/api/simulate-environments/harnessEnvironments", () => ({
   getAvailableEvaluations: vi.fn(() => Promise.resolve({ evaluations: [] })),
   addEvaluation: vi.fn(),
   addRunEvaluation: vi.fn(),
+  setToolCallEvaluation: vi.fn(),
 }));
-const { deleteAppliedEvaluation, getHarnessEnvironment } = await import(
+const { deleteAppliedEvaluation, getHarnessEnvironment, setToolCallEvaluation } = await import(
   "src/api/simulate-environments/harnessEnvironments"
 );
 
@@ -92,6 +93,54 @@ describe("EvalsStep — tool-call evaluation toggle", () => {
     expect(toggle).toBeEnabled();
     fireEvent.click(toggle);
     expect(patchSpy).toHaveBeenCalledWith({ toolCallEval: true });
+  });
+});
+
+describe("EvalsStep — tool-call evaluation on a backend-backed env", () => {
+  const agentState = { scenarios: [{ id: "s1" }], evals: [], agent: { typeId: "voice" } };
+  const detail = (on) => ({ evaluations: { selected: [] }, settings: { enable_tool_evaluation: on } });
+
+  afterEach(() => {
+    setToolCallEvaluation.mockReset();
+    getHarnessEnvironment.mockReset();
+  });
+
+  it("reads the switch from settings.enable_tool_evaluation", async () => {
+    getHarnessEnvironment.mockResolvedValue(detail(true));
+    render(<Harness backed initial={agentState} patchSpy={vi.fn()} />);
+    const toggle = screen.getByRole("checkbox", { name: EVALS_COPY.toolCall.title });
+    await waitFor(() => expect(toggle).toBeChecked());
+  });
+
+  it("persists a flip through the endpoint and shows the server's answer", async () => {
+    getHarnessEnvironment.mockResolvedValue(detail(false));
+    setToolCallEvaluation.mockResolvedValue(detail(true));
+    const patchSpy = vi.fn();
+    render(<Harness backed initial={agentState} patchSpy={patchSpy} />);
+    const toggle = screen.getByRole("checkbox", { name: EVALS_COPY.toolCall.title });
+    await waitFor(() => expect(toggle).toBeEnabled());
+
+    fireEvent.click(toggle);
+    await waitFor(() => expect(setToolCallEvaluation).toHaveBeenCalledWith(ENV.id, true));
+    await waitFor(() => expect(toggle).toBeChecked());
+    expect(patchSpy).not.toHaveBeenCalledWith({ toolCallEval: true });
+  });
+
+  it("shows the 409 a voice environment with no agent version returns", async () => {
+    getHarnessEnvironment.mockResolvedValue(detail(false));
+    setToolCallEvaluation.mockRejectedValue({
+      statusCode: 409,
+      detail: "Tool-call evaluation is not available for a voice environment yet",
+    });
+    render(<Harness backed initial={agentState} patchSpy={vi.fn()} />);
+    const toggle = screen.getByRole("checkbox", { name: EVALS_COPY.toolCall.title });
+    await waitFor(() => expect(toggle).toBeEnabled());
+
+    fireEvent.click(toggle);
+    expect(
+      await screen.findByText(/not available for a voice environment yet/),
+    ).toBeInTheDocument();
+    expect(toggle).not.toBeChecked();
   });
 });
 

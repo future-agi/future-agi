@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
 import {
   Box, Stack, Typography, TextField, MenuItem, Tooltip, Collapse, IconButton,
-  Table, TableBody, TableHead, TableRow, TableCell,
+  Table, TableBody, TableHead, TableRow, TableCell, Button, Skeleton,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SectionCard from "../../components/SectionCard";
@@ -46,7 +46,7 @@ export default function CoverageMatrix({ jobId, search, filters, defaultExpanded
   const [colAxis, setColAxis] = useState(undefined);
   const [expanded, setExpanded] = useState(defaultExpanded);
 
-  const { data, isError } = useScenarioCoverage(jobId, { search, filters, rowAxis, colAxis });
+  const { data, isError, isPending, refetch } = useScenarioCoverage(jobId, { search, filters, rowAxis, colAxis });
 
   const axes = data?.axes ?? [];
   const perAxis = useMemo(() => data?.per_axis ?? [], [data]);
@@ -98,10 +98,26 @@ export default function CoverageMatrix({ jobId, search, filters, defaultExpanded
   if (isError) {
     return (
       <SectionCard title="Coverage">
-        <Box sx={{ py: 3, px: 2, textAlign: "center" }}>
+        <Stack alignItems="center" spacing={1} sx={{ py: 3, px: 2 }}>
           <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-            Couldn&apos;t load coverage. Try again.
+            Couldn&apos;t load coverage.
           </Typography>
+          <Button size="small" variant="outlined" onClick={() => refetch()}>
+            Try again
+          </Button>
+        </Stack>
+      </SectionCard>
+    );
+  }
+
+  // Same reason while the first response is in flight: an empty `data` would
+  // render "0 scenarios · Pairs 0%" as if the suite covered nothing.
+  if (isPending) {
+    return (
+      <SectionCard title="Coverage">
+        <Box sx={{ py: 1.5, px: 2 }} aria-busy="true" aria-label="Loading coverage">
+          <Skeleton variant="text" width="40%" />
+          <Skeleton variant="text" width="60%" />
         </Box>
       </SectionCard>
     );

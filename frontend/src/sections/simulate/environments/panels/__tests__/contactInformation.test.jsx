@@ -35,6 +35,15 @@ describe("ContactInformation", () => {
     expect(screen.getByText("Inbound Calls")).toBeInTheDocument();
   });
 
+  it("phone mode: Inbound Calls is locked on, even when the draft says off", () => {
+    render(<ContactInformation {...base} mode="phone" inboundCalls={false} />);
+    const inbound = screen.getByRole("checkbox", { name: "Inbound Calls" });
+    expect(inbound).toBeChecked();
+    expect(inbound).toBeDisabled();
+    // Agent speaks first stays a free choice.
+    expect(screen.getByRole("checkbox", { name: "Agent speaks first" })).toBeEnabled();
+  });
+
   it("phoneOnly: no mode header, but the phone fields are shown", () => {
     render(<ContactInformation {...base} mode="web" phoneOnly />);
     expect(screen.queryByText("Web simulation (WebRTC)")).toBeNull();

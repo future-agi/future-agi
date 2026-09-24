@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Box, Stack, Typography, Button } from "@mui/material";
+import { Alert, Box, Stack, Typography, Button } from "@mui/material";
 import { useSnackbar } from "notistack";
 
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { ConfirmDialog } from "src/components/custom-dialog";
-import { listScenarios } from "src/api/simulate-environments/scenarios";
+import { resolveScenarioSelection } from "src/api/simulate-environments/scenarioSelection";
 import { useAmendScenarios } from "src/api/simulate-environments/scenariosHooks";
 import SectionCard from "../../components/SectionCard";
 import EmptyState from "../../components/EmptyState";
@@ -144,6 +144,13 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   // prefix). Falls back to the bootstrap length until it resolves.
   const suiteQuery = useHarnessScenarios({ jobId: env?.id, page: 0, pageSize: 1 });
   const suiteTotal = suiteQuery.data?.total ?? selected.length;
+  // The list polls every 15s. A failed first load takes the whole tab; a failed
+  // background refetch keeps the rows already on screen and says so inline.
+  const loadFailed = pageData.isError || suiteQuery.isError;
+  const retryLoad = () => {
+    if (pageData.isError) pageData.refetch();
+    if (suiteQuery.isError) suiteQuery.refetch();
+  };
   const hasScenarios = suiteTotal > 0;
   // A change to the search, the filters or the grouping moves the matching set,
   // so the page position and the selection predicate are reset in each change
@@ -228,23 +235,28 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
     setPendingDelete({ count: 1, resolve: async () => [name] });
   };
 
-  // The concrete id list a bulk action targets. include-mode is the picked ids;
-  // all-mode is every scenario minus the user's exceptions. Phase 1 resolves
-  // all-mode against `envState.scenarios` (the current mutation target); the
-  // server-side predicate delete over the filtered suite lands with Phase 2's
-  // amend route.
-  const selectedIdsForAction = () => (
-    sel.mode === "all"
-      ? selected.filter((s) => !sel.idList.includes(s.id)).map((s) => s.id)
-      : sel.idList
-  );
+  // Resolve the selection against the current filter, server-side. The
+  // selection holds row ids; `pick` projects each taken row.
+  const resolveSelection = (pick) =>
+    resolveScenarioSelection(env?.id, {
+      search: debouncedQuery,
+      filters,
+      mode: sel.mode,
+      marked: sel.idList,
+      pick,
+    });
 
-  // Edit → hand the selection to the builder chat as a pinned scaffold, so the
-  // user can add an instruction and send it as a bulk edit against those rows.
-  // Run → start a run scoped to the selection × k. The target rides ?only=…&
-  // trials=k; the product run page doesn't honour those yet (honest gap).
-  const handleRunSelected = (k) => {
-    onStartRun?.(selectedIdsForAction(), k || trials);
+  // Run → start a run scoped to the selection × k. The run route reads
+  // scenario keys, not row ids, so the selection is resolved to keys first.
+  const handleRunSelected = async (k) => {
+    let keys;
+    try {
+      keys = await resolveSelection((r) => r.scenario_key);
+    } catch {
+      enqueueSnackbar("Couldn't start the run — try again", { variant: "error" });
+      return;
+    }
+    if (keys.length) onStartRun?.(keys, k || trials);
   };
 
   // Mirror the predicate selection into the workspace builder chat. include-mode
@@ -266,34 +278,9 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   // "N selected" chip hanging in the chat.
   useEffect(() => () => clearScenarioSelection(), []);
 
-  // Enumerate the scenario names a bulk delete targets by paging the current
-  // filter server-side (group_by="" so a page is a flat slice). include-mode
-  // keeps the picked ids; all-mode keeps everything matching minus the user's
-  // exceptions. Names — not ids — because the amend route resolves drops by name.
-  const resolveSelectionNames = async () => {
-    const wantAll = sel.mode === "all";
-    const marked = new Set(sel.idList);
-    const names = [];
-    let p = 1;
-    let totalPages = 1;
-    do {
-      // eslint-disable-next-line no-await-in-loop
-      const res = await listScenarios(env?.id, {
-        page: p,
-        limit: 100,
-        search: debouncedQuery,
-        group_by: "",
-        ...filters,
-      });
-      (res.results || []).forEach((r) => {
-        const take = wantAll ? !marked.has(r.id) : marked.has(r.id);
-        if (take) names.push(r.name);
-      });
-      totalPages = res.total_pages || 1;
-      p += 1;
-    } while (p <= totalPages);
-    return names;
-  };
+  // The scenario names a bulk delete targets. Names — not ids — because the
+  // amend route resolves drops by name.
+  const resolveSelectionNames = () => resolveSelection((r) => r.name);
 
   // Bulk delete → confirm, then one drop naming the whole selection.
   const bulkDelete = () => {
@@ -377,7 +364,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
         {hasScenarios && <AddButton onClick={() => setAdding(true)} contained locked={locked} />}
       </Stack>
 
-      {pageData.isError || suiteQuery.isError ? (
+      {loadFailed && !pageData.rows.length ? (
         <EmptyState
           icon="solar:danger-triangle-linear"
           title="Couldn't load scenarios"
@@ -390,6 +377,19 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
           {/* Coverage leads the tab, collapsed — the summary numbers (Axes /
               Pairs / Forced) are visible on landing without scrolling past the
               list; the chevron unfurls the full breakdown. */}
+          {loadFailed && (
+            <Alert
+              severity="error"
+              sx={{ mb: 2, typography: "s3" }}
+              action={(
+                <Button color="inherit" size="small" onClick={retryLoad}>
+                  Retry
+                </Button>
+              )}
+            >
+              Couldn&apos;t refresh the scenarios. Showing the last loaded list.
+            </Alert>
+          )}
           <Box sx={{ mb: 2 }}>
             <CoverageMatrix jobId={env?.id} search={debouncedQuery} filters={filters} />
           </Box>

@@ -116,10 +116,11 @@ describe("EnvironmentValues", () => {
     // The upload mutation carries `meta.errorHandled`, which suppresses the
     // global error toast — so a rejected upload (e.g. the hosted 422 on a
     // wrong label) must be shown by the panel itself, or the user is told
-    // nothing and no reference is ever created.
+    // nothing and no reference is ever created. The axios interceptor rejects
+    // with the API body, so the sentence is on `detail`; exactly one Alert.
     uploadHarnessSecretFile.mockRejectedValueOnce({
       statusCode: 422,
-      message: "Hosted credential uploads must use GOOGLE_APPLICATION_CREDENTIALS.",
+      detail: "Hosted credential uploads must use GOOGLE_APPLICATION_CREDENTIALS.",
     });
     const { container } = renderWithQuery(<Harness />);
     fireEvent.change(container.querySelector('input[type="file"]'), {
