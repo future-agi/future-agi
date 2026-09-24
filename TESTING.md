@@ -54,6 +54,8 @@ make test-shell          # Shell inside the test container
 
 Under the hood, `make test` delegates to `bin/test`, which runs pytest inside an isolated Compose stack (`docker-compose.test.yml`) with its own Postgres, Redis, ClickHouse, and MinIO. See `bin/test --help` for lower-level options.
 
+A handful of suites talk to a real ClickHouse and create, write and drop tables in it. They are opt-in with `FI_LIVE_CH_TESTS=1`, which `bin/test` and CI set for you because they own the disposable ClickHouse they point at; a bare `pytest` skips them, so a stray process listening on the default ClickHouse port never gets written to.
+
 ### End-to-end (browser + full stack, Playwright)
 
 ```bash

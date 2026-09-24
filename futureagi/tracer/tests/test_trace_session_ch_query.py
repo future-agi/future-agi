@@ -27,6 +27,7 @@ import pytest
 
 # Cycle-breaker -- same rationale as test_eval_task_runtime.
 import model_hub.tasks  # noqa: F401, E402
+from conftest import require_live_clickhouse  # noqa: E402
 
 
 _TEST_DATABASE = "test_trace_session_ch_query"
@@ -36,6 +37,7 @@ _TEST_DATABASE = "test_trace_session_ch_query"
 def ch_client():
     """Connect to test ClickHouse via clickhouse-driver (the same client
     the app uses). Skip when unavailable."""
+    require_live_clickhouse()
     try:
         from clickhouse_driver import Client as CHDriver
     except ImportError:

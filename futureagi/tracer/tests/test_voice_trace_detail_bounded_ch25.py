@@ -11,6 +11,7 @@ import pytest
 from clickhouse_driver import Client
 from django.test import override_settings
 
+from conftest import require_live_clickhouse
 from tracer.selectors.trace_filter_reads import read_bounded_filter_page
 from tracer.services.clickhouse import eval_logger_table as eval_logger_table_config
 from tracer.services.clickhouse.query_builders.voice_call_list import VAPI_PHONE_NUMBERS
@@ -34,6 +35,7 @@ CH_NATIVE_PORT = int(os.environ.get("CH25_NATIVE_PORT", "19000"))
 
 @pytest.fixture(scope="module")
 def ch_client():
+    require_live_clickhouse()
     client = Client(host=CH_HOST, port=CH_NATIVE_PORT, connect_timeout=3)
     try:
         client.execute("SELECT 1")

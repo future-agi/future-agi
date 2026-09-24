@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from clickhouse_driver import Client
 
+from conftest import require_live_clickhouse
 from tracer.services.clickhouse.v2.query_builders.filters import rewrite_v1_sql_to_v2
 from tracer.services.clickhouse.v2.query_builders.session_list import (
     SessionListQueryBuilderV2,
@@ -128,6 +129,7 @@ def test_v2_rewrite_preserves_only_proven_score_alias_cdc_columns() -> None:
 
 @pytest.fixture(scope="module")
 def ch_client():
+    require_live_clickhouse()
     client = Client(
         host=CH_HOST,
         port=CH_NATIVE_PORT,

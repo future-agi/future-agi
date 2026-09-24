@@ -10,6 +10,7 @@ import pytest
 from accounts.models.workspace import Workspace
 from model_hub.models.ai_model import AIModel
 
+from conftest import require_live_clickhouse
 from tracer.models.project import Project
 from tracer.serializers.dashboard import DashboardFilterValuesQuerySerializer
 from tracer.serializers.span_attributes import SpanAttributeDetailResponseSerializer
@@ -43,6 +44,7 @@ def isolated_exact_attribute_ch25():
     relying on a textual table-name rewrite.
     """
 
+    require_live_clickhouse()
     host = os.environ.get("CH25_HOST", "127.0.0.1")
     if host not in {"127.0.0.1", "localhost", "::1"}:
         pytest.skip("exact attribute SQL integration proof is local-only")

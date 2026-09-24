@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 
+from conftest import require_live_clickhouse
 from tracer.services.clickhouse.exact_graph_reads import (
     _session_aggregate_source_sql,
 )
@@ -18,6 +19,7 @@ from tracer.services.clickhouse.v2.query_builders.trace_list import (
 def _local_ch25_client():
     """Return an explicitly local native client or skip the live proof."""
 
+    require_live_clickhouse()
     host = os.environ.get("CH25_HOST", "127.0.0.1")
     if host not in {"127.0.0.1", "localhost", "::1"}:
         pytest.skip("RMT identity proof is restricted to local ClickHouse")

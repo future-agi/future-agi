@@ -12,7 +12,7 @@ from time import monotonic, sleep
 import pytest
 from clickhouse_driver import Client
 
-from conftest import _require_safe_ch25_test_target
+from conftest import _require_safe_ch25_test_target, require_live_clickhouse
 from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
 from tracer.services.clickhouse.query_builders.user_list import UserListQueryBuilder
 from tracer.services.clickhouse.v2.query_builders.agent_graph import (
@@ -48,6 +48,7 @@ def _ch_client(*, database: str) -> Client:
 def ch_database():
     """Create one unique test-owned database and remove it after the module."""
 
+    require_live_clickhouse()
     database = f"test_user_graph_{uuid.uuid4().hex}"
     _require_safe_ch25_test_target(host=CH_HOST, database=database)
     admin = _ch_client(database="default")
