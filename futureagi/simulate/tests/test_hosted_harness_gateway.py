@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from django.test import override_settings
 from django.utils import timezone
 
 from simulate.models import HostedHarnessAttempt, HostedHarnessJob
@@ -2013,6 +2014,7 @@ def test_reconcile_relaunches_infra_failure_until_budget_then_fails(
 
 
 @pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=900)
 def test_reconcile_tolerates_brief_daytona_toolbox_outage(organization, monkeypatch):
 
     job, _ = create_hosted_job(
@@ -2023,7 +2025,7 @@ def test_reconcile_tolerates_brief_daytona_toolbox_outage(organization, monkeypa
         endpoint_base_url="https://platform.example.com",
         provider_ref="sandbox-1",
     ).attempt
-    attempt.heartbeat_at = timezone.now()
+    attempt.heartbeat_at = timezone.now() - timedelta(minutes=4)
     attempt.save(update_fields=["heartbeat_at", "updated_at"])
     gateway = object.__new__(HostedHarnessGateway)
     gateway.client = _Daytona()

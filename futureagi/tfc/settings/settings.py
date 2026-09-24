@@ -1004,6 +1004,9 @@ ALK_E2B_TEMPLATE_CPU_UNITS = int(os.getenv("ALK_E2B_TEMPLATE_CPU_UNITS", "4"))
 ALK_E2B_TEMPLATE_MEMORY_MB = int(os.getenv("ALK_E2B_TEMPLATE_MEMORY_MB", "8192"))
 ALK_E2B_TEMPLATE_DISK_GB = int(os.getenv("ALK_E2B_TEMPLATE_DISK_GB", "10"))
 ALK_E2B_MAX_TTL_SECONDS = int(os.getenv("ALK_E2B_MAX_TTL_SECONDS", "0"))
+ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS = int(
+    os.getenv("ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS", "180")
+)
 
 # Scenario parallelism (W>1) admission belt (C4 §5, decisions D12/D23/D24).
 # W>1 is admitted only when this flag is truthy AND the selected guest runtime
