@@ -300,6 +300,7 @@ def provision_alk_sim_run_test(
     agent_name: str | None = None,
     description: str = "",
     modality: str = "text",
+    enable_tool_evaluation: bool = False,
 ) -> tuple[RunTest, list[Scenarios], AgentDefinition]:
     """Stand up a modality-correct RunTest for an SDK-first run, two ways.
 
@@ -313,6 +314,11 @@ def provision_alk_sim_run_test(
       the platform's native dataset model: a scenario suite is one dataset and
       every conversation case is one datapoint.
 
+    ``enable_tool_evaluation`` starts the run test with the tool-call judge on.
+    Defaults to off, since it costs an extra judge per call. A v3 environment
+    leaves it off here and turns it on later through
+    ``PUT /simulate/api/harness-environments/{id}/evaluations/tool-call/``.
+
     One CallExecution is created per dataset row at batch time, so keep the row
     count (== persona count, or the reused scenarios' rows) equal to the
     conversations the run posts per execution; extras leave dangling PENDING rows.
@@ -320,6 +326,11 @@ def provision_alk_sim_run_test(
     from django.db import transaction
 
     with transaction.atomic():
+        # Resolved before the agent definition so a bad scenario id is still
+        # the first thing reported (everything here is inside one
+        # transaction, so the ordering buys error precedence, not less
+        # rollback).
+        scenarios: list[Scenarios] = []
         if scenario_ids:
             scenarios = list(
                 Scenarios.objects.filter(
@@ -335,14 +346,29 @@ def provision_alk_sim_run_test(
                 raise ALKSimulateIngestionError(
                     f"scenario(s) not found: {', '.join(missing)}"
                 )
-            agent_definition = _provision_agent_definition(
-                organization,
-                agent_definition_id,
-                agent_name,
-                description,
-                modality,
-                workspace,
+
+        agent_definition = _provision_agent_definition(
+            organization,
+            agent_definition_id,
+            agent_name,
+            description,
+            modality,
+            workspace,
+        )
+        # Both provisioning shapes refuse the same thing on the same terms, so
+        # the refusal is stated once, here, rather than once per shape: a voice
+        # agent with no version yet exposes no credentials for the tool-call
+        # judge to read, so the switch cannot be honoured for it.
+        if (
+            enable_tool_evaluation
+            and agent_definition.agent_type == AgentDefinition.AgentTypeChoices.VOICE
+            and agent_definition.latest_version is None
+        ):
+            raise ALKSimulateIngestionError(
+                "Tool-call evaluation is not available for a voice environment yet"
             )
+
+        if scenario_ids:
             simulator_agent = next(
                 (s.simulator_agent for s in scenarios if s.simulator_agent), None
             )
@@ -363,18 +389,10 @@ def provision_alk_sim_run_test(
                 simulator_agent=simulator_agent,
                 organization=organization,
                 workspace=workspace,
+                enable_tool_evaluation=enable_tool_evaluation,
             )
             run_test.scenarios.set(scenarios)
             return run_test, scenarios, agent_definition
-
-        agent_definition = _provision_agent_definition(
-            organization,
-            agent_definition_id,
-            agent_name,
-            description,
-            modality,
-            workspace,
-        )
 
         scenarios = _create_persona_scenarios(
             organization,
@@ -391,6 +409,7 @@ def provision_alk_sim_run_test(
             agent_definition=agent_definition,
             organization=organization,
             workspace=workspace,
+            enable_tool_evaluation=enable_tool_evaluation,
         )
         run_test.scenarios.set(scenarios)
 
@@ -863,6 +882,8 @@ def ingest_alk_sim_result(
     Idempotent for evaluation dispatch: a second call updates fields but does
     not dispatch a second evaluation (guarded by `call_metadata['eval_started']`).
     """
+    from simulate.services.harness_evals import _tool_evaluation_on
+
     if call_execution.simulation_call_type not in (
         CallExecution.SimulationCallType.VOICE,
         CallExecution.SimulationCallType.TEXT,
@@ -888,7 +909,15 @@ def ingest_alk_sim_result(
         call_metadata = call_execution.call_metadata or {}
         # Dispatched only once the row is COMPLETED, with the config ids chosen at provision.
         selected_eval_config_ids = _selected_eval_config_ids(call_execution)
-        if "harness_evaluations" in call_metadata and not selected_eval_config_ids:
+        # The tool-call judge switch is independent of the eval catalogue, so
+        # a switched-on run test must still take the dispatch arm below even
+        # with no catalogue eval selected.
+        run_test_id = getattr(call_execution.test_execution, "run_test_id", None)
+        if (
+            "harness_evaluations" in call_metadata
+            and not selected_eval_config_ids
+            and not _tool_evaluation_on(run_test_id)
+        ):
             # An ALK harness result already contains the execution-backed
             # checks. Starting the platform evaluator as well leaves the call
             # permanently `eval_started` when no platform eval templates are
@@ -899,8 +928,18 @@ def ingest_alk_sim_result(
             call_execution.call_metadata = call_metadata
             call_execution.save(update_fields=["call_metadata"])
         else:
+            # A harness receipt's selection must reach the dispatcher
+            # unchanged -- `[]` stays `[]`, never widened to `None` ("every
+            # config on the run test") -- so a switch-driven dispatch cannot
+            # re-grade a harness result column. A non-harness ALK run keeps
+            # its pre-existing `or None` fallback.
             eval_dispatched = _dispatch_evaluations_once(
-                call_execution, eval_config_ids=selected_eval_config_ids or None
+                call_execution,
+                eval_config_ids=(
+                    selected_eval_config_ids
+                    if "harness_evaluations" in call_metadata
+                    else (selected_eval_config_ids or None)
+                ),
             )
 
     _roll_up_external_execution(call_execution.test_execution_id)

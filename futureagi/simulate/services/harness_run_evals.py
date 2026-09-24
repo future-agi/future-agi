@@ -9,11 +9,18 @@ eligible for the newly bound eval.
 A finished call is passed over when it already holds a verdict for this
 eval's config (re-grading it would rewrite history nobody asked to rewrite),
 when its own evaluations have not finished (``call_metadata.eval_completed``
-is not true -- queueing before that finishes would trip
-``alk_simulate_ingestion.py::_dispatch_evaluations_once``'s latch on
-``eval_started`` and swallow the receipt's own dispatch), or when it was
-stamped as queued for this eval inside the last ten minutes, so a second
-click or a retried request queues nothing new.
+is not true), or when it was stamped as queued for this eval inside the last
+ten minutes, so a second click or a retried request queues nothing new.
+
+The pending case is the subtle one. A call's own receipt decides for itself
+whether to start the platform evaluator -- it starts one when the run has a
+runnable eval selected or its tool-call switch is on, skips the start only
+when neither holds, and a result that carries no harness evaluations of
+its own always starts one -- and ``eval_started`` is the latch that keeps a
+started evaluation from being started twice. A grading job queued from here
+sets that same flag when it runs, so queueing before a call's own
+evaluations finish would close the latch ahead of the receipt and leave its
+dispatch with nothing to do.
 """
 
 from __future__ import annotations
@@ -328,11 +335,14 @@ def queue_eval_for_finished_calls(
                 counts["skipped_existing"] += 1
                 continue
             # 2. The call's own evaluations have not finished, so no grading
-            #    starts for it. `_run_simulate_evaluations` (test_executor.py)
-            #    sets `eval_started` unconditionally when it runs; queueing
-            #    here before that finishes would trip
-            #    `alk_simulate_ingestion.py::_dispatch_evaluations_once`'s own
-            #    latch on that flag and swallow the receipt's dispatch.
+            #    starts for it. The receipt path starts the platform evaluator
+            #    when the run has a runnable eval selected or its tool-call
+            #    switch is on (and always for a result that carries no harness
+            #    evaluations of its own), and `eval_started` is the latch that keeps that
+            #    start from happening twice. `_run_simulate_evaluations` sets
+            #    the same flag unconditionally when it runs, so queueing here
+            #    before the call's own evaluations finish would close the latch
+            #    ahead of the receipt and leave its dispatch with nothing to do.
             if not metadata.get(EVAL_COMPLETED_KEY):
                 counts["skipped_pending"] += 1
                 continue

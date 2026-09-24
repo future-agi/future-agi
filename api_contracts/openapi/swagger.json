@@ -50321,6 +50321,49 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/evaluations/tool-call/": {
+            "put": {
+                "operationId": "simulate_api_harness-environments_evaluations_set_tool_call_evaluation",
+                "description": "Turn the tool-call judge on or off for this environment. Returns the full environment detail. Turning it on is refused for a hosted voice environment with no agent version yet.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentToolCallEvaluation"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentDetail"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/": {
             "delete": {
                 "operationId": "simulate_api_harness-environments_remove_evaluation",
@@ -119651,6 +119694,11 @@
                     "title": "Agent name",
                     "type": "string",
                     "maxLength": 255
+                },
+                "enable_tool_evaluation": {
+                    "title": "Enable tool evaluation",
+                    "type": "boolean",
+                    "default": false
                 }
             }
         },
@@ -121045,7 +121093,8 @@
                 "security",
                 "artifacts",
                 "scenario_count",
-                "seed"
+                "seed",
+                "enable_tool_evaluation"
             ],
             "type": "object",
             "properties": {
@@ -121102,6 +121151,10 @@
                     "title": "Seed",
                     "type": "integer",
                     "x-nullable": true
+                },
+                "enable_tool_evaluation": {
+                    "title": "Enable tool evaluation",
+                    "type": "boolean"
                 }
             }
         },
@@ -121263,6 +121316,18 @@
                     "items": {
                         "$ref": "#/definitions/HarnessEnvironmentOfferedEval"
                     }
+                }
+            }
+        },
+        "HarnessEnvironmentToolCallEvaluation": {
+            "required": [
+                "enable_tool_evaluation"
+            ],
+            "type": "object",
+            "properties": {
+                "enable_tool_evaluation": {
+                    "title": "Enable tool evaluation",
+                    "type": "boolean"
                 }
             }
         },
