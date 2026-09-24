@@ -10,6 +10,7 @@ import EnvironmentValues from "./EnvironmentValues";
 import ScenarioCount from "./ScenarioCount";
 import { DEFAULT_SCENARIOS, isValidScenarioCount } from "./scenarioCountRules";
 import RuntimePreflight from "./RuntimePreflight";
+import ParallelismField from "./ParallelismField";
 import usePanelBuild from "../hooks/usePanelBuild";
 import {
   REPO_PROVIDERS,
@@ -135,6 +136,13 @@ export default function PanelSourceRepo() {
         secretFiles={secretFiles} onSecretFiles={set("secretFiles")}
       />
       <ScenarioCount value={scenarioCount} onChange={set("scenarioCount")} />
+      <ParallelismField
+        value={build.parallelism}
+        input={build.parallelismInput}
+        onChange={build.setParallelism}
+        enabled={build.parallelismEnabled}
+        admitted={build.admittedParallelism}
+      />
       <RuntimePreflight
         status={build.status}
         canRun={canGo}

@@ -91,8 +91,7 @@ function SchemaCard({ schema, totalRows }) {
                 <Iconify icon="solar:database-linear" width={15} sx={{ color: "#2563EB", flexShrink: 0 }} />
                 <Typography sx={{ typography: "s2", fontWeight: 600, fontFamily: MONO, minWidth: 140 }}>{t.name}</Typography>
                 <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1, minWidth: 0 }} noWrap>
-                  {expandable ? `${t.cols.length} fields` : "fields not reported"}
-                  {t.note ? ` · ${t.note}` : ""}
+                  {[expandable ? `${t.cols.length} fields` : null, t.note].filter(Boolean).join(" · ")}
                 </Typography>
                 <Typography sx={{ typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
                   {(t.rows || 0).toLocaleString()} rows

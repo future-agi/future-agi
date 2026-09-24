@@ -15,7 +15,13 @@ export default function DeleteEnvironmentDialog({ env, onCancel, onConfirm }) {
         </Typography>
       )}
       action={(
-        <Button size="small" variant="contained" color="error" onClick={onConfirm}>
+        <Button
+          size="small"
+          variant="contained"
+          color="error"
+          onClick={onConfirm}
+          sx={{ paddingX: "24px" }}
+        >
           {DELETE_DIALOG_COPY.confirm}
         </Button>
       )}

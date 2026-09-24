@@ -74,7 +74,10 @@ const BUILDING_JOB = {
     scenario_count: 3,
     agent: { connector: "livekit" },
   },
-  status: { stage: "running", created_at: NOW },
+  // A stage that is genuinely still assembling the world. "running" is stage 10
+  // of 14, past connecting_agent, so it reads as built — not what this fixture
+  // is for.
+  status: { stage: "generating_environment", created_at: NOW },
   credentials: { detected_connectors: ["livekit"] },
   stage_outputs: [],
 };
@@ -330,7 +333,8 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(screen.getByRole("button", { name: /Fork to edit/ })).toBeInTheDocument();
   });
 
-  it("forks an unlocked env into a new id and navigates to it", async () => {
+  // Fork is temporarily commented out in ForkMenu — re-enable this with it.
+  it.skip("forks an unlocked env into a new id and navigates to it", async () => {
     seedClientEnv(TEMPLATE, {
       ...emptyEnvState(),
       agent: { name: "Support agent" },

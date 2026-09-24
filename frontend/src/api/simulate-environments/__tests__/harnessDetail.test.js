@@ -228,4 +228,18 @@ describe("harnessDetailToEnvironment", () => {
     };
     expect(harnessDetailToEnvironment(failed).env.buildStatus).toBe("failed");
   });
+
+  // §1/§6 report a four-state environment status (building | running |
+  // completed | failed) where "running" means the calls are running — the
+  // environment is built. That is NOT the harness-job pipeline vocabulary,
+  // where "running" means the build itself is still in flight.
+  it("reads a running overview as a built environment, not one still building", () => {
+    const running = {
+      id: "j1",
+      overview: { id: "j1", name: "live", status: "running" },
+      contract: null,
+      world: null,
+    };
+    expect(harnessDetailToEnvironment(running).env.buildStatus).toBe("ready");
+  });
 });

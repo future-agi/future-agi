@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Typography, IconButton, Menu, MenuItem, Divider } from "@mui/material";
+import { Box, Typography, IconButton, Menu, MenuItem } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { WORKSPACE_COPY } from "./workspace.constants";
@@ -11,13 +11,15 @@ import { DELETE_TONE } from "../myEnvironments.constants";
 // instead, so the shell hides this menu for those (renders nothing when locked).
 // `onDelete` is supplied only for real backend-backed environments (§2 DELETE);
 // forked/template envs have no backend row to remove, so it is omitted for them.
-export default function ForkMenu({ onFork, onDelete }) {
+// `onFork` is temporarily unused while the Fork action is commented out below.
+export default function ForkMenu({ onDelete }) {
   const [anchor, setAnchor] = useState(null);
   const close = () => setAnchor(null);
-  const fork = () => {
-    close();
-    onFork();
-  };
+  // Fork temporarily disabled — re-enable with the MenuItem below.
+  // const fork = () => {
+  //   close();
+  //   onFork();
+  // };
   const del = () => {
     close();
     onDelete?.();
@@ -43,6 +45,7 @@ export default function ForkMenu({ onFork, onDelete }) {
         transformOrigin={{ vertical: "top", horizontal: "right" }}
         slotProps={{ paper: { sx: { minWidth: 260, mt: 0.5 } } }}
       >
+        {/* Fork environment — temporarily commented out.
         <MenuItem onClick={fork} sx={{ alignItems: "flex-start", gap: 1.25, py: 1 }}>
           <Iconify
             icon="solar:copy-linear"
@@ -58,8 +61,8 @@ export default function ForkMenu({ onFork, onDelete }) {
             </Typography>
           </Box>
         </MenuItem>
-
         {onDelete && <Divider sx={{ my: 0.5 }} />}
+        */}
         {onDelete && (
           <MenuItem
             onClick={del}

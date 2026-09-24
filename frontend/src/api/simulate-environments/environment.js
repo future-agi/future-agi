@@ -272,6 +272,7 @@ export function harnessJobToEnvironment(item) {
       testExecutionId: item?.platform?.test_execution_id,
     },
     stageOutputs: item?.stage_outputs,
+    parallelism: item?.parallelism || null,
     tools: world.tools,
     rules: world.rules,
     seed: world.seed,

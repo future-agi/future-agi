@@ -7,6 +7,7 @@ import { useRuntimePreflight } from "src/api/simulate-environments/useRuntimePre
 import { useBuildEnvironment } from "src/api/simulate-environments/environments";
 import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
 import { prepareSourceForBuild } from "./prepareSourceForBuild";
+import { clampParallelism } from "../parallelism.constants";
 
 /**
  * The inline build machine shared by every source panel. A panel calls:
@@ -38,6 +39,9 @@ export default function usePanelBuild() {
   // stale exchange would resolve and mutate the source the user just changed.
   const [preparing, setPreparing] = useState(false);
   const runSeq = useRef(0);
+  const [parallelismInput, setParallelismInput] = useState("1");
+  const parallelism = clampParallelism(parallelismInput);
+  const parallelismEnabled = preflight.data?.parallelism_enabled !== false;
 
   const runPreflight = useCallback(
     async (source) => {
@@ -45,7 +49,7 @@ export default function usePanelBuild() {
       setPreparing(true);
       let result;
       try {
-        result = await prepareSourceForBuild(source);
+        result = await prepareSourceForBuild({ ...source, parallelism });
       } catch (e) {
         if (seq === runSeq.current) {
           setPreparing(false);
@@ -61,7 +65,7 @@ export default function usePanelBuild() {
       setPrepared(result.draft);
       preflight.mutate({ draft: result.draft, credentialValues: result.credentialValues });
     },
-    [preflight],
+    [preflight, parallelism],
   );
 
   const resetPreflight = useCallback(() => {
@@ -73,13 +77,22 @@ export default function usePanelBuild() {
     setPrepared(null);
   }, [preflight]);
 
+  const setParallelism = useCallback(
+    (value) => {
+      setParallelismInput(String(value ?? ""));
+      resetPreflight();
+    },
+    [resetPreflight],
+  );
+
   const commitBuild = useCallback(() => {
     if (!prepared || !preflight.data?.ready_to_submit || committing) return;
+    const draft = parallelismEnabled ? prepared : { ...prepared, parallelism: 1 };
     // Keep the passing draft in the persisted slot so the panel form rehydrates
     // on a back-navigation; the create call below is what actually builds it.
-    setDraft(prepared);
+    setDraft(draft);
     setCommitting(true);
-    build.mutate(prepared, {
+    build.mutate(draft, {
       onSuccess: ({ envId, skipped }) => {
         // A skipped (un-preflightable) draft never reaches here — preflight
         // rejects it before ready_to_submit — but guard rather than route to an
@@ -98,7 +111,7 @@ export default function usePanelBuild() {
         enqueueSnackbar(errorMessage(error), { variant: "error" });
       },
     });
-  }, [prepared, preflight.data, committing, setDraft, build, navigate]);
+  }, [prepared, preflight.data, committing, parallelismEnabled, setDraft, build, navigate]);
 
   const status = preparing || preflight.isPending
     ? "running"
@@ -114,6 +127,11 @@ export default function usePanelBuild() {
     state: preflight.data?.state,
     readyToSubmit: !!preflight.data?.ready_to_submit,
     committing,
+    parallelism,
+    parallelismInput,
+    parallelismEnabled,
+    admittedParallelism: preflight.data?.effective_parallelism,
+    setParallelism,
     error: preflight.error,
     runPreflight,
     resetPreflight,

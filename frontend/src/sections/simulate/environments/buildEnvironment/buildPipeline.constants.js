@@ -205,7 +205,18 @@ export const jobToBuildProgress = (job) => {
   const running = !terminalStages.has(stage);
 
   let failure = null;
-  if (stage === "failed") {
+  if (stage === "canceled") {
+    // A cancel is terminal but not a step failure. Mark it so the view freezes
+    // the deriving animation (it keys off `failure`), with a null stepId so the
+    // pipeline stops where it was rather than lighting a step red.
+    failure = {
+      stepId: null,
+      title: "canceled",
+      detail: "You stopped this build.",
+      retryable: false,
+      canceled: true,
+    };
+  } else if (stage === "failed") {
     const failStage = status.failure?.stage;
     const milestone =
       Object.keys(MILESTONE_STAGES).find((m) =>
