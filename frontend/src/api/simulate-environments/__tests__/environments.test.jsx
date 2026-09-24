@@ -11,7 +11,6 @@ const {
   useDeleteEnvironment,
   useBuildEnvironment,
   useUploadSecretFile,
-  useRunSimulation,
   useAdoptTemplate,
   myEnvironmentsQueryKey,
 } = await import("../environments");
@@ -127,18 +126,6 @@ describe("useUploadSecretFile", () => {
     expect(out.name).toBe("creds.json");
     expect(out.size).toBe(file.size);
     expect(out).not.toHaveProperty("contents");
-  });
-});
-
-describe("useRunSimulation", () => {
-  it("resolves the env id and a run id", async () => {
-    const { Wrapper } = makeWrapper();
-    const { result } = renderHook(() => useRunSimulation(), {
-      wrapper: Wrapper,
-    });
-    const out = await result.current.mutateAsync("env-x");
-    expect(out.envId).toBe("env-x");
-    expect(out.runId).toMatch(/^run-/);
   });
 });
 

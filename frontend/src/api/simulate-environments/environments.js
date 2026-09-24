@@ -78,13 +78,3 @@ export function useAdoptTemplate() {
     }),
   });
 }
-
-// TODO: axios.post(endpoints.simulateEnvironments.run(envId))
-export function useRunSimulation() {
-  return useMutation({
-    mutationFn: async (envId) => ({
-      envId,
-      runId: `run-${Date.now().toString(36)}`,
-    }),
-  });
-}

@@ -4,7 +4,6 @@ import userEvent from "@testing-library/user-event";
 
 import AgentHeroCard from "../AgentHeroCard";
 import VersionHistoryCard from "../VersionHistoryCard";
-import AgentCard from "../AgentCard";
 import PromoteDialog from "../PromoteDialog";
 import DivergenceBanner from "../DivergenceBanner";
 
@@ -69,45 +68,6 @@ describe("VersionHistoryCard", () => {
     // Exactly two non-active rows -> two actions total (one Set active, one Roll back).
     expect(screen.getByRole("button", { name: /^set active$/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /roll back to this/i })).toBeInTheDocument();
-  });
-});
-
-describe("AgentCard", () => {
-  const ADDITIONAL = {
-    id: "agent-2", typeId: "text", isSource: false,
-    activeVersionId: "v1",
-    values: { endpoint: "https://api.acme.dev/agent" },
-    versions: [{ id: "v1", label: "v1", connectedAt: "2026-01-01T10:00:00Z" }],
-  };
-
-  it("marks the source with ENV SOURCE and fires Set active for an inactive additional agent", async () => {
-    const user = userEvent.setup();
-    const onSetActive = vi.fn();
-    render(
-      <AgentCard
-        agent={ADDITIONAL} isActive={false} expanded={false}
-        onToggleExpand={vi.fn()} onSetActive={onSetActive}
-        onPromote={vi.fn()} onRemove={vi.fn()}
-        onAddVersion={vi.fn()} onSetActiveVersion={vi.fn()}
-      />
-    );
-    await user.click(screen.getByRole("button", { name: /^set active$/i }));
-    expect(onSetActive).toHaveBeenCalledTimes(1);
-  });
-
-  it("toggles the detail from the chevron without bubbling to a set-active", async () => {
-    const user = userEvent.setup();
-    const onToggleExpand = vi.fn();
-    render(
-      <AgentCard
-        agent={AGENT} isActive expanded={false}
-        onToggleExpand={onToggleExpand} onSetActive={vi.fn()}
-        onPromote={vi.fn()} onRemove={vi.fn()}
-        onAddVersion={vi.fn()} onSetActiveVersion={vi.fn()}
-      />
-    );
-    await user.click(screen.getByRole("button", { name: /expand details/i }));
-    expect(onToggleExpand).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -40,6 +40,14 @@ describe("workspace chip prompts", () => {
       expect(chips.length).toBeGreaterThan(0);
     });
   });
+
+  it("is keyed by the tab ids the workspace actually switches on", () => {
+    // The chips are looked up as CHIPS_BY_TAB[activeTab]; the summary tab's id
+    // is "summary", so an "overview" key served nothing.
+    WORKSPACE_TABS.forEach((tab) =>
+      expect(Object.keys(CHIPS_BY_TAB)).toContain(tab.id),
+    );
+  });
 });
 
 describe("setup-gap to tab mapping", () => {
@@ -64,5 +72,17 @@ describe("workspace copy", () => {
     ["title", "body", "action"].forEach((key) => {
       expect(typeof WORKSPACE_COPY.notFound[key]).toBe("string");
     });
+  });
+});
+
+describe("workspace copy honesty", () => {
+  it("does not promise the fork resets an agent it copies", () => {
+    expect(WORKSPACE_COPY.forkHint).not.toMatch(/Agent \+ runs reset/);
+  });
+
+  it("points the run-blocked agent reason at a tab that exists", () => {
+    const tabLabels = WORKSPACE_TABS.map((t) => t.label);
+    const named = WORKSPACE_COPY.runBlocked.agent.match(/on the (\w+) tab/);
+    expect(named && tabLabels).toContain(named?.[1]);
   });
 });

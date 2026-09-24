@@ -19,8 +19,10 @@ export const EVALS_COPY = {
   addAll: (n) => `Add all ${n}`,
   addOne: "Add",
   addedTitle: (n) => `Added evaluations (${n})`,
+  // "Every task is scored against these" was a promise the product does not
+  // keep: the evals on an environment are not sent with a run yet.
   addedSubtitle:
-    "Every task is scored against these. Add more from Suggested or the library any time.",
+    "Kept on this environment. Scoring a run against them isn't wired up yet — add more from Suggested or the library any time.",
   lockedTitle: "Add scenarios first",
   lockedBody:
     "An evaluation scores the tasks a run produces, so it needs scenarios to point at. Add some and this unlocks.",

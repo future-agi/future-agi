@@ -9,8 +9,11 @@
 // Header copy for the composed Agents surface (the "Manage versions" drawer).
 export const AGENTS_PANEL_COPY = {
   title: "Agent",
+  // Nothing re-derives a contract, scenarios or evaluations off a version yet,
+  // and a run does not carry the selected version, so the subtitle says what the
+  // surface really is: a record of the versions on this environment.
   subtitle:
-    "One agent per environment. New versions re-derive its contract, scenarios and evaluations.",
+    "One agent per environment. This is the record of its versions — a run still goes to the endpoint on file.",
 };
 
 // Fallback phrases the step builders drop in when the agent, a version, or a

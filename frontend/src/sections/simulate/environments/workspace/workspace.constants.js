@@ -19,7 +19,7 @@ export const WORKSPACE_TABS = [
 // Suggested builder prompts per tab — the same console the build screen uses.
 // The `build` key feeds the build page's in-place workspace before 7/7.
 export const CHIPS_BY_TAB = {
-  overview: [
+  summary: [
     "Summarise what's in this environment",
     "What's still missing before we can run?",
     "Explain the tools and rules to me",
@@ -67,14 +67,15 @@ export const WORKSPACE_COPY = {
   run: "Run simulation",
   moreActions: "More actions",
   fork: "Fork environment",
-  forkHint: "Duplicate the world for a different agent or team. Agent + runs reset.",
+  forkHint:
+    "Duplicate the world for a different agent or team. The agent carries over; the run history does not.",
   notFound: {
     title: "Environment not found",
     body: "It may have been removed from your workspace.",
     action: "Back to environments",
   },
   runBlocked: {
-    agent: "Connect an agent on the Agents tab",
+    agent: "Connect an agent on the Summary tab",
     scenarios: "Add scenarios on the Scenarios tab",
     evals: "Add at least one evaluation on the Evaluations tab",
     generic: "Setup incomplete",
