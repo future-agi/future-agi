@@ -7,7 +7,21 @@ const env = {
   id: "env-1",
   name: "Voice support",
   surface: "voice",
+  agentType: "voice",
+  domain: "ecommerce",
+  tagline: "Inbound phone support",
+  description: "A returns line.",
+  difficulty: "Starter",
+  tools: [{ name: "lookup_order" }],
+  rules: ["Refunds over $200 need approval"],
+  seed: { tables: [{ name: "orders" }] },
+  evalPreset: ["task_success"],
   adoptedAt: "2026-09-01T00:00:00.000Z",
+  // The parent's bridge into the product run: a fork must not inherit any of it.
+  platform: { runTestId: "rt-parent", testExecutionId: "ex-parent" },
+  buildStatus: "building",
+  buildProgress: { done: 3, total: 7 },
+  stageOutputs: [{ kind: "contract", data: {} }],
 };
 
 const envState = {
@@ -66,5 +80,35 @@ describe("forkEnvironment", () => {
     expect(fork.envState.additionalAgents).toEqual(envState.additionalAgents);
     expect(fork.envState.additionalAgents).not.toBe(envState.additionalAgents);
     expect(fork.envState.activeAgentId).toBe("agent-extra");
+  });
+
+  it("carries the world over to the fork", () => {
+    expect(fork.env.tools).toEqual(env.tools);
+    expect(fork.env.rules).toEqual(env.rules);
+    expect(fork.env.seed).toEqual(env.seed);
+    expect(fork.env.evalPreset).toEqual(env.evalPreset);
+    expect(fork.env.surface).toBe("voice");
+    expect(fork.env.agentType).toBe("voice");
+    expect(fork.env.domain).toBe("ecommerce");
+    expect(fork.env.tagline).toBe("Inbound phone support");
+    expect(fork.env.description).toBe("A returns line.");
+    expect(fork.env.difficulty).toBe("Starter");
+  });
+
+  it("does not inherit the parent's run bridge or build state", () => {
+    expect(fork.env.platform).toBeUndefined();
+    expect(fork.env.buildStatus).toBeUndefined();
+    expect(fork.env.buildProgress).toBeUndefined();
+    expect(fork.env.stageOutputs).toBeUndefined();
+  });
+
+  it("carries no unexpected field over from the parent", () => {
+    expect(Object.keys(fork.env).sort()).toEqual(
+      [
+        "adoptedAt", "agentType", "custom", "description", "difficulty", "domain",
+        "evalPreset", "forkedFrom", "id", "name", "rules", "seed", "surface",
+        "tagline", "tools",
+      ].sort(),
+    );
   });
 });
