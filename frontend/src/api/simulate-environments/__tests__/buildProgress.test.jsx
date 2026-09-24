@@ -63,6 +63,16 @@ describe("jobToBuildProgress", () => {
     expect(out.failure.detail).toBe("boom");
   });
 
+  it("marks a canceled build terminal (freezes the animation) without failing a step", () => {
+    const out = jobToBuildProgress(jobAt("canceled"));
+    expect(out.running).toBe(false);
+    // A cancel is terminal, so it carries a failure marker — that is what stops
+    // DerivingAnimation. But no specific step failed, so stepId is null and the
+    // pipeline just stops where it was rather than showing a red step.
+    expect(out.failure).toMatchObject({ canceled: true, retryable: false });
+    expect(out.failure.stepId).toBeNull();
+  });
+
   it("returns an empty slice for a job with no status", () => {
     expect(jobToBuildProgress(undefined)).toEqual({ done: [], running: false, failure: null });
   });

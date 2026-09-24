@@ -151,6 +151,18 @@ describe("WorkspaceHeader", () => {
     expect(screen.queryByRole("button", { name: "More actions" })).toBeNull();
   });
 
+  it("shows Cancel build (by Run simulation) only while the env is building", () => {
+    render(withRouter(<WorkspaceHeader {...baseProps} />));
+    expect(screen.queryByRole("button", { name: /Cancel build/ })).toBeNull();
+
+    render(
+      withRouter(
+        <WorkspaceHeader {...baseProps} env={{ ...ENV, buildStatus: "building" }} canRun={false} locked />,
+      ),
+    );
+    expect(screen.getByRole("button", { name: /Cancel build/ })).toBeInTheDocument();
+  });
+
   it("does not render the mock env-version pin (hidden until the contract has a real version)", () => {
     render(withRouter(<WorkspaceHeader {...baseProps} />));
     expect(screen.queryByText(/env v3/i)).toBeNull();

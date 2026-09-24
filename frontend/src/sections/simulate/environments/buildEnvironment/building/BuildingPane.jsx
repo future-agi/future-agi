@@ -10,7 +10,6 @@ import { DERIVING_LABEL, BUILDING_TABS } from "../build.constants";
 import { pipelineStatus } from "../buildPipeline.constants";
 import DerivingAnimation from "./DerivingAnimation";
 import PipelineChecks from "./PipelineChecks";
-import CancelBuildControl from "./CancelBuildControl";
 
 // The deriving copy climbs a four-rung ladder off the builder's `done` set:
 // each milestone that has landed swaps the line for the next thing the engine
@@ -92,27 +91,17 @@ export default function BuildingPane({
       {/* body */}
       <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "auto" }}>
         <DerivingAnimation
-          label={failure ? DERIVING_LABEL.failed : derivingLabel(done)}
+          label={
+            failure
+              ? (failure.canceled ? DERIVING_LABEL.canceled : DERIVING_LABEL.failed)
+              : derivingLabel(done)
+          }
           source={source}
           world={world}
           failed={!!failure}
         />
         <PipelineChecks pipeline={pipelineStatus(done, running, "setup", failure)} />
       </Box>
-
-      {/* Cancel is only offered while the build is actually running — once it
-          has failed (or finished) there is nothing left to stop. */}
-      {running && !failure && env?.id && (
-        <Box
-          sx={{
-            flexShrink: 0, px: 2.5, py: 1.5,
-            borderTop: "1px solid", borderColor: "divider",
-            display: "flex", justifyContent: "center",
-          }}
-        >
-          <CancelBuildControl envId={env.id} building />
-        </Box>
-      )}
     </Stack>
   );
 }

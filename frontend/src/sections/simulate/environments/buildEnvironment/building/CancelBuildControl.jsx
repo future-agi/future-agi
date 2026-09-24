@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Button } from "@mui/material";
-import { useSnackbar } from "notistack";
+import { Button, Typography } from "@mui/material";
+import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { useCancelHarnessJob } from "src/api/simulate-environments/cancelBuild";
@@ -19,7 +19,6 @@ import { useCancelHarnessJob } from "src/api/simulate-environments/cancelBuild";
  */
 export default function CancelBuildControl({ envId, building = false }) {
   const [confirming, setConfirming] = useState(false);
-  const { enqueueSnackbar } = useSnackbar();
   const cancel = useCancelHarnessJob(envId);
 
   if (!building || !envId) return null;
@@ -51,7 +50,12 @@ export default function CancelBuildControl({ envId, building = false }) {
         open={confirming}
         onClose={() => setConfirming(false)}
         title="Stop this build?"
-        content="This build will be cancelled and the environment won't be created. You can start a new build afterwards."
+        content={(
+          <Typography component="span" sx={{ typography: "s2" }}>
+            This build will be cancelled and the environment won&apos;t be created. You can start
+            a new build afterwards.
+          </Typography>
+        )}
         action={
           <Button size="small" variant="contained" color="error" onClick={onConfirm}>
             Stop build

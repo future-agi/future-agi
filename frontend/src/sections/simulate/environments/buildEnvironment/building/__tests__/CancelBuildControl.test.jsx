@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-const enqueueSnackbar = vi.fn();
-vi.mock("notistack", () => ({ useSnackbar: () => ({ enqueueSnackbar }) }));
+vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
+const { enqueueSnackbar } = await import("notistack");
 
 vi.mock("src/api/harness/harness", () => ({
   cancelHarnessJob: vi.fn(() => Promise.resolve({ status: { stage: "canceled" } })),
