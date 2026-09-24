@@ -35645,7 +35645,7 @@ export const simulateApiHarnessJobsCreateBodyAgentSecretRefsVersionMax = 255;
 
 export const simulateApiHarnessJobsCreateBodyAgentSecretRefsDefault = {};
 export const simulateApiHarnessJobsCreateBodyScenarioCountDefault = 10;
-export const simulateApiHarnessJobsCreateBodyScenarioCountMax = 200;
+export const simulateApiHarnessJobsCreateBodyScenarioCountMax = 1000;
 
 export const simulateApiHarnessJobsCreateBodyRuntimeIsolationDefault = `dedicated_vm`;
 export const simulateApiHarnessJobsCreateBodyRuntimeCpuUnitsDefault = 4;
@@ -35976,7 +35976,7 @@ export const simulateApiHarnessJobsPreflightBodyAgentSecretRefsVersionMax = 255;
 
 export const simulateApiHarnessJobsPreflightBodyAgentSecretRefsDefault = {};
 export const simulateApiHarnessJobsPreflightBodyScenarioCountDefault = 10;
-export const simulateApiHarnessJobsPreflightBodyScenarioCountMax = 200;
+export const simulateApiHarnessJobsPreflightBodyScenarioCountMax = 1000;
 
 export const simulateApiHarnessJobsPreflightBodyRuntimeIsolationDefault = `dedicated_vm`;
 export const simulateApiHarnessJobsPreflightBodyRuntimeCpuUnitsDefault = 4;
@@ -36846,6 +36846,66 @@ export const SimulateApiHarnessJobsExtendBody = zod.object({
     .max(simulateApiHarnessJobsExtendBodyClientRequestIdMax)
     .optional(),
 });
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const SimulateApiHarnessJobsScenariosParams = zod.object({
+  id: zod.string(),
+});
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const SimulateApiHarnessJobsScenariosAmendScenariosParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessJobsScenariosAmendScenariosBodyReworkDefault =
+  true;
+
+export const SimulateApiHarnessJobsScenariosAmendScenariosBody = zod.object({
+  changes: zod.array(
+    zod.object({
+      op: zod.enum(["drop", "set_field", "set_persona"]),
+      scenario: zod.string().optional(),
+      scenarios: zod.array(zod.string().min(1)).optional(),
+      field: zod.string().optional(),
+      value: zod
+        .object({})
+        .passthrough()
+        .optional()
+        .describe("Any valid JSON value."),
+      persona: zod
+        .record(
+          zod.string(),
+          zod.object({}).passthrough().describe("Any valid JSON value."),
+        )
+        .optional(),
+    }),
+  ),
+  rework: zod
+    .boolean()
+    .default(simulateApiHarnessJobsScenariosAmendScenariosBodyReworkDefault),
+});
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const SimulateApiHarnessJobsScenariosScenarioCoverageParams = zod.object(
+  {
+    id: zod.string(),
+  },
+);
 
 export const SimulateApiHarnessAttemptsArtifactsArtifactManifestParams =
   zod.object({

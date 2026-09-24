@@ -130,12 +130,13 @@ def test_daytona_health_preserves_public_provider_name(settings):
     }
 
 
-def test_hosted_job_scenario_count_is_bounded_at_two_hundred():
+def test_hosted_job_scenario_count_is_bounded_at_the_admission_ceiling():
     accepted = HarnessJobCreateSerializer(data=_v1_payload(scenario_count=200))
     assert accepted.is_valid(), accepted.errors
     assert accepted.validated_data["runtime"]["max_duration_seconds"] == 72_000
+    assert HarnessJobCreateSerializer(data=_v1_payload(scenario_count=1000)).is_valid()
 
-    rejected = HarnessJobCreateSerializer(data=_v1_payload(scenario_count=201))
+    rejected = HarnessJobCreateSerializer(data=_v1_payload(scenario_count=1001))
     assert not rejected.is_valid()
     assert "scenario_count" in rejected.errors
 

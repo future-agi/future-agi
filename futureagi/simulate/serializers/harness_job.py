@@ -6,13 +6,17 @@ from typing import Any
 from django.conf import settings
 from rest_framework import serializers
 
+from tfc.utils.serializer_fields import JsonValueField
 from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
 
+from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
+
 # Port-generic loopback pattern for the C4 §7 Channel-1 literal-endpoint scan.
 # The declared fixed port is unknowable platform-side (the bundle is authored
 # in-sandbox), so the match is any port on localhost / 127.0.0.1 / [::1].
+
 _LOOPBACK_ENDPOINT_RE = re.compile(r"(?:localhost|127\.0\.0\.1|\[::1\]):\d+")
 
 RUNNER_RESERVED_ENVIRONMENT = {
@@ -373,7 +377,15 @@ class HarnessJobCreateSerializer(serializers.Serializer):
     run_id = serializers.UUIDField(required=False)
     source = HarnessSourceSerializer(required=False)
     agent = HarnessAgentSerializer()
-    scenario_count = serializers.IntegerField(default=10, min_value=1, max_value=200)
+    scenario_count = serializers.IntegerField(
+        default=10,
+        min_value=1,
+        # The admission ceiling is deployment-settable and never above what the database allows.
+        max_value=min(
+            int(getattr(settings, "ALK_MAX_SCENARIOS_PER_REQUEST", 1000)),
+            MAX_SCENARIOS_PER_JOB,
+        ),
+    )
     seed = serializers.IntegerField(required=False, allow_null=True)
     runtime = HarnessRuntimeSerializer(default=dict)
     security = HarnessSecuritySerializer(default=dict)
@@ -569,6 +581,8 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             )
             metadata["parallelism_warnings"] = warnings
         attrs["metadata"] = metadata
+
+
 
 
 LIVEKIT_ALIASES = ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
@@ -793,6 +807,26 @@ class HarnessJobEventSerializer(serializers.Serializer):
     type = serializers.CharField()
     payload = serializers.JSONField(allow_null=True)
     emitted_at = serializers.CharField()
+
+
+class HarnessScenarioChangeSerializer(serializers.Serializer):
+    op = serializers.ChoiceField(choices=["drop", "set_field", "set_persona"])
+    # A name, a scenario key, a number, a range ("12-30") or a comma list.
+    scenario = serializers.CharField(required=False, allow_blank=True)
+    scenarios = serializers.ListField(
+        child=serializers.CharField(), required=False, allow_empty=False
+    )
+    field = serializers.CharField(required=False, allow_blank=True)
+    # Any JSON type: a plain JSONField is published as `type: object`.
+    value = JsonValueField(required=False, allow_null=True)
+    persona = serializers.DictField(
+        required=False, child=JsonValueField(allow_null=True)
+    )
+
+
+class HarnessScenarioAmendSerializer(serializers.Serializer):
+    changes = HarnessScenarioChangeSerializer(many=True, allow_empty=False)
+    rework = serializers.BooleanField(required=False, default=True)
 
 
 class HarnessStageOutputSerializer(serializers.Serializer):
