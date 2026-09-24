@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useQueries } from "@tanstack/react-query";
-import axios, { endpoints } from "src/utils/axios";
+import { kpisQueryOptions } from "src/hooks/useKpis";
 import { extractKpis } from "src/sections/test-detail/common";
 import { useEnvironmentRuns } from "src/api/simulate-environments/runs";
 import { buildSummaryRow, buildEvalSeries, deriveEvals } from "./summaryData";
@@ -18,13 +18,15 @@ export function useRunsSummary(env, envState) {
   const { runs, isLoading: runsLoading } = useEnvironmentRuns(env, envState);
 
   const scoreQueries = useQueries({
+    // `useKpis` cannot be called here (one query per run, count unknown), so
+    // this spreads the same query options that hook does rather than
+    // restating its key, fetch and freshness — a second copy is what let the
+    // two observers of this key cache different shapes. Only the `select` is
+    // this caller's own.
     queries: runs.map((r) => ({
-      queryKey: ["test-execution-detail", "KPIS", r.executionId],
-      queryFn: () =>
-        axios.get(endpoints.testExecutions.kpis(r.executionId)).then((res) => res.data),
+      ...kpisQueryOptions(r.executionId),
       // Skip the fetch when the run already carries its scores (a mock run).
       enabled: !!r.executionId && !r.scores,
-      staleTime: 1000 * 60 * 5,
       select: (data) => extractKpis(data || {}, data?.agent_type).evalMetrics,
     })),
   });

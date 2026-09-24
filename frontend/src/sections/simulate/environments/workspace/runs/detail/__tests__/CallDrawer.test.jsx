@@ -186,6 +186,112 @@ describe("CallDrawer — chat branch", () => {
   });
 });
 
+// The chat drawer's verdict list is `callDetail?.evalResults ?? task.evalResults`,
+// and `task.evalResults` is built by `mapCallRow` from the run-detail list
+// endpoint's own payload. So whether a removed eval's stored verdict can be
+// seen while the call-details request is still in flight depends on that
+// endpoint keeping the verdict AND its `column_order` entry — the backend
+// change this fixture is shaped after. Everything below the fixture is the
+// production path: the same column filter `useRunCalls` applies, the real
+// `mapCallRow`, the real drawer.
+describe("CallDrawer — the run-detail endpoint's removed verdicts, through to the drawer", () => {
+  // One page of `GET /simulate/test-executions/{id}/`, exactly as the widened
+  // endpoint sends it: the removed evaluation keeps its column in
+  // `column_order`, and its stored verdict rides along on the row marked
+  // `removed: true`.
+  const RUN_DETAIL_PAGE = {
+    count: 1,
+    column_order: [
+      { id: "call_details", type: "call_details", column_name: "Call Details" },
+      {
+        id: "eval-live",
+        type: "evaluation",
+        column_name: "Refund correctness",
+        eval_config: { output: "Pass/Fail" },
+      },
+      {
+        id: "eval-removed",
+        type: "evaluation",
+        column_name: "no_misselling",
+        eval_config: { output: "Pass/Fail" },
+      },
+    ],
+    results: [
+      {
+        id: "chat-9",
+        status: "completed",
+        simulation_call_type: "text",
+        provider: "openai",
+        turn_count: 2,
+        scenario: "Refund a double charge",
+        customer_name: "Impatient caller",
+        eval_metrics: {
+          "eval-live": {
+            name: "Refund correctness",
+            value: "Failed",
+            type: "Pass/Fail",
+            reason: "wrong amount",
+            removed: false,
+          },
+          "eval-removed": {
+            name: "no_misselling",
+            value: "Failed",
+            type: "Pass/Fail",
+            reason: "flagged upsell",
+            removed: true,
+          },
+        },
+      },
+    ],
+  };
+
+  // The same derivation `useRunCalls` performs on that payload.
+  const taskFromPage = (page) => {
+    const evalColumns = page.column_order.filter((c) => c.type === "evaluation");
+    return mapCallRow(page.results[0], evalColumns);
+  };
+
+  it("shows a removed eval's stored verdict, marked, from the run-detail payload alone while the call-details request is still pending", async () => {
+    // Pending, not failed: this is the ordinary first paint of the drawer,
+    // where the only verdicts it has are the list's.
+    useCallDetail.mockReturnValue({ callDetail: null, isLoading: true });
+    const user = userEvent.setup();
+    render(<CallDrawer task={taskFromPage(RUN_DETAIL_PAGE)} agentType="text" onClose={() => {}} />);
+
+    // The removed eval also failed, so it reaches the banner as well as the
+    // Evals tab — marked in both, by the test id an e2e flow locates.
+    expect(screen.getByText(/no_misselling failed/)).toBeInTheDocument();
+    expect(screen.getAllByTestId("removed-eval-marker")).toHaveLength(1);
+
+    await user.click(screen.getByRole("tab", { name: /Evals \(2\)/ }));
+
+    expect(screen.getByText("no_misselling")).toBeInTheDocument();
+    // The stored reason, in the banner and in the tab row.
+    expect(screen.getAllByText("flagged upsell")).toHaveLength(2);
+    expect(screen.getAllByTestId("removed-eval-marker")).toHaveLength(2);
+    // The live failing eval is listed too, and never marked — the total stays
+    // at one marker per surface, for the removed eval only.
+    expect(screen.getByText(/Refund correctness failed/)).toBeInTheDocument();
+  });
+
+  // The half of the fixture that is the backend's to keep: drop the removed
+  // eval's column from `column_order` and the verdict never reaches the
+  // drawer at all, however faithfully the row carries it.
+  it("loses that verdict entirely when the endpoint drops the removed eval's column", () => {
+    useCallDetail.mockReturnValue({ callDetail: null, isLoading: true });
+    const withoutColumn = {
+      ...RUN_DETAIL_PAGE,
+      column_order: RUN_DETAIL_PAGE.column_order.filter((c) => c.id !== "eval-removed"),
+    };
+    render(<CallDrawer task={taskFromPage(withoutColumn)} agentType="text" onClose={() => {}} />);
+
+    expect(screen.queryByText(/no_misselling failed/)).toBeNull();
+    expect(screen.queryByTestId("removed-eval-marker")).toBeNull();
+    // The live eval still comes through — only the removed column is gone.
+    expect(screen.getByText(/Refund correctness failed/)).toBeInTheDocument();
+  });
+});
+
 describe("CallDrawer — voice branch", () => {
   it("routes a voice call to the real product voice drawer, fed the call detail", () => {
     useCallExecutionDetail.mockReturnValue({ data: { id: "voice-1", scenario_id: "s1" }, isPending: false });

@@ -58,7 +58,7 @@ describe("deleteHarnessEnvironment", () => {
   });
 });
 
-describe("getHarnessEnvironment (§5)", () => {
+describe("getHarnessEnvironment", () => {
   beforeEach(() => axios.get.mockClear());
 
   it("GETs the environment detail by id (path already contracted)", async () => {
@@ -67,7 +67,7 @@ describe("getHarnessEnvironment (§5)", () => {
   });
 });
 
-describe("renameHarnessEnvironment (§8)", () => {
+describe("renameHarnessEnvironment", () => {
   beforeEach(() => axios.patch.mockClear());
 
   it("PATCHes the environment with the new name only", async () => {
@@ -78,7 +78,7 @@ describe("renameHarnessEnvironment (§8)", () => {
   });
 });
 
-describe("deleteAppliedEvaluation (§4)", () => {
+describe("deleteAppliedEvaluation", () => {
   beforeEach(() => axios.delete.mockClear());
 
   it("DELETEs the eval config by id (path now in the generated contract)", async () => {
@@ -87,7 +87,7 @@ describe("deleteAppliedEvaluation (§4)", () => {
   });
 });
 
-describe("getAvailableEvaluations (§2)", () => {
+describe("getAvailableEvaluations", () => {
   beforeEach(() => axios.get.mockClear());
 
   it("GETs the available-evals catalogue for the environment", async () => {
@@ -96,7 +96,7 @@ describe("getAvailableEvaluations (§2)", () => {
   });
 });
 
-describe("addEvaluation (§3)", () => {
+describe("addEvaluation", () => {
   beforeEach(() => axios.post.mockClear());
 
   it("POSTs the eval name only (mapping is resolved server-side)", async () => {
@@ -110,7 +110,7 @@ describe("addEvaluation (§3)", () => {
 // Every consumer test mocks the whole `harnessEnvironments` module, so the
 // exact URL this client builds is pinned here, like every sibling client
 // above.
-describe("addRunEvaluation (§6)", () => {
+describe("addRunEvaluation", () => {
   beforeEach(() => axios.post.mockClear());
 
   it("POSTs the eval name only to the run-level evaluations path built from id + execution_id", async () => {

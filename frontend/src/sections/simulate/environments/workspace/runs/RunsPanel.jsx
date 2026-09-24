@@ -35,7 +35,8 @@ export default function RunsPanel({ env, envState, runs, onStart, onOpenRun, onG
   const scenarioCount = envState.scenarios.length;
   const criticalCount = envState.scenarios.filter((s) => s.critical).length;
   // On a backed environment the caller hands us the overlaid state, so
-  // `evals` here is §5's `evaluations.selected[]` — the count below and the
+  // `evals` here is the environment detail's `evaluations.selected[]` — the
+  // count below and the
   // names in `evalSub` are the server's list, not the client store's. A
   // template/forked env has no backend detail and keeps the store's own
   // list; either way this reads one list, so the two lines cannot disagree.

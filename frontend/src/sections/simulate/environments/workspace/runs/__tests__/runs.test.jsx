@@ -101,8 +101,9 @@ describe("RunsPanel empty state", () => {
 
 describe("RunsPanel evals-applied tile", () => {
   // A backed environment's applied set arrives already overlaid on
-  // `envState` by the workspace: `evals` is §5's `evaluations.selected[]`,
-  // each row a §1 entry plus its config id. Both halves of the tile read
+  // `envState` by the workspace: `evals` is the environment detail's
+  // `evaluations.selected[]`, each row a catalogue entry plus its config id.
+  // Both halves of the tile read
   // that one list.
   //
   // One environment has one `agent_type`, so its `selected[]` can never
@@ -113,7 +114,7 @@ describe("RunsPanel evals-applied tile", () => {
     selectedEntry(LIBRARY_VOICE_EVAL, "cfg-2"),
   ];
 
-  it("counts the §5 selected evals and names them under the count", () => {
+  it("counts the detail's selected evals and names them under the count", () => {
     renderPanel({ envState: { ...readyState, evals: selected } });
 
     expect(screen.getByText(RUNS_COPY.applied(2))).toBeInTheDocument();

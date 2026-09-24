@@ -25,6 +25,10 @@ export const EVALS_COPY = {
   addAll: (n) => `Add all ${n}`,
   addOne: "Add",
   addedTitle: (n) => `Added evaluations (${n})`,
+  // The same card while the server's list is unknown — a number here would be
+  // a count of something nobody has read yet.
+  addedTitleUnknown: "Added evaluations",
+  addedError: "Couldn’t load this environment's evaluations. Try again.",
   addedSubtitle:
     "Every task is scored against these. Add more from Suggested or the library any time.",
   lockedTitle: "Add scenarios first",

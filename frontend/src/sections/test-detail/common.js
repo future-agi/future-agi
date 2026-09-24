@@ -668,8 +668,8 @@ const AGENT_METRICS = {
 };
 
 const DETAILS_KEYS = {
-  VOICE: ["total_calls", "connected_calls", "calls_connected_percentage", "completed_calls"],
-  CHAT: ["total_calls", "connected_calls", "calls_connected_percentage", "completed_calls"],
+  VOICE: ["total_calls", "connected_calls", "calls_connected_percentage"],
+  CHAT: ["total_calls", "connected_calls", "calls_connected_percentage"],
 };
 
 // Keys to exclude from processing
@@ -677,6 +677,13 @@ const IGNORED_KEYS = [
   "scenario_graphs",
   "calls_attempted",
   "failed_calls",
+  // Left out of all three buckets, next to its sibling `failed_calls`. It has
+  // no label, icon or filter mapping, so routing it into `callDetails` would
+  // paint an iconless card on the product's run-detail page that looks
+  // clickable and filters nothing; letting it fall through to `evalMetrics`
+  // would paint a phantom eval. The simulate harness reads
+  // `kpis.completed_calls` directly and never comes through here.
+  "completed_calls",
   "avg_response",
   "avg_user_interruption_count",
   "avg_ai_interruption_rate",

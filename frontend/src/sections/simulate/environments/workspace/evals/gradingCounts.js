@@ -1,12 +1,11 @@
-// §6's 202 body — {queued, skipped_existing, skipped_in_flight,
-// skipped_pending, completed_calls} — in plain words for the person who
-// just clicked Add.
+// The run-level add's 202 body — {queued, skipped_existing,
+// skipped_in_flight, skipped_pending, completed_calls} — in plain words for
+// the person who just clicked Add.
 //
 // Zero buckets are dropped: the ordinary case ("everything eligible was
-// queued") should read as one clause, not five zeros. The four buckets sum
-// to at most `completed_calls`, and any shortfall is calls that failed to
-// queue — which is why the sentence ends with the total rather than
-// claiming the four add up to it.
+// queued") should read as one clause, not five zeros. The four buckets
+// partition `completed_calls`, so the sentence ends with that total rather
+// than making the reader add the clauses up.
 //
 // An empty/no-body 202 makes every field here `undefined`. Treating
 // `completed_calls` the same as the four buckets would print "of 0 calls
@@ -33,15 +32,25 @@ export function gradingCountsSentence(counts = {}) {
   if (pending > 0) parts.push(`${pending} still being processed`);
   if (inFlight > 0) parts.push(`${inFlight} queued a few minutes ago`);
 
-  // The four buckets can sum to less than `completed_calls` — the gap is
-  // calls that failed to queue. Without a clause for it, "Nothing new to
-  // grade — of 16 calls that finished" reads as "there was nothing to do"
-  // when up to 16 dispatches actually failed. Only shown when the total is
-  // known and the buckets fall genuinely short of it.
+  // The four buckets are meant to partition the total, so a gap between them
+  // and `completed_calls` means the two sides disagree — say that the calls
+  // are unaccounted for, and nothing about why, which this body never states.
+  //
+  // Subtracting requires every term, not just the total: `count()` reads an
+  // absent bucket as 0, so on a partial body the "gap" would be the whole
+  // total and the sentence would report a shortfall invented out of the
+  // missing fields. Gate the arithmetic on all five numbers being present,
+  // the same way the total is gated on its own.
+  const bucketsKnown = [
+    counts.queued,
+    counts.skipped_existing,
+    counts.skipped_pending,
+    counts.skipped_in_flight,
+  ].every(Number.isFinite);
   const accounted = queued + existing + pending + inFlight;
-  const shortfall = completedKnown ? completed - accounted : 0;
+  const shortfall = completedKnown && bucketsKnown ? completed - accounted : 0;
   if (shortfall > 0) {
-    parts.push(`${calls(shortfall)} couldn't be queued`);
+    parts.push(`${calls(shortfall)} unaccounted for`);
   }
 
   const total = completedKnown

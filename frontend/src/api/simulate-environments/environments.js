@@ -64,8 +64,8 @@ export function useDeleteEnvironment() {
   });
 }
 
-// §8 rename. The only editable field is the name; the response is the full §5
-// detail body with `overview.name` updated, so seed the detail cache from it
+// Rename. The only editable field is the name; the response is the full
+// environment detail with `overview.name` updated, so seed the detail cache from it
 // (no refetch) and invalidate the list so the row's name changes there too.
 // Blank/too-long/unknown-field bodies come back 400 — the caller surfaces it.
 export function useRenameEnvironment() {
@@ -80,10 +80,20 @@ export function useRenameEnvironment() {
   });
 }
 
-// §4 remove an applied evaluation (soft delete → 204). The contract says to
-// re-fetch §5 and read `evaluations.selected` rather than dropping the row
-// locally, so this invalidates the detail query. The caller must surface the
-// error: 409 while still building, 404 if already removed (safe to retry).
+// Remove an applied evaluation (soft delete → 204). Re-fetch the detail and
+// read `evaluations.selected` rather than dropping the row locally. The caller
+// must surface the error: 409 while still building, 404 if already removed.
+//
+// `onSettled`, not `onSuccess`: a 404 means the row is already gone on the
+// server, so the list on screen is the stale one — refetching is exactly what
+// reconciles it, and without that the row sits there refusing every retry
+// until something else happens to refetch.
+//
+// Unlike the two add paths this also invalidates the offer list, which a
+// remove genuinely stales (the eval can be added again). Nothing is observing
+// it here — remove is pressed from the Evaluations tab with the picker closed
+// — so this only marks it stale; there is no open drawer for a refetch to
+// pull a row out from under.
 export function useRemoveAppliedEvaluation() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -92,13 +102,14 @@ export function useRemoveAppliedEvaluation() {
     meta: { errorHandled: true },
     mutationFn: ({ id, evalConfigId }) =>
       deleteAppliedEvaluation(id, evalConfigId),
-    onSuccess: (_data, { id }) => {
+    onSettled: (_data, _error, { id }) => {
       queryClient.invalidateQueries({ queryKey: harnessEnvironmentKey(id) });
+      queryClient.invalidateQueries({ queryKey: availableEvaluationsKey(id) });
     },
   });
 }
 
-// §2 the evaluations this environment can still add (catalogue filtered to its
+// The evaluations this environment can still add (catalogue filtered to its
 // modality, minus what is already selected). Drives the add-eval picker.
 export const availableEvaluationsKey = (envId) => [
   ...SIMULATE_ENVIRONMENTS_KEY,
@@ -115,11 +126,26 @@ export function useAvailableEvaluations(envId, { enabled = true } = {}) {
   });
 }
 
-// §3 add an evaluation by name (mapping is resolved server-side by modality).
-// The 201 body is the full §5 detail with the new row in evaluations.selected,
-// so seed the detail cache from it — the picker reads that to flip the row to
-// "Added". Idempotent server-side; 409 at the 8-eval cap or while building; the
-// caller surfaces it.
+// THE RULE BOTH ADD PATHS FOLLOW: neither refetches anything while the picker
+// that triggered it can still be open. Both adds are pressed from that drawer,
+// and both of its lists are being observed by it, so a same-tick refetch pulls
+// rows out from under the click that caused them — the offer list comes back
+// without the just-added eval, and a detail read can land before the write it
+// is meant to confirm and flip the row from "Added" back to "Add". The drawer
+// refetches once, on the way out, where a stale read costs nothing.
+//
+// The cost of the rule: an add still in flight at that moment gets no refetch
+// of its own, so the applied list, the tab badge and the pre-flight tile keep
+// the last read until the drawer next closes. Nothing on screen is showing
+// that list in the meantime, and the drawer's own handling of a pending
+// mutation already leaves exactly this window open.
+//
+// Add an evaluation by name (the mapping is resolved server-side by modality).
+// The 201 body is the full environment detail with the new row in
+// `evaluations.selected`, so seed the detail cache from it — that is what
+// flips the row to "Added", and it is the server's own answer rather than
+// patched-up client state. Idempotent server-side; 409 at the 8-eval cap or
+// while building; the caller surfaces it.
 export function useAddEvaluation() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -129,39 +155,24 @@ export function useAddEvaluation() {
     meta: { errorHandled: true },
     mutationFn: ({ id, name }) => addEvaluation(id, name),
     onSuccess: (detail, { id }) => {
-      // Seed from the server's own body rather than patching client state.
-      // Don't also invalidate the detail key: two detail queries are active
-      // while the picker is open, and a same-tick refetch can win the race
-      // and flip the row back to "Add". `AddEvaluationDrawer`'s `handleClose`
-      // refetches once it's safe.
       if (detail) queryClient.setQueryData(harnessEnvironmentKey(id), detail);
-      // Don't invalidate the AVAILABLE list either: it's the drawer's only
-      // active observer, so refetching here would drop the just-added row
-      // off the offer with nothing to replace it. `boundEntries` (below, in
-      // `AddEvaluationDrawer.jsx`) already dedupes by filtering on
-      // `available`'s current names.
     },
   });
 }
 
-// §6 add an evaluation from inside a run. Same body as §3 (`{ name }`), same
-// refusals, but the 202 body is the five counts, not the detail — so there is
-// nothing to seed: invalidate the detail and let the server say what is
-// selected now. The counts stay on the mutation (`mutation.data`) for the
-// caller to render; they are a receipt for one click, not cached state.
+// Add an evaluation from inside a run. Same body as the environment-level add
+// (`{ name }`), same refusals, but the 202 body is the five grading counts
+// rather than the detail — so there is nothing to seed, and by the rule above
+// nothing is invalidated here either. The receipt the counts render is this
+// click's confirmation, and the drawer's close refetches the detail. The
+// counts stay on the mutation (`mutation.data`) for the caller to render;
+// they are a receipt for one click, not cached state.
 export function useAddRunEvaluation() {
-  const queryClient = useQueryClient();
   return useMutation({
     // Same reasoning as `useAddEvaluation` above.
     meta: { errorHandled: true },
     mutationFn: ({ id, executionId, name }) =>
       addRunEvaluation(id, executionId, name),
-    onSuccess: (_counts, { id }) => {
-      queryClient.invalidateQueries({ queryKey: harnessEnvironmentKey(id) });
-      // Same reasoning as `useAddEvaluation` above — don't also invalidate
-      // the offer list; `boundEntries`'s filter on its current names already
-      // stops the eval from rendering in both groups.
-    },
   });
 }
 

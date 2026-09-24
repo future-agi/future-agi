@@ -20,11 +20,17 @@ const chipSx = {
 // the name. `runMode` (the picker opened from inside a run) swaps the cost
 // chip to "0.5 credits per call graded" / "… + judge tokens" — see
 // `costLabel`.
+//
+// Both fields are optional, and neither has a stand-in value: whichever one
+// the entry does not carry simply draws no chip, rather than an empty one or
+// a made-up default.
 export function EvalEntryChips({ entry, runMode = false }) {
+  const source = sourceLabel(entry);
+  const cost = costLabel(entry, runMode);
   return (
     <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0 }}>
-      <Chip size="small" label={sourceLabel(entry)} sx={chipSx} />
-      <Chip size="small" label={costLabel(entry, runMode)} sx={chipSx} />
+      {source && <Chip size="small" label={source} sx={chipSx} />}
+      {cost && <Chip size="small" label={cost} sx={chipSx} />}
     </Stack>
   );
 }

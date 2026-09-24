@@ -68,9 +68,11 @@ export default function EnvironmentWorkspace() {
   const navigate = useNavigate();
   const { envId } = useParams();
   const { env, source, bootstrapState, notFound, error, refetch } = useEnvironment(envId);
-  // A real (backed) env's applied evals live on §6 (evaluations.selected), not
+  // A real (backed) env's applied evals live on the environment detail
+  // (evaluations.selected), not
   // the client store — so the Evaluations tab count + the "no evals" gap must
-  // read §6, or they'd disagree with the panel and never clear after an add.
+  // read that detail, or they'd disagree with the panel and never clear after
+  // an add.
   // Shares the ["harness-environment", id] cache the Evals tab already uses.
   const backed = source === "harness";
   const evalDetailQuery = useQuery(harnessEnvironmentQuery(envId, { enabled: backed }));
@@ -244,26 +246,29 @@ export default function EnvironmentWorkspace() {
   const envLive = env.buildStatus === BUILD_STATUS.READY;
 
   // The tab count, the "no evals" gap and the Runs pre-flight tile read the
-  // applied eval set. For a backed env that set is §5 evaluations.selected
+  // applied eval set. For a backed env that set is the detail's
+  // evaluations.selected
   // (what the Evals panel shows), not the client store — so overlay it here so
   // the badge, the gap and the pre-flight count all match the panel and clear
   // after an add. Scenarios/runs keep their existing sources.
   const backedSelected = evalDetailQuery.data?.evaluations?.selected;
-  const badgeEnvState =
+  const serverEnvState =
     backed && Array.isArray(backedSelected)
       ? { ...envState, evals: backedSelected }
       : envState;
 
-  // A §8 rename writes the fresh detail back into the §6 cache, but `env` here
+  // A rename writes the fresh detail back into the detail cache, but `env` here
   // is derived from the job poll (name from job metadata), so it would keep the
-  // old name in the header. Overlay §6's name for a backed env so a rename shows
+  // old name in the header. Overlay the detail's name for a backed env so a
+  // rename shows
   // everywhere the moment it lands, not only in the Settings field.
   const backedName = evalDetailQuery.data?.overview?.name;
   const displayEnv = env && backed && backedName ? { ...env, name: backedName } : env;
 
-  // Overview summary tiles need the real §6 counts: the job poll (which drives
+  // Overview summary tiles need the detail's real counts: the job poll (which
+  // drives
   // env/envState here) carries the scenarios list but not the eval or run
-  // counts. Reuse the §6 detail already fetched above rather than a second read.
+  // counts. Reuse the detail already fetched above rather than a second read.
   const backedDetail = evalDetailQuery.data;
   const overviewCounts =
     backed && backedDetail
@@ -275,7 +280,7 @@ export default function EnvironmentWorkspace() {
           hardRules: backedDetail.contract?.hard_constraints?.length,
         }
       : undefined;
-  // Real §6 world content for the Overview (stores/amendments/dependencies),
+  // Real world content for the Overview (stores/amendments/dependencies),
   // so those cards render live data and an honest empty state instead of the
   // fixture. Undefined for a non-backed env.
   const overviewWorld =
@@ -286,7 +291,7 @@ export default function EnvironmentWorkspace() {
           dependencies: backedDetail.contract?.dependencies ?? [],
         }
       : undefined;
-  // Real §6 capability-graph branches for a backed env: tools names,
+  // Real capability-graph branches for a backed env: tools names,
   // real_use_cases (flows), world.personas names, hard_constraints (guardrails).
   // Empty arrays render the graph's honest "none yet" instead of a fixture.
   const graphData =
@@ -363,15 +368,15 @@ export default function EnvironmentWorkspace() {
           <WorkspacePanels
             env={displayEnv}
             envState={envState}
-            badgeEnvState={badgeEnvState}
+            serverEnvState={serverEnvState}
             patch={patch}
             tab={activeTab}
             onTabChange={onTabChange}
             locked={locked}
             backed={source === "harness"}
             onFork={onFork}
-            gapsByTab={gapsByTab(env, badgeEnvState)}
-            counts={counts(badgeEnvState)}
+            gapsByTab={gapsByTab(env, serverEnvState)}
+            counts={counts(serverEnvState)}
             overviewCounts={overviewCounts}
             overviewWorld={overviewWorld}
             graphData={graphData}

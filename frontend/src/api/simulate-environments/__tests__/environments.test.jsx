@@ -22,8 +22,13 @@ vi.mock("src/api/simulate-environments/harnessEnvironments", () => ({
 const { createHarnessJob, uploadHarnessSecretFile } = await import(
   "src/api/harness/harness"
 );
-const { listHarnessEnvironments, deleteHarnessEnvironment, addEvaluation, addRunEvaluation } =
-  await import("src/api/simulate-environments/harnessEnvironments");
+const {
+  listHarnessEnvironments,
+  deleteHarnessEnvironment,
+  deleteAppliedEvaluation,
+  addEvaluation,
+  addRunEvaluation,
+} = await import("src/api/simulate-environments/harnessEnvironments");
 const {
   useMyEnvironments,
   useDeleteEnvironment,
@@ -33,6 +38,7 @@ const {
   useAdoptTemplate,
   useAddEvaluation,
   useAddRunEvaluation,
+  useRemoveAppliedEvaluation,
   SIMULATE_ENVIRONMENTS_KEY,
   availableEvaluationsKey,
 } = await import("../environments");
@@ -285,7 +291,7 @@ describe("useAdoptTemplate", () => {
   });
 });
 
-describe("useAddEvaluation (§3)", () => {
+describe("useAddEvaluation", () => {
   it("seeds the detail from the 201 body and does NOT invalidate it in the same tick", async () => {
     const detail = { evaluations: { selected: [{ id: "cfg-1", name: "no_misselling" }] } };
     addEvaluation.mockResolvedValue(detail);
@@ -325,7 +331,7 @@ describe("useAddEvaluation (§3)", () => {
   });
 });
 
-describe("useAddRunEvaluation (§6)", () => {
+describe("useAddRunEvaluation", () => {
   it("posts the name on the run and returns the five counts", async () => {
     addRunEvaluation.mockResolvedValue({
       queued: 12,
@@ -344,31 +350,12 @@ describe("useAddRunEvaluation (§6)", () => {
     expect(result.current.data).toMatchObject({ queued: 12, completed_calls: 16 });
   });
 
-  it("refetches the environment detail rather than patching it from the 202", async () => {
-    addRunEvaluation.mockResolvedValue({
-      queued: 1,
-      skipped_existing: 0,
-      skipped_in_flight: 0,
-      skipped_pending: 0,
-      completed_calls: 1,
-    });
-    const { queryClient, Wrapper } = makeWrapper();
-    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
-    const { result } = renderHook(() => useAddRunEvaluation(), { wrapper: Wrapper });
-
-    result.current.mutate({ id: "env-1", executionId: "ex-1", name: "no_misselling" });
-
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(invalidate).toHaveBeenCalledWith({
-      queryKey: ["harness-environment", "env-1"],
-    });
-  });
-
-  // Same reasoning as `useAddEvaluation` above: invalidating `available` here
-  // would refetch it while the picker is still open and drop the just-added
-  // row out of the offer, ahead of the bound group's filter that already
-  // prevents the duplicate.
-  it("does NOT invalidate the available list", async () => {
+  // The same rule the environment-level add follows, for the same reason:
+  // both adds are pressed from the picker, so neither refetches anything the
+  // open picker is observing. The run path has no body to seed from either —
+  // its receipt is the click's confirmation, and the drawer's close is what
+  // refetches the detail.
+  it("refetches neither list while the picker that triggered it can still be open", async () => {
     addRunEvaluation.mockResolvedValue({
       queued: 1,
       skipped_existing: 0,
@@ -384,7 +371,65 @@ describe("useAddRunEvaluation (§6)", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(invalidate).not.toHaveBeenCalledWith({
+      queryKey: ["harness-environment", "env-1"],
+    });
+    expect(invalidate).not.toHaveBeenCalledWith({
       queryKey: availableEvaluationsKey("env-1"),
     });
+  });
+
+  // The 202 carries counts, not the detail — so nothing may be written into
+  // the detail cache from it either.
+  it("never patches the detail cache from the 202 counts", async () => {
+    addRunEvaluation.mockResolvedValue({
+      queued: 1,
+      skipped_existing: 0,
+      skipped_in_flight: 0,
+      skipped_pending: 0,
+      completed_calls: 1,
+    });
+    const { queryClient, Wrapper } = makeWrapper();
+    const setData = vi.spyOn(queryClient, "setQueryData");
+    const { result } = renderHook(() => useAddRunEvaluation(), { wrapper: Wrapper });
+
+    result.current.mutate({ id: "env-1", executionId: "ex-1", name: "no_misselling" });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(setData).not.toHaveBeenCalled();
+  });
+});
+
+describe("useRemoveAppliedEvaluation", () => {
+  const KEYS = (id) => [["harness-environment", id], availableEvaluationsKey(id)];
+
+  it("refetches the applied list and stales the offer list after a remove", async () => {
+    deleteAppliedEvaluation.mockResolvedValue(undefined);
+    const { queryClient, Wrapper } = makeWrapper();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useRemoveAppliedEvaluation(), { wrapper: Wrapper });
+
+    result.current.mutate({ id: "env-1", evalConfigId: "cfg-1" });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(deleteAppliedEvaluation).toHaveBeenCalledWith("env-1", "cfg-1");
+    // The removed eval can be added again, so the offer list is stale too.
+    // Nothing observes it here (remove is pressed with the picker closed), so
+    // this only marks it.
+    KEYS("env-1").forEach((queryKey) => expect(invalidate).toHaveBeenCalledWith({ queryKey }));
+  });
+
+  // A 404 means the row is already gone server-side, so the list on screen is
+  // the stale one — refetching is exactly what reconciles it. Invalidating
+  // only on success left the row there, refusing every retry the same way.
+  it("still reconciles the list when the remove 404s because the row is already gone", async () => {
+    deleteAppliedEvaluation.mockRejectedValue({ detail: "Not found", statusCode: 404 });
+    const { queryClient, Wrapper } = makeWrapper();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useRemoveAppliedEvaluation(), { wrapper: Wrapper });
+
+    result.current.mutate({ id: "env-1", evalConfigId: "cfg-1" });
+
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    KEYS("env-1").forEach((queryKey) => expect(invalidate).toHaveBeenCalledWith({ queryKey }));
   });
 });

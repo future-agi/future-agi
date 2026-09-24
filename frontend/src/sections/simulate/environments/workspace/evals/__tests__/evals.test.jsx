@@ -6,7 +6,7 @@ import EvalsStep from "../EvalsStep";
 import { EVALS_COPY } from "../evals.constants";
 import { NO_MISSELLING, selectedEntry } from "./fixtures/evalEntries";
 
-// §4 client, mocked so a backed-env remove exercises the real DELETE path
+// The API client, mocked so a backed-env remove exercises the real DELETE path
 // without the apiPath contract throw.
 vi.mock("src/api/simulate-environments/harnessEnvironments", () => ({
   listHarnessEnvironments: vi.fn(),
@@ -22,7 +22,7 @@ const { deleteAppliedEvaluation, getHarnessEnvironment } = await import(
   "src/api/simulate-environments/harnessEnvironments"
 );
 
-// EvalsStep now uses a react-query mutation (§4 remove-eval), so every render
+// EvalsStep now uses a react-query mutation (remove-eval), so every render
 // needs a client. Wrap the library render once so the call sites stay unchanged.
 const render = (ui, options) =>
   rtlRender(
@@ -228,8 +228,9 @@ describe("EvalsStep — template lock (read-only until forked)", () => {
   });
 });
 
-describe("EvalsStep — §4 remove on a backend-backed env", () => {
-  // A backed env's applied set comes from §5 detail (evaluations.selected), not
+describe("EvalsStep — remove on a backend-backed env", () => {
+  // A backed env's applied set comes from the environment detail
+  // (evaluations.selected), not
   // the store — so mock the detail fetch to supply the real selected row.
   const detailWith = (selected) => ({ evaluations: { selected } });
   const state = { scenarios: [{ id: "s1" }], evals: [] };
@@ -264,7 +265,7 @@ describe("EvalsStep — §4 remove on a backend-backed env", () => {
     expect(screen.queryByText("voice_recording")).toBeNull();
   });
 
-  it("lists the §5 selected evals and fires the real DELETE with the config id", async () => {
+  it("lists the detail's selected evals and fires the real DELETE with the config id", async () => {
     render(<Harness backed initial={state} patchSpy={vi.fn()} />);
 
     expect(await screen.findByText("no_misselling")).toBeInTheDocument();
@@ -296,6 +297,37 @@ describe("EvalsStep — §4 remove on a backend-backed env", () => {
     );
     expect(await screen.findByText("no_misselling")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: EVALS_COPY.remove })[0]).toBeDisabled();
+  });
+
+  // `selectedFromDetail` collapses a failed read to `[]`, which is the same
+  // value an environment with genuinely no evals produces. Announcing
+  // "Added (0) / No evaluations added yet" out of that turns a fetch that
+  // never answered into a confident claim about an environment that may hold
+  // eight.
+  it("says the applied list could not be read, never 'no evaluations added yet'", async () => {
+    // A 404 is the one failure the detail query treats as terminal; every
+    // other status is retried, which is the same branch reached a few
+    // seconds later.
+    getHarnessEnvironment.mockRejectedValue({
+      detail: "No environment matches this id",
+      statusCode: 404,
+    });
+    render(<Harness backed initial={state} patchSpy={vi.fn()} />);
+
+    expect(await screen.findByText("No environment matches this id")).toBeInTheDocument();
+    expect(screen.queryByText("Added evaluations (0)")).toBeNull();
+    expect(screen.queryByText(EVALS_COPY.emptyTitle)).toBeNull();
+    expect(screen.queryByText(EVALS_COPY.emptyNoSuggestions)).toBeNull();
+  });
+
+  it("shows the loading state, not the empty state, while the applied list is still being read", async () => {
+    getHarnessEnvironment.mockReturnValue(new Promise(() => {}));
+    render(<Harness backed initial={state} patchSpy={vi.fn()} />);
+
+    expect(await screen.findByRole("progressbar")).toBeInTheDocument();
+    // No count either: nobody has read the list yet.
+    expect(screen.queryByText("Added evaluations (0)")).toBeNull();
+    expect(screen.queryByText(EVALS_COPY.emptyTitle)).toBeNull();
   });
 
   it("shows the server's sentence when a remove is refused, attributed to the eval it failed for, and keeps the row", async () => {

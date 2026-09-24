@@ -262,11 +262,11 @@ export default function RunDetail({ env, envState, backed = false, testId, execu
         </Box>
       </Box>
 
-      {/* §6: the same picker the Evaluations tab opens. Adding from here binds
+      {/* The same picker the Evaluations tab opens. Adding from here binds
           the eval to the environment exactly as the tab's add does and then
           queues this run's finished calls that hold no verdict for it; the
           drawer shows the counts the 202 returns. Only a backed environment
-          has a §2/§6 backend to call — a client/template env (reachable here
+          has a backend to call — a client/template env (reachable here
           via the `?mockRuns=1` QA switch) gets the same store-only picker the
           Evaluations tab falls back to. */}
       {backed ? (

@@ -5,7 +5,7 @@ import { SELECTED_EVAL_SHAPE } from "./evalEntry";
 import { EvalEntryChips, EvalInputs } from "./evalEntryCells";
 
 // One row of the Evaluations tab for a backend-backed environment: the entry
-// as `evaluations.selected[]` sends it (§5) — name, description,
+// as `evaluations.selected[]` sends it — name, description,
 // Library/Custom, the cost line and what fills each input — plus the
 // caller's Remove action. Removing stops future grading only: every verdict
 // it already produced stays on its call and is still shown there, marked.

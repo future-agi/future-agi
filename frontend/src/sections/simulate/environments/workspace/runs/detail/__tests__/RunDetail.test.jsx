@@ -29,7 +29,7 @@ vi.mock("src/sections/test-detail/CreateEditOptimization/CreateEditOptimizationF
 }));
 
 // The picker owns its own network hooks; stub it to a marker that proves the
-// run view hands it the execution id (§6 — the add goes to the run, not the
+// run view hands it the execution id (the add goes to the run, not the
 // environment). The picker's own behaviour is covered in
 // evals/__tests__/addEvaluationDrawer.test.jsx.
 //

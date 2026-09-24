@@ -1,6 +1,6 @@
-// One eval entry exactly as the API sends it (§1: name, description, source,
+// One eval entry exactly as the API sends it: name, description, source,
 // tags, required_keys, agent_type, modality, credits_per_run,
-// charges_judge_tokens, inputs[]).
+// charges_judge_tokens, inputs[].
 //
 // Presentation only — the frontend never computes which source fills a key.
 // `inputs` is read as the API built it — one row per required key, sorted by
@@ -33,7 +33,7 @@ const ENTRY_FIELDS = {
 export const EVAL_ENTRY_SHAPE = PropTypes.shape(ENTRY_FIELDS);
 
 // An entry on `evaluations.selected[]` — the same entry plus the config id
-// the remove endpoint takes and `runnable` (§5).
+// the remove endpoint takes and `runnable`.
 export const SELECTED_EVAL_SHAPE = PropTypes.shape({
   ...ENTRY_FIELDS,
   id: PropTypes.string,
@@ -42,23 +42,29 @@ export const SELECTED_EVAL_SHAPE = PropTypes.shape({
 
 // "system" is a built-in from the library, anything else is the
 // organisation's own. The words on screen are the product's; the value is
-// the API's — never inferred from the name, the owner or the tags.
-export const sourceLabel = (entry) => (entry?.source === "custom" ? "Custom" : "Library");
+// the API's — never inferred from the name, the owner or the tags, and never
+// guessed at when the field is absent: no `source`, no chip.
+export const sourceLabel = (entry) => {
+  if (!entry?.source) return null;
+  return entry.source === "custom" ? "Custom" : "Library";
+};
 
-// Nothing is free — every eval run costs `credits_per_run` (always 0.5)
-// credits, and an AI-judged eval additionally charges the judge's tokens
-// (`charges_judge_tokens`). Both numbers are the API's own; never derived
-// from `eval_type` or the eval's name.
+// Every eval run costs `credits_per_run` credits, and an AI-judged eval
+// additionally charges the judge's tokens (`charges_judge_tokens`). Both are
+// the API's own; never derived from `eval_type` or the eval's name, and never
+// stood in for — an entry carrying no `credits_per_run` gets no cost chip
+// rather than an invented price.
 //
 // `runMode`: the picker opened from inside a run reads "run" as the
 // simulation run, not one eval run — "0.5 credits per run" there would
 // misread as 0.5 credits total. In run mode the chip instead reads "0.5
 // credits per call graded" / "… + judge tokens".
 export const costLabel = (entry, runMode = false) => {
-  const credits = entry?.credits_per_run ?? 0.5;
+  const credits = entry?.credits_per_run;
+  if (!Number.isFinite(credits)) return null;
   const suffix = entry?.charges_judge_tokens ? " + judge tokens" : "";
-  // `credits` is read off the API, never hard-coded — the noun still has to
-  // agree in number if it ever changes ("1 credit", not "1 credits").
+  // The noun has to agree in number with whatever the API sent ("1 credit",
+  // not "1 credits").
   const noun = credits === 1 ? "credit" : "credits";
   return runMode ? `${credits} ${noun} per call graded${suffix}` : `${credits} ${noun} per run${suffix}`;
 };

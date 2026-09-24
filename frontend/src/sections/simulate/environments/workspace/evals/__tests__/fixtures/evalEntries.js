@@ -1,12 +1,15 @@
-// The contract's own example entry (§1), copied verbatim, so a shape drift
+// The contract's own example entry, copied verbatim, so a shape drift
 // shows up as a failing test rather than a silently blank row. Not
 // collected by vitest: the include glob is
 // src/**/*.{test,spec}.{js,jsx,ts,tsx}.
 //
-// `agent_type` is the backend's own value and only ever "voice" or "text" —
-// never "chat". That is the exact string `buildRunStats` and the KPI view
-// key branch their modality on, so a wrong value here would be the opposite
-// of what this file is for.
+// An entry's own `agent_type` is "voice" or "chat", the two values the
+// evaluation definitions declare. The run KPIs carry a field of the same
+// name on a different endpoint, whose values are the ones `buildRunStats`
+// and the KPI view key branch on — a separate vocabulary that happens to
+// share a name. Keep these entries on the definitions' enum: a value from
+// the other vocabulary would be exactly the drift this file exists to
+// catch.
 
 export const NO_MISSELLING = {
   name: "no_misselling",
@@ -40,7 +43,7 @@ export const CUSTOM_EVAL = {
   source: "custom",
   tags: ["Agents", "Chatbot behaviors"],
   required_keys: ["conversation"],
-  agent_type: "text",
+  agent_type: "chat",
   modality: "text",
   credits_per_run: 0.5,
   charges_judge_tokens: true,
@@ -55,7 +58,7 @@ export const CODE_EVAL = {
   source: "system",
   tags: ["Agents"],
   required_keys: ["input"],
-  agent_type: "text",
+  agent_type: "chat",
   modality: "text",
   credits_per_run: 0.5,
   charges_judge_tokens: false,
@@ -68,14 +71,14 @@ export const CODE_EVAL = {
 // Library/Custom + cost-line test can use three entries of one
 // `agent_type`: every entry in ONE `available` response carries the same
 // `agent_type`, and mixing NO_MISSELLING (voice) with CUSTOM_EVAL/CODE_EVAL
-// (text) is a response the server cannot produce.
+// (chat) is a response the server cannot produce.
 export const LIBRARY_TEXT_EVAL = {
   name: "no_pii_leak",
   description: "Checks the agent never repeats a customer's personal data back",
   source: "system",
   tags: ["Agents", "Conversation", "Chatbot behaviors"],
   required_keys: ["conversation"],
-  agent_type: "text",
+  agent_type: "chat",
   modality: "text",
   credits_per_run: 0.5,
   charges_judge_tokens: true,

@@ -51,7 +51,7 @@ beforeEach(() => {
   addRunEvaluation.mockReset();
 });
 
-describe("AddEvaluationDrawer — the row (§1 entry)", () => {
+describe("AddEvaluationDrawer — the row", () => {
   it("shows the API's own labels for what fills each key, and never the raw source", async () => {
     render(<AddEvaluationDrawer open env={ENV} onClose={vi.fn()} />);
 
@@ -86,7 +86,7 @@ describe("AddEvaluationDrawer — the row (§1 entry)", () => {
   });
 
   // Every entry in ONE `available` response carries the same `agent_type`,
-  // so all three here are `"text"` — mixing a voice entry in would build a
+  // so all three here are `"chat"` — mixing a voice entry in would build a
   // response the server cannot produce.
   it("shows Library/Custom and the cost line, built from the two fields", async () => {
     getAvailableEvaluations.mockResolvedValue({
@@ -118,7 +118,7 @@ describe("AddEvaluationDrawer — the row (§1 entry)", () => {
   });
 });
 
-describe("AddEvaluationDrawer — adding to the environment (§3)", () => {
+describe("AddEvaluationDrawer — adding to the environment", () => {
   it("posts the name and nothing else", async () => {
     render(<AddEvaluationDrawer open env={ENV} onClose={vi.fn()} />);
     await screen.findByText("no_misselling");
@@ -129,6 +129,32 @@ describe("AddEvaluationDrawer — adding to the environment (§3)", () => {
       expect(addEvaluation).toHaveBeenCalledWith("env-1", "no_misselling"),
     );
     expect(addEvaluation).toHaveBeenCalledTimes(1);
+  });
+
+  // The only thing standing between a double click and a second POST is the
+  // offer button's `addMutation.isPending` term. Removing it (leaving
+  // `disabled={added || atCap}`) leaves every other drawer test green, so
+  // this is the one that pins it — mirroring the bound group's own
+  // in-flight case below.
+  it("issues one POST when Add is clicked twice while the first is still in flight", async () => {
+    addEvaluation.mockReturnValue(new Promise(() => {}));
+    render(<AddEvaluationDrawer open env={ENV} onClose={vi.fn()} />);
+    await screen.findByText("no_misselling");
+
+    fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
+
+    // Wait for the pending state to land (react-query notifies subscribers
+    // async) so the second click genuinely races an in-flight mutation
+    // rather than a stale pre-click render.
+    const pending = await screen.findByRole("button", { name: "…" });
+    fireEvent.click(pending);
+    fireEvent.click(pending);
+
+    // One POST, not three — the assertion the guard exists for.
+    await waitFor(() => expect(addEvaluation).toHaveBeenCalledTimes(1));
+    expect(addEvaluation).toHaveBeenCalledTimes(1);
+    // And the button says so rather than only ignoring the press.
+    expect(pending).toBeDisabled();
   });
 
   it("shows a 400 refusal exactly as the API worded it", async () => {
@@ -148,8 +174,8 @@ describe("AddEvaluationDrawer — adding to the environment (§3)", () => {
     ).toBeInTheDocument();
   });
 
-  // §3 says only *when* the add 409s (8 already selected, or no run test
-  // yet) — it promises no sentence, so this test names no contracted
+  // The contract says only *when* the add 409s (8 already selected, or no
+  // run test yet) — it promises no sentence, so this test names no contracted
   // string: it proves the drawer echoes whatever body arrives, word for
   // word.
   it("shows the 409 body exactly as returned", async () => {
@@ -188,7 +214,7 @@ describe("AddEvaluationDrawer — adding to the environment (§3)", () => {
   // The `boundEntries` filter alone (asserted below, "never lists the same
   // eval in both groups after a run-mode add") already closes the
   // duplicate-row bug an invalidation would be meant to fix.
-  it("keeps the just-added row on screen, marked Added, after a §3 add", async () => {
+  it("keeps the just-added row on screen, marked Added, after an add", async () => {
     // The server applies its own subtraction on every fetch: the second
     // `available` read no longer offers what was just bound. Since the add
     // must NOT trigger a same-tick refetch, only the first (constant)
@@ -269,7 +295,7 @@ describe("AddEvaluationDrawer — adding to the environment (§3)", () => {
     expect(screen.queryByText(/is already applied/)).toBeNull();
   });
 
-  it("shows the available list's own refusal, word for word (§2)", async () => {
+  it("shows the available list's own refusal, word for word", async () => {
     getAvailableEvaluations.mockRejectedValue({
       detail: "Environment has no evaluations until it finishes building",
       statusCode: 409,
@@ -290,6 +316,137 @@ describe("AddEvaluationDrawer — adding to the environment (§3)", () => {
     expect(
       await screen.findByText("Something went wrong fetching the library. Try again."),
     ).toBeInTheDocument();
+  });
+
+  it("shows a refusal whose sentence arrives under `message` rather than `detail`", async () => {
+    // Every one of this envelope's message fields is optional, so the
+    // "shown exactly as returned" guarantee cannot hold for `detail` alone.
+    addEvaluation.mockRejectedValue({
+      message: "no_misselling: not an eval this environment can be graded by",
+      statusCode: 400,
+    });
+    render(<AddEvaluationDrawer open env={ENV} onClose={vi.fn()} />);
+    await screen.findByText("no_misselling");
+
+    fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
+
+    expect(
+      await screen.findByText("no_misselling: not an eval this environment can be graded by"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Couldn’t add the evaluation/)).toBeNull();
+  });
+
+  // The applied list is what says which evals the environment already has.
+  // Collapsing a failed read of it to "none" turns a fetch that never
+  // answered into the confident claim that there is nothing to add.
+  it("says the applied list could not be read, never 'Nothing left to add'", async () => {
+    getAvailableEvaluations.mockResolvedValue({ evaluations: [] });
+    // A 404 is the one failure the detail query treats as terminal; every
+    // other status is retried, which is the same branch reached a few
+    // seconds later.
+    getHarnessEnvironment.mockRejectedValue({
+      detail: "No environment matches this id",
+      statusCode: 404,
+    });
+    render(<AddEvaluationDrawer open env={ENV} onClose={vi.fn()} />);
+
+    expect(await screen.findByText("No environment matches this id")).toBeInTheDocument();
+    expect(screen.queryByText("Nothing left to add")).toBeNull();
+    expect(
+      screen.queryByText("There's nothing this environment can be graded by right now."),
+    ).toBeNull();
+    // Nor a cap warning: how many are applied is exactly what isn't known.
+    expect(screen.queryByText(/maximum 8 evaluations/i)).toBeNull();
+  });
+
+  // The applied list only says which of the offered rows are already on the
+  // environment. When it fails, that is all that is lost: the offer list
+  // answered, every row is addable, and hiding them would take away the one
+  // thing the drawer is for over a fetch that says nothing about them. The
+  // failure itself still needs to be visible and retryable, though — a strip
+  // above the table carries the sentence and its own Retry.
+  it("keeps the offered rows addable when only the applied list fails", async () => {
+    getAvailableEvaluations.mockResolvedValue({ evaluations: [NO_MISSELLING] });
+    getHarnessEnvironment.mockRejectedValue({
+      detail: "No environment matches this id",
+      statusCode: 404,
+    });
+    render(<AddEvaluationDrawer open env={ENV} onClose={vi.fn()} />);
+
+    expect(await screen.findByText("no_misselling")).toBeInTheDocument();
+    const addButton = screen.getByRole("button", { name: /^Add$/ });
+    expect(addButton).toBeEnabled();
+    // The empty state never stands in for the rows.
+    expect(screen.queryByText("Nothing left to add")).toBeNull();
+    // And nothing is claimed about what is already applied: no "Added" mark
+    // on a row nobody has checked, and no cap.
+    expect(screen.queryByRole("button", { name: /^Added$/ })).toBeNull();
+    expect(screen.queryByText(/maximum 8 evaluations/i)).toBeNull();
+
+    // The failed read still shows, in the strip above the table, with its
+    // own Retry.
+    expect(await screen.findByText("No environment matches this id")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(getHarnessEnvironment).toHaveBeenCalledTimes(2));
+    // The offer list, which never failed, is not retried alongside it.
+    expect(getAvailableEvaluations).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(addButton);
+    await waitFor(() => expect(addEvaluation).toHaveBeenCalledWith("env-1", "no_misselling"));
+  });
+
+  // There is one Retry on screen for two reads. Retrying only the one whose
+  // sentence is showing leaves the other failed, so the press looks like it
+  // did nothing.
+  it("retries both reads from the one Retry button when both failed", async () => {
+    getAvailableEvaluations.mockRejectedValue({ statusCode: 500 });
+    getHarnessEnvironment.mockRejectedValue({ statusCode: 404 });
+    render(<AddEvaluationDrawer open env={ENV} onClose={vi.fn()} />);
+
+    await screen.findByText("Something went wrong fetching the library. Try again.");
+    expect(getAvailableEvaluations).toHaveBeenCalledTimes(1);
+    expect(getHarnessEnvironment).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(getAvailableEvaluations).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(getHarnessEnvironment).toHaveBeenCalledTimes(2));
+  });
+
+  it("shows the loading state, not the empty state, while the applied list is still being read", async () => {
+    getAvailableEvaluations.mockResolvedValue({ evaluations: [] });
+    getHarnessEnvironment.mockReturnValue(new Promise(() => {}));
+    render(<AddEvaluationDrawer open env={ENV} onClose={vi.fn()} />);
+
+    expect(await screen.findByRole("progressbar")).toBeInTheDocument();
+    expect(screen.queryByText("Nothing left to add")).toBeNull();
+    expect(
+      screen.queryByText("There's nothing this environment can be graded by right now."),
+    ).toBeNull();
+  });
+
+  // A loaded offer list is not held behind the applied list's own read: the
+  // row shows as soon as the offer answers, addable, and only its "Added"
+  // state waits on the applied list.
+  it("shows the offered row rather than a spinner while the applied list is still pending", async () => {
+    getHarnessEnvironment.mockReturnValue(new Promise(() => {}));
+    render(<AddEvaluationDrawer open env={ENV} onClose={vi.fn()} />);
+
+    expect(await screen.findByText("no_misselling")).toBeInTheDocument();
+    const addButton = screen.getByRole("button", { name: /^Add$/ });
+    expect(addButton).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /^Added$/ })).toBeNull();
+    expect(screen.queryByText(/maximum 8 evaluations/i)).toBeNull();
+  });
+
+  // The count on screen is the server's list length or nothing at all —
+  // never the client store's idea of what was added.
+  it("asserts no cap while the applied list is unknown", async () => {
+    getHarnessEnvironment.mockReturnValue(new Promise(() => {}));
+    render(<AddEvaluationDrawer open env={ENV} onClose={vi.fn()} />);
+
+    await screen.findByRole("progressbar");
+    expect(screen.queryByText(/maximum 8 evaluations/i)).toBeNull();
   });
 
   it("clears a stale add error once the drawer closes and reopens", async () => {
@@ -379,7 +536,7 @@ describe("AddEvaluationDrawer — adding to the environment (§3)", () => {
   });
 });
 
-describe("AddEvaluationDrawer — adding from inside a run (§6)", () => {
+describe("AddEvaluationDrawer — adding from inside a run", () => {
   it("calls the run-level endpoint and says what it queued", async () => {
     addRunEvaluation.mockResolvedValue({
       queued: 13,
@@ -496,7 +653,7 @@ describe("AddEvaluationDrawer — adding from inside a run (§6)", () => {
     expect(screen.queryByText("0.5 credits per run + judge tokens")).toBeNull();
   });
 
-  it("passes a §3 refusal through untouched — nothing was queued", async () => {
+  it("passes an add refusal through untouched — nothing was queued", async () => {
     addRunEvaluation.mockRejectedValue({
       detail: "no_misselling: not an eval this environment can be graded by",
       statusCode: 400,
@@ -622,11 +779,11 @@ describe("AddEvaluationDrawer — adding from inside a run (§6)", () => {
   });
 });
 
-describe("AddEvaluationDrawer — the environment's own evals, in run mode (§6)", () => {
-  // §2 subtracts already-selected evals, so an eval added from the
-  // Evaluations tab is not in `available` at all, and nothing that had
-  // already finished was graded by it. Without this group there is no
-  // control anywhere that can grade those calls, and §6's backfill path is
+describe("AddEvaluationDrawer — the environment's own evals, in run mode", () => {
+  // The offer list subtracts already-selected evals, so an eval added from the
+  // Evaluations tab is not in `available` at all, and nothing that had already
+  // finished was graded by it. Without this group there is no control anywhere
+  // that can grade those calls, and the run-level add's backfill path is
   // unreachable from the UI.
   const BOUND = { evaluations: { selected: [selectedEntry(NO_MISSELLING, "cfg-1")] } };
   const GROUP_TITLE = "Already on this environment — grade this run's finished calls";
@@ -652,7 +809,7 @@ describe("AddEvaluationDrawer — the environment's own evals, in run mode (§6)
     expect(grade).toBeEnabled();
     fireEvent.click(grade);
 
-    // The same run-level endpoint, with this bound eval's own name (§6).
+    // The same run-level endpoint, with this bound eval's own name.
     await waitFor(() =>
       expect(addRunEvaluation).toHaveBeenCalledWith("env-1", "ex-1", "no_misselling"),
     );
@@ -667,10 +824,10 @@ describe("AddEvaluationDrawer — the environment's own evals, in run mode (§6)
   });
 
   // The common scenario: every eval this environment can be graded by was
-  // already added from the Evaluations tab, so §2 subtracts all of them and
-  // `available` comes back empty. The old empty state ("There's nothing
-  // this environment can be graded by right now") sat directly above the
-  // group that contradicts it.
+  // already added from the Evaluations tab, so the offer list subtracts all of
+  // them and `available` comes back empty. The old empty state ("There's nothing
+  // this environment can be graded by right now") sat directly above the group
+  // that contradicts it.
   it("shows a one-line note instead of the old empty state when the offer is empty but the bound group is not", async () => {
     getAvailableEvaluations.mockResolvedValue({ evaluations: [] });
     getHarnessEnvironment.mockResolvedValue(BOUND);
@@ -771,18 +928,39 @@ describe("AddEvaluationDrawer — the environment's own evals, in run mode (§6)
     expect(screen.queryByText(GROUP_TITLE)).toBeNull();
   });
 
-  // A run-mode add refetches `selected[]` (`useAddRunEvaluation` invalidates
-  // the detail) without necessarily having refetched `available` in the
-  // same tick — the offer row is deliberately left in place marked "Added".
-  // Without filtering, `boundEntries` would be every `selected` entry
-  // unconditionally, so the same eval would render twice: once as "Added"
-  // above, once as "Grade this run" below.
-  it("never lists the same eval in both groups after a run-mode add", async () => {
+  // `boundEntries` filters `selected[]` by the offer list's current names. If
+  // it did not, the same eval would render twice whenever both lists name it
+  // — once as "Added" above, once as "Grade this run" below — which is
+  // exactly what an environment-level add inside an open run-mode drawer
+  // produces: the 201 body seeds `selected[]` while the offer list, not
+  // refetched, still offers the row.
+  it("never lists the same eval in both groups after an add inside an open drawer", async () => {
     getAvailableEvaluations.mockResolvedValue({ evaluations: [NO_MISSELLING] });
-    getHarnessEnvironment.mockResolvedValueOnce({ evaluations: { selected: [] } });
-    getHarnessEnvironment.mockResolvedValue({
+    getHarnessEnvironment.mockResolvedValue({ evaluations: { selected: [] } });
+    addEvaluation.mockResolvedValue({
       evaluations: { selected: [selectedEntry(NO_MISSELLING, "cfg-1")] },
     });
+    render(<AddEvaluationDrawer open env={ENV} onClose={vi.fn()} />);
+    await screen.findByText("no_misselling");
+
+    fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
+    await screen.findByRole("button", { name: /Added/i });
+
+    // The eval renders exactly once, in exactly one of its three possible
+    // states — never twice.
+    expect(screen.getAllByText("no_misselling")).toHaveLength(1);
+    expect(
+      screen.getAllByRole("button", { name: /^(Add|Added|Grade this run)$/ }),
+    ).toHaveLength(1);
+  });
+
+  // The run-level add's confirmation is its receipt, not an "Added" flip —
+  // the 202 carries counts, not the detail, and nothing is refetched while
+  // the drawer is open. What must never happen is the row appearing a second
+  // time in the bound group below.
+  it("leaves the offer row alone after a run-mode add and never doubles it into the bound group", async () => {
+    getAvailableEvaluations.mockResolvedValue({ evaluations: [NO_MISSELLING] });
+    getHarnessEnvironment.mockResolvedValue({ evaluations: { selected: [] } });
     addRunEvaluation.mockResolvedValue({
       queued: 3,
       skipped_existing: 0,
@@ -794,16 +972,8 @@ describe("AddEvaluationDrawer — the environment's own evals, in run mode (§6)
     await screen.findByText("no_misselling");
 
     fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
-    await screen.findByRole("button", { name: /Added/i });
 
-    // The eval renders exactly once, in exactly one of its three possible
-    // states — never twice. This holds regardless of whether `available`
-    // has caught up to the add yet: an ordinary `toBeNull()` on "Grade this
-    // run" is only true because this test's `available` mock never applies
-    // the server's subtraction; against a real server the post-add refetch
-    // would legitimately drop the eval into the bound group instead, and
-    // "Grade this run" would correctly appear. Asserting the total count
-    // across all three action labels holds in either ordering.
+    await screen.findByText(/3 calls queued for grading/);
     expect(screen.getAllByText("no_misselling")).toHaveLength(1);
     expect(
       screen.getAllByRole("button", { name: /^(Add|Added|Grade this run)$/ }),
@@ -836,5 +1006,41 @@ describe("AddEvaluationDrawer — the environment's own evals, in run mode (§6)
     ).toBeInTheDocument();
     expect(screen.getByText(GROUP_TITLE)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Grade this run" })).toBeInTheDocument();
+  });
+
+  // The other direction: this group's OWN source is the environment detail.
+  // A failed read of it empties the group silently, and — with an empty offer
+  // above — the drawer would print "Nothing left to add" about a run that may
+  // have eight evals to grade it with.
+  it("says the bound group's source failed, rather than showing an empty drawer", async () => {
+    getAvailableEvaluations.mockResolvedValue({ evaluations: [] });
+    // No body at all, so the generic sentence is what shows.
+    getHarnessEnvironment.mockRejectedValue({ statusCode: 404 });
+    render(<AddEvaluationDrawer open env={ENV} executionId="ex-1" onClose={vi.fn()} />);
+
+    expect(
+      await screen.findByText("Couldn’t load this environment's evaluations. Try again."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Nothing left to add")).toBeNull();
+    expect(
+      screen.queryByText("There's nothing this environment can be graded by right now."),
+    ).toBeNull();
+    // And no claim that everything is already on the environment either.
+    expect(
+      screen.queryByText("Every eval is already on this environment — grade this run below."),
+    ).toBeNull();
+  });
+
+  it("shows the loading state while the bound group's source is still being read", async () => {
+    getAvailableEvaluations.mockResolvedValue({ evaluations: [] });
+    getHarnessEnvironment.mockReturnValue(new Promise(() => {}));
+    render(<AddEvaluationDrawer open env={ENV} executionId="ex-1" onClose={vi.fn()} />);
+
+    expect(await screen.findByRole("progressbar")).toBeInTheDocument();
+    expect(screen.queryByText(GROUP_TITLE)).toBeNull();
+    expect(screen.queryByText("Nothing left to add")).toBeNull();
+    expect(
+      screen.queryByText("There's nothing this environment can be graded by right now."),
+    ).toBeNull();
   });
 });

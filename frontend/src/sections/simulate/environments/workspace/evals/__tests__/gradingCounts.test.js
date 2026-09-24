@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { gradingCountsSentence } from "../gradingCounts";
 
-describe("gradingCountsSentence (§6 202 counts)", () => {
+describe("gradingCountsSentence (the run-level add's 202 counts)", () => {
   it("says what was queued and what was skipped, in plain words", () => {
     expect(
       gradingCountsSentence({
@@ -70,25 +70,26 @@ describe("gradingCountsSentence (§6 202 counts)", () => {
     ).toBe("Nothing new to grade — of 0 calls that finished in this run.");
   });
 
-  // The four buckets can fall short of `completed_calls` — the gap is calls
-  // that failed to queue. Without the shortfall clause, the sentence would
-  // read "Nothing new to grade — of 16 calls that finished in this run",
-  // which claims there was nothing to do when 16 dispatches actually failed.
-  it("names the shortfall when the buckets fall short of the completed count", () => {
-    expect(
-      gradingCountsSentence({
-        queued: 0,
-        skipped_existing: 0,
-        skipped_pending: 0,
-        skipped_in_flight: 0,
-        completed_calls: 16,
-      }),
-    ).toBe(
-      "Nothing new to grade, 16 calls couldn't be queued — of 16 calls that finished in this run.",
+  // The four buckets are meant to partition `completed_calls`, so a gap
+  // between them and the total means the body disagrees with itself. Name the
+  // calls it does not account for — and name no cause, because the body gives
+  // none: a call whose grading job failed to queue is already counted inside
+  // `queued`.
+  it("names the calls the four buckets don't account for, without claiming a cause", () => {
+    const sentence = gradingCountsSentence({
+      queued: 0,
+      skipped_existing: 0,
+      skipped_pending: 0,
+      skipped_in_flight: 0,
+      completed_calls: 16,
+    });
+    expect(sentence).toBe(
+      "Nothing new to grade, 16 calls unaccounted for — of 16 calls that finished in this run.",
     );
+    expect(sentence).not.toMatch(/queue/);
   });
 
-  it("gets the shortfall's singular right and only counts what the four buckets don't already explain", () => {
+  it("gets the gap's singular right and only counts what the four buckets don't already explain", () => {
     expect(
       gradingCountsSentence({
         queued: 3,
@@ -98,13 +99,35 @@ describe("gradingCountsSentence (§6 202 counts)", () => {
         completed_calls: 7,
       }),
     ).toBe(
-      "3 calls queued for grading, 2 already graded, 1 still being processed, 1 call couldn't be queued — of 7 calls that finished in this run.",
+      "3 calls queued for grading, 2 already graded, 1 still being processed, 1 call unaccounted for — of 7 calls that finished in this run.",
     );
   });
 
-  it("never names a shortfall when the total isn't known, or when the buckets already account for it", () => {
-    // Unknown total: no shortfall can be computed, so none is claimed.
-    expect(gradingCountsSentence()).not.toMatch(/couldn't be queued/);
+  // `count()` reads an absent bucket as 0, so subtracting on a partial body
+  // would charge the whole total to a gap that only the missing fields
+  // created. A body that carries the total and nothing else prints the total
+  // and nothing else.
+  it("never reports a gap out of a body that carries the total but no buckets", () => {
+    const sentence = gradingCountsSentence({ completed_calls: 16 });
+    expect(sentence).toBe("Nothing new to grade — of 16 calls that finished in this run.");
+    expect(sentence).not.toMatch(/unaccounted for/);
+  });
+
+  it("never reports a gap out of a body missing any single bucket", () => {
+    // Three buckets present, one absent — still not enough to subtract with.
+    expect(
+      gradingCountsSentence({
+        queued: 3,
+        skipped_existing: 2,
+        skipped_pending: 1,
+        completed_calls: 16,
+      }),
+    ).not.toMatch(/unaccounted for/);
+  });
+
+  it("never names a gap when the total isn't known, or when the buckets already account for it", () => {
+    // Unknown total: no gap can be computed, so none is claimed.
+    expect(gradingCountsSentence()).not.toMatch(/unaccounted for/);
     // Buckets sum to exactly the total: no gap to name.
     expect(
       gradingCountsSentence({
@@ -114,6 +137,6 @@ describe("gradingCountsSentence (§6 202 counts)", () => {
         skipped_in_flight: 0,
         completed_calls: 6,
       }),
-    ).not.toMatch(/couldn't be queued/);
+    ).not.toMatch(/unaccounted for/);
   });
 });

@@ -18,23 +18,31 @@ import {
 import SideDrawer from "../../components/SideDrawer";
 import EmptyState from "../../components/EmptyState";
 import { EVAL_ENTRY_SHAPE } from "./evalEntry";
+import { EVALS_COPY } from "./evals.constants";
 import { EvalEntryChips, EvalInputs } from "./evalEntryCells";
 import { gradingCountsSentence } from "./gradingCounts";
+import { refusalText } from "./refusalText";
 
-// §3/§6: an environment runs at most 8 selected evals; the backend 409s past it.
+// An environment runs at most 8 selected evals; the backend 409s past it.
 const EVAL_CAP = 8;
 
-// The axios interceptor rejects with the API body plus `statusCode`, so every
-// refusal arrives as `detail`: 400 "<name>: not an eval this environment can be
-// graded by" / "<name>: needs <keys>, which a <voice|text> run does not produce",
-// 409 the cap. Shown exactly as returned — the UI never rewords a refusal and
-// never maps a status code to copy of its own.
-const addErrorMessage = (error) =>
-  error?.detail || error?.message || "Couldn’t add the evaluation. Try again.";
+// Refusals are shown exactly as returned — the UI never rewords one and never
+// maps a status code to copy of its own. `refusalText` is the single reader of
+// the body's several possible message fields.
+const ADD_FALLBACK = "Couldn’t add the evaluation. Try again.";
+// The offer list refuses with a sentence of its own — 409 "Environment has no
+// evaluations until it finishes building", 404 an invisible environment.
+const AVAILABLE_FALLBACK = "Something went wrong fetching the library. Try again.";
+// The environment detail is what says which evals are already applied. When
+// that read fails the drawer knows nothing about them, which is a different
+// answer from "there are none". The Evaluations tab shows the same sentence
+// for the same failed read, so both take it from the shared copy rather than
+// writing it out twice.
+const DETAIL_FALLBACK = EVALS_COPY.addedError;
 
 // In run mode the picker also lists the evals the environment ALREADY has, as
 // their own group, each with a "Grade this run" action that calls the same
-// run-level endpoint (§6) for that eval. The heading has to say, in the row
+// run-level endpoint for that eval. The heading has to say, in the row
 // itself, why these are here and what pressing the button does — the group is
 // otherwise indistinguishable from the offer above it.
 const BOUND_GROUP_TITLE = "Already on this environment — grade this run's finished calls";
@@ -95,12 +103,12 @@ const bodyCellSx = {
  * The eval picker.
  *
  * One list, two callers. From the Evaluations tab it adds to the environment
- * (§3) and grades future calls only. Opened from a run with `executionId` it
- * calls the run-level endpoint (§6), which binds the eval exactly as §3 does and
- * then queues this run's finished calls that hold no verdict for it — the 202's
- * five counts are shown as one sentence.
+ * and grades future calls only. Opened from a run with `executionId` it calls
+ * the run-level endpoint, which binds the eval exactly as the environment-level
+ * add does and then queues this run's finished calls that hold no verdict for
+ * it — the 202's five counts are shown as one sentence.
  *
- * Every fact on a row comes from the API entry (§1): `inputs[]` draws the
+ * Every fact on a row comes from the API entry: `inputs[]` draws the
  * arrows (the frontend never works out which source fills a key), `source`
  * says Library or Custom and `credits_per_run`/`charges_judge_tokens` build the
  * cost line — "0.5 credits per run" or "0.5 credits per run + judge tokens" on
@@ -135,40 +143,45 @@ export default function AddEvaluationDrawer({
   // its own branch for zero buckets and an honestly unknown total.
   const counts = runMode && addToRun.isSuccess ? addToRun.data || {} : null;
 
-  // What is already selected (§5). The add updates it from the server's own
-  // body — seeded directly for an environment-mode add, refetched for a
-  // run-mode add — so a just-added row flips to "Added" from the server's
-  // own answer, never from client-assembled state.
+  // What the environment already has. An environment-level add seeds this
+  // list straight from its own response body, so the row flips to "Added"
+  // from the server's own answer rather than from client-assembled state. A
+  // run-level add has no such body to seed from: its confirmation is the
+  // receipt below, and this list catches up when the drawer closes.
   const detailQuery = useQuery(harnessEnvironmentQuery(envId, { enabled: open }));
   const selected = detailQuery.data?.evaluations?.selected;
   const addedNames = useMemo(
     () => new Set((Array.isArray(selected) ? selected : []).map((e) => e.name)),
     [selected],
   );
-  const appliedCount = Array.isArray(selected) ? selected.length : addedNames.size;
-  const atCap = appliedCount >= EVAL_CAP;
+  // How many the environment already has, from the server's own list and
+  // nothing else. While that read is in flight or has failed the count is
+  // unknown — not zero, and not the client store's idea of it — so the cap
+  // cannot be asserted either way and the warning below stays off.
+  const appliedCount = Array.isArray(selected) ? selected.length : null;
+  const atCap = appliedCount != null && appliedCount >= EVAL_CAP;
 
   // What the offer list above is showing right now, by name — used to keep
   // a just-added eval out of the bound group below.
   const offeredNames = useMemo(() => new Set(evaluations.map((e) => e.name)), [evaluations]);
 
-  // The environment's own evals, straight from §5's `selected[]` — the whole
-  // §1 shape plus `id` and `runnable`, so they render through exactly the
-  // same cells as an offered entry. This is the same list the "Added" state
-  // already reads; nothing new is fetched. Run mode only: on the Evaluations
-  // tab the catalogue subtraction is the whole answer and this group must
-  // not appear.
+  // The environment's own evals, straight from the detail's `selected[]` — the
+  // whole catalogue-entry shape plus `id` and `runnable`, so they render
+  // through exactly the same cells as an offered entry. This is the same list
+  // the "Added" state already reads; nothing new is fetched. Run mode only: on
+  // the Evaluations tab the catalogue subtraction is the whole answer and this
+  // group must not appear.
   //
   // That subtraction only applies when `available` is FETCHED, not
-  // continuously — within one open drawer session, adding an eval refetches
-  // `selected[]` without refetching `available` in the same tick, since
-  // `available` is the offer list's only active observer and invalidating it
-  // here would drop the just-added row off the offer, right where "Added" is
-  // the only confirmation environment mode has. Filtering `selected` by
-  // `offeredNames` is therefore the WHOLE fix: it keeps that just-added row,
-  // still marked "Added" in the offer, from also showing up in this group
-  // with a second, different action button. `available` catches up only the
-  // next time it is genuinely fetched — typically the drawer reopening.
+  // continuously, and neither list is refetched while the drawer is open. So
+  // within one open session `selected[]` and `available` can both name the
+  // same eval — one because it was just bound by the environment-level add's
+  // own 201 body, the other because the offer list has not been asked again.
+  // Filtering `selected` by `offeredNames` is therefore the WHOLE fix: it
+  // keeps that just-added row, still marked "Added" in the offer, from also
+  // showing up in this group with a second, different action button. Both
+  // lists catch up the next time they are genuinely fetched — typically the
+  // drawer reopening.
   const boundEntries = useMemo(
     () =>
       runMode && Array.isArray(selected)
@@ -181,13 +194,21 @@ export default function AddEvaluationDrawer({
   // so the "no evaluations until it finishes building" refusal can't reach
   // this drawer in run mode — a 409 here is the cap of 8, shown as returned
   // like any other refusal.
-  // One call site for both groups and both modes. In run mode this posts §6
-  // for an offered eval and for one the environment already has alike: §6
-  // binds nothing it already holds, skips every call that already has a
+  // One call site for both groups and both modes. In run mode this posts the
+  // run-level add for an offered eval and for one the environment already has
+  // alike: it binds nothing it already holds, skips every call that already has a
   // verdict, and dedupes a repeat within a short window.
   const add = (name) => {
     const variables = runMode ? { id: envId, executionId, name } : { id: envId, name };
     addMutation.mutate(variables);
+  };
+
+  // Both reads can be down at once, and there is one Retry on screen for
+  // them. Retrying only the one whose message is showing leaves the other
+  // failed, so the press looks like it did nothing — retry whichever failed.
+  const retryFailedReads = () => {
+    if (isError) refetch();
+    if (detailQuery.isError) detailQuery.refetch();
   };
 
   // The drawer stays mounted while closed (SideDrawer only hides it), so a
@@ -201,17 +222,24 @@ export default function AddEvaluationDrawer({
     // Captured before either `reset()` call: reading `isSuccess` after
     // `reset()` happens to still work today, but that's an implementation
     // detail, not a guarantee — capturing first makes the order irrelevant.
-    const didAdd = addToEnvironment.isSuccess;
+    const didAdd = addToEnvironment.isSuccess || addToRun.isSuccess;
     if (!addToRun.isPending) addToRun.reset();
     if (!addToEnvironment.isPending) addToEnvironment.reset();
     // `SideDrawer` only hides the component on close — without this, a row
     // left expanded stays expanded next open, possibly for a different
     // environment/run.
     setExpanded(null);
-    // The environment-level add seeds the detail from its own 201 body and
-    // doesn't invalidate, so a racing read can't undo it while it's visible.
-    // The refetch happens here, on the way out, where a stale read costs
+    // Neither add path refetches while the drawer is open — a racing read
+    // would pull rows out from under the click that caused them. The refetch
+    // for both happens here, on the way out, where a stale read costs
     // nothing.
+    //
+    // An add still in flight at this moment has no success to read yet, so
+    // this close does not refetch for it and the applied list stays stale
+    // until the next one. That is the same deal the `reset()` skip above
+    // makes: a mutation that settles after the drawer is closed is picked up
+    // the next time the drawer closes, and until then nothing on screen is
+    // showing the list it would have refreshed.
     if (didAdd && envId) {
       queryClient.invalidateQueries({ queryKey: harnessEnvironmentKey(envId) });
     }
@@ -254,12 +282,27 @@ export default function AddEvaluationDrawer({
           )}
           {addMutation.isError && (
             <Alert severity="error" sx={{ mt: 2, typography: "s3" }}>
-              {addErrorMessage(addMutation.error)}
+              {refusalText(addMutation.error, ADD_FALLBACK)}
             </Alert>
           )}
         </Box>
 
         <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", px: 3, pb: 3 }}>
+          {/* Two sources feed this area, and each one's failure may hide only
+              what it alone can answer.
+
+              The offer list IS the rows, so its failure replaces them. The
+              environment detail says only which of those rows are already
+              applied — while it is unknown or unavailable every row stays
+              addable, with no false "Added" mark and no cap asserted, so
+              neither a pending nor a failed read of it takes the rows away.
+
+              What the detail does gate is the empty state: "Nothing left to
+              add — there's nothing this environment can be graded by right
+              now" is a confident claim about what the environment already
+              has, and a read that hasn't answered — pending or failed —
+              cannot support it. So the detail's pending and error states are
+              both branched on where the offer list is empty. */}
           {isLoading ? (
             <Stack alignItems="center" sx={{ py: 6 }}>
               <CircularProgress size={22} />
@@ -268,80 +311,115 @@ export default function AddEvaluationDrawer({
             <EmptyState
               icon="solar:danger-triangle-linear"
               title="Couldn’t load evaluations"
-              // The list refuses with a sentence of its own — 409
-              // "Environment has no evaluations until it finishes building",
-              // 404 an invisible environment. Shown exactly as returned; the
-              // fallback is only for a failure with no body at all.
-              body={error?.detail || "Something went wrong fetching the library. Try again."}
+              // Shown exactly as returned; the fallback is only for a
+              // failure with no body at all.
+              body={refusalText(error, AVAILABLE_FALLBACK)}
               action={
-                <Button variant="outlined" size="small" onClick={() => refetch()}>
+                <Button variant="outlined" size="small" onClick={retryFailedReads}>
                   Retry
                 </Button>
               }
             />
           ) : evaluations.length === 0 ? (
-            // In run mode, an empty offer next to a non-empty bound group is
-            // the common case: every eval this environment can be graded by
-            // was already added from the Evaluations tab, so `available`
-            // comes back empty. The default empty state ("There's nothing
-            // this environment can be graded by right now") would sit
-            // directly above rows that contradict it, so swap in a note
-            // that's true of this screen. The Evaluations tab (no
-            // `executionId`, no bound group below) keeps the original empty
-            // state unchanged.
-            //
-            // `runMode` here is defensive, not the gate — `boundEntries` is
-            // already empty outside run mode, so this condition reduces to
-            // `boundEntries.length > 0`. Left in for readers who haven't
-            // traced the memo.
-            runMode && boundEntries.length > 0 ? (
-              <Typography sx={{ typography: "s3", color: "text.secondary", py: 1 }}>
-                Every eval is already on this environment — grade this run below.
-              </Typography>
-            ) : (
+            detailQuery.isPending ? (
+              <Stack alignItems="center" sx={{ py: 6 }}>
+                <CircularProgress size={22} />
+              </Stack>
+            ) : detailQuery.isError ? (
               <EmptyState
-                icon="solar:shield-check-linear"
-                title="Nothing left to add"
-                // An empty list is a valid answer but never says why it's
-                // empty — everything already applied, nothing in the
-                // catalogue for this modality, or nobody has authored one —
-                // and the client can't tell them apart. Say what is known
-                // and stop there.
-                body="There's nothing this environment can be graded by right now."
+                icon="solar:danger-triangle-linear"
+                title="Couldn’t load evaluations"
+                body={refusalText(detailQuery.error, DETAIL_FALLBACK)}
+                action={
+                  <Button variant="outlined" size="small" onClick={retryFailedReads}>
+                    Retry
+                  </Button>
+                }
               />
+            ) : (
+              // In run mode, an empty offer next to a non-empty bound group is
+              // the common case: every eval this environment can be graded by
+              // was already added from the Evaluations tab, so `available`
+              // comes back empty. The default empty state ("There's nothing
+              // this environment can be graded by right now") would sit
+              // directly above rows that contradict it, so swap in a note
+              // that's true of this screen. The Evaluations tab (no
+              // `executionId`, no bound group below) keeps the original empty
+              // state unchanged.
+              //
+              // `runMode` here is defensive, not the gate — `boundEntries` is
+              // already empty outside run mode, so this condition reduces to
+              // `boundEntries.length > 0`. Left in for readers who haven't
+              // traced the memo.
+              (runMode && boundEntries.length > 0 ? (
+                <Typography sx={{ typography: "s3", color: "text.secondary", py: 1 }}>
+                  Every eval is already on this environment — grade this run below.
+                </Typography>
+              ) : (
+                <EmptyState
+                  icon="solar:shield-check-linear"
+                  title="Nothing left to add"
+                  // An empty list is a valid answer but never says why it's
+                  // empty — everything already applied, nothing in the
+                  // catalogue for this modality, or nobody has authored one —
+                  // and the client can't tell them apart. Say what is known
+                  // and stop there.
+                  body="There's nothing this environment can be graded by right now."
+                />
+              ))
             )
           ) : (
-            <TableContainer>
-              <Table size="small" sx={{ tableLayout: "fixed" }}>
-                <TableHead>
-                  <TableRow>
-                    <TableCell sx={{ ...headerCellSx, width: 36 }} />
-                    <TableCell sx={{ ...headerCellSx, width: 72 }} />
-                    <TableCell sx={headerCellSx}>Evaluation</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {evaluations.map((item) => {
-                    const added = addedNames.has(item.name);
-                    return (
-                      <PickerRow
-                        key={item.name}
-                        entry={item}
-                        runMode={runMode}
-                        isExpanded={expanded === item.name}
-                        onToggle={() => setExpanded(expanded === item.name ? null : item.name)}
-                        actionLabel={added ? "Added" : "Add"}
-                        actionWidth={72}
-                        muted={added}
-                        disabled={added || atCap || addMutation.isPending}
-                        busy={addingName === item.name}
-                        onAction={() => add(item.name)}
-                      />
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </TableContainer>
+            <>
+              {/* The applied list only says which of these rows are already
+                  on the environment — the rows themselves came from the
+                  offer list, which answered. So a failed read of it doesn't
+                  replace the table, just flags itself above it with the same
+                  Retry the two EmptyStates use. */}
+              {detailQuery.isError && evaluations.length > 0 && (
+                <Alert
+                  severity="warning"
+                  sx={{ mb: 2, typography: "s3" }}
+                  action={
+                    <Button size="small" onClick={retryFailedReads}>
+                      Retry
+                    </Button>
+                  }
+                >
+                  {refusalText(detailQuery.error, DETAIL_FALLBACK)}
+                </Alert>
+              )}
+              <TableContainer>
+                <Table size="small" sx={{ tableLayout: "fixed" }}>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell sx={{ ...headerCellSx, width: 36 }} />
+                      <TableCell sx={{ ...headerCellSx, width: 72 }} />
+                      <TableCell sx={headerCellSx}>Evaluation</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {evaluations.map((item) => {
+                      const added = addedNames.has(item.name);
+                      return (
+                        <PickerRow
+                          key={item.name}
+                          entry={item}
+                          runMode={runMode}
+                          isExpanded={expanded === item.name}
+                          onToggle={() => setExpanded(expanded === item.name ? null : item.name)}
+                          actionLabel={added ? "Added" : "Add"}
+                          actionWidth={72}
+                          muted={added}
+                          disabled={added || atCap || addMutation.isPending}
+                          busy={addingName === item.name}
+                          onAction={() => add(item.name)}
+                        />
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </>
           )}
 
           {/* In run mode the picker also lists the evals the environment
@@ -433,9 +511,10 @@ AddEvaluationDrawer.propTypes = {
 };
 
 // One row of either group — the expander, the action button, the name and the
-// chips. Both groups render the same entry cells (§1): only the button's word
+// chips. Both groups render the same entry cells: only the button's word
 // and what it does differ. "Add" binds an eval the environment does not have
-// (§3, or §6 in run mode); "Grade this run" posts §6 for one it already has.
+// (the run-level endpoint in run mode); "Grade this run" posts that same
+// endpoint for one it already has.
 function PickerRow({
   entry,
   runMode,

@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Box, Stack, Typography, Button, IconButton, Tooltip, Switch } from "@mui/material";
+import { Alert, Box, CircularProgress, Stack, Typography, Button, IconButton, Tooltip, Switch } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { getEval } from "src/api/simulate-environments/_fixtures/evalCatalog";
 import { useRemoveAppliedEvaluation } from "src/api/simulate-environments/environments";
@@ -14,6 +14,7 @@ import SelectedEvalRow from "./SelectedEvalRow";
 import AddEvalsDrawer from "./AddEvalsDrawer";
 import AddEvaluationDrawer from "./AddEvaluationDrawer";
 import { useAppliedEvals } from "./useAppliedEvals";
+import { refusalText } from "./refusalText";
 import { EVALS_COPY, ENV_SHAPE, ENV_STATE_SHAPE } from "./evals.constants";
 import PropTypes from "prop-types";
 
@@ -45,13 +46,14 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
   // through a mocked seam until the backend endpoint exists (useToolCallEval).
   const toolCall = useToolCallEval();
 
-  // A real backend-backed env drives its applied set from §5 detail
-  // (evaluations.selected) — the authoritative list the add (§3) and remove
-  // (§4) endpoints mutate. A forked/template env has no backend counterpart, so
-  // it stays store-driven (fixture-seeded preset). The §5 query shares its cache
-  // with useAddEvaluation's setQueryData, so an add/remove reflects immediately.
+  // A real backend-backed env drives its applied set from the environment
+  // detail (evaluations.selected) — the authoritative list the add and remove
+  // endpoints mutate. A forked/template env has no backend counterpart, so it
+  // stays store-driven (fixture-seeded preset). The detail query shares its
+  // cache with useAddEvaluation's setQueryData, so an add reflects immediately.
   const detailQuery = useQuery(harnessEnvironmentQuery(env.id, { enabled: backed }));
-  // §5 selected[]: each row is a full §1 entry plus `id` and `runnable`. Kept
+  // Each `selected[]` row is a full catalogue entry plus `id` and
+  // `runnable`. Kept
   // whole — the tab shows `source`, the cost line (`credits_per_run` /
   // `charges_judge_tokens`) and `inputs`, which the old {id,name,blurb}
   // projection threw away.
@@ -60,12 +62,20 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
     return Array.isArray(selected) ? selected : [];
   }, [detailQuery.data]);
 
+  // A failed or still-running detail read leaves `selectedFromDetail` empty,
+  // which is indistinguishable from an environment that genuinely has no
+  // evals — and the card below would then announce "Added (0)" and "No
+  // evaluations added yet" about an environment that may hold eight. Neither
+  // the count nor the empty state may be drawn until the list is actually
+  // known, so both states are handled before the card.
+  const detailUnknown = backed && (detailQuery.isPending || detailQuery.isError);
+
   const appliedEvals = backed ? selectedFromDetail : store.appliedEvals;
   const appliedIds = store.appliedIds;
   const { add } = store;
 
-  // §4 remove. On a backed env, removal is a server soft-delete of
-  // `evaluations.selected[].id`; the §5 query is invalidated so the real set is
+  // Remove. On a backed env, removal is a server soft-delete of
+  // `evaluations.selected[].id`; the detail query is invalidated so the real set is
   // the source of truth. Disabled while building (409). A forked/template env
   // stays store-only.
   const removeEval = useRemoveAppliedEvaluation();
@@ -112,7 +122,7 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
   const seededRef = useRef(false);
   useEffect(() => {
     if (seededRef.current) return;
-    // A backed env's applied set is real (§5) — never seed fixtures into it.
+    // A backed env's applied set is real — never seed fixtures into it.
     if (backed) { seededRef.current = true; return; }
     if (needsScenarios) return;
     if (appliedEvals.length > 0) { seededRef.current = true; return; }
@@ -204,15 +214,34 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
       {backed && removeEval.isError && (
         <Alert severity="error" sx={{ mb: 2, typography: "s3" }}>
           {failedRemoveName ? `${failedRemoveName}: ` : ""}
-          {removeEval.error?.detail || "Couldn’t remove the evaluation. Try again."}
+          {refusalText(removeEval.error, "Couldn’t remove the evaluation. Try again.")}
         </Alert>
       )}
 
       <SectionCard
-        title={EVALS_COPY.addedTitle(appliedEvals.length)}
-        subtitle={appliedEvals.length ? EVALS_COPY.addedSubtitle : undefined}
+        title={detailUnknown ? EVALS_COPY.addedTitleUnknown : EVALS_COPY.addedTitle(appliedEvals.length)}
+        subtitle={!detailUnknown && appliedEvals.length ? EVALS_COPY.addedSubtitle : undefined}
       >
-        {appliedEvals.length === 0 ? (
+        {detailUnknown ? (
+          detailQuery.isError ? (
+            <EmptyState
+              icon="solar:danger-triangle-linear"
+              title="Couldn’t load evaluations"
+              // The server's own sentence when it sent one; the fallback is
+              // for a failure with no body at all.
+              body={refusalText(detailQuery.error, EVALS_COPY.addedError)}
+              action={
+                <Button variant="outlined" size="small" onClick={() => detailQuery.refetch()}>
+                  Retry
+                </Button>
+              }
+            />
+          ) : (
+            <Stack alignItems="center" sx={{ py: 5 }}>
+              <CircularProgress size={22} />
+            </Stack>
+          )
+        ) : appliedEvals.length === 0 ? (
           <EmptyState
             icon={
               needsScenarios
@@ -276,7 +305,7 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
                   </Box>
                 </Tooltip>
               );
-              // A backed env's rows are §1 entries; a forked/template env's rows
+              // A backed env's rows are catalogue entries; a forked/template env's rows
               // are still the fixture catalogue shape the store holds.
               return backed ? (
                 <SelectedEvalRow key={e.id} item={e} action={action} />
@@ -288,7 +317,7 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
         )}
       </SectionCard>
 
-      {/* A backed env adds through the real §2/§3 picker (available list + the
+      {/* A backed env adds through the real backed picker (available list + the
           modality input mapping); a forked/template env keeps the store-only
           product picker. */}
       {backed ? (
