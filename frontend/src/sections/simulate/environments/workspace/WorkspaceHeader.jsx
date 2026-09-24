@@ -188,6 +188,7 @@ export default function WorkspaceHeader({
               }}
               sx={{
                 bgcolor: DELETE_TONE.main,
+                color: "common.white",
                 "&:hover": { bgcolor: DELETE_TONE.hover },
                 typography: "s2",
                 fontWeight: "fontWeightBold",
