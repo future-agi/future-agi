@@ -3,6 +3,7 @@ import { Box, Stack, Typography, Grid } from "@mui/material";
 import { getSurface } from "src/api/simulate-environments/_fixtures/surfaces";
 import { contractFor } from "src/api/simulate-environments/_fixtures/contract";
 import { ENV_SHAPE, ENV_STATE_SHAPE, OVERVIEW_COPY } from "./overview.constants";
+import { PARALLELISM_COPY, degradeReasonCopy } from "../../parallelism.constants";
 // Manage-versions (the agent "test subject" card + its version drawer) is
 // commented out below, to be picked up later — its imports go with it:
 // import Iconify from "src/components/iconify";
@@ -68,6 +69,9 @@ export default function OverviewPanel({ env, envState, patch, onGo, agentConnect
   const connector = envState?.agent?.typeId;
   const connectorLabel = connector ? CONNECTOR_LABEL[connector] || connector : "—";
 
+  const parallelism = env.parallelism;
+  const degradeReasons = parallelism?.degrade_reasons || [];
+
   const hasDerivedWorld = (env.rules?.length || 0) > 0
     || (envState?.scenarios?.length || 0) > 0
     || (env.tools?.length || 0) > 0;
@@ -89,7 +93,23 @@ export default function OverviewPanel({ env, envState, patch, onGo, agentConnect
       >
         <Fact label={OVERVIEW_COPY.facts.channel} value={surface.label} />
         <Fact label={OVERVIEW_COPY.facts.connector} value={connectorLabel} />
+        {parallelism?.requested ? (
+          <Fact label={PARALLELISM_COPY.fact} value={PARALLELISM_COPY.factValue(parallelism)} />
+        ) : null}
       </Stack>
+
+      {degradeReasons.length > 0 && (
+        <Box sx={{ mb: 2, py: 1.25, px: 2, border: "1px solid", borderColor: "divider", borderRadius: 1.5, bgcolor: "background.neutral" }}>
+          <Typography sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>
+            {PARALLELISM_COPY.degradedTitle(parallelism.effective, parallelism.requested)}
+          </Typography>
+          {degradeReasons.map((reason) => (
+            <Typography key={reason} sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}>
+              {degradeReasonCopy(reason, parallelism.effective)}
+            </Typography>
+          ))}
+        </Box>
+      )}
 
       {/* Manage-versions container (agent "test subject" card + "Manage
           versions") — commented out, to be picked up later.

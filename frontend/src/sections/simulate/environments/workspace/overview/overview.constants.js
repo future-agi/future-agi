@@ -71,6 +71,12 @@ export const ENV_SHAPE = PropTypes.shape({
     })
   ),
   rules: PropTypes.arrayOf(PropTypes.string),
+  parallelism: PropTypes.shape({
+    requested: PropTypes.number,
+    admitted: PropTypes.number,
+    effective: PropTypes.number,
+    degrade_reasons: PropTypes.arrayOf(PropTypes.string),
+  }),
   seed: PropTypes.shape({
     tables: PropTypes.arrayOf(
       PropTypes.shape({

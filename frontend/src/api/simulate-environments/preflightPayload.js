@@ -18,6 +18,7 @@ import { parseGitHubInput, parseEgressDomains } from "src/pages/dashboard/harnes
 const SCHEMA_VERSION = "futureagi.harness-job.v1";
 const DEFAULT_BRANCH = "main";
 const SCENARIO_COUNT = 10;
+const MAX_PARALLELISM = 8;
 
 const ARTIFACTS = {
   level: "full",
@@ -110,6 +111,11 @@ function envelope(draft, name) {
     artifacts: { ...ARTIFACTS },
     metadata: { name, authoring_key: name },
   };
+  const parallelism = Math.min(
+    MAX_PARALLELISM,
+    Math.max(1, Math.trunc(Number(draft.parallelism) || 1)),
+  );
+  if (parallelism > 1) payload.runtime = { parallelism };
   const domains = parseEgressDomains(draft.egress);
   if (domains.length) {
     payload.security = {
