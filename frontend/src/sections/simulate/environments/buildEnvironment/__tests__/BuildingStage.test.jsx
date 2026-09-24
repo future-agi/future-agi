@@ -98,4 +98,24 @@ describe("PanelBoundary", () => {
 
     spy.mockRestore();
   });
+
+  it("shows the message but never the stack trace", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    function Boom() {
+      const err = new Error("panel exploded");
+      err.stack = "Error: panel exploded\n    at SecretInternalFrame (/srv/app/secret.js:1:1)";
+      throw err;
+    }
+
+    render(
+      <PanelBoundary>
+        <Boom />
+      </PanelBoundary>,
+    );
+
+    expect(screen.getByText(/panel exploded/)).toBeInTheDocument();
+    expect(screen.queryByText(/SecretInternalFrame/)).toBeNull();
+
+    spy.mockRestore();
+  });
 });

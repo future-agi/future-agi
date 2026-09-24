@@ -53,6 +53,7 @@ export const READ_AUDIT_COPY = {
   hardfailDefault: "No response from the agent source. The reader gave up after 30s.",
   hardfailTitle: "We couldn’t read your agent",
   retry: "Retry read",
+  retrying: "Re-reading…",
   changeSource: "Change source",
   continueDefaults: "Continue without reading — build with template defaults",
   checksTitle: "Preflight checks that did not pass",

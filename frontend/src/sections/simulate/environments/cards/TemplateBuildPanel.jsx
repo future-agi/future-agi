@@ -1,13 +1,11 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
 import { alpha } from "@mui/material/styles";
-import { enqueueSnackbar } from "notistack";
 import {
   Box, Button, Stack, Tab, Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { SegmentedTabs } from "src/components/tabs/tabs";
-import { useAdoptTemplate } from "src/api/simulate-environments/environments";
 import { packStats } from "../helpers/packStats";
 import SectionCard from "../components/SectionCard";
 import LocalScaffoldCard from "./LocalScaffoldCard";
@@ -19,8 +17,8 @@ import {
   CLOUD_CARD,
   NOTHING_TOUCHES_PRODUCTION,
   STATS_CARD,
-  TEMPLATE_ADOPT_COPY,
   TEMPLATE_ADOPT_LABEL,
+  TEMPLATE_ADOPT_UNAVAILABLE,
   TEMPLATE_SHAPE,
   surfaceIconFor,
 } from "../useTemplate.constants";
@@ -36,7 +34,6 @@ import {
  */
 export default function TemplateBuildPanel({ template, showName = false }) {
   const [mode, setMode] = useState(BUILD_MODES.CLOUD);
-  const adopt = useAdoptTemplate();
 
   if (!template) return null;
 
@@ -49,11 +46,6 @@ export default function TemplateBuildPanel({ template, showName = false }) {
     { label: "Evals", value: `${template.evalPreset?.length || 0} suggested` },
     { label: "Agent", value: AGENT_STAT_VALUE },
   ];
-
-  const handleAdopt = () =>
-    adopt.mutate(template.id, {
-      onSuccess: () => enqueueSnackbar(TEMPLATE_ADOPT_COPY, { variant: "info" }),
-    });
 
   return (
     <Stack spacing={2}>
@@ -111,13 +103,15 @@ export default function TemplateBuildPanel({ template, showName = false }) {
             >
               <Button
                 variant="contained" color="primary"
-                onClick={handleAdopt}
-                disabled={adopt.isPending}
+                disabled
                 startIcon={<Iconify icon="solar:magic-stick-3-bold" width={16} />}
                 sx={{ typography: "s2", fontWeight: "fontWeightBold", whiteSpace: "nowrap" }}
               >
                 {TEMPLATE_ADOPT_LABEL}
               </Button>
+              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                {TEMPLATE_ADOPT_UNAVAILABLE}
+              </Typography>
             </Stack>
           </SectionCard>
 

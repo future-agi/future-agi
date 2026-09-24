@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { render } from "src/utils/test-utils";
 import { packStats } from "../../helpers/packStats";
-import { TEMPLATE_ADOPT_COPY } from "../../useTemplate.constants";
+import { TEMPLATE_ADOPT_UNAVAILABLE } from "../../useTemplate.constants";
 
 const enqueueSnackbar = vi.fn();
 const adoptMutate = vi.fn((id, opts) => opts?.onSuccess?.({ envId: "env-x" }));
@@ -108,19 +108,14 @@ describe("TemplateBuildPanel", () => {
     expect(screen.getByText(/Nothing touches production/i)).toBeInTheDocument();
   });
 
-  it("calls the adopt hook and shows the snackbar on Build environment", async () => {
-    const user = userEvent.setup();
+  it("does not claim an environment was created while the endpoint is absent", () => {
     renderPanel();
 
-    await user.click(screen.getByRole("button", { name: /Build environment/ }));
-
-    expect(adoptMutate).toHaveBeenCalledWith(
-      "env-voice-support",
-      expect.objectContaining({ onSuccess: expect.any(Function) }),
-    );
-    expect(enqueueSnackbar).toHaveBeenCalledWith(TEMPLATE_ADOPT_COPY, {
-      variant: "info",
-    });
+    // Inert, and it says why — rather than snackbaring "Environment created".
+    expect(screen.getByRole("button", { name: /Build environment/ })).toBeDisabled();
+    expect(screen.getByText(TEMPLATE_ADOPT_UNAVAILABLE)).toBeInTheDocument();
+    expect(adoptMutate).not.toHaveBeenCalled();
+    expect(enqueueSnackbar).not.toHaveBeenCalled();
   });
 
   it("shows the three CLI steps on the Build-locally tab", async () => {

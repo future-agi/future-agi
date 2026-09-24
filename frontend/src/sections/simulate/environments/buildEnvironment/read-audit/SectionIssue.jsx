@@ -5,12 +5,13 @@ import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 
 import { BUILD_TONES } from "../buildTones";
+import { READ_AUDIT_COPY } from "../readAudit.constants";
 
 // The inline "why this dimension is empty" block: an amber-tinted card with the
 // gap message, an optional hint and an optional per-section retry. Ported
 // verbatim from the designer's AgentReadReceipt.jsx SectionIssue, amber hex from
 // BUILD_TONES.
-export default function SectionIssue({ issue, onRetry }) {
+export default function SectionIssue({ issue, onRetry, busy }) {
   if (!issue) return null;
   return (
     <Stack
@@ -38,6 +39,7 @@ export default function SectionIssue({ issue, onRetry }) {
         <Button
           size="small" variant="outlined"
           onClick={onRetry}
+          disabled={busy}
           startIcon={<Iconify icon="solar:refresh-linear" width={13} />}
           sx={{
             typography: "s3", fontWeight: "fontWeightBold",
@@ -45,7 +47,7 @@ export default function SectionIssue({ issue, onRetry }) {
             "&:hover": { borderColor: "text.primary", bgcolor: "transparent" },
           }}
         >
-          {issue.retryLabel}
+          {busy ? READ_AUDIT_COPY.retrying : issue.retryLabel}
         </Button>
       )}
     </Stack>
@@ -60,4 +62,5 @@ SectionIssue.propTypes = {
     retryLabel: PropTypes.string,
   }),
   onRetry: PropTypes.func,
+  busy: PropTypes.bool,
 };

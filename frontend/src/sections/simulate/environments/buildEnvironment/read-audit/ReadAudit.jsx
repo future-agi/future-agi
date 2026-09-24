@@ -32,7 +32,7 @@ import {
 // readAuditReducer, real section gaps come from the audit (not local state, so
 // per-section retry goes through the store), and `?readerStatus=` drives a demo
 // recovery arc without a backend. The layout is copied from lines 176–282.
-export default function ReadAudit({ audit, onBuild, onBack, onRetryRead }) {
+export default function ReadAudit({ audit, onBuild, onBack, onRetryRead, isRereading }) {
   const [searchParams] = useSearchParams();
   const urlOverride = searchParams.get(READER_STATUS_PARAM);
 
@@ -93,6 +93,7 @@ export default function ReadAudit({ audit, onBuild, onBack, onRetryRead }) {
           issueCount={issueCount}
           issues={issues}
           onRetryAll={canRetry ? onRetryAll : undefined}
+          busy={isRereading}
         />
       )}
 
@@ -141,6 +142,7 @@ export default function ReadAudit({ audit, onBuild, onBack, onRetryRead }) {
                   count={counts[s.key]}
                   facts={audit.reading?.[s.key] || []}
                   issue={issues[s.key]}
+                  busy={isRereading}
                   onRetry={() => {
                     // Drop the mock gap (store) AND re-read for real gaps — the
                     // mapper only suppresses mock gaps, so a real gap needs the refetch.
@@ -209,4 +211,5 @@ ReadAudit.propTypes = {
   onBuild: PropTypes.func,
   onBack: PropTypes.func,
   onRetryRead: PropTypes.func,
+  isRereading: PropTypes.bool,
 };

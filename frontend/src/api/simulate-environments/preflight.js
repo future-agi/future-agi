@@ -21,6 +21,10 @@ export const preflightQueryKey = (payload) => [
   payload,
 ];
 
+// Every preflight entry, whatever its payload — what a fresh visit removes so
+// the read runs again instead of replaying a staleTime:Infinity cache hit.
+preflightQueryKey.prefix = [...SIMULATE_ENVIRONMENTS_KEY, "preflight"];
+
 // `credential_values` is write-only and plaintext: it drives the backend's live
 // `credentials_valid` / `provider_target` probes and is stripped from anything
 // echoed back. It is attached here, inside the request, rather than in the

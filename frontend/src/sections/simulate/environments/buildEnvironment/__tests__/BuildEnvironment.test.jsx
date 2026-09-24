@@ -85,6 +85,21 @@ const HAPPY = {
   packaging: { notes: [], candidates: [], selected_path: "src/agent.py" },
 };
 
+// Happy, but with a blocking packaging finding → a real section gap, which is
+// what puts the "Retry read" band on screen.
+const WITH_GAP = {
+  ...HAPPY,
+  packaging: {
+    ...HAPPY.packaging,
+    candidates: [
+      {
+        path: "src/agent.py",
+        findings: [{ code: "NO_ENTRYPOINT", message: "No entrypoint found", blocking: true }],
+      },
+    ],
+  },
+};
+
 const emptyProgress = () => ({
   done: [],
   running: false,
@@ -97,10 +112,12 @@ const emptyProgress = () => ({
 
 const buildTab = `${paths.dashboard.simulate.environments.root}?tab=build`;
 
-function renderPage(route = "/dashboard/simulate/environments/build") {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+function renderPage(route = "/dashboard/simulate/environments/build", client) {
+  const queryClient =
+    client ||
+    new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[route]}>
@@ -149,6 +166,49 @@ describe("BuildEnvironment", () => {
     await waitFor(() =>
       expect(navigate).toHaveBeenCalledWith(buildTab, { replace: true }),
     );
+  });
+
+  it("re-reads the source on every visit, not just the first", async () => {
+    // The query is staleTime:Infinity and keyed on the payload, so a second
+    // visit with the same draft would otherwise replay the first read.
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    useEnvironmentsStore.setState({ draft: repoDraft });
+    preflightHarnessJob.mockResolvedValue(HAPPY);
+
+    const first = renderPage("/dashboard/simulate/environments/build", client);
+    await waitFor(() => expect(preflightHarnessJob).toHaveBeenCalledTimes(1));
+    first.unmount();
+
+    renderPage("/dashboard/simulate/environments/build", client);
+    await waitFor(() => expect(preflightHarnessJob).toHaveBeenCalledTimes(2));
+  });
+
+  it("shows the retry as busy while the re-read is in flight", async () => {
+    const user = userEvent.setup();
+    useEnvironmentsStore.setState({ draft: repoDraft });
+    // A gap is what surfaces the retry affordance in the first place.
+    preflightHarnessJob.mockResolvedValue(WITH_GAP);
+    renderPage();
+
+    await screen.findByText(READ_AUDIT_COPY.title);
+
+    let resolveRetry;
+    preflightHarnessJob.mockReturnValue(
+      new Promise((res) => {
+        resolveRetry = res;
+      }),
+    );
+    // The band's retry renders first, ahead of the section-card one.
+    await user.click(screen.getAllByRole("button", { name: READ_AUDIT_COPY.retry })[0]);
+
+    const busy = await screen.findAllByRole("button", { name: READ_AUDIT_COPY.retrying });
+    busy.forEach((button) => expect(button).toBeDisabled());
+
+    await act(async () => {
+      resolveRetry(WITH_GAP);
+    });
+    const settled = await screen.findAllByRole("button", { name: READ_AUDIT_COPY.retry });
+    settled.forEach((button) => expect(button).toBeEnabled());
   });
 
   it("preflights a repo draft: pending hero → read-audit, header pill, no Run", async () => {

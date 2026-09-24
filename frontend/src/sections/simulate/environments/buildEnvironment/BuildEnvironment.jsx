@@ -1,10 +1,14 @@
-import { useEffect, useReducer } from "react";
+import { useEffect, useReducer, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
+import { useQueryClient } from "@tanstack/react-query";
 import { Box } from "@mui/material";
 
 import { paths } from "src/routes/paths";
-import { usePreflight } from "src/api/simulate-environments/preflight";
+import {
+  usePreflight,
+  preflightQueryKey,
+} from "src/api/simulate-environments/preflight";
 import { useBuildProgress } from "src/api/simulate-environments/buildProgress";
 import {
   useBuildEnvironment,
@@ -41,6 +45,7 @@ const BUILD_TAB = `${paths.dashboard.simulate.environments.root}?tab=build`;
 */
 export default function BuildEnvironment() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const {
     draft, buildStage, envId, buildProgress, retriedSections,
     startPreflight, acceptAudit,
@@ -61,19 +66,26 @@ export default function BuildEnvironment() {
     environmentNameFor,
   );
 
-  // A stale or hand-typed /build URL has no draft — bounce back to the matrix.
+  // One mount effect, guarded by a ref rather than an empty dependency list, so
+  // every dependency can be declared honestly: a stale or hand-typed /build URL
+  // bounces back to the matrix, and a real draft starts a fresh preflight. The
+  // slice is never reset on unmount, so this is the only place it is armed.
+  const started = useRef(false);
   useEffect(() => {
-    if (!draft) navigate(BUILD_TAB, { replace: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (started.current) return;
+    started.current = true;
+    if (!draft) {
+      navigate(BUILD_TAB, { replace: true });
+      return;
+    }
+    // "Fresh preflight on mount" has to mean a fresh READ: the query is
+    // staleTime:Infinity and keyed on the payload, so the same repo and branch
+    // would otherwise replay the cached result from the previous visit.
+    queryClient.removeQueries({ queryKey: preflightQueryKey.prefix });
+    startPreflight();
+  }, [draft, navigate, startPreflight, queryClient]);
 
-  // Fire a fresh preflight once on mount; the slice is never reset on unmount.
-  useEffect(() => {
-    if (draft) startPreflight();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const { audit, refetch } = usePreflight(draft, { retriedSections });
+  const { audit, refetch, isFetching } = usePreflight(draft, { retriedSections });
   const build = useBuildEnvironment();
   const run = useRunSimulation();
   const agentRef = agentRefLabel(draft);
@@ -140,6 +152,7 @@ export default function BuildEnvironment() {
               onBuild={onBuild}
               onBack={onBack}
               onRetryRead={refetch}
+              isRereading={isFetching}
             />
           ))}
 

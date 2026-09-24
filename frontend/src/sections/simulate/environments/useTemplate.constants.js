@@ -6,10 +6,12 @@ import { slugify } from "./helpers/slugify";
 // decision is where to build it. These constants back the "where to build it"
 // panel shown after a template card is clicked.
 
-// Snackbar shown after the mock adopt hook resolves. The real workspace
-// navigation lands in Phase-3, so we acknowledge the create and stop there.
-export const TEMPLATE_ADOPT_COPY =
-  "Environment created — the workspace lands in Phase-3.";
+// Why the cloud "Build environment" CTA is inert: there is no adopt endpoint
+// yet, so clicking it would create nothing. Saying so beats a snackbar claiming
+// an environment was created. TODO(TH-7962): drop this and enable the CTA once
+// the adopt endpoint lands.
+export const TEMPLATE_ADOPT_UNAVAILABLE =
+  "Building a template in the cloud isn't available yet — build it locally with the CLI steps, or start from a source repository.";
 
 export const TEMPLATE_ADOPT_LABEL = "Build environment";
 

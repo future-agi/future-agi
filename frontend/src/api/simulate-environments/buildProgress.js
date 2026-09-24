@@ -53,8 +53,9 @@ function reducer(state, action) {
   }
 }
 
-// eslint-disable-next-line no-unused-vars -- envId is reserved for the getHarnessJob poller (TODO above)
-export function useBuildProgress({ envId, agentRef, enabled }) {
+// `envId` is accepted but unused: the getHarnessJob poller in the TODO above
+// will need it, and the callers already pass it.
+export function useBuildProgress({ agentRef, enabled }) {
   const [state, dispatch] = useReducer(reducer, INITIAL);
 
   const timers = useRef([]);
@@ -84,6 +85,11 @@ export function useBuildProgress({ envId, agentRef, enabled }) {
     });
   };
 
+  // Kept in a ref so the enabled effect below can depend on nothing but
+  // `enabled` and still declare every dependency it uses: `runStage` is rebuilt
+  // every render, and listing it would restart the run on each one.
+  const runStageRef = useRef(null);
+
   const runStage = (idx) => {
     const key = STAGE_ORDER[idx];
     const raw = NARRATION_STAGES[key];
@@ -103,6 +109,8 @@ export function useBuildProgress({ envId, agentRef, enabled }) {
       },
     });
   };
+
+  runStageRef.current = runStage;
 
   const send = (text) => {
     dispatch({ type: "APPEND_TURN", turn: { id: nextId("u"), role: "user", text } });
@@ -128,7 +136,7 @@ export function useBuildProgress({ envId, agentRef, enabled }) {
   // Keyed on `enabled` (no ref guard) so a StrictMode remount re-runs cleanly.
   useEffect(() => {
     if (!enabled) return undefined;
-    runStage(0);
+    runStageRef.current(0);
     return () => {
       // Clear timers AND reset the reducer — runStage(0) synchronously appended a
       // turn and set running:true, so a bare timer-clear would leak that (and an
@@ -137,7 +145,6 @@ export function useBuildProgress({ envId, agentRef, enabled }) {
       timers.current = [];
       dispatch({ type: "RESET" });
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled]);
 
   // Mirror the milestone state to the store so the header, which sits outside

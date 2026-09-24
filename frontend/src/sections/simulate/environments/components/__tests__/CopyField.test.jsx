@@ -42,4 +42,23 @@ describe("CopyField", () => {
       expect(screen.getByRole("button", { name: /copied/i })).toBeInTheDocument(),
     );
   });
+
+  it("does not claim 'Copied' when the clipboard is unavailable", async () => {
+    const user = userEvent.setup();
+    // An insecure origin has no navigator.clipboard, and the execCommand
+    // fallback reports failure — nothing reached the clipboard.
+    Object.defineProperty(navigator, "clipboard", {
+      value: undefined,
+      configurable: true,
+    });
+    document.execCommand = vi.fn().mockReturnValue(false);
+    render(<CopyField value="fai env init demo" />);
+
+    await user.click(screen.getByRole("button", { name: /copy/i }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /copy to clipboard/i })).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("button", { name: /copied/i })).toBeNull();
+  });
 });

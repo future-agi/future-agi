@@ -5,11 +5,12 @@ import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 
 import { BUILD_TONES } from "../buildTones";
+import { READ_AUDIT_COPY } from "../readAudit.constants";
 
 // The slim amber strip between the top bar and the doc body when the reader
 // completed with gaps. Ported verbatim from the designer's AgentReadReceipt.jsx
 // ReaderStatusBand, amber hex from BUILD_TONES.
-export default function ReaderStatusBand({ issueCount, issues, onRetryAll }) {
+export default function ReaderStatusBand({ issueCount, issues, onRetryAll, busy }) {
   const list = Object.keys(issues || {}).join(", ");
   return (
     <Stack
@@ -34,10 +35,11 @@ export default function ReaderStatusBand({ issueCount, issues, onRetryAll }) {
         <Button
           size="small" variant="text"
           onClick={onRetryAll}
+          disabled={busy}
           startIcon={<Iconify icon="solar:refresh-linear" width={13} />}
           sx={{ typography: "s3", fontWeight: "fontWeightBold", color: "text.primary" }}
         >
-          Retry read
+          {busy ? READ_AUDIT_COPY.retrying : READ_AUDIT_COPY.retry}
         </Button>
       )}
     </Stack>
@@ -53,4 +55,5 @@ ReaderStatusBand.propTypes = {
     retryLabel: PropTypes.string,
   })),
   onRetryAll: PropTypes.func,
+  busy: PropTypes.bool,
 };

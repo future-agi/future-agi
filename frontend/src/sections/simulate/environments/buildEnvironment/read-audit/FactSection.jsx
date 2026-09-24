@@ -13,7 +13,7 @@ import SectionIssue from "./SectionIssue";
 // subtitle info tooltip) over either the fact rows, an inline issue block, or the
 // empty copy. Ported verbatim from the designer's AgentReadReceipt.jsx
 // FactSection, amber hex from BUILD_TONES and empty copy from READ_AUDIT_COPY.
-export default function FactSection({ icon, title, subtitle, count, facts = [], issue, onRetry }) {
+export default function FactSection({ icon, title, subtitle, count, facts = [], issue, onRetry, busy }) {
   const isIssued = !!issue;
   const showFacts = !isIssued && facts.length > 0;
   return (
@@ -55,7 +55,7 @@ export default function FactSection({ icon, title, subtitle, count, facts = [], 
       {/* card body */}
       <Box sx={{ flex: 1, minHeight: 0, px: 1.75, py: isIssued ? 1.5 : 0.25 }}>
         {isIssued ? (
-          <SectionIssue issue={issue} onRetry={onRetry} />
+          <SectionIssue issue={issue} onRetry={onRetry} busy={busy} />
         ) : showFacts ? (
           <Stack divider={<Divider sx={{ borderColor: (t) => alpha(t.palette.divider, 0.6) }} />}>
             {facts.map((f) => (
@@ -116,4 +116,5 @@ FactSection.propTypes = {
     retryLabel: PropTypes.string,
   }),
   onRetry: PropTypes.func,
+  busy: PropTypes.bool,
 };
