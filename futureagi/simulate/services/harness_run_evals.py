@@ -310,7 +310,10 @@ def queue_eval_for_finished_calls(
 
     ``eval_config`` must be this run's own and must carry a non-empty
     ``mapping``; the endpoint checks the second itself so it can answer 400.
-    Both are backstops for any other caller.
+    The run must not be cancelled or cancelling: the worker skips those, so
+    a stamp against one would be a promise nothing keeps. The endpoint
+    refuses that case itself with a 409; this is the backstop for any other
+    caller.
     """
     if eval_config.run_test_id != test_execution.run_test_id:
         raise ValueError(
@@ -323,6 +326,15 @@ def queue_eval_for_finished_calls(
             f"eval_config {eval_config.id} has an empty mapping -- it is a "
             "harness result column ingestion bound, not a selected eval, "
             "and cannot be queued for grading"
+        )
+    if test_execution.status in (
+        TestExecution.ExecutionStatus.CANCELLED,
+        TestExecution.ExecutionStatus.CANCELLING,
+    ):
+        raise ValueError(
+            f"test_execution {test_execution.id} is {test_execution.status}; "
+            "the eval worker does not grade a cancelled run, so nothing can "
+            "be queued for it"
         )
     config_id = str(eval_config.id)
     counts = {
