@@ -204,7 +204,13 @@ export default function EnvironmentWorkspace() {
   if (executionMatch) {
     return (
       <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-        <Outlet context={{ env, envState }} />
+        {/* L6: a client/template env (no backend) can still reach this route —
+            e.g. the `?mockRuns=1` QA switch mints run history for any env. `env`
+            alone doesn't say whether a backend exists, so `backed` (computed
+            above, same `source === "harness"` test WorkspacePanels/EvalsStep
+            use) rides along the same context route `envState` already takes, so
+            RunDetail can gate the real API picker on it (L6). */}
+        <Outlet context={{ env, envState, backed }} />
       </Box>
     );
   }
@@ -237,10 +243,11 @@ export default function EnvironmentWorkspace() {
   // the console freezes until it goes Live. SystemBanners reads the same value.
   const envLive = env.buildStatus === BUILD_STATUS.READY;
 
-  // The tab count + "no evals" gap read the applied eval set. For a backed env
-  // that set is §6 evaluations.selected (what the Evals panel shows), not the
-  // client store — so overlay it here so the badge matches the panel and clears
-  // after an add. Scenarios/runs keep their existing sources.
+  // The tab count, the "no evals" gap and the Runs pre-flight tile read the
+  // applied eval set. For a backed env that set is §5 evaluations.selected
+  // (what the Evals panel shows), not the client store — so overlay it here so
+  // the badge, the gap and the pre-flight count all match the panel and clear
+  // after an add (P26). Scenarios/runs keep their existing sources.
   const backedSelected = evalDetailQuery.data?.evaluations?.selected;
   const badgeEnvState =
     backed && Array.isArray(backedSelected)
@@ -355,7 +362,8 @@ export default function EnvironmentWorkspace() {
         >
           <WorkspacePanels
             env={displayEnv}
-            envState={badgeEnvState}
+            envState={envState}
+            badgeEnvState={badgeEnvState}
             patch={patch}
             tab={activeTab}
             onTabChange={onTabChange}

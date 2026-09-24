@@ -27,7 +27,14 @@ import { WORKSPACE_TABS } from "./workspace.constants";
 // panels never host the run detail themselves.
 export default function WorkspacePanels({
   env,
+  // The client store as the workspace holds it — what every panel reads.
   envState,
+  // The same state with a backed environment's real applied evals (§5
+  // `evaluations.selected`) overlaid, exactly as EnvironmentWorkspace already
+  // computes it for the tab badges and the setup gaps. Only the Runs panel's
+  // pre-flight tile reads it (P26). It defaults to `envState` for the build
+  // page, which has no backend detail to overlay yet.
+  badgeEnvState = envState,
   patch,
   tab,
   onTabChange,
@@ -81,9 +88,12 @@ export default function WorkspacePanels({
         return <EvalsStep env={env} envState={envState} patch={patch} onGo={go} locked={locked} backed={backed} onFork={onFork} />;
       case "runs":
         return (
+          // P26: the pre-flight "evals applied" tile counts and names §5's
+          // `evaluations.selected` on a backed env — the same list the
+          // Evaluations tab renders — so it is handed the overlaid state.
           <RunsPanel
             env={env}
-            envState={envState}
+            envState={badgeEnvState}
             runs={runs}
             onStart={() => navigate(runSimulationTarget(env))}
             onOpenRun={openRun}
@@ -163,6 +173,9 @@ WorkspacePanels.propTypes = {
     ),
     runs: PropTypes.arrayOf(PropTypes.shape({ id: PropTypes.string })),
   }).isRequired,
+  // Same shape as envState; on a backed env its `evals` are §5 selected
+  // entries (a §1 entry plus `id` and `runnable`).
+  badgeEnvState: PropTypes.object,
   patch: PropTypes.func.isRequired,
   tab: PropTypes.string,
   onTabChange: PropTypes.func.isRequired,
