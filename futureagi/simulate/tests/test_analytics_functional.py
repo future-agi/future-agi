@@ -415,6 +415,114 @@ class TestTestExecutionAnalyticsView:
 class TestRunResultsV3Views:
     """The v3 run-results surface remains independent from legacy contracts."""
 
+    @pytest.mark.parametrize(
+        "value,eval_status,expected",
+        [
+            ("Passed", "completed", 1),
+            (" Failed ", None, 0),
+            (True, None, 1),
+            (False, "completed", 0),
+            ("SUCCESSFUL", "completed", 1),
+            (80, "completed", 0.8),
+            (0.6, None, 0.6),
+            (0, "completed", 0),
+            ("Passed", "pending", None),
+            (75, "ERROR", None),
+            ("Failed", "skipped", None),
+            ("NaN", "completed", None),
+        ],
+    )
+    def test_group_evaluation_scores_match_rows(
+        self,
+        auth_client,
+        test_execution,
+        analytics_call_executions,
+        value,
+        eval_status,
+        expected,
+    ):
+        call = analytics_call_executions[0]
+        call.call_metadata = {"use_case": "Aggregation regression"}
+        call.eval_outputs = {
+            "native": {
+                "source": "harness",
+                "name": "Native evaluation",
+                "output": value,
+                "output_type": "Pass/Fail",
+            }
+        }
+        if eval_status is not None:
+            call.eval_outputs["native"]["status"] = eval_status
+        call.save(update_fields=["call_metadata", "eval_outputs"])
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/",
+            {
+                "group_by": "goal",
+                "filters": json.dumps({"goal": ["Aggregation regression"]}),
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["results"][0]["evaluations"][0]["score"] == expected
+        aggregate = body["groups"][0]["aggregates"]["evaluations"]["native"]
+        assert aggregate == {
+            "scored": int(expected is not None),
+            "score_sum": expected or 0,
+        }
+
+    def test_group_aggregates_cover_all_filtered_pages(
+        self,
+        auth_client,
+        test_execution,
+        eval_summary_te1_calls,
+        pass_fail_eval_config,
+        score_eval_config,
+    ):
+        for i, call in enumerate(eval_summary_te1_calls):
+            call.call_metadata = {
+                "use_case": "Refunds" if i < 2 else "Excluded",
+                "persona": {"name": f"Persona {i}"},
+                "row_data": {"situation": f"Situation {i}", "outcome": "Resolved"},
+                "conversation_branch": "same-branch",
+            }
+            call.overall_score = 6 + i * 2
+            call.avg_agent_latency_ms = 100 + i * 100
+            call.conversation_metrics_data = {
+                "turn_count": 2 + i * 2,
+                "total_tokens": 100 + i * 100,
+            }
+            call.save()
+        query = {
+            "group_by": "goal",
+            "page_size": 1,
+            "filters": json.dumps({"goal": ["Refunds"]}),
+        }
+        first = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/", query
+        )
+        second = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/",
+            {**query, "page": 2},
+        )
+        assert first.status_code == second.status_code == 200
+        group = first.json()["groups"][0]
+        assert len(group["result_ids"]) == 1
+        assert group["total"] == 2
+        assert group["aggregates"] == second.json()["groups"][0]["aggregates"]
+        assert group["aggregates"] == {
+            "csat": 7,
+            "turns": 3,
+            "latency_ms": 150,
+            "tokens": 300,
+            "evaluations": {
+                str(pass_fail_eval_config.id): {"scored": 2, "score_sum": 2},
+                str(score_eval_config.id): {
+                    "scored": 2,
+                    "score_sum": pytest.approx(1.4),
+                },
+            },
+        }
+
     def test_calls_returns_normalized_rows_groups_and_facets(
         self, auth_client, test_execution, analytics_call_executions
     ):
@@ -535,7 +643,7 @@ class TestRunResultsV3Views:
             data_type="text",
             source=SourceChoices.OTHERS.value,
         )
-        row = dataset_for_scenario.rows.first()
+        row = Row.objects.filter(dataset=dataset_for_scenario).first()
         Cell.objects.create(
             dataset=dataset_for_scenario,
             column=goal_column,

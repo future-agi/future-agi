@@ -19,6 +19,7 @@ const {
   buildRunStats,
   useRunDetail,
   mapCallDetail,
+  callTranscript,
   useCallDetail,
 } = await import("../runDetail");
 const { RUN_COLORS } = await import(
@@ -278,6 +279,69 @@ describe("mapCallDetail", () => {
 
   it("returns null for a missing payload", () => {
     expect(mapCallDetail(null)).toBeNull();
+  });
+});
+
+describe("callTranscript", () => {
+  it("interleaves timed tools and leaves missing harness timestamps at the end", () => {
+    const raw = {
+      transcript: [
+        { id: "reply", content: "Found it.", start_time_seconds: 8 },
+        { id: "question", content: "Check my order.", start_time_seconds: 0 },
+      ],
+      function_calls: [
+        { id: "missing", name: "unknown_time", at: 0 },
+        { id: "lookup", name: "lookup_order", started_at_seconds: 4 },
+        { id: "also-missing", name: "other_tool" },
+      ],
+    };
+    expect(callTranscript(raw).map((row) => row.id)).toEqual([
+      "question",
+      "lookup",
+      "reply",
+      "missing",
+      "also-missing",
+    ]);
+    expect(callTranscript(raw)[3].start_time_seconds).toBeNull();
+    expect(raw.transcript[0].id).toBe("reply");
+    expect(mapCallDetail(raw).turns.map((turn) => turn.at)).toEqual([
+      0,
+      4,
+      8,
+      null,
+      null,
+    ]);
+  });
+
+  it("keeps explicit zero offsets and equal timestamps in stable order", () => {
+    expect(
+      callTranscript({
+        transcript: [{ id: "greeting", start_time_seconds: 0 }],
+        function_calls: [
+          { id: "first", start_time_seconds: "0" },
+          { id: "second", start_time_ms: 0 },
+          { id: "third", start_time_ms: 1500 },
+        ],
+      }).map((row) => [row.id, row.start_time_seconds]),
+    ).toEqual([
+      ["greeting", 0],
+      ["first", 0],
+      ["second", 0],
+      ["third", 1.5],
+    ]);
+  });
+
+  it("does not invent times for invalid offsets or absolute timestamps without an anchor", () => {
+    expect(
+      callTranscript({
+        function_calls: [
+          { start_time_seconds: "" },
+          { start_time_seconds: "invalid" },
+          { at: 1790000000 },
+        ],
+      }).every((row) => row.start_time_seconds === null),
+    ).toBe(true);
+    expect(callTranscript({ function_calls: null })).toEqual([]);
   });
 });
 

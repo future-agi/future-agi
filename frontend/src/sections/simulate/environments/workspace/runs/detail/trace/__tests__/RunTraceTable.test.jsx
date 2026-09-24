@@ -9,6 +9,7 @@ vi.mock("src/api/simulate-environments/runDetail", () => ({
 }));
 
 const { default: RunTraceTable } = await import("../RunTraceTable");
+const { default: TraceGroupHeaderRow } = await import("../TraceGroupHeaderRow");
 
 const TASKS = [
   {
@@ -117,6 +118,48 @@ const renderTable = (props = {}) =>
   render(<RunTraceTable executionId="ex1" onOpenCall={vi.fn()} {...props} />);
 
 describe("RunTraceTable", () => {
+  it("renders full-group aggregates independently of the visible page", () => {
+    render(
+      <table>
+        <tbody>
+          <TraceGroupHeaderRow
+            group={{
+              label: "Refunds",
+              rows: [TASKS[0]],
+              count: 8,
+              measured: 8,
+              passed: 6,
+              agg: {
+                csat: 7.5,
+                turns: 4.5,
+                latency: 250,
+                tokens: 1200,
+                evals: { "eval-1": { scored: 8, scoreSum: 6 } },
+              },
+            }}
+            collapsed={false}
+            onToggle={vi.fn()}
+            show={() => true}
+            showEvals
+            evals={[{ id: "eval-1" }]}
+            selected={new Set()}
+          />
+        </tbody>
+      </table>,
+    );
+    for (const value of [
+      "7.5",
+      "4.5",
+      "250ms",
+      "1,200",
+      "75%",
+      "Avg · 8 scored",
+      "Total",
+    ]) {
+      expect(screen.getByText(value)).toBeInTheDocument();
+    }
+  });
+
   beforeEach(() => {
     useRunCalls.mockImplementation((_executionId, opts = {}) => {
       const status = opts.filters?.status?.[0];

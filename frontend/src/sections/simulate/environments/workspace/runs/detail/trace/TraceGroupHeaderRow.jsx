@@ -69,7 +69,7 @@ export default function TraceGroupHeaderRow({
     return "—";
   };
 
-  const numCell = (value, suffix = "", metric) => {
+  const numCell = (value, suffix = "", metric, aggregation = "Avg") => {
     const bad = metric
       ? isBad(metric, typeof value === "number" ? value : Number(value))
       : false;
@@ -80,24 +80,33 @@ export default function TraceGroupHeaderRow({
             —
           </Typography>
         ) : (
-          <Stack direction="row" alignItems="center" spacing={0.5}>
-            {bad && (
-              <Iconify
-                icon="solar:danger-triangle-bold"
-                width={13}
-                sx={{ color: BUILD_TONES.red, flexShrink: 0 }}
-              />
-            )}
-            <Typography
-              sx={{
-                typography: "s2",
-                fontWeight: "fontWeightBold",
-                fontVariantNumeric: "tabular-nums",
-                color: bad ? BUILD_TONES.red : "text.primary",
-              }}
-            >
-              {typeof value === "number" ? value.toLocaleString() : value}
-              {suffix}
+          <Stack alignItems="flex-start" spacing={0.25}>
+            <Stack direction="row" alignItems="center" spacing={0.5}>
+              {bad && (
+                <Iconify
+                  icon="solar:danger-triangle-bold"
+                  width={13}
+                  sx={{ color: BUILD_TONES.red, flexShrink: 0 }}
+                />
+              )}
+              <Typography
+                sx={{
+                  typography: "s2",
+                  fontWeight: "fontWeightBold",
+                  fontVariantNumeric: "tabular-nums",
+                  color: bad ? BUILD_TONES.red : "text.primary",
+                }}
+              >
+                {typeof value === "number"
+                  ? value.toLocaleString(undefined, {
+                      maximumFractionDigits: 1,
+                    })
+                  : value}
+                {suffix}
+              </Typography>
+            </Stack>
+            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+              {aggregation}
             </Typography>
           </Stack>
         )}
@@ -193,7 +202,7 @@ export default function TraceGroupHeaderRow({
       {show("csat") && numCell(a.csat, "", "csat")}
       {show("turns") && numCell(a.turns, "", "turns")}
       {show("latency") && numCell(a.latency, "ms", "latency")}
-      {show("tokens") && numCell(a.tokens)}
+      {show("tokens") && numCell(a.tokens, "", undefined, "Total")}
       {showEvals &&
         evals.map((e) => {
           const ea = a.evals?.[e.id];
@@ -218,7 +227,9 @@ export default function TraceGroupHeaderRow({
                   position: "absolute",
                   inset: 0,
                   display: "flex",
-                  alignItems: "center",
+                  flexDirection: "column",
+                  justifyContent: "center",
+                  alignItems: "flex-start",
                   px: 2,
                   py: 1.5,
                   bgcolor: interpolateColorBasedOnScore(meanScore, 1),
@@ -234,6 +245,9 @@ export default function TraceGroupHeaderRow({
                   }}
                 >
                   {rate}%
+                </Typography>
+                <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                  Avg · {ea.scored} scored
                 </Typography>
               </Box>
             </TableCell>

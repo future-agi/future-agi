@@ -299,8 +299,29 @@ function normalizeRole(role) {
 const displayJson = (value) =>
   typeof value === "string" ? value : JSON.stringify(value);
 
+const finiteNumber = (value) => {
+  if (typeof value !== "number" && typeof value !== "string") return null;
+  if (typeof value === "string" && !value.trim()) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+
+// Explicit relative offsets can legitimately be zero. Harness `at` is an epoch
+// timestamp, with zero meaning unknown, so it must not be read as an offset.
+function relativeTime(row, end = false) {
+  const seconds = end
+    ? [row.end_time_seconds, row.completed_at_seconds]
+    : [row.start_time_seconds, row.started_at_seconds];
+  for (const value of seconds) {
+    const number = finiteNumber(value);
+    if (number != null) return number;
+  }
+  const milliseconds = finiteNumber(end ? row.end_time_ms : row.start_time_ms);
+  return milliseconds == null ? null : milliseconds / 1000;
+}
+
 export function functionCallTranscriptRows(calls = []) {
-  return calls.map((call, index) => {
+  return (Array.isArray(calls) ? calls : []).map((call, index) => {
     const duration = call.duration_ms ?? call.durationMs;
     const heading = `Function call · ${call.name || call.function?.name || "tool"}${duration != null ? ` · ${duration}ms` : ""}`;
     const args = call.arguments ?? call.function?.arguments;
@@ -315,10 +336,29 @@ export function functionCallTranscriptRows(calls = []) {
       ]
         .filter(Boolean)
         .join("\n"),
-      start_time_seconds: call.start_time_seconds ?? call.started_at_seconds,
-      end_time_seconds: call.end_time_seconds ?? call.completed_at_seconds,
+      start_time_seconds: relativeTime(call),
+      end_time_seconds: relativeTime(call, true),
       tool_calls: [call],
     };
+  });
+}
+
+/** One stable timeline shared by the chat and voice drawers. */
+export function callTranscript(raw) {
+  const transcript = Array.isArray(raw?.transcript) ? raw.transcript : [];
+  return [
+    ...transcript.map((turn) => ({
+      ...turn,
+      start_time_seconds: relativeTime(turn),
+      end_time_seconds: relativeTime(turn, true),
+    })),
+    ...functionCallTranscriptRows(raw?.function_calls),
+  ].sort((a, b) => {
+    const startA = a.start_time_seconds;
+    const startB = b.start_time_seconds;
+    if (startA == null) return startB == null ? 0 : 1;
+    if (startB == null) return -1;
+    return startA - startB;
   });
 }
 
@@ -370,9 +410,7 @@ export function mapCallDetail(raw) {
   if (!raw) return null;
 
   const isChat = raw.simulation_call_type === "text";
-  const transcript = Array.isArray(raw.transcript) ? raw.transcript : [];
-  const functionCallRows = functionCallTranscriptRows(raw.function_calls);
-  const turns = [...transcript, ...functionCallRows].map((t) => ({
+  const turns = callTranscript(raw).map((t) => ({
     role: normalizeRole(t.speaker_role ?? t.role),
     text: t.content ?? "",
     at: t.start_time_seconds ?? null,

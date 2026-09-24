@@ -10,7 +10,7 @@ import {
 
 import Iconify from "src/components/iconify";
 import {
-  functionCallTranscriptRows,
+  callTranscript,
   useCallExecutionV3Detail,
 } from "src/api/simulate-environments/runDetail";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
@@ -67,10 +67,7 @@ export default function VoiceCallDrawer({ task, onClose }) {
       data
         ? {
             ...data,
-            transcript: [
-              ...(Array.isArray(data.transcript) ? data.transcript : []),
-              ...functionCallTranscriptRows(data.function_calls),
-            ],
+            transcript: callTranscript(data),
             module: "simulate",
             origin: "simulate",
           }
