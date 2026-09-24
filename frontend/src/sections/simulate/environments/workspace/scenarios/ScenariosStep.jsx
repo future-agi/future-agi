@@ -149,6 +149,16 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryKey]);
 
+  // Deleting the last rows of the last page shrinks the suite, so the current
+  // page can fall past the new last page — the server then 404s that page and
+  // the pager loops. Clamp back onto the last real page once the refetched
+  // count is in.
+  useEffect(() => {
+    if (!pageData.loading && page > 0 && page >= pageData.pageCount) {
+      setPage(Math.max(0, pageData.pageCount - 1));
+    }
+  }, [page, pageData.pageCount, pageData.loading]);
+
   // The filter catalogue comes straight from the server (`fields`), counted
   // over the searched suite so an OR stays buildable; it drops into the shared
   // FilterPanel unchanged.

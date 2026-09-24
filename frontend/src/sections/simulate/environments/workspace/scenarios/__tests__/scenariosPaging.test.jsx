@@ -76,6 +76,32 @@ describe("ScenariosStep — pagination", () => {
     // Not the "no scenarios yet" empty placeholder.
     expect(screen.queryByText(/no scenarios/i)).toBeNull();
   });
+
+  it("clamps back onto the last real page after a delete empties the current one", async () => {
+    // Serve 60 rows (3 pages) until a delete shrinks the suite to 40 (2 pages).
+    let rowCount = 60;
+    listScenarios.mockImplementation((jobId, params) =>
+      queryScenarioFixture(params, makeServerRows(rowCount)),
+    );
+    amendScenarios.mockImplementation(async () => {
+      rowCount = 40;
+      return { receipts: [] };
+    });
+    renderStep(makeServerRows(60));
+
+    fireEvent.click(await screen.findByLabelText("Go to page 3"));
+    expect(await screen.findByText(/Showing 51–60 of 60/)).toBeInTheDocument();
+
+    // Delete a row on the (now non-existent after shrink) last page.
+    fireEvent.click(
+      screen.getAllByRole("button", { name: "Remove from this environment" })[0],
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    // The suite is now 40 rows (2 pages); page 3 is gone, so it clamps to page 2
+    // rather than requesting a 404'd page 3 forever.
+    expect(await screen.findByText(/Showing 26–40 of 40/)).toBeInTheDocument();
+  });
 });
 
 describe("ScenariosStep — select all matching", () => {
