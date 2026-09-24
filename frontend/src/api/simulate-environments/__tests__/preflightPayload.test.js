@@ -229,24 +229,21 @@ describe("draftToPreflightPayload — platform", () => {
     expect(payload.agent.call_direction).toBe("inbound");
   });
 
-  it("sends a Vapi phone-mode call as inbound; web mode keeps the toggle", () => {
-    const contact = {
-      countryCode: "+1",
-      number: "4155550100",
-      inboundCalls: false,
-      agentSpeaksFirst: false,
-    };
-    const phone = draftToPreflightPayload(
-      platformDraft({ contact: { ...contact, mode: "phone" }, callDirection: "outbound" }),
-    ).payload;
-    expect(phone.agent.config.inbound).toBe(true);
-    expect(phone.agent.call_direction).toBe("inbound");
-
-    const web = draftToPreflightPayload(
-      platformDraft({ contact: { ...contact, mode: "web" }, callDirection: "outbound" }),
-    ).payload;
-    expect(web.agent.config.inbound).toBe(false);
-    expect(web.agent.call_direction).toBe("outbound");
+  it("Vapi in phone mode keeps the toggle's direction (only Others is locked)", () => {
+    const { payload } = draftToPreflightPayload(
+      platformDraft({
+        contact: {
+          mode: "phone",
+          countryCode: "+1",
+          number: "4155550100",
+          inboundCalls: false,
+          agentSpeaksFirst: false,
+        },
+        callDirection: "outbound",
+      }),
+    );
+    expect(payload.agent.config.inbound).toBe(false);
+    expect(payload.agent.call_direction).toBe("outbound");
   });
 
   it("skips a provider outside the connector enum", () => {

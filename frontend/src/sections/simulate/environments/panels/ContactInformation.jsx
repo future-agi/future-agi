@@ -23,6 +23,7 @@ export default function ContactInformation({
   onCountryIso,
   contactNumber,
   onContactNumber,
+  inboundCalls,
   onInboundCalls,
   agentSpeaksFirst,
   onAgentSpeaksFirst,
@@ -85,16 +86,17 @@ export default function ContactInformation({
         </Stack>
       )}
 
-      {/* A phone call always runs inbound — the platform dials the agent — so
-          the switch is shown locked on rather than offering a choice the
-          backend overrides. */}
+      {/* Others is always inbound — the platform dials the agent's number — so
+          its switch is shown locked on; other providers keep the choice. */}
       {effectiveMode === "phone" && (
         <ToggleRow
-          checked
-          disabled
+          checked={phoneOnly || inboundCalls}
+          disabled={phoneOnly}
           onChange={onInboundCalls}
           title="Inbound Calls"
-          body="The platform calls your agent's number, so phone calls are always inbound."
+          body={phoneOnly
+            ? "The platform calls your agent's number, so these calls are always inbound."
+            : "Allows the agent to take inbound calls."}
         />
       )}
 

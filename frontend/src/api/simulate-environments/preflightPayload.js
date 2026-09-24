@@ -80,12 +80,11 @@ function e164(contact) {
 
 // Who calls whom and who opens, as the backend's two config booleans. Only
 // emitted when the panel collected them, so a draft without contact details
-// keeps the schema defaults. A phone call is always inbound — the platform
-// dials the agent — so the toggle only counts in web mode.
-function callBehaviour(contact, usesPhone) {
+// keeps the schema defaults.
+function callBehaviour(contact) {
   if (!contact) return {};
   return {
-    inbound: usesPhone || contact.inboundCalls !== false,
+    inbound: contact.inboundCalls !== false,
     target_speaks_first: Boolean(contact.agentSpeaksFirst),
   };
 }
@@ -207,12 +206,13 @@ function platformPayload(draft, name) {
     config = {
       [idKey]: draft.agentId,
       ...(phoneNumber ? { phone_number: phoneNumber } : {}),
-      ...callBehaviour(contact, usesPhone),
+      ...callBehaviour(contact),
     };
   }
-  // The backend lets `config.inbound` win over `call_direction`, so a phone
-  // call sends the direction it actually runs in rather than the toggle's.
-  const callDirection = usesPhone ? "inbound" : draft.callDirection;
+  // Others is always inbound (the platform dials the number), so it sends that
+  // direction rather than whatever the toggle last held.
+  const callDirection =
+    connector === PREFLIGHT_CONNECTOR.PHONE ? "inbound" : draft.callDirection;
   return {
     payload: {
       ...envelope(draft, name),
