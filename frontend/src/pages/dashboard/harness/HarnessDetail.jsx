@@ -1205,7 +1205,16 @@ export default function HarnessDetail() {
                 <Stack spacing={1.5}>
                   {selectedOutputs.length ? (
                     selectedOutputs.map((output) => (
-                      <StageOutput key={output.id} output={output} />
+                      <StageOutput
+                        key={output.id}
+                        output={output}
+                        jobId={jobId}
+                        onChanged={() =>
+                          queryClient.invalidateQueries({
+                            queryKey: ["harness-jobs"],
+                          })
+                        }
+                      />
                     ))
                   ) : (
                     <Typography variant="body2" color="text.secondary">
@@ -1218,7 +1227,16 @@ export default function HarnessDetail() {
               ) : (
                 <Stack spacing={1.5}>
                   {selectedOutputs.map((output) => (
-                    <StageOutput key={output.id} output={output} />
+                    <StageOutput
+                      key={output.id}
+                      output={output}
+                      jobId={jobId}
+                      onChanged={() =>
+                        queryClient.invalidateQueries({
+                          queryKey: ["harness-jobs"],
+                        })
+                      }
+                    />
                   ))}
                   {current.credentials && (
                     <Paper
@@ -1614,9 +1632,7 @@ export default function HarnessDetail() {
                           ? "Describe the scenarios to add — e.g. 'calm first-time riders booking an airport pickup' (optional)"
                           : "Tell the run what to change…"
                     }
-                    value={
-                      conversationComposerAvailable ? message : adjustment
-                    }
+                    value={conversationComposerAvailable ? message : adjustment}
                     onChange={(event) =>
                       conversationComposerAvailable
                         ? setMessage(event.target.value)

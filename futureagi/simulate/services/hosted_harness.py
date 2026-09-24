@@ -538,12 +538,11 @@ def provision_scenarios(
         with transaction.atomic():
             for persona, (scenario, row) in zip(new_personas, bindings, strict=True):
                 registrations.append(
-                    HostedHarnessScenario.no_workspace_objects.create(
+                    HostedHarnessScenario.no_workspace_objects.update_or_create(
                         job=job,
                         scenario_key=persona["scenario_key"],
-                        scenario=scenario,
-                        dataset_row=row,
-                    )
+                        defaults={"scenario": scenario, "dataset_row": row},
+                    )[0]
                 )
         return _provision_response(job, registrations)
 
@@ -600,7 +599,20 @@ def provision_scenarios(
         locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
             id=job.id
         )
-        if locked.run_test_id and locked.run_test_id != run_test.id:
+        existing_registrations = list(
+            HostedHarnessScenario.no_workspace_objects.select_for_update()
+            .filter(job=locked)
+            .order_by("created_at")
+        )
+        requested_keys = [persona["scenario_key"] for persona in payload["personas"]]
+        existing_by_key = {
+            registration.scenario_key: registration
+            for registration in existing_registrations
+        }
+        if locked.run_test_id:
+            if set(existing_by_key) == set(requested_keys):
+                # A concurrent request already provisioned this suite; return it.
+                return _provision_response(locked, existing_registrations)
             raise HostedHarnessError(
                 "scenario_registration_conflict",
                 "another attempt registered scenarios first",
@@ -608,15 +620,35 @@ def provision_scenarios(
             )
         locked.run_test = run_test
         locked.save(update_fields=["run_test", "updated_at"])
-        registrations = [
-            HostedHarnessScenario.no_workspace_objects.create(
-                job=locked,
-                scenario_key=persona["scenario_key"],
-                scenario=scenarios[0],
-                dataset_row=row,
+        if existing_registrations:
+            if set(existing_by_key) != set(requested_keys):
+                raise HostedHarnessError(
+                    "scenario_registration_conflict",
+                    "the indexed authored suite differs from the provision request",
+                    status_code=409,
+                )
+            registrations = []
+            bound_at = timezone.now()
+            for persona, row in zip(payload["personas"], dataset_rows, strict=True):
+                registration = existing_by_key[persona["scenario_key"]]
+                registration.scenario = scenarios[0]
+                registration.dataset_row = row
+                registration.updated_at = bound_at
+                registrations.append(registration)
+            HostedHarnessScenario.no_workspace_objects.bulk_update(
+                registrations,
+                ["scenario", "dataset_row", "updated_at"],
             )
-            for persona, row in zip(payload["personas"], dataset_rows, strict=True)
-        ]
+        else:
+            registrations = [
+                HostedHarnessScenario.no_workspace_objects.create(
+                    job=locked,
+                    scenario_key=persona["scenario_key"],
+                    scenario=scenarios[0],
+                    dataset_row=row,
+                )
+                for persona, row in zip(payload["personas"], dataset_rows, strict=True)
+            ]
         _record_target_agent_facts(locked, agent_definition, payload)
         _select_platform_evals(locked, run_test, payload, modality)
     return _provision_response(locked, registrations)

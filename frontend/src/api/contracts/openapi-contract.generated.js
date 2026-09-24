@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1017,
+  endpointCount: 1020,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -27920,6 +27920,53 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-jobs/{id}/scenarios/": {
+      get: {
+        operationId: "simulate_api_harness-jobs_scenarios",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-jobs/{id}/scenarios/amend/": {
+      post: {
+        operationId: "simulate_api_harness-jobs_scenarios_amend_scenarios",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: false,
+        requestBody: {
+          $ref: "#/definitions/HarnessScenarioAmend",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/HarnessScenarioAmend",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-jobs/{id}/scenarios/coverage/": {
+      get: {
+        operationId: "simulate_api_harness-jobs_scenarios_scenario_coverage",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness/attempts/{id}/artifacts/manifest/": {
       post: {
         operationId:
@@ -45478,7 +45525,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         livekit_max_concurrency: {
           title: "Livekit max concurrency",
           type: "integer",
-          maximum: 25,
+          maximum: 5,
           minimum: 1,
           "x-nullable": true,
         },
@@ -45632,7 +45679,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         livekit_max_concurrency: {
           title: "Livekit max concurrency",
           type: "integer",
-          maximum: 25,
+          maximum: 5,
           minimum: 1,
           "x-nullable": true,
         },
@@ -46623,7 +46670,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         livekit_max_concurrency: {
           title: "Livekit max concurrency",
           type: "integer",
-          maximum: 25,
+          maximum: 5,
           minimum: 1,
         },
         commit_message: {
@@ -60059,7 +60106,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Scenario count",
           type: "integer",
           default: 10,
-          maximum: 200,
+          maximum: 1000,
           minimum: 1,
         },
         seed: {
@@ -60263,7 +60310,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Scenario count",
           type: "integer",
           default: 10,
-          maximum: 200,
+          maximum: 1000,
           minimum: 1,
         },
         seed: {
@@ -60400,6 +60447,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           pattern: "^sha256:[0-9a-f]{64}$",
           minLength: 1,
+        },
+      },
+    },
+    HarnessScenarioAmend: {
+      required: ["changes"],
+      type: "object",
+      properties: {
+        changes: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessScenarioChange",
+          },
+        },
+        rework: {
+          title: "Rework",
+          type: "boolean",
+          default: true,
         },
       },
     },
@@ -87116,7 +87180,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         connector: {
           title: "Connector",
           type: "string",
-          enum: ["livekit", "vapi", "retell", "retell_chat", "auto"],
+          enum: ["livekit", "vapi", "retell", "retell_chat", "phone", "auto"],
         },
         mode: {
           title: "Mode",
@@ -87852,6 +87916,49 @@ export const OPENAPI_CONTRACT = Object.freeze({
         judged: {
           title: "Judged",
           type: "boolean",
+        },
+      },
+    },
+    HarnessScenarioChange: {
+      required: ["op"],
+      type: "object",
+      properties: {
+        op: {
+          title: "Op",
+          type: "string",
+          enum: ["drop", "set_field", "set_persona"],
+        },
+        scenario: {
+          title: "Scenario",
+          type: "string",
+        },
+        scenarios: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        field: {
+          title: "Field",
+          type: "string",
+        },
+        value: {
+          title: "Value",
+          type: "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        persona: {
+          title: "Persona",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
         },
       },
     },

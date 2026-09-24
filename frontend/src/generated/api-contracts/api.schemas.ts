@@ -15237,7 +15237,7 @@ export interface AgentDefinitionCreateRequestApi {
   livekit_config_json?: AgentDefinitionCreateRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 25
+   * @maximum 5
    */
   livekit_max_concurrency?: number;
 }
@@ -15478,7 +15478,7 @@ export interface AgentDefinitionEditRequestApi {
   livekit_config_json?: AgentDefinitionEditRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 25
+   * @maximum 5
    */
   livekit_max_concurrency?: number;
 }
@@ -15591,7 +15591,7 @@ export interface AgentVersionCreateRequestApi {
   livekit_config_json?: AgentVersionCreateRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 25
+   * @maximum 5
    */
   livekit_max_concurrency?: number;
   commit_message?: string;
@@ -17158,6 +17158,7 @@ export const HarnessAgentApiConnector = {
   vapi: "vapi",
   retell: "retell",
   retell_chat: "retell_chat",
+  phone: "phone",
   auto: "auto",
 } as const;
 
@@ -17316,7 +17317,7 @@ export interface HarnessJobCreateApi {
   agent: HarnessAgentApi;
   /**
    * @minimum 1
-   * @maximum 200
+   * @maximum 1000
    */
   scenario_count?: number;
   seed?: number;
@@ -17353,7 +17354,7 @@ export interface HarnessPreflightApi {
   agent: HarnessAgentApi;
   /**
    * @minimum 1
-   * @maximum 200
+   * @maximum 1000
    */
   scenario_count?: number;
   seed?: number;
@@ -17470,6 +17471,39 @@ export interface HarnessJobExtendApi {
    * @maxLength 128
    */
   client_request_id?: string;
+}
+
+export type HarnessScenarioChangeApiOp =
+  (typeof HarnessScenarioChangeApiOp)[keyof typeof HarnessScenarioChangeApiOp];
+
+export const HarnessScenarioChangeApiOp = {
+  drop: "drop",
+  set_field: "set_field",
+  set_persona: "set_persona",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type HarnessScenarioChangeApiValue = { [key: string]: unknown };
+
+export type HarnessScenarioChangeApiPersona = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export interface HarnessScenarioChangeApi {
+  op: HarnessScenarioChangeApiOp;
+  scenario?: string;
+  scenarios?: string[];
+  field?: string;
+  /** Any valid JSON value. */
+  value?: HarnessScenarioChangeApiValue;
+  persona?: HarnessScenarioChangeApiPersona;
+}
+
+export interface HarnessScenarioAmendApi {
+  changes: HarnessScenarioChangeApi[];
+  rework?: boolean;
 }
 
 export type HarnessManifestApiSchemaVersion =

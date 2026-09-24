@@ -50578,6 +50578,109 @@
                 }
             ]
         },
+        "/simulate/api/harness-jobs/{id}/scenarios/": {
+            "get": {
+                "operationId": "simulate_api_harness-jobs_scenarios",
+                "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-jobs/{id}/scenarios/amend/": {
+            "post": {
+                "operationId": "simulate_api_harness-jobs_scenarios_amend_scenarios",
+                "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioAmend"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioAmend"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-jobs/{id}/scenarios/coverage/": {
+            "get": {
+                "operationId": "simulate_api_harness-jobs_scenarios_scenario_coverage",
+                "summary": "Provider-neutral control plane for hosted ALK harness jobs.",
+                "description": "Validates the v1.6 request contract and delegates execution to the public backend selected by\n``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently\nselects its managed sandbox runtime.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": ""
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness/attempts/{id}/artifacts/manifest/": {
             "post": {
                 "operationId": "simulate_api_harness_attempts_artifacts_artifact_manifest",
@@ -115869,7 +115972,7 @@
                 "livekit_max_concurrency": {
                     "title": "Livekit max concurrency",
                     "type": "integer",
-                    "maximum": 25,
+                    "maximum": 5,
                     "minimum": 1,
                     "x-nullable": true
                 }
@@ -116288,7 +116391,7 @@
                 "livekit_max_concurrency": {
                     "title": "Livekit max concurrency",
                     "type": "integer",
-                    "maximum": 25,
+                    "maximum": 5,
                     "minimum": 1,
                     "x-nullable": true
                 }
@@ -116525,7 +116628,7 @@
                 "livekit_max_concurrency": {
                     "title": "Livekit max concurrency",
                     "type": "integer",
-                    "maximum": 25,
+                    "maximum": 5,
                     "minimum": 1
                 },
                 "commit_message": {
@@ -120090,6 +120193,7 @@
                         "vapi",
                         "retell",
                         "retell_chat",
+                        "phone",
                         "auto"
                     ]
                 },
@@ -120342,7 +120446,7 @@
                     "title": "Scenario count",
                     "type": "integer",
                     "default": 10,
-                    "maximum": 200,
+                    "maximum": 1000,
                     "minimum": 1
                 },
                 "seed": {
@@ -120410,7 +120514,7 @@
                     "title": "Scenario count",
                     "type": "integer",
                     "default": 10,
-                    "maximum": 200,
+                    "maximum": 1000,
                     "minimum": 1
                 },
                 "seed": {
@@ -120631,6 +120735,74 @@
                     "type": "string",
                     "maxLength": 128,
                     "minLength": 1
+                }
+            }
+        },
+        "HarnessScenarioChange": {
+            "required": [
+                "op"
+            ],
+            "type": "object",
+            "properties": {
+                "op": {
+                    "title": "Op",
+                    "type": "string",
+                    "enum": [
+                        "drop",
+                        "set_field",
+                        "set_persona"
+                    ]
+                },
+                "scenario": {
+                    "title": "Scenario",
+                    "type": "string"
+                },
+                "scenarios": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "field": {
+                    "title": "Field",
+                    "type": "string"
+                },
+                "value": {
+                    "title": "Value",
+                    "type": "object",
+                    "x-nullable": true,
+                    "x-json-value": true,
+                    "description": "Any valid JSON value."
+                },
+                "persona": {
+                    "title": "Persona",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
+                    }
+                }
+            }
+        },
+        "HarnessScenarioAmend": {
+            "required": [
+                "changes"
+            ],
+            "type": "object",
+            "properties": {
+                "changes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessScenarioChange"
+                    }
+                },
+                "rework": {
+                    "title": "Rework",
+                    "type": "boolean",
+                    "default": true
                 }
             }
         },
