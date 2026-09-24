@@ -5,9 +5,13 @@ from typing import Any
 
 from django.conf import settings
 from rest_framework import serializers
+
+from tfc.utils.serializer_fields import JsonValueField
 from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
+
+from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 
 # Port-generic loopback pattern for the C4 §7 Channel-1 literal-endpoint scan.
 # The declared fixed port is unknowable platform-side (the bundle is authored
@@ -302,7 +306,15 @@ class HarnessJobCreateSerializer(serializers.Serializer):
     run_id = serializers.UUIDField(required=False)
     source = HarnessSourceSerializer(required=False)
     agent = HarnessAgentSerializer()
-    scenario_count = serializers.IntegerField(default=10, min_value=1, max_value=200)
+    scenario_count = serializers.IntegerField(
+        default=10,
+        min_value=1,
+        # The admission ceiling is deployment-settable and never above what the database allows.
+        max_value=min(
+            int(getattr(settings, "ALK_MAX_SCENARIOS_PER_REQUEST", 1000)),
+            MAX_SCENARIOS_PER_JOB,
+        ),
+    )
     seed = serializers.IntegerField(required=False, allow_null=True)
     runtime = HarnessRuntimeSerializer(default=dict)
     security = HarnessSecuritySerializer(default=dict)
@@ -427,17 +439,10 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"runtime": "configured sandbox lifetime exceeds the provider limit"}
             )
-        authoring_seconds = max(
-            0,
-            int(
-                getattr(
-                    settings,
-                    "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
-                    3600,
-                )
-            ),
-        )
-        execution_limit = policy.max_ttl_seconds - authoring_seconds - 120
+        # The window is what the sandbox can actually run for. Reserving the authoring budget
+        # here charged every run for time it might not spend, and the capability grant is minted
+        # against this number, so a guest that authored quickly was still killed early.
+        execution_limit = policy.max_ttl_seconds - 120
         if execution_limit < 60:
             raise serializers.ValidationError(
                 {"runtime": "sandbox lifetime leaves no supported execution window"}
@@ -687,6 +692,31 @@ class HarnessJobEventSerializer(serializers.Serializer):
     type = serializers.CharField()
     payload = serializers.JSONField(allow_null=True)
     emitted_at = serializers.CharField()
+
+
+class HarnessScenarioChangeSerializer(serializers.Serializer):
+    op = serializers.ChoiceField(choices=["drop", "set_field", "set_persona"])
+    # A name, a scenario key, a number, a range ("12-30") or a comma list; `scenarios` carries a
+    # selection sent from the table.
+    scenario = serializers.CharField(required=False, allow_blank=True)
+    scenarios = serializers.ListField(
+        child=serializers.CharField(), required=False, allow_empty=False
+    )
+    field = serializers.CharField(required=False, allow_blank=True)
+    # A field's new value is whatever that field holds: `tests` is a string, `max_turns` a number,
+    # `background_noise` a place name or false. A plain JSONField is published as `type: object`,
+    # which made the contract reject every real edit before it left the browser.
+    value = JsonValueField(required=False, allow_null=True)
+    # Persona values are strings except `keywords` and `languages`, which are lists. A bare
+    # DictField publishes its values as strings, so those two were rejected the same way.
+    persona = serializers.DictField(
+        required=False, child=JsonValueField(allow_null=True)
+    )
+
+
+class HarnessScenarioAmendSerializer(serializers.Serializer):
+    changes = HarnessScenarioChangeSerializer(many=True, allow_empty=False)
+    rework = serializers.BooleanField(required=False, default=True)
 
 
 class HarnessStageOutputSerializer(serializers.Serializer):

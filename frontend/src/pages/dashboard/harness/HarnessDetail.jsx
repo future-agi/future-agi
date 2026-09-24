@@ -35,6 +35,7 @@ import EnvironmentSwitcher from "src/components/harness/EnvironmentSwitcher";
 import { compactActivityEvents } from "./activityEvents";
 import {
   cancelHarnessJob,
+  extendHarnessJob,
   getHarnessJob,
   listHarnessJobs,
   sendHarnessConversationMessage,
@@ -219,6 +220,7 @@ export default function HarnessDetail() {
   const [copiedId, setCopiedId] = useState(false);
   const [detailTab, setDetailTab] = useState("contract");
   const [message, setMessage] = useState("");
+  const [addCount, setAddCount] = useState(5);
   const feedRef = useRef(null);
   const conversationRef = useRef(null);
   const conversationAtEnd = useRef(true);
@@ -345,9 +347,6 @@ export default function HarnessDetail() {
         detail: requestError?.detail,
         message: requestError?.message,
       });
-      if (!handleCreditError(requestError)) {
-        setAdjustError(errorMessage(requestError));
-      }
     },
   });
 
@@ -355,7 +354,7 @@ export default function HarnessDetail() {
     mutationFn: () => {
       // The finished-run "Add scenarios" action: add `addCount` scenarios to the saved
       // world, steered by the optional guidance typed in the box. Rerun is a separate action.
-      const guidance = adjustment.trim();
+      const guidance = message.trim();
       const requestId = window.crypto?.randomUUID?.();
       return extendHarnessJob(jobId, {
         count: addCount,
@@ -363,13 +362,13 @@ export default function HarnessDetail() {
         ...(requestId ? { client_request_id: requestId } : {}),
       });
     },
-    onMutate: () => setExtendError(""),
+    onMutate: () => setConversationError(""),
     onSuccess: (value) => {
       // The follow-up relaunches the environment (extended or replayed): the job returns
       // to queued and this page's poll resumes.
       queryClient.setQueryData(["harness-job", jobId], value);
       queryClient.invalidateQueries({ queryKey: ["harness-jobs"] });
-      setAdjustment("");
+      setMessage("");
       pinnedToEnd.current = true;
       setDetailTab("runs");
     },
@@ -382,7 +381,7 @@ export default function HarnessDetail() {
         message: requestError?.message,
       });
       if (!handleCreditError(requestError)) {
-        setExtendError(errorMessage(requestError));
+        setConversationError(errorMessage(requestError));
       }
     },
   });
@@ -411,17 +410,21 @@ export default function HarnessDetail() {
   // ALK reports one artifact per stage group. "Runs" is the catch-all so a new kind never
   // disappears: anything that is not a named tab lands there alongside the activity feed.
   const stageOutputs = current?.stage_outputs || [];
-  const selectedOutputs = stageOutputs.filter((output) =>
-    detailTab === "runs"
-      ? !["contract", "environment", "scenarios"].includes(output.kind)
-      : output.kind === detailTab,
+  // Coverage used to be routed here so it sat beside the suite. The suite now serves its own
+  // grid from its own route, cross-tabulated over every scenario rather than over the JSON that
+  // happened to reach the browser, so the stage output would only repeat it as raw JSON.
+  const tabOf = (kind) =>
+    ["contract", "environment", "scenarios"].includes(kind) ? kind : "runs";
+  const selectedOutputs = stageOutputs.filter(
+    (output) => tabOf(output.kind) === detailTab,
   );
-  const outputCounts = stageOutputs.reduce((counts, output) => {
-    const key = ["contract", "environment", "scenarios"].includes(output.kind)
-      ? output.kind
-      : "runs";
-    return { ...counts, [key]: (counts[key] || 0) + 1 };
-  }, {});
+  const outputCounts = stageOutputs.reduce(
+    (counts, output) => ({
+      ...counts,
+      [tabOf(output.kind)]: (counts[tabOf(output.kind)] || 0) + 1,
+    }),
+    {},
+  );
 
   const tabStates = DETAIL_TABS.reduce(
     (states, tab) => ({
@@ -1175,7 +1178,16 @@ export default function HarnessDetail() {
                 <Stack spacing={1.5}>
                   {selectedOutputs.length ? (
                     selectedOutputs.map((output) => (
-                      <StageOutput key={output.id} output={output} />
+                      <StageOutput
+                        key={output.id}
+                        output={output}
+                        jobId={jobId}
+                        onChanged={() =>
+                          queryClient.invalidateQueries({
+                            queryKey: ["harness-jobs"],
+                          })
+                        }
+                      />
                     ))
                   ) : (
                     <Typography variant="body2" color="text.secondary">
@@ -1188,7 +1200,16 @@ export default function HarnessDetail() {
               ) : (
                 <Stack spacing={1.5}>
                   {selectedOutputs.map((output) => (
-                    <StageOutput key={output.id} output={output} />
+                    <StageOutput
+                      key={output.id}
+                      output={output}
+                      jobId={jobId}
+                      onChanged={() =>
+                        queryClient.invalidateQueries({
+                          queryKey: ["harness-jobs"],
+                        })
+                      }
+                    />
                   ))}
                   {current.credentials && (
                     <Paper
@@ -1709,29 +1730,7 @@ export default function HarnessDetail() {
                           Add scenarios
                         </Button>
                       </Stack>
-                    ) : (
-                      <IconButton
-                        size="small"
-                        onClick={() => adjust()}
-                        disabled={adjusting || !adjustment.trim()}
-                        aria-label="Send"
-                        sx={{
-                          bgcolor: "accent.brand",
-                          color: "common.white",
-                          "&:hover": { bgcolor: "accent.brand", opacity: 0.88 },
-                          "&.Mui-disabled": {
-                            bgcolor: "action.disabledBackground",
-                            color: "text.disabled",
-                          },
-                        }}
-                      >
-                        {adjusting ? (
-                          <CircularProgress size={14} color="inherit" />
-                        ) : (
-                          <Iconify icon="solar:plain-linear" width={15} />
-                        )}
-                      </IconButton>
-                    )}
+                    ) : null}
                   </Stack>
                 </Box>
                 {conversationError && (

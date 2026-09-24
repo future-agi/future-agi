@@ -13,6 +13,13 @@ const secretValuesPath = () =>
   apiPath("/simulate/api/harness-jobs/secret-values/");
 const extendPath = (id) =>
   apiPath("/simulate/api/harness-jobs/{id}/extend/", { id });
+const amendScenariosPath = (id) =>
+  apiPath("/simulate/api/harness-jobs/{id}/scenarios/amend/", { id });
+const scenariosPath = (id) =>
+  apiPath("/simulate/api/harness-jobs/{id}/scenarios/", { id });
+const scenarioCoveragePath = (id) =>
+  apiPath("/simulate/api/harness-jobs/{id}/scenarios/coverage/", { id });
+
 const conversationMessagesPath = (id) =>
   apiPath("/simulate/api/harness-jobs/{id}/conversation/messages/", { id });
 
@@ -79,5 +86,38 @@ export const cancelHarnessJob = async (id, reason) => {
 // just reruns the saved suite.
 export const extendHarnessJob = async (id, payload) =>
   (await axios.post(extendPath(id), payload)).data;
+
+// Batch edit of a finished suite; the reply is one receipt per change. `rework: false` refuses
+// anything that would need a re-proof.
+export const amendHarnessScenarios = async (id, changes, { rework = true } = {}) =>
+  (await axios.post(amendScenariosPath(id), { changes, rework })).data;
+// One page of a run's suite, filtered and grouped by the server. The tab used to read every
+// scenario out of the job payload and filter in the browser, which cannot survive a suite of five
+// hundred: a browser filter only ever sees the page it was handed.
+export const listHarnessScenarios = async (id, params = {}) => {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    (Array.isArray(value) ? value : [value]).forEach((one) => search.append(key, one));
+  });
+  const query = search.toString();
+  return (await axios.get(`${scenariosPath(id)}${query ? `?${query}` : ""}`)).data;
+};
+
+export const getHarnessScenarioCoverage = async (id, params = {}) => {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    // A repeated key is one property's OR-set, so an array has to stay several params.
+    (Array.isArray(value) ? value : [value]).forEach((one) =>
+      search.append(key, String(one)),
+    );
+  });
+  const query = search.toString();
+  return (
+    await axios.get(`${scenarioCoveragePath(id)}${query ? `?${query}` : ""}`)
+  ).data;
+};
+
 export const sendHarnessConversationMessage = async (id, payload) =>
   (await axios.post(conversationMessagesPath(id), payload)).data;

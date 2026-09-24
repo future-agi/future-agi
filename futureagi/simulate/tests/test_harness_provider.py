@@ -276,7 +276,8 @@ def test_e2b_serializer_uses_fixed_template_resources_and_lifetime(settings):
     runtime = serializer.validated_data["runtime"]
     assert runtime["cpu_units"] == 2
     assert runtime["memory_mb"] == 4096
-    assert runtime["max_duration_seconds"] == 2880
+    # The authoring budget no longer shortens the window the guest is granted.
+    assert runtime["max_duration_seconds"] == 3480
     _validate_known_hosted_egress(
         serializer.validated_data, "https://harness.example.test/"
     )

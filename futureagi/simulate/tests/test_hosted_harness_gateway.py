@@ -263,12 +263,12 @@ def test_webrtc_cidrs_apply_only_to_voice_connectors(settings):
     assert _webrtc_egress_cidrs({"agent": {"connector": "retell_chat"}}, {}) == ()
 
 
-def test_execution_ttl_preserves_authoring_and_call_budget(settings):
+def test_execution_ttl_is_the_granted_window_not_the_authoring_budget_on_top(settings):
     settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
     settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
 
     assert _execution_ttl_seconds({"max_duration_seconds": 600}) == 7200
-    assert _execution_ttl_seconds({"max_duration_seconds": 5000}) == 8720
+    assert _execution_ttl_seconds({"max_duration_seconds": 8000}) == 8120
 
 
 def test_daytona_authoring_ttl_preserves_legacy_forty_minute_envelope(settings):
@@ -2370,3 +2370,11 @@ def test_hosted_execution_cancel_signals_workflow_without_deleting_sandbox(
     job.refresh_from_db()
     assert job.state == HostedHarnessJob.State.CLEANING_UP
     assert job.cancel_reason == "user_canceled"
+
+def test_gateway_authoring_turns_vertex_routing_off_explicitly():
+    from simulate.services.hosted_harness_gateway import _claude_code_use_vertex
+
+    # "" is not "0": the CLI reads the variable as set, routes to Vertex, and Vertex rejects the
+    # gateway's `vertex_ai/`-prefixed model id as a model that does not exist.
+    assert _claude_code_use_vertex(True) == "0"
+    assert _claude_code_use_vertex(False) == "1"
