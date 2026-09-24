@@ -47,9 +47,16 @@ vi.mock("src/sections/common/EvalPicker/hooks/useEvalPickerData", () => ({
 
 // Stand in for the real config screen: expose the primary label the wrapper
 // drives and a save button that returns the eval it is currently mapping.
-vi.mock("src/sections/common/EvalPicker/EvalPickerConfigFull", () => ({
-  default: (props) => {
+vi.mock("src/sections/common/EvalPicker/EvalPickerConfigFull", async () => {
+  const { useEvalPickerContext } = await import(
+    "src/sections/common/EvalPicker/context/EvalPickerContext"
+  );
+  /* eslint-disable react/prop-types */
+  function ConfigStub(props) {
     const id = props.evalData?.templateId || props.evalData?.id;
+    // The real config header's close control calls the picker's context
+    // onClose; the stub mirrors that so closing part-way is testable.
+    const { onClose } = useEvalPickerContext();
     return (
       <div data-testid="config-stub">
         <div data-testid="primary-label">{props.primaryLabel || ""}</div>
@@ -62,10 +69,17 @@ vi.mock("src/sections/common/EvalPicker/EvalPickerConfigFull", () => ({
         >
           stub-save
         </button>
+        {props.showClose && (
+          <button type="button" onClick={onClose}>
+            stub-close
+          </button>
+        )}
       </div>
     );
-  },
-}));
+  }
+  /* eslint-enable react/prop-types */
+  return { default: ConfigStub };
+});
 
 const ENV = { id: "env-1", name: "Support", surface: "voice", evalPreset: [] };
 const ENV_STATE = { scenarios: [{ id: "s1" }], agent: { typeId: "voice" } };
@@ -165,5 +179,47 @@ describe("AddEvalsDrawer — multi-select batch", () => {
     ]);
     // Single add is not a queue — the drawer stays open for more.
     expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe("AddEvalsDrawer — closing part-way through a queue", () => {
+  it("hands over the evals already mapped instead of dropping them", async () => {
+    const onAdd = vi.fn();
+    const onClose = vi.fn();
+    renderDrawer({ onAdd, onClose });
+
+    const boxes = screen.getAllByRole("checkbox");
+    fireEvent.click(boxes[0]);
+    fireEvent.click(boxes[1]);
+    fireEvent.click(screen.getByRole("button", { name: "Add Evaluations (2)" }));
+
+    // Map the first eval, then close before reaching the second.
+    fireEvent.click(screen.getByRole("button", { name: "stub-save" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("primary-label")).toHaveTextContent(
+        "Add 2 evaluations"
+      )
+    );
+    fireEvent.click(screen.getByRole("button", { name: "stub-close" }));
+
+    await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1));
+    expect(onAdd).toHaveBeenCalledWith([
+      expect.objectContaining({ id: "eval-1", custom: true }),
+    ]);
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("adds nothing when the queue is closed before any eval is mapped", async () => {
+    const onAdd = vi.fn();
+    const onClose = vi.fn();
+    renderDrawer({ onAdd, onClose });
+
+    const boxes = screen.getAllByRole("checkbox");
+    fireEvent.click(boxes[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Add Evaluations (1)" }));
+    fireEvent.click(screen.getByRole("button", { name: "stub-close" }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(onAdd).not.toHaveBeenCalled();
   });
 });

@@ -1316,7 +1316,12 @@ const EvalPickerConfigFull = ({
             </Select>
           )}
           {showClose && (
-            <IconButton onClick={onClose} size="small" sx={{ p: 0.5 }}>
+            <IconButton
+              onClick={onClose}
+              size="small"
+              aria-label="Close eval picker"
+              sx={{ p: 0.5 }}
+            >
               <Iconify icon="mingcute:close-line" width={20} />
             </IconButton>
           )}

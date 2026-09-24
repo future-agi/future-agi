@@ -19,6 +19,11 @@ export const STATUS_META = {
   completed: { label: "Completed", color: "#CA8A04" },
 };
 
+// Why a run could not be started. The server's own message is kept — a 403 and
+// a 500 read very differently and the user needs to know which they hit.
+export const RUN_FAILED_MESSAGE = (error) =>
+  `Couldn't start a simulation for this environment: ${error?.message || "the request failed"}`;
+
 export const ROW_ACTION = { RUN: "run", DELETE: "delete" };
 
 export const ROW_ACTION_LABEL = {

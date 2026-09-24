@@ -56,7 +56,13 @@ export default function AddEvalsDrawer({
     setCollected([]);
   };
 
-  const close = () => {
+  // Closing part-way through a queue used to throw away every eval already
+  // mapped — the user configured three, closed on the fourth, and got none of
+  // them. Hand over whatever is collected before tearing the queue down.
+  // `pending` is passed explicitly by the last-eval path, which already holds
+  // the final list in a local (state has not re-rendered yet).
+  const close = (pending = collected) => {
+    if (pending.length) onAdd(pending);
     reset();
     onClose();
   };
@@ -88,8 +94,7 @@ export default function AddEvalsDrawer({
   const onQueueEvalAdded = (config) => {
     const done = [...collected, entry(config)];
     if (index === queue.length - 1) {
-      onAdd(done);
-      close();
+      close(done);
       return;
     }
     setCollected(done);
@@ -105,7 +110,7 @@ export default function AddEvalsDrawer({
       // Re-keys the provider per eval so each one opens at its own config.
       key={mapping ? queue[index]?.id : "list"}
       open={open}
-      onClose={close}
+      onClose={() => close()}
       source="create-simulate"
       sourceId={env?.id || ""}
       sourcePreviewData={previewData}

@@ -17,6 +17,9 @@ vi.mock("src/api/harness/harness", () => ({
   getHarnessJob: vi.fn(),
 }));
 
+const enqueueSnackbar = vi.fn();
+vi.mock("notistack", () => ({ enqueueSnackbar: (...a) => enqueueSnackbar(...a) }));
+
 const { listHarnessJobs, getHarnessJob } = await import(
   "src/api/harness/harness"
 );
@@ -85,6 +88,7 @@ describe("MyEnvironmentsTable", () => {
     listHarnessJobs.mockResolvedValue(HARNESS_JOBS);
     getHarnessJob.mockReset();
     getHarnessJob.mockResolvedValue(JOB_DETAIL);
+    enqueueSnackbar.mockReset();
   });
 
   afterEach(() => {
@@ -193,7 +197,10 @@ describe("MyEnvironmentsTable", () => {
     );
   });
 
-  it("falls back to the product run entry when the job fetch fails", async () => {
+  it("surfaces the failure instead of silently navigating away", async () => {
+    // A 403 or a 500 used to be swallowed by `.catch(() => navigate(...))`,
+    // which dropped the user on the product's generic Run Simulation entry with
+    // no indication that anything had gone wrong.
     getHarnessJob.mockRejectedValue(new Error("boom"));
     const user = userEvent.setup();
     renderTab();
@@ -205,8 +212,12 @@ describe("MyEnvironmentsTable", () => {
     );
 
     await waitFor(() =>
-      expect(navigate).toHaveBeenCalledWith("/dashboard/simulate/test"),
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        expect.stringContaining("boom"),
+        { variant: "error" },
+      ),
     );
+    expect(navigate).not.toHaveBeenCalledWith("/dashboard/simulate/test");
   });
 
   it("disables the run action while the environment is building", async () => {
