@@ -111,18 +111,44 @@ class HarnessEnvironmentAddEvaluationSerializer(serializers.Serializer):
     )
 
 
-class HarnessEnvironmentOfferedEvalSerializer(serializers.Serializer):
-    """One eval this environment could still be graded by.
+class HarnessEnvironmentEvalInputSerializer(serializers.Serializer):
+    """Which stored piece of a call fills one of an eval's required keys.
 
-    ``required_keys`` travels so a picker can say what an eval reads; every
-    entry offered here already resolves all of them, so it is description
+    ``label`` is the only text a picker shows for a source: the frontend never
+    computes which source fills a key.
+    """
+
+    key = serializers.CharField()
+    source = serializers.ChoiceField(
+        choices=(
+            "voice_recording",
+            "transcript",
+            "agent_prompt",
+            "scenario_columns.situation.value",
+        )
+    )
+    label = serializers.CharField()
+
+
+class HarnessEnvironmentOfferedEvalSerializer(serializers.Serializer):
+    """One eval in the one list format the harness, the picker and the detail share.
+
+    ``required_keys`` is the template's stored order and ``inputs`` is sorted
+    by key; they are not aligned — pair them by ``key``. Every entry offered
+    here already resolves all of its keys, so ``inputs`` is a description
     rather than a condition the caller has to check.
     """
 
     name = serializers.CharField()
     description = serializers.CharField(allow_blank=True)
+    source = serializers.ChoiceField(choices=("system", "custom"))
+    tags = serializers.ListField(child=serializers.CharField())
     required_keys = serializers.ListField(child=serializers.CharField())
+    agent_type = serializers.ChoiceField(choices=(AGENT_TYPE_VOICE, AGENT_TYPE_CHAT))
     modality = serializers.ChoiceField(choices=("voice", "text", "any"))
+    credits_per_run = serializers.FloatField()
+    charges_judge_tokens = serializers.BooleanField()
+    inputs = HarnessEnvironmentEvalInputSerializer(many=True)
 
 
 class HarnessEnvironmentAvailableEvalsSerializer(serializers.Serializer):
@@ -291,10 +317,16 @@ class HarnessEnvironmentScenarioSerializer(serializers.Serializer):
     call_execution_id = serializers.UUIDField(allow_null=True)
 
 
-class HarnessEnvironmentSelectedEvalSerializer(serializers.Serializer):
+class HarnessEnvironmentSelectedEvalSerializer(HarnessEnvironmentOfferedEvalSerializer):
+    """One eval this environment is graded by: the same entry plus its id.
+
+    Only the configs that carry a mapping are listed; the rows ingestion
+    creates for the harness's own result columns are bound to the run but were
+    never selected. ``runnable`` is therefore always true here and is kept
+    because the frontend already reads it.
+    """
+
     id = serializers.UUIDField()
-    name = serializers.CharField(allow_blank=True)
-    description = serializers.CharField(allow_blank=True)
     runnable = serializers.BooleanField()
 
 

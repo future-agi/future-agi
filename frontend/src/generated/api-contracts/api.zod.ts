@@ -35125,9 +35125,28 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
   evaluations: zod.object({
     selected: zod.array(
       zod.object({
-        id: zod.string().uuid(),
-        name: zod.string(),
+        name: zod.string().min(1),
         description: zod.string(),
+        source: zod.enum(["system", "custom"]),
+        tags: zod.array(zod.string().min(1)),
+        required_keys: zod.array(zod.string().min(1)),
+        agent_type: zod.enum(["voice", "chat"]),
+        modality: zod.enum(["voice", "text", "any"]),
+        credits_per_run: zod.number(),
+        charges_judge_tokens: zod.boolean(),
+        inputs: zod.array(
+          zod.object({
+            key: zod.string().min(1),
+            source: zod.enum([
+              "voice_recording",
+              "transcript",
+              "agent_prompt",
+              "scenario_columns.situation.value",
+            ]),
+            label: zod.string().min(1),
+          }),
+        ),
+        id: zod.string().uuid(),
         runnable: zod.boolean(),
       }),
     ),
@@ -35318,9 +35337,28 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
   evaluations: zod.object({
     selected: zod.array(
       zod.object({
-        id: zod.string().uuid(),
-        name: zod.string(),
+        name: zod.string().min(1),
         description: zod.string(),
+        source: zod.enum(["system", "custom"]),
+        tags: zod.array(zod.string().min(1)),
+        required_keys: zod.array(zod.string().min(1)),
+        agent_type: zod.enum(["voice", "chat"]),
+        modality: zod.enum(["voice", "text", "any"]),
+        credits_per_run: zod.number(),
+        charges_judge_tokens: zod.boolean(),
+        inputs: zod.array(
+          zod.object({
+            key: zod.string().min(1),
+            source: zod.enum([
+              "voice_recording",
+              "transcript",
+              "agent_prompt",
+              "scenario_columns.situation.value",
+            ]),
+            label: zod.string().min(1),
+          }),
+        ),
+        id: zod.string().uuid(),
         runnable: zod.boolean(),
       }),
     ),
@@ -35408,8 +35446,25 @@ export const SimulateApiHarnessEnvironmentsEvaluationsAvailableEvaluationsRespon
       zod.object({
         name: zod.string().min(1),
         description: zod.string(),
+        source: zod.enum(["system", "custom"]),
+        tags: zod.array(zod.string().min(1)),
         required_keys: zod.array(zod.string().min(1)),
+        agent_type: zod.enum(["voice", "chat"]),
         modality: zod.enum(["voice", "text", "any"]),
+        credits_per_run: zod.number(),
+        charges_judge_tokens: zod.boolean(),
+        inputs: zod.array(
+          zod.object({
+            key: zod.string().min(1),
+            source: zod.enum([
+              "voice_recording",
+              "transcript",
+              "agent_prompt",
+              "scenario_columns.situation.value",
+            ]),
+            label: zod.string().min(1),
+          }),
+        ),
       }),
     ),
   });

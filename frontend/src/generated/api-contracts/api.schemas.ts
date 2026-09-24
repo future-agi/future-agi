@@ -17150,10 +17150,62 @@ export interface HarnessEnvironmentScenarioApi {
   call_execution_id: string;
 }
 
+export type HarnessEnvironmentSelectedEvalApiSource =
+  (typeof HarnessEnvironmentSelectedEvalApiSource)[keyof typeof HarnessEnvironmentSelectedEvalApiSource];
+
+export const HarnessEnvironmentSelectedEvalApiSource = {
+  system: "system",
+  custom: "custom",
+} as const;
+
+export type HarnessEnvironmentSelectedEvalApiAgentType =
+  (typeof HarnessEnvironmentSelectedEvalApiAgentType)[keyof typeof HarnessEnvironmentSelectedEvalApiAgentType];
+
+export const HarnessEnvironmentSelectedEvalApiAgentType = {
+  voice: "voice",
+  chat: "chat",
+} as const;
+
+export type HarnessEnvironmentSelectedEvalApiModality =
+  (typeof HarnessEnvironmentSelectedEvalApiModality)[keyof typeof HarnessEnvironmentSelectedEvalApiModality];
+
+export const HarnessEnvironmentSelectedEvalApiModality = {
+  voice: "voice",
+  text: "text",
+  any: "any",
+} as const;
+
+export type HarnessEnvironmentEvalInputApiSource =
+  (typeof HarnessEnvironmentEvalInputApiSource)[keyof typeof HarnessEnvironmentEvalInputApiSource];
+
+export const HarnessEnvironmentEvalInputApiSource = {
+  voice_recording: "voice_recording",
+  transcript: "transcript",
+  agent_prompt: "agent_prompt",
+  scenario_columnssituationvalue: "scenario_columns.situation.value",
+} as const;
+
+export interface HarnessEnvironmentEvalInputApi {
+  /** @minLength 1 */
+  key: string;
+  source: HarnessEnvironmentEvalInputApiSource;
+  /** @minLength 1 */
+  label: string;
+}
+
 export interface HarnessEnvironmentSelectedEvalApi {
-  id: string;
+  /** @minLength 1 */
   name: string;
   description: string;
+  source: HarnessEnvironmentSelectedEvalApiSource;
+  tags: string[];
+  required_keys: string[];
+  agent_type: HarnessEnvironmentSelectedEvalApiAgentType;
+  modality: HarnessEnvironmentSelectedEvalApiModality;
+  credits_per_run: number;
+  charges_judge_tokens: boolean;
+  inputs: HarnessEnvironmentEvalInputApi[];
+  id: string;
   runnable: boolean;
 }
 
@@ -17246,6 +17298,22 @@ export interface HarnessEnvironmentAddEvaluationApi {
   name: string;
 }
 
+export type HarnessEnvironmentOfferedEvalApiSource =
+  (typeof HarnessEnvironmentOfferedEvalApiSource)[keyof typeof HarnessEnvironmentOfferedEvalApiSource];
+
+export const HarnessEnvironmentOfferedEvalApiSource = {
+  system: "system",
+  custom: "custom",
+} as const;
+
+export type HarnessEnvironmentOfferedEvalApiAgentType =
+  (typeof HarnessEnvironmentOfferedEvalApiAgentType)[keyof typeof HarnessEnvironmentOfferedEvalApiAgentType];
+
+export const HarnessEnvironmentOfferedEvalApiAgentType = {
+  voice: "voice",
+  chat: "chat",
+} as const;
+
 export type HarnessEnvironmentOfferedEvalApiModality =
   (typeof HarnessEnvironmentOfferedEvalApiModality)[keyof typeof HarnessEnvironmentOfferedEvalApiModality];
 
@@ -17259,8 +17327,14 @@ export interface HarnessEnvironmentOfferedEvalApi {
   /** @minLength 1 */
   name: string;
   description: string;
+  source: HarnessEnvironmentOfferedEvalApiSource;
+  tags: string[];
   required_keys: string[];
+  agent_type: HarnessEnvironmentOfferedEvalApiAgentType;
   modality: HarnessEnvironmentOfferedEvalApiModality;
+  credits_per_run: number;
+  charges_judge_tokens: boolean;
+  inputs: HarnessEnvironmentEvalInputApi[];
 }
 
 export interface HarnessEnvironmentAvailableEvalsApi {

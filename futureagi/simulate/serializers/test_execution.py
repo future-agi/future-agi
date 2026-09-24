@@ -216,6 +216,13 @@ class CallExecutionEvalMetricSerializer(serializers.Serializer):
     error = serializers.BooleanField(required=False)
     status = serializers.CharField(allow_blank=True, required=False)
     skipped = serializers.BooleanField(required=False)
+    removed = serializers.BooleanField(
+        required=False,
+        help_text=(
+            "Present and true only when the eval was removed from the "
+            "environment; a live eval's verdict omits the key entirely."
+        ),
+    )
     error_localizer = serializers.BooleanField(required=False)
     error_analysis = serializers.JSONField(required=False, allow_null=True)
     error_localizer_status = serializers.CharField(
@@ -775,6 +782,15 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             if hasattr(self, "context") and self.context
             else None
         )
+        # ``mark_removed_only``: the caller wants only the removed-marker
+        # stamped, with every other effect of an ``eval_configs`` context
+        # switched off, so ``iter_live_eval_outputs`` is skipped and a key
+        # with no config row is still returned, as with no context at all.
+        mark_removed_only = bool(
+            self.context.get("mark_removed_only")
+            if hasattr(self, "context") and self.context
+            else False
+        )
         if eval_configs is None:
             logger.debug(
                 "eval_outputs_serialized_without_live_config_context",
@@ -782,7 +798,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             )
         eval_items = (
             eval_outputs.items()
-            if eval_configs is None
+            if eval_configs is None or mark_removed_only
             else iter_live_eval_outputs(eval_outputs, eval_configs)
         )
 
@@ -796,6 +812,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                 is_error = bool(raw_error is True or raw_error == "error") or (
                     eval_data.get("status") == "error"
                 )
+                eval_config = (eval_configs or {}).get(eval_id)
                 structured_outputs[eval_id] = {
                     "value": _normalize_eval_value(
                         eval_data.get("output"),
@@ -811,6 +828,13 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     "skipped": bool(eval_data.get("skipped", False))
                     or eval_data.get("status") == "skipped",
                 }
+                # The eval was removed from the environment after this
+                # verdict was stored; the verdict is shown, marked, never
+                # hidden or rewritten. A live eval's verdict carries no
+                # "removed" key. ``getattr`` also covers harness-native rows,
+                # which have no config object.
+                if getattr(eval_config, "deleted", False):
+                    structured_outputs[eval_id]["removed"] = True
 
         return structured_outputs
 
@@ -839,6 +863,16 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             if hasattr(self, "context") and self.context
             else None
         )
+        # See ``get_eval_outputs``'s ``mark_removed_only`` comment: this
+        # surface needs the marker only, with ``template_type``, the
+        # error-localizer lookup, and the ``eval_config.name`` fallback all
+        # switched off, so it stays unchanged from the no-context branch
+        # except for the added ``"removed": true`` keys.
+        mark_removed_only = bool(
+            self.context.get("mark_removed_only")
+            if hasattr(self, "context") and self.context
+            else False
+        )
         if eval_configs is None:
             logger.debug(
                 "eval_outputs_serialized_without_live_config_context",
@@ -846,7 +880,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             )
         eval_items = (
             eval_outputs.items()
-            if eval_configs is None
+            if eval_configs is None or mark_removed_only
             else iter_live_eval_outputs(eval_outputs, eval_configs)
         )
 
@@ -864,7 +898,12 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                 metrics[eval_id] = {
                     "id": eval_id,
                     "name": eval_data.get(
-                        "name", eval_config.name if eval_config else ""
+                        "name",
+                        (
+                            ""
+                            if mark_removed_only
+                            else (eval_config.name if eval_config else "")
+                        ),
                     ),
                     "value": _normalize_eval_value(
                         eval_data.get("output"),
@@ -873,9 +912,14 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     "reason": eval_data.get("reason", ""),
                     "type": eval_data.get("output_type", ""),
                     "template_type": (
-                        getattr(eval_config.eval_template, "template_type", None)
-                        if eval_config and getattr(eval_config, "eval_template", None)
-                        else None
+                        None
+                        if mark_removed_only
+                        else (
+                            getattr(eval_config.eval_template, "template_type", None)
+                            if eval_config
+                            and getattr(eval_config, "eval_template", None)
+                            else None
+                        )
                     ),
                     "visible": True,  # Default to visible
                     "error": is_error,
@@ -884,8 +928,15 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     ),
                     "skipped": bool(eval_data.get("skipped", False))
                     or eval_data.get("status") == "skipped",
-                    "error_localizer": error_localizer_enabled(eval_config),
+                    "error_localizer": (
+                        False
+                        if mark_removed_only
+                        else error_localizer_enabled(eval_config)
+                    ),
                 }
+                # Same marker as the eval_outputs projection above.
+                if getattr(eval_config, "deleted", False):
+                    metrics[eval_id]["removed"] = True
 
         call_execution_id = getattr(obj, "id", None)
         enabled_eval_config_ids = [
