@@ -118,8 +118,9 @@ describe("EvalsStep — preset auto-seeds into Added (no Suggested card)", () =>
       <Harness initial={{ scenarios: [{ id: "s1" }], evals: [{ id: "policy_adherence" }] }} patchSpy={patchSpy} />,
     );
 
-    // Already has one → the seed is skipped, and there is no Suggested card.
-    expect(patchSpy).not.toHaveBeenCalled();
+    // Already has one → no evals are seeded, and there is no Suggested card.
+    // (The seed flag is still recorded so a later remove-all stays empty.)
+    expect(patchSpy.mock.calls.every(([p]) => !("evals" in p))).toBe(true);
     expect(screen.queryByText(/Suggested evaluations/)).not.toBeInTheDocument();
     expect(screen.getByText("Added evaluations (1)")).toBeInTheDocument();
   });
@@ -133,9 +134,41 @@ describe("EvalsStep — preset auto-seeds into Added (no Suggested card)", () =>
     fireEvent.click(screen.getByRole("button", { name: EVALS_COPY.remove }));
 
     expect(patchSpy).toHaveBeenCalledWith({ evals: [] });
-    // The ref-guard keeps the suggestions from looping straight back in.
+    // The persisted seed flag keeps the suggestions from looping straight back in.
     expect(screen.getByText("Added evaluations (0)")).toBeInTheDocument();
     expect(screen.getByText(EVALS_COPY.emptyTitle)).toBeInTheDocument();
+  });
+
+  it("does not re-seed after remove-all followed by a remount (tab switch)", () => {
+    // The seed guard lives in envState, not a component ref, so unmounting the
+    // step (switching tabs) and coming back must NOT re-add the removed evals.
+    function RemountHarness() {
+      const [envState, setEnvState] = useState({ scenarios: [{ id: "s1" }], evals: [] });
+      const [mounted, setMounted] = useState(true);
+      const patch = (p) => setEnvState((s) => ({ ...s, ...p }));
+      return (
+        <>
+          <button type="button" onClick={() => setMounted((m) => !m)}>toggle</button>
+          {mounted && (
+            <EvalsStep env={ENV} envState={envState} patch={patch} onGo={vi.fn()} />
+          )}
+        </>
+      );
+    }
+    render(<RemountHarness />);
+
+    // Fresh env auto-seeds the 3 preset evals.
+    expect(screen.getByText("Added evaluations (3)")).toBeInTheDocument();
+    // Remove all three.
+    for (let i = 0; i < 3; i += 1) {
+      fireEvent.click(screen.getAllByRole("button", { name: EVALS_COPY.remove })[0]);
+    }
+    expect(screen.getByText("Added evaluations (0)")).toBeInTheDocument();
+
+    // Switch away and back — the deliberate empty set must survive.
+    fireEvent.click(screen.getByRole("button", { name: "toggle" }));
+    fireEvent.click(screen.getByRole("button", { name: "toggle" }));
+    expect(screen.getByText("Added evaluations (0)")).toBeInTheDocument();
   });
 });
 

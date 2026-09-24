@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Box, Stack, Typography, Button, IconButton, Tooltip, Switch } from "@mui/material";
 import Iconify from "src/components/iconify";
@@ -26,8 +26,9 @@ const LOCK_TOOLTIP = "Fork this environment to edit.";
  * The environment's preset evals are auto-seeded into Added on first empty
  * mount — nobody ever wanted the suggestions to *not* be scored, so a separate
  * "Suggested" card the user had to click "Add all" on was a formality. The
- * seed is ref-guarded, so deliberately clearing everything doesn't re-add them;
- * the user removes any of them from Added or opens the library for more.
+ * seed is guarded by a flag persisted in envState, so deliberately clearing
+ * everything doesn't re-add them — even across a tab switch that remounts this
+ * step; the user removes any of them from Added or opens the library for more.
  * "Add evaluations" opens the product's eval picker for the rest of the library.
  *
  * The designer's twin-backed suggestions and clone-eval editor are out of
@@ -88,20 +89,29 @@ export default function EvalsStep({ env, envState, patch, onGo, locked = false, 
       .filter((e, i, arr) => arr.findIndex((x) => x.id === e.id) === i);
   }, [env.evalPreset, appliedIds]);
 
-  // Auto-seed the preset into Added on first empty mount. Ref-guarded so a
-  // deliberate "remove all" doesn't loop the suggestions straight back in.
-  const seededRef = useRef(false);
+  // Auto-seed the preset into Added on first empty mount. The "already seeded"
+  // flag is persisted in envState — NOT a component ref — so a deliberate
+  // "remove all" survives a tab switch: a ref reset on remount and looped the
+  // suggestions straight back in.
+  const seeded = envState?.evalsSeeded === true;
   useEffect(() => {
-    if (seededRef.current) return;
-    // A backed env's applied set is real (§6) — never seed fixtures into it.
-    if (backed) { seededRef.current = true; return; }
+    if (seeded) return;
+    // A backed env's applied set is real (§6) — never seed fixtures into it,
+    // and there's no store flag to keep (it reads §6, not envState).
+    if (backed) return;
+    // Wait for scenarios: don't burn the seed flag before the env is usable.
     if (needsScenarios) return;
-    if (appliedEvals.length > 0) { seededRef.current = true; return; }
-    if (suggested.length === 0) { seededRef.current = true; return; }
-    seededRef.current = true;
-    add(suggested);
+    // No preset → there is nothing to seed and nothing that could loop back in,
+    // so keep the flag (and any patches) out of it entirely.
+    if ((env.evalPreset || []).length === 0) return;
+    // Preset exists but the user already has evals: record that the seed
+    // decision is made, so a later "remove all" survives a remount.
+    if (appliedEvals.length > 0) { patch({ evalsSeeded: true }); return; }
+    if (suggested.length === 0) { patch({ evalsSeeded: true }); return; }
+    // Seed the preset and record it in one patch, so the flag can't be lost.
+    patch({ evals: [...(envState?.evals || []), ...suggested], evalsSeeded: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [needsScenarios, suggested.length, appliedEvals.length]);
+  }, [seeded, backed, needsScenarios, suggested.length, appliedEvals.length]);
 
   return (
     <Box sx={{ p: 2 }}>
