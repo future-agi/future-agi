@@ -1,12 +1,7 @@
-"""The environment's eval endpoints, over HTTP.
-
-Contract: api_contracts/harness/eval-offer-backend-frontend.md v1.9 — §1 (entry
-shape only), §2 P6, P6a, P7, §3 P8-P12 (`add_selected_eval`'s
-three-way gate change is covered here too), §5 P16, P17, and §6's
-ten-minute queued-stamp window (P22) via the `# --- Reviewer findings ---`
-section below, plus §6's own selection transaction and its five counts
-(P18-P22, F3), added by TH-8046 Tasks 5 and 6 further down this file. The
-remove refusals (P13-P15) belong to TH-8045 and are not asserted here.
+"""The environment's eval endpoints, over HTTP: adding an eval by hand, and
+adding one from inside a run (which also grades that run's already-finished
+calls). The remove refusals live in a sibling test module and are not
+asserted here.
 """
 
 from __future__ import annotations
@@ -53,12 +48,11 @@ def _template(name, required_keys, *, tags=("Conversation",), **extra):
 def _assert_catalog_key(name: str, *, listed: bool) -> None:
     """Fail loudly if a catalog edit changes whether ``name`` is a listed key.
 
-    These tests hard-code names against the pinned catalog lists (catalog
-    contract P11): some must clear the first offer gate and some must not.
-    ``offerable_eval_names()`` is the exact lookup the offer rule itself uses
-    (``harness_evals.py::_is_listed_or_owned``), so a catalog edit that adds or
-    drops one of these names breaks this guard loudly instead of leaving the
-    test passing for a different reason than its name claims.
+    These tests hard-code names against the pinned catalog lists.
+    ``offerable_eval_names()`` is the exact lookup the offer rule itself uses,
+    so a catalog edit that adds or drops one of these names breaks this guard
+    loudly instead of leaving the test passing for a different reason than
+    its name claims.
     """
     is_listed = name in offerable_eval_names()
     assert is_listed is listed, (
@@ -182,10 +176,10 @@ def _file_receipt(job, *, scenario_key="refund-request"):
     ``evaluations.results`` is built only from accepted receipts
     (services/harness_environment.py::_results); a test that wants to prove it
     is unchanged needs one filed first, or "unchanged" holds trivially of an
-    empty list either way (frontend contract P17). Registers a fresh attempt
-    (superseding the one the ``environment`` fixture used), begins the sealed
-    scenario set, then files a minimal ``skipped`` receipt — the cheapest
-    status the serializer accepts, needing no call or evaluation payload.
+    empty list either way. Registers a fresh attempt (superseding the one the
+    ``environment`` fixture used), begins the sealed scenario set, then files
+    a minimal ``skipped`` receipt — the cheapest status the serializer
+    accepts, needing no call or evaluation payload.
     """
     capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
     headers = _headers(capability)
@@ -231,13 +225,8 @@ def _file_receipt(job, *, scenario_key="refund-request"):
 
 @pytest.mark.django_db
 def test_available_sorted_and_excludes_selected(env_client, environment, workspace):
-    """P2, P3, P6: one shape, one agent kind, sorted by name, every entry
-    addable as it stands.
-
-    P6's other half — that a bound eval is excluded — is proved by
-    `test_available_subtracts_a_row_bound_under_the_harness_own_column_name`
-    below, which subtracts under the harder of the two names a row can carry.
-    """
+    """`available` returns one shape, one agent kind, sorted by name, every
+    entry addable as it stands."""
     # Created in alphabetical (not pinned) order so EvalTemplate's default
     # `-created_at` ordering would return the reverse list, proving the
     # `.order_by("name")` sort guard below actually bites.
@@ -284,19 +273,10 @@ def test_available_sorted_and_excludes_selected(env_client, environment, workspa
 def test_available_subtracts_a_row_bound_under_the_harness_own_column_name(
     env_client, environment, workspace
 ):
-    """P6a: the row ingestion makes for a harness result column is named after
-    that column, not after the template, so both names must be subtracted —
-    otherwise the eval is offered a second time under a second id.
-
-    Two rows are planted, one exercising each half of the subtraction:
-    ``no_misselling`` is bound under a column name that is neither offered
-    template's own name, and ``audio_quality`` is bound under the column name
-    ``conversation_coherence`` — a *different* template's own name (the
-    template-name half is proved by the first row, the config-name half by
-    this second one). Deleting either
-    ``names.add(...)`` line from ``_bound_eval_names`` puts one name back in
-    the offer and turns this red.
-    """
+    """A row ingestion makes for a harness result column is named after that
+    column, not after the template, so both names must be subtracted from
+    `available` — otherwise the eval is offered a second time under a second
+    id."""
     from simulate.services.alk_simulate_ingestion import (
         _get_or_create_harness_eval_config,
     )
@@ -327,7 +307,7 @@ def test_available_subtracts_a_row_bound_under_the_harness_own_column_name(
 
 @pytest.mark.django_db
 def test_selected_excludes_empty_mapping_rows(env_client, environment, workspace):
-    """P16: an empty-mapping row is bound but was never selected, so it is not
+    """An empty-mapping row is bound but was never selected, so it is not
     listed and does not count."""
     from simulate.services.alk_simulate_ingestion import (
         _get_or_create_harness_eval_config,
@@ -359,25 +339,14 @@ def test_selected_excludes_empty_mapping_rows(env_client, environment, workspace
     assert row["charges_judge_tokens"] is True
 
 
-# --- Adding an eval by hand (frontend §3 P8-P12; M2) --------------------------
-# `add_selected_eval` changed in three ways in this diff: the refusal gate
-# gained `_is_listed_or_owned`/`_has_relevant_tag`, the idempotency check now
-# matches the template's name as well as the config's, and the cap counts
-# mapping-bearing rows only (owner decision Q1). None of the three had a test
-# anywhere in the repo before this round; these four are the contract's own
-# names for this block (§11 P8-P12).
+# --- Adding an eval by hand ----------------------------------------------------
 
 
 @pytest.mark.django_db
 def test_add_idempotent(env_client, environment, workspace):
-    """P8: adding the same name twice returns 201 and leaves one config row.
-
-    Also proves the idempotency check's second half (M2 change 2): a name
-    already bound under a harness result-column name is not re-bound under
-    the template's own name either — `add_selected_eval` matches a pick
-    against both the config's stored name and its template's name, the same
-    two names `available` already subtracts on (P6a).
-    """
+    """Adding the same name twice returns 201 and leaves one config row; a
+    name already bound under a harness result-column name is not re-bound
+    under the template's own name either."""
     from simulate.services.alk_simulate_ingestion import (
         _get_or_create_harness_eval_config,
     )
@@ -418,17 +387,14 @@ def test_add_idempotent(env_client, environment, workspace):
 
 @pytest.mark.django_db
 def test_add_refusals(env_client, environment, workspace):
-    """P9, P12: the listed/tag gate, the unmappable-input gate (M2 change 1),
-    and an unknown body field.
+    """The listed/tag gate, the unmappable-input gate, and an unknown body
+    field.
 
-    The 256-character `too_long` case below 400s, but through
-    `HarnessEnvironmentSelectedEvalSerializer.name`'s `max_length=255`
-    (`views/harness_environment.py`'s `@validated_request` decorator runs the
-    serializer before the view body, let alone `add_selected_eval`, ever
-    sees the request) — **not** through `add_selected_eval`'s own
-    255-character gate (L1). Round 2, M2: that gate's own coverage is
-    `test_add_refuses_a_name_too_long_for_the_bound_row`, below, which calls
-    the service directly and cannot pass for this reason.
+    The 256-character `too_long` case below 400s through
+    `HarnessEnvironmentSelectedEvalSerializer.name`'s `max_length=255`, not
+    through `add_selected_eval`'s own 255-character gate — that gate's own
+    coverage is `test_add_refuses_a_name_too_long_for_the_bound_row` below,
+    which calls the service directly.
     """
     _assert_catalog_key("toxicity", listed=True)
     # chat-only tags; this environment's modality is voice
@@ -464,16 +430,11 @@ def test_add_refusals(env_client, environment, workspace):
 
 @pytest.mark.django_db
 def test_add_refuses_a_name_too_long_for_the_bound_row(environment, user, workspace):
-    """Round 2, M2: `add_selected_eval`'s own 255-character gate (L1),
-    exercised with no HTTP serializer in the way to answer for it. Delete
-    the `len(wanted) <= _MOST_NAME_CHARACTERS` guard in `add_selected_eval`
-    and this test fails; `test_add_refusals`'s HTTP-level 256-character case
-    would still pass either way, because the serializer refuses the request
-    before the service is ever called — which is exactly the gap this test
-    closes.
-
-    A template is planted under the over-long name first: without one, the
-    test would pass for the wrong reason (name simply not found).
+    """`add_selected_eval`'s own 255-character gate, exercised with no HTTP
+    serializer in the way to answer for it — the serializer would refuse the
+    request before the service is ever called, which is the gap this test
+    closes. A template is planted under the over-long name first, so the
+    test cannot pass merely because the name was never found.
     """
     from simulate.services.harness_evals import (
         _MOST_NAME_CHARACTERS,
@@ -496,15 +457,8 @@ def test_add_refuses_a_name_too_long_for_the_bound_row(environment, user, worksp
 
 @pytest.mark.django_db
 def test_add_cap_counts_mapping_rows_only(env_client, environment, workspace):
-    """M2 change 3 (owner decision Q1, frontend P10/P16): the cap of 8 counts
-    mapping-bearing rows only. Five empty-mapping harness-column rows are
-    bound first and must not eat into the cap; revert the cap line in
-    `add_selected_eval` to count every bound row instead
-    (`len(current) >= MOST_SELECTED_EVALS`) and the counter starts at the
-    five already-bound rows, so the **fourth** `cap_fillers` add below 409s,
-    not the eighth (L9: an earlier version of this docstring named the wrong
-    one — the test itself was always failing at the right place).
-    """
+    """The cap of 8 counts mapping-bearing rows only: five empty-mapping
+    harness-column rows are bound first and must not eat into the cap."""
     from simulate.services.alk_simulate_ingestion import (
         _get_or_create_harness_eval_config,
     )
@@ -556,12 +510,8 @@ def test_add_cap_counts_mapping_rows_only(env_client, environment, workspace):
 
 @pytest.mark.django_db
 def test_add_never_grades_finished_calls(env_client, environment, workspace):
-    """P11: adding an eval from here never grades a call that already
-    completed. The add endpoint binds a config and touches nothing else —
-    grading a finished call is the run-level add's job (§6, TH-8046), not
-    this one's. Planted as a dispatch spy: if `add_evaluation` ever started
-    dispatching the per-call grading task itself, this would catch it.
-    """
+    """Adding an eval from here never grades a call that already completed —
+    the add endpoint binds a config and touches nothing else."""
     from unittest.mock import patch
 
     _assert_catalog_key("no_misselling", listed=True)
@@ -578,7 +528,7 @@ def test_add_never_grades_finished_calls(env_client, environment, workspace):
 
 @pytest.mark.django_db
 def test_available_refusals(env_client, user, workspace):
-    """P7: the check is 'no run test yet', not a build state."""
+    """The check is 'no run test yet', not a build state."""
     job, _ = create_hosted_job(
         user.organization,
         _payload(),
@@ -594,14 +544,8 @@ def test_available_refusals(env_client, user, workspace):
 
 @pytest.mark.django_db
 def test_available_refusals_404(env_client, workspace):
-    """P7, the other half: an environment the caller cannot see is a 404, and a
-    hand-edited id that is not a UUID must be a miss, not a 500.
-
-    Neither id below belongs to a real environment, so this needs no
-    `environment` fixture (Minor #22, round 2) — the fixture used to be
-    requested and never used, costing a whole provision cycle per run for
-    nothing.
-    """
+    """An environment the caller cannot see is a 404, and a hand-edited id
+    that is not a UUID must be a miss, not a 500."""
     import uuid
 
     missing = env_client.get(
@@ -620,14 +564,8 @@ def test_available_refusals_404(env_client, workspace):
 
 @pytest.mark.django_db
 def test_results_unchanged(env_client, environment, workspace):
-    """P17: `evaluations.results[]` is the receipt-based list and adding a
-    platform eval leaves it byte-identical.
-
-    Task 7 rewrites the function that builds `selected[]`, the sibling key in
-    the same block, so this pins the one that must not move. Platform verdicts
-    are read from call details (§7), never from here. A receipt is filed
-    before the snapshot, so the comparison below is not `"[]" == "[]"`.
-    """
+    """`evaluations.results[]` is the receipt-based list; adding a platform
+    eval leaves it byte-identical."""
     from simulate.services.harness_evals import add_selected_eval
 
     _assert_catalog_key("no_misselling", listed=True)
@@ -652,29 +590,22 @@ def test_results_unchanged(env_client, environment, workspace):
     ], "the add must have landed, or the comparison above proves nothing"
 
 
-# --- §6: add an eval from inside a run -------------------------------------
-# Contract api_contracts/harness/eval-offer-backend-frontend.md v1.9 §6
-# (P18, P18a, P19, P20, P21, P22) and F3; design §6; lld-4-add-from-run.puml.
+# --- Add an eval from inside a run ------------------------------------------
 #
-# Every test that posts to this endpoint MUST take the `dispatch` fixture.
-# Without it a real apply_async escapes into Temporal.
+# Every test that posts to this endpoint must take the `dispatch` fixture, or
+# a real `apply_async` escapes into Temporal.
 #
-# MANDATORY (TH-8046): every test that
-# posts here and then expects a dispatch outcome -- a stamp being queued,
-# `dispatch` being called, or `dispatch.assert_not_called()` -- MUST run that
-# POST inside `django_capture_on_commit_callbacks(execute=True)`. Every
-# grading job this endpoint queues is scheduled with `transaction.on_commit`
-# (`harness_run_evals.py::queue_eval_for_finished_calls`), which Django only
-# runs once the OUTERMOST transaction actually commits; pytest-django's `db`
-# fixture wraps each test in an atomic block that is rolled back, never
-# committed, so a plain `@pytest.mark.django_db` HTTP test here would observe
-# zero dispatch calls regardless of what the endpoint actually did --
-# vacuously passing an "assert not called" and failing an "assert called" for
-# the wrong reason. Precedent: `futureagi/tracer/tests/test_ch25_p3b_flip_gates.py:341`,
-# `futureagi/tracer/tests/test_project.py:624`.
+# Every test that posts and then expects a dispatch outcome -- a stamp being
+# queued, `dispatch` being called, or `dispatch.assert_not_called()` -- must
+# run that POST inside `django_capture_on_commit_callbacks(execute=True)`.
+# Every grading job this endpoint queues is scheduled with
+# `transaction.on_commit`, which Django only runs once the outermost
+# transaction commits; pytest-django's `db` fixture wraps each test in a
+# transaction that is rolled back, never committed, so a plain
+# `@pytest.mark.django_db` HTTP test here would see zero dispatch calls
+# regardless of what the endpoint actually did.
 # `test_nothing_is_dispatched_before_the_stamp_is_committed` below uses
-# `execute=False` instead -- its whole point is to prove the ordering, not
-# just that dispatch eventually happens.
+# `execute=False` instead, to prove the ordering itself.
 
 
 def _run_add(client, job, execution, workspace, name):
@@ -690,10 +621,8 @@ def _run_add(client, job, execution, workspace, name):
 def dispatch():
     """Spy on the one grading job this endpoint can start.
 
-    Patching the attribute on the task object itself is what makes the
-    service's function-local import see the patch -- the same idiom
-    `test_add_never_grades_finished_calls` above uses for the environment-level
-    add.
+    Patches the attribute on the task object itself, so the service's
+    function-local import sees the patch.
     """
     from unittest.mock import patch
 
@@ -707,11 +636,9 @@ def dispatch():
 def finished_run(environment):
     """One finished run of this environment, with no calls yet.
 
-    In production the attempt's `scenarios/` endpoint with `operation: begin`
-    (`hosted_harness.py::begin_scenarios`) creates the execution and
-    pre-allocates its calls. Here the row is built directly, because the
-    point of these tests is to put each call in exactly one of the four
-    states §6 distinguishes, which a real `begin` cannot do.
+    Built directly rather than through the attempt's `scenarios/` endpoint,
+    because the point of these tests is to put each call in exactly one of
+    the states this endpoint distinguishes, which a real `begin` cannot do.
     """
     run_test = environment.run_test
     scenario = run_test.scenarios.first()
@@ -764,11 +691,8 @@ def test_run_add_counts(
     dispatch,
     django_capture_on_commit_callbacks,
 ):
-    """P19: the five counts partition the run's finished calls.
-
-    One call of each kind, plus a failed call that is not a finished call at
-    all and must not be counted.
-    """
+    """The five counts partition the run's finished calls; a failed call is
+    not a finished call and is not counted."""
     template = _template("no_misselling", ["conversation"], tags=("Conversation",))
     already_graded = _call(finished_run, metadata=_graded())
     pending = _call(finished_run, metadata={"eval_started": True})
@@ -834,10 +758,8 @@ def test_run_add_touches_only_the_run_it_was_posted_to(
     dispatch,
     django_capture_on_commit_callbacks,
 ):
-    """P19/P21: `completed_calls` and the dispatch are scoped to THIS execution,
-    not to every execution of the environment's run test. A rerun keeps the same
-    run test (`harness_provider.py`), so a sibling run's eligible calls must be
-    neither counted nor stamped nor dispatched."""
+    """`completed_calls` and the dispatch are scoped to this run, not to every
+    execution of the environment's run test."""
     template = _template("no_misselling", ["conversation"], tags=("Conversation",))
     mine = _call(finished_run, metadata=_graded())
     sibling_run = TestExecution.objects.create(
@@ -878,13 +800,8 @@ def test_run_add_dispatches_per_call_with_skip_existing(
     dispatch,
     django_capture_on_commit_callbacks,
 ):
-    """P18a, verbatim: one task per eligible call, that exact argument shape.
-
-    `args` is a one-element tuple, `eval_config_ids` a one-element list of
-    strings, and `skip_existing` the literal True -- the flag TH-8045 taught
-    the task to honour, and the only thing that makes a second grading of the
-    same call harmless.
-    """
+    """One grading task per eligible call, in the exact argument shape
+    `skip_existing=True` requires."""
     template = _template("no_misselling", ["conversation"], tags=("Conversation",))
     first_call = _call(finished_run, metadata=_graded())
     second_call = _call(finished_run, metadata=_graded())
@@ -921,12 +838,8 @@ def test_run_add_stamps_every_call_it_queues(
     dispatch,
     django_capture_on_commit_callbacks,
 ):
-    """P19: `queued` = the rest, each stamped now and dispatched.
-
-    The stamp is keyed by config id so a second eval queued on the same call
-    does not erase the first one's, and it is an aware ISO-8601 timestamp
-    inside the window.
-    """
+    """Every queued call is stamped with an aware ISO-8601 timestamp inside
+    the window, keyed by config id."""
     template = _template("no_misselling", ["conversation"], tags=("Conversation",))
     call_execution = _call(finished_run, metadata=_graded())
 
@@ -959,16 +872,9 @@ def test_nothing_is_dispatched_before_the_stamp_is_committed(
     dispatch,
     django_capture_on_commit_callbacks,
 ):
-    """The ordering itself, not just that dispatch eventually happens:
-    `queue_eval_for_finished_calls` writes the stamp and schedules dispatch
-    with `transaction.on_commit` inside the same transaction as the bind, so
-    the stamp is durable before the callback that would call `apply_async`
-    has run at all.
-
-    `execute=False` captures the callback without running it: the stamp must
-    already be visible in the database at that point, and `dispatch` must
-    still be untouched.
-    """
+    """The stamp commits inside the request's own transaction, before the
+    deferred `on_commit` callback that would call `apply_async` has run at
+    all."""
     template = _template("no_misselling", ["conversation"], tags=("Conversation",))
     call_execution = _call(finished_run, metadata=_graded())
 
@@ -1011,22 +917,9 @@ def test_a_broker_failure_stops_further_dispatch_and_clears_the_remaining_stamps
     django_capture_on_commit_callbacks,
     django_assert_num_queries,
 ):
-    """TH-8046: the first hand-off failure in a batch
-    stops the rest -- a dead broker costs one timeout, not N -- and every
+    """The first hand-off failure in a batch stops the rest, and every
     not-yet-dispatched stamp, the failed call's own included, is cleared in
-    one transaction rather than one per call.
-
-    Uses `django_capture_on_commit_callbacks(execute=False)` and runs the one
-    captured callback by hand, inside `django_assert_num_queries`, so the
-    query count below covers only the callback (`_dispatch_batch_after_commit`
-    is scheduled with `transaction.on_commit` and only runs once the
-    request's transaction actually commits) and not the whole request.
-
-    The batch dispatches in `id` order (`queue_eval_for_finished_calls`'s own
-    `.order_by("id")`), so the three calls are sorted here first, and the
-    second one by that order is made to fail -- the point being that the
-    third is never attempted at all.
-    """
+    one transaction rather than one per call."""
     template = _template("no_misselling", ["conversation"], tags=("Conversation",))
     calls = sorted(
         (_call(finished_run, metadata=_graded()) for _ in range(3)),
@@ -1046,16 +939,10 @@ def test_a_broker_failure_stops_further_dispatch_and_clears_the_remaining_stamps
         )
     assert response.status_code == 202, response.content
     assert len(callbacks) == 1, "one on_commit callback for the whole batch"
-    # The batch stops at the first failure and unstamps what it never sent in
-    # ONE transaction, not one pair per call (TH-8046):
-    # `_clear_queued_stamps` opens its own `transaction.atomic()`, nested
-    # inside this test's already-open transaction, so entering and leaving it
-    # is a real SAVEPOINT and a RELEASE SAVEPOINT, not free -- plus the one
-    # `SELECT ... FOR UPDATE` and the one bulk `UPDATE` (`bulk_update`'s own
-    # internal atomic block passes `savepoint=False`, so it adds no
-    # statement of its own). Four statements, not one pair per call: three
-    # eligible calls, two of them to unstamp -- a per-call clear would issue
-    # its own SAVEPOINT/SELECT/UPDATE/RELEASE quartet for each of the two.
+    # Four statements for the whole batch, not one quartet per call:
+    # `_clear_queued_stamps`'s own `transaction.atomic()` is a SAVEPOINT and
+    # a RELEASE SAVEPOINT, plus one `SELECT ... FOR UPDATE` and one bulk
+    # `UPDATE`.
     with django_assert_num_queries(4) as captured:
         callbacks[0]()
     # The unstamp path must not fetch the wide row for every locked call.
@@ -1093,20 +980,17 @@ def test_a_broker_failure_stops_further_dispatch_and_clears_the_remaining_stamps
         )
 
 
-# --- §6, continued: skip reasons, refusals, the 404, and F3 -----------------
-# Contract §11 rows `::test_run_add_skips_existing_pending_in_flight` and
-# `::test_run_add_foreign_run_404`. Contract P18, P20, P21, P22; F3. Design
-# §10's two run-level failure rows. Same mandatory
-# `django_capture_on_commit_callbacks(execute=True)` rule as above applies to
-# every test below that posts and expects a dispatch outcome.
+# --- Run-level add, continued: skip reasons, refusals, the 404 -------------
+# Same `django_capture_on_commit_callbacks(execute=True)` rule as above
+# applies to every test below that posts and expects a dispatch outcome.
 
 # The nine names the two cap tests bind. They are real catalog names, not
 # invented ones: `add_selected_eval` refuses any name that is not a key of
 # `evaluations/catalog/system_evals.yaml`, so a made-up placeholder name
 # would come back 400 instead of filling the cap. All nine are offered for
-# voice (eval-catalog.md P11) and `_template`'s default `("Conversation",)` is
-# a voice-relevant tag, so each one binds. `no_misselling` is deliberately
-# not among them -- the other tests in this section add that one.
+# voice, and `_template`'s default `("Conversation",)` is a voice-relevant
+# tag, so each one binds. `no_misselling` is deliberately not among them --
+# the other tests in this section add that one.
 CAP_FILLERS = [
     "advice_authority_boundary",
     "audio_quality",
@@ -1129,11 +1013,10 @@ def test_run_add_skips_existing_pending_in_flight(
     dispatch,
     django_capture_on_commit_callbacks,
 ):
-    """P19/P20/P22 and F3: the three reasons a finished call is passed over,
-    each on its own, plus a fourth arm proving what does NOT pass it over --
-    a `{"status": "pending"}` row is a stored row, not a verdict (contract
-    F2), so it must still be queued rather than counted `skipped_existing`.
-    """
+    """The three reasons a finished call is passed over, each on its own,
+    plus a fourth arm proving what does NOT pass it over: a
+    `{"status": "pending"}` row is a stored row, not a verdict, so it must
+    still be queued rather than counted `skipped_existing`."""
     template = _template("no_misselling", ["conversation"], tags=("Conversation",))
     graded = _call(finished_run, metadata=_graded())
     pending = _call(finished_run, metadata={"eval_started": True})
@@ -1153,8 +1036,8 @@ def test_run_add_skips_existing_pending_in_flight(
     graded.call_metadata = _graded()
     graded.eval_outputs = {str(config.id): _verdict()}
     graded.save(update_fields=["call_metadata", "eval_outputs"])
-    # A `{"status": "pending"}` row is a stored row, not a verdict (contract
-    # F2, `utils/verdicts.py::has_stored_verdict`): this call must be queued,
+    # A `{"status": "pending"}` row is a stored row, not a verdict
+    # (`utils/verdicts.py::has_stored_verdict`): this call must be queued,
     # not counted `skipped_existing`. A bare truthy `eval_outputs` read here
     # instead of the shared predicate would count it as already graded.
     placeholder.eval_outputs = {str(config.id): {"status": "pending"}}
@@ -1197,13 +1080,9 @@ def test_run_add_never_dispatches_a_call_whose_evaluations_have_not_finished(
     dispatch,
     django_capture_on_commit_callbacks,
 ):
-    """F3, on its own: no endpoint here starts a grading for a call whose
-    evaluations have not finished.
-
-    `eval_completed` absent and `eval_completed: False` are the same answer:
-    the eval task's `eval_started` latch would otherwise swallow the receipt's
-    own dispatch (design §6).
-    """
+    """No grading starts for a call whose evaluations have not finished;
+    `eval_completed` absent and `eval_completed: False` are the same
+    answer."""
     template = _template("no_misselling", ["conversation"], tags=("Conversation",))
     absent = _call(finished_run, metadata={"eval_started": True})
     explicit_false = _call(
@@ -1237,7 +1116,7 @@ def test_run_add_repeated_within_ten_minutes_queues_nothing_new(
     dispatch,
     django_capture_on_commit_callbacks,
 ):
-    """P22: repeating the call within ten minutes queues nothing new; once the
+    """Repeating the call within ten minutes queues nothing new; once the
     window lapses the same calls are eligible again."""
     template = _template("no_misselling", ["conversation"], tags=("Conversation",))
     call_execution = _call(finished_run, metadata=_graded())
@@ -1288,11 +1167,9 @@ def test_run_add_returns_the_environment_refusal_and_queues_nothing(
     dispatch,
     django_capture_on_commit_callbacks,
 ):
-    """P18: a §3 refusal is returned unchanged and nothing is queued.
-
-    Both refusals: a name the environment cannot be graded by (400, P9) and a
-    full environment (409, P10). Neither may stamp or dispatch anything.
-    """
+    """Both bind refusals -- an ungradeable name (400) and a full
+    environment (409) -- are returned unchanged, and neither stamps or
+    dispatches anything."""
     from simulate.services.harness_evals import MOST_SELECTED_EVALS
 
     call_execution = _call(finished_run, metadata=_graded())
@@ -1349,12 +1226,9 @@ def test_run_add_refuses_a_bound_result_column_row(
     dispatch,
     django_capture_on_commit_callbacks,
 ):
-    """P18b: a name already bound as one of
-    the harness's own result columns (empty ``mapping``, ingestion-bound) is
-    refused with its own reason -- not P9's "does not produce", which would
-    be false here: the run demonstrably CAN fill this eval's inputs, the
-    harness already reports it natively. Nothing is stamped or dispatched.
-    """
+    """A name already bound as one of the harness's own result columns
+    (empty ``mapping``) is refused with its own reason, and nothing is
+    stamped or dispatched."""
     from simulate.services.alk_simulate_ingestion import (
         _get_or_create_harness_eval_config,
     )
@@ -1384,19 +1258,9 @@ def test_run_add_at_the_cap_still_grades_an_eval_already_bound(
     dispatch,
     django_capture_on_commit_callbacks,
 ):
-    """P8 + P18: adding a name that is already bound is idempotent, and the
+    """Adding a name that is already bound is idempotent, and the
     idempotency scan runs before the cap check -- so a full environment can
-    still have one of its own evals graded over a finished run.
-
-    This is also the backend half of contract v1.9 P27's "Grade this run"
-    action: in run mode TH-8047's picker lists the evals the environment
-    ALREADY has and posts each one to this endpoint. `add_selected_eval`
-    returns the existing config rather than raising (`harness_evals.py:616-625`,
-    the scan sitting above the cap check at `:626`), so a bound name skips the
-    bind and goes straight to queueing -- no special case is needed in the view,
-    and this test is what proves it. P20 keeps the already-graded calls out and
-    P22 bounds a repeat.
-    """
+    still have one of its own evals graded over a finished run."""
     from simulate.services.harness_evals import MOST_SELECTED_EVALS
 
     call_execution = _call(finished_run, metadata=_graded())
@@ -1433,8 +1297,8 @@ def test_run_add_foreign_run_404(
     dispatch,
     django_capture_on_commit_callbacks,
 ):
-    """P21: 404 when `execution_id` is not a run of this environment -- and the
-    eval is not bound, because the run is resolved before anything is bound."""
+    """404 when `execution_id` is not a run of this environment, and the eval
+    is not bound, because the run is resolved before anything is bound."""
     template = _template("no_misselling", ["conversation"], tags=("Conversation",))
 
     other_job, _ = create_hosted_job(
@@ -1502,8 +1366,9 @@ def test_run_add_foreign_run_404(
 def test_run_add_refuses_an_environment_with_no_run_test(
     env_client, user, workspace, dispatch, django_capture_on_commit_callbacks
 ):
-    """P7/P10's 409 reaches this route too, because it shares `_run_test_job`:
-    an environment with no run test has no runs to grade."""
+    """The "no run test yet" 409 reaches this route too, because it shares
+    `_run_test_job`: an environment with no run test has no runs to
+    grade."""
     job, _ = create_hosted_job(
         user.organization,
         _payload(),
@@ -1533,15 +1398,10 @@ def test_run_add_moves_the_environment_clock_only_when_something_changed(
     dispatch,
     django_capture_on_commit_callbacks,
 ):
-    """TH-8046: the touch-skip at
-    `views/harness_environment.py:449` moves the environment's clock on a
-    fresh bind (a), leaves it alone on a genuinely no-op repeat (b), and
-    moves it again when a removed eval is revived by a run-level add, even
-    though every completed call already holds its verdict and nothing new
-    is queued (c). (c) is the regression guard: comparing `created_at`
-    (write-once) instead of `updated_at` (written on both the fresh insert
-    and the revive's save) misses this arm and fails today.
-    """
+    """Moves the environment's clock on a fresh bind (a), leaves it alone on
+    a genuinely no-op repeat (b), and moves it again when a removed eval is
+    revived, even though nothing new is queued (c) -- the regression guard:
+    comparing `created_at` instead of `updated_at` misses this arm."""
     template = _template("no_misselling", ["conversation"], tags=("Conversation",))
     # Never eligible, so across every arm below only the bind itself -- not
     # a queued call -- can be what moves the clock.
@@ -1883,21 +1743,11 @@ def test_tool_call_switch_refuses_on_for_a_versionless_voice_environment(
     assert off.json()["settings"]["enable_tool_evaluation"] is False
 
 
-# --- Reviewer findings -------------------------------------------------------
-# Every reviewer finding that survives verification becomes a test here, named
-# after the finding (design §11). Do not delete this header; add below it.
-
-
 @pytest.mark.django_db
 def test_available_not_visible_across_workspaces(env_client, user, workspace):
-    """P7: an environment that exists, but in a workspace the caller did not
-    ask for, is a 404 — not a 403 and not a 200 leaking another tenant's data.
-
-    Failing scenario this catches: drop the `scope_jobs(...)` wrapper around
-    `_queryset` (views/harness_environment.py), and every other test in the
-    repo still passes while one workspace could read another workspace's
-    environment evals.
-    """
+    """An environment that exists, but in a workspace the caller did not ask
+    for, is a 404 — not a 403 and not a 200 leaking another tenant's
+    data."""
     from accounts.models.workspace import Workspace
 
     other_workspace = Workspace.objects.create(
@@ -1928,10 +1778,9 @@ def test_run_add_not_visible_across_workspaces(
     dispatch,
     django_capture_on_commit_callbacks,
 ):
-    """TH-8046: `runs/{id}/evaluations/` has the same workspace isolation as
-    `evaluations/available/` — a caller in another workspace gets the same
-    404, not a 403 and not a leak of this workspace's run.
-    """
+    """`runs/{id}/evaluations/` has the same workspace isolation as
+    `evaluations/available/`: a caller in another workspace gets a 404, not
+    a leak of this workspace's run."""
     from accounts.models.workspace import Workspace
 
     other_workspace = Workspace.objects.create(
@@ -1955,13 +1804,9 @@ def test_run_add_not_visible_across_workspaces(
 def test_selected_required_keys_stays_aligned_with_the_stored_mapping(
     env_client, environment, workspace
 ):
-    """L6: `selected[]`'s `required_keys` must keep frontend P1's invariant —
-    exactly one `inputs` row per name in `required_keys` — even after the
-    template is edited post-bind. Before the fix, `required_keys` came from
-    the *live* template while `inputs` came from the *stored* mapping: adding
-    a required key to the template after the eval was already selected would
-    return two `required_keys` and one `inputs` row for the same entry.
-    """
+    """`selected[]`'s `required_keys` must keep exactly one `inputs` row per
+    name, even after the template is edited post-bind — not two
+    `required_keys` and one `inputs` row for the same entry."""
     from simulate.services.harness_evals import add_selected_eval
 
     _assert_catalog_key("no_misselling", listed=True)
@@ -1979,32 +1824,17 @@ def test_selected_required_keys_stays_aligned_with_the_stored_mapping(
     assert len(row["inputs"]) == len(row["required_keys"])
 
 
-# --- Round 2 findings (M1, M2, M4, Lows, carried Minors) ---------------------
-
-
 @pytest.mark.django_db
 def test_a_custom_eval_may_not_shadow_a_catalog_name(
     env_client, environment, workspace, user
 ):
-    """M1: `EvalTemplate.name` has no uniqueness constraint (`model_hub/models/evals_metric.py`
-    declares no `Meta`/`UniqueConstraint` on it), and the product can end up
-    with a tenant's custom eval sharing a name with a catalog eval — the
-    catalog is periodically re-seeded (`seed_system_evals.py`, via
-    `bulk_create`/`bulk_update`, which run no `clean()`/`full_clean()` at
-    all), so a system eval can be added or renamed to a name a tenant already
-    uses for their own custom eval without either side ever checking the
-    other. (`EvalTemplate.clean()` *does* block a **custom** row from being
-    saved under a name an **existing** system row already has — which is why
-    this test plants the custom row first, then the system row: the
-    model-level check only runs for `owner == "user"` saves and only looks
-    backwards, so it cannot stop a system row arriving second under a name
-    already in use.) Before the fix, `available` could list the name twice,
-    `add` bound whichever row `.filter(name=wanted).first()`'s `-created_at`
-    ordering returned, and provisioning's name-keyed `found` dict kept
-    whichever row a `.filter(name__in=...)` queryset happened to return
-    last — three different, uncoordinated answers. By owner decision, the
-    tenant's own row wins; this test plants both, so ``system`` alone would
-    fail every assertion below.
+    """`EvalTemplate.name` has no uniqueness constraint, so a tenant's custom
+    eval can share a name with a catalog eval. The tenant's own row must win
+    in every path — `available`, `add`, and provisioning.
+
+    The custom row is planted before the system row: `EvalTemplate.clean()`
+    blocks a custom row from being saved under a name an existing system row
+    already has, so this is the only order that can exist.
     """
     _assert_catalog_key("conversation_coherence", listed=True)
     mine = _template(
@@ -2041,14 +1871,8 @@ def test_a_custom_eval_may_not_shadow_a_catalog_name(
 
 @pytest.mark.django_db
 def test_add_a_custom_eval_by_hand(env_client, environment, workspace, user):
-    """L10: the whole point of replacing the old `wanted not in
-    offerable_eval_names()` gate with `_is_listed_or_owned` is that a
-    tenant's own custom eval — never a catalog key — can now be added by
-    hand. Nothing exercised the ownership half of that gate on its own
-    before this test: `test_add_refusals` only proves the tag half
-    (`toxicity` is refused by its tags whether or not `_is_listed_or_owned`
-    runs at all).
-    """
+    """A tenant's own custom eval — never a catalog key — can be added by
+    hand."""
     mine = _template(
         "my_custom_conversation_check",
         ["conversation"],
@@ -2067,8 +1891,8 @@ def test_add_a_custom_eval_by_hand(env_client, environment, workspace, user):
 
 @pytest.mark.django_db
 def test_add_refuses_another_organizations_template(env_client, environment, workspace):
-    """L10: another tenant's custom template must be refused at the add
-    endpoint, not just silently absent from `available`."""
+    """Another tenant's custom template must be refused at the add endpoint,
+    not just silently absent from `available`."""
     from accounts.models.organization import Organization
 
     other_org = Organization.objects.create(name="A different organisation")
@@ -2093,15 +1917,9 @@ def test_add_refuses_another_organizations_template(env_client, environment, wor
 def test_selected_and_available_agree_on_required_keys_order(
     env_client, environment, workspace
 ):
-    """M4: `selected[]`'s `required_keys` must keep the template's *stored*
-    order, the same order `available[]` reports — not `sorted(mapping)`.
-    Frontend contract P1 promises `required_keys` in stored order and
-    explicitly *not* aligned with `inputs` (which is sorted); a sorted
-    `required_keys` on `selected[]` breaks both halves of that promise at
-    once and makes the two lists byte-identical in order, which P1 forbids.
-    Two required keys, so the order is actually observable — a one-key
-    template (as `test_selected_required_keys_stays_aligned_with_the_stored_mapping`
-    uses) cannot see this.
+    """`selected[]`'s `required_keys` must keep the template's stored order,
+    the same order `available[]` reports — not `sorted(mapping)`. Two
+    required keys, so the order is actually observable.
     """
     _assert_catalog_key("conversation_hallucination", listed=True)
     _template(
@@ -2136,10 +1954,8 @@ def test_selected_and_available_agree_on_required_keys_order(
 
 @pytest.mark.django_db
 def test_available_not_visible_across_organizations(env_client, workspace, user):
-    """Carried Minor #20: only cross-workspace visibility had a test; an
-    environment belonging to an entirely different organisation must 404
-    too, not merely be excluded by the workspace check.
-    """
+    """An environment belonging to an entirely different organisation must
+    404 too, not merely be excluded by the workspace check."""
     from accounts.models.organization import Organization
     from accounts.models.workspace import Workspace
 
@@ -2162,26 +1978,12 @@ def test_available_not_visible_across_organizations(env_client, workspace, user)
     assert response.json()["detail"] == "Environment not found"
 
 
-# --- Round 3 findings (M1, L2) ------------------------------------------------
-
-
 @pytest.mark.django_db
 def test_selected_inputs_never_outnumber_required_keys(
     env_client, environment, workspace
 ):
-    """M1: P1 in the direction round 2's M4 fix left open — the template
-    drops a required key after the bind. Round 2's intersect
-    (`entry["required_keys"] = [... if key in (config.mapping or {})]`) can
-    only ever *shorten* `required_keys` relative to the template's live
-    keys; `inputs` was still built from the whole stored mapping, so a
-    template that drops a key it used to require left `inputs` with *more*
-    rows than `required_keys` had names — the mirror image of L6's
-    "template gains a key" case above. Narrowing the mapping `eval_entry`
-    builds `inputs` from to the same live `required_keys` set (`services/
-    harness_environment.py::_selected_evals`) closes it: revert that
-    narrowing back to `dict(config.mapping or {})` and this fails with two
-    `inputs` rows for one `required_keys` entry.
-    """
+    """`selected[]`'s `inputs` must never outnumber `required_keys`, even
+    when the template drops a required key after the bind."""
     from simulate.services.harness_evals import add_selected_eval
 
     _assert_catalog_key("conversation_hallucination", listed=True)
@@ -2205,16 +2007,9 @@ def test_selected_inputs_never_outnumber_required_keys(
 
 @pytest.mark.django_db
 def test_add_refuses_a_too_long_name_with_its_own_reason(environment, user, workspace):
-    """L2: the 255-character gate must report its own reason rather than
-    reusing "not an eval this environment can be graded by" — the same
-    sentence `add_selected_eval` also raises for "another tenant's" and
-    "wrong tag" (`test_add_refuses_another_organizations_template` above,
-    `test_add_refusals`'s tag case). A direct service caller — the only
-    caller this gate exists for (round 1's L1) — cannot otherwise tell a
-    length problem from an eligibility one. A template is planted under the
-    over-long name first, the same way
-    `test_add_refuses_a_name_too_long_for_the_bound_row` does, so the test
-    cannot pass merely because the name was never found.
+    """The 255-character gate must report its own reason rather than reusing
+    "not an eval this environment can be graded by", the same sentence
+    `add_selected_eval` also raises for "another tenant's" and "wrong tag".
     """
     from simulate.services.harness_evals import (
         _MOST_NAME_CHARACTERS,
@@ -2240,47 +2035,26 @@ def test_add_refuses_a_too_long_name_with_its_own_reason(environment, user, work
 
 
 def test_a_corrupt_stamp_reads_as_not_queued_instead_of_raising():
-    """TH-8046: a well-formed-but-invalid stamp must read as "not
-    queued", not raise and 500 the whole run-level add.
-
-    ``"2026-02-30T00:00:00"`` matches ISO-8601 shape but names a day that does
-    not exist; Django's `parse_datetime` raises `ValueError` for exactly this
-    case (it only returns `None` for input that is not well-formed at all).
-    Before this fix nothing caught it here, so it escaped `_queued_within_window`
-    and every call behind the corrupt one in Task 2's per-call loop.
-    """
+    """A well-formed-but-invalid stamp (``"2026-02-30T00:00:00"``, a real
+    ISO-8601 shape naming a day that does not exist) reads as "not queued"
+    rather than raising."""
     now = timezone.now()
     metadata = {EVAL_QUEUED_KEY: {"cfg": "2026-02-30T00:00:00"}}
     assert _queued_within_window(metadata, "cfg", now=now) is False
 
 
 def test_the_window_guard_does_not_care_whether_the_config_id_is_a_uuid():
-    """TH-8046: the stamp key is `str(config_id)` on read, matching write
-    and clear -- one normalisation, applied consistently.
-
-    `SimulateEvalConfig.id` is a `UUIDField`; a caller that passes the raw
-    `UUID` rather than `str(config.id)` must still find the stamp. Before
-    this fix the raw `UUID` missed the string-keyed dict and P22's window
-    silently stopped holding on every repeat click.
-    """
+    """The stamp key is `str(config_id)` on read, matching write and clear,
+    so a caller that passes a raw `UUID` still finds the stamp."""
     now, config_id = timezone.now(), uuid.uuid4()
     metadata = {EVAL_QUEUED_KEY: {str(config_id): now.isoformat()}}
     assert _queued_within_window(metadata, config_id, now=now) is True
 
 
 def test_a_stamp_a_few_seconds_ahead_still_reads_as_queued():
-    """TH-8046: a stamp a little *ahead* of `now` must
-    still read as queued -- clock skew between two web workers, not
-    corruption.
-
-    Two seconds is well inside `EVAL_QUEUE_STAMP_SKEW` (one minute). Before
-    this fix the window had no tolerance band at all
-    (`return timedelta(0) <= elapsed < EVAL_QUEUE_STAMP_WINDOW`), so *any*
-    stamp ahead of `now`, by any amount, read as not queued -- reopening the
-    exact double-dispatch hole the window exists to close: a second worker,
-    its clock a couple of seconds behind the first, would see this call as
-    not-queued and queue (and dispatch) a second grading job for it.
-    """
+    """A stamp a little *ahead* of `now`, well inside `EVAL_QUEUE_STAMP_SKEW`,
+    still reads as queued -- clock skew between two web workers, not
+    corruption."""
     now = timezone.now()
     ahead = (now + timedelta(seconds=2)).isoformat()
     metadata = {EVAL_QUEUED_KEY: {"cfg": ahead}}
@@ -2288,34 +2062,18 @@ def test_a_stamp_a_few_seconds_ahead_still_reads_as_queued():
 
 
 def test_a_stamp_far_in_the_future_does_not_lock_the_call_out_forever():
-    """TH-8046: the window
-    bounds a future stamp too -- `-EVAL_QUEUE_STAMP_SKEW <= (now - stamped) <
-    window` -- not just "less than the window", and not an unbounded
-    tolerance for clock skew either.
-
-    A garbage stamp like `"2999-01-01T00:00:00+00:00"` is far outside even
-    the one-minute skew band, so it must still read as not queued rather than
-    blocking the call for roughly 973 years -- the "permanently
-    unqueueable" outcome the module's own docstring says must not be
-    possible -- instead of costing at most one ten-minute wait.
-    """
+    """A garbage stamp like `"2999-01-01T00:00:00+00:00"` is far outside the
+    skew band, so it reads as not queued rather than locking the call out
+    for roughly 973 years."""
     now = timezone.now()
     metadata = {EVAL_QUEUED_KEY: {"cfg": "2999-01-01T00:00:00+00:00"}}
     assert _queued_within_window(metadata, "cfg", now=now) is False
 
 
 def test_metadata_hands_back_a_writable_stamps_dict_even_when_the_column_is_corrupt():
-    """TH-8046: `_metadata` must coerce a non-dict
-    `eval_queued` to `{}` rather than pass it through -- the write pattern
-    its own docstring recommends (`result.setdefault(EVAL_QUEUED_KEY,
-    {})[config_id] = ...`) must never raise.
-
-    Before this fix a non-dict `eval_queued` (a stray string here) was
-    copied through untouched, and `setdefault` on that string raised
-    `TypeError: 'str' object does not support item assignment` -- which
-    would have propagated out of Task 2's per-call loop and 500'd the whole
-    run-level add on one corrupt row.
-    """
+    """`_metadata` coerces a non-dict `eval_queued` to `{}` rather than
+    passing it through, so the recommended `setdefault` write pattern never
+    raises."""
     from simulate.services.harness_run_evals import EVAL_QUEUED_KEY as _KEY
     from simulate.services.harness_run_evals import _metadata
 
@@ -2330,19 +2088,8 @@ def test_metadata_hands_back_a_writable_stamps_dict_even_when_the_column_is_corr
 
 @pytest.mark.django_db
 def test_clear_queued_stamps_finds_the_stamp_when_the_config_id_is_a_uuid(environment):
-    """TH-8046: `_clear_queued_stamps` -- the rollback for a
-    stamp whose dispatch failed -- must find and clear a `UUID` config id's
-    stamp, the same normalisation `_queued_within_window` already needed,
-    and must remove only that config's key.
-
-    Proved by removal: drop the `eval_config_id = str(eval_config_id)` line
-    at the top of `_clear_queued_stamps` (`harness_run_evals.py:232`) and the
-    raw `UUID` misses the string-keyed stamps dict, the function no-ops at
-    its `eval_config_id not in stamps` guard, and the stamp survives --
-    leaving the call reporting as already-queued for the rest of the
-    ten-minute window while nothing is actually grading it, which is exactly
-    the state the docstring says must not exist.
-    """
+    """`_clear_queued_stamps` finds and clears a `UUID` config id's stamp,
+    and removes only that config's key."""
     from simulate.models import CallExecution, TestExecution
     from simulate.services.harness_run_evals import _clear_queued_stamps
 

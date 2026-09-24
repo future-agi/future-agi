@@ -2064,29 +2064,20 @@ class RunTestKPIsView(APIView):
             # Prepare response
             kpi_data = {
                 "total_calls": total_calls,
-                # Contract v1.9 P27 / P19: the run's COMPLETED-status call count,
-                # for BOTH modalities. `connected_calls` above is NOT a stand-in:
-                # on a chat run it is this same column (`:1903`), but on a voice
-                # run it is `connected_voice_calls` (`duration_seconds > 0`,
-                # `sql_query.py:369`) — a different filter. This is
-                # `COUNT(*) FILTER (WHERE status = 'completed')`
-                # (`sql_query.py:368`), which is the same SQL predicate P19's
-                # `completed_calls` names, and it is what the picker names
-                # before a run-level add (TH-8047). `total_calls` is COUNT(*)
-                # over every status (`sql_query.py:364`) and is a different
-                # number.
+                # The run's COMPLETED-status call count, for both modalities.
+                # `connected_calls` above is not a stand-in: on a chat run it is
+                # this same column, but on a voice run it is
+                # `connected_voice_calls` (`duration_seconds > 0`) -- a
+                # different filter. `total_calls` counts every status and is a
+                # different number too.
                 #
-                # Known limit (TH-8057): this SQL query
-                # has no `deleted = false` clause, so this count -- like every
-                # other KPI here -- counts a soft-deleted call. The run-level
-                # add's own 202 (`harness_run_evals.py::queue_eval_for_finished_calls`)
-                # selects through `CallExecution.objects`, which IS filtered to
-                # live rows, so the two counts can disagree by exactly the
-                # soft-deleted calls of a run. Not fixed here: changing this
-                # query's WHERE clause changes every KPI number it returns, and
-                # that is its own decision (TH-8057). Until then the run-level
-                # add's own 202 is the authoritative count; the KPI number is
-                # the picker's estimate and may be higher.
+                # Known limit: this query has no `deleted = false` clause, so
+                # this count, unlike every other KPI here, counts a
+                # soft-deleted call -- while the run-level add's own 202
+                # (`harness_run_evals.py::queue_eval_for_finished_calls`)
+                # selects through `CallExecution.objects`, which is filtered to
+                # live rows, so the two can disagree by exactly a run's
+                # soft-deleted calls.
                 "completed_calls": metrics.get("completed_calls", 0) or 0,
                 "avg_score": avg_score,
                 "avg_response": avg_response,
@@ -2287,14 +2278,12 @@ class RunTestCallExecutionsView(APIView):
                 for snapshot in snapshots:
                     snapshots_dict[str(snapshot.id)] = snapshot
 
-            # One config map for the whole page, not one query per row
-            # (whole-change review round 3, M2): union every eval id this
-            # page's call-execution rows AND snapshot rows reference into a
-            # single ``build_eval_configs_map`` call, then reuse the result
-            # for every row below. ``build_eval_configs_map`` only reads
+            # One config map for the whole page, not one query per row: union
+            # every eval id this page's call-execution and snapshot rows
+            # reference into a single ``build_eval_configs_map`` call, then
+            # reuse the result below. ``build_eval_configs_map`` only reads
             # ``call_execution.eval_outputs``, so a duck-typed
-            # ``SimpleNamespace`` holding the union is enough -- no second
-            # implementation of its query to keep in sync.
+            # ``SimpleNamespace`` holding the union is enough.
             merged_eval_outputs = {}
             for call_exec in call_executions_dict.values():
                 merged_eval_outputs.update(call_exec.eval_outputs or {})
@@ -2318,19 +2307,11 @@ class RunTestCallExecutionsView(APIView):
                 if item_type == "call_execution":
                     call_exec = call_executions_dict.get(str(item_id))
                     if call_exec:
-                        # Same map the call-details view builds (contract
-                        # v1.6 P23; whole-change review round 2, M1): without
-                        # it, get_eval_outputs/get_eval_metrics fall back to
-                        # the unfiltered branch and a removed eval's verdict
-                        # comes back with no "removed" key on this surface.
-                        # ``mark_removed_only`` (whole-change review round 3,
-                        # M3) keeps every other effect of passing
-                        # ``eval_configs`` off on this paginated list: no
-                        # per-row error-localizer lookup, no ``template_type``,
-                        # and no key dropped by ``iter_live_eval_outputs`` for
-                        # not having a config row -- this surface's shape
-                        # stays byte-identical to before this ticket except
-                        # for the added ``"removed": true`` keys.
+                        # Same map the call-details view builds, so a removed
+                        # eval's verdict gets the "removed" key here too.
+                        # ``mark_removed_only`` keeps every other effect of
+                        # passing ``eval_configs`` switched off, so this
+                        # surface's shape stays unchanged except for that key.
                         serializer = CallExecutionDetailSerializer(
                             call_exec,
                             context={
@@ -2348,15 +2329,13 @@ class RunTestCallExecutionsView(APIView):
                 else:  # snapshot
                     snapshot = snapshots_dict.get(str(item_id))
                     if snapshot:
-                        # Get the original call execution for the six
-                        # non-eval keys _convert_snapshot_to_call_execution
-                        # reads (scenario, customer_name, ...). No
-                        # eval_configs context here: this serializer call's
-                        # own eval_outputs/eval_metrics are discarded below,
-                        # so building a config map for it was pure waste
-                        # (whole-change review round 3, M4) -- the snapshot's
-                        # own eval_outputs is marked separately, from the
-                        # single page-level map above.
+                        # Get the original call execution for the non-eval
+                        # keys _convert_snapshot_to_call_execution reads
+                        # (scenario, customer_name, ...). No eval_configs
+                        # context here: this serializer call's own
+                        # eval_outputs/eval_metrics are discarded below --
+                        # the snapshot's own eval_outputs is marked
+                        # separately, from the page-level map above.
                         original_call_exec = snapshot.call_execution
                         serializer = CallExecutionDetailSerializer(original_call_exec)
                         original_data = serializer.data
@@ -2423,13 +2402,11 @@ class RunTestCallExecutionsView(APIView):
     ):
         """Convert a snapshot to call execution format for API response.
 
-        ``eval_configs_map`` is the single page-level map built once in
-        ``get`` (whole-change review round 3, M2/M4) -- a snapshot has no
-        dedicated serializer method for ``eval_outputs``, so the removed
-        marker is stamped here, directly on the snapshot's own raw stored
-        shape (which is not the same shape ``CallExecutionDetailSerializer``
-        returns for a live call execution's ``eval_outputs`` -- pre-existing,
-        contract P23).
+        ``eval_configs_map`` is the page-level map built once in ``get`` --
+        a snapshot has no dedicated serializer method for ``eval_outputs``,
+        so the removed marker is stamped here, directly on the snapshot's own
+        raw stored shape (not the same shape ``CallExecutionDetailSerializer``
+        returns for a live call execution's ``eval_outputs`` -- pre-existing).
         """
         # Create a call execution object from snapshot data
         snapshot_as_call_exec = {
@@ -2490,19 +2467,15 @@ class RunTestCallExecutionsView(APIView):
     @staticmethod
     def _mark_removed_evals(eval_outputs, eval_configs_map):
         """Copy of ``eval_outputs`` with ``"removed": True`` stamped on any
-        row whose config was soft-deleted. Never mutates the stored dict
-        (contract P14: the stored value is never rewritten) -- mirrors
-        ``CallExecutionDetailSerializer.get_eval_outputs``'s marker, applied
-        here because a snapshot row has no serializer method of its own for
-        this field (whole-change review round 3, M4).
+        row whose config was soft-deleted. Never mutates the stored dict --
+        mirrors ``CallExecutionDetailSerializer.get_eval_outputs``'s marker,
+        applied here because a snapshot row has no serializer method of its
+        own for this field.
 
-        Each row is deep-copied, not shallow-copied (whole-change review
-        round 5, L6): a shallow ``dict(eval_data)`` shares any nested
-        dict/list inside the row with the caller's own stored object, so a
-        later in-place edit of the *returned* row's nested value would
-        silently reach back into the input -- see
-        ``test_mark_removed_evals_does_not_mutate_input``, which plants a
-        nested value and proves this by removal."""
+        Each row is deep-copied, not shallow-copied: a shallow ``dict(...)``
+        would share any nested dict/list with the caller's stored object, so
+        a later in-place edit of the returned row could reach back into it.
+        """
         if not eval_outputs:
             return eval_outputs
         marked = {}

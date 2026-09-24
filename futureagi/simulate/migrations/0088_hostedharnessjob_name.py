@@ -35,7 +35,10 @@ def backfill_names(apps, schema_editor):
     HostedHarnessJob = apps.get_model("simulate", "HostedHarnessJob")
     pending = []
     for job in HostedHarnessJob.objects.filter(name="").iterator(chunk_size=_CHUNK):
-        job.name = _derived_name(job)
+        try:
+            job.name = _derived_name(job)
+        except (AttributeError, TypeError):
+            job.name = f"simulation-{str(job.id)[:8]}"
         pending.append(job)
         if len(pending) >= _CHUNK:
             HostedHarnessJob.objects.bulk_update(pending, ["name"])

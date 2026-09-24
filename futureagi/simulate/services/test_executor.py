@@ -42,44 +42,16 @@ logger = structlog.get_logger(__name__)
 def build_eval_configs_map(call_execution) -> dict[str, "SimulateEvalConfig"]:
     """The configs behind this call's verdicts, removed ones included.
 
-    ``all_objects`` and not ``objects`` on purpose: a verdict produced by an
-    eval that was later removed from the environment stays stored and stays
-    visible in call details, marked ``"removed": true``. Contract v1.5
-    P14/P23; design §7; ``lld-5-verdict-lifecycle.puml`` state ``Removed``.
-    ``SimulateEvalConfig`` carries no ``workspace`` column, so ``all_objects``
-    differs from ``objects`` by exactly the soft-delete filter.
+    Uses ``all_objects`` (not ``objects``) so a verdict produced by an eval
+    later removed from the environment stays visible in call details, marked
+    ``"removed": true``. ``select_related("eval_template")`` avoids a
+    per-config FK fetch in ``get_eval_metrics``'s ``template_type`` lookup.
 
-    ``select_related("eval_template")`` because ``get_eval_metrics``'
-    ``template_type`` lookup does one FK fetch per config in this map --
-    live or removed -- when it is not preloaded (whole-change review round 2,
-    L7).
-
-    Callers: ``views/run_test.py::CallExecutionDetailView`` (``:3730``) and
-    ``RunTestCallExecutionsView`` (one call, ``:2279``, reused at ``:2313``)
-    -- contract v1.6 P23 names both as the only read surfaces that show a
-    removed eval's verdicts, marked ``"removed": true`` (whole-change review
-    round 2, M1; ``RunTestCallExecutionsView`` used to build the serializer
-    with no context at all, so removed verdicts came back unmarked there).
-    Every other caller of ``CallExecutionDetailSerializer`` builds its own
-    live-only map and keeps dropping removed evals: ``TestExecutionDetailView``
-    (``:2976``) and the CSV export (``:6036``, ``:6129``). (Line anchors
-    below ``RunTestCallExecutionsView._mark_removed_evals`` shifted by its
-    round-5 docstring growth, L6; cited by symbol where possible since this
-    file moves under its own edits.)
-
-    ``eval_config_ids`` is filtered to well-formed UUIDs before the query
-    (``_is_uuid``): a raw ``eval_outputs`` key that is not a UUID would
-    otherwise raise ``ValidationError`` straight out of ``id__in``, and
-    ``RunTestCallExecutionsView`` now builds exactly one map for the whole
-    page from every row's keys unioned together (whole-change review round
-    3, M2) -- so one bad key on one row would take the whole page's response
-    down with it, not just that one row's, which is a materially bigger
-    blast radius than the single-call detail response this map originally
-    served (whole-change review round 4, L8). A key that fails the check is
-    simply absent from the returned map, exactly like any other id this
-    query does not find a live-or-removed config for -- every reader already
-    handles a missing map entry (``eval_configs.get(eval_id)`` returns
-    ``None``).
+    ``eval_config_ids`` is filtered to well-formed UUIDs first (``_is_uuid``):
+    a raw ``eval_outputs`` key that isn't a UUID would otherwise raise
+    ``ValidationError`` out of ``id__in``. A key that fails the check is
+    simply absent from the returned map, same as any id with no matching
+    config.
     """
     eval_config_ids = [
         eval_config_id
@@ -97,9 +69,9 @@ def build_eval_configs_map(call_execution) -> dict[str, "SimulateEvalConfig"]:
 
 
 def _is_uuid(value) -> bool:
-    """True when ``value`` parses as a UUID -- used to keep a malformed
-    ``eval_outputs`` key out of ``id__in`` filters instead of letting it
-    raise ``ValidationError`` (whole-change review round 4, L8)."""
+    """True when ``value`` parses as a UUID -- keeps a malformed
+    ``eval_outputs`` key out of ``id__in`` filters instead of raising
+    ``ValidationError``."""
     try:
         UUID(str(value))
     except (ValueError, AttributeError, TypeError):
@@ -4213,12 +4185,12 @@ class TestExecutor:
             skip_status_update: If True, do not transition status to COMPLETED. Used when
                 the caller (e.g. Temporal workflow) manages the status transition itself.
 
-        Known gap (M2, accepted for now): the ``skip_existing`` guard reads
-        ``eval_outputs`` from the in-memory snapshot taken by
-        ``call_execution.refresh_from_db()`` above, and every save writes the
-        whole ``eval_outputs`` column, so a verdict landed by another worker
-        between that read and this task's save is silently lost; a row lock
-        or merge-before-save is a follow-up, not fixed here.
+        Known gap: the ``skip_existing`` guard reads ``eval_outputs`` from the
+        in-memory snapshot taken by ``call_execution.refresh_from_db()``
+        above, and every save writes the whole ``eval_outputs`` column, so a
+        verdict landed by another worker between that read and this task's
+        save is silently lost; a row lock or merge-before-save is a
+        follow-up, not fixed here.
         """
         try:
             close_old_connections()
@@ -4331,12 +4303,8 @@ class TestExecutor:
             # Run each evaluation
             for eval_config in eval_configs:
                 try:
-                    # A stored verdict is sealed. With skip-existing on, this
-                    # eval is not re-graded and nothing is written for it --
-                    # keyed on the config id, so a sibling config on the same
-                    # call is still graded. Contract v1.4 P20/F2, design §7,
-                    # lld-4 "already holds a verdict -> skip", lld-5
-                    # GradingSkipped.
+                    # A stored verdict is sealed: with skip-existing on, this
+                    # eval is not re-graded and nothing is written for it.
                     if skip_existing and has_stored_verdict(
                         call_execution, eval_config.id
                     ):
@@ -4419,19 +4387,13 @@ class TestExecutor:
 
         With ``skip_existing`` on, a config that already holds a verdict on
         this call keeps it: the "skipped" payload is written only for configs
-        whose row is empty. With it off, behaviour is exactly as before --
-        every config in the batch gets the payload.
+        whose row is empty. With it off, behaviour is unchanged -- every
+        config in the batch gets the payload.
 
-        The guard is required, not a belt-and-braces nicety. The inputs to the
-        skip decision are not immutable: a receipt re-ingest deletes and
-        recreates the transcript rows
-        (``hosted_harness_ingestion.py:1081-1084`` and ``:1141``), so a call
-        that once earned a real verdict can later be judged "too short", and
-        the "no transcript" branch swallows any read error into an empty
-        transcript. Contract v1.4 F2, design §7, ``lld-4-add-from-run.puml``
-        guard block.
-
-        The call-level bookkeeping (``processing_skipped``,
+        The guard matters because the inputs to the skip decision aren't
+        immutable: a receipt re-ingest can delete and recreate the transcript
+        rows, so a call that once earned a real verdict can later be judged
+        "too short". The call-level bookkeeping (``processing_skipped``,
         ``processing_skip_reason``, ``eval_started``, ``eval_completed``) is
         written either way; only the per-config ``eval_outputs`` rows are
         sealed.
@@ -4739,9 +4701,23 @@ class TestExecutor:
                     ):
                         transcript_data[transcript_key] = normalized_recording[key]
 
-            recording_urls = self.voice_service_manager.get_recording_urls(
-                provider_payload
-            )
+            # Hosted/ALK ingestion persists recording URLs directly on the call
+            # row (and may also provide normalized recording entries above).
+            # Evaluation must not require a provider client merely to consume
+            # those already-persisted artifacts.  Provider lookup is only an
+            # optional enrichment path for legacy calls that still carry a
+            # provider payload.
+            recording_urls = {}
+            if self.voice_service_manager is not None and provider_payload:
+                recording_urls = self.voice_service_manager.get_recording_urls(
+                    provider_payload
+                )
+            elif provider_payload:
+                logger.info(
+                    "Skipping provider recording lookup for call %s because "
+                    "the voice service manager is not initialized",
+                    call_execution.id,
+                )
             if recording_urls:
                 recording_object = {}
 
@@ -5775,7 +5751,11 @@ def _run_simulate_evaluations_task(
             "test_execution__run_test",
         ).get(id=call_execution_id)
 
-        test_executor = TestExecutor()
+        # Evaluation only needs transcript/eval helpers. Initializing the
+        # configured voice provider here makes otherwise provider-neutral
+        # evaluations fail when, for example, Vapi credentials are absent for
+        # a LiveKit, Retell, chat, or connect-only run.
+        test_executor = TestExecutor(initialize_voice_service=False)
         test_executor._run_simulate_evaluations(
             call_execution, eval_config_ids=eval_config_ids, skip_existing=skip_existing
         )

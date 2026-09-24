@@ -921,24 +921,11 @@ class TestRunTestKPIsViewAPI:
     def test_kpi_exposes_completed_calls_on_a_voice_run(
         self, auth_client, test_execution, scenario
     ):
-        """Contract v1.9 P27/P19: the KPI body names the run's COMPLETED-status
-        call count on a VOICE run too -- the modality that has no other way to
-        learn it, because `connected_calls` there is `connected_voice_calls`
-        (`duration_seconds > 0`), a DIFFERENT filter.
-
-        Built locally rather than from the shared `voice_call_executions`
-        fixture: that fixture sets
-        `duration_seconds` only on its completed rows, so on it
-        `connected_voice_calls` and `completed_calls` are accidentally the
-        same number (2) -- a fixture that cannot catch
-        `"completed_calls": connected_calls` sneaking in for
-        `"completed_calls": metrics.get("completed_calls", 0) or 0`, because
-        both read 2 either way. This test's rows instead include one call
-        that is CONNECTED but not COMPLETED (`status="failed"`,
-        `duration_seconds=90`), so it counts toward `connected_calls` and
-        not toward `completed_calls` -- the two numbers differ here, so the
-        substitution mistake fails.
-        """
+        """The KPI body names the run's COMPLETED-status call count on a
+        voice run too, where `connected_calls` is a different filter
+        (`connected_voice_calls`) and cannot be used as a stand-in. Built
+        locally, not from the shared fixture, so a connected-but-not-completed
+        row keeps the two counts from accidentally matching."""
         CallExecution.objects.create(
             test_execution=test_execution,
             scenario=scenario,
@@ -993,14 +980,9 @@ class TestRunTestKPIsViewAPI:
         chat_agent_definition,
         scenario,
     ):
-        """Contract v1.9 P27: the same field, same meaning, on a chat run.
-
-        On chat it happens to equal `connected_calls` (the chat branch sets that
-        from the same column, `run_test.py:1903`); the point of the field is that
-        the client no longer has to know that. A fourth, non-completed row
-        makes `completed_calls` distinguishable from `total_calls` here too
-        (TH-8046).
-        """
+        """The same `completed_calls` field, same meaning, on a chat run --
+        where it happens to equal `connected_calls`, but the client should
+        not need to know that."""
         test_execution.agent_definition = chat_agent_definition
         test_execution.save()
         CallExecution.objects.create(

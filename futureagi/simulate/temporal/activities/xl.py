@@ -1208,14 +1208,9 @@ def _run_evaluations_standalone(
     Runs all configured SimulateEvalConfig evaluations for a call execution.
     Does NOT run tool evaluation (handled by separate activity).
     Does NOT update test_execution status (workflow/rerun handles that).
-    With ``skip_existing`` on, a config that already holds a sealed
-    verdict is neither re-graded nor rewritten, mirroring
-    ``TestExecutor._run_simulate_evaluations``'s guard (contract v1.6 P20/F2).
-    ``has_stored_verdict`` is imported at module scope from
-    ``simulate.utils.verdicts``, which imports nothing from
-    ``simulate.services.test_executor`` or from the model layer -- no
-    circular import to dodge, so no function-local import (whole-change
-    review round 2, L4; moved out of ``processing_outcomes`` in round 3, L2).
+    With ``skip_existing`` on, a config that already holds a sealed verdict
+    is neither re-graded nor rewritten, mirroring
+    ``TestExecutor._run_simulate_evaluations``'s guard.
     """
     from simulate.models import SimulateEvalConfig, TestExecution
 
@@ -1262,9 +1257,9 @@ def _run_evaluations_standalone(
             if not call_execution.eval_outputs:
                 call_execution.eval_outputs = {}
             for eval_config in eval_configs:
-                # A stored verdict is sealed: with skip-existing on, write the
-                # "no transcript" payload only for a config whose row is
-                # still empty. Contract v1.4 F2.
+                # A stored verdict is sealed: with skip-existing on, write
+                # the "no transcript" payload only for a config whose row is
+                # still empty.
                 if skip_existing and has_stored_verdict(call_execution, eval_config.id):
                     logger.info(
                         f"Keeping the stored verdict for {eval_config.id} on call "
@@ -1272,10 +1267,8 @@ def _run_evaluations_standalone(
                     )
                     continue
                 # The skipped payload's output_type is None; restore the
-                # derived KPI output_type here (as the pre-ticket write did)
-                # so get_kpi_eval_metrics_query's `output_type IN (...)`
-                # filter still sees this row (whole-change review round 5,
-                # M1).
+                # derived KPI output_type so get_kpi_eval_metrics_query's
+                # `output_type IN (...)` filter still sees this row.
                 skipped_payload = build_skipped_eval_output_payload(
                     eval_name=eval_config.name,
                     reason="No transcript data available",
@@ -1293,10 +1286,8 @@ def _run_evaluations_standalone(
         # Run each evaluation
         for eval_config in eval_configs:
             try:
-                # A stored verdict is sealed. With skip-existing on, this
-                # eval is not re-graded and nothing is written for it --
-                # keyed on the config id, so a sibling config on the same
-                # call is still graded. Contract v1.4 P20/F2.
+                # A stored verdict is sealed: with skip-existing on, this
+                # eval is not re-graded and nothing is written for it.
                 if skip_existing and has_stored_verdict(call_execution, eval_config.id):
                     logger.info(
                         f"Skipping evaluation {eval_config.id} for call "

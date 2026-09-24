@@ -364,9 +364,6 @@ def test_call_details_marks_removed(auth_client, simulation_tree, eval_configs):
     """A removed eval's verdict is still returned by call details, marked
     ``removed: true`` in both projections; a live eval's verdict carries no
     such key; the stored value is never rewritten.
-
-    Contract api_contracts/harness/eval-offer-backend-frontend.md v1.4 P14/P23;
-    design §7; lld-5 state Removed; lld-1 Verdict.removed.
     """
     live, deleted = eval_configs["live"], eval_configs["deleted"]
     call_execution = simulation_tree["call_execution"]
@@ -392,7 +389,7 @@ def test_call_details_marks_removed(auth_client, simulation_tree, eval_configs):
     assert outputs[str(deleted.id)]["value"] == "Passed"
     assert metrics[str(deleted.id)]["value"] == "Passed"
 
-    # The live eval's verdict carries NO "removed" key (P23: not `false`).
+    # The live eval's verdict carries no "removed" key at all (not `false`).
     assert "removed" not in outputs[str(live.id)]
     assert "removed" not in metrics[str(live.id)]
 
@@ -407,14 +404,10 @@ def test_run_test_call_execution_list_marks_removed_evals(
 ):
     """The run's call list (``GET /simulate/run-tests/{id}/call-executions/``,
     ``RunTestCallExecutionsView``) marks a removed eval's verdict the same
-    way call details does -- mirrors ``test_call_details_marks_removed``.
-
-    Contract v1.5 P23 now names this endpoint too, alongside call details, as
-    the only read surfaces that show removed verdicts (whole-change review
-    round 2, M1): the view used to build ``CallExecutionDetailSerializer``
-    with no context at all, so ``get_eval_outputs``/``get_eval_metrics`` took
-    the unfiltered branch and a removed eval's verdict came back
-    indistinguishable from a live one here.
+    way call details does -- mirrors ``test_call_details_marks_removed``. The
+    view used to build ``CallExecutionDetailSerializer`` with no context at
+    all, so a removed eval's verdict came back indistinguishable from a live
+    one here.
     """
     live, deleted = eval_configs["live"], eval_configs["deleted"]
     run_test = simulation_tree["run_test"]
@@ -438,7 +431,7 @@ def test_run_test_call_execution_list_marks_removed_evals(
     assert outputs[str(deleted.id)]["value"] == "Passed"
     assert metrics[str(deleted.id)]["value"] == "Passed"
 
-    # The live eval's verdict carries NO "removed" key (P23: not `false`).
+    # The live eval's verdict carries no "removed" key at all (not `false`).
     assert "removed" not in outputs[str(live.id)]
     assert "removed" not in metrics[str(live.id)]
 
@@ -451,19 +444,9 @@ def test_run_test_call_execution_list_marks_removed_evals(
 def test_run_test_call_execution_list_name_less_row_falls_back_to_empty_string(
     auth_client, simulation_tree, eval_configs
 ):
-    """L3 (whole-change review round 5): round 4's L1 fix added an ``""``
-    ``name`` fallback under ``mark_removed_only`` in ``get_eval_metrics`` so
-    a status-less row with no stored ``name`` does not pick up the live
-    config's name on this surface (that would break the "byte-identical to
-    the no-context branch except for the added `removed` keys" claim).
-    Nothing planted a name-less row here before, so the fallback was
-    revertible while green -- this pins it.
-
-    Removal proof: revert the fallback from ``"" if mark_removed_only else
-    (eval_config.name if eval_config else "")`` back to
-    ``eval_config.name if eval_config else ""`` and this test goes red
-    (``name`` would read ``"Deleted Eval"`` instead of ``""``).
-    """
+    """The ``""`` ``name`` fallback under ``mark_removed_only`` in
+    ``get_eval_metrics`` keeps a status-less row with no stored ``name`` from
+    picking up the live config's name on this surface."""
     deleted = eval_configs["deleted"]
     run_test = simulation_tree["run_test"]
     call_execution = simulation_tree["call_execution"]
@@ -491,8 +474,8 @@ def test_serializer_does_not_mutate_stored_eval_outputs(simulation_tree, eval_co
     that instance's ``eval_outputs`` -- no ``removed`` key leaks into the
     model's dict, and the stored value is unaffected by whatever the
     serializer builds for the API. Unlike ``test_call_details_marks_removed``,
-    this never goes through ``refresh_from_db()``, so it would actually catch
-    an in-place mutation."""
+    this never goes through ``refresh_from_db()``, so it would catch an
+    in-place mutation."""
     live, deleted = eval_configs["live"], eval_configs["deleted"]
     call_execution = simulation_tree["call_execution"]
     expected = copy.deepcopy(_eval_outputs_for(live, deleted))
@@ -539,32 +522,21 @@ def test_call_details_config_map_includes_removed_configs(
 def test_run_test_call_execution_list_builds_the_eval_config_map_once_per_request(
     auth_client, simulation_tree, eval_configs
 ):
-    """Before this fix, ``build_eval_configs_map`` was called once per row
-    (whole-change review round 3, M2) -- once per call-execution row and
-    once per snapshot row -- so its query cost grew with the number of rows
-    on a page: a default page (``limit=10``) was +10 queries, and an
-    uncapped ``?limit=`` scaled further. It must not: the map is built
-    exactly once per request now, from the union of every row's
-    ``eval_outputs`` keys, and the same dict is reused for every row.
+    """``build_eval_configs_map`` must be built exactly once per request, from
+    the union of every row's ``eval_outputs`` keys, and reused for every row
+    -- not called once per call-execution row and once per snapshot row,
+    which would make its query cost grow with the number of rows on a page.
 
     Asserted by spying on the real ``build_eval_configs_map`` (wrapped, not
-    replaced, so its behaviour -- and every other assertion on the response
-    shape -- is unaffected) and counting calls, rather than the endpoint's
-    total query count: this view's serializer has other, pre-existing
-    per-row queries unrelated to eval configs (e.g. chat-metrics and
-    scenario-graph lookups), so the total count already scales with the
-    number of rows for reasons this ticket does not touch, and asserting
-    total-count invariance would conflate that unrelated, pre-existing cost
-    with the one this fix removes.
+    replaced) and counting calls, rather than the endpoint's total query
+    count: this view's serializer has other, pre-existing per-row queries
+    unrelated to eval configs, so total-count invariance would conflate that
+    unrelated cost with the one this fix removes.
 
-    Round 3's M2 fix note was "once per call-execution row **and once per
-    snapshot row**", but this test used to plant zero
-    ``CallExecutionSnapshot`` rows -- so a regressed per-snapshot
-    ``build_eval_configs_map`` call inside the snapshot branch would still
-    keep ``map_spy.assert_called_once()`` green (nothing on the snapshot
-    branch was ever spied on). The one snapshot row below closes that gap
-    (whole-change review round 4, L4): it would also have caught the
-    discarded-map bug round 3 filed separately as M4.
+    The one snapshot row below matters: with zero ``CallExecutionSnapshot``
+    rows planted, a regressed per-snapshot ``build_eval_configs_map`` call
+    inside the snapshot branch would still keep
+    ``map_spy.assert_called_once()`` green.
     """
     live, deleted = eval_configs["live"], eval_configs["deleted"]
     run_test = simulation_tree["run_test"]
@@ -610,12 +582,11 @@ def test_run_test_call_execution_list_omits_error_localizer_payload(
 ):
     """The run's call list must not fire a per-row error-localizer lookup or
     embed its payload (``input_data`` can hold a full transcript) in a
-    paginated response. The context this view now passes
-    (``mark_removed_only``) keeps ``error_localizer`` false for every entry
-    regardless of the config's own flag, so ``get_eval_metrics``'s EL merge
-    block never runs here -- ``template_type`` stays ``None`` too, exactly
-    the shape this surface had with no context at all before this ticket
-    (whole-change review round 3, M3).
+    paginated response. ``mark_removed_only`` keeps ``error_localizer`` false
+    for every entry regardless of the config's own flag, so
+    ``get_eval_metrics``'s EL merge block never runs here -- ``template_type``
+    stays ``None`` too, exactly the shape this surface had with no context
+    at all.
     """
     live, deleted = eval_configs["live"], eval_configs["deleted"]
     live.error_localizer = True
@@ -658,15 +629,10 @@ def test_call_details_keeps_error_localizer_payload(
     auth_client, simulation_tree, eval_configs, organization, workspace
 ):
     """The mirror of ``test_run_test_call_execution_list_omits_error_localizer_payload``,
-    on call details instead of the run's call list: ``mark_removed_only`` is
-    a context key that ``CallExecutionDetailView`` never sets
-    (``run_test.py:3730``, no ``mark_removed_only`` in its context dict), so
-    ``template_type`` and the error-localizer merge (``error_localizer``,
-    ``error_analysis``) must stay live there -- the drawer's error-analysis
-    tab depends on them. Nothing before this test pinned that call details
-    keeps this on; a copy-paste of ``mark_removed_only: True`` into this
-    view's context would silently blank the drawer's error analysis with the
-    whole suite still green (whole-change review round 4, L5).
+    on call details instead of the run's call list: ``CallExecutionDetailView``
+    never sets ``mark_removed_only``, so ``template_type`` and the
+    error-localizer merge (``error_localizer``, ``error_analysis``) must stay
+    live there -- the drawer's error-analysis tab depends on them.
     """
     live, deleted = eval_configs["live"], eval_configs["deleted"]
     live.error_localizer = True
@@ -703,13 +669,10 @@ def test_call_details_keeps_error_localizer_payload(
 def test_run_test_call_execution_list_keeps_key_with_no_config_row(
     auth_client, simulation_tree, eval_configs
 ):
-    """A stored ``eval_outputs`` key with no matching config row at all (not
-    even a removed one) -- theoretical today, since every writer keys by a
-    real config id or a harness ``uuid5`` -- must not be silently dropped
-    from this surface by ``iter_live_eval_outputs``'s filtering (whole-change
-    review round 3, M3's fourth flip): the context this view now passes
-    (``mark_removed_only``) iterates ``eval_outputs`` directly, same as the
-    no-context branch, so nothing is dropped for lacking a config row.
+    """A stored ``eval_outputs`` key with no matching config row at all must
+    not be silently dropped from this surface by ``iter_live_eval_outputs``'s
+    filtering: ``mark_removed_only`` iterates ``eval_outputs`` directly, same
+    as the no-context branch, so nothing is dropped for lacking a config row.
     """
     live = eval_configs["live"]
     run_test = simulation_tree["run_test"]
@@ -746,21 +709,14 @@ def test_run_test_call_execution_list_survives_a_non_uuid_eval_outputs_key(
     auth_client, simulation_tree, eval_configs
 ):
     """A raw, non-UUID key in one row's stored ``eval_outputs`` (a corrupted
-    or hand-edited row -- ``orphan_id`` above is still a well-formed UUID,
-    just one with no matching config) must not 500 the whole page.
-
-    ``build_eval_configs_map`` now builds exactly one map for every row on
-    the page from the union of their ``eval_outputs`` keys (whole-change
-    review round 3, M2); before that, only the one call's own detail
-    request broke on a bad key. Passing a raw non-UUID string straight into
-    ``SimulateEvalConfig.all_objects.filter(id__in=...)`` raises
-    ``ValidationError``, which this view's blanket ``except Exception``
-    turns into a 500 for every row sharing the single page-level map, not
-    just the row that holds the bad key (whole-change review round 4, L8).
-    The fix filters non-UUID keys out of the map query; the bad key's own
-    entry simply has no matching config (same as any other id the query
-    finds nothing for), while every other row's ``removed`` marking is
-    unaffected.
+    or hand-edited row) must not 500 the whole page: passing a raw non-UUID
+    string straight into ``SimulateEvalConfig.all_objects.filter(id__in=...)``
+    raises ``ValidationError``, which this view's blanket
+    ``except Exception`` would turn into a 500 for every row sharing the
+    single page-level map, not just the row that holds the bad key. The fix
+    filters non-UUID keys out of the map query; the bad key's own entry
+    simply has no matching config, while every other row's ``removed``
+    marking is unaffected.
     """
     live, deleted = eval_configs["live"], eval_configs["deleted"]
     run_test = simulation_tree["run_test"]
@@ -807,18 +763,12 @@ def test_run_test_call_execution_list_survives_a_non_uuid_eval_outputs_key(
 def test_call_details_survives_a_non_uuid_eval_outputs_key(
     auth_client, simulation_tree, eval_configs
 ):
-    """L4 (whole-change review round 5): unlike the run's call list (see
-    ``test_run_test_call_execution_list_survives_a_non_uuid_eval_outputs_key``
-    above, which iterates ``eval_outputs`` directly under
-    ``mark_removed_only`` and keeps the bad key), call details feeds the
-    filtered map straight to ``iter_live_eval_outputs``. A non-UUID key is
-    never in that map and has no ``"source": "harness"`` marker, so
-    ``iter_live_eval_outputs`` drops the row -- round 4's L8 fix turned a
-    500 on this surface into a silent 200 that omits the row, and nothing
-    pinned that until now. This test only pins the behaviour (200, the
-    other row still rendered, the bad key omitted from both projections);
-    it does not assert that omission is the right call -- the PR body
-    names it as a known, deliberate trade-off (never 500 the page).
+    """Unlike the run's call list (which iterates ``eval_outputs`` directly
+    under ``mark_removed_only`` and keeps the bad key), call details feeds
+    the filtered map straight to ``iter_live_eval_outputs``. A non-UUID key
+    is never in that map and has no ``"source": "harness"`` marker, so
+    ``iter_live_eval_outputs`` drops the row -- a deliberate trade-off (never
+    500 the page) over surfacing the corrupted key.
     """
     live = eval_configs["live"]
     call_execution = simulation_tree["call_execution"]
@@ -853,11 +803,8 @@ def test_run_test_call_execution_list_snapshot_row_marks_removed_evals(
 ):
     """A snapshot row's own ``eval_outputs`` (returned raw, not through the
     serializer -- a pre-existing shape mismatch with a live call execution's
-    row for the same field name, contract P23) gets the removed marker too,
-    from the same page-level config map (whole-change review round 3, M4):
-    the map built for the snapshot branch used to be thrown away entirely
-    (its output was never used), so a snapshot row's removed verdict came
-    back unmarked here even after round 2's M1 fix.
+    row for the same field name) gets the removed marker too, from the same
+    page-level config map.
     """
     live, deleted = eval_configs["live"], eval_configs["deleted"]
     run_test = simulation_tree["run_test"]
@@ -881,16 +828,10 @@ def test_run_test_call_execution_list_snapshot_row_marks_removed_evals(
     # Raw stored shape, not the serializer's structured one (pre-existing).
     assert outputs[str(deleted.id)]["output"] == "Passed"
 
-    # Reading never rewrites what is stored on the snapshot. NOTE: this
-    # specific check is not itself a mutation guard -- nothing in the
-    # request above ever calls ``snapshot.save()``, so
-    # ``refresh_from_db()`` re-reads the same row ``_mark_removed_evals``
-    # was handed in the first place, and it would pass identically even if
-    # ``_mark_removed_evals`` mutated its input dict in place (whole-change
-    # review round 4, L6). The real non-mutation guard is
-    # ``test_mark_removed_evals_does_not_mutate_input`` below, which calls
-    # ``_mark_removed_evals`` directly and diffs its input against a
-    # deep copy taken before the call.
+    # Reading never rewrites what is stored on the snapshot. NOTE: this is
+    # not itself a mutation guard, since nothing above calls
+    # ``snapshot.save()`` -- see ``test_mark_removed_evals_does_not_mutate_input``
+    # below for the real guard, which calls ``_mark_removed_evals`` directly.
     snapshot.refresh_from_db()
     assert "removed" not in snapshot.eval_outputs[str(deleted.id)]
 
@@ -900,25 +841,13 @@ def test_mark_removed_evals_does_not_mutate_input(simulation_tree, eval_configs)
     """``RunTestCallExecutionsView._mark_removed_evals`` returns a stamped
     copy and never touches the dict it was handed -- called directly here,
     with the input diffed against a ``copy.deepcopy`` taken before the call,
-    so an in-place mutation would actually be caught (unlike
-    ``test_run_test_call_execution_list_snapshot_row_marks_removed_evals``'s
-    ``refresh_from_db()`` check, which never saves the snapshot and so
-    cannot observe a mutation -- whole-change review round 4, L6). Mirrors
-    ``test_serializer_does_not_mutate_stored_eval_outputs``'s approach for
-    ``CallExecutionDetailSerializer.get_eval_outputs``, applied to this
-    view's own ``eval_outputs`` marker for snapshot rows.
+    so an in-place mutation would actually be caught.
 
-    Round 4's version of this test only ever planted flat rows
-    (``_eval_outputs_for``'s shape), so its "every row dict nested inside it
-    is byte-for-byte unchanged" claim was never actually exercised: a
-    shallow ``dict(eval_data)`` copy leaves any nested value shared with the
-    input, and a flat row has no nested value for that sharing to matter
-    (whole-change review round 5, L6). This version plants a nested
-    ``details`` dict on the live row and mutates it through the *returned*
-    ``marked`` copy -- proof by removal: revert the helper's
-    ``copy.deepcopy(eval_data)`` back to ``dict(eval_data)`` and the last
-    assertion below goes red, because the mutation below would then reach
-    back into ``eval_outputs`` through the shared nested dict.
+    Plants a nested ``details`` dict on the live row and mutates it through
+    the returned ``marked`` copy: if the helper shallow-copied each row
+    (``dict(eval_data)`` instead of ``copy.deepcopy(eval_data)``) that
+    mutation would reach back into the caller's own ``eval_outputs`` through
+    the shared nested dict.
     """
     live, deleted = eval_configs["live"], eval_configs["deleted"]
     eval_outputs = _eval_outputs_for(live, deleted)
