@@ -1,5 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
+import { configure } from "@testing-library/react";
 import { screen, fireEvent, waitFor } from "src/utils/test-utils";
+
+// Heavy ScenariosStep render — give async utils headroom so page-range/count
+// findByText assertions stay load-stable under full-suite parallelism.
+configure({ asyncUtilTimeout: 5000 });
+afterAll(() => configure({ asyncUtilTimeout: 1000 }));
 
 import ScenariosStep from "../ScenariosStep";
 import { PAGE_SIZE } from "../useScenarioPage";

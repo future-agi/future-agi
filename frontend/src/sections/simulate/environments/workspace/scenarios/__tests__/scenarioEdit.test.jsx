@@ -1,5 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
+import { configure } from "@testing-library/react";
 import { render, screen, fireEvent, waitFor } from "src/utils/test-utils";
+
+// Heavy ScenariosStep render — give async utils headroom so these assertions
+// stay load-stable under full-suite parallelism.
+configure({ asyncUtilTimeout: 5000 });
+afterAll(() => configure({ asyncUtilTimeout: 1000 }));
 
 import { MOCK_WORLD } from "src/api/simulate-environments/_fixtures/world";
 import { generatedPool } from "src/api/simulate-environments/_fixtures/scenarioPool";

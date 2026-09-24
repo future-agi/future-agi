@@ -1,5 +1,13 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
+import { configure } from "@testing-library/react";
 import { screen, fireEvent, waitFor } from "src/utils/test-utils";
+
+// ScenariosStep is a heavy render (toolbar + coverage + table + filter panel);
+// under full-suite parallel load its filtered-count `findByText` can exceed the
+// 1000ms default. Give the async utils more headroom (well under the 30s test
+// timeout) so these assertions are load-stable, not flaky.
+configure({ asyncUtilTimeout: 5000 });
+afterAll(() => configure({ asyncUtilTimeout: 1000 }));
 
 import { MOCK_WORLD } from "src/api/simulate-environments/_fixtures/world";
 import { generatedPool } from "src/api/simulate-environments/_fixtures/scenarioPool";
