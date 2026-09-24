@@ -159,8 +159,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         left in place: neither is owned by this row, and other environments may
         reference the same credentials.
         """
-        from simulate.services.hosted_harness import request_cancellation
-        from simulate.temporal.client import cancel_hosted_harness_gateway_workflow
+        from simulate.services.hosted_harness import delete_environment
 
         job = self._job(request, pk)
         if job is None:
@@ -168,24 +167,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                 {"detail": "Environment not found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        terminal = {
-            HostedHarnessJob.State.COMPLETED,
-            HostedHarnessJob.State.FAILED,
-            HostedHarnessJob.State.CANCELED,
-        }
-        if job.state not in terminal:
-            request_cancellation(job, "user_canceled")
-            try:
-                cancel_hosted_harness_gateway_workflow(str(job.id))
-            except Exception:  # noqa: BLE001 - the row is still deleted below
-                # A scheduler that cannot be reached must not strand the user
-                # with an environment they cannot remove. The workflow is
-                # bounded by the job deadline and its sandbox by its own TTL,
-                # so the worst case is a sandbox that expires on its own.
-                pass
-        job.deleted = True
-        job.deleted_at = timezone.now()
-        job.save(update_fields=["deleted", "deleted_at", "updated_at"])
+        delete_environment(job)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @validated_request(

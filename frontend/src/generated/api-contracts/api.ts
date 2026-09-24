@@ -588,6 +588,7 @@ import type {
   HarnessPreflightApi,
   HarnessPreflightResponseApi,
   HarnessResultReceiptApi,
+  HarnessScenarioAmendApi,
   HarnessScenarioOperationApi,
   HarnessScenarioOperationResponseApi,
   HarnessSecretFileUploadResponseApi,
@@ -59193,6 +59194,151 @@ export const simulateApiHarnessJobsExtend = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(harnessJobExtendApi),
+    },
+  );
+};
+
+export type simulateApiHarnessJobsScenariosResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateApiHarnessJobsScenariosResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessJobsScenariosResponseSuccess =
+  simulateApiHarnessJobsScenariosResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsScenariosResponseError =
+  simulateApiHarnessJobsScenariosResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsScenariosResponse =
+  | simulateApiHarnessJobsScenariosResponseSuccess
+  | simulateApiHarnessJobsScenariosResponseError;
+
+export const getSimulateApiHarnessJobsScenariosUrl = (id: string) => {
+  return `/simulate/api/harness-jobs/${id}/scenarios/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsScenarios = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsScenariosResponse> => {
+  return apiMutator<simulateApiHarnessJobsScenariosResponse>(
+    getSimulateApiHarnessJobsScenariosUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessJobsScenariosAmendScenariosResponse201 = {
+  data: HarnessScenarioAmendApi;
+  status: 201;
+};
+
+export type simulateApiHarnessJobsScenariosAmendScenariosResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiHarnessJobsScenariosAmendScenariosResponseSuccess =
+  simulateApiHarnessJobsScenariosAmendScenariosResponse201 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsScenariosAmendScenariosResponseError =
+  simulateApiHarnessJobsScenariosAmendScenariosResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsScenariosAmendScenariosResponse =
+  | simulateApiHarnessJobsScenariosAmendScenariosResponseSuccess
+  | simulateApiHarnessJobsScenariosAmendScenariosResponseError;
+
+export const getSimulateApiHarnessJobsScenariosAmendScenariosUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-jobs/${id}/scenarios/amend/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsScenariosAmendScenarios = async (
+  id: string,
+  harnessScenarioAmendApi: HarnessScenarioAmendApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsScenariosAmendScenariosResponse> => {
+  return apiMutator<simulateApiHarnessJobsScenariosAmendScenariosResponse>(
+    getSimulateApiHarnessJobsScenariosAmendScenariosUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessScenarioAmendApi),
+    },
+  );
+};
+
+export type simulateApiHarnessJobsScenariosScenarioCoverageResponse200 = {
+  data: void;
+  status: 200;
+};
+
+export type simulateApiHarnessJobsScenariosScenarioCoverageResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessJobsScenariosScenarioCoverageResponseSuccess =
+  simulateApiHarnessJobsScenariosScenarioCoverageResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessJobsScenariosScenarioCoverageResponseError =
+  simulateApiHarnessJobsScenariosScenarioCoverageResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessJobsScenariosScenarioCoverageResponse =
+  | simulateApiHarnessJobsScenariosScenarioCoverageResponseSuccess
+  | simulateApiHarnessJobsScenariosScenarioCoverageResponseError;
+
+export const getSimulateApiHarnessJobsScenariosScenarioCoverageUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-jobs/${id}/scenarios/coverage/`;
+};
+
+/**
+ * Validates the v1.6 request contract and delegates execution to the public backend selected by
+``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
+selects its managed sandbox runtime.
+ * @summary Provider-neutral control plane for hosted ALK harness jobs.
+ */
+export const simulateApiHarnessJobsScenariosScenarioCoverage = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsScenariosScenarioCoverageResponse> => {
+  return apiMutator<simulateApiHarnessJobsScenariosScenarioCoverageResponse>(
+    getSimulateApiHarnessJobsScenariosScenarioCoverageUrl(id),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };

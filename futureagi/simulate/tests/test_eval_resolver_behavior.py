@@ -1038,22 +1038,12 @@ class TestSubjectDispatchRobustness:
 def test_xl_error_write_stamps_failed_status(
     run_test, call_execution, transcript_data, eval_template
 ):
-    """``xl.py::_run_single_evaluation``'s generic-exception write
-    (``xl.py:1091``) actually runs and stamps ``"status":
-    StatusType.FAILED.value`` on the row it writes -- and that row does not
-    seal under ``has_stored_verdict``. Unlike ``test_has_stored_verdict_edge_shapes``
-    (which hand-plants the post-fix shape) and
-    ``test_xl_standalone_an_errored_grading_row_does_not_seal`` (which mocks
-    ``_run_single_evaluation`` out of the run entirely), this drives the real
-    function through its real error path, so the writer and the predicate
-    are tied together by a test that can actually go red if either drifts
-    (whole-change review round 4, M1).
-
-    Proof by removal: delete the ``"status": StatusType.FAILED.value,`` line
-    at ``xl.py:1091`` and this test fails -- ``row["status"]`` no longer
-    exists (``KeyError``). Restored afterwards; sha256 of ``xl.py`` before and
-    after the removal round-trip matches (see
-    ``.superpowers/sdd/final-review.md``, "Fix round 4").
+    """``xl.py::_run_single_evaluation``'s generic-exception write actually
+    runs and stamps ``"status": StatusType.FAILED.value`` on the row it
+    writes -- and that row does not seal under ``has_stored_verdict``. This
+    drives the real function through its real error path, so the writer and
+    the predicate are tied together by a test that can go red if either
+    drifts.
     """
     from model_hub.views.utils import evals as evals_mod
 
@@ -1073,42 +1063,19 @@ def test_xl_error_write_stamps_failed_status(
 def test_xl_mismatch_error_write_stamps_failed_status(
     run_test, call_execution, transcript_data, eval_template
 ):
-    """``xl.py::_run_single_evaluation``'s column-mismatch write
-    (``xl.py:959``) also stamps ``"status": StatusType.FAILED.value`` --
-    proven independently of ``test_xl_error_write_stamps_failed_status``
-    above, which only exercises the *generic*-exception write
-    (``xl.py:1091``).
-
-    The mismatch branch's ``raise ValueError(...)`` (``xl.py:966``) is inside
-    the same ``try`` the generic-exception ``except`` wraps, so whatever this
-    branch writes is immediately overwritten by that *second* write on the
-    way out -- the final persisted row can never show, by itself, whether
-    the first write's stamp existed at all; both writes independently stamp
-    ``status``, so a black-box read of the final row alone cannot isolate
-    either one from the other. A spy on ``call_execution.save`` (wraps the
-    real save, does not replace it) captures a deep copy of ``eval_outputs``
-    at the moment of each save call, so the *first* snapshot is exactly what
-    the mismatch branch wrote, before the second write clobbers it. That
-    makes this test sensitive to ``xl.py:959``'s stamp specifically: deleting
-    it (and only it) turns this test red -- via the first-snapshot
-    assertions above -- without touching
-    ``test_xl_error_write_stamps_failed_status`` (whole-change review round
-    4, M1). ``xl.py:1091``'s stamp is not isolated the same way: it is the
-    *final*, persisted row here too (the assertions at :1133-1136 below
-    read it after the mismatch branch's write has already been
-    overwritten), so deleting it turns both this test and
-    ``test_xl_error_write_stamps_failed_status`` red (whole-change review
-    round 5, L2 -- round 4's docstring claimed the two tests were isolated
-    in both directions; the fix round's own verification log showed
-    otherwise for this direction).
+    """``xl.py::_run_single_evaluation``'s column-mismatch write also stamps
+    ``"status": StatusType.FAILED.value``, but its ``raise ValueError`` is
+    inside the same ``try`` the generic-exception ``except`` wraps, so
+    whatever it writes is immediately overwritten by that second write on
+    the way out -- the final persisted row alone can't show whether the
+    first write's stamp existed. A spy on ``call_execution.save`` (wraps the
+    real save) captures a deep copy of ``eval_outputs`` at each save call, so
+    the first snapshot is exactly what the mismatch branch wrote, before the
+    second write clobbers it.
 
     A mapping value that is a syntactically valid UUID but matches no real
     ``Column`` reaches the "not available in the test scenario(s)" message
-    without raising anywhere upstream (a non-UUID value would raise
-    ``ValidationError`` out of the ``Column.objects.filter(id__in=...)``
-    batch fetch before this branch is even reached, landing on the generic
-    write instead) -- exactly the shape ``test_a_pending_placeholder_row_does_not_seal``'s
-    siblings use to reach this branch.
+    without raising anywhere upstream.
     """
     ec = _make_eval({"x": str(uuid.uuid4())}, run_test, eval_template)
 
@@ -1583,15 +1550,30 @@ class TestLegacyTranscriptRecordingResolution:
         assert xl_transcript_data["assistant_recording"] == "s3://bucket/assistant.mp3"
         assert xl_transcript_data["customer_recording"] == "s3://bucket/customer.mp3"
 
+    def test_persisted_recordings_do_not_require_voice_provider_client(
+        self, call_execution
+    ):
+        call_execution.provider_call_data = {
+            "livekit": {
+                "engine": "livekit",
+                "recording": {},
+            }
+        }
+        executor = TestExecutor(initialize_voice_service=False)
+
+        transcript_data = executor._get_call_transcript_data(
+            call_execution, url_save_only=True
+        )
+
+        assert transcript_data["voice_recording"] == call_execution.recording_url
+        assert (
+            transcript_data["stereo_recording"]
+            == call_execution.stereo_recording_url
+        )
+
 
 # ---------------------------------------------------------------------------
 # TH-8045 -- sealed verdicts.
-# Contract api_contracts/harness/eval-offer-backend-frontend.md v1.6 P20, P23,
-# F2; design §7; diagrams lld-4-add-from-run.puml (the guard block) and
-# lld-5-verdict-lifecycle.puml (GradingSkipped, Removed). `copy`, `inspect`,
-# `SimpleNamespace`, `_run_simulate_evaluations_task` and
-# `has_stored_verdict` used below are imported at the top of the file
-# (whole-change review round 3, L9).
 # ---------------------------------------------------------------------------
 
 _STORED_VERDICT = {
@@ -1662,8 +1644,7 @@ def test_task_skip_existing_honours_config_id(
     eval_template,
 ):
     """skip-existing on: the sealed config is not graded and not rewritten;
-    a sibling config with no verdict still is. Contract P20; lld-4 restored
-    loop branch."""
+    a sibling config with no verdict still is."""
     _no_tool_eval(run_test)
     mock_transcript.return_value = transcript_data
     sealed = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
@@ -1765,13 +1746,10 @@ _HAS_STORED_VERDICT_CFG_ID = "abc12300-0000-0000-0000-000000000000"
             True,
             id="legacy_status_less_errored_row_seals",
         ),
-        # L4 (whole-change review round 3): the isinstance(row, dict) guard
-        # exists to make a truthy non-dict row not crash; these pin what it
-        # returns for the shapes it exists to survive. Owner's rule -- "any
-        # other non-empty row seals" -- draws no distinction on the row's
-        # type, only on dict rows carrying one of the three non-sealing
-        # statuses; a non-dict row can never carry a "status" key, so it
-        # always seals when truthy.
+        # The isinstance(row, dict) guard exists to make a truthy non-dict
+        # row not crash; these pin what it returns for those shapes -- a
+        # non-dict row can never carry a "status" key, so it always seals
+        # when truthy.
         pytest.param(
             {_HAS_STORED_VERDICT_CFG_ID: "Passed"},
             True,
@@ -1795,49 +1773,12 @@ _HAS_STORED_VERDICT_CFG_ID = "abc12300-0000-0000-0000-000000000000"
     ],
 )
 def test_has_stored_verdict_edge_shapes(eval_outputs, expected):
-    """``has_stored_verdict`` returns False only for a row that is a pending
-    placeholder, a skipped payload or a ``Failed`` grading -- any other
-    non-empty row seals, including a status-less one -- table-driven over the
-    edge shapes the docstring only describes in prose, so the predicate's
-    contract is executable rather than prose.
-
-    A ``{"status": "pending"}`` placeholder, a skipped payload (``status``
-    ``"skipped"``, ``build_skipped_eval_output_payload``'s shape) and an
-    errored grading row (``status`` ``StatusType.FAILED.value``) all do NOT
-    seal -- the run-level add grades those calls again (owner's rule,
-    whole-change review round 2, M2). ``{}``, ``None`` and a missing key all
-    fail to seal too.
-
-    ``status_less_non_empty_row_seals_conservative_form`` pins the
-    conservative form the predicate implements: a non-empty row whose
-    ``status`` is none of the three non-sealing values seals, even with no
-    ``status`` key at all (``simulate/utils/verdicts.py::has_stored_verdict``'s
-    docstring has the full writer-by-writer evidence).
-
-    ``xl_shaped_errored_row_with_status_does_not_seal`` and
-    ``legacy_status_less_errored_row_seals`` pin the round-3 fix and its
-    documented consequence (whole-change review round 3, M1):
-    ``xl.py::_run_single_evaluation``'s error writes now stamp ``"status":
-    StatusType.FAILED.value`` (mirroring the Celery path), so a fresh errored
-    grading on the Temporal path does not seal; but a row written by the old
-    code -- status-less, otherwise identical -- still seals, because the
-    predicate cannot distinguish "no status because it errored before this
-    fix" from any other status-less completed row. Such a legacy row can
-    only be re-graded by the eval-only re-run, which wipes ``eval_outputs``
-    wholesale.
-
-    ``non_dict_str_row_seals``, ``non_dict_list_row_seals``,
-    ``non_dict_int_row_seals`` and ``dict_with_non_string_status_seals``
-    (whole-change review round 3, L4) exercise the one shape nothing
-    previously covered: a truthy row that is not a dict (the
-    ``isinstance(row, dict)`` guard exists precisely so this does not raise),
-    and a dict whose ``status`` is present but not a string. Both seal --
-    consistent with the owner's rule, which draws no distinction on the
-    row's type or the status's type, only on whether a dict row's ``status``
-    is one of the three known non-sealing strings.
-
-    Contract api_contracts/harness/eval-offer-backend-frontend.md v1.6 F2.
-    """
+    """``has_stored_verdict`` returns False only for a pending placeholder, a
+    skipped payload, or a ``Failed`` grading -- any other non-empty row
+    seals, including a status-less one. Also covers a legacy status-less
+    errored/no-transcript row (still seals, indistinguishable from a real
+    completed row) and a truthy non-dict row (always seals, since it can
+    never carry a "status" key)."""
     call_execution = SimpleNamespace(eval_outputs=eval_outputs)
 
     assert has_stored_verdict(call_execution, _HAS_STORED_VERDICT_CFG_ID) is expected
@@ -1857,19 +1798,15 @@ def test_a_pending_placeholder_row_does_not_seal(
     eval_template,
 ):
     """A ``{"status": "pending"}`` placeholder is written by the bulk rerun
-    paths before grading starts (not a verdict) -- so it does not seal under
-    skip-existing. The pending config is graded exactly like a fresh one, and
-    grading replaces its row with the real verdict. Owner-confirmed (M1,
-    whole-change review: a pending placeholder does NOT seal).
+    paths before grading starts (not a verdict), so it does not seal under
+    skip-existing: the pending config is graded like a fresh one, and grading
+    replaces its row with the real verdict.
 
     The final assertion checks ``call_metadata["eval_completed"]`` rather
     than only re-comparing ``eval_outputs`` to the mock's own write: that
-    flag is set by ``_check_and_update_eval_completion``, real production
-    code that re-reads ``eval_outputs`` from the database and would only
-    flip it once the row is no longer ``"pending"``. The mock's side effect
-    never touches ``call_metadata``, so this proves the production
-    completion check itself saw the row as no longer pending -- something
-    the mock cannot satisfy on its own (whole-change review round 2, L6)."""
+    flag is set by ``_check_and_update_eval_completion``, which re-reads
+    ``eval_outputs`` from the database, so this proves the production
+    completion check itself saw the row as no longer pending."""
     _no_tool_eval(run_test)
     mock_transcript.return_value = transcript_data
     pending_config = _make_eval(
@@ -1907,15 +1844,10 @@ def test_a_skipped_payload_row_does_not_seal(
     eval_template,
 ):
     """A stored skipped payload (``build_skipped_eval_output_payload``'s
-    six-key shape, ``status`` ``"skipped"``) is not a verdict -- it is what
-    the "conversation too short" / "no transcript" branches write before the
-    per-eval loop, for a call whose inputs can change later (a receipt
-    re-ingest rewrites transcript rows). The run-level add (TH-8046) is the
-    only caller that will ever pass ``skip_existing=True``; if a skipped
-    payload sealed, a call skipped once could never be graded again except
-    by an eval-only re-run that wipes every other eval's verdict on the call.
-    So the config is graded exactly like a fresh one. Owner's rule, 2026-09-23
-    night, whole-change review round 2, M2; contract v1.5 F2."""
+    shape, ``status`` ``"skipped"``) is not a verdict -- it is what the
+    "conversation too short" / "no transcript" branches write before the
+    per-eval loop, for a call whose inputs can change later. So the config
+    is graded exactly like a fresh one."""
     _no_tool_eval(run_test)
     mock_transcript.return_value = transcript_data
     skipped_config = _make_eval(
@@ -1945,12 +1877,9 @@ def test_an_errored_grading_row_does_not_seal(
     eval_template,
 ):
     """An errored grading row (``status`` ``StatusType.FAILED.value``, the
-    shape ``_run_single_simulate_evaluation``'s ``except`` branch writes at
-    ``test_executor.py:4978-4989`` / ``:5119-5130``) is not a verdict either
-    -- a judge outage during a run-level add must not permanently seal the
-    call for this config. Mirrors ``test_a_skipped_payload_row_does_not_seal``.
-    Owner's rule, 2026-09-23 night, whole-change review round 2, M2; contract
-    v1.6 F2."""
+    shape ``_run_single_simulate_evaluation``'s ``except`` branch writes) is
+    not a verdict either -- a judge outage during a run-level add must not
+    permanently seal the call for this config."""
     _no_tool_eval(run_test)
     mock_transcript.return_value = transcript_data
     errored_config = _make_eval(
@@ -1989,8 +1918,7 @@ def test_skip_existing_off_still_regrades_a_stored_verdict(
 ):
     """skip-existing off is exactly today's behaviour -- the receipt path and
     the eval-only re-run keep overwriting. Documented on purpose so nobody
-    "fixes" it silently (design §7's last bullet applies to the run-level add,
-    not to a re-ingest)."""
+    "fixes" it silently."""
     _no_tool_eval(run_test)
     mock_transcript.return_value = transcript_data
     sealed = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
@@ -2011,10 +1939,9 @@ def test_skipped_branch_never_replaces_a_real_verdict(
     call_execution,
     eval_template,
 ):
-    """ "Conversation too short" with skip-existing on: the sealed config keeps
-    its verdict byte-for-byte, a config with no verdict gets the skipped
-    payload. Contract F2; lld-4 "write a skipped result ONLY if the row for
-    this eval is empty"."""
+    """ "Conversation too short" with skip-existing on: the sealed config
+    keeps its verdict byte-for-byte, a config with no verdict gets the
+    skipped payload."""
     _no_tool_eval(run_test)
     sealed = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
     empty = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
@@ -2070,8 +1997,7 @@ def test_no_transcript_branch_never_replaces_a_real_verdict(
     eval_template,
 ):
     """The "no transcript" branch routes through the same helper, so it is
-    guarded too -- it swallows any read error into an empty transcript
-    (design §7)."""
+    guarded too -- it swallows any read error into an empty transcript."""
     _no_tool_eval(run_test)
     mock_transcript.return_value = {**transcript_data, "transcript": ""}
     sealed = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
@@ -2089,9 +2015,8 @@ def test_no_transcript_branch_never_replaces_a_real_verdict(
 
 
 # ---------------------------------------------------------------------------
-# H2 -- xl.py's standalone (Temporal) evaluation orchestrator mirrors the same
-# skip-existing guards as TestExecutor._run_simulate_evaluations. Contract
-# v1.4 P20/F2; final-review.md H2.
+# xl.py's standalone (Temporal) evaluation orchestrator mirrors the same
+# skip-existing guards as TestExecutor._run_simulate_evaluations.
 # ---------------------------------------------------------------------------
 
 
@@ -2114,10 +2039,7 @@ def test_xl_standalone_honours_skip_existing(
 ):
     """skip-existing on: the sealed config is not re-graded by xl.py's
     standalone orchestrator and its row is not rewritten; a sibling config
-    with no verdict still is graded. Same body as
-    ``test_task_skip_existing_honours_config_id``, adapted to xl.py's names
-    -- the judge is ``_run_single_evaluation`` and the transcript builder is
-    ``_build_transcript_data``."""
+    with no verdict still is graded."""
     from simulate.temporal.activities.xl import _run_evaluations_standalone
 
     _no_tool_eval(run_test)
@@ -2172,21 +2094,13 @@ def test_xl_standalone_no_transcript_branch_never_replaces_a_real_verdict(
     eval_template,
 ):
     """The "no transcript" branch is reachable in isolation on the xl.py path
-    (unlike the Celery path, it does not route through a shared helper, so
-    it needed its own guard -- see the xl.py fix) -- with skip-existing on,
-    the sealed config keeps its verdict byte-for-byte and a config with no
-    verdict gets the "no transcript" payload.
-
-    The payload is `build_skipped_eval_output_payload`'s six-key shape
-    (``status`` ``"skipped"``), matching the Celery path's "conversation too
-    short" / "no transcript" branches, rather than the four-key ad-hoc dict
-    the xl.py writer used before (whole-change review round 3, M1: the
-    ad-hoc dict carried no ``status`` key, so an errored grading on this path
-    sealed forever) -- except ``output_type``, which this write restores to
-    the derived KPI type instead of the builder's ``None`` (whole-change
-    review round 5, M1: see
-    ``test_xl_standalone_no_transcript_write_keeps_derived_output_type`` for
-    the dedicated, remove-to-fail proof)."""
+    (it does not route through a shared helper, so it needed its own guard)
+    -- with skip-existing on, the sealed config keeps its verdict
+    byte-for-byte and a config with no verdict gets the "no transcript"
+    payload, in ``build_skipped_eval_output_payload``'s shape except for
+    ``output_type``, which this write restores to the derived KPI type
+    instead of the builder's ``None`` (see
+    ``test_xl_standalone_no_transcript_write_keeps_derived_output_type``)."""
     from simulate.temporal.activities.xl import _run_evaluations_standalone
 
     _no_tool_eval(run_test)
@@ -2217,19 +2131,12 @@ def test_xl_standalone_no_transcript_write_keeps_derived_output_type(
     transcript_data,
     eval_template,
 ):
-    """M1 (whole-change review round 5): the no-transcript write in
-    ``_run_evaluations_standalone`` switched to
-    ``build_skipped_eval_output_payload`` (round 3's M1 fix, to carry
-    ``status``/``skipped`` so the row stops sealing forever), but that
-    builder always sets ``output_type`` to ``None``. The pre-ticket write
-    set ``output_type`` to ``derive_kpi_output_type(eval_config.eval_template)``
-    so ``get_kpi_eval_metrics_query``'s ``WHERE output_type IN (...)`` filter
-    keeps the row instead of silently dropping the metric. The fix restores
-    that derivation on top of the skipped-payload shape.
-
-    Removal proof: delete the ``skipped_payload["output_type"] = ...`` line
-    in ``xl.py``'s no-transcript branch and this test goes red (the stored
-    row's ``output_type`` reads back ``None``, not the derived value)."""
+    """The no-transcript write in ``_run_evaluations_standalone`` switched to
+    ``build_skipped_eval_output_payload``, but that builder always sets
+    ``output_type`` to ``None``. ``get_kpi_eval_metrics_query``'s ``WHERE
+    output_type IN (...)`` filter needs the derived KPI type to keep the row
+    instead of silently dropping the metric, so the write restores that
+    derivation on top of the skipped-payload shape."""
     from simulate.temporal.activities.xl import _run_evaluations_standalone
 
     _no_tool_eval(run_test)
@@ -2260,11 +2167,9 @@ def test_task_an_xl_shaped_errored_row_with_status_does_not_seal(
     eval_template,
 ):
     """The exact row shape ``xl.py::_run_single_evaluation`` now writes on an
-    error (``status`` ``StatusType.FAILED.value``, whole-change review round
-    3, M1 fix) does not seal on the ``TestExecutor`` loop either -- the two
-    write paths must agree, since both go through the same predicate. Same
-    body as ``test_an_errored_grading_row_does_not_seal``, with the xl.py
-    field set (``timestamp``, no ``skipped`` key)."""
+    error (``status`` ``StatusType.FAILED.value``) does not seal on the
+    ``TestExecutor`` loop either -- the two write paths must agree, since
+    both go through the same predicate."""
     _no_tool_eval(run_test)
     mock_transcript.return_value = transcript_data
     errored_config = _make_eval(
@@ -2301,12 +2206,9 @@ def test_xl_standalone_an_errored_grading_row_does_not_seal(
     eval_template,
 ):
     """An errored grading row as ``xl.py::_run_single_evaluation`` now writes
-    it -- ``status`` ``StatusType.FAILED.value`` (whole-change review round
-    3, M1 fix) -- is not a verdict on the standalone/Temporal path either: a
-    judge outage during a run-level add must not permanently seal the call
-    for this config. Mirrors ``test_an_errored_grading_row_does_not_seal``
-    and ``test_task_an_xl_shaped_errored_row_with_status_does_not_seal``,
-    adapted to xl.py's names. Contract v1.6 F2."""
+    it (``status`` ``StatusType.FAILED.value``) is not a verdict on the
+    standalone/Temporal path either: a judge outage during a run-level add
+    must not permanently seal the call for this config."""
     from simulate.temporal.activities.xl import _run_evaluations_standalone
 
     _no_tool_eval(run_test)
@@ -2344,17 +2246,13 @@ def test_xl_standalone_legacy_status_less_errored_row_seals(
     transcript_data,
     eval_template,
 ):
-    """Documented behaviour (whole-change review round 3, M1): a row written
-    by the code as it stood *before* this round's fix -- an errored grading
-    with no ``status`` key at all, the exact shape
-    ``xl.py::_run_single_evaluation`` used to write -- is indistinguishable
-    from any other status-less completed row, so it still seals. It is
-    treated as a verdict and is not re-graded even with ``skip_existing``
-    on; the eval-only re-run (which wipes ``eval_outputs`` wholesale) is the
-    only way to clear it. This is the intended, documented consequence of
-    the conservative predicate form, not a bug -- see
-    ``simulate/utils/verdicts.py::has_stored_verdict``'s docstring and
-    contract v1.6 F2's last sentence."""
+    """A row written by the code as it stood before this fix -- an errored
+    grading with no ``status`` key at all -- is indistinguishable from any
+    other status-less completed row, so it still seals. It is treated as a
+    verdict and is not re-graded even with ``skip_existing`` on; the
+    eval-only re-run (which wipes ``eval_outputs`` wholesale) is the only
+    way to clear it. This is the intended, documented consequence of the
+    conservative predicate form, not a bug."""
     from simulate.temporal.activities.xl import _run_evaluations_standalone
 
     _no_tool_eval(run_test)
@@ -2381,21 +2279,14 @@ def test_xl_standalone_legacy_status_less_errored_row_seals(
 
 
 def test_task_signature_supports_the_run_level_add_kwargs():
-    """TH-8046 will call
-    ``_run_simulate_evaluations_task.apply_async(args=(str(call_id),),
-    kwargs={"eval_config_ids": [str(cfg)], "skip_existing": True})``
-    (contract P18a) -- the call id bound **positionally**, so
-    ``call_execution_id`` being the first parameter is load-bearing. Pin that
-    the three names exist with the right defaults -- not the whole parameter
-    list, so an unrelated new keyword-only parameter added later does not
-    fail this test -- but also bind through the real signature with P18a's
-    exact call shape and assert the id lands on ``call_execution_id``: a
-    membership-only check would stay green if the parameters were reordered
-    to put ``eval_config_ids`` first, silently binding the call id to the
-    wrong name at the real call site. Whole-change review round 2, L1 -- a
-    regression in round 1's own L5 fix, which replaced a full
-    ``list(params) == [...]`` equality check with membership checks and lost
-    the positional guarantee."""
+    """The task's call id is bound positionally, so ``call_execution_id``
+    being the first parameter is load-bearing. Pins that the three names
+    exist with the right defaults -- not the whole parameter list, so an
+    unrelated new keyword-only parameter doesn't fail this test -- and binds
+    through the real signature to assert the id lands on
+    ``call_execution_id``, since a membership-only check would stay green
+    even if the parameters were reordered and the call id silently bound to
+    the wrong name."""
     params = inspect.signature(_run_simulate_evaluations_task).parameters
     assert "call_execution_id" in params
     assert "eval_config_ids" in params
@@ -2415,10 +2306,10 @@ def test_receipt_dispatch_binds_skip_existing_false(
 ):
     """The receipt path regrades, on purpose: whatever shape it calls
     ``apply_async`` with, the effective ``skip_existing`` the task receives is
-    False. Bound through the real signature rather than pinned call shape, so
-    a behaviour-identical refactor of the dispatch call (e.g. moving the
+    False. Bound through the real signature rather than a pinned call shape,
+    so a behaviour-identical refactor of the dispatch call (e.g. moving the
     positional args into kwargs) does not fail this test. Documenting today's
-    behaviour so nobody "fixes" it silently (design §7, lld-4's guard note)."""
+    behaviour so nobody "fixes" it silently."""
     from simulate.services.alk_simulate_ingestion import _dispatch_evaluations_once
 
     config = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)

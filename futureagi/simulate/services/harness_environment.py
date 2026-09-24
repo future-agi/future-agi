@@ -13,6 +13,7 @@ new is computed at read time, and no field is invented when its source is absent
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from django.db.models import Count, Prefetch, Q, QuerySet
@@ -49,7 +50,7 @@ _RUN_STATES = frozenset(
 # Transports that carry audio. A source that serves both voice and HTTP lists
 # both connectors, and voice wins: the recording is the thing that would be lost
 # if the environment were rendered as chat.
-_VOICE_CONNECTORS = frozenset({"livekit", "vapi", "retell"})
+_VOICE_CONNECTORS = frozenset({"livekit", "vapi", "retell", "phone"})
 
 AGENT_TYPE_VOICE = "voice"
 AGENT_TYPE_CHAT = "chat"
@@ -346,6 +347,7 @@ def environment_detail(job: HostedHarnessJob) -> dict[str, Any]:
             "personas_count": len(personas) if personas else None,
             "evaluations_count": len(selected),
             "run": _run_link(job),
+            "agent": _agent(job),
         }
     )
     return {
@@ -441,6 +443,11 @@ def _status_of(reg, receipt: HostedHarnessReceipt | None) -> str:
     return receipt.status if receipt is not None else "running"
 
 
+def _registration_key(value: Any) -> str:
+    """The key the runner registers a scenario under: its name slugged to ASCII."""
+    return re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
+
+
 def _scenarios(
     registrations: list,
     docs: Any,
@@ -451,14 +458,15 @@ def _scenarios(
     by_key: dict[str, dict[str, Any]] = {}
     for doc in docs if isinstance(docs, list) else []:
         if isinstance(doc, dict):
-            key = str(doc.get("scenario_key") or doc.get("name") or "")
-            if key:
-                by_key[key] = doc
+            for key in (doc.get("scenario_key"), doc.get("name")):
+                normalized = _registration_key(key)
+                if normalized:
+                    by_key.setdefault(normalized, doc)
     goals = _catalogue_index(catalogue)
     scenarios: list[dict[str, Any]] = []
     for reg in registrations:
         platform_name = getattr(reg.scenario, "name", "") or ""
-        doc = by_key.get(reg.scenario_key) or by_key.get(platform_name) or {}
+        doc = by_key.get(_registration_key(reg.scenario_key)) or {}
         cells = rows.get(str(reg.dataset_row_id), {}) if reg.dataset_row_id else {}
         fixture = doc.get("fixture")
         steps = doc.get("steps")
@@ -523,7 +531,7 @@ def _selected_evals(job: HostedHarnessJob) -> list[dict[str, Any]]:
     Only the rows that carry a mapping. A row with an empty mapping is one
     ingestion made for one of the harness's own result columns: it is bound to
     the run, but nobody selected it, it is not a "selected eval", and it does
-    not count toward the cap of 8 (frontend contract P16).
+    not count toward the cap of 8.
 
     Each row is the same entry the picker shows, built from the mapping that is
     actually stored — so what was shown when it was added is what runs — plus
@@ -542,25 +550,14 @@ def _selected_evals(job: HostedHarnessJob) -> list[dict[str, Any]]:
     modality = eval_modality(job)
     rows: list[dict[str, Any]] = []
     for config in selected_eval_configs(run_test, mapping_only=True):
-        # `eval_template` is a non-nullable FK (`SimulateEvalConfig.eval_template`
-        # is `null=False`) joined by `select_related`, which returns the row
-        # regardless of the template's own soft-delete state, so this is never
-        # `None` (L7: a prior `if template is None: continue` guard here was
-        # dead code, confirmed by the FK constraint and the join).
+        # `eval_template` is a non-nullable FK joined by `select_related`, so
+        # this is never `None` regardless of the template's own soft-delete
+        # state.
         template = config.eval_template
-        # M1 (round 3): `inputs` is built from a mapping already narrowed to
-        # the template's *live* `required_keys`, the same set the
-        # `required_keys` line below intersects against — not from the raw
-        # stored mapping. Round 2's M4 fix intersected `required_keys`
-        # against the mapping's keys but left `eval_entry`'s `inputs` built
-        # from every key the stored mapping carries; when the template drops
-        # a required key after the bind, that intersect can only ever
-        # *shorten* `required_keys`, so an unnarrowed `inputs` ends up with
-        # more rows than `required_keys` has names — frontend contract P1
-        # ("`inputs` has exactly one row per name in `required_keys`")
-        # broken in the direction M4 left open. Narrowing the mapping before
-        # it reaches `eval_entry` keeps both promises at once: the stored
-        # order below, and exactly one `inputs` row per `required_keys` name.
+        # `inputs` must be built from the mapping narrowed to the template's
+        # live `required_keys`, not the raw stored mapping — otherwise, if the
+        # template later drops a required key, `inputs` ends up with more
+        # rows than `required_keys` has names.
         required_keys = set(_required_keys(template))
         entry = eval_entry(
             template,
@@ -574,27 +571,13 @@ def _selected_evals(job: HostedHarnessJob) -> list[dict[str, Any]]:
         # The name a person added is the config's own, which is what add and
         # remove address; for a row this endpoint created the two are equal.
         entry["name"] = str(config.name or entry["name"])
-        # `required_keys` is realigned to the *stored* mapping's own keys
-        # rather than left as `eval_entry`'s live-template value (L6): the
-        # entry's `required_keys` normally comes from the template's current
-        # `config.required_keys`, but a stored `mapping` is a snapshot taken
-        # when the eval was added. If the template's required keys change
-        # afterwards, the live value and the stored mapping's keys diverge,
-        # and frontend contract P1 ("`inputs` has exactly one row per name in
-        # `required_keys`") breaks for this row — `inputs` still reflects the
-        # stored mapping, but `required_keys` would not.
-        #
-        # Intersected against the template's own stored order rather than
-        # `sorted(config.mapping)` (M4, round 2): frontend contract P1's
-        # *second* sentence promises `required_keys` in the template's
-        # stored order, explicitly "not aligned with `inputs` (which is
-        # sorted)" — `available[]` honours that (`eval_entry`'s
-        # `_required_keys(template)`), and a sorted `required_keys` here put
-        # `selected[]` in breach of the very clause L6 was written to
-        # protect, and made it byte-identical to `inputs`'s own order, which
-        # P1 says must never happen. `_required_keys(template)` filtered to
-        # the keys the stored mapping actually has keeps both promises at
-        # once: stored order, and exactly one `inputs` row per name.
+        # Realigned to the stored mapping's own keys rather than the
+        # template's current `required_keys`: the mapping is a snapshot taken
+        # when the eval was added, so `inputs` (built from it) and a live
+        # `required_keys` could otherwise diverge if the template changes
+        # afterwards. Intersected against the template's own stored order,
+        # not `sorted(mapping)`, since `required_keys` and `inputs` carry
+        # different orders on purpose.
         entry["required_keys"] = [
             key for key in _required_keys(template) if key in (config.mapping or {})
         ]
@@ -778,6 +761,30 @@ def _world_section(
         "runtime": runtime,
         "personas": personas,
         "stores": stores if isinstance(stores, list) else [],
+    }
+
+
+def _agent(job: HostedHarnessJob) -> dict[str, Any] | None:
+    """The agent under test, as the platform recorded it for this environment's run."""
+    from simulate.models import RunTest
+
+    if not job.run_test_id:
+        return None
+    run_test = (
+        RunTest.objects.filter(id=job.run_test_id, deleted=False)
+        .select_related("agent_definition")
+        .first()
+    )
+    definition = getattr(run_test, "agent_definition", None)
+    if definition is None:
+        return None
+    latest = definition.latest_version
+    return {
+        "id": str(definition.id),
+        "name": definition.agent_name or None,
+        "provider": definition.provider or None,
+        "versions_count": definition.version_count,
+        "active_version": f"v{latest.version_number}" if latest else None,
     }
 
 

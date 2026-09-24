@@ -106,6 +106,14 @@ class HarnessEnvironmentRunLinkSerializer(serializers.Serializer):
     simulation_url = serializers.CharField(allow_null=True)
 
 
+class HarnessEnvironmentAgentSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField(allow_null=True)
+    provider = serializers.CharField(allow_null=True)
+    versions_count = serializers.IntegerField()
+    active_version = serializers.CharField(allow_null=True)
+
+
 class HarnessEnvironmentOverviewSerializer(HarnessEnvironmentSerializer):
     """The list row plus the counts the overview draws; each null until authored."""
 
@@ -114,6 +122,7 @@ class HarnessEnvironmentOverviewSerializer(HarnessEnvironmentSerializer):
     personas_count = serializers.IntegerField(allow_null=True)
     evaluations_count = serializers.IntegerField()
     run = HarnessEnvironmentRunLinkSerializer()
+    agent = HarnessEnvironmentAgentSerializer(allow_null=True)
 
 
 class HarnessEnvironmentAddEvaluationSerializer(serializers.Serializer):
@@ -149,7 +158,7 @@ class HarnessEnvironmentEvalInputSerializer(serializers.Serializer):
     """Which stored piece of a call fills one of an eval's required keys.
 
     ``label`` is the only text a picker shows for a source: the frontend never
-    computes which source fills a key (frontend contract P1, F1).
+    computes which source fills a key.
     """
 
     key = serializers.CharField()
@@ -356,8 +365,8 @@ class HarnessEnvironmentSelectedEvalSerializer(HarnessEnvironmentOfferedEvalSeri
 
     Only the configs that carry a mapping are listed; the rows ingestion
     creates for the harness's own result columns are bound to the run but were
-    never selected (frontend contract P16). ``runnable`` is therefore always
-    true here and is kept because the frontend already reads it.
+    never selected. ``runnable`` is therefore always true here and is kept
+    because the frontend already reads it.
     """
 
     id = serializers.UUIDField()
