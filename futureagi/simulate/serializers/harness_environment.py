@@ -106,6 +106,14 @@ class HarnessEnvironmentRunLinkSerializer(serializers.Serializer):
     simulation_url = serializers.CharField(allow_null=True)
 
 
+class HarnessEnvironmentAgentSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField(allow_null=True)
+    provider = serializers.CharField(allow_null=True)
+    versions_count = serializers.IntegerField()
+    active_version = serializers.CharField(allow_null=True)
+
+
 class HarnessEnvironmentOverviewSerializer(HarnessEnvironmentSerializer):
     """The list row plus the counts the overview draws; each null until authored."""
 
@@ -114,6 +122,7 @@ class HarnessEnvironmentOverviewSerializer(HarnessEnvironmentSerializer):
     personas_count = serializers.IntegerField(allow_null=True)
     evaluations_count = serializers.IntegerField()
     run = HarnessEnvironmentRunLinkSerializer()
+    agent = HarnessEnvironmentAgentSerializer(allow_null=True)
 
 
 class HarnessEnvironmentAddEvaluationSerializer(serializers.Serializer):

@@ -35,7 +35,7 @@ def service_for_model(model: object) -> str | None:
 def _cloud_gateway_credentials() -> tuple[str, str]:
     from ee.usage.services.gateway_llm_client import _get_setting
 
-    base_url = _get_setting("AGENTCC_INTERNAL_URL", "http://agentcc-gateway:8090")
+    base_url = _get_setting("AGENTCC_INTERNAL_URL", "http://agentcc-gateway:8080")
     api_key = _get_setting("AGENTCC_INTERNAL_API_KEY")
     if not api_key:
         raise ManagedServiceError(

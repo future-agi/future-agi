@@ -47,6 +47,16 @@ _EVENT_TYPES = {
     "log",
     "terminal",
 }
+# Closed parallelism-degrade enum, exactly C4 §2's FIVE members (v1.3, FROZEN).
+# ``port_not_consumable`` is deliberately NOT here — it is a TERMINAL JOB FAILURE
+# (decision D28 / C1 v1.3 §4), surfaced via failure.code, never a degrade event.
+_DEGRADE_REASONS = {
+    "resource_limited",
+    "literal_local_endpoint",
+    "world_start_failed",
+    "fixed_port",
+    "conformance_gate_failed",
+}
 _TERMINAL_STAGES = {"completed", "failed", "canceled"}
 _ARTIFACT_KINDS = {
     "recording_combined",
@@ -141,6 +151,7 @@ def ingest_result_receipt(
     body: dict[str, Any],
     *,
     digest_body: dict[str, Any] | None = None,
+    recovered_artifact_ids: list[str] | None = None,
 ) -> tuple[HostedHarnessReceipt, bool]:
     from simulate.services.harness_usage import replay_harness_usage
 
@@ -194,7 +205,9 @@ def ingest_result_receipt(
                 # contract modality) was synchronized.  Re-applying the same
                 # sealed receipt is safe and repairs that derived state without
                 # requiring another customer call.
-                _apply_receipt_to_call(registration, body)
+                _apply_receipt_to_call(
+                    registration, body, recovered_artifact_ids=recovered_artifact_ids
+                )
                 update_execution_counts(attempt.job)
                 transaction.on_commit(lambda: replay_harness_usage(attempt))
                 return existing, False
@@ -254,7 +267,9 @@ def ingest_result_receipt(
                 status=body["status"],
                 body=_json_ready(body),
             )
-        _apply_receipt_to_call(registration, body)
+        _apply_receipt_to_call(
+            registration, body, recovered_artifact_ids=recovered_artifact_ids
+        )
         update_execution_counts(attempt.job)
         transaction.on_commit(lambda: replay_harness_usage(attempt))
         return receipt, True
@@ -348,15 +363,20 @@ def ingest_artifact(
     )
     temporary.seek(0)
     object_key = f"alk-harness/{attempt.job.organization_id}/{attempt.job_id}/{digest}"
-    get_storage_client().put_object(
-        bucket_name=UPLOAD_BUCKET_NAME,
-        object_name=object_key,
-        data=temporary,
-        length=size,
-        content_type=content_type,
-    )
-    temporary.close()
+    try:
+        get_storage_client().put_object(
+            bucket_name=UPLOAD_BUCKET_NAME,
+            object_name=object_key,
+            data=temporary,
+            length=size,
+            content_type=content_type,
+        )
+    finally:
+        # Every scenario can upload artifacts concurrently; do not retain a spooled file when
+        # storage is unavailable or rejects the object.
+        temporary.close()
 
+    budget_exceeded = False
     with transaction.atomic():
         job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
             id=attempt.job_id
@@ -376,9 +396,35 @@ def ingest_artifact(
                 job=job, sha256=digest
             )
             return artifact, False
-        job.uploaded_artifact_bytes += size
-        job.save(update_fields=["uploaded_artifact_bytes", "updated_at"])
-        return artifact, True
+        # The first budget check is only an early rejection. Other scenario uploads can finish
+        # while this artifact is being streamed to object storage, so repeat the decision while
+        # holding the job row lock immediately before accounting bytes.
+        absolute_budget = int(job.max_artifact_bytes * 1.1)
+        if job.uploaded_artifact_bytes + size > absolute_budget:
+            budget_exceeded = True
+        else:
+            job.uploaded_artifact_bytes += size
+            job.save(update_fields=["uploaded_artifact_bytes", "updated_at"])
+            return artifact, True
+
+    # The object was uploaded before the final accounting lock. Remove a rejected unique object
+    # so a losing concurrent upload does not leave untracked storage behind. Cleanup is best effort
+    # because the budget rejection itself must remain authoritative if storage is degraded.
+    if budget_exceeded:
+        try:
+            get_storage_client().remove_object(UPLOAD_BUCKET_NAME, object_key)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "failed to remove over-budget harness artifact", exc_info=True
+            )
+        raise HostedHarnessError(
+            "artifact_budget_exceeded",
+            "artifact exceeds the remaining job upload budget",
+            status_code=413,
+        )
+    raise HostedHarnessError(
+        "artifact_ingest_failed", "artifact could not be accounted", status_code=500
+    )
 
 
 def ingest_manifest(
@@ -492,6 +538,14 @@ def _validate_event(
     )
     if payload_error:
         return reject("event_payload_invalid", payload_error)
+    if event["type"] == "scenario_started":
+        if not HostedHarnessScenario.no_workspace_objects.filter(
+            job_id=attempt.job_id,
+            scenario_key=event["payload"]["scenario_key"],
+        ).exists():
+            return reject(
+                "scenario_unknown", "scenario key is not registered for this job"
+            )
     existing_id = HostedHarnessEvent.no_workspace_objects.filter(
         event_id=event["event_id"]
     ).first()
@@ -556,10 +610,71 @@ def _store_event(
             .first()
         )
         if registration and registration.call_execution_id:
-            CallExecution.objects.filter(
-                id=registration.call_execution_id,
-                status=CallExecution.CallStatus.PENDING,
-            ).update(status=CallExecution.CallStatus.ONGOING)
+            has_current_receipt = HostedHarnessReceipt.no_workspace_objects.filter(
+                job=attempt.job,
+                scenario=registration,
+                attempt_number=attempt.attempt_number,
+            ).exists()
+            if not has_current_receipt:
+                CallExecution.objects.filter(id=registration.call_execution_id).update(
+                    status=CallExecution.CallStatus.ONGOING,
+                    completed_at=None,
+                    error_message="",
+                )
+    if rejection is None and event["type"] == "parallelism_degraded":
+        # Attempt-level degrade projection (C4 §6, decision D26). We reach here
+        # only on the FIRST store of the event — the event_id dedup guard at the
+        # top of _store_event returns early for a redelivered duplicate — so a
+        # redelivery can never double-append a reason. Effective parallelism is
+        # min-monotone (an out-of-order duplicate carrying a HIGHER effective can
+        # never raise it) and the reason is appended only if absent.
+        payload = event["payload"]
+        effective = payload["effective"]
+        reason = payload["reason"]
+        current = attempt.effective_parallelism
+        reasons = list(attempt.degrade_reasons or [])
+        # C4 §8 per-attempt cross-event invariant check. The two invariants —
+        # effective STRICTLY DECREASING across accepted degrade events, and <=1
+        # event per reason — are WARNING-ONLY: a violation is logged but never
+        # rejects and never changes the projection (still min-monotone below +
+        # append-if-absent), so an out-of-order or duplicate delivery is absorbed.
+        if current is not None and effective >= current:
+            logger.warning(
+                "harness degrade event violates strictly-decreasing effective "
+                "parallelism invariant (C4 §8)",
+                extra={
+                    "job_id": str(attempt.job_id),
+                    "attempt_id": str(attempt.id),
+                    "reason": reason,
+                    "incoming_effective": effective,
+                    "recorded_effective": current,
+                },
+            )
+        if reason in reasons:
+            logger.warning(
+                "harness degrade event repeats a reason already recorded for "
+                "the attempt (C4 §8)",
+                extra={
+                    "job_id": str(attempt.job_id),
+                    "attempt_id": str(attempt.id),
+                    "reason": reason,
+                    "incoming_effective": effective,
+                    "recorded_effective": current,
+                },
+            )
+        attempt.effective_parallelism = (
+            effective if current is None else min(current, effective)
+        )
+        if reason not in reasons:
+            reasons.append(reason)
+        attempt.degrade_reasons = reasons
+        attempt.save(
+            update_fields=[
+                "effective_parallelism",
+                "degrade_reasons",
+                "updated_at",
+            ]
+        )
     if rejection is None and event["type"] == "terminal":
         payload = event["payload"]
         attempt.terminal_stage = payload["stage"]
@@ -618,10 +733,14 @@ def _event_payload_error(event_type: str, stage: str, payload: object) -> str | 
     if event_type == "stage_changed":
         if set(payload) != {"from", "to"} or payload["to"] != stage:
             return "stage_changed requires exactly from/to and stage == to"
+    elif event_type == "scenario_started":
+        key = payload.get("scenario_key")
+        if not isinstance(key, str) or not key.strip() or len(key) > 255:
+            return "scenario_started requires a nonempty scenario key"
     elif event_type == "parallelism_degraded":
         if set(payload) != {"requested", "effective", "reason"}:
             return "parallelism_degraded requires requested/effective/reason"
-        if payload["reason"] not in {"conformance_gate_failed", "fixed_port"}:
+        if payload["reason"] not in _DEGRADE_REASONS:
             return "invalid parallelism degradation reason"
         if not (
             isinstance(payload["requested"], int)
@@ -692,8 +811,29 @@ def _assert_receipt_artifacts(job: HostedHarnessJob, body: dict[str, Any]) -> No
         )
 
 
+def _merge_recovered_call_artifacts(artifacts, recovered):
+    """Fill missing media kinds only when the attempt spool is unambiguous."""
+    result = list(artifacts)
+    present = {artifact.kind for artifact in result}
+    allowed = {
+        "transcript",
+        "recording_combined",
+        "recording_stereo",
+        "recording_customer",
+        "recording_assistant",
+    }
+    for kind in sorted(allowed - present):
+        candidates = {item.sha256: item for item in recovered if item.kind == kind}
+        if len(candidates) == 1:
+            result.append(next(iter(candidates.values())))
+    return result
+
+
 def _apply_receipt_to_call(
-    registration: HostedHarnessScenario, body: dict[str, Any]
+    registration: HostedHarnessScenario,
+    body: dict[str, Any],
+    *,
+    recovered_artifact_ids: list[str] | None = None,
 ) -> None:
     call = registration.call_execution
     if call is None:
@@ -719,6 +859,13 @@ def _apply_receipt_to_call(
     elif body["status"] == "skipped":
         call.completed_at = timezone.now()
     metadata = dict(call.call_metadata or {})
+    previous_receipt = metadata.get("hosted_harness_receipt") or {}
+    if previous_receipt.get("digest") != body.get("digest"):
+        metadata.pop("hosted_harness_recovered_artifact_ids", None)
+    if recovered_artifact_ids is not None:
+        metadata["hosted_harness_recovered_artifact_ids"] = recovered_artifact_ids
+    else:
+        recovered_artifact_ids = metadata.get("hosted_harness_recovered_artifact_ids")
     metadata["hosted_harness_receipt"] = _json_ready(body)
     metadata["harness_evaluations"] = _receipt_evaluations(body)
     metadata["harness_outcome_status"] = body["status"]
@@ -757,6 +904,20 @@ def _apply_receipt_to_call(
                 sha256__in=[item.removeprefix("sha256:") for item in artifact_ids],
             )
         )
+        # Offline recovery can persist files whose original upload was never
+        # acknowledged. Enrich only the projection, never the signed receipt.
+        # Use the current attempt's spool IDs, not all historical scenario files.
+        if recovered_artifact_ids:
+            recovered = list(
+                HostedHarnessArtifact.no_workspace_objects.filter(
+                    job=registration.job,
+                    scenario_key=registration.scenario_key,
+                    sha256__in=[
+                        item.removeprefix("sha256:") for item in recovered_artifact_ids
+                    ],
+                )
+            )
+            artifacts = _merge_recovered_call_artifacts(artifacts, recovered)
         tool_trace = (
             HostedHarnessArtifact.no_workspace_objects.filter(
                 job=registration.job,
@@ -794,6 +955,7 @@ def _apply_receipt_to_call(
             )
             update_fields.append("stereo_recording_url")
         if combined is not None or stereo is not None:
+            call.simulation_call_type = CallExecution.SimulationCallType.VOICE
             call.recording_available = True
             update_fields.append("recording_available")
 

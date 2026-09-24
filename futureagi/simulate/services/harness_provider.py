@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import re
 from typing import Any
 
 from django.conf import settings
@@ -47,6 +48,40 @@ def _rejected_archive_upload(files) -> Response | None:
             status=status.HTTP_400_BAD_REQUEST,
         )
     return None
+
+
+_E164_PHONE = re.compile(r"^\+[1-9]\d{6,14}$")
+
+
+def _validate_phone_connectivity(payload) -> None:
+    """A phone-only target uses platform telephony, never customer SIP credentials."""
+    agent = payload["agent"]
+    if agent["connector"] != "phone" and not (
+        agent["connector"] in {"vapi", "retell"}
+        and agent.get("mode") == "connect_only"
+        and (agent.get("config") or {}).get("phone_number")
+    ):
+        return
+    from simulate.services.phone_telephony import platform_phone_telephony
+
+    telephony = platform_phone_telephony()
+    missing = [name for name, value in telephony.items() if not value]
+    if missing:
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        raise HostedHarnessError(
+            "phone_dialer_not_configured",
+            "Platform outbound calling is not configured: " + ", ".join(missing),
+            status_code=503,
+        )
+    if not _E164_PHONE.fullmatch(telephony["SIP_OUTBOUND_FROM_NUMBER"]):
+        from simulate.services.hosted_harness import HostedHarnessError
+
+        raise HostedHarnessError(
+            "phone_dialer_caller_id_invalid",
+            "Platform SIP_OUTBOUND_FROM_NUMBER must be an E.164 caller ID",
+            status_code=503,
+        )
 
 
 def get_harness_provider():
@@ -112,6 +147,21 @@ def scope_jobs(queryset, request):
     return queryset.filter(workspace=workspace)
 
 
+def _scoped_job(request, pk):
+    """One job, or None, resolved under the caller's organization and workspace."""
+    organization = request_organization(request)
+    if organization is None:
+        return None
+    return (
+        scope_jobs(
+            HostedHarnessJob.no_workspace_objects.filter(organization=organization),
+            request,
+        )
+        .filter(id=pk)
+        .first()
+    )
+
+
 def _validate_secret_refs_hosted(secret_refs: dict) -> None:
     """Reject secret references that the managed gateway cannot materialize.
 
@@ -147,6 +197,7 @@ def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) ->
         SandboxProviderConfigurationError,
         sandbox_egress_domain_limit,
         sandbox_provider_name,
+        sandbox_runtime_policy,
         validate_sandbox_requirements,
     )
 
@@ -169,6 +220,8 @@ def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) ->
         domains, max_domains=sandbox_egress_domain_limit()
     )
     runtime = payload["runtime"]
+    policy = sandbox_runtime_policy()
+    disk_gb = policy.fixed_resources[2] if policy.fixed_resources else 10
     provider_name = sandbox_provider_name()
     max_ttl_seconds = max(
         _authoring_ttl_seconds(provider_name),
@@ -178,7 +231,7 @@ def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) ->
         validate_sandbox_requirements(
             runtime["cpu_units"],
             runtime["memory_mb"],
-            10,
+            disk_gb,
             max_ttl_seconds,
         )
     except SandboxProviderConfigurationError as exc:
@@ -251,7 +304,42 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
     receipt_qs = HostedHarnessReceipt.no_workspace_objects.filter(job=job).order_by(
         "created_at"
     )[: job.scenario_count]
-    receipts = [r.body for r in receipt_qs]
+    receipt_rows = list(receipt_qs)
+    receipts = [r.body for r in receipt_rows]
+    cycle_start = (job.payload.get("metadata") or {}).get("attempt_cycle_start")
+    if type(cycle_start) is not int or cycle_start < 1:
+        cycle_start = 1
+    current_attempt = (
+        attempt if attempt and attempt.attempt_number >= cycle_start else None
+    )
+    registered_keys = {reg.scenario_key for reg in scenario_regs}
+    finished = {
+        row.body.get("scenario_key")
+        for row in receipt_rows
+        if current_attempt
+        and row.attempt_number == current_attempt.attempt_number
+        and isinstance(row.body, dict)
+        and isinstance(row.body.get("scenario_key"), str)
+        and row.body["scenario_key"] in registered_keys
+    }
+    started = set()
+    if current_attempt:
+        started = set(
+            current_attempt.events.filter(
+                accepted=True,
+                event_type="scenario_started",
+                payload__scenario_key__in=registered_keys,
+            )
+            .values_list("payload__scenario_key", flat=True)
+            .distinct()
+        ) - {None}
+    terminal = job.state in {
+        HostedHarnessJob.State.COMPLETED,
+        HostedHarnessJob.State.FAILED,
+        HostedHarnessJob.State.CANCELED,
+    }
+    active = 0 if terminal else len(started - finished)
+    queued = 0 if terminal else max(0, job.scenario_count - len(finished) - active)
     platform = {
         "run_test_id": str(job.run_test_id) if job.run_test_id else None,
         "test_execution_id": str(job.test_execution_id)
@@ -287,6 +375,22 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
     _agent_cfg = job.payload.get("agent") or {}
     _connector = str(_agent_cfg.get("connector") or "").strip().lower()
     detected_connectors = [_connector] if _connector and _connector != "auto" else []
+    # Parallelism surfacing (C4 §6). ``requested`` is the immutable stored intent;
+    # ``effective`` and ``degrade_reasons`` come from the LATEST attempt's
+    # attempt-level projection (updated at ingestion), never the 100-event window
+    # a long run evicts. A new attempt starts cleared, so this reflects the
+    # current attempt only. With no degrade event, effective == requested.
+    _runtime = job.payload.get("runtime") or {}
+    _requested_parallelism = _runtime.get("parallelism") or 1
+    _clamp = (job.payload.get("metadata") or {}).get("parallelism_clamped") or {}
+    if not isinstance(_clamp, dict):
+        _clamp = {}
+    _admitted = _clamp.get("admitted", 1 if _clamp else _requested_parallelism)
+    if type(_admitted) is not int or _admitted < 1:
+        _admitted = 1
+    _admitted = min(_admitted, _requested_parallelism)
+    _effective = attempt.effective_parallelism if attempt else None
+    _degrade_reasons = list(attempt.degrade_reasons or []) if attempt else []
     conversation = HostedHarnessConversation.no_workspace_objects.filter(
         job=job
     ).first()
@@ -296,10 +400,22 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
             "run_id": str(job.run_id),
             "source": job.payload["source"],
             "metadata": job.payload.get("metadata", {}),
+            "runtime": {
+                "parallelism": _requested_parallelism,
+                "cpu_units": _runtime.get("cpu_units"),
+            },
             "run_test_id": str(job.run_test_id) if job.run_test_id else None,
             "test_execution_id": str(job.test_execution_id)
             if job.test_execution_id
             else None,
+        },
+        "parallelism": {
+            "requested": _requested_parallelism,
+            "admitted": _admitted,
+            "effective": min(_effective, _admitted)
+            if _effective is not None
+            else _admitted,
+            "degrade_reasons": _degrade_reasons,
         },
         "status": {
             "state": job.state,
@@ -308,6 +424,8 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
             "attempt": attempt.attempt_number if attempt else 0,
             "completed_scenarios": job.completed_count,
             "failed_scenarios": job.failed_count,
+            "active_scenarios": active,
+            "queued_scenarios": queued,
             "total_scenarios": job.scenario_count,
             "deadline_at": job.deadline_at.isoformat(),
             "cancel_requested_at": (
@@ -509,7 +627,10 @@ def _preflight_credential_probe(payload) -> list[dict[str, Any]]:
     agent = payload["agent"]
     connector = str(agent.get("connector") or "").strip().lower()
     mode = str(agent.get("mode") or "").strip().lower()
-    if mode in {"connect_only", "provider_import"}:
+    if connector in {"vapi", "retell", "retell_chat"} and mode in {
+        "connect_only",
+        "provider_import",
+    }:
         target_field = "assistant_id" if connector == "vapi" else "agent_id"
         target = probe_provider_target(
             connector,
@@ -526,6 +647,10 @@ _SOURCE_FIX_HINTS = {
         "Use the owner/repository form, for example acme/support-agent"
     ),
     "github_ref_invalid": "Use a branch, tag or commit SHA for ref",
+    "github_repository_not_found": (
+        "Check the owner/repository spelling; for a private repository, choose "
+        "Private and install the GitHub App on it"
+    ),
     "github_clone_failed": (
         "Check the repository exists and, for a private repository, that the "
         "GitHub App is installed on it"
@@ -791,7 +916,9 @@ def _sandbox_preflight_body(payload, report):
         "state": "connected" if ready else "failed",
         "checks": checks,
         "credentials": credentials,
+        "parallelism_enabled": False,
         "effective_parallelism": payload["runtime"]["parallelism"],
+        "resource_profile": None,
         "snapshot": {
             "name": None,
             "digest": None,
@@ -826,6 +953,84 @@ def _packaging_check(packaging):
         notes[0] if notes else "no Dockerfile or compose file packages the agent",
         fix="Add a Dockerfile that runs the agent, or a compose file that starts it",
     )
+
+
+_ORDINAL_WORDS = {
+    word: number
+    for number, word in enumerate(
+        (
+            "first second third fourth fifth sixth seventh eighth ninth tenth "
+            "eleventh twelfth thirteenth fourteenth fifteenth sixteenth seventeenth "
+            "eighteenth nineteenth twentieth"
+        ).split(),
+        start=1,
+    )
+}
+
+
+def scenarios_meant(
+    said: Any, suite: list[dict], numbering: dict[int, str] | None = None
+) -> list[str]:
+    """Scenario names from "4", "12-30", "12, 15, 18" or a name; `numbering` maps stored numbers."""
+    by_number = numbering or {
+        position: str(one.get("name") or "") for position, one in enumerate(suite, 1)
+    }
+    known = {str(one.get("name") or "") for one in suite}
+    keys = {
+        str(one.get("scenario_key") or ""): str(one.get("name") or "") for one in suite
+    }
+    found: list[str] = []
+
+    def take(name: str) -> None:
+        if name and name not in found:
+            found.append(name)
+
+    for piece in said if isinstance(said, (list, tuple)) else [said]:
+        for part in re.split(r"[,\s]+(?:and\s+)?", str(piece or "").strip()):
+            part = part.strip().strip(".")
+            if not part:
+                continue
+            if part in known:
+                take(part)
+                continue
+            if part in keys:
+                take(keys[part])
+                continue
+            span = re.fullmatch(r"(\d+)\s*(?:-|–|to|through)\s*(\d+)", part)
+            if span:
+                low, high = sorted((int(span.group(1)), int(span.group(2))))
+                for number in range(low, high + 1):
+                    take(by_number.get(number, ""))
+                continue
+            # "#4", "4th", "the fourth".
+            plain = re.sub(r"^(?:the|scenario|no\.?|#)\s*", "", part, flags=re.IGNORECASE)
+            plain = re.sub(r"(?<=\d)(?:st|nd|rd|th)$", "", plain, flags=re.IGNORECASE)
+            if plain.isdigit():
+                take(by_number.get(int(plain), ""))
+                continue
+            if plain.lower() in _ORDINAL_WORDS:
+                take(by_number.get(_ORDINAL_WORDS[plain.lower()], ""))
+    return found
+
+
+def _scenario_row(reg, number: int | None = None) -> dict:
+    """One registered scenario; ``number`` is its one-based place in its own suite."""
+    return {
+        "number": number,
+        "scenario_key": reg.scenario_key,
+        "scenario_id": str(reg.scenario_id),
+        "name": getattr(reg.scenario, "name", "") if reg.scenario else "",
+        "instruction": (getattr(reg.scenario, "prompt", None) or "")
+        if reg.scenario
+        else None,
+        "use_case": (getattr(reg.scenario, "use_case", None) or "")
+        if reg.scenario
+        else None,
+        "call_execution_id": str(reg.call_execution_id)
+        if reg.call_execution_id
+        else None,
+        "status": _scenario_status(reg),
+    }
 
 
 class HostedHarnessProvider:
@@ -870,6 +1075,7 @@ class HostedHarnessProvider:
         # Definitive launch validation runs again after vault resolution.
         try:
             _validate_secret_refs_hosted(payload["agent"]["secret_refs"])
+            _validate_phone_connectivity(payload)
             _validate_known_hosted_egress(payload, base_url)
             _validate_required_credential_files(request, payload)
         except HostedHarnessError as exc:
@@ -921,9 +1127,12 @@ class HostedHarnessProvider:
         ).rstrip("/")
         try:
             _validate_secret_refs_hosted(payload["agent"]["secret_refs"])
+            _validate_phone_connectivity(payload)
             _validate_known_hosted_egress(payload, base_url)
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
+        from simulate.services.hosted_harness import clamp_parallelism
+
         runtime = payload["runtime"]
         source_error = None
         try:
@@ -954,15 +1163,58 @@ class HostedHarnessProvider:
         )
         failed = any(check["status"] == "failed" for check in checks)
         runtime_name, runtime_digest = sandbox_runtime_reference()
+        # Continuous advisory surface (C4 §4 pin ii / §5). ``parallelism_enabled``
+        # reflects the same flag-AND-digest state the register_attempt guard
+        # enforces; the ``effective_parallelism`` echo reflects the clamped value
+        # (never the requested value) whenever admission would clamp, so the FE
+        # is never promised a W the platform will refuse.
+        from simulate.services.harness_capacity import configured_capacity
+
+        try:
+            capacity = configured_capacity(payload)
+            parallel_capacity = configured_capacity(
+                {
+                    **payload,
+                    "scenario_count": max(2, payload.get("scenario_count", 1)),
+                    "runtime": {**runtime, "parallelism": 2},
+                }
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=503)
+        from simulate.services.hosted_sandbox import sandbox_provider_name
+
+        if sandbox_provider_name() != "daytona" and (
+            (capacity.snapshot_name and capacity.snapshot_name != runtime_name)
+            or (capacity.snapshot_digest and capacity.snapshot_digest != runtime_digest)
+        ):
+            return Response(
+                {
+                    "detail": "configured resource profile does not match the selected sandbox runtime"
+                },
+                status=503,
+            )
+        digest = capacity.snapshot_digest or runtime_digest
+        admitted, _clamped = clamp_parallelism(runtime["parallelism"], digest)
+        admitted = min(admitted, capacity.parallelism)
+        parallel_digest = parallel_capacity.snapshot_digest or runtime_digest
+        _, denied_at_2 = clamp_parallelism(2, parallel_digest)
         body = {
             "ready_to_submit": not failed,
             "state": "failed" if failed else "connected",
             "checks": checks,
             "credentials": credentials["report"],
-            "effective_parallelism": runtime["parallelism"],
+            "parallelism_enabled": not denied_at_2
+            and parallel_capacity.parallelism > 1,
+            "effective_parallelism": admitted,
+            "resource_profile": {
+                "name": capacity.name,
+                "cpu_units": capacity.cpu_units,
+                "memory_mb": capacity.memory_mb,
+                "disk_gb": capacity.disk_gb,
+            },
             "snapshot": {
-                "name": runtime_name or None,
-                "digest": runtime_digest or None,
+                "name": capacity.snapshot_name or runtime_name or None,
+                "digest": digest or None,
                 "engines": HOSTED_ENGINE_CATALOG,
                 "runtimes": HOSTED_RUNTIME_CATALOG,
             },
@@ -1282,6 +1534,360 @@ class HostedHarnessProvider:
         job.refresh_from_db()
         return serialize_job(job)
 
+    # Editable fields; all but `tests` are refused when the caller declines a re-proof.
+    _DESCRIPTIVE_FIELDS = frozenset({"tests"})
+    _BEHAVIOURAL_FIELDS = frozenset({"max_turns", "background_noise", "keywords"})
+    _PERSONA_FIELDS = frozenset(
+        {
+            "personality",
+            "communication_style",
+            "accent",
+            "languages",
+            "occupation",
+            "location",
+        }
+    )
+
+    def _editing_contract(self) -> dict[str, list[str]]:
+        """Which fields an amend will take, and which of them cannot be taken without a re-proof."""
+        return {
+            "editable_fields": sorted(self._DESCRIPTIVE_FIELDS | self._BEHAVIOURAL_FIELDS),
+            "persona_fields": sorted(self._PERSONA_FIELDS),
+            "rework_fields": sorted(self._BEHAVIOURAL_FIELDS | self._PERSONA_FIELDS),
+        }
+
+    def list_scenarios(self, request, pk) -> Response:
+        """One page of a run's authored scenarios, in the order they were written."""
+        from tfc.utils.pagination import ExtendedPageNumberPagination
+
+        job = _scoped_job(request, pk)
+        if job is None:
+            return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        from simulate.services.harness_scenarios import (
+            apply_filters,
+            apply_ordering,
+            apply_search,
+            field_catalogue,
+            group_counts,
+            grouped,
+            index_scenarios,
+            scenario_row,
+        )
+
+        queryset = HostedHarnessScenario.no_workspace_objects.filter(
+            job=job
+        ).select_related("scenario", "call_execution")
+        if not queryset.filter(number__isnull=False).exists():
+            # Runs from before indexing: index from the stage output or the unpacked archive.
+            artefact = (
+                HostedHarnessStageOutput.no_workspace_objects.filter(
+                    job=job, kind="scenarios"
+                )
+                .values_list("data", flat=True)
+                .first()
+            )
+            if not artefact:
+                artefact = next(
+                    (
+                        one.get("data")
+                        for one in (job.stage_outputs or [])
+                        if isinstance(one, dict) and one.get("kind") == "scenarios"
+                    ),
+                    None,
+                )
+            if isinstance(artefact, list) and artefact:
+                index_scenarios(job, artefact)
+                queryset = HostedHarnessScenario.no_workspace_objects.filter(
+                    job=job
+                ).select_related("scenario", "call_execution")
+        # Filter choices are counted before filtering, or picking one value would hide the others.
+        queryset = apply_search(queryset, request.query_params.get("search", ""))
+        offerable = queryset
+        queryset = apply_filters(queryset, request.query_params)
+        queryset = apply_ordering(queryset, request.query_params.get("ordering", ""))
+
+        paginator = ExtendedPageNumberPagination()
+        page = paginator.paginate_queryset(queryset, request)
+        from simulate.services.harness_scenarios import DEFAULT_GROUP_BY
+
+        asked = request.query_params.get("group_by")
+        group_by = DEFAULT_GROUP_BY if asked is None else asked
+        rows = grouped([scenario_row(one) for one in page or []], group_by)
+        response = paginator.get_paginated_response(rows)
+        response.data["groups"] = group_counts(rows, queryset, group_by)
+        response.data["group_by"] = group_by
+        response.data["fields"] = field_catalogue(offerable)
+        response.data["scenario_editing"] = self._editing_contract()
+        from simulate.services.harness_scenarios import GROUPINGS
+
+        response.data["groupings"] = [dict(one) for one in GROUPINGS]
+        from simulate.services.harness_scenarios import level_labels_for
+        response.data["level_labels"] = level_labels_for(rows)
+        return response
+
+    def scenario_coverage(self, request, pk) -> Response:
+        """The suite's coverage grid, over the filtered suite rather than a page."""
+        job = _scoped_job(request, pk)
+        if job is None:
+            return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        from simulate.services.harness_scenarios import (
+            DEFAULT_COL_AXIS,
+            DEFAULT_ROW_AXIS,
+            apply_filters,
+            apply_search,
+            coverage_grid,
+        )
+
+        queryset = HostedHarnessScenario.no_workspace_objects.filter(job=job)
+        queryset = apply_search(queryset, request.query_params.get("search", ""))
+        queryset = apply_filters(queryset, request.query_params)
+        return Response(
+            coverage_grid(
+                queryset,
+                request.query_params.get("row_axis") or DEFAULT_ROW_AXIS,
+                request.query_params.get("col_axis") or DEFAULT_COL_AXIS,
+            )
+        )
+
+    def amend_scenarios(self, request, pk) -> Response:
+        """Edit a finished run's authored suite, one receipt per requested change."""
+        from simulate.services.hosted_harness_gateway import (
+            push_scenarios_into_live_sandbox,
+            rewrite_authoring_scenarios,
+        )
+
+        changes = request.validated_data["changes"]
+        rework = bool(request.validated_data.get("rework", True))
+        with transaction.atomic():
+            # Scope before locking, so a busy lock never reveals a job outside the caller's scope.
+            scoped = _scoped_job(request, pk)
+            if scoped is None:
+                return Response(
+                    {"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND
+                )
+            job = (
+                HostedHarnessJob.no_workspace_objects.select_for_update()
+                .filter(id=scoped.id)
+                .first()
+            )
+            if job is None:
+                return Response(
+                    {"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND
+                )
+            output = (
+                HostedHarnessStageOutput.no_workspace_objects.select_for_update()
+                .filter(job=job, kind="scenarios")
+                .first()
+            )
+            suite = list(output.data or []) if output is not None else None
+            if suite is None:
+                suite = [
+                    dict(one)
+                    for one in next(
+                        (
+                            item.get("data") or []
+                            for item in (job.stage_outputs or [])
+                            if item.get("kind") == "scenarios"
+                        ),
+                        [],
+                    )
+                ]
+            if not suite:
+                return Response(
+                    {
+                        "error": "no_authored_suite",
+                        "message": "this run has no authored scenarios to amend",
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+            by_name = {str(one.get("name") or ""): one for one in suite}
+            receipts = []
+            touched = False
+            # One change may name many scenarios; each gets its own receipt.
+            spread = []
+            for change in changes:
+                said = change.get("scenarios") or change.get("scenario")
+                # Resolve numbers against stored numbering, not list position.
+                numbering = {
+                    row.number: row.name or row.scenario_key
+                    for row in HostedHarnessScenario.no_workspace_objects.filter(
+                        job=job, number__isnull=False
+                    )
+                }
+                meant = scenarios_meant(said, suite, numbering or None)
+                if not meant:
+                    receipts.append(
+                        {
+                            "scenario": str(change.get("scenario") or ""),
+                            "outcome": "refused",
+                            "why": "nothing in this suite answers to that",
+                        }
+                    )
+                    continue
+                spread.extend({**change, "scenario": name} for name in meant)
+            for change in spread:
+                name = str(change.get("scenario") or "")
+                target = by_name.get(name)
+                if target is None:
+                    receipts.append(
+                        {
+                            "scenario": name,
+                            "outcome": "refused",
+                            "why": "no scenario of that name in this suite",
+                        }
+                    )
+                    continue
+                op = str(change.get("op") or "")
+                if op == "drop":
+                    if not rework:
+                        receipts.append(
+                            {
+                                "scenario": name,
+                                "outcome": "refused",
+                                "why": "dropping a scenario changes the suite, so it needs a re-proof",
+                            }
+                        )
+                        continue
+                    suite = [one for one in suite if one is not target]
+                    by_name.pop(name, None)
+                    touched = True
+                    receipts.append(
+                        {"scenario": name, "outcome": "applied", "why": "dropped"}
+                    )
+                    continue
+                if op == "set_field":
+                    field = str(change.get("field") or "")
+                    if field in self._DESCRIPTIVE_FIELDS:
+                        pass
+                    elif field in self._BEHAVIOURAL_FIELDS:
+                        if not rework:
+                            receipts.append(
+                                {
+                                    "scenario": name,
+                                    "outcome": "refused",
+                                    "why": f"{field} changes what the run does, so it needs a re-proof",
+                                }
+                            )
+                            continue
+                    else:
+                        receipts.append(
+                            {
+                                "scenario": name,
+                                "outcome": "refused",
+                                "why": f"{field} is not editable: it is proved, not described",
+                            }
+                        )
+                        continue
+                    target[field] = change.get("value")
+                    touched = True
+                    receipts.append(
+                        {"scenario": name, "outcome": "applied", "why": f"{field} updated"}
+                    )
+                    continue
+                if op == "set_persona":
+                    if not rework:
+                        receipts.append(
+                            {
+                                "scenario": name,
+                                "outcome": "refused",
+                                "why": "the persona is what the agent hears, so it needs a re-proof",
+                            }
+                        )
+                        continue
+                    given = dict(change.get("persona") or {})
+                    unknown = sorted(set(given) - self._PERSONA_FIELDS)
+                    if unknown:
+                        receipts.append(
+                            {
+                                "scenario": name,
+                                "outcome": "refused",
+                                "why": f"not editable on a persona: {', '.join(unknown)}",
+                            }
+                        )
+                        continue
+                    persona = dict(target.get("persona") or {})
+                    persona.update(
+                        {key: value for key, value in given.items() if value is not None}
+                    )
+                    target["persona"] = persona
+                    touched = True
+                    receipts.append(
+                        {"scenario": name, "outcome": "applied", "why": "persona updated"}
+                    )
+                    continue
+                receipts.append(
+                    {"scenario": name, "outcome": "refused", "why": f"unknown change {op!r}"}
+                )
+            # Edits pass the same gates as a written scenario.
+            if touched:
+                try:
+                    from fi.alk.harness.scenario import Scenario, scenario_edit_problems
+                except ImportError:  # the harness package ships in the runner image, not the web backend
+                    scenario_edit_problems = None
+
+                rejected = []
+                for one in suite if scenario_edit_problems else ():
+                    try:
+                        problems = scenario_edit_problems(Scenario.model_validate(one))
+                    except Exception:  # noqa: BLE001 - a document we cannot read is the edit's fault
+                        problems = ["the edited scenario could not be read"]
+                    if problems:
+                        rejected.append((str(one.get("name") or ""), problems))
+                if rejected:
+                    named = {name for name, _ in rejected}
+                    return Response(
+                        {
+                            "receipts": [
+                                {
+                                    "scenario": name,
+                                    "outcome": "refused",
+                                    "why": "; ".join(problems),
+                                }
+                                for name, problems in rejected
+                            ]
+                            + [
+                                one
+                                for one in receipts
+                                if one.get("scenario") not in named
+                                and one.get("outcome") == "refused"
+                            ]
+                        }
+                    )
+            if touched:
+                if output is not None:
+                    output.data = suite
+                    output.summary = f"{len(suite)} pre-authored scenarios"
+                    output.save(update_fields=["data", "summary", "updated_at"])
+                else:
+                    job.stage_outputs = [
+                        {**item, "data": suite}
+                        if item.get("kind") == "scenarios"
+                        else item
+                        for item in (job.stage_outputs or [])
+                    ]
+                    job.save(update_fields=["stage_outputs", "updated_at"])
+                # Write to the archive, the live guest and the index, or the edit reverts or hides.
+                try:
+                    from simulate.services.harness_scenarios import index_scenarios
+
+                    index_scenarios(job, suite, prune=True)
+                except Exception:  # noqa: BLE001 - the edit itself applied; the index can lag
+                    logger.warning(
+                        "harness_scenario_reindex_failed job_id=%s", job.id, exc_info=True
+                    )
+                rewrite_authoring_scenarios(job, suite)
+                delivered = push_scenarios_into_live_sandbox(job, suite)
+                if delivered:
+                    receipts = [
+                        {**one, "outcome": "queued"}
+                        if one.get("outcome") == "applied"
+                        else one
+                        for one in receipts
+                    ]
+        return Response({"receipts": receipts})
+
     def extend(self, request, pk) -> Response:
         """Chat 'Add scenarios' on a finished RL environment: add ``count`` new scenarios,
         steered by optional guidance, replaying the authored world. Rerun is a separate action."""
@@ -1514,13 +2120,41 @@ class SandboxHarnessProvider:
             },
         )
 
+    def list_scenarios(self, request, pk) -> Response:
+        return Response(
+            {
+                "error": "scenarios_not_supported",
+                "message": "reading an authored suite is only available on the hosted provider",
+            },
+            status=status.HTTP_501_NOT_IMPLEMENTED,
+        )
+
+    def scenario_coverage(self, request, pk) -> Response:
+        return Response(
+            {
+                "error": "scenarios_not_supported",
+                "message": "reading an authored suite is only available on the hosted provider",
+            },
+            status=status.HTTP_501_NOT_IMPLEMENTED,
+        )
+
+    def amend_scenarios(self, request, pk) -> Response:
+        return Response(
+            {
+                "error": "amend_not_supported",
+                "message": "editing an authored suite is only available on the hosted provider",
+            },
+            status=status.HTTP_501_NOT_IMPLEMENTED,
+        )
+
     def extend(self, request, pk) -> Response:
         return Response(
-            build_error_envelope(
-                "adding scenarios is only available on the hosted (daytona) provider",
-                status_code=status.HTTP_400_BAD_REQUEST,
-                code="extend_not_supported",
-            ),
+            {
+                "error": "extend_not_supported",
+                "message": (
+                    "adding scenarios is only available on the hosted (daytona) provider"
+                ),
+            },
             status=status.HTTP_400_BAD_REQUEST,
         )
 

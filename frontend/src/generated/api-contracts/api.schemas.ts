@@ -16933,6 +16933,17 @@ export interface HarnessEnvironmentRunLinkApi {
   simulation_url: string;
 }
 
+export interface HarnessEnvironmentAgentApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  provider: string;
+  versions_count: number;
+  /** @minLength 1 */
+  active_version: string;
+}
+
 export interface HarnessEnvironmentOverviewApi {
   id: string;
   /** @minLength 1 */
@@ -16958,6 +16969,7 @@ export interface HarnessEnvironmentOverviewApi {
   personas_count: number;
   evaluations_count: number;
   run: HarnessEnvironmentRunLinkApi;
+  agent: HarnessEnvironmentAgentApi;
 }
 
 export interface HarnessEnvironmentAmendmentApi {
@@ -17277,11 +17289,14 @@ export type HarnessJobInfoApiSource = { [key: string]: string };
 
 export type HarnessJobInfoApiMetadata = { [key: string]: string };
 
+export type HarnessJobInfoApiRuntime = { [key: string]: string };
+
 export interface HarnessJobInfoApi {
   job_id: string;
   run_id: string;
   source: HarnessJobInfoApiSource;
   metadata: HarnessJobInfoApiMetadata;
+  runtime?: HarnessJobInfoApiRuntime;
   run_test_id: string;
   test_execution_id: string;
 }
@@ -17298,6 +17313,8 @@ export interface HarnessJobStatusApi {
   attempt: number;
   completed_scenarios: number;
   failed_scenarios: number;
+  active_scenarios?: number;
+  queued_scenarios?: number;
   total_scenarios: number;
   /** @minLength 1 */
   deadline_at: string;
@@ -17366,6 +17383,13 @@ export interface HarnessRuntimeReadApi {
   /** @minLength 1 */
   sandbox_id?: string;
   diagnostics?: HarnessDiagnosticsApi;
+}
+
+export interface HarnessParallelismApi {
+  requested: number;
+  admitted: number;
+  effective: number;
+  degrade_reasons: string[];
 }
 
 export type HarnessConversationMessageApiRole =
@@ -17486,6 +17510,7 @@ export interface HarnessJobReadApi {
   receipts: HarnessJobReadApiReceiptsItem[];
   platform: HarnessPlatformApi;
   runtime?: HarnessRuntimeReadApi;
+  parallelism?: HarnessParallelismApi;
   conversation?: HarnessConversationReadApi;
   consumption?: HarnessConsumptionApi;
   usage_limit?: HarnessJobReadApiUsageLimit;
@@ -17518,6 +17543,8 @@ export const HarnessSourceApiVisibility = {
   private: "private",
 } as const;
 
+export type HarnessSourceApiEnvironmentValues = { [key: string]: string };
+
 export interface HarnessSourceApi {
   kind: HarnessSourceApiKind;
   /**
@@ -17544,6 +17571,7 @@ export interface HarnessSourceApi {
   /** @minLength 1 */
   endpoint?: string;
   visibility?: HarnessSourceApiVisibility;
+  environment_values?: HarnessSourceApiEnvironmentValues;
 }
 
 export type HarnessAgentApiConnector =
@@ -17726,7 +17754,7 @@ export interface HarnessJobCreateApi {
   agent: HarnessAgentApi;
   /**
    * @minimum 1
-   * @maximum 200
+   * @maximum 1000
    */
   scenario_count?: number;
   seed?: number;
@@ -17763,7 +17791,7 @@ export interface HarnessPreflightApi {
   agent: HarnessAgentApi;
   /**
    * @minimum 1
-   * @maximum 200
+   * @maximum 1000
    */
   scenario_count?: number;
   seed?: number;
@@ -17788,6 +17816,10 @@ export const HarnessPreflightResponseApiState = {
   connected: "connected",
   failed: "failed",
 } as const;
+
+export type HarnessPreflightResponseApiResourceProfile = {
+  [key: string]: unknown;
+};
 
 export type HarnessPreflightResponseApiSnapshot = { [key: string]: unknown };
 
@@ -17837,7 +17869,9 @@ export interface HarnessPreflightResponseApi {
   state: HarnessPreflightResponseApiState;
   checks: HarnessPreflightCheckApi[];
   credentials: HarnessPreflightCredentialsApi;
+  parallelism_enabled: boolean;
   effective_parallelism: number;
+  resource_profile: HarnessPreflightResponseApiResourceProfile;
   snapshot: HarnessPreflightResponseApiSnapshot;
 }
 
@@ -17940,6 +17974,39 @@ export interface HarnessJobExtendApi {
    * @maxLength 128
    */
   client_request_id?: string;
+}
+
+export type HarnessScenarioChangeApiOp =
+  (typeof HarnessScenarioChangeApiOp)[keyof typeof HarnessScenarioChangeApiOp];
+
+export const HarnessScenarioChangeApiOp = {
+  drop: "drop",
+  set_field: "set_field",
+  set_persona: "set_persona",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type HarnessScenarioChangeApiValue = { [key: string]: unknown };
+
+export type HarnessScenarioChangeApiPersona = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export interface HarnessScenarioChangeApi {
+  op: HarnessScenarioChangeApiOp;
+  scenario?: string;
+  scenarios?: string[];
+  field?: string;
+  /** Any valid JSON value. */
+  value?: HarnessScenarioChangeApiValue;
+  persona?: HarnessScenarioChangeApiPersona;
+}
+
+export interface HarnessScenarioAmendApi {
+  changes: HarnessScenarioChangeApi[];
+  rework?: boolean;
 }
 
 export type HarnessManifestApiSchemaVersion =
