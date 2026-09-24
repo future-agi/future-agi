@@ -52,6 +52,12 @@ const TEMPLATE = {
   evalPreset: ["task_success", "tone"],
 };
 
+const JOB_SCENARIO = {
+  scenario_key: "refund-happy-path",
+  name: "refund_happy_path",
+  instruction: "Ask for a refund on a delivered order.",
+};
+
 // A completed harness job with the platform ids at the TOP LEVEL (sibling of
 // job/status), the run-test bridge the workspace runs against.
 const COMPLETED_JOB = {
@@ -65,6 +71,9 @@ const COMPLETED_JOB = {
   credentials: { detected_connectors: ["livekit"] },
   platform: { run_test_id: "rt1", test_execution_id: "ex1" },
   stage_outputs: [],
+  // Run needs scenarios, and a real env takes them only from the run's own
+  // data (no fixture pool), so the completed job carries one.
+  scenarios: [JOB_SCENARIO],
 };
 
 // A still-building job: no platform bridge yet, a non-terminal stage. The
@@ -174,15 +183,21 @@ describe("EnvironmentWorkspace route shell", () => {
     axios.get.mockReset();
     // The Runs-tab summary reads the executions list; the run DETAIL reads the
     // v3 run-results contract. Route each to its own shape so the full-page
-    // RunDetail can resolve its identity header.
-    axios.get.mockImplementation((url) =>
-      Promise.resolve({
+    // RunDetail can resolve its identity header. The environment detail
+    // (GET /harness-environments/{id}/) 404s, so these tests exercise the
+    // job-poll path; answering it with the executions list would make every
+    // unknown id resolve to a garbage environment.
+    axios.get.mockImplementation((url) => {
+      if (/\/harness-environments\/[^/]+\/$/.test(url)) {
+        return Promise.reject(Object.assign(new Error("Not found"), { statusCode: 404 }));
+      }
+      return Promise.resolve({
         data:
           url === endpoints.runResultsV3.calls("ex1")
             ? RUN_DETAIL_V3
             : EXECUTIONS,
-      }),
-    );
+      });
+    });
   });
 
   it("renders a seeded client env: name, Live pill and the five tabs", async () => {
@@ -362,6 +377,7 @@ describe("EnvironmentWorkspace route shell", () => {
       ...BUILDING_JOB,
       status: { stage: "completed", created_at: NOW },
       platform: { run_test_id: "rt2", test_execution_id: "ex2" },
+      scenarios: [JOB_SCENARIO],
     };
     // A mutable stage the shared job poll reads, so the build state is stable
     // until we flip it — then the 2s refetch lands "completed".
