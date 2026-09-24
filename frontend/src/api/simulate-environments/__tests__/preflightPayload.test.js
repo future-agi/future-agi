@@ -175,6 +175,30 @@ describe("draftToPreflightPayload — platform", () => {
     expect(livekit.agent.config).toStrictEqual({ agent_id: "asst_1" });
   });
 
+  const phoneDraft = (contact) =>
+    platformDraft({
+      provider: "other",
+      agentType: "voice",
+      prompt: "You are a helpful phone agent.",
+      contact,
+    });
+
+  it("prefixes a national number with the selected dial code", () => {
+    // India +91 with a national number that happens to begin with 91 must not
+    // be mistaken for an already-international number.
+    const { payload } = draftToPreflightPayload(
+      phoneDraft({ countryCode: "+91", number: "9123456789" }),
+    );
+    expect(payload.agent.config.phone_number).toBe("+919123456789");
+  });
+
+  it("keeps an already-international (+ prefixed) number as written", () => {
+    const { payload } = draftToPreflightPayload(
+      phoneDraft({ countryCode: "+1", number: "+919123456789" }),
+    );
+    expect(payload.agent.config.phone_number).toBe("+919123456789");
+  });
+
   it("skips a provider outside the connector enum", () => {
     const { payload, skipped } = draftToPreflightPayload(platformDraft({ provider: "bland" }));
     expect(payload).toBeUndefined();

@@ -56,11 +56,18 @@ export const PROVIDER_TO_CONNECTOR = {
 
 // The contact panel keeps the dial code and the local number apart; the
 // backend wants one E.164 string. Empty when the draft has no usable number.
+//
+// Treat the number as already-international only when it is written that way — a
+// leading `+`. Never infer a prefix from the national digits: a national number
+// whose leading digits coincide with the dial code (India +91, 9123456789) would
+// otherwise be sent as +9123456789 instead of +919123456789.
 function e164(contact) {
   const dial = String(contact?.countryCode || "").replace(/\D/g, "");
-  const local = String(contact?.number || "").replace(/\D/g, "");
+  const raw = String(contact?.number || "").trim();
+  const local = raw.replace(/\D/g, "");
   if (!local) return "";
-  return `+${local.startsWith(dial) && dial.length > 1 ? local : dial + local}`;
+  if (raw.startsWith("+")) return `+${local}`;
+  return dial ? `+${dial}${local}` : `+${local}`;
 }
 
 // Who calls whom and who opens, as the backend's two config booleans. Only
