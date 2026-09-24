@@ -279,11 +279,19 @@ def create_selected_harness_run(
         )
 
     with transaction.atomic():
-        environment = HostedHarnessJob.no_workspace_objects.select_for_update().get(
-            id=environment.id
-        )
+        try:
+            environment = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                id=environment.id
+            )
+        except HostedHarnessJob.DoesNotExist as exc:
+            raise HostedHarnessError(
+                "environment_not_ready",
+                "environment was deleted while submitting this Run",
+                status_code=409,
+            ) from exc
         if (
-            environment.state != HostedHarnessJob.State.COMPLETED
+            environment.deleted
+            or environment.state != HostedHarnessJob.State.COMPLETED
             or not environment.run_test_id
             or not (environment.payload.get("metadata") or {}).get(
                 "authoring_object_key"
@@ -662,33 +670,58 @@ DELETE_CANCEL_REASON = "environment_deleted"
 
 
 def delete_environment(job: HostedHarnessJob) -> None:
-    """Soft-delete an environment, cancelling its run first if one is live.
-
-    A live run keeps its row until sandbox cleanup has finished: the cleanup
-    path reads the job through the soft-delete manager, so hiding the row
-    first would strand the sandbox until its TTL. The row is hidden by
-    ``finish_deferred_delete`` when the run reaches a terminal state. The
-    authoring archive and the organization's secrets are left in place:
-    neither is owned by this row, and other environments may reference the
-    same credentials.
-    """
+    """Hide an environment and request cleanup for every live hosted sandbox."""
     from simulate.temporal.client import cancel_hosted_harness_gateway_workflow
 
-    if job.state in _TERMINAL_STATES:
-        _soft_delete(job)
-        return
-    locked = request_cancellation(job, DELETE_CANCEL_REASON)
-    if locked.state in _TERMINAL_STATES:
-        _soft_delete(locked)
-        return
-    try:
-        cancel_hosted_harness_gateway_workflow(str(job.id))
-    except Exception:
-        # Fail open: a scheduler that cannot be reached must not strand the
-        # user with an environment they cannot remove. The workflow is bounded
-        # by the job deadline and its sandbox by its own TTL.
-        logger.exception("hosted_harness_delete_cancel_failed", job_id=str(job.id))
-        _soft_delete(locked)
+    jobs_to_cancel = []
+    parent_cancel_id = None
+    with transaction.atomic():
+        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=job.id
+        )
+        active_children = list(
+            HostedHarnessJob.no_workspace_objects.select_for_update()
+            .filter(environment=locked)
+            .exclude(state__in=_TERMINAL_STATES)
+            .order_by("id")
+        )
+        for child in active_children:
+            child = request_cancellation(child, DELETE_CANCEL_REASON)
+            if child.state not in _TERMINAL_STATES:
+                jobs_to_cancel.append(str(child.id))
+
+        if locked.state in _TERMINAL_STATES:
+            _soft_delete(locked)
+        else:
+            locked = request_cancellation(locked, DELETE_CANCEL_REASON)
+            if locked.state in _TERMINAL_STATES:
+                _soft_delete(locked)
+            else:
+                parent_cancel_id = str(locked.id)
+                jobs_to_cancel.append(parent_cancel_id)
+
+    for job_id in jobs_to_cancel:
+        try:
+            cancel_hosted_harness_gateway_workflow(job_id)
+        except Exception:
+            logger.exception("hosted_harness_delete_cancel_failed", job_id=job_id)
+            try:
+                from simulate.services.hosted_harness_gateway import (
+                    HostedHarnessGateway,
+                )
+
+                cancel_job = HostedHarnessJob.no_workspace_objects.get(id=job_id)
+                HostedHarnessGateway().cancel(
+                    cancel_job, reason=DELETE_CANCEL_REASON
+                )
+            except Exception:
+                logger.exception(
+                    "hosted_harness_delete_direct_cancel_failed", job_id=job_id
+                )
+                if job_id == parent_cancel_id:
+                    _soft_delete(
+                        HostedHarnessJob.no_workspace_objects.get(id=job_id)
+                    )
 
 
 def _soft_delete(job: HostedHarnessJob) -> None:

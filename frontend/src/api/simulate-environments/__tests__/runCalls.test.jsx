@@ -278,6 +278,25 @@ describe("useRunCalls", () => {
     );
   });
 
+  it("returns a stable empty result while the first request is pending", () => {
+    axios.get.mockImplementation(() => new Promise(() => {}));
+    const { result, unmount } = renderHook(() => useRunCalls("ex1"), {
+      wrapper: makeWrapper(),
+    });
+
+    expect(result.current).toMatchObject({
+      tasks: [],
+      columns: [],
+      count: 0,
+      groups: [],
+      facets: {},
+      summary: null,
+      totalPages: 1,
+      isLoading: true,
+    });
+    unmount();
+  });
+
   it("polls active execution results and stops polling when the Run is terminal", async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -297,8 +316,8 @@ describe("useRunCalls", () => {
       expect(
         queryClient
           .getQueryCache()
-          .findAll({ queryKey: ["simulation-run-results-v3", "ex1"] })[0]
-          ?.state.data?.execution?.status,
+          .findAll({ queryKey: ["simulation-run-results-v3", "ex1"] })[0]?.state
+          .data?.execution?.status,
       ).toBe("cancelling"),
     );
     const query = queryClient

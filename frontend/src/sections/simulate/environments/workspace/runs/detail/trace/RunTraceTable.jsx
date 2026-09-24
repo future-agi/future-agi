@@ -160,7 +160,6 @@ export default function RunTraceTable({
     setStatusChip("all");
   };
 
-
   const title = (
     <Stack direction="row" alignItems="center" spacing={1.25}>
       <TraceGroupByPicker
@@ -242,6 +241,7 @@ export default function RunTraceTable({
           />
         ) : (
           <TraceTable
+            columns={visibleColumns}
             groups={groups}
             evals={evals}
             onOpen={onOpenCall}

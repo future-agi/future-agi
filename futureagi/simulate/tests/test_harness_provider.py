@@ -1668,3 +1668,85 @@ def test_environments_delete_hides_the_row(user, workspace):
 
     assert deleted.status_code == 204
     assert listed.json()["count"] == 0
+
+
+@pytest.mark.django_db
+@override_settings(HARNESS_PROVIDER="daytona")
+def test_deleting_environment_cancels_active_selected_run(user, workspace):
+    environment, _ = create_hosted_job(
+        user.organization,
+        _v1_payload(scenario_count=1),
+        idempotency_key="delete-selected-run-environment",
+        workspace=workspace,
+    )
+    attempt = register_attempt(
+        environment.id, endpoint_base_url="https://harness.example.test"
+    ).attempt
+    provision_scenarios(
+        attempt,
+        {
+            "operation": "provision",
+            "name": "Selected Run suite",
+            "modality": "text",
+            "personas": [
+                {
+                    "scenario_key": "scenario-a",
+                    "name": "A",
+                    "role": "customer",
+                    "situation": "A customer needs help.",
+                    "outcome": "The customer gets help.",
+                    "persona": {"name": "A"},
+                }
+            ],
+        },
+    )
+    environment.refresh_from_db()
+    payload = dict(environment.payload)
+    metadata = dict(payload.get("metadata") or {})
+    metadata["authoring_object_key"] = "harness/environments/authored.tar.gz"
+    payload["metadata"] = metadata
+    environment.payload = payload
+    environment.state = HostedHarnessJob.State.COMPLETED
+    environment.current_stage = "completed"
+    environment.save(update_fields=["payload", "state", "current_stage", "updated_at"])
+    child, created = create_selected_harness_run(
+        environment,
+        scenario_keys=["scenario-a"],
+        trials=1,
+        idempotency_key="active-selected-run",
+    )
+    assert created is True
+    child.state = HostedHarnessJob.State.RUNNING
+    child.current_stage = "running"
+    child.save(update_fields=["state", "current_stage", "updated_at"])
+    child.test_execution.status = SimulationTestExecution.ExecutionStatus.RUNNING
+    child.test_execution.save(update_fields=["status", "updated_at"])
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+    with patch(
+        "simulate.temporal.client.cancel_hosted_harness_gateway_workflow"
+    ) as cancel:
+        deleted = client.delete(
+            f"/simulate/api/harness-environments/{environment.id}/",
+            HTTP_X_WORKSPACE_ID=str(workspace.id),
+        )
+
+    environment.refresh_from_db()
+    child.refresh_from_db()
+    assert deleted.status_code == 204
+    assert environment.deleted is True
+    assert child.state == HostedHarnessJob.State.CLEANING_UP
+    assert child.cancel_reason == "environment_deleted"
+    assert child.cancel_requested_at is not None
+    cancel.assert_called_once_with(str(child.id))
+
+    with pytest.raises(HostedHarnessError) as error:
+        create_selected_harness_run(
+            environment,
+            scenario_keys=["scenario-a"],
+            trials=1,
+            idempotency_key="submission-after-delete",
+        )
+    assert error.value.code == "environment_not_ready"
+    assert environment.simulation_runs.count() == 1

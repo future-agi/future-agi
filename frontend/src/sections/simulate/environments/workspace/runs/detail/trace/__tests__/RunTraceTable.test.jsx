@@ -224,6 +224,19 @@ describe("RunTraceTable", () => {
     );
   });
 
+  it("applies column picker choices to the rendered table", async () => {
+    const user = userEvent.setup();
+    renderTable();
+
+    expect(
+      screen.getByRole("columnheader", { name: "Latency" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Columns/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Latency" }));
+
+    expect(screen.queryByRole("columnheader", { name: "Latency" })).toBeNull();
+  });
+
   it("re-buckets the rows when the group-by axis changes to Status", async () => {
     const user = userEvent.setup();
     renderTable();

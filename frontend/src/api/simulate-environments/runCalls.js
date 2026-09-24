@@ -39,12 +39,17 @@ export function mapCallRow(row, evalColumns = []) {
 
   const trialIndex = row?.trial_index ?? null;
   const scenarioName =
-    row?.source_scenario_key || row?.scenario || row?.customer_name || "Untitled scenario";
+    row?.source_scenario_key ||
+    row?.scenario ||
+    row?.customer_name ||
+    "Untitled scenario";
   return {
     id: row?.id,
     goal: row?.goal || row?.scenario || "Untitled goal",
     subGoals: row?.sub_goals ?? [],
-    scenario: trialIndex ? `${scenarioName} · Trial ${trialIndex}` : scenarioName,
+    scenario: trialIndex
+      ? `${scenarioName} · Trial ${trialIndex}`
+      : scenarioName,
     sourceScenario: scenarioName,
     harnessOutcomeStatus: row?.harness_outcome_status ?? outcome ?? null,
     trialIndex,
@@ -158,13 +163,17 @@ export function useRunCalls(executionId, opts = {}) {
   const data = query.data;
   const { tasks, columns, count, groups, facets, summary, totalPages } =
     useMemo(() => {
-      if (!data)
+      if (!data) {
         return {
           tasks: [],
+          columns: [],
+          count: 0,
+          groups: [],
           facets: {},
           summary: null,
           totalPages: 1,
         };
+      }
       const evalColumns = data.evaluation_columns ?? [];
       const rows = (data.results ?? []).map((r) => mapCallRow(r, evalColumns));
       const rowsById = new Map(rows.map((row) => [row.id, row]));
