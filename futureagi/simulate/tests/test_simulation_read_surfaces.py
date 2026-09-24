@@ -13,11 +13,8 @@ from simulate.models import AgentDefinition, Scenarios
 from simulate.models.eval_config import SimulateEvalConfig
 from simulate.models.run_test import RunTest
 from simulate.models.simulator_agent import SimulatorAgent
-from simulate.models.test_execution import (
-    CallExecution,
-    CallTranscript,
-    TestExecution as SimulationTestExecution,
-)
+from simulate.models.test_execution import CallExecution, CallTranscript
+from simulate.models.test_execution import TestExecution as SimulationTestExecution
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
 
 

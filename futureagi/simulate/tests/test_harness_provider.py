@@ -17,9 +17,9 @@ from simulate.models import (
     HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessReceipt,
-    TestExecution as SimulationTestExecution,
 )
 from simulate.models.run_test import RunTest
+from simulate.models.test_execution import TestExecution as SimulationTestExecution
 from simulate.serializers.harness_job import (
     HarnessJobCreateSerializer,
     HarnessPreflightSerializer,
