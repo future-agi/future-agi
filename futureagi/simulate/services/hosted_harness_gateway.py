@@ -180,6 +180,23 @@ def _claude_code_use_vertex(gateway_ready: bool) -> str:
     return str(os.environ.get("CLAUDE_CODE_USE_VERTEX") or "1")
 
 
+_BACKGROUND_SOUNDS = Path(__file__).resolve().parents[1] / "data" / "background_sounds.json"
+
+
+def _background_noise_catalogue() -> str:
+    """The platform's hosted ambience clips as inline JSON the harness can choose from."""
+    try:
+        sounds = json.loads(_BACKGROUND_SOUNDS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    clips = [
+        {"environment": sound.get("environment", ""), "url": sound["url"]}
+        for sound in sounds
+        if isinstance(sound, dict) and sound.get("url")
+    ]
+    return json.dumps(clips, separators=(",", ":")) if clips else ""
+
+
 def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
     """Return control-process-only simulator config and optional Vertex ADC bytes.
 
@@ -300,6 +317,10 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         value = str(os.environ.get(name) or "").strip()
         if value:
             values[name] = value
+    if "ALK_BACKGROUND_NOISE_CATALOG" not in values:
+        catalogue = _background_noise_catalogue()
+        if catalogue:
+            values["ALK_BACKGROUND_NOISE_CATALOG"] = catalogue
     # The sandbox resolves nothing on our network, so the guest's collector is configured
     # separately and only falls back to ours when they are the same host.
     collector = str(
@@ -1249,6 +1270,16 @@ def _resolved_egress_domains(
     gateway_host = _hostname_from_url(simulator_env.get("AGENTCC_BASE_URL"))
     if gateway_host:
         values.append(gateway_host)
+    catalogue = str(simulator_env.get("ALK_BACKGROUND_NOISE_CATALOG") or "").strip()
+    if catalogue.startswith("["):
+        try:
+            clips = json.loads(catalogue)
+        except ValueError:
+            clips = []
+        for clip in clips if isinstance(clips, list) else []:
+            clip_host = _hostname_from_url(clip.get("url")) if isinstance(clip, dict) else None
+            if clip_host:
+                values.append(clip_host)
     # Observe, when the guest is given credentials for it. Derived rather than requested, because a
     # customer cannot be expected to know the collector is a dependency of their own run.
     simulator_values = {str(k).upper(): v for k, v in simulator_env.items()}

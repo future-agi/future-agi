@@ -7,6 +7,7 @@ import tarfile
 from contextlib import nullcontext
 from datetime import timedelta
 from types import SimpleNamespace
+from urllib.parse import urlparse
 from unittest.mock import patch
 
 import pytest
@@ -177,6 +178,40 @@ def test_claude_authoring_prefers_platform_owned_harness_key(monkeypatch):
         values,
         None,
     )
+
+
+def test_platform_ambience_clips_reach_the_harness_and_its_egress(monkeypatch):
+    monkeypatch.delenv("ALK_HOSTED_SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    monkeypatch.setenv("ALK_HARNESS", "claude")
+    monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "internal-service-key")
+    monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
+    monkeypatch.delenv("ALK_BACKGROUND_NOISE_CATALOG", raising=False)
+
+    values, _ = _platform_simulator_material()
+
+    clips = json.loads(values["ALK_BACKGROUND_NOISE_CATALOG"])
+    assert clips and all(clip["environment"] and clip["url"].startswith("https://") for clip in clips)
+    domains = _resolved_egress_domains(
+        {"agent": {"connector": "auto"}, "security": {"allowed_egress_domains": []}},
+        {},
+        values,
+        None,
+    )
+    assert {urlparse(clip["url"]).hostname for clip in clips} <= domains
+
+
+def test_a_deployment_catalogue_overrides_the_platform_clips(monkeypatch):
+    monkeypatch.delenv("ALK_HOSTED_SIMULATOR_GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    monkeypatch.setenv("ALK_HARNESS", "claude")
+    monkeypatch.setenv("AGENTCC_INTERNAL_API_KEY", "internal-service-key")
+    monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
+    monkeypatch.setenv("ALK_BACKGROUND_NOISE_CATALOG", "/etc/clips.json")
+
+    values, _ = _platform_simulator_material()
+
+    assert values["ALK_BACKGROUND_NOISE_CATALOG"] == "/etc/clips.json"
 
 
 def test_claude_authoring_uses_separate_remote_gateway_key(monkeypatch):
