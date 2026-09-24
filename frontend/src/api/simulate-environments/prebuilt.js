@@ -12,7 +12,7 @@ export const prebuiltEnvironmentsQueryKey = () => [
 // one-line change once the backend lands.
 const cloneFixture = () => structuredClone(PREBUILT_ENVIRONMENTS_FIXTURE);
 
-// TODO: swap to axios(endpoints.simulateEnvironments.templates)
+// TODO(TH-7962): swap to axios(endpoints.simulateEnvironments.templates)
 export function usePrebuiltEnvironments() {
   return useQuery({
     queryKey: prebuiltEnvironmentsQueryKey(),

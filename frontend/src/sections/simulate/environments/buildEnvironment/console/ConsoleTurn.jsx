@@ -5,6 +5,7 @@ import { Box, Stack, Typography, Collapse } from "@mui/material";
 import Iconify from "src/components/iconify";
 
 import { BUILD_TONES } from "../buildTones";
+import { activateOnKey } from "../../helpers/activateOnKey";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
@@ -114,6 +115,10 @@ export function Step({ step }) {
         <Stack
           direction="row" alignItems="center" spacing={1}
           onClick={() => setOpen((o) => !o)}
+          role="button"
+          tabIndex={0}
+          aria-expanded={open}
+          onKeyDown={activateOnKey(() => setOpen((o) => !o))}
           sx={{
             py: 0.5, cursor: "pointer", borderRadius: 1,
             "&:hover": { bgcolor: "action.hover" },

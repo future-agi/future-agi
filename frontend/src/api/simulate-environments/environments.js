@@ -18,7 +18,7 @@ export const myEnvironmentsQueryKey = () => [
 const toRows = (data) =>
   (Array.isArray(data) ? data : []).map(harnessJobToRow);
 
-// TODO: interim source — the My Environments table reads from the
+// TODO(TH-7962): interim source — the My Environments table reads from the
 // harness-jobs list and maps each job to a flat row. Several columns (see
 // harnessJobToRow) have no field in this payload and render as placeholders;
 // replace with the dedicated environments endpoint once it lands.
@@ -30,7 +30,7 @@ export function useMyEnvironments() {
   });
 }
 
-// TODO: axios.delete(endpoints.simulateEnvironments.detail(envId))
+// TODO(TH-7962): axios.delete(endpoints.simulateEnvironments.detail(envId))
 export function useDeleteEnvironment() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -44,7 +44,7 @@ export function useDeleteEnvironment() {
   });
 }
 
-// TODO: axios.post(endpoints.simulateEnvironments.build, source)
+// TODO(TH-7962): axios.post(endpoints.simulateEnvironments.build, source)
 // Return only the server-minted id — never echo the raw source back, since it
 // can carry apiKey/envText secrets that would then sit in the mutation cache.
 export function useBuildEnvironment() {
@@ -55,7 +55,7 @@ export function useBuildEnvironment() {
   });
 }
 
-// TODO: POST to /secret-files (uploadHarnessSecretFile) — never inline
+// TODO(TH-7962): POST to /secret-files (uploadHarnessSecretFile) — never inline
 // file contents. The UI holds only the returned reference, not the bytes.
 export function useUploadSecretFile() {
   return useMutation({
@@ -67,7 +67,7 @@ export function useUploadSecretFile() {
   });
 }
 
-// TODO: swap to axios.post(endpoints.simulateEnvironments.adopt, { templateId })
+// TODO(TH-7962): swap to axios.post(endpoints.simulateEnvironments.adopt, { templateId })
 // Adopting a prebuilt template mints a fresh environment instance from the
 // library entry. Return only the server-minted id — never echo the template
 // back into the mutation cache.
@@ -79,7 +79,7 @@ export function useAdoptTemplate() {
   });
 }
 
-// TODO: axios.post(endpoints.simulateEnvironments.run(envId))
+// TODO(TH-7962): axios.post(endpoints.simulateEnvironments.run(envId))
 export function useRunSimulation() {
   return useMutation({
     mutationFn: async (envId) => ({

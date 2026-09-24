@@ -5,6 +5,7 @@ import { Box, Stack, Typography, Button } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { BUILD_TONES } from "./buildTones";
+import { activateOnKey } from "../helpers/activateOnKey";
 
 // The shape of one live pipeline step (a BUILD_PIPELINE entry decorated with a
 // derived `status` and, on a failed step, its `failure`). Exported so the
@@ -59,7 +60,11 @@ export default function PipelineRow({ step }) {
     <Box>
       <Stack
         direction="row" alignItems="flex-start" spacing={1.25}
-        onClick={() => failed && setOpen((o) => !o)}
+        onClick={failed ? () => setOpen((o) => !o) : undefined}
+        role={failed ? "button" : undefined}
+        tabIndex={failed ? 0 : undefined}
+        aria-expanded={failed ? open : undefined}
+        onKeyDown={failed ? activateOnKey(() => setOpen((o) => !o)) : undefined}
         sx={{
           px: 2, py: 1,
           cursor: failed ? "pointer" : "default",
