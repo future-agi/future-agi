@@ -521,6 +521,11 @@ fi
 USER_EMAIL=""
 USER_NAME=""
 USER_PASS=""
+ACCOUNT_READY=0
+
+has_control_chars() {
+  LC_ALL=C printf '%s' "$1" | grep -q '[[:cntrl:]]'
+}
 
 prompt_user() {
   step "Create your first account"
@@ -533,6 +538,10 @@ prompt_user() {
     if [[ -z "$USER_EMAIL" ]]; then
       say "  ${DIM}skipped — no user will be created${RESET}"
       return
+    fi
+    if has_control_chars "$USER_EMAIL"; then
+      warn "  email can't contain control characters — try again"
+      continue
     fi
     if [[ "$USER_EMAIL" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]; then
       break
@@ -571,6 +580,9 @@ elif [[ "$NON_INTERACTIVE" -eq 1 ]]; then
     USER_EMAIL="$FAGI_ADMIN_EMAIL"
     USER_NAME="$FAGI_ADMIN_NAME"
     USER_PASS="$FAGI_ADMIN_PASSWORD"
+    if has_control_chars "$USER_EMAIL"; then
+      die "FAGI_ADMIN_EMAIL must not contain control characters"
+    fi
     step "Using FAGI_ADMIN_* from environment for first-user creation"
   else
     step "Non-interactive: skipping first-user creation"
@@ -651,17 +663,29 @@ compose_service_snapshot() {
   fi
 }
 
+backend_migrations_observed() {
+  local backend_logs
+  backend_logs=$($DC logs --tail 200 backend 2>/dev/null || true)
+  printf '%s\n' "$backend_logs" | grep -qiE \
+    'Operations to perform:|Running migrations:|Applying [[:alnum:]_.]+\.'
+}
+
 bounded_env_int INSTALL_READY_TIMEOUT_SECONDS 600 60 1800
 ready_timeout="$BOUNDED_ENV_INT"
+bounded_env_int INSTALL_READY_ABSOLUTE_TIMEOUT_SECONDS 1800 "$ready_timeout" 3600
+ready_absolute_timeout="$BOUNDED_ENV_INT"
 bounded_env_int INSTALL_STABILITY_SECONDS 15 5 120
 stability_seconds="$BOUNDED_ENV_INT"
 
 # Source .env for BACKEND_PORT so we hit the right host port.
 backend_port=$(grep -E '^BACKEND_PORT=' .env | head -1 | cut -d= -f2- || true)
 backend_port="${backend_port:-8000}"
-deadline=$(( $(date +%s) + ready_timeout ))
+ready_started_at=$(date +%s)
+deadline=$(( ready_started_at + ready_timeout ))
+absolute_deadline=$(( ready_started_at + ready_absolute_timeout ))
 ready_since=0
 last_ready_signature=""
+migration_readiness_extended=0
 declare -a catalog_jobs=(
   property-catalog-kafka-volume-init
   property-catalog-runtime-volume-init
@@ -748,6 +772,16 @@ while true; do
   fi
 
   if (( now >= deadline )); then
+    if (( now < absolute_deadline )) && backend_migrations_observed; then
+      deadline=$(( now + 60 ))
+      (( deadline > absolute_deadline )) && deadline=$absolute_deadline
+      if (( migration_readiness_extended == 0 )); then
+        warn "backend migrations are still running; extending readiness wait up to ${ready_absolute_timeout}s"
+        migration_readiness_extended=1
+      fi
+      sleep 5
+      continue
+    fi
     $DC ps -a >&3 2>&1 || true
     $DC logs --tail 80 property-catalog-kafka property-catalog-kafka-volume-init \
       property-catalog-runtime-volume-init property-catalog-topic-init \
@@ -780,13 +814,16 @@ if [[ -n "$USER_EMAIL" ]]; then
 
   if (( cu_rc == 0 )); then
     ok "Account created for $USER_EMAIL"
+    ACCOUNT_READY=1
   elif printf '%s' "$cu_out" | grep -qiE "already exists|UNIQUE constraint"; then
     ok "Account already exists for $USER_EMAIL — sign in normally"
+    ACCOUNT_READY=1
   else
     warn "create_user failed (exit $cu_rc). Last 6 lines of output:"
     printf '%s\n' "$cu_out" | tail -6 | sed 's|^|      |'
     warn "Run it manually after the stack settles:"
     warn "  docker exec -it futureagi-backend-1 python manage.py create_user"
+    die "First account was not created; install cannot report success until account creation succeeds"
   fi
 fi
 
@@ -839,7 +876,7 @@ say "  ${BOLD}Existing-data catalog backfill${RESET}"
 say "    Restarts do not scan historical data automatically. After an upgrade:"
 say "    ${BOLD}./bin/property-catalog-backfill --execute${RESET}"
 
-if [[ -n "$USER_EMAIL" ]]; then
+if [[ -n "$USER_EMAIL" && "$ACCOUNT_READY" -eq 1 ]]; then
   say ""
   say "  ${BOLD}Sign in as${RESET} ${USER_EMAIL}"
   say "    →  http://localhost:${frontend_port}/auth/jwt/login"

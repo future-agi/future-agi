@@ -23,6 +23,9 @@ STARTUP_SAFE_MANAGEMENT_COMMANDS = frozenset(
         "ch25_property_catalog_lifecycle_controller",
         "check",
         "collectstatic",
+        # Explicit one-shot first-account bootstrap used by the OSS installer.
+        # It is not an AppConfig startup hook and must run after migrations.
+        "create_user",
         "generate_swagger",
         "grpcrunaioserver",
         "runserver",

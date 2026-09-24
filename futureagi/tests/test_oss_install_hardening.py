@@ -189,12 +189,36 @@ def test_installers_gate_success_on_the_full_catalog_path() -> None:
         assert service in shell
         assert service in powershell
 
-    assert "INSTALL_READY_TIMEOUT_SECONDS" in shell
-    assert "INSTALL_STABILITY_SECONDS" in shell
+    for installer in (shell, powershell):
+        assert "INSTALL_READY_TIMEOUT_SECONDS" in installer
+        assert "INSTALL_READY_ABSOLUTE_TIMEOUT_SECONDS" in installer
+        assert "INSTALL_STABILITY_SECONDS" in installer
+        assert "extending readiness wait" in installer
+    assert "backend_migrations_observed" in shell
+    assert "Test-BackendMigrationsObserved" in powershell
     assert "Stack did not become fully ready" in shell
     assert "Stack did not become fully ready" in powershell
     assert "Backend did not pass /health/" not in shell
     assert "Backend did not pass /health/" not in powershell
+
+
+def test_installers_gate_first_account_success() -> None:
+    shell = _read(INSTALL_SH)
+    powershell = _read(INSTALL_PS1)
+    assert "has_control_chars" in shell
+    assert "Test-ControlChars" in powershell
+    assert "email can't contain control characters" in shell
+    assert "email can't contain control characters" in powershell
+    assert "FAGI_ADMIN_EMAIL must not contain control characters" in shell
+    assert "FAGI_ADMIN_EMAIL must not contain control characters" in powershell
+    assert "ACCOUNT_READY=0" in shell
+    assert "$AccountReady = $false" in powershell
+    assert "ACCOUNT_READY=1" in shell
+    assert "$AccountReady = $true" in powershell
+    assert "First account was not created" in shell
+    assert "First account was not created" in powershell
+    assert '[[ -n "$USER_EMAIL" && "$ACCOUNT_READY" -eq 1 ]]' in shell
+    assert "if ($UserEmail -and $AccountReady)" in powershell
 
 
 def test_installers_cover_kafka_port_and_all_catalog_persistent_state() -> None:

@@ -338,6 +338,7 @@ if ($NoUp) {
 $UserEmail = $null
 $UserName  = $null
 $UserPass  = $null
+$AccountReady = $false
 
 function Read-Plain {
   param([string]$Prompt, [switch]$Secret)
@@ -349,6 +350,11 @@ function Read-Plain {
   }
 }
 
+function Test-ControlChars {
+  param([string]$Value)
+  return $Value -match '[\x00-\x1F\x7F]'
+}
+
 if (-not $SkipUserCreation -and -not $NonInteractive) {
   Step "Create your first account"
   Say "  Press Enter on email to skip and create the user later via:"
@@ -358,6 +364,10 @@ if (-not $SkipUserCreation -and -not $NonInteractive) {
   while ($true) {
     $UserEmail = Read-Plain "  Email"
     if (-not $UserEmail) { Say "  skipped -- no user will be created"; break }
+    if (Test-ControlChars $UserEmail) {
+      Warn "  email can't contain control characters -- try again"
+      continue
+    }
     if ($UserEmail -match '^[^@\s]+@[^@\s]+\.[^@\s]+$') { break }
     Warn "  '$UserEmail' doesn't look like an email -- try again"
   }
@@ -389,6 +399,9 @@ if (-not $SkipUserCreation -and -not $NonInteractive) {
     $UserEmail = $env:FAGI_ADMIN_EMAIL
     $UserName  = $env:FAGI_ADMIN_NAME
     $UserPass  = $env:FAGI_ADMIN_PASSWORD
+    if (Test-ControlChars $UserEmail) {
+      Die "FAGI_ADMIN_EMAIL must not contain control characters"
+    }
     Step "Using FAGI_ADMIN_* from environment for first-user creation"
   } else {
     Step "Non-interactive: skipping first-user creation"
@@ -499,13 +512,22 @@ function Save-ReadinessDiagnostics {
   Append-Log $logOutput
 }
 
+function Test-BackendMigrationsObserved {
+  $backendLogs = @(& $DcCmd @DcArgs logs --tail 200 backend 2>$null | ForEach-Object { [string]$_ }) -join "`n"
+  return $backendLogs -match 'Operations to perform:|Running migrations:|Applying [A-Za-z0-9_.]+\.'
+}
+
 $BackendPort = Get-EnvValue 'BACKEND_PORT'
 if (-not $BackendPort) { $BackendPort = 8000 }
 $readyTimeout = Get-BoundedEnvInt 'INSTALL_READY_TIMEOUT_SECONDS' 600 60 1800
+$readyAbsoluteTimeout = Get-BoundedEnvInt 'INSTALL_READY_ABSOLUTE_TIMEOUT_SECONDS' 1800 $readyTimeout 3600
 $stabilitySeconds = Get-BoundedEnvInt 'INSTALL_STABILITY_SECONDS' 15 5 120
-$deadline = (Get-Date).AddSeconds($readyTimeout)
+$readyStartedAt = Get-Date
+$deadline = $readyStartedAt.AddSeconds($readyTimeout)
+$absoluteDeadline = $readyStartedAt.AddSeconds($readyAbsoluteTimeout)
 $readySince = $null
 $lastReadySignature = ''
+$migrationReadinessExtended = $false
 $catalogJobs = @(
   'property-catalog-kafka-volume-init',
   'property-catalog-runtime-volume-init',
@@ -585,6 +607,16 @@ while ($true) {
   }
 
   if ($now -ge $deadline) {
+    if ($now -lt $absoluteDeadline -and (Test-BackendMigrationsObserved)) {
+      $deadline = $now.AddSeconds(60)
+      if ($deadline -gt $absoluteDeadline) { $deadline = $absoluteDeadline }
+      if (-not $migrationReadinessExtended) {
+        Warn "backend migrations are still running; extending readiness wait up to ${readyAbsoluteTimeout}s"
+        $migrationReadinessExtended = $true
+      }
+      Start-Sleep -Seconds 5
+      continue
+    }
     Save-ReadinessDiagnostics
     Die "Stack did not become fully ready within ${readyTimeout}s. Relevant service logs were appended to $LogFile"
   }
@@ -599,13 +631,16 @@ if ($UserEmail) {
   $cuRc = $LASTEXITCODE
   if ($cuRc -eq 0) {
     Ok "Account created for $UserEmail"
+    $AccountReady = $true
   } elseif ($cuOut -match '(?i)already exists|UNIQUE constraint') {
     Ok "Account already exists for $UserEmail -- sign in normally"
+    $AccountReady = $true
   } else {
     Warn "create_user failed (exit $cuRc). Last 6 lines:"
     ($cuOut | Out-String).Split([char]10) | Select-Object -Last 6 | ForEach-Object { Say "      $_" }
     Warn "Run it manually after the stack settles:"
     Warn "  docker exec -it futureagi-backend-1 python manage.py create_user"
+    Die "First account was not created; install cannot report success until account creation succeeds"
   }
 }
 
@@ -630,7 +665,7 @@ Say ""
 Say "  Existing-data catalog backfill"
 Say "    Restarts do not scan historical data automatically. After an upgrade:"
 Say "    .\bin\property-catalog-backfill.ps1 -Execute"
-if ($UserEmail) {
+if ($UserEmail -and $AccountReady) {
   Say ""
   Say "  Sign in as $UserEmail"
   Say "    ->  http://localhost:$FrontendPort/auth/jwt/login"

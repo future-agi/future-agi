@@ -163,6 +163,12 @@ def test_mutation_guard_allows_required_read_only_and_server_commands(argv):
     assert guarded_management_command(argv) is None
 
 
+def test_mutation_guard_allows_explicit_first_user_creation_command():
+    assert guarded_management_command(
+        ["manage.py", "create_user", "--email", "admin@example.com"]
+    ) is None
+
+
 def test_ready_rejects_unsafe_management_command_before_pytest_shortcut(monkeypatch):
     monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "true")
     monkeypatch.setattr(sys, "argv", ["manage.py", "migrate"])
