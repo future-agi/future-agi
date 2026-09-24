@@ -3314,7 +3314,13 @@ class HostedHarnessGateway:
         return True
 
     def cancel(self, job: HostedHarnessJob, *, reason: str) -> HostedHarnessJob:
-
+        settled = HostedHarnessAttempt.no_workspace_objects.filter(
+            job=job,
+            attempt_number=job.current_attempt_number,
+            cleanup_verified_at__isnull=False,
+        ).exists()
+        if settled:
+            return job
         job = request_cancellation(job, reason)
         attempt = HostedHarnessAttempt.no_workspace_objects.filter(
             job=job, attempt_number=job.current_attempt_number
