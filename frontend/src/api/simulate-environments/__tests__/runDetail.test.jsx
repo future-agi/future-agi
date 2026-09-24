@@ -120,14 +120,16 @@ describe("buildRunStats", () => {
 
   it("shows hosted verdicts without replacing them with transport KPIs", () => {
     const row = mapExecutions({
-      results: [{
-        id: "ex-hosted",
-        status: "Running",
-        total_calls: 6,
-        outcome_passed: 2,
-        outcome_failed: 1,
-        outcome_skipped: 0,
-      }],
+      results: [
+        {
+          id: "ex-hosted",
+          status: "Running",
+          total_calls: 6,
+          outcome_passed: 2,
+          outcome_failed: 1,
+          outcome_skipped: 0,
+        },
+      ],
     })[0];
     const stats = buildRunStats(
       { total_calls: 6, failed_calls: 0 },
@@ -403,6 +405,30 @@ describe("useRunDetail", () => {
     );
   });
 
+  it("keeps terminal Run failure when some calls already passed", async () => {
+    axios.get.mockResolvedValueOnce({
+      data: {
+        execution: {
+          id: "ex-failed",
+          status: "failed",
+          summary: {
+            total: 12,
+            outcomes: { passed: 8, failed: 2, error: 2, inconclusive: 0 },
+          },
+        },
+      },
+    });
+    const { result } = renderHook(() => useRunDetail("rt1", "ex-failed"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.identity.status).toBe("failed");
+    expect(result.current.stats.passed).toBe(8);
+    expect(result.current.stats.failed).toBe(4);
+  });
+
   it("polls the Run summary while active and stops when it completes", async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -421,9 +447,12 @@ describe("useRunDetail", () => {
       },
     });
 
-    const { result, unmount } = renderHook(() => useRunDetail("rt1", "ex-new"), {
-      wrapper: Wrapper,
-    });
+    const { result, unmount } = renderHook(
+      () => useRunDetail("rt1", "ex-new"),
+      {
+        wrapper: Wrapper,
+      },
+    );
     await waitFor(() =>
       expect(
         queryClient.getQueryData([

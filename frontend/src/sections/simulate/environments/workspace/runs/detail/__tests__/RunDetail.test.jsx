@@ -48,7 +48,7 @@ const IDENTITY = {
   agentVersion: "v2",
   startedAt: "2026-09-10T09:00:00.000Z",
   finishedAt: null,
-  status: "failed",
+  status: "passed",
   scenarioIds: ["scenario-a", "scenario-b"],
   trials: 3,
 };
@@ -99,9 +99,10 @@ const OPT_RUN = {
   startedAt: "2026-09-16T09:00:00.000Z",
 };
 
-
 const renderDetail = (props = {}) => {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
@@ -150,6 +151,17 @@ describe("RunDetail", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows terminal execution failure despite partial call success", () => {
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, status: "failed" },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+  });
+
   it("opens the Add-evals drawer from the header action", async () => {
     useRunDetail.mockReturnValue({
       identity: IDENTITY,
@@ -165,7 +177,11 @@ describe("RunDetail", () => {
   });
 
   it("submits the same immutable selection and trials on Run again", async () => {
-    useRunDetail.mockReturnValue({ identity: IDENTITY, stats: STATS, isLoading: false });
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: STATS,
+      isLoading: false,
+    });
     const user = userEvent.setup();
     const onStartRun = vi.fn();
     renderDetail({ onStartRun });

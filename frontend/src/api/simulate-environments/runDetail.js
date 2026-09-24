@@ -28,7 +28,7 @@ import {
  * @property {?string} startedAt    ISO start time.
  * @property {?string} finishedAt   ISO finish time — GAP: the executions row
  *                                   carries no end time, so this is null.
- * @property {"passed"|"failed"|"running"} status  Run-level outcome.
+ * @property {"passed"|"failed"|"running"|"cancelled"} status  Run-level outcome.
  */
 
 /**
@@ -92,16 +92,21 @@ export function buildRunIdentity(row, envName = null) {
  * @returns {RunStats}
  */
 export function buildRunStats(kpis, perf, row) {
-  const total = row?.hasOutcomes ? row.total : kpis?.total_calls ?? row?.total ?? 0;
-  const failed = row?.hasOutcomes ? row.failed : kpis?.failed_calls ?? row?.failed ?? 0;
-  const passed = row?.hasOutcomes
-    ? row.passed
-    : Math.max(total - failed, 0);
+  const total = row?.hasOutcomes
+    ? row.total
+    : kpis?.total_calls ?? row?.total ?? 0;
+  const failed = row?.hasOutcomes
+    ? row.failed
+    : kpis?.failed_calls ?? row?.failed ?? 0;
+  const passed = row?.hasOutcomes ? row.passed : Math.max(total - failed, 0);
 
   const perfRate = perf?.test_run_performance_metrics?.pass_rate;
-  const passRate = row?.hasOutcomes || typeof perfRate !== "number"
-    ? total ? Math.round((passed / total) * 100) : 0
-    : Math.round(perfRate);
+  const passRate =
+    row?.hasOutcomes || typeof perfRate !== "number"
+      ? total
+        ? Math.round((passed / total) * 100)
+        : 0
+      : Math.round(perfRate);
 
   const durationS = kpis?.total_duration ?? null;
   const avgDurationMs =
@@ -175,9 +180,13 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
       startedAt: execution.started_at ?? null,
       status: ACTIVE_EXECUTION_STATUSES.has(execution.status)
         ? "running"
-        : summary?.outcomes?.passed > 0
-          ? "passed"
-          : "failed",
+        : execution.status === "failed"
+          ? "failed"
+          : execution.status === "cancelled"
+            ? "cancelled"
+            : summary?.outcomes?.passed > 0
+              ? "passed"
+              : "failed",
       scenarioIds: execution.selected_scenario_keys?.length
         ? execution.selected_scenario_keys
         : undefined,
