@@ -3,7 +3,6 @@ import { alpha, keyframes } from "@mui/material/styles";
 import { Box, Stack, Typography } from "@mui/material";
 
 import { BUILD_TONES } from "../buildTones";
-import { STEP_DURATION } from "../buildPipeline.constants";
 import { PIPELINE_CHECKS_COPY } from "../build.constants";
 
 const rowIn = keyframes`
@@ -16,18 +15,13 @@ const pulseRing = keyframes`
   50%     { box-shadow: 0 0 0 6px ${alpha(BUILD_TONES.accent, 0.28)}; }
 `;
 
-export default function TimelineRow({ step, first, last, elapsed, index }) {
+export default function TimelineRow({ step, first, last, index }) {
   const done = step.status === "done";
   const running = step.status === "running";
   const failed = step.status === "failed";
   const pending = !done && !running && !failed;
 
   const tone = failed ? BUILD_TONES.red : done ? BUILD_TONES.green : running ? BUILD_TONES.accent : null;
-  const durationLabel = done
-    ? `${STEP_DURATION[step.id]?.toFixed(1) || "—"}s`
-    : running
-      ? (elapsed / 1000).toFixed(1) + "s"
-      : "";
 
   return (
     <Stack
@@ -163,17 +157,6 @@ export default function TimelineRow({ step, first, last, elapsed, index }) {
             {step.label}
           </Typography>
           <Box flex={1} />
-          {durationLabel && (
-            <Typography
-              sx={{
-                typography: "s3", fontVariantNumeric: "tabular-nums",
-                color: done ? "text.disabled" : running ? BUILD_TONES.accent : "text.disabled",
-                fontWeight: running ? "fontWeightSemiBold" : "fontWeightMedium",
-              }}
-            >
-              {durationLabel}
-            </Typography>
-          )}
           {pending && (
             <Typography sx={{ typography: "s3", color: "text.disabled" }}>
               {PIPELINE_CHECKS_COPY.queued}
@@ -203,6 +186,5 @@ TimelineRow.propTypes = {
   }),
   first: PropTypes.bool,
   last: PropTypes.bool,
-  elapsed: PropTypes.number,
   index: PropTypes.number,
 };
