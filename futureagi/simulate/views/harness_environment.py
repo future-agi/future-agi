@@ -16,9 +16,11 @@ from simulate.serializers.harness_environment import (
     HarnessEnvironmentListResponseSerializer,
     HarnessEnvironmentRenameSerializer,
     HarnessEnvironmentRunEvaluationQueuedSerializer,
-    HarnessEnvironmentRunResponseSerializer,
-    HarnessEnvironmentRunSerializer,
     HarnessEnvironmentToolCallEvaluationSerializer,
+)
+from simulate.serializers.harness_job import (
+    HarnessRunCreateResponseSerializer,
+    HarnessRunCreateSerializer,
 )
 from simulate.services.harness_environment import (
     annotate_for_list,
@@ -29,7 +31,6 @@ from simulate.services.harness_environment import (
 from simulate.services.harness_provider import (
     get_harness_provider,
     request_organization,
-    request_workspace,
     scope_jobs,
 )
 from tfc.utils.api_contracts import validated_request
@@ -83,7 +84,9 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         return annotate_for_list(
             scope_jobs(
                 HostedHarnessJob.no_workspace_objects.filter(
-                    organization=request_organization(request), deleted=False
+                    organization=request_organization(request),
+                    environment__isnull=True,
+                    deleted=False,
                 ),
                 request,
             )
@@ -173,47 +176,14 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @validated_request(
-        request_serializer=HarnessEnvironmentRunSerializer,
-        responses={202: HarnessEnvironmentRunResponseSerializer},
+        request_serializer=HarnessRunCreateSerializer,
+        responses={202: HarnessRunCreateResponseSerializer},
         reject_unknown_fields=True,
     )
     @action(detail=True, methods=["post"])
     def run(self, request, pk=None):
-        """Start a simulation on an existing environment.
-
-        This reuses the saved contract and scenario suite rather than authoring
-        a new one, which is what makes a second run comparable to the first.
-        """
-        from simulate.services.hosted_harness import HostedHarnessError
-
-        job = self._job(request, pk)
-        if job is None:
-            return Response(
-                {"detail": "Environment not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        try:
-            result = get_harness_provider().rerun_saved(
-                str(job.id),
-                organization=request_organization(request),
-                workspace=request_workspace(request),
-                environment_values={},
-            )
-        except HostedHarnessError as exc:
-            return Response(exc.as_dict(), status=exc.status_code)
-
-        started = result.get("job") or {}
-        started_status = result.get("status") or {}
-        return Response(
-            {
-                "environment_id": str(job.id),
-                "job_id": started.get("job_id") or str(job.id),
-                "run_id": started.get("run_id"),
-                "state": started_status.get("state"),
-                "stage": started_status.get("stage"),
-            },
-            status=status.HTTP_202_ACCEPTED,
-        )
+        """Create one new Run for the selected scenarios and trial count."""
+        return get_harness_provider().run(request, pk)
 
     def _run_test_job(self, request, pk):
         """The environment and its run test, or the response that refuses the call.

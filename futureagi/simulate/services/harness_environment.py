@@ -77,11 +77,14 @@ def annotate_for_list(
                 "scenario_registrations",
                 filter=Q(scenario_registrations__deleted=False),
                 distinct=True,
-            )
+            ),
+            simulation_run_count=Count(
+                "simulation_runs",
+                filter=Q(simulation_runs__deleted=False),
+                distinct=True,
+            ),
         )
         .prefetch_related(
-            # Only the snapshots the row counts from are needed, so the
-            # environment, store and scenario snapshots stay in the database.
             Prefetch(
                 "normalized_stage_outputs",
                 queryset=HostedHarnessStageOutput.no_workspace_objects.filter(
@@ -90,8 +93,6 @@ def annotate_for_list(
                 to_attr="row_outputs",
             )
         )
-        # Newest environment first. Creation order is stable: a list sorted by
-        # last change reshuffles under the reader while background stages land.
         .order_by("-created_at")
     )
 
@@ -99,6 +100,9 @@ def annotate_for_list(
 def environment_row(job: HostedHarnessJob) -> dict[str, Any]:
     """One list row. Safe to call on a job that has never finished building."""
     contract = _contract_data(job)
+    runs_count = getattr(job, "simulation_run_count", None)
+    if runs_count is None:
+        runs_count = job.simulation_runs.filter(deleted=False).count()
     return {
         "id": str(job.id),
         "name": environment_name(job),
@@ -111,7 +115,7 @@ def environment_row(job: HostedHarnessJob) -> dict[str, Any]:
         "scenario_count": scenario_count(job),
         "sub_goals_count": _sub_goals_count(_row_stage_output(job, "sub_goals")),
         "tools_count": _tools_count(contract),
-        "runs_count": 1 if job.test_execution_id else 0,
+        "runs_count": runs_count,
         "last_updated": _isoformat(job.content_updated_at or job.created_at),
         "created_at": _isoformat(job.created_at),
     }
@@ -789,13 +793,22 @@ def _agent(job: HostedHarnessJob) -> dict[str, Any] | None:
 
 
 def _run_link(job: HostedHarnessJob) -> dict[str, Any]:
+    latest_run = (
+        job.simulation_runs.filter(deleted=False)
+        .order_by("-created_at", "-id")
+        .first()
+    )
     run_test_id = str(job.run_test_id) if job.run_test_id else None
-    test_execution_id = str(job.test_execution_id) if job.test_execution_id else None
+    test_execution_id = (
+        str(latest_run.test_execution_id)
+        if latest_run and latest_run.test_execution_id
+        else None
+    )
     return {
         "run_test_id": run_test_id,
         "test_execution_id": test_execution_id,
         "simulation_url": (
-            f"/dashboard/simulate/test/{run_test_id}/{test_execution_id}/call-details"
+            f"/dashboard/simulate/environments/{job.id}/runs/{run_test_id}/{test_execution_id}"
             if run_test_id and test_execution_id
             else None
         ),

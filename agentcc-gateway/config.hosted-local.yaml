@@ -1,0 +1,39 @@
+server:
+  port: 8080
+  host: "0.0.0.0"
+  read_timeout: 5s
+  write_timeout: 300s
+  idle_timeout: 120s
+  shutdown_timeout: 30s
+  max_request_body_size: 10485760
+  default_request_timeout: 120s
+
+providers:
+  vertex:
+    base_url: "https://aiplatform.googleapis.com"
+    api_format: "gemini"
+    credentials_file: "/app/Vertex_AI_Creds.json"
+    default_timeout: 120s
+    max_concurrent: 50
+    conn_pool_size: 50
+    headers:
+      x-gcp-project: "futureagiprimary"
+      x-gcp-location: "global"
+    models:
+      - gemini-3.7-flash
+      - gemini-3.8-flash
+
+model_map:
+  vertex_ai/gemini-3.7-flash: vertex
+  vertex_ai/gemini-3.8-flash: vertex
+  gemini-3.7-flash: vertex
+  gemini-3.8-flash: vertex
+
+routing:
+  targets:
+    vertex_ai/gemini-3.7-flash:
+      - provider: vertex
+        model_override: gemini-3.7-flash
+    vertex_ai/gemini-3.8-flash:
+      - provider: vertex
+        model_override: gemini-3.8-flash

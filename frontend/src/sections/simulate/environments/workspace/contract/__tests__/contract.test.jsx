@@ -69,10 +69,9 @@ describe("RlContractPanel", () => {
     });
   });
 
-  it("mounts the actors panel in place of the deferred empty state", () => {
+  it("no longer mounts the dummy Actors section (commented out, to be picked up later)", () => {
     renderPanel();
-    expect(screen.getAllByText("Colleague with a different plan").length).toBeGreaterThan(0);
-    expect(screen.queryByText("Actors land with the next phase")).toBeNull();
+    expect(screen.queryByText("Colleague with a different plan")).toBeNull();
   });
 
   describe("template lock (read-only until forked)", () => {

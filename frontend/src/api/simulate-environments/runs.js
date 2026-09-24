@@ -28,10 +28,17 @@ export function listRunTestExecutions(runTestId) {
 // this pure mapper). `executionId` mirrors `id` so a row click routes into the
 // reused product execution detail.
 export function executionToRun(raw) {
-  const total = raw?.total_chats ?? raw?.calls_attempted ?? 0;
+  const total =
+    raw?.total_calls ?? raw?.total_chats ?? raw?.calls_attempted ?? raw?.calls ?? 0;
+  const hasOutcomes = raw?.outcome_passed != null;
   const rate = raw?.success_rate ?? 0;
-  const passed = Math.round((total * rate) / 100);
-  const failed = Math.max(total - passed, 0);
+  const passed = hasOutcomes
+    ? raw.outcome_passed
+    : raw?.completed_calls ?? Math.round((total * rate) / 100);
+  const skipped = hasOutcomes ? raw.outcome_skipped ?? 0 : 0;
+  const failed = hasOutcomes
+    ? (raw.outcome_failed ?? 0) + skipped
+    : raw?.failed_calls ?? Math.max(total - passed, 0);
 
   let status;
   if (!TERMINAL_STATUSES.includes(raw?.status)) {
@@ -47,11 +54,20 @@ export function executionToRun(raw) {
     executionId: raw?.id,
     status,
     startedAt: raw?.start_time ?? null,
-    finishedAt: null,
+    finishedAt: raw?.completed_at ?? null,
     total,
     passed,
     failed,
+    pending: hasOutcomes
+      ? Math.max(total - passed - failed, 0)
+      : raw?.pending_calls ?? Math.max(total - passed - failed, 0),
+    skipped,
+    hasOutcomes,
+    scenarioCount: raw?.selected_scenarios ?? null,
+    scenarioIds: raw?.scenario_keys ?? [],
+    trials: raw?.trials ?? 1,
     agentVersion: raw?.agent_version ?? null,
+    durationS: raw?.duration ?? null,
   };
 }
 
@@ -82,6 +98,12 @@ export function useEnvironmentRuns(env, envState) {
     queryFn: () => listRunTestExecutions(runTestId),
     enabled: !!runTestId && !mockRuns,
     select: mapExecutions,
+    refetchInterval: (query) =>
+      (query.state.data?.results || []).some(
+        (row) => !TERMINAL_STATUSES.includes(row?.status),
+      )
+        ? 2000
+        : false,
   });
 
   if (mockRuns) {
@@ -104,3 +126,4 @@ export function runSimulationTarget(env) {
   }
   return paths.dashboard.simulate.test;
 }
+

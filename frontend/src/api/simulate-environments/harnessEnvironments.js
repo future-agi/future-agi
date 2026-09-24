@@ -19,6 +19,8 @@ import { apiPath } from "src/api/contracts/api-surface";
 const environmentsPath = () => apiPath("/simulate/api/harness-environments/");
 const environmentPath = (id) =>
   apiPath("/simulate/api/harness-environments/{id}/", { id });
+const environmentRunPath = (id) =>
+  apiPath("/simulate/api/harness-environments/{id}/run/", { id });
 const environmentEvaluationsPath = (id) =>
   apiPath("/simulate/api/harness-environments/{id}/evaluations/", { id });
 const environmentEvaluationsAvailablePath = (id) =>
@@ -44,6 +46,20 @@ export const deleteHarnessEnvironment = async (id) =>
 // finishes, so every consumer must be null-tolerant.
 export const getHarnessEnvironment = async (id) =>
   (await axios.get(environmentPath(id))).data;
+
+export const runHarnessEnvironment = async (
+  id,
+  scenarioIds,
+  trials,
+  idempotencyKey,
+) =>
+  (
+    await axios.post(
+      environmentRunPath(id),
+      { scenario_ids: scenarioIds, trials },
+      { headers: { "Idempotency-Key": idempotencyKey } },
+    )
+  ).data;
 
 // §8 rename: `name` is the only editable field. The response is the full §6
 // detail body with `overview.name` updated, so callers can seed the detail

@@ -526,9 +526,17 @@ class TestRunResultsV3Views:
     def test_calls_returns_normalized_rows_groups_and_facets(
         self, auth_client, test_execution, analytics_call_executions
     ):
+        test_execution.execution_metadata = {
+            "selected_scenario_keys": ["routine-return"],
+            "trials": 2,
+        }
+        test_execution.trials = 2
+        test_execution.save(update_fields=["execution_metadata", "trials"])
         passed_call = analytics_call_executions[0]
         passed_call.call_metadata = {
             "harness_outcome_status": "passed",
+            "harness_scenario_key": "routine-return",
+            "harness_trial_index": 2,
             "use_case": "Returns",
             "row_data": {
                 "persona": json.dumps(
@@ -577,6 +585,8 @@ class TestRunResultsV3Views:
         assert row["scenario_details"] == "Caller needs help with a return."
         assert row["ideal_outcome"] == "Return is completed"
         assert row["conversation_branch"] == "routine-return"
+        assert row["source_scenario_key"] == "routine-return"
+        assert row["trial_index"] == 2
         assert row["outcome"] == "passed"
         assert row["latency_ms"] == 240.0
         assert row["turn_count"] == 4
@@ -593,6 +603,30 @@ class TestRunResultsV3Views:
             {"value": "identity_verified", "count": 1}
         ]
         assert body["execution"]["id"] == str(test_execution.id)
+        assert body["execution"]["selected_scenario_keys"] == ["routine-return"]
+        assert body["execution"]["trials"] == 2
+
+
+    def test_harness_error_is_not_green_when_transport_completed(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        call = analytics_call_executions[0]
+        call.status = CallExecution.CallStatus.COMPLETED
+        call.call_metadata = {"harness_outcome_status": "error"}
+        call.eval_outputs = {}
+        call.save(update_fields=["status", "call_metadata", "eval_outputs"])
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        row = next(
+            item for item in response.json()["results"] if item["id"] == str(call.id)
+        )
+        assert row["outcome"] == "error"
+        assert row["harness_outcome_status"] == "error"
+        assert row["execution_status"] == "completed"
 
     def test_persona_is_not_a_grouping_option(
         self, auth_client, test_execution, analytics_call_executions

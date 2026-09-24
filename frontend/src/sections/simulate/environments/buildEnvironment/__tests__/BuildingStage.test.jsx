@@ -44,6 +44,22 @@ describe("BuildingStage", () => {
     expect(screen.getByPlaceholderText("Reply to the builder…")).toBeInTheDocument();
   });
 
+  it("drives the console from the real chat and shows Stop when a turn is in flight", () => {
+    const stop = vi.fn();
+    const chat = {
+      turns: [{ id: "b1", role: "builder", steps: [{ id: "s1", kind: "note", text: "live from chat" }] }],
+      running: false,
+      send: vi.fn(),
+      stop,
+      inFlight: true,
+      frozen: false,
+    };
+    render(<BuildingStage progress={makeProgress({ turns: [] })} chat={chat} />);
+    expect(screen.getByText("live from chat")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    expect(stop).toHaveBeenCalled();
+  });
+
   it("labels the deriving hero 'understand' when nothing is done yet", () => {
     render(<BuildingStage progress={makeProgress({ done: [] })} />);
     expect(screen.getByTestId("deriving")).toHaveTextContent(DERIVING_LABEL.understand);

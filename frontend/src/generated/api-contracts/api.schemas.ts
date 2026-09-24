@@ -16767,6 +16767,7 @@ export interface ALKSimulateProvisionRunTestRequestApi {
   agent_definition_id?: string;
   /** @maxLength 255 */
   agent_name?: string;
+  enable_tool_evaluation?: boolean;
 }
 
 export interface ALKSimulateProvisionResultApi {
@@ -17150,10 +17151,62 @@ export interface HarnessEnvironmentScenarioApi {
   call_execution_id: string;
 }
 
+export type HarnessEnvironmentSelectedEvalApiSource =
+  (typeof HarnessEnvironmentSelectedEvalApiSource)[keyof typeof HarnessEnvironmentSelectedEvalApiSource];
+
+export const HarnessEnvironmentSelectedEvalApiSource = {
+  system: "system",
+  custom: "custom",
+} as const;
+
+export type HarnessEnvironmentSelectedEvalApiAgentType =
+  (typeof HarnessEnvironmentSelectedEvalApiAgentType)[keyof typeof HarnessEnvironmentSelectedEvalApiAgentType];
+
+export const HarnessEnvironmentSelectedEvalApiAgentType = {
+  voice: "voice",
+  chat: "chat",
+} as const;
+
+export type HarnessEnvironmentSelectedEvalApiModality =
+  (typeof HarnessEnvironmentSelectedEvalApiModality)[keyof typeof HarnessEnvironmentSelectedEvalApiModality];
+
+export const HarnessEnvironmentSelectedEvalApiModality = {
+  voice: "voice",
+  text: "text",
+  any: "any",
+} as const;
+
+export type HarnessEnvironmentEvalInputApiSource =
+  (typeof HarnessEnvironmentEvalInputApiSource)[keyof typeof HarnessEnvironmentEvalInputApiSource];
+
+export const HarnessEnvironmentEvalInputApiSource = {
+  voice_recording: "voice_recording",
+  transcript: "transcript",
+  agent_prompt: "agent_prompt",
+  scenario_columnssituationvalue: "scenario_columns.situation.value",
+} as const;
+
+export interface HarnessEnvironmentEvalInputApi {
+  /** @minLength 1 */
+  key: string;
+  source: HarnessEnvironmentEvalInputApiSource;
+  /** @minLength 1 */
+  label: string;
+}
+
 export interface HarnessEnvironmentSelectedEvalApi {
-  id: string;
+  /** @minLength 1 */
   name: string;
   description: string;
+  source: HarnessEnvironmentSelectedEvalApiSource;
+  tags: string[];
+  required_keys: string[];
+  agent_type: HarnessEnvironmentSelectedEvalApiAgentType;
+  modality: HarnessEnvironmentSelectedEvalApiModality;
+  credits_per_run: number;
+  charges_judge_tokens: boolean;
+  inputs: HarnessEnvironmentEvalInputApi[];
+  id: string;
   runnable: boolean;
 }
 
@@ -17218,6 +17271,7 @@ export interface HarnessEnvironmentSettingsApi {
   artifacts: HarnessEnvironmentSettingsApiArtifacts;
   scenario_count: number;
   seed: number;
+  enable_tool_evaluation: boolean;
 }
 
 export interface HarnessEnvironmentDetailApi {
@@ -17246,6 +17300,22 @@ export interface HarnessEnvironmentAddEvaluationApi {
   name: string;
 }
 
+export type HarnessEnvironmentOfferedEvalApiSource =
+  (typeof HarnessEnvironmentOfferedEvalApiSource)[keyof typeof HarnessEnvironmentOfferedEvalApiSource];
+
+export const HarnessEnvironmentOfferedEvalApiSource = {
+  system: "system",
+  custom: "custom",
+} as const;
+
+export type HarnessEnvironmentOfferedEvalApiAgentType =
+  (typeof HarnessEnvironmentOfferedEvalApiAgentType)[keyof typeof HarnessEnvironmentOfferedEvalApiAgentType];
+
+export const HarnessEnvironmentOfferedEvalApiAgentType = {
+  voice: "voice",
+  chat: "chat",
+} as const;
+
 export type HarnessEnvironmentOfferedEvalApiModality =
   (typeof HarnessEnvironmentOfferedEvalApiModality)[keyof typeof HarnessEnvironmentOfferedEvalApiModality];
 
@@ -17259,26 +17329,62 @@ export interface HarnessEnvironmentOfferedEvalApi {
   /** @minLength 1 */
   name: string;
   description: string;
+  source: HarnessEnvironmentOfferedEvalApiSource;
+  tags: string[];
   required_keys: string[];
+  agent_type: HarnessEnvironmentOfferedEvalApiAgentType;
   modality: HarnessEnvironmentOfferedEvalApiModality;
+  credits_per_run: number;
+  charges_judge_tokens: boolean;
+  inputs: HarnessEnvironmentEvalInputApi[];
 }
 
 export interface HarnessEnvironmentAvailableEvalsApi {
   evaluations: HarnessEnvironmentOfferedEvalApi[];
 }
 
-export interface HarnessEnvironmentRunApi {
-  [key: string]: unknown;
+export interface HarnessEnvironmentToolCallEvaluationApi {
+  enable_tool_evaluation: boolean;
 }
 
-export interface HarnessEnvironmentRunResponseApi {
+export interface HarnessRunCreateApi {
+  /** @maxItems 1000 */
+  scenario_ids: string[];
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials?: number;
+}
+
+export interface HarnessRunCreateResponseApi {
   environment_id: string;
   job_id: string;
   run_id: string;
+  run_test_id: string;
+  test_execution_id: string;
+  /** @minimum 1 */
+  scenario_count: number;
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials: number;
+  /** @minimum 1 */
+  total_calls: number;
   /** @minLength 1 */
   state: string;
   /** @minLength 1 */
   stage: string;
+}
+
+export interface HarnessEnvironmentRunEvaluationQueuedApi {
+  /** Stamped and scheduled for dispatch -- not yet dispatched. A call whose stamp committed but whose grading job then failed to queue is still counted here, not subtracted. */
+  queued: number;
+  skipped_existing: number;
+  skipped_in_flight: number;
+  skipped_pending: number;
+  completed_calls: number;
 }
 
 export type HarnessJobReadApiReceiptsItem = { [key: string]: unknown };
@@ -19603,6 +19709,8 @@ export interface CallExecutionEvalMetricApi {
   error?: boolean;
   status?: string;
   skipped?: boolean;
+  /** Present and true only when the eval was removed from the environment; a live eval's verdict omits the key entirely. */
+  removed?: boolean;
   error_localizer?: boolean;
   error_analysis?: CallExecutionEvalMetricApiErrorAnalysis;
   error_localizer_status?: string;
@@ -19701,6 +19809,9 @@ export interface CallExecutionDetailApi {
   readonly recordings?: string;
   readonly test_execution_id?: string;
   readonly scenario_id?: string;
+  readonly source_scenario_key?: string;
+  readonly trial_index?: string;
+  readonly harness_outcome_status?: string;
   readonly scenario_graph?: string;
   readonly scenario_graph_id?: string;
   readonly avg_agent_latency?: number;
@@ -20666,6 +20777,18 @@ export interface TestExecutionItemResponseApi {
   readonly total_number_of_fagi_agent_turns?: number;
   /** @minLength 1 */
   readonly source_type?: string;
+  readonly scenario_keys?: readonly string[];
+  readonly selected_scenarios?: number;
+  readonly trials?: number;
+  readonly total_calls?: number;
+  readonly completed_calls?: number;
+  readonly failed_calls?: number;
+  readonly pending_calls?: number;
+  /** @minLength 1 */
+  readonly completed_at?: string;
+  readonly outcome_passed?: number;
+  readonly outcome_failed?: number;
+  readonly outcome_skipped?: number;
 }
 
 export interface RunTestExecutionsResponseApi {
@@ -21469,6 +21592,8 @@ export type RunTestKPIsResponseApiScenarioGraphs = {
 
 export interface RunTestKPIsResponseApi {
   readonly total_calls?: number;
+  /** Calls with status completed, counted like every other KPI here: soft-deleted calls included. The run-level add's 202 counts live calls only, so the two can differ for a run with a deleted call (TH-8057). */
+  readonly completed_calls?: number;
   readonly avg_score?: number;
   readonly avg_response?: number;
   readonly calls_attempted?: number;
@@ -21785,6 +21910,9 @@ export interface CallExecutionV3DetailResponseApi {
   readonly recordings?: string;
   readonly test_execution_id?: string;
   readonly scenario_id?: string;
+  readonly source_scenario_key?: string;
+  readonly trial_index?: string;
+  readonly harness_outcome_status?: string;
   readonly scenario_graph?: string;
   readonly scenario_graph_id?: string;
   readonly avg_agent_latency?: number;
@@ -22285,6 +22413,9 @@ export interface RunExecutionApi {
   ordinal: number;
   /** @minLength 1 */
   agent_version: string;
+  selected_scenario_keys?: string[];
+  /** @minimum 1 */
+  trials?: number;
   /** @minLength 1 */
   agent_type: string;
   summary: RunSummaryApi;
@@ -22316,6 +22447,11 @@ export interface RunCallApi {
   persona: string;
   persona_details: PersonaDetailsApi;
   sub_goals: string[];
+  /** @minLength 1 */
+  harness_outcome_status: string;
+  /** @minLength 1 */
+  source_scenario_key: string;
+  trial_index: number;
   outcome: RunCallApiOutcome;
   /** @minLength 1 */
   execution_status: string;

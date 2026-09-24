@@ -2,109 +2,78 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "src/utils/test-utils";
 import RuntimePreflight from "../RuntimePreflight";
 
-const CHECKS_PASS = [
-  { id: "source", label: "Source", status: "passed", detail: "Repo reachable", missing: [], fix: null },
-  { id: "credentials_present", label: "Credentials present", status: "passed", detail: "", missing: [], fix: null },
-  { id: "provider_target", label: "Provider target", status: "skipped", detail: "Not applicable", missing: [], fix: null },
-];
-
-const CHECKS_FAIL = [
-  { id: "source", label: "Source", status: "passed", detail: "Repo reachable", missing: [], fix: null },
-  {
-    id: "credentials_valid",
-    label: "Credentials valid",
-    status: "failed",
-    detail: "Probe rejected the key",
-    missing: ["VAPI_API_KEY"],
-    fix: "Add a valid VAPI_API_KEY.",
+const hostedReport = {
+  ready_to_submit: false,
+  credentials: {
+    scanned_files: 7,
+    detected_connectors: ["livekit"],
+    requirements: [
+      { environment_name: "GOOGLE_APPLICATION_CREDENTIALS_JSON", purpose: "Agent service-account credential file", kind: "file", required: true, status: "missing" },
+      { environment_name: "LIVEKIT_API_KEY", purpose: "target_provider", required: true, status: "configured" },
+      { environment_name: "RETELL_API_KEY", purpose: "target_provider", required: false, status: "optional" },
+    ],
+    credential_choices: [],
+    probe: [{ provider: "livekit", label: "LiveKit", aliases: ["LIVEKIT_API_KEY"], ok: false, message: "Credential rejected" }],
   },
-];
+};
 
 describe("RuntimePreflight", () => {
-  it("idle: shows the trigger, gated until the form is valid", () => {
+  it("only allows a valid form to start preflight", () => {
     const onRun = vi.fn();
-    const { rerender } = render(
-      <RuntimePreflight status="idle" canRun={false} onRun={onRun} />,
-    );
-    const btn = screen.getByRole("button", { name: "Run preflight" });
-    expect(btn).toBeDisabled();
-    expect(
-      screen.getByText("We check the source and credentials before building."),
-    ).toBeInTheDocument();
-
+    const { rerender } = render(<RuntimePreflight status="idle" canRun={false} onRun={onRun} />);
+    expect(screen.getByRole("button", { name: "Run preflight" })).toBeDisabled();
     rerender(<RuntimePreflight status="idle" canRun onRun={onRun} />);
     fireEvent.click(screen.getByRole("button", { name: "Run preflight" }));
     expect(onRun).toHaveBeenCalledTimes(1);
+    rerender(<RuntimePreflight status="running" canRun onRun={onRun} />);
+    expect(screen.getByRole("button", { name: /Checking source and credentials/ })).toBeDisabled();
   });
 
-  it("running: shows the in-flight label and disables the trigger", () => {
-    render(<RuntimePreflight status="running" canRun onRun={vi.fn()} />);
-    const btn = screen.getByRole("button", { name: /Checking source and credentials/ });
-    expect(btn).toBeDisabled();
-  });
-
-  it("error: surfaces the message and retries via onRun", () => {
+  it("shows the server error and allows a retry", () => {
     const onRun = vi.fn();
-    render(
-      <RuntimePreflight
-        status="error"
-        onRun={onRun}
-        error={{ message: "Network unreachable" }}
-      />,
-    );
-    expect(screen.getByText("Preflight couldn't run")).toBeInTheDocument();
-    expect(screen.getByText("Network unreachable")).toBeInTheDocument();
+    render(<RuntimePreflight status="error" onRun={onRun} error={{ response: { data: { detail: "Source archive unavailable" } } }} />);
+    expect(screen.getByText("Source archive unavailable")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(onRun).toHaveBeenCalledTimes(1);
   });
 
-  it("done + connected: Ready to build, Connected pill, check rows, Re-run", () => {
+  it("shows required credential files and failed live probes from the hosted response", () => {
+    render(<RuntimePreflight status="done" result={hostedReport} onRun={vi.fn()} />);
+    expect(screen.getByText("Credentials need attention")).toBeInTheDocument();
+    expect(screen.getByText("GOOGLE_APPLICATION_CREDENTIALS_JSON")).toBeInTheDocument();
+    expect(screen.getByText("Agent service-account credential file · Credential file")).toBeInTheDocument();
+    expect(screen.getByText("Credential rejected")).toBeInTheDocument();
+    expect(screen.getByText("7 source files scanned · Detected: livekit")).toBeInTheDocument();
+    expect(screen.queryByText("RETELL_API_KEY")).toBeNull();
+  });
+
+  it("shows a ready uploaded credential and supports re-running", () => {
     const onRun = vi.fn();
-    render(
-      <RuntimePreflight
-        status="done"
-        state="connected"
-        checks={CHECKS_PASS}
-        onRun={onRun}
-      />,
-    );
+    const result = {
+      ...hostedReport,
+      ready_to_submit: true,
+      credentials: {
+        ...hostedReport.credentials,
+        requirements: hostedReport.credentials.requirements.map((item) => ({ ...item, status: "configured" })),
+        probe: [],
+      },
+    };
+    render(<RuntimePreflight status="done" result={result} onRun={onRun} />);
     expect(screen.getByText("Ready to build")).toBeInTheDocument();
-    expect(screen.getByText("Connected")).toBeInTheDocument();
-    // Every check renders its label + mono id.
-    expect(screen.getByText("Source")).toBeInTheDocument();
-    expect(screen.getByText("credentials_present")).toBeInTheDocument();
+    expect(screen.getByText("GOOGLE_APPLICATION_CREDENTIALS_JSON")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Re-run" }));
     expect(onRun).toHaveBeenCalledTimes(1);
   });
 
-  it("done + failed: N-to-resolve headline, Blocked pill, missing chip + Fix line", () => {
-    render(
-      <RuntimePreflight
-        status="done"
-        state="failed"
-        checks={CHECKS_FAIL}
-        onRun={vi.fn()}
-      />,
-    );
-    expect(screen.getByText("1 check to resolve")).toBeInTheDocument();
-    expect(screen.getByText("Blocked")).toBeInTheDocument();
-    expect(screen.getByText("VAPI_API_KEY")).toBeInTheDocument();
-    expect(screen.getByText(/Add a valid VAPI_API_KEY/)).toBeInTheDocument();
-  });
-
-  it("done with an empty checks array: a tolerant fallback, no crash", () => {
-    render(<RuntimePreflight status="done" state="connected" checks={[]} onRun={vi.fn()} />);
-    expect(screen.getByText("Preflight returned no checks.")).toBeInTheDocument();
-  });
-
-  it("orders the rows by the fixed check sequence regardless of response order", () => {
-    const shuffled = [CHECKS_PASS[2], CHECKS_PASS[1], CHECKS_PASS[0]];
-    render(
-      <RuntimePreflight status="done" state="connected" checks={shuffled} onRun={vi.fn()} />,
-    );
-    const ids = screen
-      .getAllByText(/^(source|credentials_present|provider_target)$/)
-      .map((n) => n.textContent);
-    expect(ids).toEqual(["source", "credentials_present", "provider_target"]);
+  it("explains the alternative credential sets in an ambiguous source", () => {
+    const result = {
+      ...hostedReport,
+      credentials: {
+        ...hostedReport.credentials,
+        credential_choices: [{ id: "target_provider", satisfied: false, options: [["LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"], ["RETELL_API_KEY"]] }],
+      },
+    };
+    render(<RuntimePreflight status="done" result={result} onRun={vi.fn()} />);
+    expect(screen.getByText("Provide one credential set: LIVEKIT_URL + LIVEKIT_API_KEY + LIVEKIT_API_SECRET or RETELL_API_KEY")).toBeInTheDocument();
   });
 });

@@ -39,22 +39,39 @@ SeededDataCard.propTypes = { env: ENV_SHAPE.isRequired };
 
 // The services built and torn down with the environment.
 export function DependsOnCard({ dependsOn }) {
+  const rows = dependsOn || [];
   return (
     <SectionCard title={OVERVIEW_COPY.dependsTitle} subtitle={OVERVIEW_COPY.dependsSubtitle}>
+      {rows.length === 0 ? (
+        <Box sx={{ p: 2.5 }}>
+          <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+            {OVERVIEW_COPY.dependsEmpty}
+          </Typography>
+        </Box>
+      ) : (
       <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
-        {(dependsOn || []).map((d) => (
+        {rows.map((d) => (
           <Box key={d.name} sx={{ px: 2.5, py: 1.5 }}>
             <Stack direction="row" alignItems="center" spacing={1}>
               <Typography sx={{ typography: "s2", fontWeight: "fontWeightBold", fontFamily: MONO }}>{d.name}</Typography>
               <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{d.kind}</Typography>
             </Stack>
             <Typography sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}>{d.provides}</Typography>
-            <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.5, fontFamily: MONO }}>
+            <Typography
+              sx={{
+                typography: "s3",
+                color: "text.subtitle",
+                mt: 0.5,
+                fontFamily: MONO,
+                overflowWrap: "anywhere",
+              }}
+            >
               {OVERVIEW_COPY.usedBy(d.usedBy)}
             </Typography>
           </Box>
         ))}
       </Stack>
+      )}
     </SectionCard>
   );
 }

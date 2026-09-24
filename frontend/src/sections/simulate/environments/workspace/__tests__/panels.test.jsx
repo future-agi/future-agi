@@ -106,12 +106,6 @@ describe("WorkspacePanels", () => {
     await user.click(screen.getByRole("tab", { name: /Contract/ }));
     expect(onTabChange).toHaveBeenCalledWith("contract");
   });
-
-  it("replaces the Runs body with executionOutlet when one is passed", () => {
-    renderPanels({ tab: "runs", executionOutlet: <div>outlet-body</div> });
-    expect(screen.getByText("outlet-body")).toBeInTheDocument();
-    expect(screen.queryByText("runs-body")).toBeNull();
-  });
 });
 
 const GAP_ENV = {

@@ -123,6 +123,35 @@ describe("buildRunStats", () => {
     expect(stats.failedCritical).toBe(0);
   });
 
+  it("shows hosted verdicts without replacing them with transport KPIs", () => {
+    const row = mapExecutions({
+      results: [
+        {
+          id: "ex-hosted",
+          status: "Running",
+          total_calls: 6,
+          outcome_passed: 2,
+          outcome_failed: 1,
+          outcome_skipped: 0,
+        },
+      ],
+    })[0];
+    const stats = buildRunStats(
+      { total_calls: 6, failed_calls: 0 },
+      { test_run_performance_metrics: { pass_rate: 100 } },
+      row,
+    );
+
+    expect(stats).toMatchObject({
+      total: 6,
+      passed: 2,
+      failed: 1,
+      measured: 3,
+      unmeasured: 3,
+      passRate: 33,
+    });
+  });
+
   it("falls back to the executions row counts and derives the pass rate when kpis/perf are absent", () => {
     const rows = mapExecutions(executionsPayload());
     const row = rows.find((r) => r.executionId === "ex-old");
@@ -444,6 +473,8 @@ describe("useRunDetail", () => {
           status: "completed",
           started_at: "2026-01-14T09:12:00.000Z",
           completed_at: "2026-01-14T09:22:00.000Z",
+          selected_scenario_keys: ["scenario-a", "scenario-b"],
+          trials: 3,
           summary: {
             total: 12,
             measured: 12,
@@ -466,14 +497,93 @@ describe("useRunDetail", () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(result.current.error).toBeNull();
+    expect(result.current.identity.status).toBe("passed");
     expect(result.current.identity.ordinal).toBe(2);
     expect(result.current.identity.name).toBe("Refund Copilot");
+    expect(result.current.identity.scenarioIds).toEqual([
+      "scenario-a",
+      "scenario-b",
+    ]);
+    expect(result.current.identity.trials).toBe(3);
     expect(result.current.stats.total).toBe(12);
     expect(result.current.stats.passRate).toBe(74);
     expect(axios.get).toHaveBeenCalledWith(
       endpoints.runResultsV3.calls("ex-new"),
       { params: { page: 1, page_size: 1 } },
     );
+  });
+
+  it("keeps terminal Run failure when some calls already passed", async () => {
+    axios.get.mockResolvedValueOnce({
+      data: {
+        execution: {
+          id: "ex-failed",
+          status: "failed",
+          summary: {
+            total: 12,
+            outcomes: { passed: 8, failed: 2, error: 2, inconclusive: 0 },
+          },
+        },
+      },
+    });
+    const { result } = renderHook(() => useRunDetail("rt1", "ex-failed"), {
+      wrapper: makeWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.identity.status).toBe("failed");
+    expect(result.current.stats.passed).toBe(8);
+    expect(result.current.stats.failed).toBe(4);
+  });
+
+  it("polls the Run summary while active and stops when it completes", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    axios.get.mockResolvedValue({
+      data: {
+        execution: {
+          id: "ex-new",
+          status: "evaluating",
+          summary: { total: 0, outcomes: {} },
+        },
+      },
+    });
+
+    const { result, unmount } = renderHook(
+      () => useRunDetail("rt1", "ex-new"),
+      {
+        wrapper: Wrapper,
+      },
+    );
+    await waitFor(() =>
+      expect(
+        queryClient.getQueryData([
+          "simulation-run-results-v3",
+          "ex-new",
+          "summary",
+        ])?.execution?.status,
+      ).toBe("evaluating"),
+    );
+    expect(result.current.identity.status).toBe("running");
+    const query = queryClient.getQueryCache().find({
+      queryKey: ["simulation-run-results-v3", "ex-new", "summary"],
+    });
+
+    expect(query.options.refetchInterval(query)).toBe(3000);
+    queryClient.setQueryData(query.queryKey, {
+      execution: {
+        id: "ex-new",
+        status: "completed",
+        summary: { total: 0, outcomes: {} },
+      },
+    });
+    expect(query.options.refetchInterval(query)).toBe(false);
+    unmount();
   });
 });

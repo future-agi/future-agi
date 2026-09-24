@@ -1,69 +1,147 @@
 import PropTypes from "prop-types";
+import { useState } from "react";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, Button, Tooltip } from "@mui/material";
+import { Box, Stack, Typography, Button, Tooltip, Popover, TextField } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { injectComposerScaffold } from "../../buildEnvironment/console/composerScaffoldBus";
+import { BUILD_TONES } from "../../buildEnvironment/buildTones";
+
+// Trial presets — 1 is the single-shot; 3/5/8 are the common repeat counts;
+// Custom covers anything else in 1–20. Same set as the header TrialsPicker so
+// the vocabulary is one thing.
+const TRIAL_PRESETS = [1, 3, 5, 8];
+const DEFAULT_TRIALS_LABEL = 1;
+const RED = BUILD_TONES.red;
 
 /**
  * Bulk-action bar for the scenario table.
  *
- * Shape: count on the left, a strip of clickable suggestion chips
- * in the middle, Clear + Delete on the right. Clicking a chip pins
- * that suggestion into the builder composer as a scaffold — same
- * shape Falcon's ChatInput uses for its detected-skill chips — so
- * the user can add more text before sending.
+ * Renders IN-PLACE where the search / group-by / filter toolbar normally lives
+ * — same row of the SectionCard, same height, same padding. When one or more
+ * scenarios are checked the toolbar transforms into this bar (Gmail /
+ * GitHub-changes pattern): one location for both states, so the actions appear
+ * where the eye already is.
+ *
+ * Hierarchy (left → right):
+ *   [count] ✕  ·  Select all N matching  |  Edit  Delete  Repeats[k▾]  ▶ Run (N)
+ *   context       escalation (paging)        secondary  destructive  dial  PRIMARY
+ *
+ * `matching` carries our pagination's predicate-selection context so a
+ * selection can escalate to "all N matching" without every id being loaded.
+ * Each of `onEdit` / `onRun` / `onTrialsChange` is optional and gates its own
+ * button.
  */
+export default function SelectionBar({
+  count, trials, onTrialsChange, onRun, onEdit, onDelete, onClear, matching,
+}) {
+  const [trialsAnchor, setTrialsAnchor] = useState(null);
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customValue, setCustomValue] = useState(String(trials || 1));
 
-/*
-  Prompt suggestions surfaced next to the count. Handpicked to
-  match the kind of instruction a user typically wants applied
-  across many scenarios at once. One is enough for the demo —
-  keeps the bar readable and lets the chip carry visual weight.
-*/
-const SUGGESTIONS = [
-  "Make callers more impatient",
-];
+  const k = Math.max(1, Math.min(20, Number(trials) || 1));
+  const totalRuns = count * k;
+  const estSeconds = totalRuns * 10; // ~10s / run in the mock player
+  const timeHint = estSeconds < 60
+    ? `~${estSeconds}s`
+    : `~${Math.max(1, Math.round(estSeconds / 60))} min`;
+  const runLabel = `Run simulation (${count})`;
 
-export default function SelectionBar({ count, onDelete, onClear, matching }) {
-  // The select-all-matching state lives inline here rather than in a second
-  // strip below — one bar, so starting a selection inserts a single fixed row
-  // instead of shifting the table twice, and there's one Clear, not two.
+  // Predicate-selection escalation: in include-mode, offer "select all N
+  // matching" once the whole visible page is checked and there's more beyond it.
   const isAll = matching?.mode === "all";
   const canEscalate =
     matching && !isAll && matching.pageCount > 0 && matching.total > matching.pageCount;
+
+  const applyPreset = (v) => {
+    onTrialsChange?.(v);
+    setTrialsAnchor(null);
+    setCustomOpen(false);
+    setCustomValue(String(v));
+  };
+  const commitCustom = () => {
+    const n = Math.max(1, Math.min(20, Math.floor(Number(customValue) || 1)));
+    onTrialsChange?.(n);
+    setTrialsAnchor(null);
+    setCustomOpen(false);
+    setCustomValue(String(n));
+  };
 
   return (
     <Stack
       direction="row"
       alignItems="center"
-      spacing={2}
+      spacing={1.25}
       sx={{
-        px: 2, py: 1.25,
-        borderRadius: 1.5,
-        border: "1px solid",
-        borderColor: "divider",
-        bgcolor: "background.paper",
+        width: "100%",
+        px: 2.5, py: 1.25,
+        minHeight: 52,
+        bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.08 : 0.05),
       }}
     >
-      {/* count — in all-mode the count line states the whole-match scope so the
-          escalation reads as done; otherwise it's the plain page/pick count. */}
-      {isAll ? (
-        <Typography sx={{ typography: "s2", color: "text.primary", flexShrink: 0 }}>
-          All {count.toLocaleString()} matching {count === 1 ? "scenario" : "scenarios"} selected
-        </Typography>
-      ) : (
-        <Typography sx={{ typography: "s2", color: "text.primary", flexShrink: 0 }}>
-          <Box component="span" sx={{ fontWeight: 700 }}>{count}</Box>
-          {" "}
-          <Box component="span" sx={{ color: "text.secondary" }}>
-            {count === 1 ? "scenario selected" : "scenarios selected"}
+      {/* CONTEXT — count + clear-all in one pill. The × is the primary
+          clear-all, on the same object as the count. */}
+      <Stack
+        direction="row" alignItems="center" spacing={0.75}
+        sx={{
+          flexShrink: 0,
+          pl: 0.375, pr: 0.375, py: 0.375, borderRadius: 999,
+          border: "1px solid",
+          borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.16 : 0.12),
+          bgcolor: "transparent",
+        }}
+      >
+        {isAll ? (
+          // Whole-match scope stated as one phrase so the escalation reads as
+          // done (and the paging contract can assert it as a unit).
+          <Typography sx={{
+            typography: "s2", fontWeight: 600, fontSize: 13,
+            color: "text.primary", whiteSpace: "nowrap", px: 0.5,
+          }}>
+            All {count.toLocaleString()} matching {count === 1 ? "scenario" : "scenarios"} selected
+          </Typography>
+        ) : (
+          <>
+            <Box sx={{
+              width: 22, height: 22, borderRadius: "50%",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              bgcolor: "text.primary",
+              color: (t) => (t.palette.mode === "dark" ? "background.default" : "background.paper"),
+              fontSize: 11, fontWeight: 700, fontVariantNumeric: "tabular-nums",
+            }}>
+              {count}
+            </Box>
+            <Typography sx={{
+              typography: "s2", fontWeight: 600, fontSize: 13,
+              color: "text.primary", whiteSpace: "nowrap", pl: 0.25,
+            }}>
+              {count === 1 ? "scenario selected" : "scenarios selected"}
+            </Typography>
+          </>
+        )}
+        <Tooltip arrow title="Clear selection">
+          <Box
+            component="button"
+            type="button"
+            onClick={onClear}
+            aria-label="Clear selection"
+            sx={{
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+              width: 22, height: 22, borderRadius: 999,
+              bgcolor: "transparent", border: "none", cursor: "pointer",
+              color: "text.subtitle",
+              transition: "background-color 120ms, color 120ms",
+              "&:hover": {
+                bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.14 : 0.08),
+                color: "text.primary",
+              },
+            }}
+          >
+            <Iconify icon="eva:close-fill" width={14} />
           </Box>
-        </Typography>
-      )}
+        </Tooltip>
+      </Stack>
 
-      {/* The bridge to the whole match — only while the page is fully checked
-          and there's more beyond it. Replaced by the all-mode line above once
-          taken; cleared through the same Clear button as any selection. */}
+      {/* ESCALATION — bridge to the whole match while the page is fully checked
+          and there's more beyond it. Disappears once taken (mode → all). */}
       {canEscalate && (
         <Button
           size="small"
@@ -71,6 +149,7 @@ export default function SelectionBar({ count, onDelete, onClear, matching }) {
           sx={{
             typography: "s2", fontWeight: 700, flexShrink: 0,
             color: "primary.main", minWidth: 0, px: 1,
+            whiteSpace: "nowrap",
             "&:hover": { bgcolor: "transparent", textDecoration: "underline" },
           }}
         >
@@ -78,57 +157,218 @@ export default function SelectionBar({ count, onDelete, onClear, matching }) {
         </Button>
       )}
 
-      {/* suggestion chips — click to pin into the composer */}
-      <Stack
-        direction="row" alignItems="center" spacing={0.75}
-        sx={{
-          pl: 2, ml: 0.5, minWidth: 0, flex: 1,
-          borderLeft: "1px solid", borderColor: "divider",
-          flexWrap: "wrap", rowGap: 0.75,
-        }}
-      >
-        {SUGGESTIONS.map((s) => (
-          <SuggestionChip key={s} label={s} onClick={() => injectComposerScaffold(s)} />
-        ))}
-      </Stack>
+      <Box sx={{ flex: 1 }} />
 
-      {/* actions */}
-      <Tooltip arrow title="Deselect all">
+      {/* SECONDARY — Edit with builder chat */}
+      {onEdit && (
+        <Tooltip arrow title="Send this selection to the builder chat">
+          <Button
+            size="small"
+            onClick={onEdit}
+            variant="outlined"
+            startIcon={<Iconify icon="solar:chat-round-line-linear" width={13} />}
+            sx={{
+              typography: "s2", fontWeight: 600, fontSize: 12.5,
+              color: "text.primary",
+              borderColor: "divider",
+              px: 1.5, py: 0.5, minWidth: 0,
+              whiteSpace: "nowrap",
+              "&:hover": {
+                borderColor: (t) => alpha(t.palette.text.primary, 0.4),
+                bgcolor: "action.hover",
+              },
+            }}
+          >
+            Edit
+          </Button>
+        </Tooltip>
+      )}
+
+      {/* DESTRUCTIVE — Delete */}
+      <Tooltip arrow title="Delete selected scenarios">
         <Button
           size="small"
-          onClick={onClear}
+          onClick={onDelete}
+          variant="outlined"
+          startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={13} />}
           sx={{
-            typography: "s2", fontWeight: 600,
-            color: "text.secondary", minWidth: 0, px: 1,
-            "&:hover": { color: "text.primary", bgcolor: "transparent" },
+            typography: "s2", fontWeight: 600, fontSize: 12.5,
+            color: RED,
+            borderColor: alpha(RED, 0.4),
+            px: 1.5, py: 0.5, minWidth: 0,
+            whiteSpace: "nowrap",
+            "&:hover": {
+              borderColor: RED,
+              bgcolor: (t) => alpha(RED, t.palette.mode === "dark" ? 0.1 : 0.05),
+            },
           }}
         >
-          Clear
+          Delete
         </Button>
       </Tooltip>
 
-      <Button
-        size="small"
-        onClick={onDelete}
-        startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={13} />}
-        sx={{
-          typography: "s2", fontWeight: 600,
-          color: "#DC2626",
-          px: 1, minWidth: 0,
-          "&:hover": { bgcolor: (t) => alpha("#DC2626", t.palette.mode === "dark" ? 0.12 : 0.06) },
-        }}
+      {/* TRIALS — reliability dial */}
+      {onTrialsChange && (
+        <Tooltip arrow title="How many times to run each scenario — reliability across trials">
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={(e) => setTrialsAnchor(e.currentTarget)}
+            endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={11} />}
+            startIcon={<Iconify icon="solar:repeat-linear" width={13} />}
+            sx={{
+              typography: "s2", fontWeight: 600, fontSize: 12.5,
+              color: "text.primary",
+              borderColor: "divider",
+              px: 1.25, py: 0.5, minWidth: 0,
+              whiteSpace: "nowrap",
+              "&:hover": {
+                borderColor: (t) => alpha(t.palette.text.primary, 0.4),
+                bgcolor: "action.hover",
+              },
+            }}
+          >
+            Repeats: {k}
+          </Button>
+        </Tooltip>
+      )}
+
+      {/* PRIMARY — Run N selected (× k) */}
+      {onRun && (
+        <Tooltip
+          arrow
+          title={k > 1
+            ? `${count} ${count === 1 ? "scenario" : "scenarios"} × ${k} repeats = ${totalRuns} runs · ${timeHint}`
+            : `${count} ${count === 1 ? "scenario" : "scenarios"} × 1 repeat · ${timeHint}`}
+        >
+          <Button
+            size="small"
+            variant="contained"
+            onClick={() => onRun(k)}
+            startIcon={<Iconify icon="solar:play-bold" width={13} />}
+            sx={{
+              typography: "s2", fontWeight: 700, fontSize: 12.5,
+              px: 1.75, py: 0.5, minWidth: 0,
+              bgcolor: "text.primary",
+              color: (t) => (t.palette.mode === "dark" ? "background.default" : "background.paper"),
+              boxShadow: "none",
+              whiteSpace: "nowrap",
+              "&:hover": { bgcolor: "text.primary", opacity: 0.92, boxShadow: "none" },
+            }}
+          >
+            {runLabel}
+          </Button>
+        </Tooltip>
+      )}
+
+      {/* Repeats popover — presets + custom */}
+      <Popover
+        open={!!trialsAnchor}
+        anchorEl={trialsAnchor}
+        onClose={() => { setTrialsAnchor(null); setCustomOpen(false); }}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
+        slotProps={{ paper: { sx: { minWidth: 240, p: 0.5, mt: 0.5 } } }}
       >
-        Delete
-      </Button>
+        <Box sx={{ px: 1.5, py: 1, borderBottom: "1px solid", borderColor: "divider" }}>
+          <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.primary" }}>
+            Repeats per scenario
+          </Typography>
+          <Typography sx={{ typography: "s3", color: "text.subtitle", fontSize: 11.5, mt: 0.25 }}>
+            {count} {count === 1 ? "scenario" : "scenarios"} × {k} {k === 1 ? "repeat" : "repeats"} = {totalRuns} runs
+          </Typography>
+        </Box>
+        {TRIAL_PRESETS.map((v) => {
+          const active = v === k;
+          return (
+            <Box
+              key={v}
+              onClick={() => applyPreset(v)}
+              sx={{
+                display: "flex", alignItems: "center", gap: 1,
+                px: 1.5, py: 0.875, borderRadius: 0.75, cursor: "pointer",
+                bgcolor: active ? "action.hover" : "transparent",
+                "&:hover": { bgcolor: "action.hover" },
+              }}
+            >
+              <Box sx={{
+                width: 34, textAlign: "left",
+                typography: "s2", fontWeight: active ? 700 : 600,
+                color: active ? "primary.main" : "text.primary",
+                fontVariantNumeric: "tabular-nums",
+              }}>
+                {v}×
+              </Box>
+              {v === DEFAULT_TRIALS_LABEL && (
+                <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
+                  Default
+                </Typography>
+              )}
+              <Box sx={{ flex: 1 }} />
+              {active && <Iconify icon="eva:checkmark-fill" width={14} sx={{ color: "primary.main" }} />}
+            </Box>
+          );
+        })}
+        <Box sx={{ borderTop: "1px solid", borderColor: "divider", mt: 0.5, pt: 0.5 }}>
+          {!customOpen ? (
+            <Box
+              onClick={() => setCustomOpen(true)}
+              sx={{
+                display: "flex", alignItems: "center", gap: 1,
+                px: 1.5, py: 0.875, borderRadius: 0.75, cursor: "pointer",
+                "&:hover": { bgcolor: "action.hover" },
+              }}
+            >
+              <Iconify icon="solar:pen-2-linear" width={13} sx={{ color: "text.subtitle" }} />
+              <Typography sx={{ typography: "s2", fontWeight: 600, color: "text.primary" }}>
+                Custom…
+              </Typography>
+            </Box>
+          ) : (
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ px: 1.5, py: 0.75 }}>
+              <TextField
+                size="small"
+                type="number"
+                autoFocus
+                value={customValue}
+                onChange={(e) => setCustomValue(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") commitCustom(); }}
+                inputProps={{ min: 1, max: 20, style: { padding: "6px 8px", fontSize: 13, width: 56 } }}
+                sx={{ "& .MuiOutlinedInput-root": { fontVariantNumeric: "tabular-nums" } }}
+              />
+              <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1 }}>
+                1 – 20 repeats
+              </Typography>
+              <Button
+                size="small" variant="contained"
+                onClick={commitCustom}
+                sx={{
+                  typography: "s3", fontWeight: 700,
+                  bgcolor: "text.primary",
+                  color: (t) => (t.palette.mode === "dark" ? "background.default" : "background.paper"),
+                  boxShadow: "none", minWidth: 0, px: 1.25, py: 0.375,
+                  "&:hover": { bgcolor: "text.primary", opacity: 0.92, boxShadow: "none" },
+                }}
+              >
+                Set
+              </Button>
+            </Stack>
+          )}
+        </Box>
+      </Popover>
     </Stack>
   );
 }
 SelectionBar.propTypes = {
   count: PropTypes.number.isRequired,
+  trials: PropTypes.number,
+  onTrialsChange: PropTypes.func,
+  onRun: PropTypes.func,
+  onEdit: PropTypes.func,
   onDelete: PropTypes.func.isRequired,
   onClear: PropTypes.func.isRequired,
-  // Select-all-matching context. Absent → a plain page selection with no
-  // escalation (the original bar). { mode, total, pageCount, onSelectAll }.
+  // Select-all-matching context from the pagination predicate. Absent → a plain
+  // page selection with no escalation. { mode, total, pageCount, onSelectAll }.
   matching: PropTypes.shape({
     mode: PropTypes.oneOf(["include", "all"]),
     total: PropTypes.number,
@@ -136,50 +376,3 @@ SelectionBar.propTypes = {
     onSelectAll: PropTypes.func,
   }),
 };
-
-/**
- * One suggestion chip. Filled purple tint + sparkle icon so it reads
- * as "an AI suggestion you can click", not a static tag. Trailing
- * arrow reinforces the clickability. Hover deepens the fill and
- * slides the arrow — small motion is what makes a button feel like
- * a button.
- */
-function SuggestionChip({ label, onClick }) {
-  return (
-    <Button
-      size="small"
-      onClick={onClick}
-      startIcon={<Iconify icon="solar:magic-stick-3-bold" width={13} />}
-      endIcon={
-        <Iconify
-          icon="solar:arrow-right-linear"
-          width={12}
-          sx={{ transition: "transform 160ms ease" }}
-          className="chip-arrow"
-        />
-      }
-      sx={{
-        typography: "s3", fontWeight: 600,
-        color: "#7857FC",
-        border: "1px solid",
-        borderColor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.45 : 0.3),
-        bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.14 : 0.08),
-        borderRadius: 999,
-        px: 1.5, py: 0.35,
-        minWidth: 0, textTransform: "none",
-        transition: "background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease",
-        "& .MuiButton-startIcon": { mr: 0.5 },
-        "& .MuiButton-endIcon": { ml: 0.5 },
-        "&:hover": {
-          borderColor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.7 : 0.55),
-          bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.22 : 0.14),
-          boxShadow: (t) => `0 0 0 3px ${alpha("#7857FC", t.palette.mode === "dark" ? 0.18 : 0.12)}`,
-          "& .chip-arrow": { transform: "translateX(2px)" },
-        },
-      }}
-    >
-      {label}
-    </Button>
-  );
-}
-SuggestionChip.propTypes = { label: PropTypes.string, onClick: PropTypes.func };

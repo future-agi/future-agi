@@ -3,8 +3,12 @@ import { useRef, useState } from "react";
 import { Box, Stack, Typography, Button, TextField, Alert } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useUploadSecretFile } from "src/api/simulate-environments/environments";
+import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import Label from "../components/Label";
 import Field from "../components/Field";
+
+// `secret_ref` is an object and cannot key a list; alias and name cover older drafts.
+const secretFileKey = (f) => f?.secret_ref?.key || f?.environment_name || f?.name;
 
 export default function EnvironmentValues({
   envText,
@@ -18,25 +22,25 @@ export default function EnvironmentValues({
   const fileRef = useRef(null);
   const upload = useUploadSecretFile();
 
-  // Never read the file's bytes into the browser. We hand the raw File to the
-  // (mocked) upload endpoint and keep only the returned reference — contents
-  // are mounted per run, never written into .env or the draft.
+  // Never read the file's bytes into the browser — the raw File goes to the upload
+  // endpoint and only the returned reference is kept; contents are mounted per run.
+  // `environment_name` rides along: that alias is the key `secret_refs` needs.
   const onFile = (file) => {
     if (!file) return;
     upload.mutate(
       { file },
       {
-        onSuccess: ({ secret_ref, name, size }) =>
+        onSuccess: ({ secret_ref, environment_name, name, size }) =>
           onSecretFiles?.((prev) => [
             ...(prev ?? []),
-            { name, size, secret_ref },
+            { name, size, secret_ref, environment_name },
           ]),
       },
     );
   };
 
-  const removeSecretFile = (ref) =>
-    onSecretFiles?.((prev) => (prev ?? []).filter((f) => f.secret_ref !== ref));
+  const removeSecretFile = (key) =>
+    onSecretFiles?.((prev) => (prev ?? []).filter((f) => secretFileKey(f) !== key));
 
   return (
     <Box>
@@ -72,6 +76,10 @@ export default function EnvironmentValues({
           }}
         />
       </Stack>
+      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+        Google service-account JSON only (up to 5 MiB).
+      </Typography>
+      {upload.error && <Alert severity="error">{errorMessage(upload.error)}</Alert>}
 
       {/* Uploaded files echo here, always visible, so an upload made while the
           body is collapsed still confirms. */}
@@ -79,10 +87,10 @@ export default function EnvironmentValues({
         <Stack spacing={1} sx={{ mt: 1 }}>
           {secretFiles.map((f) => (
             <Alert
-              key={f.secret_ref}
+              key={secretFileKey(f)}
               severity="success"
               variant="outlined"
-              onClose={() => removeSecretFile(f.secret_ref)}
+              onClose={() => removeSecretFile(secretFileKey(f))}
               sx={{
                 typography: "s3",
                 py: 0.5,
@@ -151,7 +159,9 @@ EnvironmentValues.propTypes = {
     PropTypes.shape({
       name: PropTypes.string,
       size: PropTypes.number,
-      secret_ref: PropTypes.string,
+      // Older drafts persisted a bare string ref.
+      secret_ref: PropTypes.oneOfType([PropTypes.string, PropTypes.object]),
+      environment_name: PropTypes.string,
     }),
   ),
   onSecretFiles: PropTypes.func,

@@ -12,29 +12,16 @@ vi.mock("react-router-dom", async () => {
   return { ...actual, useNavigate: () => navigate };
 });
 
-vi.mock("src/api/harness/harness", () => ({
-  getHarnessJob: vi.fn(),
-}));
 vi.mock("src/api/simulate-environments/harnessEnvironments", () => ({
   listHarnessEnvironments: vi.fn(),
   deleteHarnessEnvironment: vi.fn(),
 }));
 
-const { getHarnessJob } = await import("src/api/harness/harness");
 const { listHarnessEnvironments, deleteHarnessEnvironment } = await import(
   "src/api/simulate-environments/harnessEnvironments"
 );
 const { default: MyEnvironmentsTab } = await import("../MyEnvironmentsTab");
 
-// The job detail the run action fetches: platform ids sit at the top level, so
-// runSimulationTarget routes to the product's execution detail.
-const JOB_DETAIL = {
-  job: { job_id: "job-support", metadata: { name: "Customer Support Line" } },
-  status: { stage: "completed", created_at: "2026-09-15T09:00:00Z" },
-  credentials: { detected_connectors: ["livekit"] },
-  platform: { run_test_id: "rt-support", test_execution_id: "ex-support" },
-  stage_outputs: [],
-};
 
 // A small harness-environments page: the four pill states, two voice rows and
 // two chat rows, with a real description on the first row.
@@ -131,8 +118,6 @@ describe("MyEnvironmentsTable", () => {
     listHarnessEnvironments.mockResolvedValue(HARNESS_ENVS);
     deleteHarnessEnvironment.mockReset();
     deleteHarnessEnvironment.mockResolvedValue(undefined);
-    getHarnessJob.mockReset();
-    getHarnessJob.mockResolvedValue(JOB_DETAIL);
   });
 
   afterEach(() => {
@@ -188,8 +173,8 @@ describe("MyEnvironmentsTable", () => {
     expect(row.getByText("Handles inbound billing calls")).toBeInTheDocument();
     expect(row.getByText("Logistics")).toBeInTheDocument();
     expect(row.getByText("12")).toBeInTheDocument();
-    // runs_count 1 → has-run state.
-    expect(row.getByText("Ran")).toBeInTheDocument();
+    // runs_count 1 → the Runs column shows the number.
+    expect(row.getByText("1")).toBeInTheDocument();
   });
 
   it("renders dashes and the never-run state when the §1 additions are absent", async () => {
@@ -233,7 +218,7 @@ describe("MyEnvironmentsTable", () => {
     );
   });
 
-  it("fetches the job then routes to the run target on Re-run simulation", async () => {
+  it("opens scenario selection before starting another simulation", async () => {
     const user = userEvent.setup();
     renderTab();
     await screen.findByText("Customer Support Line");
@@ -243,33 +228,11 @@ describe("MyEnvironmentsTable", () => {
       within(screen.getByRole("menu")).getByText("Re-run simulation"),
     );
 
-    // The list payload has no platform, so the row action fetches the detail
-    // first, then navigates to the product's execution target.
-    await waitFor(() =>
-      expect(getHarnessJob).toHaveBeenCalledWith("job-support"),
-    );
-    await waitFor(() =>
-      expect(navigate).toHaveBeenCalledWith(
-        "/dashboard/simulate/test/rt-support/ex-support/call-details",
-      ),
+    expect(navigate).toHaveBeenCalledWith(
+      "/dashboard/simulate/environments/job-support?tab=scenarios",
     );
   });
 
-  it("falls back to the product run entry when the job fetch fails", async () => {
-    getHarnessJob.mockRejectedValue(new Error("boom"));
-    const user = userEvent.setup();
-    renderTab();
-    await screen.findByText("Customer Support Line");
-
-    await openMenu(user, "Customer Support Line");
-    await user.click(
-      within(screen.getByRole("menu")).getByText("Re-run simulation"),
-    );
-
-    await waitFor(() =>
-      expect(navigate).toHaveBeenCalledWith("/dashboard/simulate/test"),
-    );
-  });
 
   it("disables the run action while the environment is building", async () => {
     const user = userEvent.setup();

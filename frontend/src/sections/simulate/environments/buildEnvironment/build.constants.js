@@ -34,6 +34,7 @@ export const CONSOLE_COPY = {
   workingDot: "Working…",
   frozen: "Environment is still being built",
   mode: "Builder mode — Auto or Manual",
+  stop: "Stop the current turn",
 };
 
 export const PIPELINE_CHECKS_COPY = {

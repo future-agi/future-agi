@@ -167,6 +167,10 @@ class RunExecutionSerializer(serializers.Serializer):
     completed_at = serializers.DateTimeField(allow_null=True)
     ordinal = serializers.IntegerField()
     agent_version = serializers.CharField(allow_null=True)
+    selected_scenario_keys = serializers.ListField(
+        child=serializers.CharField(), required=False, default=list
+    )
+    trials = serializers.IntegerField(required=False, min_value=1, default=1)
     agent_type = serializers.CharField(allow_null=True)
     summary = RunSummarySerializer()
 
@@ -210,6 +214,9 @@ class RunCallSerializer(serializers.Serializer):
     persona = serializers.CharField(allow_null=True)
     persona_details = PersonaDetailsSerializer(allow_null=True)
     sub_goals = serializers.ListField(child=serializers.CharField())
+    harness_outcome_status = serializers.CharField(allow_null=True)
+    source_scenario_key = serializers.CharField(allow_null=True)
+    trial_index = serializers.IntegerField(allow_null=True)
     outcome = serializers.ChoiceField(
         choices=["passed", "failed", "error", "inconclusive"]
     )
@@ -439,6 +446,10 @@ def _execution_payload(
             if execution.agent_definition
             else None
         ),
+        "selected_scenario_keys": list(
+            (execution.execution_metadata or {}).get("selected_scenario_keys") or []
+        ),
+        "trials": execution.trials or 1,
         "summary": summary,
     }
 

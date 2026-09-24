@@ -150,11 +150,13 @@ def _billable_records(
 ):
     cached = getattr(attempt, "_prefetched_objects_cache", {}).get("result_receipts")
     receipts = {
-        receipt.scenario.scenario_key: receipt
+        receipt.execution.execution_key
+        if receipt.execution_id
+        else receipt.scenario.scenario_key: receipt
         for receipt in (
             cached
             if cached is not None
-            else attempt.result_receipts.select_related("scenario").all()
+            else attempt.result_receipts.select_related("scenario", "execution").all()
         )
     }
     history = attempt.receipt_history or {}
@@ -407,23 +409,24 @@ def replay_harness_usage(attempt: HostedHarnessAttempt) -> None:
         report = (metadata.get(_REPORT_KEY) or {}).get(str(current.id))
     if report is not None:
         emit_harness_usage(current, report)
-    authoring = current.authoring_usage_report
-    if authoring is None:
-        authoring = (metadata.get(_AUTHORING_REPORT_KEY) or {}).get(str(current.id))
-    if authoring is not None:
-        emit_harness_authoring_usage(current, authoring)
-    elif current.cleanup_verified_at is not None:
-        spend = ((metadata.get("harness_spend") or {}).get("attempts") or {}).get(
-            str(current.attempt_number)
-        )
-        if spend is not None:
-            try:
-                record_harness_authoring_usage(current, spend)
-            except HostedHarnessError:
-                logger.exception(
-                    "Authoring usage could not be finalized for attempt %s",
-                    current.id,
-                )
+    if not metadata.get("simulation_only"):
+        authoring = current.authoring_usage_report
+        if authoring is None:
+            authoring = (metadata.get(_AUTHORING_REPORT_KEY) or {}).get(str(current.id))
+        if authoring is not None:
+            emit_harness_authoring_usage(current, authoring)
+        elif current.cleanup_verified_at is not None:
+            spend = ((metadata.get("harness_spend") or {}).get("attempts") or {}).get(
+                str(current.attempt_number)
+            )
+            if spend is not None:
+                try:
+                    record_harness_authoring_usage(current, spend)
+                except HostedHarnessError:
+                    logger.exception(
+                        "Authoring usage could not be finalized for attempt %s",
+                        current.id,
+                    )
 
 
 def harness_consumption(job: HostedHarnessJob) -> dict | None:
@@ -431,7 +434,11 @@ def harness_consumption(job: HostedHarnessJob) -> dict | None:
     legacy_reports = metadata.get(_REPORT_KEY) or {}
     legacy_authoring_reports = metadata.get(_AUTHORING_REPORT_KEY) or {}
     legacy_runtimes = metadata.get("sandbox_runtime") or {}
-    authoring_spend = (metadata.get("harness_spend") or {}).get("attempts") or {}
+    authoring_spend = (
+        {}
+        if metadata.get("simulation_only")
+        else (metadata.get("harness_spend") or {}).get("attempts") or {}
+    )
     attempts = {
         str(attempt.id): attempt
         for attempt in job.attempts.prefetch_related("result_receipts__scenario")
@@ -452,7 +459,8 @@ def harness_consumption(job: HostedHarnessJob) -> dict | None:
             else legacy_authoring_reports.get(attempt_id)
         )
         for attempt_id, attempt in attempts.items()
-        if (
+        if not metadata.get("simulation_only")
+        and (
             attempt.authoring_usage_report is not None
             or attempt_id in legacy_authoring_reports
         )

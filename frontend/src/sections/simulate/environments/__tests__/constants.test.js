@@ -82,6 +82,7 @@ describe("hostedPlatforms", () => {
       "bland",
       "elevenlabs",
       "livekit",
+      "other",
     ]);
     expect(HOSTED_PLATFORMS_BY_TYPE.text.map((p) => p.id)).toEqual([
       "openai_assistants",

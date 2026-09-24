@@ -23,15 +23,6 @@ class HarnessEnvironmentListQuerySerializer(serializers.Serializer):
     limit = serializers.IntegerField(required=False, min_value=1, max_value=100)
 
 
-class HarnessEnvironmentRunSerializer(serializers.Serializer):
-    """The body of a run request, which carries nothing.
-
-    Starting a run reuses the saved contract and scenario suite, so there is
-    nothing for a caller to choose. The serializer exists so the endpoint
-    declares that in its schema: a mutation with no declared body reads as an
-    undocumented one, and the contract coverage gate counts it as debt.
-    """
-
 
 class HarnessEnvironmentRenameSerializer(serializers.Serializer):
     """The only field an environment exposes for editing.
@@ -85,19 +76,6 @@ class HarnessEnvironmentListResponseSerializer(serializers.Serializer):
     current_page = serializers.IntegerField()
     results = HarnessEnvironmentSerializer(many=True)
 
-
-class HarnessEnvironmentRunResponseSerializer(serializers.Serializer):
-    """What starting a simulation returns.
-
-    The trigger is accepted, not completed: execution is a separate concern and
-    the caller polls the job for progress.
-    """
-
-    environment_id = serializers.UUIDField()
-    job_id = serializers.UUIDField()
-    run_id = serializers.UUIDField()
-    state = serializers.CharField()
-    stage = serializers.CharField()
 
 
 class HarnessEnvironmentRunLinkSerializer(serializers.Serializer):

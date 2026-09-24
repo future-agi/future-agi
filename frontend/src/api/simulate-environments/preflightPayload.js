@@ -113,9 +113,7 @@ function repoPayload(draft, name) {
     payload: {
       ...envelope(draft, name),
       source,
-      // `auto` still lets ALK detect the connector from the source; the exchanged
-      // credential refs (env values + secret files) ride along so a detected
-      // provider's `credentials_present` check can pass.
+      // Source detection uses these refs to report credential readiness.
       agent: {
         connector: PREFLIGHT_CONNECTOR.AUTO,
         config: {},
@@ -141,6 +139,10 @@ function platformPayload(draft, name) {
         // opaque `{alias: reference}` map before the draft is persisted. Absent
         // (a provider with no single-key exchange), the schema default applies.
         secret_refs: draft.secret_refs || {},
+        // The panel collects call direction (Inbound Calls); send it so it is at
+        // least recorded. Backend accepts it but treats it as inert today (§4f) —
+        // do not present it as changing who speaks first until the backend honours it.
+        ...(draft.callDirection ? { call_direction: draft.callDirection } : {}),
       },
     },
   };
@@ -154,9 +156,7 @@ function uploadPayload(draft, name) {
     payload: {
       ...envelope(draft, name),
       source: { kind: "archive", archive_artifact_id: draft.archive_artifact_id },
-      // `auto` still lets ALK detect the connector from the source; the exchanged
-      // credential refs (env values + secret files) ride along so a detected
-      // provider's `credentials_present` check can pass.
+      // Source detection uses these refs to report credential readiness.
       agent: {
         connector: PREFLIGHT_CONNECTOR.AUTO,
         config: {},

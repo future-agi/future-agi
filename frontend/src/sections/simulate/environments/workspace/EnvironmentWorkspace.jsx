@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { alpha } from "@mui/material/styles";
+import { enqueueSnackbar } from "notistack";
 import { Box, Button, Stack, Typography, IconButton } from "@mui/material";
 import {
   useNavigate,
@@ -10,9 +11,10 @@ import {
 } from "react-router-dom";
 
 import Iconify from "src/components/iconify";
+import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import CustomTooltip from "src/components/tooltip";
 import { paths } from "src/routes/paths";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useEnvironment,
   canRunHeader,
@@ -21,6 +23,9 @@ import {
 } from "src/api/simulate-environments/environment";
 import { useBuildProgress } from "src/api/simulate-environments/buildProgress";
 import { useWorkspaceChat } from "src/api/simulate-environments/workspaceChat";
+import { harnessIdempotencyKey } from "src/api/harness/harness";
+import { runHarnessEnvironment } from "src/api/simulate-environments/harnessEnvironments";
+import { runSimulationTarget } from "src/api/simulate-environments/runs";
 
 import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
 import { useEnvState } from "../store/envState";
@@ -67,8 +72,8 @@ const blockedReason = (envState) => {
  * template) and lays out the shared workspace: header, system banners, the
  * version pairing strip, the builder console on the left and the tabbed panels
  * on the right — the same composition the build page swaps in at 7/7. A deep
- * link to `runs/:testId/:executionId` forces the Runs tab and renders the reused
- * product execution detail (the Outlet) inside its body.
+ * link to `runs/:testId/:executionId` renders the run detail as its own full
+ * page instead (the workspace chrome is replaced by the nested Outlet).
  */
 export default function EnvironmentWorkspace() {
   const navigate = useNavigate();
@@ -91,9 +96,57 @@ export default function EnvironmentWorkspace() {
     building || buildFailed ? undefined : bootstrapState,
   );
   const { tab, setTab } = useWorkspaceTab();
-  const chat = useWorkspaceChat(env);
+  const chat = useWorkspaceChat(env, { source });
   const registerFork = useEnvironmentsStore((s) => s.forkEnvironment);
   const selection = useScenarioSelection();
+  const queryClient = useQueryClient();
+  const pendingSubmission = useRef(null);
+  const runMutation = useMutation({
+    mutationFn: ({ ids, trials }) => {
+      const scenarioIds = ids === undefined
+        ? (envState?.scenarios || []).map((scenario) => scenario.id).filter(Boolean)
+        : ids;
+      const selection = JSON.stringify([env.id, scenarioIds, trials || 1]);
+      if (pendingSubmission.current?.selection !== selection) {
+        pendingSubmission.current = {
+          selection,
+          key: harnessIdempotencyKey(),
+        };
+      }
+      return runHarnessEnvironment(
+        env.id,
+        scenarioIds,
+        trials || 1,
+        pendingSubmission.current.key,
+      );
+    },
+    onSuccess: (run) => {
+      pendingSubmission.current = null;
+      queryClient.invalidateQueries({
+        queryKey: ["run-test-executions", run.run_test_id],
+      });
+      navigate(
+        paths.dashboard.simulate.environments.execution(
+          env.id,
+          run.run_test_id,
+          run.test_execution_id,
+        ),
+      );
+    },
+    onError: (error) => {
+      if (error?.statusCode >= 400 && error.statusCode < 500) {
+        pendingSubmission.current = null;
+      }
+      enqueueSnackbar(errorMessage(error), { variant: "error" });
+    },
+  });
+  const startRun = (ids, trials) => {
+    if (source !== "harness") {
+      navigate(runSimulationTarget(env));
+      return;
+    }
+    runMutation.mutate({ ids, trials });
+  };
 
   // While the job is still deriving, this page IS the build experience: the same
   // milestone poll the /build page used, now keyed off the resolved env id. The
@@ -189,6 +242,7 @@ export default function EnvironmentWorkspace() {
         <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden", p: 2 }}>
           <BuildingStage
             progress={progress}
+            chat={chat}
             env={env}
             envState={envState}
             patch={patch}
@@ -201,17 +255,25 @@ export default function EnvironmentWorkspace() {
     );
   }
 
+  // A deep-linked run detail is its own full page: the workspace chrome (header,
+  // builder console, tab rail) makes way for the run view, matching the designer
+  // — a run opens as a page, not a body swapped inside the tabbed workspace. The
+  // env is already resolved above, so the nested Outlet still receives it via
+  // context and RunDetail owns the viewport (its own header + Test-runs tabs).
+  if (executionMatch) {
+    return (
+      <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+        <Outlet context={{ env, envState, onStartRun: startRun }} />
+      </Box>
+    );
+  }
+
   // A template-seeded env stays locked until forked: the version pin is
   // read-only, the header overflow is hidden and Overview offers Fork instead.
   const locked = source === "client" && !!envState.seededFromTemplate;
 
-  // The execution route forces the Runs tab and hands the panels the nested
-  // product detail; switching tabs from there leaves the execution behind.
-  const activeTab = executionMatch ? "runs" : tab;
-  const onTabChange = (id) =>
-    executionMatch
-      ? navigate(paths.dashboard.simulate.environments.workspaceTab(env.id, id))
-      : setTab(id);
+  const activeTab = tab;
+  const onTabChange = (id) => setTab(id);
 
   const onFork = () => {
     const fork = buildFork(env, envState, new Date().toISOString());
@@ -220,6 +282,11 @@ export default function EnvironmentWorkspace() {
   };
 
   const runnable = canRunHeader(source, env, canRun);
+
+
+  // A scenario selection on the Scenarios tab owns the primary Run — the header
+  // yields its Run/Repeats while one is active ("one primary at a time").
+  const selectionActive = (selection.count ?? selection.ids.length) > 0;
 
   // While the environment is still deriving, the builder can't accept edits —
   // the console freezes until it goes Live. SystemBanners reads the same value.
@@ -235,17 +302,64 @@ export default function EnvironmentWorkspace() {
       ? { ...envState, evals: backedSelected }
       : envState;
 
+  // A §8 rename writes the fresh detail back into the §6 cache, but `env` here
+  // is derived from the job poll (name from job metadata), so it would keep the
+  // old name in the header. Overlay §6's name for a backed env so a rename shows
+  // everywhere the moment it lands, not only in the Settings field.
+  const backedName = evalDetailQuery.data?.overview?.name;
+  const displayEnv = env && backed && backedName ? { ...env, name: backedName } : env;
+
+  // Overview summary tiles need the real §6 counts: the job poll (which drives
+  // env/envState here) carries the scenarios list but not the eval or run
+  // counts. Reuse the §6 detail already fetched above rather than a second read.
+  const backedDetail = evalDetailQuery.data;
+  const overviewCounts =
+    backed && backedDetail
+      ? {
+          scenarios: backedDetail.overview?.scenario_count ?? backedDetail.scenarios?.length,
+          evaluations:
+            backedDetail.overview?.evaluations_count ?? backedDetail.evaluations?.selected?.length,
+          runs: backedDetail.overview?.runs_count,
+          hardRules: backedDetail.contract?.hard_constraints?.length,
+        }
+      : undefined;
+  // Real §6 world content for the Overview (stores/amendments/dependencies),
+  // so those cards render live data and an honest empty state instead of the
+  // fixture. Undefined for a non-backed env.
+  const overviewWorld =
+    backed && backedDetail
+      ? {
+          stores: backedDetail.world?.stores ?? [],
+          amendments: backedDetail.contract?.amendments ?? [],
+          dependencies: backedDetail.contract?.dependencies ?? [],
+        }
+      : undefined;
+  // Real §6 capability-graph branches for a backed env: tools names,
+  // real_use_cases (flows), world.personas names, hard_constraints (guardrails).
+  // Empty arrays render the graph's honest "none yet" instead of a fixture.
+  const graphData =
+    backed && backedDetail
+      ? {
+          tools: (backedDetail.contract?.tools ?? []).map((t) => t?.name).filter(Boolean),
+          flows: backedDetail.contract?.real_use_cases ?? [],
+          personas: (backedDetail.world?.personas ?? []).map((p) => p?.name).filter(Boolean),
+          guardrails: backedDetail.contract?.hard_constraints ?? [],
+        }
+      : undefined;
+
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <WorkspaceHeader
-        env={env}
+        env={displayEnv}
         envState={envState}
         patch={patch}
-        canRun={runnable}
+        canRun={runnable && !runMutation.isPending}
         runBlockedReason={blockedReason(envState)}
         locked={locked}
         backed={source === "harness"}
         onFork={onFork}
+        onStartRun={startRun}
+        selectionActive={selectionActive}
       />
 
       <SystemBanners env={env} envState={envState} patch={patch} />
@@ -274,8 +388,10 @@ export default function EnvironmentWorkspace() {
             chips={CHIPS_BY_TAB[activeTab] || CHIPS_BY_TAB.overview}
             onSend={chat.send}
             onChip={chat.send}
-            frozen={!envLive}
-            frozenReason={CONSOLE_COPY.frozen}
+            onStop={chat.stop}
+            canStop={chat.inFlight}
+            frozen={!envLive || chat.frozen}
+            frozenReason={!envLive ? CONSOLE_COPY.frozen : chat.frozenReason}
             preComposer={
               (selection.count ?? selection.ids.length) > 0 ? (
                 <SelectionContextChip
@@ -303,7 +419,7 @@ export default function EnvironmentWorkspace() {
           }}
         >
           <WorkspacePanels
-            env={env}
+            env={displayEnv}
             envState={envState}
             patch={patch}
             tab={activeTab}
@@ -313,7 +429,11 @@ export default function EnvironmentWorkspace() {
             onFork={onFork}
             gapsByTab={gapsByTab(env, badgeEnvState)}
             counts={counts(badgeEnvState)}
-            executionOutlet={executionMatch ? <Outlet context={{ env, envState }} /> : undefined}
+            overviewCounts={overviewCounts}
+            overviewWorld={overviewWorld}
+            graphData={graphData}
+            onStartRun={startRun}
+            canRun={runnable && !runMutation.isPending}
           />
         </Box>
       </Box>
@@ -325,7 +445,7 @@ export default function EnvironmentWorkspace() {
 // console's pre-composer chip re-renders when rows are checked or cleared on
 // the Scenarios tab. The bus fires the current value on subscribe.
 function useScenarioSelection() {
-  const [selection, setSelection] = useState({ ids: [], rows: [] });
+  const [selection, setSelection] = useState({ ids: [], rows: [], count: 0, all: false });
   useEffect(() => subscribeScenarioSelection(setSelection), []);
   return selection;
 }

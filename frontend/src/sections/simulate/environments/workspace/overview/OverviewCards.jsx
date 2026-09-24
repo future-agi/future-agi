@@ -114,10 +114,18 @@ UseCasesCard.propTypes = { useCases: PropTypes.arrayOf(PropTypes.string) };
 
 // Facts changed after reading the source, each with its stated reason.
 export function AmendmentsCard({ amendments }) {
+  const rows = amendments || [];
   return (
     <SectionCard title={OVERVIEW_COPY.amendmentsTitle} subtitle={OVERVIEW_COPY.amendmentsSubtitle}>
+      {rows.length === 0 ? (
+        <Box sx={{ p: 2.5 }}>
+          <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
+            {OVERVIEW_COPY.amendmentsEmpty}
+          </Typography>
+        </Box>
+      ) : (
       <Stack sx={{ p: 2.5 }} spacing={1.25}>
-        {(amendments || []).map((a) => (
+        {rows.map((a) => (
           <Box
             key={a.subject}
             sx={{
@@ -131,6 +139,7 @@ export function AmendmentsCard({ amendments }) {
           </Box>
         ))}
       </Stack>
+      )}
     </SectionCard>
   );
 }

@@ -153,14 +153,6 @@ export const bodyCellSx = {
   borderColor: "divider",
   "&:not(:first-of-type)": { borderLeft: "1px solid", borderColor: "divider" },
 };
-export const checkCellSx = {
-  width: 48,
-  p: 0,
-  pl: 1.25,
-  verticalAlign: "middle",
-  borderBottom: "1px solid",
-  borderColor: "divider",
-};
 
 // Outcome as colour + label so a failure is scannable at the row level. Reuses
 // the run status colours; the `error` label is normalised to "Errored" to match

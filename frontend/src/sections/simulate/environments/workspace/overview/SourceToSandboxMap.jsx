@@ -9,7 +9,7 @@ import {
   toolMapRows,
   ruleMapRows,
   storeMapRows,
-  actorMapRows,
+  storeRowsFromStores,
 } from "./sourceToSandbox.constants";
 
 const MONO = "ui-monospace, Menlo, monospace";
@@ -29,13 +29,13 @@ const MAP_PX = 3;
 // a Contract override: a resolved tool shows the overridden target and a "you
 // confirmed" mark. This is the artifact someone returns to weeks later to see
 // which decisions a human made and which the reader made itself.
-export default function SourceToSandboxMap({ env, envState }) {
+export default function SourceToSandboxMap({ env, envState, stores }) {
   const toolRows = toolMapRows(env, envState);
   const ruleRows = ruleMapRows(env);
-  const storeRows = storeMapRows(env);
-  const actors = actorMapRows(env);
-
-  const actorMapped = actors.filter((a) => a.mapped).length;
+  // A backed env passes its real §6 world.stores (may be empty); otherwise fall
+  // back to the client/fixture seed tables. Actors were removed — they were a
+  // hardcoded 4-row stub, not backed by world.personas.
+  const storeRows = stores !== undefined ? storeRowsFromStores(stores) : storeMapRows(env);
 
   return (
     <Box
@@ -99,28 +99,13 @@ export default function SourceToSandboxMap({ env, envState }) {
         hint={MAP_COPY.groups.stores.hint}
         right={MAP_COPY.storesRight(storeRows.length)}
       >
-        {storeRows.map((r, i) => (
-          <MapRow key={r.key} index={i} name={r.name} origin={r.origin} target={r.target} mono />
-        ))}
-        <MapRow index={storeRows.length} name={null} origin={null} target={MAP_COPY.derivedStore} derived />
-      </MapGroup>
-
-      <MapGroup
-        label={MAP_COPY.groups.actors.label}
-        hint={MAP_COPY.groups.actors.hint}
-        right={MAP_COPY.actorsRight(actorMapped, actors.length - actorMapped)}
-      >
-        {actors.map((a, i) => (
-          <MapRow
-            key={a.key}
-            index={i}
-            name={a.name}
-            origin={a.origin}
-            target={a.target}
-            mono={!!a.name}
-            derived={!a.mapped}
-          />
-        ))}
+        {storeRows.length === 0 ? (
+          <EmptyRow>{MAP_COPY.storesEmpty}</EmptyRow>
+        ) : (
+          storeRows.map((r, i) => (
+            <MapRow key={r.key} index={i} name={r.name} origin={r.origin} target={r.target} mono />
+          ))
+        )}
       </MapGroup>
     </Box>
   );
@@ -128,7 +113,22 @@ export default function SourceToSandboxMap({ env, envState }) {
 SourceToSandboxMap.propTypes = {
   env: ENV_SHAPE.isRequired,
   envState: PropTypes.shape({ toolResolutions: PropTypes.objectOf(PropTypes.string) }),
+  // Real §6 world.stores for a backed env (may be []); undefined = use the
+  // client/fixture seed tables.
+  stores: PropTypes.array,
 };
+
+// A muted full-width row for a group the backend returned empty.
+function EmptyRow({ children }) {
+  return (
+    <Box sx={{ px: MAP_PX, py: 1.25 }}>
+      <Typography sx={{ typography: "s3", color: "text.subtitle", fontStyle: "italic" }}>
+        {children}
+      </Typography>
+    </Box>
+  );
+}
+EmptyRow.propTypes = { children: PropTypes.node };
 
 // A small "you confirmed" pill for a tool row whose read/write effect was
 // overridden by a human on the Contract tab — the map reflects that decision.

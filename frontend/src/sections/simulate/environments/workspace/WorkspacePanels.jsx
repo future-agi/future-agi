@@ -3,7 +3,7 @@ import { Box, Stack, Tab } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { CustomTabs } from "src/components/tabs/tabs";
 import { paths } from "src/routes/paths";
-import { useEnvironmentRuns, runSimulationTarget } from "src/api/simulate-environments/runs";
+import { useEnvironmentRuns } from "src/api/simulate-environments/runs";
 import { ENV_TABS_SX } from "../environmentOptions";
 import OverviewPanel from "./overview/OverviewPanel";
 import RlContractPanel from "./contract/RlContractPanel";
@@ -22,9 +22,9 @@ import { WORKSPACE_TABS } from "./workspace.constants";
 //
 // The rail reuses the product tab treatment Phase-1 established (ENV_TABS_SX)
 // rather than the designer's CustomTabs px:1. Numeric counts are hidden while
-// the builder streams — the parent passes `counts={null}` then. When an
-// execution is open in the URL the parent passes `executionOutlet`, which
-// replaces the Runs body with the nested product run detail.
+// the builder streams — the parent passes `counts={null}` then. A deep-linked
+// run detail is a full page (the workspace early-returns the Outlet), so the
+// panels never host the run detail themselves.
 export default function WorkspacePanels({
   env,
   envState,
@@ -37,7 +37,11 @@ export default function WorkspacePanels({
   buildMode = false,
   gapsByTab,
   counts,
-  executionOutlet,
+  overviewCounts,
+  overviewWorld,
+  graphData,
+  onStartRun,
+  canRun = false,
 }) {
   const navigate = useNavigate();
   const { runs } = useEnvironmentRuns(env, envState);
@@ -68,12 +72,11 @@ export default function WorkspacePanels({
   };
 
   const renderBody = () => {
-    if (executionOutlet && current.id === "runs") return executionOutlet;
     switch (current.id) {
       case "contract":
-        return <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} locked={locked} onFork={onFork} />;
+        return <RlContractPanel env={env} envState={envState} patch={patch} onGo={go} locked={locked} onFork={onFork} graphData={graphData} />;
       case "scenarios":
-        return <ScenariosStep env={env} envState={envState} patch={patch} locked={locked} onFork={onFork} />;
+        return <ScenariosStep env={env} envState={envState} patch={patch} locked={locked} onFork={onFork} onStartRun={onStartRun} canRun={canRun} />;
       case "evals":
         return <EvalsStep env={env} envState={envState} patch={patch} onGo={go} locked={locked} backed={backed} onFork={onFork} />;
       case "runs":
@@ -82,13 +85,13 @@ export default function WorkspacePanels({
             env={env}
             envState={envState}
             runs={runs}
-            onStart={() => navigate(runSimulationTarget(env))}
+            onStart={() => onStartRun?.(undefined, 1)}
             onOpenRun={openRun}
             onGo={go}
           />
         );
       case "settings":
-        return <SettingsPanel env={env} envState={envState} patch={patch} locked={locked} />;
+        return <SettingsPanel env={env} locked={locked} backed={backed} />;
       default:
         return (
           <OverviewPanel
@@ -98,6 +101,8 @@ export default function WorkspacePanels({
             onGo={go}
             agentConnected={!!envState?.agent}
             locked={locked}
+            counts={overviewCounts}
+            backedWorld={overviewWorld}
             onFork={onFork}
             buildMode={buildMode}
           />
@@ -170,5 +175,14 @@ WorkspacePanels.propTypes = {
     scenarios: PropTypes.number,
     evals: PropTypes.number,
   }),
-  executionOutlet: PropTypes.node,
+  // Real §6 counts for the Overview summary tiles on a backed env.
+  overviewCounts: PropTypes.object,
+  // Real §6 world content (stores/amendments/dependencies) for the Overview.
+  overviewWorld: PropTypes.object,
+  // Real §6 capability-graph data (tools/flows/personas/guardrails) for Contract.
+  graphData: PropTypes.object,
+  // Starts a run scoped to the scenario selection × trials — (ids, trials).
+  onStartRun: PropTypes.func,
+  // Whether the env is runnable; gates the scenarios selection-bar Run.
+  canRun: PropTypes.bool,
 };

@@ -6,8 +6,14 @@ import { ENV_STATUS } from "src/sections/simulate/environments/myEnvironments.co
 import { environmentName } from "src/pages/dashboard/harness/harnessShared";
 
 vi.mock("src/api/harness/harness", () => ({ getHarnessJob: vi.fn() }));
+vi.mock("src/api/simulate-environments/harnessEnvironments", () => ({
+  getHarnessEnvironment: vi.fn(),
+}));
 
 const { getHarnessJob } = await import("src/api/harness/harness");
+const { getHarnessEnvironment } = await import(
+  "src/api/simulate-environments/harnessEnvironments"
+);
 const {
   useEnvironment,
   harnessJobToEnvironment,
@@ -15,7 +21,6 @@ const {
   harnessEnvState,
   canRunHeader,
 } = await import("../environment");
-const { MOCK_WORLD } = await import("../_fixtures/world");
 const { useEnvironmentsStore, resetEnvironmentsStore } = await import(
   "src/sections/simulate/environments/store/useEnvironmentsStore"
 );
@@ -90,10 +95,11 @@ const makeWrapper = () => {
   Wrapper.propTypes = { children: PropTypes.node };
   return { queryClient, Wrapper };
 };
-
 beforeEach(() => {
   resetEnvironmentsStore();
   getHarnessJob.mockReset();
+  getHarnessEnvironment.mockReset();
+  getHarnessEnvironment.mockResolvedValue(null);
 });
 
 describe("useEnvironment resolution order", () => {
@@ -163,7 +169,7 @@ describe("useEnvironment resolution order", () => {
     expect(doneQuery.options.refetchInterval(doneQuery)).toBe(false);
   });
 
-  it("takes world tools from a parseable contract output, else MOCK_WORLD", async () => {
+  it("uses authored tools and leaves unavailable tools empty", async () => {
     getHarnessJob.mockResolvedValue(COMPLETED_JOB);
     const { Wrapper } = makeWrapper();
     const parsed = renderHook(() => useEnvironment("job-done"), {
@@ -180,26 +186,22 @@ describe("useEnvironment resolution order", () => {
       wrapper: Wrapper,
     });
     await waitFor(() => expect(overlaid.result.current.source).toBe("harness"));
-    expect(overlaid.result.current.env.tools.map((t) => t.name)).toEqual(
-      MOCK_WORLD.tools.map((t) => t.name),
-    );
+    expect(overlaid.result.current.env.tools).toBeUndefined();
   });
 
-  it("bootstraps an endpoint agent and scenario_count scenarios", async () => {
+  it("bootstraps only real registered scenarios", async () => {
     getHarnessJob.mockResolvedValue(COMPLETED_JOB);
     const { Wrapper } = makeWrapper();
     const { result } = renderHook(() => useEnvironment("job-done"), {
       wrapper: Wrapper,
     });
 
-    await waitFor(() => expect(result.current.source).toBe("harness"));
+    await waitFor(() => expect(result.current.bootstrapState).toBeDefined());
     expect(result.current.bootstrapState.agent.via).toBe("endpoint");
-    expect(result.current.bootstrapState.scenarios).toHaveLength(
-      COMPLETED_JOB.job.scenario_count,
-    );
+    expect(result.current.bootstrapState.scenarios).toEqual([]);
   });
 
-  it("enables canRunHeader for a completed harness job", async () => {
+  it("enables canRunHeader only when a completed harness has real scenarios", async () => {
     getHarnessJob.mockResolvedValue(COMPLETED_JOB);
     const { Wrapper } = makeWrapper();
     const { result } = renderHook(() => useEnvironment("job-done"), {
@@ -207,7 +209,8 @@ describe("useEnvironment resolution order", () => {
     });
 
     await waitFor(() => expect(result.current.source).toBe("harness"));
-    expect(canRunHeader("harness", result.current.env, false)).toBe(true);
+    expect(canRunHeader("harness", result.current.env, true)).toBe(true);
+    expect(canRunHeader("harness", result.current.env, false)).toBe(false);
   });
 
   it("flags an unknown id as notFound on a 404", async () => {
@@ -285,14 +288,11 @@ describe("stageOutputsToWorld", () => {
   });
 });
 
-describe("harnessJobToEnvironment — real-first / mock-fill + provenance", () => {
-  it("keeps mock seed tables while surfacing real services (field-aware merge)", () => {
+describe("harnessJobToEnvironment — real-first provenance", () => {
+  it("surfaces real services without fabricating unavailable tables", () => {
     const { env } = harnessJobToEnvironment(COMPLETED_JOB);
-    // Real environment.services surface…
     expect(env.seed.services).toEqual(["postgres", "redis"]);
-    // …but the empty real seed does not blank the sandbox card: mock tables fill.
-    expect(env.seed.tables).toEqual(MOCK_WORLD.seed.tables);
-    expect(env.seed.tables.length).toBeGreaterThan(0);
+    expect(env.seed.tables).toEqual([]);
   });
 
   it("marks each field real or mock in env.provenance", () => {
@@ -355,10 +355,10 @@ describe("harnessJobToEnvironment", () => {
 });
 
 describe("canRunHeader", () => {
-  it("gates a harness env on its platform run id", () => {
-    expect(canRunHeader("harness", { platform: { runTestId: "rt1" } }, false)).toBe(true);
-    expect(canRunHeader("harness", { platform: {} }, false)).toBe(false);
-    expect(canRunHeader("harness", { platform: {} }, true)).toBe(true);
+  it("requires both a persisted RunTest and real runnable scenarios", () => {
+    expect(canRunHeader("harness", { platform: { runTestId: "rt1" } }, true)).toBe(true);
+    expect(canRunHeader("harness", { platform: { runTestId: "rt1" } }, false)).toBe(false);
+    expect(canRunHeader("harness", { platform: {} }, true)).toBe(false);
   });
 
   it("falls back to canRun for non-harness sources", () => {

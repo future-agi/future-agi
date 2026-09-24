@@ -6,13 +6,12 @@ import {
   Typography,
   TableCell,
   TableRow,
-  Checkbox,
 } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { interpolateColorBasedOnScore } from "src/utils/utils";
 import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
-import { isBad, neutralCheckboxSx } from "./traceTable.constants";
+import { isBad } from "./traceTable.constants";
 
 const DESC_KEYS = [
   "callDetails",
@@ -34,8 +33,6 @@ export default function TraceGroupHeaderRow({
   show,
   showEvals,
   evals,
-  selected,
-  onToggleGroup,
 }) {
   const cellSx = {
     bgcolor: "transparent",
@@ -148,34 +145,9 @@ export default function TraceGroupHeaderRow({
     </Stack>
   );
 
-  const ids = group.rows.map((r) => r.id);
-  const allOn = ids.length > 0 && ids.every((id) => selected?.has(id));
-  const someOn = ids.some((id) => selected?.has(id)) && !allOn;
 
   return (
     <TableRow onClick={onToggle}>
-      <TableCell
-        sx={{
-          width: 48,
-          pl: 1.25,
-          pr: 0,
-          py: 0,
-          verticalAlign: "middle",
-          borderBottom: "1px solid",
-          borderColor: "divider",
-          cursor: "pointer",
-          ".MuiTableRow-root:hover &": { bgcolor: rowHover },
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <Checkbox
-          size="small"
-          checked={allOn}
-          indeterminate={someOn}
-          onChange={() => onToggleGroup?.(group.rows)}
-          sx={neutralCheckboxSx}
-        />
-      </TableCell>
       {descColumns.length === 0 ? (
         <TableCell sx={{ ...cellSx, pl: 2, overflow: "hidden" }}>
           {label}
@@ -263,6 +235,4 @@ TraceGroupHeaderRow.propTypes = {
   show: PropTypes.func,
   showEvals: PropTypes.bool,
   evals: PropTypes.array,
-  selected: PropTypes.object,
-  onToggleGroup: PropTypes.func,
 };

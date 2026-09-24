@@ -31,10 +31,8 @@ export function redactSource(source) {
  *  - a hosted provider's `apiKey` → its fixed alias (VAPI_API_KEY / RETELL_API_KEY)
  *  - pasted `.env` contents → one alias per assignment (parsed with parseDotEnv)
  *
- * These same values feed two independent preflight paths: exchanged into opaque
- * `secret_refs` (which the `credentials_present` check reads), and sent verbatim
- * as write-only `credential_values` (which the live `credentials_valid` /
- * `provider_target` probes read). Empty when there is nothing to send.
+ * These values become opaque `secret_refs` for credential readiness and are
+ * also sent write-only as `credential_values` for live provider probes.
  */
 function collectCredentialValues(source) {
   const values = {};
@@ -49,11 +47,6 @@ function collectCredentialValues(source) {
  * Exchange a raw `{ ALIAS: value }` map for opaque secret references the backend
  * can resolve. Returns a `{ ALIAS: reference }` map (empty when there is nothing
  * to exchange).
- *
- * NOTE: uploaded credential FILES (`source.secretFiles`) are intentionally not
- * folded here — the environments panels still mint those refs from the mock
- * upload hook, so they are not real vault references yet. They ride the draft
- * untouched until real secret-file upload is wired.
  */
 async function exchangeSecrets(values) {
   if (!Object.keys(values).length) return {};
@@ -62,9 +55,23 @@ async function exchangeSecrets(values) {
 }
 
 /**
+ * The `{ ALIAS: reference }` map for credential FILES already uploaded to the vault.
+ * Preflight reads `agent.secret_refs` and nothing else, so a file left out here is
+ * invisible to `credential_files` however many times it was uploaded.
+ */
+function fileSecretRefs(source) {
+  const refs = {};
+  for (const file of source?.secretFiles ?? []) {
+    const alias = String(file?.environment_name || "").trim();
+    if (alias && file?.secret_ref) refs[alias] = file.secret_ref;
+  }
+  return refs;
+}
+
+/**
  * Turn a raw panel source into what preflight/build need:
  *  - `draft`: the redacted, exchanged source — safe to persist and to POST to
- *    preflight/create. Its `secret_refs` satisfy `credentials_present`.
+ *    preflight/create. Its `secret_refs` satisfy credential readiness.
  *  - `credentialValues`: the raw `{ ALIAS: value }` map for the preflight-only,
  *    write-only `credential_values` field that drives the live credential probe.
  *    This is NEVER stored (it holds plaintext secrets) — the caller sends it on
@@ -74,7 +81,11 @@ async function exchangeSecrets(values) {
  */
 export async function prepareSourceForBuild(source) {
   const credentialValues = collectCredentialValues(source);
-  const secretRefs = await exchangeSecrets(credentialValues);
+  // File refs first so a typed value for the same alias wins, matching the create path.
+  const secretRefs = {
+    ...fileSecretRefs(source),
+    ...(await exchangeSecrets(credentialValues)),
+  };
   const withRefs = Object.keys(secretRefs).length
     ? { ...source, secret_refs: secretRefs }
     : source;

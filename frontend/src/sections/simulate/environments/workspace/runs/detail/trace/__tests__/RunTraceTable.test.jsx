@@ -236,6 +236,50 @@ describe("RunTraceTable", () => {
     );
   });
 
+  it("exposes later server pages for runs with more than 100 trials", async () => {
+    const user = userEvent.setup();
+    const finalTrial = {
+      ...TASKS[0],
+      id: "trial-200",
+      goal: "Scenario 200",
+      scenario: "Scenario 200 · Trial 20",
+    };
+    useRunCalls.mockImplementation((_executionId, opts = {}) => {
+      const tasks = opts.page === 2 ? [finalTrial] : TASKS;
+      return {
+        tasks,
+        columns: COLUMNS,
+        groups: groupsFor(tasks, opts.groupBy),
+        facets: FACETS,
+        count: 200,
+        totalPages: 2,
+        isLoading: false,
+      };
+    });
+    renderTable();
+
+    await user.click(screen.getByRole("button", { name: "Go to page 2" }));
+
+    expect(screen.getByText("Scenario 200")).toBeInTheDocument();
+    expect(useRunCalls).toHaveBeenLastCalledWith(
+      "ex1",
+      expect.objectContaining({ page: 2, limit: 50 }),
+    );
+  });
+
+  it("applies column picker choices to the rendered table", async () => {
+    const user = userEvent.setup();
+    renderTable();
+
+    expect(
+      screen.getByRole("columnheader", { name: "Latency" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Columns/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Latency" }));
+
+    expect(screen.queryByRole("columnheader", { name: "Latency" })).toBeNull();
+  });
+
   it("re-buckets the rows when the group-by axis changes to Status", async () => {
     const user = userEvent.setup();
     renderTable();

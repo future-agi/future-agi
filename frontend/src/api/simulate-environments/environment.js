@@ -15,14 +15,14 @@ import {
   stageToStatus,
   buildStatusFor,
 } from "src/sections/simulate/environments/helpers/harnessJobToRow";
-import { generatedPool } from "./_fixtures/scenarioPool";
 import { MOCK_WORLD } from "./_fixtures/world";
 import { usePrebuiltEnvironments } from "./prebuilt";
+import { conversationInFlight } from "./conversationProjection";
 
 // While the real world seam (stage_outputs) is still thin, an environment whose
 // outputs carry nothing parseable falls back to the MOCK_WORLD overlay. Flip this
 // to false (and delete _fixtures/world.js) once the backend fills every output.
-export const MOCK_WORLD_OVERLAY = true;
+export const MOCK_WORLD_OVERLAY = false;
 
 // The §6 environment-detail endpoint is implemented on the backend branch but not
 // yet merged/served (see environments-api-contracts §6). Until it lands and the
@@ -30,13 +30,22 @@ export const MOCK_WORLD_OVERLAY = true;
 // detail query stays disabled to keep the live workspace error-free. Flip to true
 // once the backend serves §6 — the whole real-detail path (harnessDetailToEnvironment
 // merge + real scenarios/evals/amendments/end_conditions/stores) turns on with it.
-export const HARNESS_DETAIL_ENABLED = false;
+export const HARNESS_DETAIL_ENABLED = true;
 
-// The harness detail poll cadence, matching HarnessDetail's own 2s tick.
+// The harness detail poll cadence, matching HarnessDetail's own 2s tick, with a
+// faster 1s tick while a conversation turn is in flight so a reply lands promptly.
 const REFETCH_MS = 2000;
+const REFETCH_ACTIVE_MS = 1000;
 
-const jobRefetchInterval = (data) =>
-  terminalStages.has(data?.status?.stage) ? false : REFETCH_MS;
+// A READY env is terminal, so without the conversation check a chat reply would
+// never poll in. Poll fast while the agent has a turn in flight; otherwise stop
+// at a terminal stage; otherwise the steady live tick. `waiting_for_user` is not
+// "in flight" — nothing changes server-side until the user answers, and we keep
+// the composer enabled while waiting.
+const jobRefetchInterval = (data) => {
+  if (conversationInFlight(data?.conversation)) return REFETCH_ACTIVE_MS;
+  return terminalStages.has(data?.status?.stage) ? false : REFETCH_MS;
+};
 
 // Shared react-query config for the single harness-job poll. The build page's
 // progress hook and the workspace both read the same ["harness-job", id] cache
@@ -172,19 +181,13 @@ const scenarioFromOutput = (row) => ({
 // backend: an endpoint agent, scenarios from the run (or the derived pool sliced
 // to the run's count) and v1 versions. Real runs arrive from the executions API.
 export function harnessEnvState(item, world) {
-  const job = item?.job || {};
   const status = item?.status || {};
-  const resolved = world || MOCK_WORLD;
-  const poolEnv = { ...resolved, id: job.job_id };
-
-  // Prefer scenarios parsed from stage_outputs; then the job's own registered
-  // scenarios (serialize_job top-level `scenarios[]`); then the derived pool.
+  const resolved = world || {};
   const scenarios =
     (resolved.scenarios?.length && resolved.scenarios.map(scenarioFromOutput)) ||
     (Array.isArray(item?.scenarios) && item.scenarios.length
       ? item.scenarios.map(scenarioFromOutput)
-      : null) ||
-    generatedPool(poolEnv).slice(0, job.scenario_count ?? undefined);
+      : []);
 
   const connector = item?.credentials?.detected_connectors?.[0] || "auto";
   const version = { label: "v1", note: "First run of this environment.", createdAt: status.updated_at };
@@ -276,7 +279,9 @@ export function harnessJobToEnvironment(item) {
 // Header Run-simulation gating: a built harness job can run through the product
 // bridge as soon as it has a run-test id, even before the client canRun is met.
 export const canRunHeader = (source, env, canRun) =>
-  source === "harness" ? Boolean(env?.platform?.runTestId) || canRun : canRun;
+  source === "harness"
+    ? Boolean(env?.platform?.runTestId) && canRun
+    : canRun;
 
 // Overlay only the keys `extra` actually defines onto `base`, so a real §6 field
 // (or a new structured field like amendments) wins while an absent one leaves the

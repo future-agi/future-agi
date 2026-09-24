@@ -161,12 +161,47 @@ describe("mapCallRow", () => {
     expect(t.csat).toBe(3.1);
   });
 
+  it("uses the sealed trial outcome while retaining completed transport status", () => {
+    const task = mapCallRow(
+      {
+        id: "call-error",
+        outcome: "error",
+        harness_outcome_status: "error",
+        execution_status: "completed",
+        evaluations: [],
+      },
+      [],
+    );
+
+    expect(task.status).toBe("error");
+    expect(task.harnessOutcomeStatus).toBe("error");
+    expect(task.executionStatus).toBe("completed");
+  });
+
   it("maps a call that never ran to error, with no eval cells", () => {
     const t = mapCallRow(payload().results[2], evalCols);
     expect(t.status).toBe("error");
     expect(t.evalResults).toHaveLength(0);
     expect(t.csat).toBeNull();
     expect(t.durationMs).toBeNull();
+  });
+
+  it("surfaces source scenario and trial identity for repeated executions", () => {
+    const t = mapCallRow(
+      {
+        id: "c-trial",
+        status: "completed",
+        scenario: "Shared suite",
+        source_scenario_key: "refund-double-charge",
+        trial_index: 2,
+        eval_metrics: {},
+      },
+      evalCols,
+    );
+
+    expect(t.scenario).toBe("refund-double-charge · Trial 2");
+    expect(t.sourceScenario).toBe("refund-double-charge");
+    expect(t.trialIndex).toBe(2);
   });
 });
 
@@ -244,5 +279,60 @@ describe("useRunCalls", () => {
         params: expect.objectContaining({ page_size: 100 }),
       }),
     );
+  });
+
+  it("returns a stable empty result while the first request is pending", () => {
+    axios.get.mockImplementation(() => new Promise(() => {}));
+    const { result, unmount } = renderHook(() => useRunCalls("ex1"), {
+      wrapper: makeWrapper(),
+    });
+
+    expect(result.current).toMatchObject({
+      tasks: [],
+      columns: [],
+      count: 0,
+      groups: [],
+      facets: {},
+      summary: null,
+      totalPages: 1,
+      isLoading: true,
+    });
+    unmount();
+  });
+
+  it("polls active execution results and stops polling when the Run is terminal", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    axios.get.mockResolvedValue({
+      data: { ...payload(), execution: { status: "cancelling" } },
+    });
+
+    const { unmount } = renderHook(() => useRunCalls("ex1"), {
+      wrapper: Wrapper,
+    });
+    await waitFor(() =>
+      expect(
+        queryClient
+          .getQueryCache()
+          .findAll({ queryKey: ["simulation-run-results-v3", "ex1"] })[0]?.state
+          .data?.execution?.status,
+      ).toBe("cancelling"),
+    );
+    const query = queryClient
+      .getQueryCache()
+      .findAll({ queryKey: ["simulation-run-results-v3", "ex1"] })[0];
+
+    expect(query.options.refetchInterval(query)).toBe(3000);
+    queryClient.setQueryData(query.queryKey, {
+      ...payload(),
+      execution: { status: "completed" },
+    });
+    expect(query.options.refetchInterval(query)).toBe(false);
+    unmount();
   });
 });

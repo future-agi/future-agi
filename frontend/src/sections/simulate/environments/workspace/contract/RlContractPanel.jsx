@@ -4,7 +4,9 @@ import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { episodeContract } from "src/api/simulate-environments/_fixtures/rlContract";
 import SectionCard from "../../components/SectionCard";
-import ActorsPanel from "./ActorsPanel";
+// Actors section (ActorsPanel) is commented out below — it was a dummy cast from
+// the fixture ACTOR_LIBRARY, not backed by §6. To be picked up later.
+// import ActorsPanel from "./ActorsPanel";
 import CapabilityGraph from "../overview/CapabilityGraph";
 import WorldInternalsSection from "./WorldInternalsSection";
 import { CONTRACT_COPY } from "./contract.constants";
@@ -55,7 +57,7 @@ function realEpisode(env) {
  * Twin-backed envs are out of scope in this integration, so the world is always
  * the capability graph (the designer's TwinSandboxSection branch is omitted).
  */
-export default function RlContractPanel({ env, envState, patch, onGo, locked = false }) {
+export default function RlContractPanel({ env, envState, patch, locked = false, graphData }) {
   // Prefer the real §6 `end_conditions` when authored, mapped into the same
   // terminate/truncate/clock/seed shape the card renders: `ended_reasons` are the
   // ways a run terminates, `max_turns`/`max_duration_seconds` are the truncation
@@ -79,7 +81,7 @@ export default function RlContractPanel({ env, envState, patch, onGo, locked = f
       {/* ── the world ─────────────────────────────────────────────────── */}
       {hasWorld && (
         <Box sx={{ mb: 2 }}>
-          <CapabilityGraph env={env} envState={envState} onGo={onGo} />
+          <CapabilityGraph env={env} envState={envState} data={graphData} />
         </Box>
       )}
 
@@ -150,12 +152,12 @@ export default function RlContractPanel({ env, envState, patch, onGo, locked = f
       </SectionCard>
 
       {/*
-        Actors — third parties with competing goals (a colleague who wants pizza,
-        an angry passenger). Distinct from personas (who the agent serves), and
-        they don't live on any other tab, so the cast is read from the
-        environment and rendered read-only here.
+        Actors section removed — it was a dummy cast from the fixture
+        ACTOR_LIBRARY (not backed by §6), and actors were also dropped from the
+        capability graph (now Personas only). To be picked up later if a real
+        actors field lands.
+        <ActorsPanel env={env} envState={envState} patch={patch} onGo={onGo} locked={locked} />
       */}
-      <ActorsPanel env={env} envState={envState} patch={patch} onGo={onGo} locked={locked} />
     </Box>
   );
 }
@@ -178,8 +180,10 @@ RlContractPanel.propTypes = {
   env: ENV_SHAPE.isRequired,
   envState: ENV_STATE_SHAPE.isRequired,
   patch: PropTypes.func,
-  onGo: PropTypes.func,
   locked: PropTypes.bool,
+  // Real §6 capability-graph data for a backed env (tools/flows/personas/
+  // guardrails); undefined for a non-backed env (fixture derivation).
+  graphData: PropTypes.object,
 };
 
 function Label({ children }) {

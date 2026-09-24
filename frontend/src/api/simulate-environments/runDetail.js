@@ -3,7 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { extractKpis } from "src/sections/test-detail/common";
 import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
-import { runColor } from "src/sections/simulate/environments/workspace/runs/runs.constants";
+import {
+  ACTIVE_EXECUTION_STATUSES,
+  runColor,
+} from "src/sections/simulate/environments/workspace/runs/runs.constants";
 
 /**
  * The run/execution DETAIL data source.
@@ -25,7 +28,7 @@ import { runColor } from "src/sections/simulate/environments/workspace/runs/runs
  * @property {?string} startedAt    ISO start time.
  * @property {?string} finishedAt   ISO finish time — GAP: the executions row
  *                                   carries no end time, so this is null.
- * @property {"passed"|"failed"|"running"} status  Run-level outcome.
+ * @property {"passed"|"failed"|"running"|"cancelled"} status  Run-level outcome.
  */
 
 /**
@@ -74,6 +77,8 @@ export function buildRunIdentity(row, envName = null) {
     startedAt: row.startedAt ?? null,
     finishedAt: row.finishedAt ?? null,
     status: row.status,
+    scenarioIds: row.scenarioIds ?? [],
+    trials: row.trials ?? 1,
   };
 }
 
@@ -87,17 +92,21 @@ export function buildRunIdentity(row, envName = null) {
  * @returns {RunStats}
  */
 export function buildRunStats(kpis, perf, row) {
-  const total = kpis?.total_calls ?? row?.total ?? 0;
-  const failed = kpis?.failed_calls ?? row?.failed ?? 0;
-  const passed = Math.max(total - failed, 0);
+  const total = row?.hasOutcomes
+    ? row.total
+    : kpis?.total_calls ?? row?.total ?? 0;
+  const failed = row?.hasOutcomes
+    ? row.failed
+    : kpis?.failed_calls ?? row?.failed ?? 0;
+  const passed = row?.hasOutcomes ? row.passed : Math.max(total - failed, 0);
 
   const perfRate = perf?.test_run_performance_metrics?.pass_rate;
   const passRate =
-    typeof perfRate === "number"
-      ? Math.round(perfRate)
-      : total
+    row?.hasOutcomes || typeof perfRate !== "number"
+      ? total
         ? Math.round((passed / total) * 100)
-        : 0;
+        : 0
+      : Math.round(perfRate);
 
   const durationS = kpis?.total_duration ?? null;
   const avgDurationMs =
@@ -125,8 +134,8 @@ export function buildRunStats(kpis, perf, row) {
     tokens: null,
     cost: null,
     scores: { ...evalMetrics },
-    measured: total,
-    unmeasured: 0,
+    measured: row?.hasOutcomes ? passed + failed : total,
+    unmeasured: row?.hasOutcomes ? Math.max(total - passed - failed, 0) : 0,
     flaky: 0,
     dropped: 0,
     failedCritical: 0,
@@ -150,6 +159,10 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
         })
         .then((res) => res.data),
     enabled: !!executionId,
+    refetchInterval: (query) =>
+      ACTIVE_EXECUTION_STATUSES.has(query.state.data?.execution?.status)
+        ? 3000
+        : false,
     staleTime: 1000 * 60 * 5,
   });
   const execution = query.data?.execution;
@@ -165,13 +178,19 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
       name: envName ?? null,
       agentVersion: execution.agent_version ?? null,
       startedAt: execution.started_at ?? null,
-      finishedAt: execution.completed_at ?? null,
-      status:
-        execution.status === "running" || execution.status === "pending"
-          ? "running"
-          : summary?.outcomes?.passed > 0
-            ? "passed"
-            : "failed",
+      status: ACTIVE_EXECUTION_STATUSES.has(execution.status)
+        ? "running"
+        : execution.status === "failed"
+          ? "failed"
+          : execution.status === "cancelled"
+            ? "cancelled"
+            : summary?.outcomes?.passed > 0
+              ? "passed"
+              : "failed",
+      scenarioIds: execution.selected_scenario_keys?.length
+        ? execution.selected_scenario_keys
+        : undefined,
+      trials: execution.trials ?? 1,
     };
   }, [execution, envName, summary]);
   const stats = useMemo(
@@ -219,6 +238,8 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
  * @property {string} scenario     Scenario / task name.
  * @property {?string} persona     Simulated-user persona label.
  * @property {"passed"|"failed"|"flaky"|"error"|"unmeasured"} status
+ * @property {?string} harnessOutcomeStatus Authoritative sealed trial verdict.
+ * @property {?string} executionStatus Transport lifecycle status; kept separate.
  * @property {boolean} critical    Whether the scenario is a release blocker.
  * @property {?number} csat        Per-call CSAT, on the product's 0–10 scale
  *                                 (`overall_score`); null when absent.

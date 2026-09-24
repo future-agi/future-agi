@@ -116,6 +116,63 @@ describe("executionToRun", () => {
     const run = executionToRun({ id: "ex-5", status: "Completed", calls_attempted: 8, success_rate: 100 });
     expect(run.total).toBe(8);
   });
+
+  it("carries the run-level duration (seconds) the summary table shows", () => {
+    const run = executionToRun({ id: "ex-6", status: "Completed", total_chats: 4, success_rate: 100, duration: 11.9 });
+    expect(run.durationS).toBe(11.9);
+  });
+
+  it("leaves durationS null when the execution row has no duration", () => {
+    const run = executionToRun({ id: "ex-7", status: "Completed", total_chats: 4, success_rate: 100 });
+    expect(run.durationS).toBeNull();
+  });
+
+  it("prefers authoritative trial-aware counts and preserves the Run manifest", () => {
+    const run = executionToRun({
+      id: "ex-trials",
+      status: "Running",
+      selected_scenarios: 2,
+      trials: 3,
+      total_calls: 6,
+      completed_calls: 2,
+      failed_calls: 1,
+      pending_calls: 3,
+      scenario_keys: ["scenario-a", "scenario-b"],
+    });
+
+    expect(run).toMatchObject({
+      total: 6,
+      passed: 2,
+      failed: 1,
+      pending: 3,
+      scenarioCount: 2,
+      trials: 3,
+      scenarioIds: ["scenario-a", "scenario-b"],
+      status: "running",
+    });
+  });
+
+  it("uses scenario verdicts rather than successful transport calls", () => {
+    const run = executionToRun({
+      id: "ex-outcomes",
+      status: "Completed",
+      total_calls: 6,
+      completed_calls: 6,
+      failed_calls: 0,
+      outcome_passed: 3,
+      outcome_failed: 2,
+      outcome_skipped: 1,
+    });
+
+    expect(run).toMatchObject({
+      total: 6,
+      passed: 3,
+      failed: 3,
+      skipped: 1,
+      pending: 0,
+      status: "failed",
+    });
+  });
 });
 
 describe("useEnvironmentRuns", () => {
@@ -180,3 +237,4 @@ describe("runSimulationTarget", () => {
     expect(runSimulationTarget(null)).toBe(paths.dashboard.simulate.test);
   });
 });
+

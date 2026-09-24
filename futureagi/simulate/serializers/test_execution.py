@@ -18,16 +18,11 @@ from simulate.models import (
 from simulate.serializers.chat_message import ChatMessageSerializer
 from simulate.utils.eval_summary import iter_live_eval_outputs
 from simulate.utils.test_execution_utils import canonical_scenario_column_name
+from tracer.models.observability_provider import ProviderChoices
 from tracer.serializers.filters import (
     StrictInputSerializer,
     filter_list_query_param_field,
 )
-
-try:
-    from ee.voice.services.voice_service_manager import VoiceServiceManager
-except ImportError:
-    VoiceServiceManager = None
-from tracer.models.observability_provider import ProviderChoices
 
 logger = structlog.get_logger(__name__)
 
@@ -317,6 +312,9 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
     service_provider_call_id = serializers.CharField(
         source="customer_call_id", read_only=True
     )
+    source_scenario_key = serializers.SerializerMethodField()
+    harness_outcome_status = serializers.SerializerMethodField()
+    trial_index = serializers.SerializerMethodField()
 
     # New fields for simulator and agent definition used in this execution
     simulator_agent_name = serializers.CharField(
@@ -405,6 +403,9 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             "recordings",
             "test_execution_id",
             "scenario_id",
+            "source_scenario_key",
+            "trial_index",
+            "harness_outcome_status",
             "scenario_graph",
             "scenario_graph_id",
             # Conversation metrics fields
@@ -447,6 +448,16 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "timestamp"]
 
+    def get_source_scenario_key(self, obj):
+        return (obj.call_metadata or {}).get("harness_scenario_key")
+
+    def get_harness_outcome_status(self, obj):
+        metadata = obj.call_metadata if isinstance(obj.call_metadata, dict) else {}
+        return metadata.get("harness_outcome_status")
+
+    def get_trial_index(self, obj):
+        return (obj.call_metadata or {}).get("harness_trial_index")
+
     def get_session_id(self, obj):
         """
         Return session_id (if present) from the dataset Row.metadata for this call execution.
@@ -488,7 +499,6 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             and isinstance(obj.provider_call_data, dict)
             else {}
         )
-        provider_payload = pcd.get(ProviderChoices.VAPI.value)
 
         # Per-channel recording URLs live under <provider>.recording for whatever
         # provider produced the call (vapi, livekit, ...). Read the shortcut from
@@ -530,15 +540,27 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         }
         for track, artifact_kind in hosted_track_kinds.items():
             artifact = hosted.get(artifact_kind)
-            if track not in recordings and isinstance(artifact, dict) and artifact.get("url"):
+            if (
+                track not in recordings
+                and isinstance(artifact, dict)
+                and artifact.get("url")
+            ):
                 recordings[track] = artifact["url"]
 
-        # Fall back to the VoiceServiceManager resolution when no URLs are present.
-        if not recordings:
-            if VoiceServiceManager is None:
-                return {}
-            vsm = VoiceServiceManager(system_voice_provider=ProviderChoices.VAPI)
-            recordings = vsm.get_recording_urls(provider_payload) or {}
+        if not recordings and isinstance(pcd.get(ProviderChoices.VAPI.value), dict):
+            from simulate.utils.session_comparison import (
+                fetch_simulated_call_recordings,
+            )
+
+            fallback = fetch_simulated_call_recordings(obj)
+            for track, source in (
+                ("combined", "mono_combined"),
+                ("stereo", "stereo"),
+                ("customer", "mono_customer"),
+                ("assistant", "mono_assistant"),
+            ):
+                if url := fallback.get(source):
+                    recordings[track] = url
 
         if isinstance(recordings, dict) and recordings:
             from simulate.utils.speaker_roles import SpeakerRoleResolver

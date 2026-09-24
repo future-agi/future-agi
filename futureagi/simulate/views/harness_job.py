@@ -20,6 +20,8 @@ from simulate.serializers.harness_job import (
     HarnessJobReadSerializer,
     HarnessPreflightResponseSerializer,
     HarnessPreflightSerializer,
+    HarnessRunCreateResponseSerializer,
+    HarnessRunCreateSerializer,
     HarnessSecretFileUploadResponseSerializer,
     HarnessSecretValuesResponseSerializer,
     HarnessSecretValuesSerializer,
@@ -36,8 +38,8 @@ from simulate.services.harness_credentials import (
     store_credential_file,
 )
 from simulate.services.harness_provider import get_harness_provider
-from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 
 
 class HarnessJobViewSet(viewsets.ViewSet):
@@ -306,6 +308,15 @@ class HarnessJobViewSet(viewsets.ViewSet):
     @action(detail=True, methods=["post"], url_path="scenarios/amend")
     def amend_scenarios(self, request, pk=None):
         return get_harness_provider().amend_scenarios(request, pk)
+    @validated_request(
+        request_serializer=HarnessRunCreateSerializer,
+        responses={202: HarnessRunCreateResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"])
+    def runs(self, request, pk=None):
+        return get_harness_provider().run(request, pk)
+
     @validated_request(
         request_serializer=HarnessConversationMessageCreateSerializer,
         responses={
