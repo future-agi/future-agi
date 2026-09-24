@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   fDate,
@@ -6,7 +6,6 @@ import {
   fTimestamp,
   fToNow,
   fToNowStrict,
-  relativeTime,
   toValidDate,
 } from "./format-time";
 
@@ -42,33 +41,6 @@ describe("toValidDate", () => {
     const parsed = toValidDate(1773567000000);
     expect(parsed).toBeInstanceOf(Date);
     expect(parsed.getTime()).toBe(1773567000000);
-  });
-});
-
-describe("relativeTime", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-09-15T12:00:00Z"));
-  });
-  afterEach(() => vi.useRealTimers());
-
-  const ago = (ms) => new Date(Date.now() - ms).toISOString();
-
-  it("returns an em dash for missing or invalid input", () => {
-    expect(relativeTime(undefined)).toBe("—");
-    expect(relativeTime("not-a-date")).toBe("—");
-  });
-
-  it("formats sub-minute as just now", () => {
-    expect(relativeTime(ago(30 * 1000))).toBe("just now");
-  });
-
-  it("formats minutes, hours, days, months and years", () => {
-    expect(relativeTime(ago(60 * 1000))).toBe("1 minute ago");
-    expect(relativeTime(ago(3 * 3600 * 1000))).toBe("3 hours ago");
-    expect(relativeTime(ago(2 * 86400 * 1000))).toBe("2 days ago");
-    expect(relativeTime(ago(45 * 86400 * 1000))).toBe("1 month ago");
-    expect(relativeTime(ago(400 * 86400 * 1000))).toBe("1 year ago");
   });
 });
 

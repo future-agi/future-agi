@@ -91,10 +91,10 @@ describe("MyEnvironmentsTable", () => {
       within(rowFor("Customer Support Line")).getByText("3 hours ago"),
     ).toBeInTheDocument();
     expect(
-      within(rowFor("Billing Chat Agent")).getByText("just now"),
+      within(rowFor("Billing Chat Agent")).getByText("10 seconds ago"),
     ).toBeInTheDocument();
     expect(
-      within(rowFor("Airline Rebooking")).getByText("1 month ago"),
+      within(rowFor("Airline Rebooking")).getByText("2 months ago"),
     ).toBeInTheDocument();
   });
 
@@ -134,6 +134,16 @@ describe("MyEnvironmentsTable", () => {
 
     expect(await screen.findByText("No environments yet")).toBeInTheDocument();
     expect(screen.queryByText("Dummy")).toBeNull();
+  });
+
+  it("shows an error state, not the empty state, when the list request fails", async () => {
+    listHarnessJobs.mockRejectedValue(new Error("harness unavailable"));
+    renderTab();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "harness unavailable",
+    );
+    expect(screen.queryByText("No environments yet")).toBeNull();
   });
 
   it("offers Open + Run + Delete on a completed environment", async () => {

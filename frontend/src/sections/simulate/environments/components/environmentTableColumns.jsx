@@ -1,6 +1,6 @@
 import { Typography, IconButton } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { relativeTime } from "src/utils/format-time";
+import { fToNowStrict } from "src/utils/format-time";
 import StatusPill from "./StatusPill";
 import RunsPill from "./RunsPill";
 import { NumberCell, AgentTypeCell } from "./environmentTableCells";
@@ -92,7 +92,7 @@ export function buildEnvironmentColumns({ onRowActions }) {
       size: 130,
       cell: ({ getValue }) => (
         <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-          {relativeTime(getValue())}
+          {fToNowStrict(getValue()) || "—"}
         </Typography>
       ),
     },

@@ -1,6 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import PropTypes from "prop-types";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 vi.mock("src/api/harness/harness", () => ({ listHarnessJobs: vi.fn() }));
@@ -8,6 +8,7 @@ vi.mock("src/api/harness/harness", () => ({ listHarnessJobs: vi.fn() }));
 const { listHarnessJobs } = await import("src/api/harness/harness");
 const {
   useMyEnvironments,
+  LIST_POLL_MS,
   useDeleteEnvironment,
   useBuildEnvironment,
   useUploadSecretFile,
@@ -75,6 +76,55 @@ describe("useMyEnvironments", () => {
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual([]);
+  });
+});
+
+describe("useMyEnvironments polling", () => {
+  const SETTLED_JOBS = [
+    {
+      job: { job_id: "job-done", metadata: { name: "Customer Support Line" } },
+      status: { stage: "completed", updated_at: "2026-09-15T09:00:00Z" },
+      credentials: { detected_connectors: ["livekit"] },
+    },
+    {
+      job: { job_id: "job-dead", metadata: { name: "Airline Rebooking" } },
+      status: { stage: "failed", updated_at: "2026-09-15T09:00:00Z" },
+      credentials: { detected_connectors: [] },
+    },
+  ];
+
+  const renderAndSettle = async () => {
+    const { Wrapper } = makeWrapper();
+    const view = renderHook(() => useMyEnvironments(), { wrapper: Wrapper });
+    await vi.waitFor(() => expect(view.result.current.isSuccess).toBe(true));
+    expect(listHarnessJobs).toHaveBeenCalledTimes(1);
+    return view;
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("re-fetches while a job is still running or building", async () => {
+    // HARNESS_JOBS carries a "running" job, so the list has not settled.
+    await renderAndSettle();
+
+    await act(() => vi.advanceTimersByTimeAsync(LIST_POLL_MS));
+
+    expect(listHarnessJobs).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops polling once every job has reached a terminal stage", async () => {
+    listHarnessJobs.mockResolvedValue(SETTLED_JOBS);
+    await renderAndSettle();
+
+    await act(() => vi.advanceTimersByTimeAsync(LIST_POLL_MS * 3));
+
+    expect(listHarnessJobs).toHaveBeenCalledTimes(1);
   });
 });
 

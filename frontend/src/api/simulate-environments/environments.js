@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { listHarnessJobs } from "src/api/harness/harness";
 import { harnessJobToRow } from "src/sections/simulate/environments/helpers/harnessJobToRow";
+import { ENV_STATUS } from "src/sections/simulate/environments/myEnvironments.constants";
 
 export const SIMULATE_ENVIRONMENTS_KEY = ["simulate-environments"];
 export const myEnvironmentsQueryKey = () => [
@@ -22,11 +23,26 @@ const toRows = (data) =>
 // harness-jobs list and maps each job to a flat row. Several columns (see
 // harnessJobToRow) have no field in this payload and render as placeholders;
 // replace with the dedicated environments endpoint once it lands.
+// HarnessList polls the same endpoint every 5s; match it, but only while a row
+// can still change. A list where every job has reached a terminal stage never
+// moves on its own, so polling it is pure noise.
+export const LIST_POLL_MS = 5000;
+
+const hasUnsettledRow = (raw) =>
+  toRows(raw).some(
+    (row) =>
+      row.status === ENV_STATUS.RUNNING || row.status === ENV_STATUS.BUILDING,
+  );
+
 export function useMyEnvironments() {
   return useQuery({
     queryKey: myEnvironmentsQueryKey(),
     queryFn: listHarnessJobs,
     select: toRows,
+    // The cache holds the raw payload, so read stages through the same mapper
+    // `select` uses rather than reaching into `status.stage` a second time.
+    refetchInterval: (query) =>
+      hasUnsettledRow(query.state.data) ? LIST_POLL_MS : false,
   });
 }
 

@@ -1,7 +1,8 @@
-import { Box, Stack, Typography, Button } from "@mui/material";
+import { Alert, Box, Stack, Typography, Button } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import { useNavigate } from "react-router-dom";
 import Iconify from "src/components/iconify";
+import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { paths } from "src/routes/paths";
 import {
   useMyEnvironments,
@@ -21,7 +22,7 @@ import MyEnvironmentsTable from "./MyEnvironmentsTable";
 export default function MyEnvironmentsTab() {
   const navigate = useNavigate();
   const { setTab } = useEnvironmentsTab();
-  const { data, isLoading, isPending } = useMyEnvironments();
+  const { data, isLoading, isPending, error } = useMyEnvironments();
   const rows = data || [];
   const loading = isLoading || isPending;
 
@@ -59,23 +60,31 @@ export default function MyEnvironmentsTab() {
             justifyContent: "center",
           }}
         >
-          <Stack spacing={1.75} alignItems="center">
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              {EMPTY_MESSAGE}
-            </Typography>
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              Bring your agent in to create your first environment.
-            </Typography>
-            <Button
-              variant="contained"
-              size="small"
-              onClick={() => setTab(ENTRY_TAB.BUILD)}
-              startIcon={<Iconify icon="solar:add-circle-linear" width={16} />}
-              sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
-            >
-              Build an environment
-            </Button>
-          </Stack>
+          {error ? (
+            <Alert severity="error" variant="outlined">
+              {errorMessage(error)}
+            </Alert>
+          ) : (
+            <Stack spacing={1.75} alignItems="center">
+              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                {EMPTY_MESSAGE}
+              </Typography>
+              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                Bring your agent in to create your first environment.
+              </Typography>
+              <Button
+                variant="contained"
+                size="small"
+                onClick={() => setTab(ENTRY_TAB.BUILD)}
+                startIcon={
+                  <Iconify icon="solar:add-circle-linear" width={16} />
+                }
+                sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
+              >
+                Build an environment
+              </Button>
+            </Stack>
+          )}
         </Box>
       ) : (
         <MyEnvironmentsTable
