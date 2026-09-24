@@ -13,7 +13,7 @@ import RunDetail from "./detail/RunDetail";
 // backwards-compatible deep links (they render nothing without an Outlet here)
 // and can be removed in a follow-up.
 export default function WorkspaceExecutionDetail() {
-  const { env, envState } = useOutletContext() || {};
+  const { env, envState, patch } = useOutletContext() || {};
   const { testId, executionId } = useParams();
 
   if (!env) return null;
@@ -22,6 +22,7 @@ export default function WorkspaceExecutionDetail() {
     <RunDetail
       env={env}
       envState={envState}
+      patch={patch}
       testId={testId}
       executionId={executionId}
     />

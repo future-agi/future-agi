@@ -21,18 +21,34 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
   };
 });
 
-// The launch drawer hosts the heavy product optimizer form; stub it to a marker.
+// The launch drawer hosts the heavy product optimizer form; stub it to a marker
+// that can fire the form's onSuccess (which the real drawer maps to onLaunched).
 vi.mock(
   "src/sections/test-detail/CreateEditOptimization/CreateEditOptimizationForm",
   () => ({
-    default: () => <div>optimizer-form</div>,
+    default: ({ onSuccess }) => (
+      <div>
+        optimizer-form
+        <button type="button" onClick={() => onSuccess?.()}>form-success</button>
+      </div>
+    ),
   }),
 );
 
-// The Add-evals drawer pulls the heavy product eval picker; stub it to a marker.
+// The Add-evals drawer pulls the heavy product eval picker; stub it to a marker
+// that can also fire onAdd with a configured eval.
 vi.mock("../../../evals/AddEvalsDrawer", () => ({
-  default: ({ open }) => (open ? <div>add-evals-drawer</div> : null),
+  default: ({ open, onAdd }) =>
+    open ? (
+      <div>
+        add-evals-drawer
+        <button type="button" onClick={() => onAdd([{ id: "new-eval", name: "New Eval" }])}>
+          drawer-add-eval
+        </button>
+      </div>
+    ) : null,
 }));
+
 
 // The per-call table owns its own network hook, so stub it to a marker.
 function RunTraceTableStub() {
@@ -106,10 +122,10 @@ function LocationProbe() {
   return <div data-testid="location">{pathname}</div>;
 }
 
-const renderDetail = () => {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+const renderDetail = ({ patch, client: passedClient } = {}) => {
+  const client =
+    passedClient ||
+    new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
@@ -117,6 +133,7 @@ const renderDetail = () => {
         <RunDetail
           env={ENV}
           envState={{ evals: [] }}
+          patch={patch}
           testId="rt1"
           executionId="ex1"
         />
@@ -181,6 +198,43 @@ describe("RunDetail", () => {
     expect(screen.queryByText("add-evals-drawer")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Add evals" }));
     expect(screen.getByText("add-evals-drawer")).toBeInTheDocument();
+  });
+
+  it("persists the configured evals when Add evals is confirmed", async () => {
+    // onAdd previously just closed the drawer, dropping the configured evals.
+    useRunDetail.mockReturnValue({ identity: IDENTITY, stats: STATS, isLoading: false });
+    const patch = vi.fn();
+    const user = userEvent.setup();
+    renderDetail({ patch });
+
+    await user.click(screen.getByRole("button", { name: "Add evals" }));
+    await user.click(screen.getByRole("button", { name: "drawer-add-eval" }));
+
+    expect(patch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        evals: expect.arrayContaining([expect.objectContaining({ id: "new-eval" })]),
+      }),
+    );
+  });
+
+  it("invalidates the optimization runs on launch without a detached-client crash", async () => {
+    // refetchOptimizations was a detached invalidateQueries, which throws on
+    // this.#queryCache in react-query v5.
+    useRunDetail.mockReturnValue({ identity: IDENTITY, stats: STATS, isLoading: false });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidateSpy = vi.spyOn(client, "invalidateQueries");
+    const user = userEvent.setup();
+    renderDetail({ client });
+
+    await user.click(screen.getByRole("button", { name: "Debug failures" }));
+    await user.click(screen.getByRole("button", { name: "Run Self Improvement" }));
+    // The optimizer form's onSuccess flows through the real launch drawer to
+    // onLaunched → queryClient.invalidateQueries.
+    await user.click(screen.getByRole("button", { name: "form-success" }));
+
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["agent-optimization-runs", "ex1"],
+    });
   });
 
   it("navigates to the run-simulation target on Run again", async () => {

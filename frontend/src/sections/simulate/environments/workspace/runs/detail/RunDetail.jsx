@@ -20,6 +20,7 @@ import { runSimulationTarget } from "src/api/simulate-environments/runs";
 import SectionCard from "../../../components/SectionCard";
 import StatusChip from "../StatusChip";
 import AddEvalsDrawer from "../../evals/AddEvalsDrawer";
+import { useAppliedEvals } from "../../evals/useAppliedEvals";
 import RunTraceTable from "./trace/RunTraceTable";
 import CallDrawer from "./CallDrawer";
 import FixMyAgentDrawer from "./fixmyagent/FixMyAgentDrawer";
@@ -49,7 +50,7 @@ function headerStatus(identity, stats) {
  * `RunResults` chrome — the identity header and tab strip — over real run-level
  * data (`useRunDetail`).
  */
-export default function RunDetail({ env, envState, testId, executionId }) {
+export default function RunDetail({ env, envState, patch, testId, executionId }) {
   const navigate = useNavigate();
   const [tab, setTab] = useState("tasks");
   const [analyticsFilters, setAnalyticsFilters] = useState({});
@@ -68,7 +69,12 @@ export default function RunDetail({ env, envState, testId, executionId }) {
   const { runs: optimizationRuns, isLoading: optimizationsLoading } =
     useOptimizationRuns(executionId);
   const hasTrials = optimizationRuns.length > 0;
-  const refetchOptimizations = useQueryClient().invalidateQueries;
+  // Keep the client bound: `useQueryClient().invalidateQueries` detached from
+  // the client throws on `this.#queryCache` in react-query v5.
+  const queryClient = useQueryClient();
+  // Applied-evals store add, so "Add evals" on the run page actually persists
+  // the configured evals (mirrors the Evals tab) instead of dropping them.
+  const { add: addEvals } = useAppliedEvals(envState, patch);
 
   const openOptimization = (row) =>
     navigate(
@@ -323,7 +329,10 @@ export default function RunDetail({ env, envState, testId, executionId }) {
             ),
           )
         }
-        onAdd={() => setAddingEvals(false)}
+        onAdd={(entries) => {
+          if (entries?.length) addEvals(entries);
+          setAddingEvals(false);
+        }}
       />
 
       <CallDrawer
@@ -347,7 +356,7 @@ export default function RunDetail({ env, envState, testId, executionId }) {
         open={launching}
         onClose={() => setLaunching(false)}
         onLaunched={() => {
-          refetchOptimizations({
+          queryClient.invalidateQueries({
             queryKey: ["agent-optimization-runs", executionId],
           });
           // Land on the run just started — the tab appears once the list refetches.
@@ -370,6 +379,7 @@ RunDetail.propTypes = {
   envState: PropTypes.shape({
     evals: PropTypes.array,
   }),
+  patch: PropTypes.func,
   testId: PropTypes.string,
   executionId: PropTypes.string,
 };

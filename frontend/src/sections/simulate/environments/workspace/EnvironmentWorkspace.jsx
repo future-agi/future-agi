@@ -204,7 +204,7 @@ export default function EnvironmentWorkspace() {
   if (executionMatch) {
     return (
       <Box sx={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-        <Outlet context={{ env, envState }} />
+        <Outlet context={{ env, envState, patch }} />
       </Box>
     );
   }
