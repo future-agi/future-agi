@@ -22,7 +22,14 @@ vi.mock("notistack", () => ({
 // controlled 60-row suite so the pager engages at PAGE_SIZE 25.
 vi.mock("src/api/simulate-environments/scenarios", async () => {
   const actual = await vi.importActual("src/api/simulate-environments/scenarios");
-  return { ...actual, listScenarios: vi.fn(), amendScenarios: vi.fn() };
+  return {
+    ...actual,
+    listScenarios: vi.fn(),
+    amendScenarios: vi.fn(),
+    // Mock coverage too so CoverageMatrix does not fire a real (failing) request
+    // that spams the axios auth-redirect interceptor on every render.
+    scenarioCoverage: vi.fn(async () => ({ axes: [], per_axis: [], rows: [], columns: [], cells: [] })),
+  };
 });
 const { listScenarios, amendScenarios } = await import("src/api/simulate-environments/scenarios");
 const { queryScenarioFixture, resetScenarioFixture } = await import(

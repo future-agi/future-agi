@@ -20,8 +20,14 @@ beforeEach(() => {
   stubClipboard();
 });
 
+const originalExecCommand = document.execCommand;
+
 afterEach(() => {
   vi.clearAllMocks();
+  // Restore anything the unavailable-clipboard test mutated so it can't leak
+  // into another test file.
+  stubClipboard();
+  document.execCommand = originalExecCommand;
 });
 
 describe("CopyField", () => {
