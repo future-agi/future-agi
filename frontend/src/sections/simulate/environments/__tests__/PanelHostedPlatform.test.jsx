@@ -66,7 +66,10 @@ describe("PanelHostedPlatform", () => {
     expect(screen.getByText("Chat")).toBeInTheDocument();
     expect(screen.getByText("Computer use")).toBeInTheDocument();
     expect(screen.getByText("Robotics")).toBeInTheDocument();
-    expect(screen.getAllByLabelText("Coming soon")).toHaveLength(3);
+    // 3 coming-soon agent types (Code / Computer use / Robotics) + the 3
+    // coming-soon voice platforms (Bland, ElevenLabs, LiveKit — none of them a
+    // live hosted connector yet, so a submit would 400).
+    expect(screen.getAllByLabelText("Coming soon")).toHaveLength(6);
   });
 
   it("keeps Voice selected when a coming-soon type is clicked", () => {
@@ -92,8 +95,10 @@ describe("PanelHostedPlatform", () => {
     fireEvent.change(screen.getByPlaceholderText("sk-…"), { target: { value: "sk-x" } });
     fireEvent.click(screen.getByText("Chat"));
 
+    // Chat defaults to Retell (the only chat connector); OpenAI Assistants is a
+    // coming-soon chip. Switching agent type clears the id/key.
     expect(screen.getByText("OpenAI Assistants")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("asst_9f2c…").value).toBe("");
+    expect(screen.getByPlaceholderText("agent_9f2c…").value).toBe("");
     expect(screen.getByPlaceholderText("sk-…").value).toBe("");
   });
 

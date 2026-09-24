@@ -22,16 +22,18 @@ const RED = BUILD_TONES.red;
  * where the eye already is.
  *
  * Hierarchy (left → right):
- *   [count] ✕  ·  Select all N matching  |  Edit  Delete  Repeats[k▾]  ▶ Run (N)
- *   context       escalation (paging)        secondary  destructive  dial  PRIMARY
+ *   [count] ✕  ·  Select all N matching  |  Delete  Repeats[k▾]  ▶ Run (N)
+ *   context       escalation (paging)        destructive  dial  PRIMARY
+ *
+ * Editing is a per-row action (the pencil opens the edit drawer), not a bulk
+ * one, so the bar carries no Edit button.
  *
  * `matching` carries our pagination's predicate-selection context so a
  * selection can escalate to "all N matching" without every id being loaded.
- * Each of `onEdit` / `onRun` / `onTrialsChange` is optional and gates its own
- * button.
+ * Each of `onRun` / `onTrialsChange` is optional and gates its own button.
  */
 export default function SelectionBar({
-  count, trials, onTrialsChange, onRun, onEdit, onDelete, onClear, matching,
+  count, trials, onTrialsChange, onRun, onDelete, onClear, matching,
 }) {
   const [trialsAnchor, setTrialsAnchor] = useState(null);
   const [customOpen, setCustomOpen] = useState(false);
@@ -72,7 +74,10 @@ export default function SelectionBar({
       spacing={1.25}
       sx={{
         width: "100%",
-        px: 2.5, py: 1.25,
+        // Left inset matches the table's checkbox column (TableCell pl: 1.5), so
+        // the count chip sits directly over the row checkboxes below. Right keeps
+        // the toolbar's inset for the Run button.
+        pl: 1.5, pr: 2.5, py: 1.25,
         minHeight: 52,
         bgcolor: (t) => alpha(t.palette.primary.main, t.palette.mode === "dark" ? 0.08 : 0.05),
       }}
@@ -158,31 +163,6 @@ export default function SelectionBar({
       )}
 
       <Box sx={{ flex: 1 }} />
-
-      {/* SECONDARY — Edit with builder chat */}
-      {onEdit && (
-        <Tooltip arrow title="Send this selection to the builder chat">
-          <Button
-            size="small"
-            onClick={onEdit}
-            variant="outlined"
-            startIcon={<Iconify icon="solar:chat-round-line-linear" width={13} />}
-            sx={{
-              typography: "s2", fontWeight: 600, fontSize: 12.5,
-              color: "text.primary",
-              borderColor: "divider",
-              px: 1.5, py: 0.5, minWidth: 0,
-              whiteSpace: "nowrap",
-              "&:hover": {
-                borderColor: (t) => alpha(t.palette.text.primary, 0.4),
-                bgcolor: "action.hover",
-              },
-            }}
-          >
-            Edit
-          </Button>
-        </Tooltip>
-      )}
 
       {/* DESTRUCTIVE — Delete */}
       <Tooltip arrow title="Delete selected scenarios">
@@ -364,7 +344,6 @@ SelectionBar.propTypes = {
   trials: PropTypes.number,
   onTrialsChange: PropTypes.func,
   onRun: PropTypes.func,
-  onEdit: PropTypes.func,
   onDelete: PropTypes.func.isRequired,
   onClear: PropTypes.func.isRequired,
   // Select-all-matching context from the pagination predicate. Absent → a plain

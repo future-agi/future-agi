@@ -20,7 +20,7 @@ export const OPTIONS = [
       "Skip world setup — pick a prebuilt world, then connect your agent to it.",
     setupSubtitle:
       "Prebuilt environments you can adapt in minutes — pick one, then wire your agent.",
-    status: OPTION_STATUS.LIVE,
+    status: OPTION_STATUS.COMING_SOON,
   },
   {
     id: "web",

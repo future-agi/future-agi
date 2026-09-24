@@ -105,7 +105,10 @@ function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection
             fontVariantNumeric: "tabular-nums", flexShrink: 0, letterSpacing: 0.2,
           }}
         >
-          {group.rows.length} {group.rows.length === 1 ? "scenario" : "scenarios"}
+          {/* The whole-suite total for this group (from the server), even when
+              only a slice of it is on this page. */}
+          {(group.totalInGroup ?? group.rows.length)}{" "}
+          {(group.totalInGroup ?? group.rows.length) === 1 ? "scenario" : "scenarios"}
         </Typography>
         {onHideGroup && (
           // The header is itself a keyboard button; stop click and keydown from

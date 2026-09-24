@@ -60,9 +60,9 @@ describe("BuildEnvironmentTab", () => {
     expect(screen.queryByText("Start from scratch")).toBeNull();
   });
 
-  it("marks web, mcp, and local as coming soon", () => {
+  it("marks prebuilt, web, mcp, and local as coming soon", () => {
     renderTab();
-    expect(screen.getAllByLabelText("Coming soon")).toHaveLength(3);
+    expect(screen.getAllByLabelText("Coming soon")).toHaveLength(4);
   });
 
   it("opens the source panel and ignores coming-soon picks", async () => {
@@ -80,13 +80,11 @@ describe("BuildEnvironmentTab", () => {
     expect(screen.getAllByText("MCP server")).toHaveLength(1);
   });
 
-  it("navigates to templates from the Prebuilt hero", async () => {
+  it("does not navigate from the Prebuilt hero while it is coming soon", async () => {
     const user = userEvent.setup();
     renderTab();
 
     await user.click(screen.getByText("Prebuilt Environments"));
-    expect(navigate).toHaveBeenCalledWith(
-      "/dashboard/simulate/environments/templates",
-    );
+    expect(navigate).not.toHaveBeenCalled();
   });
 });

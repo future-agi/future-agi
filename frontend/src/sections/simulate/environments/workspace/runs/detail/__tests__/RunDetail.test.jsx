@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import PropTypes from "prop-types";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
@@ -17,18 +18,54 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
   };
 });
 
-// The launch drawer hosts the heavy product optimizer form; stub it to a marker.
+// The launch drawer hosts the heavy product optimizer form; stub it to a marker
+// that can fire the form's onSuccess (which the real drawer maps to onLaunched).
 vi.mock(
   "src/sections/test-detail/CreateEditOptimization/CreateEditOptimizationForm",
   () => ({
-    default: () => <div>optimizer-form</div>,
+    default: ({ onSuccess }) => (
+      <div>
+        optimizer-form
+        <button type="button" onClick={() => onSuccess?.()}>form-success</button>
+      </div>
+    ),
   }),
 );
 
-// The Add-evals drawer pulls the heavy product eval picker; stub it to a marker.
-vi.mock("../../../evals/AddEvalsDrawer", () => ({
-  default: ({ open }) => (open ? <div>add-evals-drawer</div> : null),
-}));
+// The picker owns its own network hooks; stub it to a marker that proves the
+// run view hands it the execution id (the add goes to the run, not the
+// environment). The picker's own behaviour is covered in
+// evals/__tests__/addEvaluationDrawer.test.jsx.
+//
+// Widened to render `completedCallsCount` too, so a wiring bug
+// (`RunDetail.jsx` handing the drawer the run's TOTAL call count instead of
+// its COMPLETED count) can't hide again — every test in this file would
+// have passed with `completedCallsCount={-1}` before this.
+function AddEvaluationDrawerStub({ open, executionId, completedCallsCount }) {
+  const completed = Number.isFinite(completedCallsCount) ? completedCallsCount : "unknown";
+  return open ? <div>add-evals-drawer:{executionId} completed:{completed}</div> : null;
+}
+AddEvaluationDrawerStub.propTypes = {
+  open: PropTypes.bool,
+  executionId: PropTypes.string,
+  completedCallsCount: PropTypes.number,
+};
+vi.mock("../../../evals/AddEvaluationDrawer", () => ({ default: AddEvaluationDrawerStub }));
+
+// A non-backed environment (client/template — reachable on this route via
+// the `?mockRuns=1` QA switch, which mints run history for any env) gets
+// the same store-only picker the Evaluations tab falls back to, not the
+// real API picker. Stubbed separately so the two are never confused for one
+// another.
+function AddEvalsDrawerStub({ open, envState }) {
+  return open ? <div>add-evals-drawer-fixture:{(envState?.evals || []).length}</div> : null;
+}
+AddEvalsDrawerStub.propTypes = {
+  open: PropTypes.bool,
+  envState: PropTypes.shape({ evals: PropTypes.array }),
+};
+vi.mock("../../../evals/AddEvalsDrawer", () => ({ default: AddEvalsDrawerStub }));
+
 
 // The per-call table owns its own network hook, so stub it to a marker.
 function RunTraceTableStub() {
@@ -99,16 +136,26 @@ const OPT_RUN = {
   startedAt: "2026-09-16T09:00:00.000Z",
 };
 
-const renderDetail = (props = {}) => {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+// `backed` defaults to true: every test in this file except the store-only one
+// exercises the real (backed) run-detail route, which is what this whole
+// suite predates and assumes. `client` lets a test share a spy-wrapped client,
+// and any remaining props (e.g. `onStartRun`) pass straight through to RunDetail.
+const renderDetail = ({
+  backed = true,
+  envState = { evals: [] },
+  client: passedClient,
+  ...props
+} = {}) => {
+  const client =
+    passedClient ??
+    new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
         <RunDetail
           env={ENV}
-          envState={{ evals: [] }}
+          envState={envState}
+          backed={backed}
           testId="rt1"
           executionId="ex1"
           {...props}
@@ -151,6 +198,17 @@ describe("RunDetail", () => {
     ).toBeInTheDocument();
   });
 
+  it("does not show a Failed verdict while the run is still loading", () => {
+    // Loading: identity null and zeroed stats must not read as "Failed".
+    useRunDetail.mockReturnValue({
+      identity: null,
+      stats: { total: 0, passed: 0, failed: 0, passRate: 0, scores: {} },
+      isLoading: true,
+    });
+    renderDetail();
+    expect(screen.queryByText("Failed")).toBeNull();
+  });
+
   it("shows terminal execution failure despite partial call success", () => {
     useRunDetail.mockReturnValue({
       identity: { ...IDENTITY, status: "failed" },
@@ -162,18 +220,80 @@ describe("RunDetail", () => {
     expect(screen.getByText("Failed")).toBeInTheDocument();
   });
 
-  it("opens the Add-evals drawer from the header action", async () => {
+  it("opens the real eval picker from the header action, pointed at this run", async () => {
+    useRunDetail.mockReturnValue({ identity: IDENTITY, stats: STATS, isLoading: false });
+    const user = userEvent.setup();
+    renderDetail();
+
+    expect(screen.queryByText(/add-evals-drawer/)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Add evals" }));
+    // STATS carries no `completed` field (still loading it) — the drawer
+    // must receive no finite count, never a borrowed number.
+    expect(screen.getByText("add-evals-drawer:ex1 completed:unknown")).toBeInTheDocument();
+  });
+
+  it("hands the picker the run's COMPLETED call count, not its total — the two differ on a run with failures", async () => {
     useRunDetail.mockReturnValue({
       identity: IDENTITY,
-      stats: STATS,
+      stats: { ...STATS, total: 16, failed: 4, completed: 12 },
       isLoading: false,
     });
     const user = userEvent.setup();
     renderDetail();
 
-    expect(screen.queryByText("add-evals-drawer")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Add evals" }));
-    expect(screen.getByText("add-evals-drawer")).toBeInTheDocument();
+    expect(screen.getByText("add-evals-drawer:ex1 completed:12")).toBeInTheDocument();
+  });
+
+  it("hands the picker no finite count while the KPIs are still loading, rather than 0", async () => {
+    // `buildRunStats` defaults `total` to 0 before the kpis query resolves;
+    // `completed` must stay unknown in that same window, never inherit that
+    // placeholder 0.
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: { ...STATS, total: 0 },
+      isLoading: true,
+    });
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "Add evals" }));
+    expect(screen.getByText("add-evals-drawer:ex1 completed:unknown")).toBeInTheDocument();
+  });
+
+  it("falls back to the store-only picker for a non-backed environment reached via ?mockRuns=1", async () => {
+    useRunDetail.mockReturnValue({ identity: IDENTITY, stats: STATS, isLoading: false });
+    const user = userEvent.setup();
+    renderDetail({ backed: false, envState: { evals: ["preset-eval"] } });
+
+    expect(screen.queryByText(/^add-evals-drawer:/)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Add evals" }));
+
+    // The store-only fixture picker opens, fed the client envState …
+    expect(screen.getByText("add-evals-drawer-fixture:1")).toBeInTheDocument();
+    // … and the real API picker never mounts — it would 404/error against a
+    // client-minted id that has no `/harness-environments/{id}/` backend.
+    expect(screen.queryByText(/^add-evals-drawer:/)).toBeNull();
+  });
+
+  it("invalidates the optimization runs on launch without a detached-client crash", async () => {
+    // refetchOptimizations was a detached invalidateQueries, which throws on
+    // this.#queryCache in react-query v5.
+    useRunDetail.mockReturnValue({ identity: IDENTITY, stats: STATS, isLoading: false });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidateSpy = vi.spyOn(client, "invalidateQueries");
+    const user = userEvent.setup();
+    renderDetail({ client });
+
+    await user.click(screen.getByRole("button", { name: "Debug failures" }));
+    await user.click(screen.getByRole("button", { name: "Run Self Improvement" }));
+    // The optimizer form's onSuccess flows through the real launch drawer to
+    // onLaunched → queryClient.invalidateQueries.
+    await user.click(screen.getByRole("button", { name: "form-success" }));
+
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["agent-optimization-runs", "ex1"],
+    });
   });
 
   it("submits the same immutable selection and trials on Run again", async () => {

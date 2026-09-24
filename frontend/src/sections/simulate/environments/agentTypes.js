@@ -61,7 +61,14 @@ export const MODALITY = {
   },
 };
 
-export const DEFAULT_MODALITY = MODALITY[AGENT_TYPES.CHAT];
+// Shown when a row's agent type is missing or unrecognised. We deliberately do
+// NOT fall back to Chat — an unknown modality is not a chat agent, and labelling
+// it "Chat" misreports repo/upload/other envs whose type the backend hasn't set.
+export const UNIDENTIFIED_MODALITY = {
+  id: "unidentified",
+  label: "Not identified",
+  icon: "solar:question-circle-linear",
+};
 
 export const CALL_DIRECTION = { INBOUND: "inbound", OUTBOUND: "outbound" };
 

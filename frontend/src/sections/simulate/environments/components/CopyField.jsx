@@ -4,6 +4,7 @@ import {
   IconButton, Stack, Tooltip, Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { copyToClipboard } from "src/utils/utils";
 
 const COPIED_RESET_MS = 1500;
 const MONO_STACK = "ui-monospace, SFMono-Regular, Menlo, monospace";
@@ -24,15 +25,14 @@ export default function CopyField({ value, wrap = false }) {
   useEffect(() => () => clearTimeout(timer.current), []);
 
   const handleCopy = async () => {
-    try {
-      await navigator.clipboard?.writeText?.(value);
-      setCopied(true);
-      clearTimeout(timer.current);
-      timer.current = setTimeout(() => setCopied(false), COPIED_RESET_MS);
-    } catch {
-      // Clipboard denied (e.g. insecure context) — leave the value on screen
-      // for the user to copy by hand rather than surfacing an error.
-    }
+    // copyToClipboard returns false when the clipboard is unavailable (insecure
+    // context, execCommand refused). Only flash "Copied" on a real success — the
+    // old optional-chaining path resolved to undefined and flashed it anyway.
+    const ok = await copyToClipboard(value);
+    if (!ok) return;
+    setCopied(true);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => setCopied(false), COPIED_RESET_MS);
   };
 
   const label = copied ? "Copied" : "Copy to clipboard";

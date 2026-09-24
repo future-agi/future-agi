@@ -44,6 +44,18 @@ function normalizeQuestion(message, blocking) {
   };
 }
 
+// Demote any tool step still marked "running" to a terminal "interrupted" state,
+// so its dot stops pulsing. Used when a turn ends or the run is no longer
+// working: a tool left "running" never received its result (the run moved on).
+function finalizeRunningSteps(steps) {
+  for (const step of steps || []) {
+    if (step.kind === "tool" && step.state === "running") {
+      step.state = "interrupted";
+      if (!step.result) step.result = "Didn't finish";
+    }
+  }
+}
+
 export function projectConversation(conversation) {
   if (!conversation) return [];
   const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
@@ -82,6 +94,10 @@ export function projectConversation(conversation) {
     return builder;
   };
   const endBuilder = () => {
+    // A turn that ends with a tool still "running" never received its result —
+    // the run moved on (a new turn, an interrupt, a stop). Demote it so its dot
+    // stops pulsing, rather than leaving a permanently in-flight indicator.
+    finalizeRunningSteps(builder?.steps);
     builder = null;
   };
 
@@ -215,6 +231,11 @@ export function projectConversation(conversation) {
     const b = startBuilder();
     const since = events.length ? events[events.length - 1].emitted_at : undefined;
     b.steps.push({ id: "heartbeat", kind: "heartbeat", since });
+  } else {
+    // Not actively working (stopped, failed, or waiting on the user): nothing is
+    // in flight, so no tool dot should keep pulsing. Finalize any lingering
+    // "running" step across every turn (the last one is never ended otherwise).
+    turns.forEach((t) => finalizeRunningSteps(t.steps));
   }
 
   turns.forEach((t, ti) => {

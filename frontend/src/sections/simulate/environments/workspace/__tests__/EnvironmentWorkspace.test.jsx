@@ -1,10 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import {
-  publishScenarioSelection,
-  clearScenarioSelection,
-} from "../../buildEnvironment/console/scenarioSelectionBus";
+import { clearScenarioSelection } from "../../buildEnvironment/console/scenarioSelectionBus";
 import {
   MemoryRouter,
   Routes,
@@ -28,7 +25,9 @@ vi.mock("src/utils/axios", async (importOriginal) => {
 });
 
 const { getHarnessJob } = await import("src/api/harness/harness");
-const axios = (await import("src/utils/axios")).default;
+const axiosMod = await import("src/utils/axios");
+const axios = axiosMod.default;
+const { endpoints } = axiosMod;
 const { default: EnvironmentWorkspace } = await import("../EnvironmentWorkspace");
 const { default: WorkspaceExecutionDetail } = await import(
   "../runs/WorkspaceExecutionDetail"
@@ -53,6 +52,12 @@ const TEMPLATE = {
   evalPreset: ["task_success", "tone"],
 };
 
+const JOB_SCENARIO = {
+  scenario_key: "refund-happy-path",
+  name: "refund_happy_path",
+  instruction: "Ask for a refund on a delivered order.",
+};
+
 // A completed harness job with the platform ids at the TOP LEVEL (sibling of
 // job/status), the run-test bridge the workspace runs against.
 const COMPLETED_JOB = {
@@ -66,6 +71,9 @@ const COMPLETED_JOB = {
   credentials: { detected_connectors: ["livekit"] },
   platform: { run_test_id: "rt1", test_execution_id: "ex1" },
   stage_outputs: [],
+  // Run needs scenarios, and a real env takes them only from the run's own
+  // data (no fixture pool), so the completed job carries one.
+  scenarios: [JOB_SCENARIO],
 };
 
 // A still-building job: no platform bridge yet, a non-terminal stage. The
@@ -77,7 +85,10 @@ const BUILDING_JOB = {
     scenario_count: 3,
     agent: { connector: "livekit" },
   },
-  status: { stage: "running", created_at: NOW },
+  // A stage that is genuinely still assembling the world. "running" is stage 10
+  // of 14, past connecting_agent, so it reads as built — not what this fixture
+  // is for.
+  status: { stage: "generating_environment", created_at: NOW },
   credentials: { detected_connectors: ["livekit"] },
   stage_outputs: [],
 };
@@ -94,6 +105,29 @@ const EXECUTIONS = {
     },
   ],
   count: 1,
+};
+
+// The run DETAIL now reads the v3 run-results contract (`runResultsV3.calls`
+// returns `{ execution: {...} }`), not the executions list `EXECUTIONS` feeds
+// the Runs-tab summary from. The `execution` carries its own server-stamped
+// ordinal + agent version — the identity the full-page RunDetail header shows.
+const RUN_DETAIL_V3 = {
+  execution: {
+    id: "ex1",
+    ordinal: 1,
+    agent_version: "v1",
+    agent_type: "VOICE",
+    status: "completed",
+    started_at: "2026-01-14T09:12:00.000Z",
+    completed_at: "2026-01-14T09:22:00.000Z",
+    summary: {
+      total: 12,
+      measured: 12,
+      pass_rate: 100,
+      outcomes: { passed: 12, failed: 0, error: 0, inconclusive: 0 },
+      duration: { average: 50 },
+    },
+  },
 };
 
 function LocationProbe() {
@@ -143,11 +177,27 @@ describe("EnvironmentWorkspace route shell", () => {
     Element.prototype.scrollIntoView = vi.fn();
     resetEnvironmentsStore();
     // The scenario selection is module-level; clear it so a leaked selection
-    // can't render the context chip into an unrelated test.
+    // can't bleed into an unrelated test's chat send.
     clearScenarioSelection();
     getHarnessJob.mockReset();
     axios.get.mockReset();
-    axios.get.mockResolvedValue({ data: EXECUTIONS });
+    // The Runs-tab summary reads the executions list; the run DETAIL reads the
+    // v3 run-results contract. Route each to its own shape so the full-page
+    // RunDetail can resolve its identity header. The environment detail
+    // (GET /harness-environments/{id}/) 404s, so these tests exercise the
+    // job-poll path; answering it with the executions list would make every
+    // unknown id resolve to a garbage environment.
+    axios.get.mockImplementation((url) => {
+      if (/\/harness-environments\/[^/]+\/$/.test(url)) {
+        return Promise.reject(Object.assign(new Error("Not found"), { statusCode: 404 }));
+      }
+      return Promise.resolve({
+        data:
+          url === endpoints.runResultsV3.calls("ex1")
+            ? RUN_DETAIL_V3
+            : EXECUTIONS,
+      });
+    });
   });
 
   it("renders a seeded client env: name, Live pill and the five tabs", async () => {
@@ -250,6 +300,39 @@ describe("EnvironmentWorkspace route shell", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows no fixture world on a real harness env whose outputs are empty", async () => {
+    getHarnessJob.mockResolvedValue(COMPLETED_JOB);
+
+    renderWorkspace("/dashboard/simulate/environments/job-done");
+
+    expect(await screen.findByText("Done Environment", { selector: "p" }))
+      .toBeInTheDocument();
+    // The "Customer Support Line" fixture world (MOCK_WORLD) used to fill every
+    // missing field on a real environment, so its tools, rules and description
+    // rendered as this environment's own. With the overlay gone the sections are
+    // empty, not invented.
+    expect(screen.queryByText(/verify_identity/)).toBeNull();
+    expect(screen.queryByText(/Goodwill credit is capped/)).toBeNull();
+    expect(
+      screen.queryByText(/A returns-and-orders phone line for a mid-size retailer/),
+    ).toBeNull();
+  });
+
+  it("renders the Scenarios tab of an empty-world harness env without crashing", async () => {
+    getHarnessJob.mockResolvedValue(COMPLETED_JOB);
+
+    // The Add-scenarios drawer derives its candidate pool from the env's tools
+    // and rules the moment the tab mounts. The overlay used to guarantee those
+    // arrays existed; on a real env with an empty world they are absent, so the
+    // pool derivation must tolerate it rather than throw.
+    renderWorkspace("/dashboard/simulate/environments/job-done?tab=scenarios");
+
+    expect(await screen.findByText("Done Environment", { selector: "p" }))
+      .toBeInTheDocument();
+    // No fixture scenario content leaked in either.
+    expect(screen.queryByText(/verify_identity/)).toBeNull();
+  });
+
   it("hosts the build experience in place for a still-building job", async () => {
     getHarnessJob.mockResolvedValue(BUILDING_JOB);
 
@@ -294,6 +377,7 @@ describe("EnvironmentWorkspace route shell", () => {
       ...BUILDING_JOB,
       status: { stage: "completed", created_at: NOW },
       platform: { run_test_id: "rt2", test_execution_id: "ex2" },
+      scenarios: [JOB_SCENARIO],
     };
     // A mutable stage the shared job poll reads, so the build state is stable
     // until we flip it — then the 2s refetch lands "completed".
@@ -323,28 +407,6 @@ describe("EnvironmentWorkspace route shell", () => {
     );
   }, 12000);
 
-  it("surfaces the selection-context chip and clears it", async () => {
-    seedClientEnv(TEMPLATE, {
-      ...emptyEnvState(),
-      agent: { name: "Support agent" },
-      scenarios: [{ id: "s1" }],
-    });
-    const user = userEvent.setup();
-
-    renderWorkspace("/dashboard/simulate/environments/env-1");
-    await screen.findByText("Refund Copilot", { selector: "p" });
-
-    act(() =>
-      publishScenarioSelection({ ids: ["s1"], rows: [{ name: "Late refund" }] }),
-    );
-
-    expect(await screen.findByText(/Editing/)).toBeInTheDocument();
-    expect(screen.getByText(/Late refund/)).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Clear selection" }));
-    expect(screen.queryByText(/Editing/)).toBeNull();
-  });
-
   it("locks a template-seeded env: no overflow, Fork to edit on Overview", async () => {
     seedClientEnv(TEMPLATE, seedFromTemplate(TEMPLATE, NOW));
 
@@ -355,7 +417,8 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(screen.getByRole("button", { name: /Fork to edit/ })).toBeInTheDocument();
   });
 
-  it("forks an unlocked env into a new id and navigates to it", async () => {
+  // Fork is temporarily commented out in ForkMenu — re-enable this with it.
+  it.skip("forks an unlocked env into a new id and navigates to it", async () => {
     seedClientEnv(TEMPLATE, {
       ...emptyEnvState(),
       agent: { name: "Support agent" },

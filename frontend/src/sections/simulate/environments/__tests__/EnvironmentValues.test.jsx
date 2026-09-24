@@ -112,6 +112,26 @@ describe("EnvironmentValues", () => {
     expect(screen.getByPlaceholderText(/OPENAI_API_KEY/).value).toBe("");
   });
 
+  it("surfaces a rejected credential upload instead of failing silently", async () => {
+    // The upload mutation carries `meta.errorHandled`, which suppresses the
+    // global error toast — so a rejected upload (e.g. the hosted 422 on a
+    // wrong label) must be shown by the panel itself, or the user is told
+    // nothing and no reference is ever created. The axios interceptor rejects
+    // with the API body, so the sentence is on `detail`; exactly one Alert.
+    uploadHarnessSecretFile.mockRejectedValueOnce({
+      statusCode: 422,
+      detail: "Hosted credential uploads must use GOOGLE_APPLICATION_CREDENTIALS.",
+    });
+    const { container } = renderWithQuery(<Harness />);
+    fireEvent.change(container.querySelector('input[type="file"]'), {
+      target: { files: [new File(["{}"], "creds.json", { type: "application/json" })] },
+    });
+    await waitFor(() =>
+      expect(screen.getByText(/Hosted credential uploads must use/)).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/creds\.json uploaded/)).toBeNull();
+  });
+
   it("removes an uploaded credential reference", async () => {
     const { container } = renderWithQuery(<Harness />);
     fireEvent.click(screen.getByRole("button", { name: /Environment values \(optional\)/ }));

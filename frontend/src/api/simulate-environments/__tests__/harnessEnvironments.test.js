@@ -19,6 +19,7 @@ import {
   deleteAppliedEvaluation,
   getAvailableEvaluations,
   addEvaluation,
+  addRunEvaluation,
 } from "../harnessEnvironments";
 
 const BASE = "/simulate/api/harness-environments/";
@@ -58,7 +59,7 @@ describe("deleteHarnessEnvironment", () => {
   });
 });
 
-describe("getHarnessEnvironment (§6)", () => {
+describe("getHarnessEnvironment", () => {
   beforeEach(() => axios.get.mockClear());
 
   it("GETs the environment detail by id (path already contracted)", async () => {
@@ -91,7 +92,7 @@ describe("renameHarnessEnvironment (§8)", () => {
   });
 });
 
-describe("deleteAppliedEvaluation (§9)", () => {
+describe("deleteAppliedEvaluation", () => {
   beforeEach(() => axios.delete.mockClear());
 
   it("DELETEs the eval config by id (path now in the generated contract)", async () => {
@@ -100,7 +101,7 @@ describe("deleteAppliedEvaluation (§9)", () => {
   });
 });
 
-describe("getAvailableEvaluations (§10)", () => {
+describe("getAvailableEvaluations", () => {
   beforeEach(() => axios.get.mockClear());
 
   it("GETs the available-evals catalogue for the environment", async () => {
@@ -109,7 +110,7 @@ describe("getAvailableEvaluations (§10)", () => {
   });
 });
 
-describe("addEvaluation (§10)", () => {
+describe("addEvaluation", () => {
   beforeEach(() => axios.post.mockClear());
 
   it("POSTs the eval name only (mapping is resolved server-side)", async () => {
@@ -117,5 +118,20 @@ describe("addEvaluation (§10)", () => {
     expect(axios.post).toHaveBeenCalledWith(`${BASE}env-10/evaluations/`, {
       name: "advice_authority_boundary",
     });
+  });
+});
+
+// Every consumer test mocks the whole `harnessEnvironments` module, so the
+// exact URL this client builds is pinned here, like every sibling client
+// above.
+describe("addRunEvaluation", () => {
+  beforeEach(() => axios.post.mockClear());
+
+  it("POSTs the eval name only to the run-level evaluations path built from id + execution_id", async () => {
+    await addRunEvaluation("env-1", "ex-1", "no_misselling");
+    expect(axios.post).toHaveBeenCalledWith(
+      `${BASE}env-1/runs/ex-1/evaluations/`,
+      { name: "no_misselling" },
+    );
   });
 });

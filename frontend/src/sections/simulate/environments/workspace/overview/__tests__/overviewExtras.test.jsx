@@ -105,11 +105,13 @@ describe("Overview extras wired into OverviewPanel", () => {
     scenarios: [],
   };
 
-  it("renders the source-to-sandbox map on an env with a derived world", () => {
+  it("no longer renders the source-to-sandbox map on an env with a derived world", () => {
     render(
       <OverviewPanel env={MOCK_WORLD} envState={connected} patch={vi.fn()} onGo={vi.fn()} agentConnected />
     );
-    expect(screen.getByText("How the world was built")).toBeInTheDocument();
+    // The map's origin chips and sandbox targets were derived by position and
+    // keyword rather than reported by ALK, so the panel dropped it.
+    expect(screen.queryByText("How the world was built")).toBeNull();
   });
 
   it("renders the next-steps checklist only when there is no agent and no derived world", () => {

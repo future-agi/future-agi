@@ -10,6 +10,7 @@ import { parseDotEnv } from "src/pages/dashboard/harness/dotenv";
 const PROVIDER_SECRET_ALIAS = {
   vapi: "VAPI_API_KEY",
   retell: "RETELL_API_KEY",
+  retell_chat: "RETELL_API_KEY",
 };
 
 /**

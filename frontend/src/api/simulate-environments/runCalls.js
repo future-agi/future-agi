@@ -1,25 +1,72 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 import { TRACE_COLUMNS } from "src/sections/simulate/environments/workspace/runs/detail/trace/traceTable.constants";
 import { ACTIVE_EXECUTION_STATUSES } from "src/sections/simulate/environments/workspace/runs/runs.constants";
 
 /** Adapt the v3 run-results contract for the trace table. */
 
-// The server owns status, filtering, grouping, and evaluation normalization.
-// These adapters only rename response fields for the existing table components.
-function evalResultFor(row, col) {
-  const data = row?.evaluations?.find((item) => item.id === col.id);
-  if (!data) return null;
+const to01 = (n) => (n == null ? null : n <= 1 ? n : n / 100);
+
+// One cell from a live `evaluations[]` entry — the array shape the isolated
+// v3 run-results contract sends, where the server has already scored the eval.
+function liveEvalCell(col, data) {
   return {
     id: col.id,
-    name: data.name || col.name || col.id,
+    name: data.name || col.name || col.column_name || col.id,
     score: data.score ?? null,
     passed: data.passed ?? null,
     label: typeof data.value === "string" ? data.value : null,
     reason: data.reason || "",
     threshold: 0.5,
+    removed: data.removed === true,
   };
+}
+
+// One cell from an `eval_metrics[evalId]` entry, normalised through the
+// product's `normalizeEvalResult` — the eval-picker path, which also carries a
+// since-removed eval's stored verdict marked `removed: true` so the chat call
+// drawer's list-derived fallback (while `useCallDetail` is loading or errored)
+// can mark it too — same expression as `runDetail.js`'s `callEvalResult`.
+function storedEvalCell(col, data) {
+  const norm = normalizeEvalResult(data.value, data.type ?? col.eval_config?.output);
+  if (norm.kind === "empty") return null;
+  let score = null;
+  let passed = null;
+  let label = null;
+  if (norm.kind === "score") {
+    score = to01(norm.score);
+    passed = score != null ? score >= 0.5 : null;
+  } else if (norm.kind === "passfail") {
+    passed = norm.pass;
+    score = passed == null ? null : passed ? 1 : 0;
+    label = norm.label ?? null;
+  } else if (norm.kind === "choices") {
+    score = to01(norm.score);
+    label = (norm.items || []).join(", ") || null;
+  }
+  return {
+    id: col.id,
+    name: data.name || col.column_name || col.name || col.id,
+    score,
+    passed,
+    label,
+    reason: data.reason || "",
+    threshold: 0.5,
+    removed: data.removed === true,
+  };
+}
+
+// The server owns status, filtering, grouping, and evaluation normalization.
+// A live verdict (the `evaluations[]` array) beats a stored one; a since-removed
+// eval only survives in `eval_metrics`, keyed by config id, so fall to it there.
+function evalResultFor(row, col) {
+  const live = row?.evaluations?.find((item) => item.id === col.id);
+  if (live) return liveEvalCell(col, live);
+  const stored = row?.eval_metrics?.[col.id];
+  if (stored) return storedEvalCell(col, stored);
+  return null;
 }
 
 /**
