@@ -42,4 +42,18 @@ describe("CopyField", () => {
       expect(screen.getByRole("button", { name: /copied/i })).toBeInTheDocument(),
     );
   });
+
+  it("does not claim 'Copied' when the clipboard is unavailable", async () => {
+    const user = userEvent.setup();
+    // No async clipboard API, and the execCommand fallback refuses.
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    const execCommand = vi.fn(() => false);
+    document.execCommand = execCommand;
+    render(<CopyField value="fai env init demo" />);
+
+    await user.click(screen.getByRole("button", { name: /copy/i }));
+
+    // The label stays "Copy to clipboard" — nothing actually copied.
+    expect(screen.queryByRole("button", { name: /copied/i })).toBeNull();
+  });
 });
