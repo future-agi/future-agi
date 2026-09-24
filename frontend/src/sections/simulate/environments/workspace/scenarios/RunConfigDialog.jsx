@@ -12,7 +12,7 @@ const TRIAL_PRESETS = [1, 3, 5, 8];
 
 // Run configuration dialog — opens when the user clicks "Run simulation" in the
 // environment header. Shows how many scenarios will run, a repeats-per-scenario
-// picker, the total runs + a rough time estimate, and Cancel / Run. Modal so the
+// picker, and Cancel / Run. Modal so the
 // "how many times?" question is unmissable for first-time users; the inline
 // TrialsPicker pill in the header is the faster path once known.
 export default function RunConfigDialog({
@@ -31,12 +31,6 @@ export default function RunConfigDialog({
   }, [open, defaultTrials]);
 
   const k = Math.max(1, Math.min(20, Number(trials) || 1));
-  const total = scenarioCount * k;
-  // ~10s per run in the mock player — good enough for a UI hint.
-  const estSeconds = total * 10;
-  const timeHint = estSeconds < 60
-    ? `~${estSeconds}s`
-    : `~${Math.max(1, Math.round(estSeconds / 60))} min`;
 
   const applyCustom = () => {
     const n = Math.max(1, Math.min(20, Math.floor(Number(customValue) || 1)));
@@ -160,34 +154,6 @@ export default function RunConfigDialog({
               </Button>
             </Stack>
           )}
-        </Box>
-
-        <Box sx={{
-          mx: 2.5, mb: 2, px: 1.75, py: 1.5, borderRadius: 1,
-          border: "1px solid", borderColor: "divider",
-          bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.03 : 0.02),
-        }}>
-          <Typography sx={{ fontSize: 11, color: "text.subtitle", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.4, mb: 0.5 }}>
-            Estimated
-          </Typography>
-          <Stack direction="row" alignItems="baseline" spacing={2.5}>
-            <Box>
-              <Typography sx={{ fontSize: 20, fontWeight: 700, fontVariantNumeric: "tabular-nums", letterSpacing: -0.3, lineHeight: 1 }}>
-                {total.toLocaleString()}
-              </Typography>
-              <Typography sx={{ fontSize: 10.5, color: "text.subtitle", mt: 0.375 }}>
-                total runs
-              </Typography>
-            </Box>
-            <Box>
-              <Typography sx={{ fontSize: 20, fontWeight: 700, fontVariantNumeric: "tabular-nums", letterSpacing: -0.3, lineHeight: 1 }}>
-                {timeHint}
-              </Typography>
-              <Typography sx={{ fontSize: 10.5, color: "text.subtitle", mt: 0.375 }}>
-                approx duration
-              </Typography>
-            </Box>
-          </Stack>
         </Box>
 
         <Stack direction="row" spacing={1} sx={{

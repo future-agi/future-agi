@@ -98,10 +98,11 @@ export default function PanelHostedPlatform() {
       ? (() => {
           const contactMode = isOther ? "phone" : simMode;
           return {
-            callDirection: inboundCalls ? "inbound" : "outbound",
+            // A phone call is always inbound; the toggle is locked on there.
+            callDirection: contactMode === "phone" || inboundCalls ? "inbound" : "outbound",
             contact: {
               mode: contactMode,
-              inboundCalls,
+              inboundCalls: contactMode === "phone" || inboundCalls,
               agentSpeaksFirst,
               ...(contactMode === "phone"
                 ? {

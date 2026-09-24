@@ -87,6 +87,18 @@ export const getAvailableEvaluations = async (id) =>
 export const addEvaluation = async (id, name) =>
   (await axios.post(environmentEvaluationsPath(id), { name })).data;
 
+// Turn the tool-call judge on or off. PUT with the whole state of the switch;
+// the 200 body is the full detail (`settings.enable_tool_evaluation`), so the
+// caller seeds the detail cache from it. 409 turning it on for a voice
+// environment whose agent has no version yet.
+export const setToolCallEvaluation = async (id, enabled) =>
+  (
+    await axios.put(
+      apiPath("/simulate/api/harness-environments/{id}/evaluations/tool-call/", { id }),
+      { enable_tool_evaluation: enabled },
+    )
+  ).data;
+
 const runEvaluationsPath = (id, executionId) =>
   apiPath(
     "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/",

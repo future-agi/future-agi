@@ -7,16 +7,15 @@ import {
 import CustomTooltip from "src/components/tooltip";
 import { fDateTime, formatDuration } from "src/utils/format-time";
 import { runColor } from "../runs.constants";
-import ColumnDummyTag from "./ColumnDummyTag";
 
 // The dashed placeholder a not-yet-backed cell shows.
 const DASH = "—";
 
 // The run comparison table. Real columns (pass, avg duration) plus the derived
-// eval columns render live values; the columns with no backend field show a
-// dashed cell under a "Dummy"-tagged header. Selecting runs to compare is a
-// later phase, so the checkboxes are present (for parity with the design) but
-// disabled behind a "coming soon" tooltip.
+// eval columns render live values; the columns with no backend field yet show a
+// plain dashed cell. Selecting runs to compare is a later phase, so the
+// checkboxes are present (for parity with the design) but disabled behind a
+// "coming soon" tooltip.
 export default function SummaryTable({ rows, evals, onOpenRun }) {
   return (
     <Box sx={{ overflowX: "auto" }}>
@@ -36,10 +35,10 @@ export default function SummaryTable({ rows, evals, onOpenRun }) {
             <TableCell align="right">Simulations</TableCell>
             <TableCell align="right">Pass</TableCell>
             <TableCell align="right">Duration</TableCell>
-            <TableCell align="right">Tokens<ColumnDummyTag /></TableCell>
-            <TableCell align="right">Cost<ColumnDummyTag /></TableCell>
-            <TableCell align="right">Said not done<ColumnDummyTag /></TableCell>
-            <TableCell align="right">Mean return<ColumnDummyTag /></TableCell>
+            <TableCell align="right">Tokens</TableCell>
+            <TableCell align="right">Cost</TableCell>
+            <TableCell align="right">Said not done</TableCell>
+            <TableCell align="right">Mean return</TableCell>
             {evals.map((e) => (
               <TableCell key={e.id} align="right">{e.name}</TableCell>
             ))}

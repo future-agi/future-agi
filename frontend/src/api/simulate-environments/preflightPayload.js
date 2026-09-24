@@ -61,22 +61,31 @@ export const PROVIDER_TO_CONNECTOR = {
 // leading `+`. Never infer a prefix from the national digits: a national number
 // whose leading digits coincide with the dial code (India +91, 9123456789) would
 // otherwise be sent as +9123456789 instead of +919123456789.
+//
+// A national number written with its trunk prefix (UK 07911 123456) drops that
+// one leading 0 once the dial code goes on, or it dials +4407911… — a number
+// that doesn't exist. Italy keeps its 0 in international form.
+const KEEPS_TRUNK_ZERO = new Set(["39"]);
+
 function e164(contact) {
   const dial = String(contact?.countryCode || "").replace(/\D/g, "");
   const raw = String(contact?.number || "").trim();
   const local = raw.replace(/\D/g, "");
   if (!local) return "";
   if (raw.startsWith("+")) return `+${local}`;
-  return dial ? `+${dial}${local}` : `+${local}`;
+  if (!dial) return `+${local}`;
+  const national = local.startsWith("0") && !KEEPS_TRUNK_ZERO.has(dial) ? local.slice(1) : local;
+  return `+${dial}${national}`;
 }
 
 // Who calls whom and who opens, as the backend's two config booleans. Only
 // emitted when the panel collected them, so a draft without contact details
-// keeps the schema defaults.
-function callBehaviour(contact) {
+// keeps the schema defaults. A phone call is always inbound — the platform
+// dials the agent — so the toggle only counts in web mode.
+function callBehaviour(contact, usesPhone) {
   if (!contact) return {};
   return {
-    inbound: contact.inboundCalls !== false,
+    inbound: usesPhone || contact.inboundCalls !== false,
     target_speaks_first: Boolean(contact.agentSpeaksFirst),
   };
 }
@@ -198,9 +207,12 @@ function platformPayload(draft, name) {
     config = {
       [idKey]: draft.agentId,
       ...(phoneNumber ? { phone_number: phoneNumber } : {}),
-      ...callBehaviour(contact),
+      ...callBehaviour(contact, usesPhone),
     };
   }
+  // The backend lets `config.inbound` win over `call_direction`, so a phone
+  // call sends the direction it actually runs in rather than the toggle's.
+  const callDirection = usesPhone ? "inbound" : draft.callDirection;
   return {
     payload: {
       ...envelope(draft, name),
@@ -214,7 +226,7 @@ function platformPayload(draft, name) {
         secret_refs: draft.secret_refs || {},
         // The direction as the panel collected it. The backend honours
         // `config.inbound` first and this second, before the authored guess.
-        ...(draft.callDirection ? { call_direction: draft.callDirection } : {}),
+        ...(callDirection ? { call_direction: callDirection } : {}),
       },
     },
   };
