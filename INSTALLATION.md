@@ -157,7 +157,7 @@ colima start --cpu 4 --memory 8 --disk 64 --vm-type vz --vz-rosetta   # drop --v
 
 Three things differ from a Docker Desktop install, and all three fail quietly:
 
-1. **Clone inside your home directory.** Colima mounts only `/Users/$USER` into its VM. Compose bind-mounts several files out of this repo into containers, and Colima raises no error for a host path it cannot see: the mount just arrives empty. The first symptom is ClickHouse exiting with `Unknown storage policy 'tiered'`, because `futureagi/.ci/clickhouse-storage-policy.xml` never made it in. To keep the repo elsewhere, mount it explicitly: `colima start --mount /path/to/parent:w`.
+1. **Clone inside your home directory.** Colima mounts only `/Users/$USER` into its VM. Compose bind-mounts several files out of this repo into containers, and Colima raises no error for a host path it cannot see: the mount just arrives empty. The first symptom is ClickHouse exiting with `Unknown storage policy 'tiered'`, because `futureagi/.ci/clickhouse-storage-policy.xml` never made it in. To keep the repo elsewhere, mount it explicitly, and keep `$HOME` in the same list because passing any `--mount` replaces the default home mount: `colima start --mount "$HOME:w" --mount /path/to/parent:w`.
 
 2. **Raise CPU and memory at creation time.** Colima defaults to 2 CPUs and 2 GiB of RAM. At 2 GiB the kernel OOM-kills ClickHouse or the backend part-way through boot, so you see a container restart loop rather than an error. Changing it later needs `colima stop` first; the disk can only grow.
 

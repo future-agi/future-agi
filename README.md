@@ -105,7 +105,7 @@ Two ways, depending on how much you want to install:
 The self-host path requires Docker Desktop, [Colima](https://github.com/abiosoft/colima),
 or Docker Engine with Docker Compose available before running the installer. On macOS,
 see [Docker Desktop or Colima](INSTALLATION.md#macos-docker-desktop-or-colima) for the
-VM sizing and the two Colima settings that the stack needs.
+VM sizing and the three Colima settings that the stack needs.
 
 <table width="100%">
 <tr>
