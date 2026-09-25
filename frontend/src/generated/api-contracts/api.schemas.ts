@@ -27125,6 +27125,8 @@ export interface TraceGraphDataRequestApi {
   req_data_config: TraceGraphDataRequestApiReqDataConfig;
   /** Population the graph counts: every trace, or only voice calls (traces whose root span is a conversation), exactly as list_voice_calls selects them. */
   observe_type?: TraceGraphDataRequestApiObserveType;
+  /** Voice graphs only: exclude calls placed by a simulator phone, exactly as list_voice_calls' remove_simulation_calls does. */
+  remove_simulation_calls?: boolean;
 }
 
 export interface TracePropertiesResponseApi {

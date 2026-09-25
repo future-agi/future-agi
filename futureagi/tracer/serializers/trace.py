@@ -729,6 +729,23 @@ class TraceGraphDataRequestSerializer(ObserveGraphDataRequestSerializer):
             "list_voice_calls selects them."
         ),
     )
+    remove_simulation_calls = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text=(
+            "Voice graphs only: exclude calls placed by a simulator phone, "
+            "exactly as list_voice_calls' remove_simulation_calls does."
+        ),
+    )
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        is_voice = attrs.get("observe_type") == "voice"
+        if attrs.get("remove_simulation_calls") and not is_voice:
+            raise serializers.ValidationError(
+                {"remove_simulation_calls": "Requires observe_type 'voice'."}
+            )
+        return attrs
 
 
 class TraceAgentGraphQuerySerializer(StrictInputSerializer):

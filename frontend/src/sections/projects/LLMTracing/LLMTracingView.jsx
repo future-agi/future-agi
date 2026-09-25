@@ -3786,6 +3786,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     : endpoints.project.getTraceGraphData()
                 }
                 observeType={traceGraphObserveType}
+                removeSimulationCalls={!!excludeSimulationCalls}
                 onFilterToggle={
                   showCompare
                     ? (e) => handleCompareFilterToggle(e, "primary")
@@ -3824,6 +3825,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       : endpoints.project.getTraceGraphData()
                   }
                   observeType={traceGraphObserveType}
+                  removeSimulationCalls={!!excludeSimulationCalls}
                   onFilterToggle={(e) =>
                     handleCompareFilterToggle(e, "compare")
                   }

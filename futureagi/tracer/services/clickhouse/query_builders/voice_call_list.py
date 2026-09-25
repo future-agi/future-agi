@@ -56,6 +56,52 @@ VOICE_CALL_ROOT_FILTER = {
     "_eval_task_trace_root": True,
 }
 
+# The Voice screen's "exclude simulation calls" toggle for population readers
+# that take filter leaves (the Voice chart): the call's root is not a
+# simulator call. It carries the same unforgeable root marker, so requests
+# cannot spell it and exact identities keep it.
+VOICE_CALL_SIMULATOR_EXCLUSION_FILTER = {
+    "column_id": "simulator_call",
+    "filter_config": {
+        "col_type": "INTERNAL_ROOT_METRIC",
+        "filter_type": "boolean",
+        "filter_op": "equals",
+        "filter_value": False,
+    },
+    "_eval_task_trace_root": True,
+}
+
+
+def simulator_call_sql(
+    *, provider: str, raw_log_json: str, raw_log_text: str, span_attr_str: str
+) -> str:
+    """SQL that is true when a voice call was placed by a simulator phone.
+
+    The one definition shared by the Voice list and the Voice chart. The
+    arguments are SQL expressions for the call root's provider, its ``raw_log``
+    as JSON and as JSON-encoded text, and its string attribute map; the caller
+    binds ``simulator_phone_numbers``.
+    """
+
+    def phone(*path: str) -> str:
+        keys = ", ".join(f"'{key}'" for key in path)
+        sources = (raw_log_json, raw_log_text, f"{span_attr_str}['raw_log']")
+        extracted = ", ".join(
+            f"nullIf(JSONExtractString({source}, {keys}), '')" for source in sources
+        )
+        return f"coalesce({extracted})"
+
+    return f"""(
+                (
+                    lowerUTF8({provider}) = 'vapi'
+                    AND ({phone("customer", "number")}) IN %(simulator_phone_numbers)s
+                )
+                OR (
+                    lowerUTF8({provider}) = 'retell'
+                    AND ({phone("from_number")}) IN %(simulator_phone_numbers)s
+                )
+            )"""
+
 
 class VoiceCallFilterBuilder(ClickHouseFilterBuilder):
     """Voice-list filter compiler using the shared normalized public aliases."""
@@ -802,32 +848,6 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             # and every physical root is reduced to its latest version before
             # the predicate.
             params = {**params, "simulator_phone_numbers": tuple(VAPI_PHONE_NUMBERS)}
-            simulator_phone = """
-            coalesce(
-                nullIf(JSONExtractString(
-                    latest_raw_log_json, 'customer', 'number'
-                ), ''),
-                nullIf(JSONExtractString(
-                    latest_raw_log_text, 'customer', 'number'
-                ), ''),
-                nullIf(JSONExtractString(
-                    latest_span_attr_str['raw_log'], 'customer', 'number'
-                ), '')
-            )
-        """
-            retell_phone = """
-            coalesce(
-                nullIf(JSONExtractString(
-                    latest_raw_log_json, 'from_number'
-                ), ''),
-                nullIf(JSONExtractString(
-                    latest_raw_log_text, 'from_number'
-                ), ''),
-                nullIf(JSONExtractString(
-                    latest_span_attr_str['raw_log'], 'from_number'
-                ), '')
-            )
-        """
             simulator_time_scope = (
                 """
                   AND start_time >= %(candidate_start_date)s
@@ -835,6 +855,12 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             """
                 if "candidate_start_date" in params
                 else ""
+            )
+            simulator_call = simulator_call_sql(
+                provider="latest_provider",
+                raw_log_json="latest_raw_log_json",
+                raw_log_text="latest_raw_log_text",
+                span_attr_str="latest_span_attr_str",
             )
             query = f"""
         SELECT *
@@ -870,16 +896,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             WHERE latest_is_deleted = 0
               AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
               AND latest_observation_type = 'conversation'
-              AND (
-                    (
-                        lowerUTF8(latest_provider) = 'vapi'
-                        AND ({simulator_phone}) IN %(simulator_phone_numbers)s
-                    )
-                    OR (
-                        lowerUTF8(latest_provider) = 'retell'
-                        AND ({retell_phone}) IN %(simulator_phone_numbers)s
-                    )
-              )
+              AND {simulator_call}
         )
         ORDER BY start_time DESC, trace_id DESC
         LIMIT {bounded_voice_limit}

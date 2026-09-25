@@ -134,6 +134,7 @@ from tracer.services.clickhouse.query_builders.user_list import (
 )
 from tracer.services.clickhouse.query_builders.voice_call_list import (
     VOICE_CALL_ROOT_FILTER,
+    VOICE_CALL_SIMULATOR_EXCLUSION_FILTER,
 )
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
 from tracer.services.clickhouse.read_budget import (
@@ -2808,6 +2809,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 # conversation span. Apply the voice list's own private root
                 # leaf so the chart counts the list's population.
                 filters = [*filters, VOICE_CALL_ROOT_FILTER]
+                if body.get("remove_simulation_calls"):
+                    # The list's "exclude simulation calls" toggle.
+                    filters.append(VOICE_CALL_SIMULATOR_EXCLUSION_FILTER)
             interval = body["interval"]
             req_data_config = body["req_data_config"]
             try:

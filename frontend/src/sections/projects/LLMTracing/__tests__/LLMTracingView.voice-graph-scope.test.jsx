@@ -16,8 +16,10 @@ const harness = vi.hoisted(() => ({
     setActiveViewConfig: vi.fn(),
     setHeaderConfig: vi.fn(),
   },
+  callLogsGridProps: [],
   primaryGraphProps: [],
   projectDetail: { source: "observe" },
+  removeSimulationCalls: undefined,
   replayState: {
     openReplaySessionDrawer: {},
     setIsReplayDrawerCollapsed: vi.fn(),
@@ -46,7 +48,10 @@ vi.mock("src/routes/hooks/use-url-state", async () => {
   return {
     useUrlState: (key, defaultValue) =>
       ReactModule.useState(
-        key === "selectedTab" ? harness.selectedTab : defaultValue,
+        {
+          selectedTab: harness.selectedTab,
+          remove_simulation_calls: harness.removeSimulationCalls,
+        }[key] ?? defaultValue,
       ),
   };
 });
@@ -118,7 +123,12 @@ vi.mock("../SpanGrid", async () => {
 
 vi.mock("src/sections/agents/CallLogs/CallLogsGrid", async () => {
   const ReactModule = await import("react");
-  return { default: ReactModule.forwardRef((_props, _ref) => null) };
+  return {
+    default: ReactModule.forwardRef((props, _ref) => {
+      harness.callLogsGridProps.push(props);
+      return null;
+    }),
+  };
 });
 
 vi.mock("../ObserveToolbar", () => ({ default: () => null }));
@@ -246,7 +256,9 @@ const lastPrimaryGraphProps = async () => {
 
 describe("LLMTracingView graph population", () => {
   beforeEach(() => {
+    harness.callLogsGridProps = [];
     harness.primaryGraphProps = [];
+    harness.removeSimulationCalls = undefined;
     harness.selectedTab = "trace";
   });
 
@@ -276,5 +288,31 @@ describe("LLMTracingView graph population", () => {
     const props = await lastPrimaryGraphProps();
     expect(props.graphEndpoint).toBe("/spans/graph/");
     expect(props.observeType).toBeUndefined();
+  });
+
+  it("applies the Voice list's simulation-call toggle to the Voice chart", async () => {
+    harness.projectDetail = { source: "simulator" };
+    harness.removeSimulationCalls = true;
+    renderView();
+
+    const props = await lastPrimaryGraphProps();
+    expect(props.observeType).toBe("voice");
+    expect(props.removeSimulationCalls).toBe(true);
+    // The grid beside it lists calls under the same toggle.
+    await waitFor(() =>
+      expect(harness.callLogsGridProps.length).toBeGreaterThan(0),
+    );
+    expect(
+      harness.callLogsGridProps.at(-1).params.remove_simulation_calls,
+    ).toBe(true);
+  });
+
+  it("keeps simulation calls on the Voice chart while the toggle is off", async () => {
+    harness.projectDetail = { source: "simulator" };
+    renderView();
+
+    const props = await lastPrimaryGraphProps();
+    expect(props.observeType).toBe("voice");
+    expect(props.removeSimulationCalls).toBe(false);
   });
 });

@@ -76314,6 +76314,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           enum: ["trace", "voice"],
           default: "trace",
         },
+        remove_simulation_calls: {
+          title: "Remove simulation calls",
+          description:
+            "Voice graphs only: exclude calls placed by a simulator phone, exactly as list_voice_calls' remove_simulation_calls does.",
+          type: "boolean",
+          default: false,
+        },
       },
     },
     TraceIndexQuery: {

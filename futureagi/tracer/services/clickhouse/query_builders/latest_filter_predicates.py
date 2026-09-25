@@ -402,6 +402,48 @@ def is_internal_trace_root_filter(item: dict[str, Any]) -> bool:
     return col_type == _INTERNAL_ROOT_METRIC_TYPE and key == "observation_type"
 
 
+def is_internal_simulator_call_filter(item: dict[str, Any]) -> bool:
+    """Whether ``item`` is the private Voice "exclude simulation calls" leaf."""
+
+    if not isinstance(item, dict) or item.get("_eval_task_trace_root") is not True:
+        return False
+    key, config = _parts(item)
+    col_type = str(config.get("col_type") or config.get("colType") or "").upper()
+    return col_type == _INTERNAL_ROOT_METRIC_TYPE and key == "simulator_call"
+
+
+def simulator_call_root_predicate() -> tuple[str, dict[str, Any]]:
+    """Match a CH25 span that is a voice-call root placed by a simulator.
+
+    The Voice list applies the same ``simulator_call_sql`` to each latest
+    conversation root and drops those traces; graphs drop a trace when this
+    matches its live root. With no simulator numbers configured nothing
+    matches, rather than rendering an empty ``IN ()``.
+    """
+
+    from tracer.services.clickhouse.query_builders.voice_call_list import (
+        VAPI_PHONE_NUMBERS,
+        simulator_call_sql,
+    )
+    from tracer.services.clickhouse.v2.query_builders.filters import (
+        rewrite_v1_sql_to_v2,
+    )
+
+    if not VAPI_PHONE_NUMBERS:
+        return "0", {}
+    simulator_call = simulator_call_sql(
+        provider="provider",
+        raw_log_json="JSONExtractRaw(span_attributes_raw, 'raw_log')",
+        raw_log_text="JSONExtractString(span_attributes_raw, 'raw_log')",
+        span_attr_str="span_attr_str",
+    )
+    predicate = rewrite_v1_sql_to_v2(
+        "(parent_span_id IS NULL OR parent_span_id = '') "
+        f"AND observation_type = 'conversation' AND {simulator_call}"
+    )
+    return predicate, {"simulator_phone_numbers": tuple(VAPI_PHONE_NUMBERS)}
+
+
 def _normalize_value(
     config: dict[str, Any], coerce: Callable[[object], object]
 ) -> tuple[str, object | None]:
@@ -1541,6 +1583,7 @@ def compile_exact_graph_filter_predicates(
     ordinary_filters: list[dict[str, Any]] = []
     structured_filters: list[tuple[int, dict[str, Any]]] = []
     trace_root_filters: list[tuple[int, dict[str, Any]]] = []
+    exclude_simulator_calls = False
     for index, item in enumerate(filters or []):
         if not isinstance(item, dict):
             raise UnsupportedFilterShapeError("filter must be an object")
@@ -1550,6 +1593,9 @@ def compile_exact_graph_filter_predicates(
             raise UnsupportedFilterShapeError("filter config must be an object")
         if is_internal_trace_root_filter(item):
             trace_root_filters.append((index, item))
+            continue
+        if is_internal_simulator_call_filter(item):
+            exclude_simulator_calls = True
             continue
         col_type = config.get("col_type") or config.get("colType")
         raw_value = config.get("filter_value", config.get("filterValue"))
@@ -1636,6 +1682,21 @@ def compile_exact_graph_filter_predicates(
             """
         )
         params.update(root_plan.params)
+
+    if exclude_simulator_calls:
+        # The Voice list's simulator toggle: drop every row of a trace whose
+        # live root is a simulator call.
+        simulator_root, simulator_params = simulator_call_root_predicate()
+        clauses.append(
+            f"""
+            trace_id NOT IN (
+                SELECT DISTINCT trace_id
+                FROM ({latest_span_membership_source_sql(predicate=simulator_root)})
+                WHERE matched
+            )
+            """
+        )
+        params.update(simulator_params)
 
     return " AND ".join(f"({clause})" for clause in clauses), params
 
@@ -2264,9 +2325,11 @@ __all__ = [
     "compile_span_attribute_row_predicate",
     "compile_span_filter_plans",
     "compile_trace_filter_plans",
+    "is_internal_simulator_call_filter",
     "is_internal_trace_root_filter",
     "partition_span_filter_plans",
     "partition_trace_filter_plans",
+    "simulator_call_root_predicate",
     "supports_span_filters",
     "supports_trace_filters",
     "targets_span_filter_domain",

@@ -61248,6 +61248,7 @@ export const tracerTraceGetGraphMethodsBodyFiltersDefault = [];
 export const tracerTraceGetGraphMethodsBodyIntervalDefault = `day`;
 export const tracerTraceGetGraphMethodsBodyPropertyDefault = `average`;
 export const tracerTraceGetGraphMethodsBodyObserveTypeDefault = `trace`;
+export const tracerTraceGetGraphMethodsBodyRemoveSimulationCallsDefault = false;
 
 export const TracerTraceGetGraphMethodsBody = zod.object({
   project_id: zod.string().uuid(),
@@ -61337,6 +61338,12 @@ export const TracerTraceGetGraphMethodsBody = zod.object({
     .default(tracerTraceGetGraphMethodsBodyObserveTypeDefault)
     .describe(
       "Population the graph counts: every trace, or only voice calls (traces whose root span is a conversation), exactly as list_voice_calls selects them.",
+    ),
+  remove_simulation_calls: zod
+    .boolean()
+    .default(tracerTraceGetGraphMethodsBodyRemoveSimulationCallsDefault)
+    .describe(
+      "Voice graphs only: exclude calls placed by a simulator phone, exactly as list_voice_calls' remove_simulation_calls does.",
     ),
 });
 
