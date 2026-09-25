@@ -248,7 +248,9 @@ class _LiveExecutor:
         )
 
 
-def _manager(*, value="gold", window_start=WINDOW_START, project=PROJECT):
+def _manager(
+    *, value="gold", window_start=WINDOW_START, window_end=WINDOW_END, project=PROJECT
+):
     return UsersListManager(
         organization_id=ORGANIZATION,
         allowed_project_ids=[project],
@@ -259,7 +261,7 @@ def _manager(*, value="gold", window_start=WINDOW_START, project=PROJECT):
                 "filter_config": {
                     "filter_type": "datetime",
                     "filter_op": "between",
-                    "filter_value": [window_start.isoformat(), WINDOW_END.isoformat()],
+                    "filter_value": [window_start.isoformat(), window_end.isoformat()],
                 },
             },
             {
@@ -289,9 +291,12 @@ def _read_page(
     cursor=None,
     value="gold",
     window_start=WINDOW_START,
+    window_end=WINDOW_END,
     project=PROJECT,
 ):
-    manager = _manager(value=value, window_start=window_start, project=project)
+    manager = _manager(
+        value=value, window_start=window_start, window_end=window_end, project=project
+    )
     executor = _LiveExecutor(ch_client, tables)
     with (
         patch(SERVICE, return_value=executor),
@@ -337,6 +342,40 @@ def test_two_page_cursor_publishes_every_member_once_in_matching_order(
     # witness is stale). C moved, F tombstoned, G uncurated: never published.
     assert pages == [["delta", "alpha"], ["hotel", "echo-old"], ["bravo"]]
     assert read.seen_rows == 5
+
+
+def test_a_sparse_recent_window_publishes_its_page_in_one_request_live(
+    ch_client, seeded_tables
+):
+    """Live: the window ends 80 days after the seeded activity (dev D3's shape).
+
+    The first slice is empty and the tail needs more one-day slices than the
+    statement budget holds, so the costed probe runs; its row is the tail's
+    newest witnessed row (bravo's stale hour-40 version), and the walk resumes
+    just above it instead of returning an empty checkpoint. The one request
+    publishes the page the three-day window publishes, in the same order.
+    """
+    read, executor = _read_page(
+        ch_client,
+        seeded_tables,
+        page_size=25,
+        window_end=WINDOW_END + timedelta(days=80),
+    )
+
+    assert [row["user_id"] for row in read.payload["table"]] == [
+        "delta",
+        "alpha",
+        "hotel",
+        "echo-old",
+        "bravo",
+    ]
+    assert read.has_more is False and read.payload["query_status"] == "complete"
+    statements = executor.statements
+    assert "AS raw_end_user_id" in statements[0]
+    assert statements[1].lstrip().startswith("EXPLAIN ESTIMATE")
+    assert "AS witnessed" in statements[2]
+    assert "AS raw_end_user_id" in statements[3]
+    assert len(statements) < walk.USER_LIST_WALK_MAX_STATEMENTS
 
 
 def test_a_tied_instant_pages_by_resolved_id_on_live_clickhouse(
@@ -463,7 +502,8 @@ def test_empty_thirty_day_tail_is_proven_by_one_costed_existence_statement(
     assert len(statements) == 3, [s.split()[0] for s in statements]
     assert "AS raw_end_user_id" in statements[0]
     assert statements[1].lstrip().startswith("EXPLAIN ESTIMATE")
-    assert "AS witnessed" in statements[2] and "LIMIT 1" in statements[2]
+    assert "AS witnessed" in statements[2]
+    assert "ORDER BY start_time DESC" in statements[2] and "LIMIT 1" in statements[2]
 
     builder = UserListQueryBuilderV2(
         organization_id=ORGANIZATION,

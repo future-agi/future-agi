@@ -716,7 +716,8 @@ def test_positive_text_attribute_filter_walks_matching_activity_not_the_seed():
     assert len(statements) == 3
     assert "AS raw_end_user_id" in statements[0]
     assert statements[1] == "EXPLAIN ESTIMATE\n" + statements[2].lstrip()
-    assert "SELECT 1 AS witnessed" in statements[2] and "LIMIT 1" in statements[2]
+    assert "SELECT start_time AS witnessed" in statements[2]
+    assert "ORDER BY start_time DESC" in statements[2] and "LIMIT 1" in statements[2]
     for statement in statements:
         assert "scalar_witness_identities" not in statement
         assert "end_user_id_remap" not in statement
