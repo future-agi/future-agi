@@ -113,6 +113,17 @@ const payload = () => ({
 describe("mapCallRow", () => {
   const evalCols = columnOrder();
 
+  it("renders a live choices verdict by its label and inner score", () => {
+    const row = {
+      id: "c9",
+      evaluations: [{ id: "e-choice", name: "clarification", type: "choices", score: null,
+        value: { score: 1.0, choice: "always" } }],
+    };
+    const [cell] = mapCallRow(row, [{ id: "e-choice", name: "clarification" }]).evalResults;
+    expect(cell.label).toBe("always");
+    expect(cell.score).toBe(1);
+  });
+
   it("maps a passing completed call: real metrics, CSAT on the 0–10 scale, ms duration", () => {
     const t = mapCallRow(payload().results[0], evalCols);
     expect(t.id).toBe("c1");
