@@ -5637,20 +5637,164 @@ class TestAlkVoiceCsatScoring:
         assert call.call_metadata["csat_status"] == "completed"
 
     def test_failed_scorer_is_durable_and_retryable(self, auth_client, run_test):
+        """Evidence present but the agent produced no score: a real failure."""
         from simulate.tasks import alk_sim
 
         call = self._completed_voice_call(auth_client, run_test)
         with (
             patch("simulate.tasks.alk_sim.close_old_connections"),
             patch.object(alk_sim, "_run_agent_csat", return_value=None),
-            pytest.raises(RuntimeError, match="returned no result"),
+            pytest.raises(RuntimeError, match="returned no score"),
         ):
             alk_sim.calculate_alk_voice_csat_score._original_func(str(call.id))
 
         call.refresh_from_db()
         assert call.call_metadata["csat_status"] == "failed"
-        assert "returned no result" in call.call_metadata["csat_error"]
+        assert call.call_metadata["csat_error"] == (
+            "CSAT scorer returned no score for the recording"
+        )
         assert not (call.conversation_metrics_data or {}).get("csat_score")
+
+    def _no_evidence_call(self, auth_client, run_test):
+        call = self._completed_voice_call(auth_client, run_test)
+        call.recording_url = None
+        call.save(update_fields=["recording_url"])
+        assert not CallTranscript.objects.filter(call_execution=call).exists()
+        return call
+
+    def _add_transcript(self, call):
+        CallTranscript.objects.create(
+            call_execution=call,
+            speaker_role=CallTranscript.SpeakerRole.USER,
+            content="Thanks, that resolved my issue.",
+            start_time_ms=0,
+            end_time_ms=1000,
+        )
+
+    def test_no_evidence_is_skipped_not_failed(self, auth_client, run_test):
+        """No recording and no transcript is nothing to score, not an error."""
+        from simulate.tasks import alk_sim
+
+        call = self._no_evidence_call(auth_client, run_test)
+        with (
+            patch("simulate.tasks.alk_sim.close_old_connections"),
+            patch.object(alk_sim, "_run_agent_csat", return_value=8.0) as scorer,
+        ):
+            alk_sim.calculate_alk_voice_csat_score._original_func(str(call.id))
+            # Re-delivery of the same task must land on the same state.
+            alk_sim.calculate_alk_voice_csat_score._original_func(str(call.id))
+
+        scorer.assert_not_called()
+        call.refresh_from_db()
+        assert call.call_metadata["csat_status"] == "skipped"
+        assert "csat_error" not in call.call_metadata
+        assert not (call.conversation_metrics_data or {}).get("csat_score")
+
+    def test_skipped_call_is_not_redispatched(self, auth_client, run_test):
+        from simulate.services.alk_simulate_ingestion import _dispatch_csat_once
+
+        call = self._no_evidence_call(auth_client, run_test)
+        call.call_metadata = {
+            **(call.call_metadata or {}),
+            "csat_dispatched": True,
+            "csat_status": "skipped",
+        }
+        call.save(update_fields=["call_metadata"])
+
+        with patch(
+            "simulate.tasks.alk_sim.calculate_alk_voice_csat_score.apply_async"
+        ) as apply_async:
+            _dispatch_csat_once(call)
+
+        apply_async.assert_not_called()
+        call.refresh_from_db()
+        assert call.call_metadata["csat_status"] == "skipped"
+
+    def test_both_scorers_raising_stores_real_messages(self, auth_client, run_test):
+        from simulate.tasks import alk_sim
+
+        call = self._completed_voice_call(auth_client, run_test)
+        self._add_transcript(call)
+        with (
+            patch("simulate.tasks.alk_sim.close_old_connections"),
+            patch.object(
+                alk_sim,
+                "_run_agent_csat",
+                side_effect=[RuntimeError("rec boom"), ValueError("txt boom")],
+            ) as scorer,
+            pytest.raises(RuntimeError, match="rec boom"),
+        ):
+            alk_sim.calculate_alk_voice_csat_score._original_func(str(call.id))
+
+        assert scorer.call_count == 2
+        call.refresh_from_db()
+        assert call.call_metadata["csat_status"] == "failed"
+        assert call.call_metadata["csat_error"] == (
+            "Recording: rec boom\nTranscript: txt boom"
+        )
+        assert not (call.conversation_metrics_data or {}).get("csat_score")
+
+    def test_same_failure_from_both_scorers_is_stored_once(
+        self, auth_client, run_test
+    ):
+        from simulate.tasks import alk_sim
+
+        call = self._completed_voice_call(auth_client, run_test)
+        self._add_transcript(call)
+        with (
+            patch("simulate.tasks.alk_sim.close_old_connections"),
+            patch.object(
+                alk_sim,
+                "_run_agent_csat",
+                side_effect=[
+                    ValueError("Evaluation failed."),
+                    ValueError("Evaluation failed."),
+                ],
+            ),
+            pytest.raises(RuntimeError),
+        ):
+            alk_sim.calculate_alk_voice_csat_score._original_func(str(call.id))
+
+        call.refresh_from_db()
+        assert call.call_metadata["csat_error"] == "Evaluation failed."
+
+    def test_agent_without_a_result_raises_no_score(self):
+        from simulate.tasks import alk_sim
+
+        with (
+            patch(
+                "ee.evals.llm.agent_evaluator.evaluator.AgentEvaluator"
+            ) as evaluator_cls,
+            pytest.raises(RuntimeError, match="returned no score"),
+        ):
+            evaluator_cls.return_value.run.return_value = SimpleNamespace(
+                eval_results=[]
+            )
+            alk_sim._run_agent_csat("Customer: hi")
+
+    def test_recording_failure_falls_back_to_transcript(self, auth_client, run_test):
+        from simulate.tasks import alk_sim
+
+        call = self._completed_voice_call(auth_client, run_test)
+        self._add_transcript(call)
+        with (
+            patch("simulate.tasks.alk_sim.close_old_connections"),
+            patch.object(
+                alk_sim,
+                "_run_agent_csat",
+                side_effect=[RuntimeError("rec boom"), 8.0],
+            ) as scorer,
+        ):
+            alk_sim.calculate_alk_voice_csat_score._original_func(str(call.id))
+
+        assert scorer.call_count == 2
+        assert scorer.call_args_list[1].args == (
+            "Customer: Thanks, that resolved my issue.",
+        )
+        call.refresh_from_db()
+        assert call.conversation_metrics_data["csat_score"] == 8.0
+        assert call.call_metadata["csat_status"] == "completed"
+        assert "csat_error" not in call.call_metadata
 
     def test_text_call_falls_back_to_call_transcript(self, auth_client, run_test):
         from simulate.tasks import alk_sim

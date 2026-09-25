@@ -54,11 +54,14 @@ def calculate_alk_voice_csat_score(call_execution_id: str) -> None:
 
     _set_csat_state(call, "running")
     try:
-        csat_score = _score_from_recording(call)
+        csat_score, scorer_errors = _score_call(call)
+        if csat_score is None and not scorer_errors:
+            # Nothing to score is not a failure: no retry, "-" in the table.
+            _set_csat_state(call, "skipped")
+            logger.info("alk_csat_skipped", call_execution_id=str(call.id))
+            return
         if csat_score is None:
-            csat_score = _score_from_transcript(call)
-        if csat_score is None:
-            raise RuntimeError("CSAT scorer returned no result for available evidence")
+            raise RuntimeError(_describe_scorer_errors(scorer_errors))
     except Exception as exc:
         _set_csat_state(call, "failed", str(exc))
         logger.exception("alk_csat_failed", call_execution_id=str(call.id))
@@ -82,18 +85,59 @@ def calculate_alk_voice_csat_score(call_execution_id: str) -> None:
     )
 
 
+def _score_call(
+    call: CallExecution,
+) -> tuple[float | None, list[tuple[str, str]]]:
+    """Try the recording, then the transcript; collect each scorer's failure.
+
+    ``(None, [])`` means the call carried no evidence at all. ``(None, errors)``
+    means evidence was present but every scorer that ran failed.
+    """
+    errors: list[str] = []
+    for source, event, scorer in (
+        ("recording", "alk_csat_recording_failed", _score_from_recording),
+        ("transcript", "alk_csat_transcript_failed", _score_from_transcript),
+    ):
+        try:
+            score = scorer(call)
+        except Exception as exc:
+            logger.warning(
+                event,
+                call_execution_id=str(call.id),
+                error=str(exc),
+                exc_info=True,
+            )
+            errors.append((source, str(exc)))
+            continue
+        if score is not None:
+            return score, errors
+    return None, errors
+
+
+def _describe_scorer_errors(errors: list[tuple[str, str]]) -> str:
+    """The stored CSAT reason: one line when every source failed the same way,
+    otherwise one ``Source: message`` line per source."""
+    messages = {message for _, message in errors}
+    if len(messages) == 1:
+        return messages.pop()
+    return "\n".join(
+        f"{source.capitalize()}: {message}" for source, message in errors
+    )
+
+
 def _score_from_recording(call: CallExecution) -> float | None:
     """Priority-1 CSAT via audio-native AgentEvaluator (turing_large).
 
     Runs only when the SDK supplied a public ``recording_url`` — otherwise
-    the transcript-text path is used.
+    the transcript-text path is used. Returns ``None`` only when there is no
+    recording; a scorer failure raises.
     """
     if not call.recording_url:
         return None
     # Addressed for a server-side fetch; an unreachable URL is sniffed as text and scored as a link.
     score = _run_agent_csat(server_reachable_url(call.recording_url))
     if score is None:
-        logger.warning("alk_csat_recording_failed", call_execution_id=str(call.id))
+        raise RuntimeError("CSAT scorer returned no score for the recording")
     return score
 
 
@@ -101,14 +145,15 @@ def _score_from_transcript(call: CallExecution) -> float | None:
     """Priority-2 CSAT — AgentEvaluator on the stored transcript text.
 
     Same evaluator + rule prompt as the recording path (and native voice), so
-    scores stay consistent whether or not a recording was available.
+    scores stay consistent whether or not a recording was available. Returns
+    ``None`` only when there is no transcript text; a scorer failure raises.
     """
     transcript_text = _build_transcript_text(call)
     if not transcript_text:
         return None
     score = _run_agent_csat(transcript_text)
     if score is None:
-        logger.warning("alk_csat_transcript_failed", call_execution_id=str(call.id))
+        raise RuntimeError("CSAT scorer returned no score for the transcript")
     return score
 
 
@@ -117,25 +162,24 @@ def _run_agent_csat(output: str) -> float | None:
 
     Mirrors ee.voice.temporal.activities.voice_xl.calculate_voice_csat_score:
     turing_large in agent mode, choices 1–10. A URL is auto-detected as audio;
-    plain text is scored as text.
+    plain text is scored as text. Any failure propagates so the caller can
+    record the real reason; a missing or unparseable result is reported as
+    the scorer returning no score.
     """
-    try:
-        from ee.evals.llm.agent_evaluator.evaluator import AgentEvaluator
+    from ee.evals.llm.agent_evaluator.evaluator import AgentEvaluator
 
-        evaluator = AgentEvaluator(
-            rule_prompt=_CSAT_RULE_PROMPT,
-            model="turing_large",
-            output_type="choices",
-            choices=_CSAT_CHOICES,
-            agent_mode="agent",
-        )
-        batch_result = evaluator.run(output=output, required_keys=["output"])
+    evaluator = AgentEvaluator(
+        rule_prompt=_CSAT_RULE_PROMPT,
+        model="turing_large",
+        output_type="choices",
+        choices=_CSAT_CHOICES,
+        agent_mode="agent",
+    )
+    batch_result = evaluator.run(output=output, required_keys=["output"])
+    try:
         return float(batch_result.eval_results[0]["data"]["result"])
-    except (ValueError, TypeError, IndexError, KeyError):
-        return None
-    except Exception:
-        logger.exception("alk_csat_agent_evaluator_failed")
-        return None
+    except (ValueError, TypeError, IndexError, KeyError) as exc:
+        raise RuntimeError(f"CSAT scorer returned no score: {exc!r}") from exc
 
 
 def _build_transcript_text(call: CallExecution) -> str | None:
