@@ -598,8 +598,22 @@ export const onCellValueChangedWrapper = (queryClient, dataset) => (params) => {
     } catch (e) {
       logger.error("Failed to update cell:", e);
       onError?.();
+      if (typeof params?.onError === "function") {
+        params.onError(e);
+      }
+      const apiMessage =
+        e?.response?.data?.message ||
+        e?.response?.data?.detail ||
+        e?.response?.data?.error ||
+        (typeof e?.response?.data?.result === "string"
+          ? e.response.data.result
+          : null);
       enqueueSnackbar(
-        "Failed to update cell value. Reverting to previous value.",
+        dataType === "document" &&
+          typeof apiMessage === "string" &&
+          apiMessage.trim()
+          ? apiMessage
+          : "Failed to update cell value. Reverting to previous value.",
         {
           variant: "error",
         },
@@ -655,12 +669,15 @@ export const onCellValueChangedWrapper = (queryClient, dataset) => (params) => {
           () => rowNode.setDataValue(columnId, oldValue),
         );
       } else if (dataType === "document") {
+        // Document edits come from FileCellRenderer (no oldValue). Reverting
+        // would setDataValue(undefined) and blank the cell. Reload server state.
+        const refreshDocumentGrid = () => {
+          gridApi?.refreshServerSide({});
+        };
         updateCellValue(
           { column_id: columnId, row_id: rowId, new_value: newValue },
-          () => {
-            gridApi?.refreshServerSide({});
-          },
-          () => rowNode.setDataValue(columnId, oldValue),
+          refreshDocumentGrid,
+          refreshDocumentGrid,
         );
       } else {
         const formattedValue =

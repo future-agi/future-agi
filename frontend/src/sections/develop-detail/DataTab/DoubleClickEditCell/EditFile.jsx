@@ -9,6 +9,10 @@ import DeleteMediaDialog from "./ConfirmDelete";
 import ReplaceMediaDialog from "./ReplaceMediaDialog";
 import _ from "lodash";
 import { getFileType } from "../../../common/DevelopCellRenderer/CellRenderers/common";
+import {
+  isDocumentWebAddress,
+  NOT_A_WEB_ADDRESS_MESSAGE,
+} from "./editHelper";
 
 const getTempFileData = (tempFile) => {
   if (tempFile instanceof File) {
@@ -77,16 +81,23 @@ export default function EditFile({ params, onClose, onCellValueChanged }) {
 
         reader.readAsDataURL(tempFile);
       } else if (typeof tempFile === "string") {
-        // Update cell with new link
+        if (!isDocumentWebAddress(tempFile)) {
+          enqueueSnackbar(NOT_A_WEB_ADDRESS_MESSAGE, { variant: "error" });
+          return;
+        }
         onCellValueChanged({
           ...params,
           newValue: tempFile,
           fileName: name,
+          onSuccess: () => {
+            setFileName(name);
+            setFileType(getFileType(type));
+            handleClose();
+          },
+          onError: () => {
+            setTempFile(null);
+          },
         });
-
-        setFileName(name);
-        setFileType(getFileType(type));
-        handleClose();
       }
       // Case 2: No new file selected, just closing/saving current state
       else {
