@@ -63,7 +63,8 @@ def test_the_contract_serves_each_editable_persona_fields_choices():
     typed = HostedHarnessProvider._editing_contract(HostedHarnessProvider, spoken=False)
 
     assert set(spoken["persona_choices"]) == set(spoken["persona_fields"])
-    assert spoken["persona_choices"]["accent"] == [value for value, _ in Persona.AccentChoices.choices]
+    accents = [value for value, _ in Persona.AccentChoices.choices]
+    assert spoken["persona_choices"]["accent"] == accents
     assert "accent" not in typed["persona_choices"]
 
 
@@ -120,6 +121,6 @@ def test_a_scenario_sits_under_every_sub_goal_it_carries():
     assert [(row["group"], row["name"]) for row in rows] == [
         ("Ungrouped", "c"), ("books", "a"), ("books", "b"), ("greets", "a")
     ]
-    assert {one["name"]: one["total"] for one in group_counts(rows, suite, "sub_goal")} == {
-        "Ungrouped": 1, "books": 2, "greets": 2
-    }
+    sections = group_counts(rows, suite, "sub_goal")
+    totals = {one["name"]: one["total"] for one in sections}
+    assert totals == {"Ungrouped": 1, "books": 2, "greets": 2}

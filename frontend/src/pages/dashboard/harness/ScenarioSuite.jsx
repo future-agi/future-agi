@@ -291,10 +291,21 @@ export default function ScenarioSuite({
     // to apply across a selection: a shared "passes when" would erase what makes each a test.
     const naming = { scenario: editing.name };
     const offered = (field) => (editableFields || []).includes(field);
-    const changed = (key) => JSON.stringify(form[key]) !== JSON.stringify(before[key]);
+    const changed = (key) =>
+      JSON.stringify(form[key]) !== JSON.stringify(before[key]);
     const changes = [
-      changed("tests") && { op: "set_field", ...naming, field: "tests", value: form.tests },
-      changed("keywords") && { op: "set_field", ...naming, field: "keywords", value: form.keywords },
+      changed("tests") && {
+        op: "set_field",
+        ...naming,
+        field: "tests",
+        value: form.tests,
+      },
+      changed("keywords") && {
+        op: "set_field",
+        ...naming,
+        field: "keywords",
+        value: form.keywords,
+      },
       offered("max_turns") &&
         changed("max_turns") &&
         form.max_turns != null && {

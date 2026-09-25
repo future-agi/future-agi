@@ -31,8 +31,7 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
     [scenarioEditing],
   );
   // Background-noise choices come from the server field catalogue (the values
-  // the agent actually uses); fall back to the abstract levels only if the
-  // catalogue is absent, and always include the current value so it stays
+  // the agent actually uses), always including the current value so it stays
   // selectable even if it's outside the server's list.
   const noiseChoices = useMemo(() => {
     const base = noiseOptions;
@@ -322,8 +321,7 @@ ScenarioEditor.propTypes = {
     persona_choices: PropTypes.objectOf(PropTypes.arrayOf(PropTypes.string)),
     rework_fields: PropTypes.arrayOf(PropTypes.string),
   }),
-  // Background-noise choices from the server field catalogue (values the agent
-  // uses). Falls back to the abstract levels when absent.
+  // Background-noise choices from the server field catalogue (values the agent uses).
   noiseOptions: PropTypes.arrayOf(PropTypes.string),
   levelLabels: PropTypes.object,
 };

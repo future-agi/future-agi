@@ -395,7 +395,7 @@ def coverage_grid(
 def level_labels_for(
     rows: list[dict[str, Any]], fields: list[dict[str, Any]] | None = None
 ) -> dict[str, str]:
-    """The reader-facing name for every coverage level and noise bed on a page and in its filters."""
+    """The reader-facing name for every coverage level and noise bed a page can show."""
     levels: set[str] = set()
     beds: set[str] = set()
     for field in fields or []:
@@ -465,7 +465,7 @@ def grouped(rows: list[dict[str, Any]], group_by: str) -> list[dict[str, Any]]:
     tagged: list[dict[str, Any]] = []
     for row in rows:
         held = (row.get(head) or {}).get(tail) if tail else row.get(head)
-        # A scenario carrying several values of a list field sits in each of their sections.
+        # A list field places the scenario in the section of each of its values.
         for value in (held or [None]) if isinstance(held, list) else [held]:
             tagged.append({**row, "group": value or "Ungrouped"})
     tagged.sort(key=lambda row: (str(row.get("group") or ""), row.get("number") or 0))
@@ -493,8 +493,9 @@ def group_counts(
         return sections
     totals: dict[str, int] = {}
     for held in queryset.values_list(_orm_path(field), flat=True):
-        for key in (held or ["Ungrouped"]) if isinstance(held, list) else [held or "Ungrouped"]:
-            totals[key] = totals.get(key, 0) + 1
+        for value in (held if isinstance(held, list) else [held]) or [None]:
+            name = value or "Ungrouped"
+            totals[name] = totals.get(name, 0) + 1
     for section in sections:
         section["total"] = totals.get(section["name"], section["count"])
     return sections
