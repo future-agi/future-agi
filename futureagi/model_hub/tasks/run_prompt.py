@@ -12,6 +12,7 @@ from model_hub.models.choices import CellStatus, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell
 from model_hub.models.run_prompt import RunPrompter
 from model_hub.views.run_prompt import RunPrompts
+from tfc.logging.temporal.context import try_activity_info
 from tfc.temporal import temporal_activity
 from tfc.utils.distributed_locks import LockContendedError, distributed_lock_manager
 from tfc.utils.distributed_state import DistributedEvaluationTracker
@@ -25,9 +26,10 @@ STUCK_RUNNING_THRESHOLD_HOURS = 1
 
 LEASE_RENEW_INTERVAL_SECONDS = 60
 LEASE_TTL_SECONDS = 300  # ~ Temporal heartbeat_timeout (5 min)
-LEASE_FRESH_SECONDS = 3 * LEASE_RENEW_INTERVAL_SECONDS
 # Renewed every 60s; must be < ACTIVITY_HEARTBEAT_TIMEOUT so a dead worker's lock is gone before its retry.
 LOCK_TTL_SECONDS = 4 * LEASE_RENEW_INTERVAL_SECONDS  # 240s
+# A lease is "live" exactly as long as its lock can still be held, so both views of a dead worker agree.
+LEASE_FRESH_SECONDS = LOCK_TTL_SECONDS
 
 # Spread crash-reclaim retries over ~12 min instead of the default 15s budget.
 PROCESS_PROMPT_MAX_RETRIES = 5
@@ -147,6 +149,14 @@ def _claim_prompt(run_prompt_id, runner_info):
             "run_prompt_claim_unconfirmed",
             run_prompt_id=str(run_prompt_id),
         )
+    # We own it now; drop any cancel flag left by the edit that preempted the previous run.
+    run_prompt_tracker.clear_cancel_flag(run_prompt_id)
+
+
+def _is_final_attempt() -> bool:
+    """True on the last Temporal retry (or outside Temporal), i.e. when a failure must be made visible."""
+    info = try_activity_info()
+    return info is None or info.attempt >= PROCESS_PROMPT_MAX_RETRIES + 1
 
 
 def _mark_prompt_failed(run_prompt_id, log_prefix):
@@ -252,8 +262,8 @@ def process_editing_prompt(run_prompt_id):
     )
 
     try:
-        # An edit preempts a live run: request cancel, take over once the lock frees.
-        if _held_by_other_live_instance(run_prompt_id):
+        # An edit preempts a live run (any instance, ours included): request cancel, take over once the lock frees.
+        if _get_fresh_lease(run_prompt_id) is not None:
             logger.warning(
                 "process_editing_prompt_already_running",
                 run_prompt_id=str(run_prompt_id),
@@ -299,12 +309,14 @@ def process_editing_prompt(run_prompt_id):
                 run_prompt_tracker.mark_completed(run_prompt_id)
 
     except (LockContendedError, PromptAlreadyRunningElsewhere):
-        # Owner won't write a status after an edit (updated_at changed), so FAILED now, not RUNNING for an hour.
+        # The owner is draining (it honours the cancel flag per row); retry, and only FAILED once retries are spent.
         logger.warning(
             "process_editing_prompt_preempt_failed",
             run_prompt_id=str(run_prompt_id),
+            final_attempt=_is_final_attempt(),
         )
-        _mark_prompt_failed(run_prompt_id, "process_editing_prompt")
+        if _is_final_attempt():
+            _mark_prompt_failed(run_prompt_id, "process_editing_prompt")
         raise
     except Exception as e:
         logger.exception(

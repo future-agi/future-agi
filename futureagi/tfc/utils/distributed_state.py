@@ -369,14 +369,31 @@ class DistributedEvaluationTracker(DistributedStateManager):
 
     def refresh_running(self, eval_id: int, ttl: int | None = None) -> bool:
         """Owner-only lease renewal: re-sets the entry with a fresh TTL and stamps metadata["renewed_at"]."""
-        key = str(eval_id)
-        try:
-            info = self.get_running_info(eval_id)
-            if not info or info.instance_id != self._instance_id:
+        if not self._redis_available:
+            return False
+        full_key = self._get_key(str(eval_id))
+        ttl = ttl or self.default_ttl
+
+        def _renew(pipe: redis.client.Pipeline) -> bool:
+            raw = pipe.get(full_key)
+            if raw is None:
+                return False
+            info = RunningTaskInfo.from_dict(json.loads(raw))
+            if info.instance_id != self._instance_id:
                 return False
             info.metadata = dict(info.metadata or {})
             info.metadata["renewed_at"] = datetime.utcnow().isoformat()
-            return self.set(key, info.to_dict(), ttl=ttl)
+            pipe.multi()
+            pipe.set(full_key, json.dumps(info.to_dict()), ex=ttl)
+            return True
+
+        try:
+            # WATCH aborts the write if the entry changed (e.g. mark_completed deleted it) between GET and SET.
+            return bool(
+                self._redis_client.transaction(
+                    _renew, full_key, value_from_callable=True
+                )
+            )
         except Exception as e:
             logger.warning(f"Failed to refresh running entry {eval_id}: {e}")
             return False

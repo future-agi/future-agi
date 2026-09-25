@@ -202,6 +202,47 @@ class TestClaimPrompt:
 
         _claim_prompt("prompt-123", runner_info={})  # no raise
 
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    def test_claim_clears_cancel_flag_left_by_preempting_edit(self, mock_tracker):
+        """The edit sets cancel:<id> to drain the old run; once the edit owns
+        the prompt that flag must go, or the edit's own rows get skipped."""
+        from model_hub.tasks.run_prompt import _claim_prompt
+
+        mock_tracker.instance_id = "current-instance"
+        mock_tracker.get_running_info.return_value = None
+        mock_tracker.mark_running.return_value = True
+
+        _claim_prompt("prompt-123", runner_info={})
+
+        mock_tracker.clear_cancel_flag.assert_called_once_with("prompt-123")
+
+
+class TestIsFinalAttempt:
+    """Contention on the edit path is retried; FAILED is written only when
+    no further retry will come."""
+
+    @pytest.mark.parametrize(
+        "attempt,expected",
+        [(1, False), (5, False), (6, True), (7, True)],
+    )
+    def test_final_attempt_tracks_retry_policy(self, attempt, expected):
+        from model_hub.tasks.run_prompt import (
+            PROCESS_PROMPT_MAX_RETRIES,
+            _is_final_attempt,
+        )
+
+        assert PROCESS_PROMPT_MAX_RETRIES + 1 == 6  # attempts = retries + 1
+        info = MagicMock(attempt=attempt)
+        with patch("model_hub.tasks.run_prompt.try_activity_info", return_value=info):
+            assert _is_final_attempt() is expected
+
+    def test_outside_temporal_counts_as_final(self):
+        """No activity context means no retry is coming; fail visibly."""
+        from model_hub.tasks.run_prompt import _is_final_attempt
+
+        with patch("model_hub.tasks.run_prompt.try_activity_info", return_value=None):
+            assert _is_final_attempt() is True
+
 
 class TestProcessEditingPrompt:
     """Tests for process_editing_prompt function."""
@@ -255,6 +296,29 @@ class TestProcessEditingPrompt:
     @patch("model_hub.tasks.run_prompt.distributed_lock_manager")
     @patch("model_hub.tasks.run_prompt.RunPrompts")
     @patch("model_hub.tasks.run_prompt.close_old_connections")
+    def test_requests_cancel_when_same_instance_holds_a_live_run(
+        self, mock_close, mock_runner_class, mock_lock_mgr, mock_tracker
+    ):
+        """A live run on *this* instance blocks the lock just the same; the
+        edit must ask it to drain rather than wait out every retry."""
+        from model_hub.tasks.run_prompt import process_editing_prompt
+
+        mock_tracker.instance_id = "current-instance"
+        mine = MagicMock()
+        mine.instance_id = "current-instance"
+        mock_tracker.get_running_info.return_value = mine
+        mock_runner_class.return_value = MagicMock()
+
+        process_editing_prompt("prompt-123")
+
+        mock_tracker.request_cancel.assert_called_once_with(
+            "prompt-123", reason="Edit requested"
+        )
+
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    @patch("model_hub.tasks.run_prompt.distributed_lock_manager")
+    @patch("model_hub.tasks.run_prompt.RunPrompts")
+    @patch("model_hub.tasks.run_prompt.close_old_connections")
     def test_uses_longer_blocking_timeout_for_edit(
         self, mock_close, mock_runner_class, mock_lock_mgr, mock_tracker
     ):
@@ -279,10 +343,10 @@ class TestProcessEditingPrompt:
     def test_marks_failed_when_live_owner_keeps_the_lock(
         self, mock_close, mock_prompter, mock_lock_mgr, mock_tracker
     ):
-        """An edit that cannot take the lock has no one to finish it: the
-        original run refuses to write a terminal status once updated_at
-        changed. It must be FAILED now, not RUNNING until the sweep — and
-        the owner's tracker entry must not be deleted (the old bug)."""
+        """On the final attempt an edit that still cannot take the lock has no
+        one to finish it: the original run refuses to write a terminal status
+        once updated_at changed. It must be FAILED now, not RUNNING until the
+        sweep — and the owner's tracker entry must not be deleted (the old bug)."""
         from tfc.utils.distributed_locks import LockContendedError
 
         from model_hub.models.choices import StatusType
@@ -294,12 +358,44 @@ class TestProcessEditingPrompt:
         mock_tracker.get_running_info.return_value = live
         mock_lock_mgr.lock.side_effect = LockContendedError("held elsewhere")
 
-        with pytest.raises(LockContendedError):
+        with (
+            patch("model_hub.tasks.run_prompt._is_final_attempt", return_value=True),
+            pytest.raises(LockContendedError),
+        ):
             process_editing_prompt("prompt-123")
 
         mock_prompter.objects.filter.return_value.update.assert_called_once_with(
             status=StatusType.FAILED.value
         )
+        mock_tracker.mark_completed.assert_not_called()
+
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    @patch("model_hub.tasks.run_prompt.distributed_lock_manager")
+    @patch("model_hub.tasks.run_prompt.RunPrompter")
+    @patch("model_hub.tasks.run_prompt.close_old_connections")
+    def test_contention_before_final_attempt_retries_without_failing(
+        self, mock_close, mock_prompter, mock_lock_mgr, mock_tracker
+    ):
+        """The owner honours the cancel flag per row, so it will drain; an
+        early attempt must leave status alone and let Temporal retry."""
+        from tfc.utils.distributed_locks import LockContendedError
+
+        from model_hub.tasks.run_prompt import process_editing_prompt
+
+        mock_tracker.instance_id = "current-instance"
+        live = MagicMock()
+        live.instance_id = "other-instance"
+        mock_tracker.get_running_info.return_value = live
+        mock_lock_mgr.lock.side_effect = LockContendedError("held elsewhere")
+
+        with (
+            patch("model_hub.tasks.run_prompt._is_final_attempt", return_value=False),
+            pytest.raises(LockContendedError),
+        ):
+            process_editing_prompt("prompt-123")
+
+        mock_tracker.request_cancel.assert_called_once()
+        mock_prompter.objects.filter.return_value.update.assert_not_called()
         mock_tracker.mark_completed.assert_not_called()
 
 
@@ -784,6 +880,44 @@ class TestLeaseTimingInvariants:
         )
 
         assert LOCK_TTL_SECONDS / LEASE_RENEW_INTERVAL_SECONDS >= 4
+
+    def test_lease_freshness_matches_lock_lifetime(self):
+        """If a lease looked dead while its lock could still be held, the
+        reclaimer would raise LockContendedError instead of taking over."""
+        from model_hub.tasks.run_prompt import LEASE_FRESH_SECONDS, LOCK_TTL_SECONDS
+
+        assert LEASE_FRESH_SECONDS == LOCK_TTL_SECONDS
+
+
+class TestRunPromptsHonoursCancel:
+    """RunPrompts.process_row is the per-row LLM step; a run that has been
+    asked to stop must skip it instead of burning calls whose cells the
+    preempting edit will overwrite anyway."""
+
+    def _runner(self):
+        from model_hub.views.run_prompt import RunPrompts
+
+        return RunPrompts(run_prompt_id="prompt-123")
+
+    @patch("model_hub.views.run_prompt.Cell")
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    def test_process_row_skips_when_cancel_requested(self, mock_tracker, mock_cell):
+        mock_tracker.should_cancel.return_value = True
+        runner = self._runner()
+        runner.run_prompt_model = MagicMock()
+
+        assert runner.process_row(MagicMock(), MagicMock()) is None
+
+        mock_tracker.should_cancel.assert_called_once_with("prompt-123")
+        mock_cell.objects.create.assert_not_called()
+        mock_cell.objects.get.assert_not_called()
+
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    def test_redis_failure_is_not_a_cancel(self, mock_tracker):
+        """A flaky Redis must never silently skip rows."""
+        mock_tracker.should_cancel.side_effect = Exception("redis down")
+
+        assert self._runner()._cancel_requested() is False
 
 
 @pytest.mark.django_db

@@ -1266,8 +1266,14 @@ class RunPrompts:
                 current_status == StatusType.RUNNING.value
                 and current_updated_at == start_updated_at
             ):
+                # A cancel with no edit behind it has no successor run, so close it out as FAILED.
+                final_status = (
+                    StatusType.FAILED.value
+                    if self._cancel_requested()
+                    else StatusType.COMPLETED.value
+                )
                 RunPrompter.objects.filter(id=self.run_prompt_id).update(
-                    status=StatusType.COMPLETED.value
+                    status=final_status
                 )
             else:
                 # Either status changed or prompt was edited during processing
@@ -1317,8 +1323,25 @@ class RunPrompts:
                 pass
             raise
 
+    def _cancel_requested(self) -> bool:
+        """True if an edit (or manual cancel) asked this run to stop; Redis errors count as not cancelled."""
+        from model_hub.tasks.run_prompt import run_prompt_tracker  # local: tasks imports this module
+
+        try:
+            return run_prompt_tracker.should_cancel(self.run_prompt_id)
+        except Exception:
+            return False
+
     def process_row(self, row, column, edit_mode=False):
         row_id = str(row.id)
+        if self._cancel_requested():
+            # Skip the LLM call; the run that requested the cancel will redo this cell.
+            logger.info(
+                "RunPrompts_process_row_skipped_cancelled",
+                run_prompt_id=str(self.run_prompt_id),
+                row_id=row_id,
+            )
+            return
         logger.info(
             "RunPrompts_process_row_started",
             run_prompt_id=str(self.run_prompt_id),
