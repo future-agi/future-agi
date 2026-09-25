@@ -404,7 +404,6 @@ export default function AddEvaluationDrawer({
                         <PickerRow
                           key={item.name}
                           entry={item}
-                          runMode={runMode}
                           isExpanded={expanded === item.name}
                           onToggle={() => setExpanded(expanded === item.name ? null : item.name)}
                           actionLabel={added ? "Added" : "Add"}
@@ -476,7 +475,6 @@ export default function AddEvaluationDrawer({
                         <PickerRow
                           key={key}
                           entry={item}
-                          runMode={runMode}
                           isExpanded={expanded === key}
                           onToggle={() => setExpanded(expanded === key ? null : key)}
                           actionLabel="Grade this run"
@@ -517,7 +515,6 @@ AddEvaluationDrawer.propTypes = {
 // endpoint for one it already has.
 function PickerRow({
   entry,
-  runMode,
   isExpanded,
   onToggle,
   actionLabel,
@@ -581,7 +578,7 @@ function PickerRow({
             <Typography noWrap sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>
               {entry.name}
             </Typography>
-            <EvalEntryChips entry={entry} runMode={runMode} />
+            <EvalEntryChips entry={entry} />
           </Stack>
         </TableCell>
       </TableRow>
@@ -599,7 +596,6 @@ function PickerRow({
 
 PickerRow.propTypes = {
   entry: EVAL_ENTRY_SHAPE,
-  runMode: PropTypes.bool,
   isExpanded: PropTypes.bool,
   onToggle: PropTypes.func,
   actionLabel: PropTypes.string,

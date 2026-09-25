@@ -88,7 +88,7 @@ describe("AddEvaluationDrawer — the row", () => {
   // Every entry in ONE `available` response carries the same `agent_type`,
   // so all three here are `"chat"` — mixing a voice entry in would build a
   // response the server cannot produce.
-  it("shows Library/Custom and the cost line, built from the two fields", async () => {
+  it("shows Library/Custom and no cost chip", async () => {
     getAvailableEvaluations.mockResolvedValue({
       evaluations: [LIBRARY_TEXT_EVAL, CUSTOM_EVAL, CODE_EVAL],
     });
@@ -97,8 +97,7 @@ describe("AddEvaluationDrawer — the row", () => {
     await screen.findByText("no_pii_leak");
     expect(screen.getAllByText("Library")).toHaveLength(2);
     expect(screen.getAllByText("Custom")).toHaveLength(1);
-    expect(screen.getAllByText("0.5 credits per run + judge tokens")).toHaveLength(2);
-    expect(screen.getAllByText("0.5 credits per run")).toHaveLength(1);
+    expect(screen.queryByText(/credits per/)).toBeNull();
   });
 
   it("gives the row's expander an accessible name and announces its state", async () => {
@@ -645,12 +644,11 @@ describe("AddEvaluationDrawer — adding from inside a run", () => {
     expect(screen.getByRole("button", { name: /^Add$/ })).toBeEnabled();
   });
 
-  it("reads the row's cost chip as 'per call graded', not 'per run' — run mode only", async () => {
+  it("shows no cost chip in run mode either", async () => {
     render(<AddEvaluationDrawer open env={ENV} executionId="ex-1" onClose={vi.fn()} />);
     await screen.findByText("no_misselling");
 
-    expect(screen.getByText("0.5 credits per call graded + judge tokens")).toBeInTheDocument();
-    expect(screen.queryByText("0.5 credits per run + judge tokens")).toBeNull();
+    expect(screen.queryByText(/credits per/)).toBeNull();
   });
 
   it("passes an add refusal through untouched — nothing was queued", async () => {
@@ -846,14 +844,14 @@ describe("AddEvaluationDrawer — the environment's own evals, in run mode", () 
     expect(screen.getByRole("button", { name: "Grade this run" })).toBeInTheDocument();
   });
 
-  it("shows the same entry cells on a bound row, with the run-mode cost chip", async () => {
+  it("shows the same entry cells on a bound row, with no cost chip", async () => {
     getAvailableEvaluations.mockResolvedValue({ evaluations: [] });
     getHarnessEnvironment.mockResolvedValue(BOUND);
     render(<AddEvaluationDrawer open env={ENV} executionId="ex-1" onClose={vi.fn()} />);
 
     await screen.findByText(GROUP_TITLE);
     expect(screen.getByText("Library")).toBeInTheDocument();
-    expect(screen.getByText("0.5 credits per call graded + judge tokens")).toBeInTheDocument();
+    expect(screen.queryByText(/credits per/)).toBeNull();
 
     // The inputs are behind the same expander, with the API's labels.
     fireEvent.click(screen.getByRole("button", { name: "Expand no_misselling" }));
