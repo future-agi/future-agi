@@ -323,6 +323,17 @@ def test_every_native_leaf_matches_the_users_graph(
     assert _list_members(ch_client, item) == _graph_members(ch_client, item)
 
 
+@pytest.mark.parametrize(("operation", "value"), OPERATIONS, ids=OPERATION_IDS)
+def test_a_native_leaf_without_col_type_matches_the_users_graph(
+    ch_client, seeded, operation, value
+):
+    # A leaf that declares no col_type is compiled by the graph with its
+    # collection semantics; the list sends the graph's SQL, so it agrees.
+    item = _leaf("model", operation, value)
+    del item["filter_config"]["col_type"]
+    assert _list_members(ch_client, item) == _graph_members(ch_client, item)
+
+
 def test_two_leaves_on_one_column_are_decided_independently(ch_client, seeded):
     # "model contains gpt AND model is_null": only C has both a gpt span and
     # an empty one. Each leaf reads its own any-span decision from the same

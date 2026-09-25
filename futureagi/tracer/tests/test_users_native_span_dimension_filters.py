@@ -349,3 +349,39 @@ def test_the_native_read_sends_the_statement_caps_its_siblings_send(
         assert "server_execution_cap_ms" not in kwargs
     assert kwargs["settings"]["max_threads"] == 8
     assert kwargs["settings"]["max_result_rows"] == 1
+
+
+def test_a_leaf_without_col_type_keeps_the_graphs_collection_shape():
+    # FilterItemField checks property_id against col_type only when col_type
+    # is sent, so a native leaf can arrive with no col_type. The graph compiles
+    # that family with collection semantics (presence AND no forbidden value);
+    # the list sends that same multi-flag SQL, never a forced SYSTEM_METRIC.
+    item = {
+        "column_id": "status",
+        "property_id": "system_attribute:traces:status",
+        "filter_config": {
+            "filter_type": "text",
+            "filter_op": "not_equals",
+            "filter_value": "OK",
+        },
+    }
+    assert UserListQueryBuilderV2.native_span_dimension(item) == "status"
+    graph_flags, graph_condition, graph_params = _user_membership_having(
+        [item], project_id=PROJECT
+    )
+    builder = UserListQueryBuilderV2(
+        organization_id=ORG, project_ids=[PROJECT], filters=[item]
+    )
+    query, params = builder.build_native_span_dimension_query([UID], [(2, item)])
+    flat = " ".join(query.split())
+
+    def renamed(text):
+        return text.replace("user_member", "native_leaf_2")
+
+    assert len(graph_flags) == 2
+    assert "= 0" in graph_condition
+    for flag in graph_flags:
+        assert " ".join(renamed(flag).split()) in flat
+    assert f"({renamed(graph_condition)}) AS native_leaf_2" in flat
+    for name, value in graph_params.items():
+        assert params[renamed(name)] == value
