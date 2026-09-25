@@ -115402,6 +115402,13 @@
                     "type": "string",
                     "format": "uuid",
                     "x-nullable": true
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "description": "Tracer project the trace / span was opened from. The same id can exist in several projects; when supplied, the score is written to that project's copy.",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
                 }
             }
         },

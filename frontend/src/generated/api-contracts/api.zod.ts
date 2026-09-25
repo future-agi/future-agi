@@ -29788,6 +29788,13 @@ export const ModelHubScoresBulkCreateBody = zod.object({
   span_notes: zod.string().optional(),
   span_notes_source_id: zod.string().optional(),
   queue_item_id: zod.string().uuid().optional(),
+  project_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "Tracer project the trace / span was opened from. The same id can exist in several projects; when supplied, the score is written to that project's copy.",
+    ),
 });
 
 export const modelHubScoresBulkCreateResponseStatusDefault = true;

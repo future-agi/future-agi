@@ -176,6 +176,16 @@ class BulkCreateScoresSerializer(StrictInputSerializer):
     )
     # Optional explicit queue context — same rationale as in CreateScoreSerializer.
     queue_item_id = serializers.UUIDField(required=False, allow_null=True, default=None)
+    project_id = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text=(
+            "Tracer project the trace / span was opened from. The same id can "
+            "exist in several projects; when supplied, the score is written to "
+            "that project's copy."
+        ),
+    )
 
     def validate_scores(self, value):
         if not value:

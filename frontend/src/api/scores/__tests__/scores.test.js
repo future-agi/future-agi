@@ -88,5 +88,31 @@ describe("Scores API", () => {
         );
       });
     });
+
+    it("pins the write to the project the drawer showed", async () => {
+      axios.post.mockResolvedValueOnce({
+        data: { result: { scores: [], errors: [] } },
+      });
+
+      const { result } = renderHook(() => useBulkCreateScores(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate({
+        sourceType: "observation_span",
+        sourceId: "span-1",
+        scores: [{ label_id: "label-1", value: { value: "up" } }],
+        projectId: "project-1",
+      });
+
+      await waitFor(() => expect(axios.post).toHaveBeenCalledTimes(1));
+      expect(axios.post.mock.calls[0][1]).toEqual(
+        expect.objectContaining({
+          source_type: "observation_span",
+          source_id: "span-1",
+          project_id: "project-1",
+        }),
+      );
+    });
   });
 });

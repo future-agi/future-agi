@@ -32,7 +32,7 @@ read-only.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -599,11 +599,22 @@ class CHSpanReader:
         return join, predicate
 
     # ─── Single-row by id ────────────────────────────────────────────────────
-    def get(self, span_id: str, *, project_id: str | None = None) -> CHSpan | None:
+    def get(
+        self,
+        span_id: str,
+        *,
+        project_id: str | None = None,
+        project_ids: Iterable[str] | None = None,
+    ) -> CHSpan | None:
         """Equivalent to ObservationSpan.objects.get(id=span_id), returns None
         if absent (matches the pattern most callers wrap with try/except).
 
         ``project_id`` (optional) scopes to one tenant; omit for prior behavior.
+
+        ``project_ids`` (optional) restricts the read to a caller's projects.
+        A replay, re-import or shared provider account writes the same span id
+        into several projects; the most recently written live copy wins, the
+        rule the trace-detail read (``read_span_detail``) applies.
 
         ``id`` is below the primary-key prefix, so a bare ``id =`` read prunes
         only via the ``idx_id`` bloom — which CH 25.3 disables under FINAL by
@@ -614,18 +625,55 @@ class CHSpanReader:
         # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
         where = ["id = %(span_id)s"]
         params: dict[str, Any] = {"span_id": span_id}
+        order_by = ""
         if project_id:
             where.append("project_id = %(pid)s")
             params["pid"] = str(project_id)
+        if project_ids is not None:
+            params["pids"] = tuple(dict.fromkeys(str(pid) for pid in project_ids))
+            if not params["pids"]:
+                return None
+            where.append("project_id IN %(pids)s")
+            order_by = (
+                " ORDER BY _version DESC, toString(project_id) DESC,"
+                " trace_id DESC, start_time DESC"
+            )
         rows = self._client.query(
             f"SELECT {_SELECT_SQL} FROM spans FINAL "
-            f"WHERE {' AND '.join(where)} LIMIT 1",
+            f"WHERE {' AND '.join(where)}{order_by} LIMIT 1",
             parameters=params,
             settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         if not rows:
             return None
         return _row_to_chspan(rows[0])
+
+    def newest_trace_project(
+        self, trace_id: str, project_ids: Iterable[str]
+    ) -> str | None:
+        """The project holding the most recently written live copy of a trace.
+
+        The rule ``read_trace_detail`` applies when one trace id is written into
+        several of the caller's projects: newest live span version wins, ties
+        broken by project id. ``None`` when no project in ``project_ids`` holds
+        a live span of the trace.
+        """
+        pids = tuple(dict.fromkeys(str(pid) for pid in project_ids))
+        if not pids:
+            return None
+        rows = self._client.query(
+            "SELECT toString(project_id) FROM ("
+            " SELECT project_id,"
+            " argMax(is_deleted, _version) AS latest_is_deleted,"
+            " max(_version) AS latest_version"
+            " FROM spans"
+            " PREWHERE project_id IN %(pids)s AND trace_id = %(tid)s"
+            " GROUP BY project_id, trace_id, id, start_time"
+            ") WHERE latest_is_deleted = 0"
+            " ORDER BY latest_version DESC, toString(project_id) DESC LIMIT 1",
+            parameters={"pids": pids, "tid": str(trace_id)},
+        ).result_rows
+        return str(rows[0][0]) if rows else None
 
     # ─── One trace's curated fields (the `traces` store the list endpoints read)
     def get_trace_row(

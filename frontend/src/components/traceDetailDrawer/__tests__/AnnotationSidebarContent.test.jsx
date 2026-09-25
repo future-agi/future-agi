@@ -120,4 +120,31 @@ describe("AnnotationSidebarContent", () => {
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
   });
+
+  it("forwards the drawer project with the save", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <AnnotationSidebarContent
+        sources={[
+          {
+            sourceType: "trace",
+            sourceId: "trace-1",
+            spanNotesSourceId: "span-1",
+            projectId: "project-1",
+          },
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /update/i })).toBeEnabled();
+    });
+    await user.click(screen.getByRole("button", { name: /update/i }));
+
+    expect(mockBulkCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ sourceId: "trace-1", projectId: "project-1" }),
+      expect.anything(),
+    );
+  });
 });

@@ -468,17 +468,20 @@ class ScoreViewSet(viewsets.ModelViewSet):
         source_id = data["source_id"]
         span_notes = data.get("span_notes")  # None when field was not sent
         span_notes_source_id = data.get("span_notes_source_id")
+        project_id = data.get("project_id")
 
         fk_field = SCORE_SOURCE_FK_MAP.get(source_type)
         if not fk_field:
             return self._gm.bad_request(f"Invalid source_type: {source_type}")
 
         # Tracer sources resolve CH-native via the single boundary (see create()).
+        # project_id pins the trace / span to the project it was opened from.
         source_obj = resolve_source_object(
             source_type,
             source_id,
             organization=request.organization,
             workspace=getattr(request, "workspace", None),
+            project_id=project_id,
         )
         if not source_obj:
             return self._gm.not_found(f"Source not found: {source_type}={source_id}")
@@ -493,6 +496,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
                     span_notes_source_id,
                     organization=request.organization,
                     workspace=getattr(request, "workspace", None),
+                    project_id=project_id,
                 )
                 if not span_notes_target:
                     return self._gm.not_found(

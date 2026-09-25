@@ -14401,6 +14401,8 @@ export interface BulkCreateScoresApi {
   span_notes?: string;
   span_notes_source_id?: string;
   queue_item_id?: string;
+  /** Tracer project the trace / span was opened from. The same id can exist in several projects; when supplied, the score is written to that project's copy. */
+  project_id?: string;
 }
 
 export interface BulkCreateScoresResultApi {

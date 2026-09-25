@@ -485,13 +485,16 @@ def resolve_default_queue_item_for_source(source_type, source_obj, organization,
     return item
 
 
-def resolve_source_object(source_type, source_id, organization=None, workspace=None):
+def resolve_source_object(
+    source_type, source_id, organization=None, workspace=None, project_id=None
+):
     """Look up a source object by type and ID.
 
     Tracer sources (trace / observation_span / trace_session) live only in
     ClickHouse — the tracer app is CH-native — so they resolve straight from CH and
     come back duck-typed (``.id`` / ``.project_id``); the CH resolver tenant-scopes
     them against the PG ``Project`` (which is not a tracer table), fail-closed.
+    ``project_id`` pins a trace / span id to the project it was opened from.
 
     Non-tracer source types (dataset_row / call_execution / prototype_run) are
     PG-backed models, verified to belong to *organization* / *workspace* (directly or
@@ -499,7 +502,11 @@ def resolve_source_object(source_type, source_id, organization=None, workspace=N
     """
     if source_type in _CH_NATIVE_SOURCE_TYPES:
         return _resolve_ch_source_object(
-            source_type, source_id, organization=organization, workspace=workspace
+            source_type,
+            source_id,
+            organization=organization,
+            workspace=workspace,
+            project_id=project_id,
         )
 
     model = get_source_model(source_type)
@@ -556,6 +563,41 @@ def _source_passes_tenant_gate(
     return True
 
 
+_MAX_SOURCE_SCOPE_PROJECTS = 4096
+
+
+def _tenant_scoped_project_ids(*, organization=None, workspace=None, project_id=None):
+    """Projects a CH trace / span id may resolve in, under the same gate as
+    :func:`_tenant_scoped_project`: ``[project_id]`` when it passes that gate,
+    otherwise every accessible project. FAIL CLOSED: an empty list denies.
+    """
+    if project_id:
+        project = _tenant_scoped_project(
+            project_id, organization=organization, workspace=workspace
+        )
+        return [str(project.id)] if project is not None else []
+    if organization is None:
+        return []
+    from tracer.models.project import Project
+
+    projects = Project.objects.filter(organization=organization)
+    if workspace is not None:
+        workspace_q = Q(workspace=workspace)
+        if getattr(workspace, "is_default", False):
+            workspace_q |= Q(workspace__isnull=True)
+        projects = projects.filter(workspace_q)
+    project_ids = [
+        str(value)
+        for value in projects.values_list("id", flat=True)[
+            : _MAX_SOURCE_SCOPE_PROJECTS + 1
+        ]
+    ]
+    if len(project_ids) > _MAX_SOURCE_SCOPE_PROJECTS:
+        logger.warning("ch_source_scope_too_large", organization=str(organization.pk))
+        return []
+    return project_ids
+
+
 def _tenant_scoped_project(project_id, *, organization=None, workspace=None):
     """Tenant gate for CH-resolved collector sources: return the PG ``Project`` for
     *project_id* iff accessible to the org/workspace, else ``None``. ``organization``
@@ -598,18 +640,34 @@ class _CHTraceSource:
 
 
 def _resolve_ch_source_object(
-    source_type, source_id, *, organization=None, workspace=None
+    source_type, source_id, *, organization=None, workspace=None, project_id=None
 ):
     """CH fallback for :func:`resolve_source_object` (collector data, no PG row).
     Returns a duck-typed CH object (``.id`` / ``.project_id``) or ``None``, tenant-
     verified against the PG ``Project``. CH errors are logged and denied (fail closed).
+
+    A trace / span id can exist in several projects (replays, re-imports, a shared
+    provider account). The read is restricted to the caller's projects — or to
+    ``project_id`` when the caller pins one — and the newest copy wins, as in the
+    trace-detail read, so a score never lands on another tenant's or an arbitrary
+    copy.
     """
+    if source_type in (
+        QueueItemSourceType.OBSERVATION_SPAN.value,
+        QueueItemSourceType.TRACE.value,
+    ):
+        project_ids = _tenant_scoped_project_ids(
+            organization=organization, workspace=workspace, project_id=project_id
+        )
+        if not project_ids:
+            return None
+
     if source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
         from tracer.services.clickhouse.v2 import get_reader
 
         try:
             with get_reader() as reader:
-                span = reader.get(str(source_id))
+                span = reader.get(str(source_id), project_ids=project_ids)
         except Exception as exc:  # narrow: any CH read failure → deny
             logger.warning(
                 "ch_source_resolve_error",
@@ -645,7 +703,7 @@ def _resolve_ch_source_object(
         # Collector trace (no PG row): resolve its root span from CH for the
         # project_id, tenant-gate, and duck-type the trace so the add path
         # stores the soft trace_id. The item is annotated at this root span.
-        root_span = _ch_root_span_for_trace(source_id)
+        root_span = _ch_root_span_for_trace(source_id, project_ids=project_ids)
         if root_span is None:
             return None
         if (
@@ -732,7 +790,7 @@ def _pick_conversation_root(root_spans):
     return root_spans[0]
 
 
-def _ch_root_span_for_trace(trace_id):
+def _ch_root_span_for_trace(trace_id, *, project_ids=None):
     """Best-effort CH read of a trace's root span (resolve/render path).
 
     Reads ONLY the parentless (root) spans, LEAN, via ``roots_by_trace_ids``: a
@@ -741,17 +799,30 @@ def _ch_root_span_for_trace(trace_id):
     shared cluster — this runs on every trace resolution. Prefers the conversation
     root, else the first parentless span; a trace with no parentless span in CH
     resolves to ``None`` (fail closed — never a full scan to find one root). FAIL
-    OPEN on CH error — logs, never raises into the page."""
+    OPEN on CH error — logs, never raises into the page.
+
+    ``project_ids`` restricts the read to those projects and takes the roots of
+    the one holding the newest copy of the trace (see ``newest_trace_project``)."""
     if not trace_id:
         return None
     from tracer.services.clickhouse.v2 import get_reader
 
     try:
         with get_reader() as reader:
+            project_id = None
+            if project_ids is not None:
+                project_id = (
+                    project_ids[0]
+                    if len(project_ids) == 1
+                    else reader.newest_trace_project(str(trace_id), project_ids)
+                )
+                if project_id is None:
+                    return None
             roots = reader.roots_by_trace_ids(
                 [str(trace_id)],
                 include_heavy=False,
                 dedup_via_limit_by=True,  # see _batch_ch_trace_roots (TH-7226)
+                project_id=project_id,
             )
     except Exception as exc:
         logger.warning("ch_trace_render_error", trace_id=str(trace_id), error=str(exc))

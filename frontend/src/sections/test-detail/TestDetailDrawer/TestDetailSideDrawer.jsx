@@ -608,8 +608,9 @@ const TestDetailSideDrawerChild = ({
         rootSpanId: rootObsSpanId,
         module: urlModule,
         callExecutionId: data?.id,
+        projectId: resolvedProjectId,
       }),
-    [traceId, rootObsSpanId, urlModule, data?.id],
+    [traceId, rootObsSpanId, urlModule, data?.id, resolvedProjectId],
   );
   const hasCurrentTerminalNavigator =
     urlModule === "project" &&

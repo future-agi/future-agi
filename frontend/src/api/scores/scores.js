@@ -152,6 +152,7 @@ export const useBulkCreateScores = () => {
       includeSpanNotes = false,
       spanNotesSourceId,
       scoreSource,
+      projectId,
     }) => {
       const payload = {
         source_type: sourceType,
@@ -168,6 +169,11 @@ export const useBulkCreateScores = () => {
       // falls back to the source's default queue.
       if (queueItemId) {
         payload.queue_item_id = queueItemId;
+      }
+      // The same trace / span id can exist in several projects; pin the write
+      // to the copy the drawer showed.
+      if (projectId) {
+        payload.project_id = projectId;
       }
       if (includeSpanNotes || spanNotes) {
         payload.span_notes = spanNotes || "";

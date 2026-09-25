@@ -783,6 +783,7 @@ const TraceDetailDrawerChild = ({
               traceId: traceData?.trace_id,
               spanId: selectedNode?.id || rootSpanId,
               sessionId: traceDetail?.trace?.session,
+              projectId: projectIdToUse,
             })}
             onClose={() => setAnnotationSidebarOpen(false)}
             onAddLabel={() => setAddLabelDrawerOpen(true)}

@@ -138,9 +138,11 @@ class _ReaderCM:
     def __exit__(self, *exc):
         return False
 
-    def get(self, span_id):
+    def get(self, span_id, *, project_id=None, project_ids=None):
         self.get_calls.append(str(span_id))
         if self._span is None:
+            return None
+        if project_ids is not None and str(self._span.project_id) not in project_ids:
             return None
         return self._span if str(span_id) == str(self._span.id) else None
 

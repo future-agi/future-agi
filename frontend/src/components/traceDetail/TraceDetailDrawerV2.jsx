@@ -1441,6 +1441,7 @@ const TraceDetailDrawerV2 = ({
             traceId,
             spanId: annotateDrawerOpen?.spanId || rootSpanId,
             sessionId: data?.trace?.session,
+            projectId,
           })}
           onClose={() => setAnnotateDrawerOpen(null)}
           onAddLabel={() => setAddLabelDrawerOpen(true)}
