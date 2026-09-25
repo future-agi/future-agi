@@ -32,6 +32,10 @@ const theme = createTheme({
     red: {
       50: "#ffebee",
       500: "#f44336",
+      700: "#d32f2f",
+    },
+    error: {
+      main: "#f44336",
     },
   },
 });
@@ -117,5 +121,25 @@ describe("ExecutionNode", () => {
   it("renders correctly with selected state", () => {
     renderNode({ selected: true, nodeExecution: { status: "success" } });
     expect(screen.getByText("Test Node")).toBeInTheDocument();
+  });
+
+  it("dims a skipped node like a never-run node and marks it SKIPPED", () => {
+    renderNode({
+      nodeExecution: { status: "skipped" },
+    });
+    const skipped = screen.getByLabelText("Skipped");
+    expect(skipped).toHaveStyle({ opacity: "0.4" });
+    expect(screen.getByText("SKIPPED")).toBeInTheDocument();
+  });
+
+  it("does not render the skipped mark on a never-run node", () => {
+    renderNode();
+    expect(screen.queryByText("SKIPPED")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Skipped")).not.toBeInTheDocument();
+  });
+
+  it("exposes a Skipped hover title", async () => {
+    renderNode({ nodeExecution: { status: "skipped" } });
+    expect(screen.getByLabelText("Skipped")).toBeInTheDocument();
   });
 });
