@@ -204,8 +204,8 @@ async def cancel_hosted_harness_attempt(
         state = await _run_db(_cancel)
     except Exception:
         activity.logger.exception(
-            "hosted harness cancellation cleanup is still pending",
-            attempt_id=input.attempt_id,
+            "hosted harness cancellation cleanup is still pending; attempt_id=%s",
+            input.attempt_id,
         )
         return HostedHarnessPollOutput(
             done=False,

@@ -7,8 +7,8 @@ import tarfile
 from contextlib import nullcontext
 from datetime import timedelta
 from types import SimpleNamespace
-from urllib.parse import urlparse
 from unittest.mock import patch
+from urllib.parse import urlparse
 
 import pytest
 from django.test import override_settings
@@ -1967,7 +1967,19 @@ def test_cancel_signals_guest_before_provider_delete(organization, monkeypatch):
         return_value=(b"archive", ""),
     ):
         gateway.launch(job, endpoint_base_url="https://platform.example.com")
-    monkeypatch.setattr(gateway, "_delete_and_record", lambda _: job)
+    cleanup_order = []
+    monkeypatch.setattr(
+        "simulate.services.phone_telephony.cleanup_hosted_phone_rooms",
+        lambda _: cleanup_order.append("livekit"),
+    )
+
+    def delete_and_record(_attempt, *, after_provider_cleanup=None):
+        cleanup_order.append("sandbox")
+        if after_provider_cleanup is not None:
+            after_provider_cleanup()
+        return job
+
+    monkeypatch.setattr(gateway, "_delete_and_record", delete_and_record)
 
     gateway.cancel(job, reason="user_canceled")
 
@@ -1983,6 +1995,7 @@ def test_cancel_signals_guest_before_provider_delete(organization, monkeypatch):
     assert attempt.terminal_stage == "canceled"
     assert attempt.terminal_reason == "user_canceled"
     assert attempt.terminal_failure is None
+    assert cleanup_order == ["livekit", "sandbox", "livekit"]
 
 
 @pytest.mark.django_db
@@ -2016,6 +2029,56 @@ def test_cancel_deletes_when_guest_signal_fails(organization, monkeypatch):
 
     assert client.deleted is True
     assert canceled.state == HostedHarnessJob.State.CANCELED
+
+
+@pytest.mark.django_db
+def test_cancel_retries_room_cleanup_after_sandbox_is_already_deleted(
+    organization, monkeypatch
+):
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(
+        organization, payload, idempotency_key="cancel-room-cleanup-retry"
+    )
+    client = _Daytona()
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    with patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    ):
+        gateway.launch(job, endpoint_base_url="https://platform.example.com")
+
+    cleanup_attempts = []
+
+    def cleanup(_job):
+        cleanup_attempts.append(str(_job.id))
+        if len(cleanup_attempts) == 1:
+            raise RuntimeError("LiveKit temporarily unavailable")
+
+    monkeypatch.setattr(
+        "simulate.services.phone_telephony.cleanup_hosted_phone_rooms", cleanup
+    )
+
+    with pytest.raises(RuntimeError, match="LiveKit temporarily unavailable"):
+        gateway.cancel(job, reason="user_canceled")
+
+    attempt = HostedHarnessAttempt.no_workspace_objects.get(job=job)
+    assert client.deleted is True
+    assert attempt.cleanup_verified_at is None
+
+    canceled = gateway.cancel(job, reason="user_canceled")
+
+    assert cleanup_attempts == [str(job.id), str(job.id)]
+    assert canceled.state == HostedHarnessJob.State.CANCELED
+    attempt.refresh_from_db()
+    assert attempt.cleanup_verified_at is not None
 
 
 @pytest.mark.django_db

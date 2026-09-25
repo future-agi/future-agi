@@ -14,7 +14,7 @@ import tarfile
 import tempfile
 import time
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager, nullcontext
 from datetime import timedelta
 from pathlib import Path
@@ -3380,18 +3380,25 @@ class HostedHarnessGateway:
         return True
 
     def cancel(self, job: HostedHarnessJob, *, reason: str) -> HostedHarnessJob:
+        from simulate.services.phone_telephony import cleanup_hosted_phone_rooms
+
         settled = HostedHarnessAttempt.no_workspace_objects.filter(
             job=job,
             attempt_number=job.current_attempt_number,
             cleanup_verified_at__isnull=False,
         ).exists()
         if settled:
+            # A prior platform version considered sandbox absence sufficient cleanup.
+            # Re-run the idempotent telephony backstop so cancelling such a job again
+            # also repairs an orphaned SIP call.
+            cleanup_hosted_phone_rooms(job)
             return job
         job = request_cancellation(job, reason)
         attempt = HostedHarnessAttempt.no_workspace_objects.filter(
             job=job, attempt_number=job.current_attempt_number
         ).first()
         if attempt is None or not attempt.provider_ref:
+            cleanup_hosted_phone_rooms(job)
             if attempt is not None:
                 attempt.terminal_stage = "canceled"
                 attempt.terminal_reason = reason
@@ -3444,9 +3451,25 @@ class HostedHarnessGateway:
                     completed_at=job.terminal_at,
                 )
             return job
+
+        # Hang up the PSTN leg before any provider call. Reconnecting to or
+        # deleting a remote sandbox can take tens of seconds, while Stop must
+        # disconnect the caller promptly. This pass is best effort because the
+        # verified post-delete pass below also closes any room recreated during
+        # the shutdown race.
+        try:
+            cleanup_hosted_phone_rooms(job)
+        except Exception:
+            logger.exception(
+                "hosted phone pre-delete cleanup failed attempt=%s",
+                attempt.id,
+            )
         try:
             sandbox = self.client.get(str(attempt.provider_ref))
         except SandboxNotFoundError:
+            # Sandbox deletion and SIP hangup are separate provider boundaries.
+            # A missing sandbox therefore does not prove that the call ended.
+            cleanup_hosted_phone_rooms(job)
             attempt.terminal_stage = "canceled"
             attempt.terminal_reason = reason
             attempt.save(
@@ -3491,7 +3514,14 @@ class HostedHarnessGateway:
                     "updated_at",
                 ]
             )
-        return self._delete_and_record(attempt)
+
+        return self._delete_and_record(
+            attempt,
+            # Re-run after sandbox termination to close the create/delete race. Do
+            # not record cleanup complete until room absence is independently
+            # verified. A transient failure is retried through SandboxNotFound.
+            after_provider_cleanup=lambda: cleanup_hosted_phone_rooms(job),
+        )
 
     def _should_retry(self, attempt: HostedHarnessAttempt, domain: str) -> bool:
         # An infrastructure/connectivity failure is worth a fresh attempt while
@@ -3832,7 +3862,11 @@ class HostedHarnessGateway:
             lease.save(update_fields=["state", "updated_at"])
 
     def _delete_and_record(
-        self, attempt: HostedHarnessAttempt, *, retry_pending: bool = False
+        self,
+        attempt: HostedHarnessAttempt,
+        *,
+        retry_pending: bool = False,
+        after_provider_cleanup: Callable[[], Any] | None = None,
     ) -> HostedHarnessJob:
 
         try:
@@ -3860,6 +3894,8 @@ class HostedHarnessGateway:
                     )
                 except SandboxNotFoundError:
                     absent = True
+        if after_provider_cleanup is not None:
+            after_provider_cleanup()
         job = record_cleanup(
             attempt.id,
             provider_ref=str(attempt.provider_ref),
