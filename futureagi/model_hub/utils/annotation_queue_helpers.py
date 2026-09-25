@@ -479,6 +479,10 @@ def resolve_default_queue_item_for_source(source_type, source_obj, organization,
         defaults={
             "organization": queue.organization,
             "workspace": queue.workspace,
+            # A tracer default queue is the source copy's project; stamp it as
+            # add_items does, so reads pinned to one copy can tell its notes
+            # from another copy's. Other default queues have no project.
+            "project_id": queue.project_id,
             "status": QueueItemStatus.PENDING.value,
         },
     )

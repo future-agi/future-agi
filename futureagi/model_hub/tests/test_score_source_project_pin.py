@@ -12,7 +12,9 @@ source.
 The read side is the twin: ``/model-hub/scores/for-source/`` keys on the bare id,
 so the drawer of one copy listed every copy's scores. It takes the same pin and
 lists only that project's scores; a pin outside the caller's scope answers like a
-source with no scores.
+source with no scores. Rows written before the project was recorded (a NULL
+``Score.tracer_project_id`` / ``QueueItem.project``) were never attributed to a
+copy, so every in-scope copy keeps them.
 
 The ClickHouse reader is faked with per-project copies; Postgres scope, the view
 and the resolver run for real.
@@ -25,11 +27,19 @@ import pytest
 from rest_framework import status
 
 from accounts.models.organization import Organization
+from accounts.models.user import User
 from accounts.models.workspace import Workspace
 from model_hub.models.ai_model import AIModel
+from model_hub.models.annotation_queues import (
+    AnnotationQueue,
+    AnnotationQueueStatusChoices,
+    QueueItem,
+    QueueItemNote,
+)
 from model_hub.models.choices import AnnotationTypeChoices
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import Score
+from tfc.constants.roles import OrganizationRoles
 from tracer.models.project import Project
 from tracer.models.span_notes import SpanNotes
 from tracer.services.clickhouse.v2.span_reader import SpanScope
@@ -309,6 +319,8 @@ def test_pinned_read_outside_scope_or_without_scores_answers_like_no_scores(
     project_id = {
         "foreign": str(replayed_span.foreign.id),
         "unknown": str(uuid.uuid4()),
+        # In scope, so it would still list unattributed (NULL-project) scores;
+        # only the copies' attributed scores are seeded here.
         "empty": str(replayed_span.empty.id),
     }[pin]
     unscored = auth_client.get(
@@ -386,3 +398,128 @@ def test_pin_leaves_session_scores_unfiltered(auth_client, user, replayed_span):
 
     assert response.status_code == status.HTTP_200_OK, response.content
     assert [row["id"] for row in response.data["result"]] == [str(score.id)]
+
+
+def _legacy_score(user, replayed_span, source_type):
+    """A score written before ``tracer_project_id`` was populated: never
+    attributed to a copy (dev: 371 of 380 live span scores, 84 of 179 trace)."""
+    source = (
+        {"observation_span_id": SPAN_ID}
+        if source_type == "observation_span"
+        else {"trace_id": replayed_span.trace_id}
+    )
+    return Score.objects.create(
+        source_type=source_type,
+        label=replayed_span.label,
+        value={"rating": 2},
+        annotator=user,
+        organization=user.organization,
+        workspace=replayed_span.older.workspace,
+        **source,
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("source_type", SOURCE_TYPES)
+def test_pinned_read_keeps_legacy_scores_without_a_project(
+    auth_client, user, replayed_span, source_type
+):
+    score_ids = _score_on_each_copy(auth_client, replayed_span, source_type)
+    legacy = _legacy_score(user, replayed_span, source_type)
+
+    response = _for_source(
+        auth_client,
+        replayed_span,
+        source_type,
+        project_id=str(replayed_span.older.id),
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    assert sorted(row["id"] for row in response.data["result"]) == sorted(
+        [score_ids[replayed_span.older], str(legacy.id)]
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("source_type", SOURCE_TYPES)
+@pytest.mark.parametrize("pin", ["foreign", "unknown"])
+def test_pinned_read_outside_scope_hides_legacy_scores_too(
+    auth_client, user, replayed_span, source_type, pin
+):
+    _legacy_score(user, replayed_span, source_type)
+    project_id = {
+        "foreign": str(replayed_span.foreign.id),
+        "unknown": str(uuid.uuid4()),
+    }[pin]
+
+    response = _for_source(
+        auth_client, replayed_span, source_type, project_id=project_id
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    assert response.data["result"] == []
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("source_type", SOURCE_TYPES)
+def test_pinned_span_read_hides_another_copys_queue_note(
+    auth_client, user, replayed_span, source_type
+):
+    # The caller notes the newer copy from its drawer: a span note, or a call
+    # note on the trace (its span notes live on the root span).
+    extra = {"span_notes": "newer copy: refund was issued"}
+    if source_type == "trace":
+        extra["span_notes_source_id"] = SPAN_ID
+    response = _bulk(
+        auth_client,
+        replayed_span,
+        source_type,
+        project_id=str(replayed_span.newer.id),
+        **extra,
+    )
+    assert response.status_code == status.HTTP_200_OK, response.content
+    # A queue note from before QueueItem.project existed, by another annotator:
+    # never attributed to a copy, so every copy's drawer keeps it.
+    colleague = User.objects.create_user(
+        email=f"colleague-{uuid.uuid4().hex[:8]}@futureagi.com",
+        password="testpassword123",
+        name="Colleague",
+        organization=user.organization,
+        organization_role=OrganizationRoles.MEMBER,
+    )
+    legacy_queue = AnnotationQueue.objects.create(
+        name="Legacy review",
+        status=AnnotationQueueStatusChoices.ACTIVE.value,
+        organization=user.organization,
+        workspace=replayed_span.older.workspace,
+        created_by=user,
+    )
+    legacy_item = QueueItem.objects.create(
+        queue=legacy_queue,
+        source_type="observation_span",
+        observation_span_id=SPAN_ID,
+        organization=user.organization,
+        workspace=replayed_span.older.workspace,
+    )
+    QueueItemNote.objects.create(
+        queue_item=legacy_item,
+        annotator=colleague,
+        notes="legacy: escalated to billing",
+        organization=user.organization,
+        workspace=replayed_span.older.workspace,
+    )
+
+    def notes(project):
+        response = _for_source(
+            auth_client, replayed_span, "observation_span", project_id=str(project.id)
+        )
+        assert response.status_code == status.HTTP_200_OK, response.content
+        return sorted(note["notes"] for note in response.data["span_notes"])
+
+    # The newer copy's note must not reach the older copy's drawer, neither as
+    # a queue note nor through its legacy SpanNotes mirror.
+    assert notes(replayed_span.older) == ["legacy: escalated to billing"]
+    assert notes(replayed_span.newer) == [
+        "legacy: escalated to billing",
+        "newer copy: refund was issued",
+    ]

@@ -727,28 +727,31 @@ class ScoreViewSet(viewsets.ModelViewSet):
             return self._gm.bad_request(f"Invalid source_type: {source_type}")
 
         # project_id pins a trace / span to the copy the drawer shows, as on the
-        # score write; a pin outside the caller's scope pins to nothing.
+        # score write; a pin outside the caller's scope pins to nothing. Scores
+        # written before tracer_project_id was populated were never attributed
+        # to a copy, so every in-scope copy keeps them.
         pinned_project_ids = pinned_source_project_ids(
             source_type,
             query_params.get("project_id"),
             organization=request.organization,
             workspace=getattr(request, "workspace", None),
         )
-        project_filter = (
-            {}
-            if pinned_project_ids is None
-            else {"tracer_project_id__in": pinned_project_ids}
-        )
+        project_filter = Q()
+        if pinned_project_ids is not None:
+            project_filter = Q(tracer_project_id__in=pinned_project_ids)
+            # Guarded: an empty IN beside an OR would leave only the IS NULL arm.
+            if pinned_project_ids:
+                project_filter |= Q(tracer_project_id__isnull=True)
 
         scores = (
             Score.objects.filter(
+                project_filter,
                 # Pin source_type: span Scores carry a denormalized trace_id (for the
                 # trace-detail rollup), so a trace_id= filter alone would also match them.
                 source_type=source_type,
                 **{f"{fk_field}_id": source_id},
                 organization=request.organization,
                 deleted=False,
-                **project_filter,
             )
             .select_related("label", "annotator", "queue_item__queue")
             .order_by("label__name", "-created_at")
@@ -846,6 +849,17 @@ class ScoreViewSet(viewsets.ModelViewSet):
                 )
                 if note.annotator_id:
                     users_with_queue_notes.add(note.annotator_id)
+                # A pinned read lists its own copy's notes and those on items
+                # never attributed to a project. Another copy's note still counts
+                # above: its legacy SpanNotes mirror (keyed on span + user, no
+                # project) must not bring it back below.
+                item_project_id = note.queue_item.project_id
+                if (
+                    pinned_project_ids is not None
+                    and item_project_id is not None
+                    and str(item_project_id) not in pinned_project_ids
+                ):
+                    continue
                 key = (note.annotator_id, note.queue_item_id)
                 if key in seen_user_queue:
                     continue
@@ -864,7 +878,8 @@ class ScoreViewSet(viewsets.ModelViewSet):
             # for this span) — keep them in the list as backward-compat
             # context until the SpanNotes backfill runs. Gated on the
             # org-scoped span check above so cross-org callers can't read
-            # this org's legacy notes.
+            # this org's legacy notes. SpanNotes carry no project, so a pinned
+            # read keeps them on every copy.
             legacy_notes = (
                 (
                     SpanNotes.objects.filter(span_id=source_id)
