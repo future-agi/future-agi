@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import pytest
 from django.utils import timezone
+from redis.exceptions import RedisError
 from rest_framework import status
 
 from accounts.models.organization import Organization
@@ -704,6 +705,54 @@ class TestAddToNewDatasetAPI:
             )
 
             assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    @pytest.mark.parametrize(
+        ("is_cloud", "expected_status"),
+        [(True, status.HTTP_400_BAD_REQUEST), (False, status.HTTP_200_OK)],
+    )
+    @patch("tracer.views.dataset.process_spans_chunk_task")
+    def test_entitlement_error_refuses_creation_on_cloud_only(
+        self,
+        mock_task,
+        auth_client,
+        organization,
+        observe_project,
+        observe_spans,
+        ch_seed,
+        is_cloud,
+        expected_status,
+    ):
+        """An erroring dataset entitlement check refuses on cloud like a limit."""
+        mock_task.delay.return_value = None
+        ch_seed(observe_spans)
+
+        with (
+            patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=is_cloud),
+            patch(
+                "ee.usage.services.entitlements.Entitlements.can_create",
+                side_effect=RedisError("entitlement cache unavailable"),
+            ),
+        ):
+            response = auth_client.post(
+                "/tracer/dataset/add_to_new_dataset/",
+                {
+                    "new_dataset_name": "Unverified Dataset",
+                    "project": str(observe_project.id),
+                    "span_ids": [s.id for s in observe_spans],
+                    "mapping_config": [
+                        {"col_name": "input", "data_type": "text"},
+                    ],
+                },
+                format="json",
+            )
+
+        assert response.status_code == expected_status
+        assert (
+            Dataset.no_workspace_objects.filter(
+                name="Unverified Dataset", organization=organization
+            ).exists()
+            is not is_cloud
+        )
 
 
 @pytest.mark.django_db

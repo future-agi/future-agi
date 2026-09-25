@@ -27,6 +27,7 @@ from accounts.services.aws_marketplace_metering import (
     aws_marketplace_metering,
 )
 from agentic_eval.core.utils.functions import detect_input_type
+from ee.usage.deployment import DeploymentMode
 
 logger = structlog.get_logger(__name__)
 from model_hub.utils import call_websocket
@@ -68,6 +69,10 @@ ROW_LIMIT_REACHED_MESSAGE = "Row limit reached. \
 TRACES_LIMIT_REACHED_MESSAGE = "Traces limit reached. \
       Please delete existing traces or upgrade to a higher tier to \
       avail more traces."
+
+DATASET_LIMIT_CHECK_FAILED_MESSAGE = (
+    "Could not verify your plan's dataset limit. Please try again in a moment."
+)
 
 
 EVALUATOR_CALLS = [
@@ -2190,7 +2195,16 @@ def check_if_dataset_creation_is_allowed(organization, config=None):
         return True, {}
     except Exception as e:
         logger.exception(f"Error checking if dataset creation is allowed: {str(e)}")
-        return True, {}
+        # Self-hosted has no dataset count limit (Entitlements.can_create
+        # allows off-cloud); on cloud the quota is billing, so fail closed.
+        if not DeploymentMode.is_cloud():
+            return True, {}
+        detail = {
+            "resource_name": ResourceTypeChoices.DATASET.value,
+            "limit": 0,
+            "reason": DATASET_LIMIT_CHECK_FAILED_MESSAGE,
+        }
+        return False, detail
 
 
 def check_if_row_limit_reached(organization, row_count):
