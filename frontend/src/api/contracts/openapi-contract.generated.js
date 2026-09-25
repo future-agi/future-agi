@@ -107041,7 +107041,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
         },
         docs_url: {
-          title: "Docs Url",
+          title: "Docs url",
           type: "string",
         },
       },

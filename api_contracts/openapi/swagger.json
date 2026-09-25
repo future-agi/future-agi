@@ -89444,7 +89444,7 @@
                     "type": "string"
                 },
                 "docs_url": {
-                    "title": "Docs Url",
+                    "title": "Docs url",
                     "type": "string"
                 }
             }
