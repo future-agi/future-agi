@@ -23,7 +23,6 @@ from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
 )
 
-
 # MATERIALIZED ``spans`` columns a compiled filter can reference. ``SELECT *``
 # omits MATERIALIZED columns, so a predicate on one over the latest-row
 # snapshot fails with an unknown identifier (code 47); the snapshot names each
