@@ -87,9 +87,12 @@ export default function TraceTable({
       return next;
     });
   }, [activeCallId, activeGroupLabel, groups]);
+  // Its row only mounts once its group expands, so scroll again when that
+  // happens — not just when the call changes.
+  const activeGroupCollapsed = collapsedSet.has(activeGroupLabel);
   useEffect(() => {
     activeRowRef.current?.scrollIntoView?.({ block: "nearest" });
-  }, [activeCallId, activeGroupLabel]);
+  }, [activeCallId, activeGroupLabel, activeGroupCollapsed]);
 
   const allCollapsed =
     groups.length > 0 && groups.every((g) => collapsedSet.has(g.label));
