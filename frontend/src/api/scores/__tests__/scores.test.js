@@ -4,10 +4,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import axios from "src/utils/axios";
-import { useBulkCreateScores } from "../scores";
+import {
+  useBulkCreateScores,
+  useScoresForSource,
+  useSpanNotes,
+} from "../scores";
 
 vi.mock("src/utils/axios", () => ({
   default: {
+    get: vi.fn(),
     post: vi.fn(),
   },
 }));
@@ -113,6 +118,83 @@ describe("Scores API", () => {
           project_id: "project-1",
         }),
       );
+    });
+  });
+
+  describe("scores for-source reads", () => {
+    const readParams = () =>
+      axios.get.mock.calls.map(([url]) => {
+        const parsed = new URL(url, "http://localhost");
+        expect(parsed.pathname).toBe("/model-hub/scores/for-source/");
+        return Object.fromEntries(parsed.searchParams);
+      });
+
+    beforeEach(() => {
+      axios.get.mockResolvedValue({
+        data: { status: true, result: [], span_notes: [] },
+      });
+    });
+
+    it("pins the read to the project the drawer showed", async () => {
+      renderHook(
+        () =>
+          useScoresForSource("observation_span", "span-1", {
+            projectId: "project-1",
+          }),
+        { wrapper: createQueryWrapper() },
+      );
+
+      await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(1));
+      expect(readParams()).toEqual([
+        {
+          source_type: "observation_span",
+          source_id: "span-1",
+          project_id: "project-1",
+        },
+      ]);
+    });
+
+    it("reads each project's copy of one span on its own", async () => {
+      renderHook(
+        () => [
+          useScoresForSource("trace", "trace-1", { projectId: "project-1" }),
+          useScoresForSource("trace", "trace-1", { projectId: "project-2" }),
+        ],
+        { wrapper: createQueryWrapper() },
+      );
+
+      await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(2));
+      expect(
+        readParams()
+          .map((params) => params.project_id)
+          .sort(),
+      ).toEqual(["project-1", "project-2"]);
+    });
+
+    it("leaves a read without a project unpinned", async () => {
+      renderHook(() => useScoresForSource("trace", "trace-1"), {
+        wrapper: createQueryWrapper(),
+      });
+
+      await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(1));
+      expect(readParams()).toEqual([
+        { source_type: "trace", source_id: "trace-1" },
+      ]);
+    });
+
+    it("pins the span notes read to the drawer's project", async () => {
+      renderHook(() => useSpanNotes("span-1", { projectId: "project-1" }), {
+        wrapper: createQueryWrapper(),
+      });
+
+      await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(1));
+      expect(readParams()).toEqual([
+        {
+          source_type: "observation_span",
+          source_id: "span-1",
+          project_id: "project-1",
+        },
+      ]);
     });
   });
 });

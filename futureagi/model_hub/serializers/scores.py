@@ -116,6 +116,16 @@ class ScoreListQuerySerializer(StrictInputSerializer):
 class ScoreForSourceQuerySerializer(StrictInputSerializer):
     source_type = serializers.ChoiceField(choices=list(SCORE_SOURCE_FK_MAP.keys()))
     source_id = serializers.CharField()
+    project_id = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text=(
+            "Tracer project the trace / span was opened from. The same id can "
+            "exist in several projects; when supplied, only that project's "
+            "scores are listed."
+        ),
+    )
 
 
 class ScoreResponseSerializer(serializers.Serializer):

@@ -598,6 +598,28 @@ def _tenant_scoped_project_ids(*, organization=None, workspace=None, project_id=
     return project_ids
 
 
+def pinned_source_project_ids(
+    source_type, project_id, *, organization=None, workspace=None
+):
+    """Projects a read of a trace / span is pinned to, or ``None`` for no pin.
+
+    A trace / span id can exist in several projects; a detail drawer pins its
+    reads to the copy it shows with ``project_id``, under the gate the score
+    write applies (:func:`_tenant_scoped_project_ids`). A pin that fails the
+    gate yields ``[]``: the caller answers like a source with nothing on it.
+    Session ids are derived from their project and other sources have no tracer
+    project, so only traces / spans pin.
+    """
+    if not project_id or source_type not in (
+        QueueItemSourceType.OBSERVATION_SPAN.value,
+        QueueItemSourceType.TRACE.value,
+    ):
+        return None
+    return _tenant_scoped_project_ids(
+        organization=organization, workspace=workspace, project_id=project_id
+    )
+
+
 def _tenant_scoped_project(project_id, *, organization=None, workspace=None):
     """Tenant gate for CH-resolved collector sources: return the PG ``Project`` for
     *project_id* iff accessible to the org/workspace, else ``None``. ``organization``

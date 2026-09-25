@@ -111,7 +111,10 @@ vi.mock("src/components/traceDetail/SpanTreeTimeline", () => ({
 }));
 
 vi.mock("src/components/traceDetail/SpanDetailPane", () => ({
-  default: () => <div data-testid="span-detail" />,
+  // eslint-disable-next-line react/prop-types -- test stub
+  default: ({ projectId }) => (
+    <div data-testid="span-detail" data-project-id={projectId} />
+  ),
 }));
 
 vi.mock("src/components/traceDetail/TraceLeftPanel", () => ({
@@ -443,6 +446,32 @@ describe("Annotation queue ContentPanel", () => {
     expect(
       screen.queryByRole("button", { name: "View session" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("reads the span's annotations from the project the trace shows", () => {
+    mockUseGetTraceDetail.mockReturnValue({
+      data: {
+        trace: { project: "proj-1", session: null, tags: [] },
+        observation_spans: [
+          { observation_span: { id: "span-1", trace: "trace-1" } },
+        ],
+      },
+      isLoading: false,
+    });
+
+    renderWithQuery(
+      <ContentPanel
+        item={{
+          source_type: "observation_span",
+          source_content: { trace_id: "trace-1", span_id: "span-1" },
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("span-detail")).toHaveAttribute(
+      "data-project-id",
+      "proj-1",
+    );
   });
 
   describe("View session for trace / span items", () => {

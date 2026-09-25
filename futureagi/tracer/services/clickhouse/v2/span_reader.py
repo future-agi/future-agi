@@ -1311,7 +1311,9 @@ class CHSpanReader:
         ).result_rows
         return [str(r[0]) for r in rows]
 
-    def scope_by_ids(self, span_ids: list[str]) -> dict[str, SpanScope]:
+    def scope_by_ids(
+        self, span_ids: list[str], *, project_ids: Iterable[str] | None = None
+    ) -> dict[str, SpanScope]:
         """Map ``span_id -> SpanScope(project_id, trace_id)``, reading ONLY those
         two columns instead of the full span row.
 
@@ -1324,14 +1326,25 @@ class CHSpanReader:
         panel-open must not OOM the shared cluster. ``FINAL`` is kept —
         project/trace are stable across versions and a two-column ``FINAL`` read
         stays well under the limit.
+
+        ``project_ids`` (optional) restricts the read to those projects. A span
+        id can exist in several projects, and unscoped the map keeps one
+        arbitrary copy per id.
         """
         if not span_ids:
             return {}
+        where = "id IN %(ids)s AND is_deleted = 0"
+        params: dict[str, Any] = {"ids": tuple(span_ids)}
+        if project_ids is not None:
+            params["pids"] = tuple(dict.fromkeys(str(pid) for pid in project_ids))
+            if not params["pids"]:
+                return {}
+            where += " AND project_id IN %(pids)s"
         rows = self._client.query(
             "SELECT id, toString(project_id) AS project_id, "
             "toString(trace_id) AS trace_id FROM spans FINAL "
-            "WHERE id IN %(ids)s AND is_deleted = 0",
-            parameters={"ids": tuple(span_ids)},
+            f"WHERE {where}",
+            parameters=params,
         ).result_rows
 
         def _norm(v: Any) -> str | None:

@@ -31775,6 +31775,10 @@ export type ModelHubScoresForSourceParams = {
    * @minLength 1
    */
   source_id: string;
+  /**
+   * Tracer project the trace / span was opened from. The same id can exist in several projects; when supplied, only that project's scores are listed.
+   */
+  project_id?: string;
 };
 
 export type ModelHubScoresForSourceSourceType =

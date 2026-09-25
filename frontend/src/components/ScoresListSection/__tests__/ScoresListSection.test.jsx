@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
+import { useScoresForSource, useSpanNotes } from "src/api/scores/scores";
 import ScoresListSection from "../ScoresListSection";
 
 const mockState = vi.hoisted(() => ({
@@ -317,5 +318,29 @@ describe("ScoresListSection", () => {
     expect(mockState.spanNoteSourceIds).toContain("span-1");
     expect(screen.getByText("Span Notes")).toBeInTheDocument();
     expect(screen.getByText("whole item note")).toBeInTheDocument();
+  });
+
+  it("reads every source of the drawer's project only", () => {
+    render(
+      <ScoresListSection
+        sourceType="observation_span"
+        sourceId="span-1"
+        secondarySourceType="trace"
+        secondarySourceId="trace-1"
+        projectId="project-1"
+      />,
+    );
+
+    expect(useScoresForSource).toHaveBeenCalledWith(
+      "observation_span",
+      "span-1",
+      { projectId: "project-1" },
+    );
+    expect(useScoresForSource).toHaveBeenCalledWith("trace", "trace-1", {
+      projectId: "project-1",
+    });
+    expect(useSpanNotes).toHaveBeenCalledWith("span-1", {
+      projectId: "project-1",
+    });
   });
 });

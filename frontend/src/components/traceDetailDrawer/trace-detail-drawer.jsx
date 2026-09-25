@@ -641,6 +641,7 @@ const TraceDetailDrawerChild = ({
                     showAnnotation={showAnnotation}
                     observationSpan={observationSpan}
                     observationSpanLoading={observationSpanLoading}
+                    projectId={projectIdToUse}
                   />
                 </Box>
               </Box>
@@ -746,6 +747,7 @@ const TraceDetailDrawerChild = ({
                   showAnnotation={showAnnotation}
                   observationSpan={observationSpan}
                   observationSpanLoading={observationSpanLoading}
+                  projectId={projectIdToUse}
                 />
               </Box>
             </Grid>

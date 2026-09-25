@@ -45802,6 +45802,15 @@
                         "required": true,
                         "type": "string",
                         "minLength": 1
+                    },
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "description": "Tracer project the trace / span was opened from. The same id can exist in several projects; when supplied, only that project's scores are listed.",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid",
+                        "x-nullable": true
                     }
                 ],
                 "responses": {

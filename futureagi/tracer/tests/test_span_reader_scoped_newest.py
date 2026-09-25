@@ -113,3 +113,17 @@ def test_scoped_reads_pick_the_newest_live_copy_in_scope(copies):
     insert(NEWER, version=40, deleted=1)
     assert reader.get("root", project_ids=in_scope).project_id == OLDER
     assert reader.newest_trace_project(TRACE, in_scope) == OLDER
+
+
+@pytest.mark.django_db
+def test_scope_by_ids_reads_only_the_given_projects(copies):
+    reader, insert = copies
+    insert(OLDER, version=10)
+    insert(FOREIGN, version=30)
+
+    assert reader.scope_by_ids(["root"], project_ids=[OLDER])["root"].project_id == (
+        OLDER
+    )
+    assert reader.scope_by_ids(["root"], project_ids=[NEWER]) == {}
+    assert reader.scope_by_ids(["root"], project_ids=[]) == {}
+    assert reader.scope_by_ids(["root"])["root"].project_id in {OLDER, FOREIGN}

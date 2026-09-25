@@ -27,6 +27,7 @@ from model_hub.serializers.scores import (
     UpdateScoreSerializer,
 )
 from model_hub.utils.annotation_queue_helpers import (
+    pinned_source_project_ids,
     resolve_default_queue_item_for_source,
     resolve_source_object,
     source_project,
@@ -725,6 +726,20 @@ class ScoreViewSet(viewsets.ModelViewSet):
         if not fk_field:
             return self._gm.bad_request(f"Invalid source_type: {source_type}")
 
+        # project_id pins a trace / span to the copy the drawer shows, as on the
+        # score write; a pin outside the caller's scope pins to nothing.
+        pinned_project_ids = pinned_source_project_ids(
+            source_type,
+            query_params.get("project_id"),
+            organization=request.organization,
+            workspace=getattr(request, "workspace", None),
+        )
+        project_filter = (
+            {}
+            if pinned_project_ids is None
+            else {"tracer_project_id__in": pinned_project_ids}
+        )
+
         scores = (
             Score.objects.filter(
                 # Pin source_type: span Scores carry a denormalized trace_id (for the
@@ -733,6 +748,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
                 **{f"{fk_field}_id": source_id},
                 organization=request.organization,
                 deleted=False,
+                **project_filter,
             )
             .select_related("label", "annotator", "queue_item__queue")
             .order_by("label__name", "-created_at")
@@ -775,7 +791,9 @@ class ScoreViewSet(viewsets.ModelViewSet):
             # (project_id + trace_id only): pulling the full span row here blows
             # the shared ClickHouse memory limit (code 241) on fat voice spans.
             with get_reader() as reader:
-                span_scope = reader.scope_by_ids([str(source_id)]).get(str(source_id))
+                span_scope = reader.scope_by_ids(
+                    [str(source_id)], project_ids=pinned_project_ids
+                ).get(str(source_id))
             span_belongs_to_org = False
             trace_id = None
             if (

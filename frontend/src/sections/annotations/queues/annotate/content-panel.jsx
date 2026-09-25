@@ -540,6 +540,7 @@ function InlineTraceView({ traceId, spanId }) {
                   }
                   isRootSpan={selectedSpanId === rootSpanId}
                   traceTags={data?.trace?.tags || []}
+                  projectId={projectId}
                   onSelectSpan={handleSelectSpan}
                 />
               </Box>
@@ -577,6 +578,7 @@ function InlineTraceView({ traceId, spanId }) {
                   }
                   isRootSpan={selectedSpanId === rootSpanId}
                   traceTags={data?.trace?.tags || []}
+                  projectId={projectId}
                   onSelectSpan={handleSelectSpan}
                 />
               ) : (

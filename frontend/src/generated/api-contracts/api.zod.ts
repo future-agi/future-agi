@@ -29873,6 +29873,13 @@ export const ModelHubScoresForSourceQueryParams = zod.object({
     "trace_session",
   ]),
   source_id: zod.string().min(1),
+  project_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "Tracer project the trace / span was opened from. The same id can exist in several projects; when supplied, only that project's scores are listed.",
+    ),
 });
 
 export const modelHubScoresForSourceResponseStatusDefault = true;
