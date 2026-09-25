@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -1459,12 +1460,17 @@ def read_or_schedule_exact_snapshot(
     refresh: bool,
     pending_payload: Any,
     schedule_on_miss: bool = True,
+    accept_snapshot: Callable[[Any], bool] | None = None,
 ) -> Any:
     """Serve an exact snapshot immediately and run slow refreshes out of band.
 
     A cache hit is never replaced by a pending response. A cold miss returns a
     non-chartable pending envelope. Failed cold jobs wait for another explicit
     refresh instead of being resubmitted by every polling request.
+    ``accept_snapshot`` lets a caller reject a cached payload it cannot serve
+    (for example one written by an older worker during a rolling deploy); a
+    rejected snapshot is treated exactly as a miss on every read, including
+    the re-read after a refresh is enqueued.
     """
 
     stale_identity = None
@@ -1482,9 +1488,24 @@ def read_or_schedule_exact_snapshot(
             stale_identity,
             normalized_identity,
         )
-    previous = read_exact_snapshot(namespace, normalized_identity)
+
+    def read_servable(snapshot_identity: Any) -> Any | None:
+        # Every read that can be served goes through the caller's guard: the
+        # re-read after enqueueing too, since a rejected payload stays in the
+        # cache (and may have been carried into this key) until a worker the
+        # caller trusts overwrites it.
+        snapshot = read_exact_snapshot(namespace, snapshot_identity)
+        if (
+            snapshot is not None
+            and accept_snapshot is not None
+            and not accept_snapshot(snapshot)
+        ):
+            return None
+        return snapshot
+
+    previous = read_servable(normalized_identity)
     if previous is None and stale_identity is not None:
-        previous = read_exact_snapshot(namespace, stale_identity)
+        previous = read_servable(stale_identity)
     state = exact_refresh_state(namespace, normalized_identity)
     if previous is not None and not refresh:
         return _decorate_refresh_state(previous, state)
@@ -1591,7 +1612,7 @@ def read_or_schedule_exact_snapshot(
     # Eager test execution (or an exceptionally fast worker) may have already
     # published before enqueue returned. Re-read once; production requests do
     # not wait or poll here.
-    current = read_exact_snapshot(namespace, normalized_identity)
+    current = read_servable(normalized_identity)
     current_state = exact_refresh_state(namespace, normalized_identity)
     if current is not None:
         return _decorate_refresh_state(current, current_state)

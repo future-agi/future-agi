@@ -967,8 +967,17 @@ const PrimaryGraph = ({
       ? "rgba(147, 130, 220, 0.30)"
       : "rgba(147, 160, 230, 0.25)");
 
-  const metricSeriesName = metricDef.unit
-    ? `${metricDef.label} (${metricDef.unit})`
+  // The server names the statistic of every system-metric series; latency is
+  // always the median. Only a stamped payload is labelled: one without the
+  // field (an older server or a stale tab) may still hold a mean, so it keeps
+  // the plain metric name rather than a guess.
+  const metricStatistic = (displayGraphData || graphData)?.metric_statistic;
+  const statisticLabel = metricStatistic === "median" ? "median" : null;
+  const metricSeriesQualifiers = [statisticLabel, metricDef.unit].filter(
+    Boolean,
+  );
+  const metricSeriesName = metricSeriesQualifiers.length
+    ? `${metricDef.label} (${metricSeriesQualifiers.join(", ")})`
     : metricDef.label;
   const lineSeriesName = metricSeriesName;
   const trafficSeriesName = "Traffic";
@@ -1193,6 +1202,15 @@ const PrimaryGraph = ({
               sx={{ flexShrink: 0, color: "text.secondary" }}
             />
           </ButtonBase>
+          {statisticLabel && (
+            <Typography
+              data-testid="graph-metric-statistic"
+              noWrap
+              sx={{ fontSize: 12, color: "text.secondary" }}
+            >
+              ({statisticLabel})
+            </Typography>
+          )}
 
           {/* Metric picker popover */}
           <Popover

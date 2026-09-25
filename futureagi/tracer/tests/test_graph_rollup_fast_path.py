@@ -1250,7 +1250,7 @@ def test_filtered_graph_poll_does_not_duplicate_running_background_read(monkeypa
         organization_id="33333333-3333-4333-8333-333333333333",
     )
 
-    assert response == pending
+    assert response == {**pending, "metric_statistic": "median"}
     direct_read.assert_not_called()
     assert cache_probe.call_count == 1
     assert cache_probe.call_args.kwargs["schedule_on_miss"] is False
@@ -1300,7 +1300,7 @@ def test_filtered_graph_budget_failure_schedules_one_heavy_read(monkeypatch):
         workspace_id="44444444-4444-4444-8444-444444444444",
     )
 
-    assert response == pending
+    assert response == {**pending, "metric_statistic": "median"}
     assert len(cache_calls) == 2
     assert cache_calls[0][1]["schedule_on_miss"] is False
     assert cache_calls[1][1]["schedule_on_miss"] is True
@@ -1353,7 +1353,7 @@ def test_filtered_graph_mid_response_eof_schedules_one_heavy_read(monkeypatch):
         workspace_id="44444444-4444-4444-8444-444444444444",
     )
 
-    assert response == pending
+    assert response == {**pending, "metric_statistic": "median"}
     assert len(cache_calls) == 2
     assert cache_calls[0][1]["schedule_on_miss"] is False
     assert cache_calls[1][1]["schedule_on_miss"] is True

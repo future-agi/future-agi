@@ -283,7 +283,18 @@ def _attribute_detail_payload(identity: dict[str, Any]) -> Any:
 
 def _load_exact_payload(namespace: str, identity: dict[str, Any]) -> Any:
     if namespace.startswith("observe-"):
-        return _observe_payload(namespace, identity)
+        from tracer.services.clickhouse.graph_metric_statistic import (
+            stamp_snapshot_statistic,
+        )
+
+        # The statistic travels in the cached payload. Readers serve a latency
+        # snapshot only when it says "median", so one cached by a pre-median
+        # worker during a rolling deploy is a miss (graph_metric_statistic).
+        return stamp_snapshot_statistic(
+            namespace,
+            identity.get("metric_id"),
+            _observe_payload(namespace, identity),
+        )
     if namespace == "dashboard-query":
         return _dashboard_payload(identity)
     if namespace == "eval-usage":

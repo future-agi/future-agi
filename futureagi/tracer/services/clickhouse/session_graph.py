@@ -18,11 +18,16 @@ from tracer.services.clickhouse.bounded_graph_reads import (
     read_graph_candidates,
 )
 from tracer.services.clickhouse.graph_dispatch import (
+    OBSERVE_SYSTEM_GRAPH_PAYLOAD_VERSION,
     _require_rollup_result_shape,
     degraded_graph_response,
     fetch_annotation_graph_ch,
     fetch_eval_graph_ch,
     format_system_metric_graph,
+)
+from tracer.services.clickhouse.graph_metric_statistic import (
+    snapshot_names_its_statistic,
+    stamps_metric_statistic,
 )
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.session_time_series import (
@@ -669,6 +674,14 @@ def _session_scoped_filters(
     ]
 
 
+def _requested_session_system_metric(call: dict[str, Any]) -> str | None:
+    config = call.get("req_data_config") or {}
+    if str(config.get("type") or "") != "SYSTEM_METRIC":
+        return None
+    return str(config.get("id") or "session_count")
+
+
+@stamps_metric_statistic("session", _requested_session_system_metric)
 def fetch_session_graph_ch(
     *,
     analytics: QueryExecutor,
@@ -745,6 +758,7 @@ def fetch_session_graph_ch(
             "filters": filters,
             "interval": interval,
             "metric_id": metric_id,
+            "payload_version": OBSERVE_SYSTEM_GRAPH_PAYLOAD_VERSION,
         }
         if organization_id is not None:
             identity["organization_id"] = str(organization_id)
@@ -762,6 +776,10 @@ def fetch_session_graph_ch(
                 "query_sampled": False,
                 "query_refreshing": True,
             },
+            # A latency snapshot a pre-median worker cached is a miss.
+            accept_snapshot=lambda payload: snapshot_names_its_statistic(
+                "observe-session-system-graph", metric_id, payload
+            ),
         )
 
     # Eval and annotation graphs, like filtered system graphs, are exact

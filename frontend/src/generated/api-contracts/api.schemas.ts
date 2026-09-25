@@ -21446,6 +21446,17 @@ export interface ApiErrorResponseApi {
   details?: ApiErrorResponseApiDetails;
 }
 
+export type FetchGraphResponseApiResultMetricStatistic =
+  (typeof FetchGraphResponseApiResultMetricStatistic)[keyof typeof FetchGraphResponseApiResultMetricStatistic];
+
+export const FetchGraphResponseApiResultMetricStatistic = {
+  count: "count",
+  sum: "sum",
+  mean: "mean",
+  median: "median",
+  percentage: "percentage",
+} as const;
+
 export type FetchGraphResponseApiResultDataItem = {
   timestamp: string;
   value: number;
@@ -21470,6 +21481,7 @@ export type FetchGraphResponseApiResult = {
   metric_name?: string;
   id?: string;
   name?: string;
+  metric_statistic?: FetchGraphResponseApiResultMetricStatistic;
   data: FetchGraphResponseApiResultDataItem[];
   query_complete: boolean;
   query_status: FetchGraphResponseApiResultQueryStatus;
@@ -24843,9 +24855,24 @@ export interface ObserveGraphDataRequestApi {
   /** On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result. */
   filters?: ObserveGraphDataRequestApiFiltersItem[];
   interval?: ObserveGraphDataRequestApiInterval;
+  /** Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the median (p50). */
   property?: string;
   req_data_config: ObserveGraphDataRequestApiReqDataConfig;
 }
+
+/**
+ * Statistic of the published system-metric series per bucket. Latency is always the t-digest median (p50) of span latency. Absent for eval and annotation series.
+ */
+export type ObserveGraphDataResultApiMetricStatistic =
+  (typeof ObserveGraphDataResultApiMetricStatistic)[keyof typeof ObserveGraphDataResultApiMetricStatistic];
+
+export const ObserveGraphDataResultApiMetricStatistic = {
+  count: "count",
+  sum: "sum",
+  mean: "mean",
+  median: "median",
+  percentage: "percentage",
+} as const;
 
 /**
  * Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.
@@ -24904,6 +24931,8 @@ export const ObserveGraphDataResultApiQuerySamplingStrategy = {
 export interface ObserveGraphDataResultApi {
   metric_name: string;
   name?: string;
+  /** Statistic of the published system-metric series per bucket. Latency is always the t-digest median (p50) of span latency. Absent for eval and annotation series. */
+  metric_statistic?: ObserveGraphDataResultApiMetricStatistic;
   /** Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points. */
   data: ObserveGraphDataPointApi[];
   query_complete?: boolean;
@@ -25346,6 +25375,13 @@ export interface ProjectApi {
 export type ProjectGraphDataResultApiSystemMetrics = { [key: string]: unknown };
 
 /**
+ * Statistic of each ``system_metrics`` series per bucket, e.g. {"latency": "median", "tokens": "sum", "cost": "mean", "traffic": "count"}. Latency is always the t-digest median (p50).
+ */
+export type ProjectGraphDataResultApiSystemMetricStatistics = {
+  [key: string]: "count" | "sum" | "mean" | "median" | "percentage";
+};
+
+/**
  * Any valid JSON value.
  */
 export type ProjectGraphDataResultApiEvaluations = { [key: string]: unknown };
@@ -25353,6 +25389,8 @@ export type ProjectGraphDataResultApiEvaluations = { [key: string]: unknown };
 export interface ProjectGraphDataResultApi {
   /** Any valid JSON value. */
   system_metrics: ProjectGraphDataResultApiSystemMetrics;
+  /** Statistic of each ``system_metrics`` series per bucket, e.g. {"latency": "median", "tokens": "sum", "cost": "mean", "traffic": "count"}. Latency is always the t-digest median (p50). */
+  system_metric_statistics?: ProjectGraphDataResultApiSystemMetricStatistics;
   /** Any valid JSON value. */
   evaluations: ProjectGraphDataResultApiEvaluations;
 }
@@ -26544,6 +26582,7 @@ export interface TraceSessionGraphDataRequestApi {
   /** On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result. */
   filters?: TraceSessionGraphDataRequestApiFiltersItem[];
   interval?: TraceSessionGraphDataRequestApiInterval;
+  /** Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the median (p50). */
   property?: string;
   req_data_config: TraceSessionGraphDataRequestApiReqDataConfig;
 }
@@ -26570,6 +26609,20 @@ export const ObserveGraphDataErrorResponseApiType = {
 export type ObserveGraphDataErrorResponseApiDetails = {
   [key: string]: string[];
 };
+
+/**
+ * Statistic of the published system-metric series per bucket. Latency is always the t-digest median (p50) of span latency. Absent for eval and annotation series.
+ */
+export type ObserveGraphDataErrorResultApiMetricStatistic =
+  (typeof ObserveGraphDataErrorResultApiMetricStatistic)[keyof typeof ObserveGraphDataErrorResultApiMetricStatistic];
+
+export const ObserveGraphDataErrorResultApiMetricStatistic = {
+  count: "count",
+  sum: "sum",
+  mean: "mean",
+  median: "median",
+  percentage: "percentage",
+} as const;
 
 export type ObserveGraphDataErrorResultApiQueryProvenance =
   (typeof ObserveGraphDataErrorResultApiQueryProvenance)[keyof typeof ObserveGraphDataErrorResultApiQueryProvenance];
@@ -26618,6 +26671,8 @@ export const ObserveGraphDataErrorResultApiQuerySamplingStrategy = {
 export interface ObserveGraphDataErrorResultApi {
   metric_name: string;
   name?: string;
+  /** Statistic of the published system-metric series per bucket. Latency is always the t-digest median (p50) of span latency. Absent for eval and annotation series. */
+  metric_statistic?: ObserveGraphDataErrorResultApiMetricStatistic;
   /** Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points. */
   data: ObserveGraphDataPointApi[];
   query_complete?: boolean;

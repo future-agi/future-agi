@@ -29,6 +29,7 @@ import ChartsDateTimeRangePicker from "./ChartsDateTimeRangePicker";
 import EvaluationCharts from "./EvaluationCharts";
 import { useChartsViewContext } from "./ChartsViewProvider/ChartsViewContext";
 import { normalizeTimestamp } from "./ChartsViewProvider/common";
+import { latencyChartLabels } from "./common";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import TraceFilterPanel from "../LLMTracing/TraceFilterPanel";
@@ -301,6 +302,10 @@ const ChartsView = () => {
   });
 
   const systemMetrics = graphData?.result?.system_metrics;
+  const latencyLabels = useMemo(
+    () => latencyChartLabels(graphData?.result?.system_metric_statistics),
+    [graphData],
+  );
   const graphReadState = getExactAggregationReadState(systemMetrics, {
     isError: graphError,
   });
@@ -320,13 +325,13 @@ const ChartsView = () => {
           charts: [
             {
               id: "chart-1",
-              label: "Latency",
+              label: latencyLabels.label,
               unit: metricUnits?.latency,
-              yAxisLabel: metricYLabels?.latency,
+              yAxisLabel: latencyLabels.yAxisLabel,
               isEvaluationChart: false,
               series: [
                 {
-                  name: "Latency",
+                  name: latencyLabels.seriesName,
                   data:
                     systemMetrics?.latency?.map((item) => ({
                       x: normalizeTimestamp(item?.timestamp),
@@ -392,7 +397,7 @@ const ChartsView = () => {
     }
 
     return [];
-  }, [graphReadState, systemMetrics]);
+  }, [graphReadState, latencyLabels, systemMetrics]);
 
   const refreshGrid = useCallback(() => {
     queryClient.invalidateQueries({

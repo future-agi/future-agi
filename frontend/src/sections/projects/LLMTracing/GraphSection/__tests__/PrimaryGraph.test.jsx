@@ -20,6 +20,7 @@ vi.mock("react-apexcharts", () => ({
   default: ({ series, options }) => (
     <div
       data-testid="apex-chart"
+      data-primary-series-name={series?.[0]?.name}
       data-traffic-series-name={series?.[1]?.name}
       data-traffic-axis-series-name={options?.yaxis?.[1]?.seriesName}
       data-primary-first-y={series?.[0]?.data?.[0]?.y}
@@ -487,7 +488,10 @@ describe("PrimaryGraph", () => {
       ),
     );
     const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
     });
     const graph = (projectId) => (
       <QueryClientProvider client={queryClient}>
@@ -1495,5 +1499,122 @@ describe("PrimaryGraph", () => {
         id: "eval-uuid-1",
       }),
     );
+  });
+
+  describe("latency statistic label", () => {
+    const graphResponse = (extra) => ({
+      data: {
+        status: true,
+        result: {
+          metric_name: "latency",
+          data: [
+            {
+              timestamp: "2026-08-03T01:00:00Z",
+              value: 120,
+              primary_traffic: 4,
+            },
+          ],
+          query_complete: true,
+          query_status: "complete",
+          query_sampled: false,
+          query_completed_at: "2026-08-03T02:00:00Z",
+          ...extra,
+        },
+      },
+    });
+
+    it.each([
+      ["traces", undefined],
+      ["sessions", "/tracer/trace-session/get_session_graph_data/"],
+      ["users", "/tracer/project/get_users_aggregate_graph_data/"],
+    ])(
+      "labels the %s latency series as the median the server declares",
+      async (trafficLabel, graphEndpoint) => {
+        axios.post.mockResolvedValue(
+          graphResponse({ metric_statistic: "median" }),
+        );
+        renderWithQueryClient(
+          <PrimaryGraph
+            observeIdOverride="project-override"
+            graphEndpoint={graphEndpoint}
+            trafficLabel={trafficLabel}
+          />,
+        );
+
+        await waitFor(() =>
+          expect(screen.getByTestId("apex-chart")).toHaveAttribute(
+            "data-primary-series-name",
+            "Latency (median, ms)",
+          ),
+        );
+        expect(screen.getByTestId("graph-metric-statistic")).toHaveTextContent(
+          "(median)",
+        );
+        // The picker trigger keeps the catalog name of the metric.
+        expect(screen.getByText("Latency")).toBeInTheDocument();
+      },
+    );
+
+    it("does not guess a statistic the response does not declare", async () => {
+      axios.post.mockResolvedValue(graphResponse({}));
+      renderWithQueryClient(
+        <PrimaryGraph observeIdOverride="project-override" />,
+      );
+
+      await waitFor(() =>
+        expect(screen.getByTestId("apex-chart")).toHaveAttribute(
+          "data-primary-series-name",
+          "Latency (ms)",
+        ),
+      );
+      expect(screen.queryByTestId("graph-metric-statistic")).toBeNull();
+    });
+
+    it("draws a statistic it does not know under the plain latency label", async () => {
+      // A newer server may name a statistic this tab predates. The graph
+      // still renders; the label falls back to the plain name.
+      axios.post.mockResolvedValue(graphResponse({ metric_statistic: "p95" }));
+      renderWithQueryClient(
+        <PrimaryGraph observeIdOverride="project-override" />,
+      );
+
+      await waitFor(() =>
+        expect(screen.getByTestId("apex-chart")).toHaveAttribute(
+          "data-primary-series-name",
+          "Latency (ms)",
+        ),
+      );
+      expect(screen.queryByTestId("graph-metric-statistic")).toBeNull();
+    });
+
+    it("adds no median caption to a summed series", async () => {
+      axios.post.mockResolvedValue(
+        graphResponse({ metric_name: "tokens", metric_statistic: "sum" }),
+      );
+      renderWithQueryClient(
+        <PrimaryGraph
+          observeIdOverride="project-override"
+          defaultMetric="tokens"
+          staticMetrics={{
+            system: [
+              {
+                id: "tokens",
+                label: "Tokens",
+                unit: "",
+                apiType: "SYSTEM_METRIC",
+              },
+            ],
+          }}
+        />,
+      );
+
+      await waitFor(() =>
+        expect(screen.getByTestId("apex-chart")).toHaveAttribute(
+          "data-primary-series-name",
+          "Tokens",
+        ),
+      );
+      expect(screen.queryByTestId("graph-metric-statistic")).toBeNull();
+    });
   });
 });

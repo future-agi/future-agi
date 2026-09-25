@@ -1,5 +1,6 @@
 """Session numeric witnesses preserve exact latest state and time boundaries."""
 import re
+import statistics
 import struct
 from dataclasses import replace
 from datetime import datetime, timedelta
@@ -164,8 +165,16 @@ def test_numeric_range_keeps_latest_alias_membership_and_all_roots(engine,monkey
     matched={canonical(r) for r in live if r['trace_session_id'] not in (None,str(UUID(int=0))) and 'agent.duration_s' in r['attrs_number'] and r['attrs_number']['agent.duration_s']>1}
     roots=[r for r in live if not r['parent_span_id'] and canonical(r) in matched]
     expected={}
+    # The public latency graph is the pooled t-digest median of every live
+    # span's non-NULL latency in the session (the population the unfiltered
+    # session rollup digests), which equals the lower median at this size. The
+    # other aggregates stay on the session's roots. The child here has a NULL
+    # latency, so it adds nothing to the median.
+    members=[r for r in live if r['trace_session_id'] not in (None,str(UUID(int=0))) and canonical(r) in matched]
+    expected_median={}
     for session in {canonical(r) for r in roots}:
         rows=[r for r in roots if canonical(r)==session]
+        expected_median[session]=statistics.median_low(int(r['latency_ms']) for r in members if canonical(r)==session and r['latency_ms'] is not None)
         expected[session]=(sum(int(r['latency_ms']) for r in rows)/len(rows),sum(int(r['total_tokens']) for r in rows),sum(r['cost'] for r in rows),len({r['trace_id'] for r in rows}))
     gold=({D:(50.0,23,2.0,1)} if scenario=='session-move' else {A:(20.0,12,1.0,2)} if scenario in ('live','other-hour','tied') else {})
     assert expected==gold
@@ -183,7 +192,7 @@ def test_numeric_range_keeps_latest_alias_membership_and_all_roots(engine,monkey
     assert typed(outputs[0])==typed(outputs[1])
     _assert_public_reader_absence_gate(
         run, monkeypatch, record_property, filters, raw_present=True,
-        expected_value=next(iter(gold.values()))[0] if gold else None,
+        expected_value=expected_median[next(iter(gold))] if gold else None,
     )
 
 
@@ -223,9 +232,12 @@ def test_microsecond_latest_winner_half_open_controls(engine,monkeypatch,boundar
             assert rows[0]['session_avg_latency']==20 and int(rows[0]['session_traces'])==2
         outputs.append(rows)
     assert typed(outputs[0])==typed(outputs[1])
+    # Roots 10 and 30 (the child's latency is NULL): the public latency graph
+    # is the pooled median of the session's spans (the lower median, 10), not
+    # the per-session mean (20).
     _assert_public_reader_absence_gate(
         run, monkeypatch, record_property, filters, raw_present=True,
-        expected_value=20 if expected_match else None,
+        expected_value=10 if expected_match else None,
     )
 
 

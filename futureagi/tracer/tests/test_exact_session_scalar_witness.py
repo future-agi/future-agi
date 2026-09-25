@@ -42,7 +42,7 @@ def _filters(*leaves):
     ]
 
 
-def _source(filters=None, enabled=True):
+def _source(filters=None, enabled=True, include_latency_values=False):
     return graph._session_aggregate_source_sql(
         project_id=PROJECT,
         filters=filters or _filters(),
@@ -51,6 +51,7 @@ def _source(filters=None, enabled=True):
         include_trace_ids=False,
         anchor_by_session_start=True,
         use_scalar_witness=enabled,
+        include_latency_values=include_latency_values,
     )
 
 
@@ -215,7 +216,8 @@ def test_budget_failure_discards_witness_and_runs_original_exact_query(code):
     assert len(analytics.calls) == 2 and result["query_count"] == 2
     assert "session_scalar_witness_ids" in analytics.calls[0][0]
     fallback, params, _, settings = analytics.calls[1]
-    original_source, _ = _source(enabled=False)
+    # ``_read`` asks for the latency graph, whose source carries latency values.
+    original_source, _ = _source(enabled=False, include_latency_values=True)
     assert original_source in fallback
     assert "session_scalar_witness_ids" not in fallback
     assert params["snapshot_start_date"] == START

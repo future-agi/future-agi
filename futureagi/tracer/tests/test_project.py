@@ -1131,7 +1131,17 @@ class TestProjectGraphDataAPI:
             )
         assert response.status_code == status.HTTP_200_OK
         data = get_result(response)
-        assert data == {"system_metrics": exact_metrics, "evaluations": {}}
+        assert data == {
+            "system_metrics": exact_metrics,
+            # Declared per-series statistic: latency is always the median.
+            "system_metric_statistics": {
+                "latency": "median",
+                "tokens": "sum",
+                "cost": "mean",
+                "traffic": "count",
+            },
+            "evaluations": {},
+        }
 
     @pytest.mark.parametrize(
         ("failure", "expected_status", "expected_code"),

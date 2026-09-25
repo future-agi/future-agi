@@ -509,7 +509,10 @@ def test_combined_relations_and_attributes_keep_one_compact_spans_source():
     assert "GROUP BY trace_id, graph_bucket, graph_in_output_window" in query
     assert "groupArrayIf(" in query
     assert "ARRAY JOIN graph_output_buckets" in query
-    assert "sum(tupleElement(graph_output_bucket, 2))" in query
+    # Slot 2 carries each trace's latency array; the bucket median is taken
+    # once over their union. The additive slots are still summed.
+    assert "quantileTDigestArray(0.5)(tupleElement(graph_output_bucket, 2))" in query
+    assert "sum(tupleElement(graph_output_bucket, 3))" in query
     assert "greatest(sum(tupleElement(graph_output_bucket, 5)), 1)" in query
 
     prewhere = query.split("PREWHERE", 1)[1].split("GROUP BY", 1)[0]

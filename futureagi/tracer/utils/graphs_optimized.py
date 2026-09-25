@@ -726,12 +726,18 @@ def get_system_metric_data(
         workspace_id=workspace_id,
     )
     metric_key = metric_name if metric_name in metrics else "latency"
+    from tracer.services.clickhouse.graph_metric_statistic import (
+        system_metric_statistic,
+    )
+
+    statistic = system_metric_statistic("trace", metric_key)
     traffic_by_timestamp = {
         point.get("timestamp"): point.get("traffic", 0)
         for point in metrics.get("traffic", [])
     }
     return {
         "metric_name": metric_name,
+        **({"metric_statistic": statistic} if statistic else {}),
         "data": [
             {
                 "timestamp": point.get("timestamp"),

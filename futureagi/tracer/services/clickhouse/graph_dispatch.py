@@ -39,6 +39,10 @@ from tracer.services.clickhouse.exact_graph_reads import (
     read_exact_eval_graph,
     read_exact_user_system_graph,
 )
+from tracer.services.clickhouse.graph_metric_statistic import (
+    snapshot_names_its_statistic,
+    stamps_metric_statistic,
+)
 from tracer.services.clickhouse.graph_read_cost import (
     estimate_raw_graph_scan_rows,
     estimate_user_graph_scan_rows,
@@ -73,6 +77,12 @@ GRAPH_RESULT_BYTES = settings.DASHBOARD_ROLLUP_MAX_RESULT_BYTES
 # prevents a rolling deploy from serving a 30-day cached payload produced by
 # the retired hierarchy-as-path projection.
 AGENT_GRAPH_PAYLOAD_VERSION = 5
+# The same, for the exact system-metric snapshots (observe-system-graph,
+# observe-session-system-graph, observe-user-system-graph). Version 1: latency
+# is the t-digest median. Snapshots cached before it hold a mean and must never
+# be served under the "median" label, so the identity (and with it the cache,
+# alias, refresh-lock and refresh-state keys) rotates.
+OBSERVE_SYSTEM_GRAPH_PAYLOAD_VERSION = 1
 # A short-window selector may prove as many as 4,096 trace matches. Decoration
 # fans each trace set into child-span reads, so keep the same finite 40-trace
 # envelope used by the long-window sampler before any decoration query runs.
@@ -887,12 +897,17 @@ def _read_or_refresh_exact_graph(
         identity["organization_id"] = str(organization_id)
     if workspace_id is not None:
         identity["workspace_id"] = str(workspace_id)
+    metric_id = identity.get("metric_id")
     return read_or_schedule_exact_snapshot(
         namespace,
         identity,
         refresh=refresh,
         pending_payload=pending_payload,
         schedule_on_miss=schedule_on_miss,
+        # A latency snapshot a pre-median worker cached is a miss.
+        accept_snapshot=lambda payload: snapshot_names_its_statistic(
+            namespace, metric_id, payload
+        ),
     )
 
 
@@ -1835,6 +1850,7 @@ def fetch_background_raw_system_metric_graph(
     )
 
 
+@stamps_metric_statistic("trace", lambda call: call.get("metric_id"))
 def fetch_system_metric_graph_ch(
     *,
     analytics: Any,
@@ -1897,6 +1913,7 @@ def fetch_system_metric_graph_ch(
         "interval": interval,
         "metric_id": str(metric_id or ""),
         "observe_type": normalized_observe_type,
+        "payload_version": OBSERVE_SYSTEM_GRAPH_PAYLOAD_VERSION,
     }
     pending_payload = _pending_graph_payload(str(metric_id or ""))
     cached = _read_or_refresh_exact_graph(
@@ -2166,6 +2183,7 @@ def _affordable_user_graph_read(
     return _GraphReadUnaffordable(estimated_rows)
 
 
+@stamps_metric_statistic("users", lambda call: call.get("metric_id"))
 def fetch_user_system_metric_graph_ch(
     *,
     analytics: Any,
@@ -2201,6 +2219,7 @@ def fetch_user_system_metric_graph_ch(
         "filters": filters,
         "interval": interval,
         "metric_id": normalized_metric_id,
+        "payload_version": OBSERVE_SYSTEM_GRAPH_PAYLOAD_VERSION,
     }
     pending_payload = _pending_graph_payload(normalized_metric_id)
     if organization_id:

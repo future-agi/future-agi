@@ -29,6 +29,12 @@ from tracer.services.clickhouse.query_builders.hourly_aggregate_states import (
     ERROR_RATE_MERGE_EXPRESSION,
     hourly_aggregate_state_source,
 )
+from tracer.services.clickhouse.query_builders.latency_statistic import (
+    latency_values_sql,
+    median_latency_from_arrays_sql,
+    median_latency_from_states_sql,
+    median_latency_sql,
+)
 
 _SAFE_CLUSTER_NAME_RE = re.compile(r"\A[A-Za-z0-9_-]+\Z")
 
@@ -175,6 +181,9 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
 
         Expected columns from the query:
         ``time_bucket, avg_latency, total_tokens, avg_cost, traffic_count``
+
+        ``avg_latency`` is an internal alias kept for compatibility: every
+        live builder fills it with the t-digest median (p50) of latency.
 
         Args:
             rows: Rows returned by ClickHouse.
@@ -342,15 +351,13 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         """
         bucket_fn = self.time_bucket_expr(self.interval)
 
-        # quantilesTDigestMerge returns a Tuple; index [1] is the 0.5 (median).
-        # The stored states hold 3 quantiles (0.5, 0.95, 0.99) vs the legacy 4
-        # (0.5, 0.9, 0.95, 0.99) — we still surface the median as avg_latency
-        # to preserve the dashboard contract. This is the same statistic the
-        # retired rollup rendered, so the line does not change meaning here.
+        # Latency is the t-digest median (p50) on every Observe graph path;
+        # this one merges the stored per-hour states. ``avg_latency`` is only
+        # the internal result alias shared with ``format_result``.
         query = f"""
         SELECT
             {bucket_fn}(hour) AS time_bucket,
-            (quantilesTDigestMerge(0.5, 0.95, 0.99)(latency_q))[1]
+            {median_latency_from_states_sql("latency_q")}
                 AS avg_latency,
             sumMerge(total_tokens_sum) AS total_tokens,
             sumMerge(cost_sum) / greatest(countMerge(n), 1)
@@ -375,7 +382,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         query = f"""
         SELECT
             {bucket_fn}(start_time) AS time_bucket,
-            avg(latency_ms) AS avg_latency,
+            {median_latency_sql("latency_ms")} AS avg_latency,
             sum(total_tokens) AS total_tokens,
             avg(cost) AS avg_cost,
             count() AS traffic_count,
@@ -914,9 +921,13 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         by local ``max(predicate)`` aggregates and never cross that boundary.
         A second compact aggregation computes each trace's any-sibling flags
         and packs its exact additive bucket states; the outer query merges
-        those states. This preserves exact averages through ``sum / count``
-        without retaining raw rows in a window-function buffer (the shape that
-        exceeded the production 2-GiB query memory limit).
+        those states. Latency crosses the trace boundary as each trace's raw
+        ``Array(Int32)`` of contributing latencies (4 B per span), and the
+        outer query takes one t-digest median over the union per bucket, so
+        a median is never averaged or weighted by traffic. Nothing retains
+        raw rows in a window-function buffer (the shape that exceeded the
+        production 2-GiB query memory limit), and per-(trace, bucket)
+        t-digest states would cost about 2.5x the memory of these arrays.
 
         A span graph applies filters directly to contributing rows. Explicit
         ``PREWHERE`` contains only immutable identity/range predicates whose
@@ -1001,7 +1012,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                     groupArrayIf(
                         tuple(
                             graph_bucket,
-                            graph_latency_sum,
+                            graph_latencies,
                             graph_total_tokens_sum,
                             graph_cost_sum,
                             graph_row_count,
@@ -1020,8 +1031,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                             {sentinel_bucket}
                         ) AS graph_bucket,
                         toUInt8({output_window}) AS graph_in_output_window,
-                        sumIf(toInt64(latency_ms), {contribution_condition})
-                            AS graph_latency_sum,
+                        {latency_values_sql("latency_ms", contribution_condition)}
+                            AS graph_latencies,
                         sumIf(toInt64(total_tokens), {contribution_condition})
                             AS graph_total_tokens_sum,
                         sumIf(cost, {contribution_condition})
@@ -1047,8 +1058,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             query = f"""
         SELECT
             tupleElement(graph_output_bucket, 1) AS time_bucket,
-            sum(tupleElement(graph_output_bucket, 2))
-                / greatest(sum(tupleElement(graph_output_bucket, 5)), 1)
+            {median_latency_from_arrays_sql("tupleElement(graph_output_bucket, 2)")}
                 AS avg_latency,
             sum(tupleElement(graph_output_bucket, 3)) AS total_tokens,
             sum(tupleElement(graph_output_bucket, 4))
@@ -1092,7 +1102,7 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
         query = f"""
         SELECT
             {bucket_fn}(start_time) AS time_bucket,
-            avg(latency_ms) AS avg_latency,
+            {median_latency_sql("latency_ms")} AS avg_latency,
             sum(total_tokens) AS total_tokens,
             avg(cost) AS avg_cost,
             count() AS traffic_count,
