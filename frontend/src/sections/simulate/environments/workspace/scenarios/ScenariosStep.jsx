@@ -179,12 +179,10 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
     () => withServedLabels(pageData.fields || [], pageData.levelLabels),
     [pageData.fields, pageData.levelLabels],
   );
-  // The editor's background-noise choices come from the server field catalogue
-  // (the values the agent actually uses), not a hardcoded list — so the picker
-  // matches the suite and follows any backend vocabulary change automatically.
+  // The editor offers every noise bed the backend serves, not only the ones the suite already uses.
   const noiseOptions = useMemo(
-    () => (pageData.fields || []).find((f) => f.value === "background_noise")?.choices ?? [],
-    [pageData.fields],
+    () => pageData.scenarioEditing?.noise_choices ?? [],
+    [pageData.scenarioEditing],
   );
 
   const filterCount = Object.values(filters).reduce(

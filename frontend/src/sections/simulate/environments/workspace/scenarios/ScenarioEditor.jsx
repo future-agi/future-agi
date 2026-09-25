@@ -30,9 +30,7 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
     () => scenarioEditing?.editable_fields ?? [],
     [scenarioEditing],
   );
-  // Background-noise choices come from the server field catalogue (the values
-  // the agent actually uses), always including the current value so it stays
-  // selectable even if it's outside the server's list.
+  // Background-noise choices come from the editing contract, always including the current value.
   const noiseChoices = useMemo(() => {
     const base = noiseOptions;
     const current = noiseKey(row?.backgroundNoise);

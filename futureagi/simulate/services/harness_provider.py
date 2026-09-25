@@ -1674,6 +1674,7 @@ class HostedHarnessProvider:
         """Which fields an amend will take, and which of them cannot be taken without a re-proof."""
         from simulate.models.agent_definition import AgentDefinition
         from simulate.models.persona import Persona
+        from simulate.services.harness_scenarios import NOISE_LABELS
 
         # A call has no turn budget; a chat has no accent or room behind the caller.
         behavioural = self._BEHAVIOURAL_FIELDS - (
@@ -1699,6 +1700,9 @@ class HostedHarnessProvider:
                 )
                 for field in sorted(persona)
             },
+            "noise_choices": (
+                [bed for bed in NOISE_LABELS if bed != "present"] if spoken else []
+            ),
             "rework_fields": sorted(behavioural | persona),
         }
 

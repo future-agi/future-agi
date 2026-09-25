@@ -180,8 +180,7 @@ export default function ScenarioSuite({
   const editableFields = contract?.editable_fields;
   const personaFields = contract?.persona_fields;
   const levelLabels = served?.levelLabels || {};
-  const noiseChoices =
-    fields.find((one) => one.value === "background_noise")?.choices || [];
+  const noiseChoices = contract?.noise_choices || [];
   const filterFields = withServedLabels(fields, levelLabels);
 
   const activeFilters = Object.keys(filters).length;

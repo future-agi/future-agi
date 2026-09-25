@@ -53,6 +53,9 @@ def test_a_call_offers_no_turn_budget_and_a_chat_no_voice_fields():
     assert "background_noise" in spoken["editable_fields"] and "accent" in spoken["persona_fields"]
     assert "max_turns" in typed["editable_fields"]
     assert "background_noise" not in typed["editable_fields"] and "accent" not in typed["persona_fields"]
+    assert spoken["noise_choices"][0] == "quiet line"
+    assert "street" in spoken["noise_choices"]
+    assert "present" not in spoken["noise_choices"] and typed["noise_choices"] == []
 
 
 def test_the_contract_serves_each_editable_persona_fields_choices():
