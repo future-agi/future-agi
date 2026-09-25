@@ -68,6 +68,17 @@ NavArrow.propTypes = {
   disabled: PropTypes.bool,
 };
 
+// A scroll pane keeps ↑/↓ for itself while focused, so the arrows scroll it
+// instead of stepping to another conversation — the voice transcript does the
+// same. Focusable so a click inside hands it the keyboard; default not
+// prevented, so the browser still scrolls.
+const ownsArrowKeys = {
+  tabIndex: 0,
+  onKeyDown: (e) => {
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") e.stopPropagation();
+  },
+};
+
 export default function ChatCallDrawer({
   task,
   onClose,
@@ -149,7 +160,7 @@ export default function ChatCallDrawer({
             <Tab value="graph" label="Graph" sx={{ minHeight: 40 }} />
           </CustomTabs>
 
-          <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+          <Box {...ownsArrowKeys} sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}>
             {pane === "transcript" &&
               (isLoading && turns.length === 0 ? (
                 <Stack alignItems="center" sx={{ py: 6 }}>
@@ -220,7 +231,7 @@ export default function ChatCallDrawer({
             <Tab value="attributes" label="Attributes" sx={{ minHeight: 40 }} />
           </CustomTabs>
 
-          <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+          <Box {...ownsArrowKeys} sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}>
             {side === "analytics" && (
               <Box sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))" }}>
                 <Cell label="Duration" value={secs(durationMs)} />

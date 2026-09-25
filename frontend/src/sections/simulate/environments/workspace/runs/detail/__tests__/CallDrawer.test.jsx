@@ -251,6 +251,25 @@ describe("CallDrawer — chat prev/next", () => {
     input.remove();
   });
 
+  it.each([
+    ["the transcript", () => screen.getByText("Refund issued.")],
+    ["the analytics pane", () => screen.getByText("Words")],
+  ])(
+    "leaves ↑/↓ to scroll %s instead of stepping",
+    (_pane, target) => {
+      const onNext = vi.fn();
+      const onPrev = vi.fn();
+      renderChat({ hasPrev: true, hasNext: true, onPrev, onNext });
+
+      // fireEvent returns false when the default (the browser's scroll) was
+      // prevented.
+      expect(fireEvent.keyDown(target(), { key: "ArrowDown" })).toBe(true);
+      expect(fireEvent.keyDown(target(), { key: "ArrowUp" })).toBe(true);
+      expect(onNext).not.toHaveBeenCalled();
+      expect(onPrev).not.toHaveBeenCalled();
+    },
+  );
+
   it("says conversation, not call — this is a chat", () => {
     useCallDetail.mockReturnValue({
       callDetail: { ...CHAT_DETAIL, turns: [] },
