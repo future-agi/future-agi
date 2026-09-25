@@ -194,6 +194,121 @@ class TestCharacterBasedPricing:
 
 
 # =============================================================================
+# Unit Tests - Per-1k-Character Pricing (Gemini chat/embedding models)
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestPer1kCharacterPricing:
+    """Test per-1k-character pricing.
+
+    Several Gemini models (e.g. gemini-1.5-pro / -flash, gemini/gemini-2.5-*,
+    openrouter/google/gemini-pro-1.5) are priced with
+    ``input_per_1k_characters`` / ``output_per_1k_characters``. Before the fix
+    ``calculate_total_cost`` only handled the per-1M-character (TTS) branch, so
+    every per-1k-character model fell through to the "unknown pricing" path and
+    returned a hard $0.
+
+    NOTE (chars-vs-tokens): these entries are ``mode="chat"`` yet priced per
+    *character*. Character pricing requires REAL character counts
+    (``input_characters`` / ``output_characters``) in the usage dict — the
+    implementation never approximates characters from token counts. A normal
+    Gemini chat response reports only token counts, so it deliberately falls
+    through to the unrecognized-pricing fallback (a $0 result) rather than
+    fabricating a precise-looking-but-wrong char-from-token cost.
+    """
+
+    def test_gemini_1_5_pro_per_1k_char_pricing_lookup(self):
+        """Gemini 1.5 Pro is priced per 1k characters, not per 1M tokens."""
+        pricing = get_model_pricing("gemini-1.5-pro")
+
+        assert pricing is not None
+        assert "input_per_1k_characters" in pricing
+        assert "output_per_1k_characters" in pricing
+        # This branch does NOT use token-based keys.
+        assert "input_per_1M_tokens" not in pricing
+
+    def test_calculate_cost_per_1k_char_with_explicit_characters_is_non_zero(self):
+        """Regression: with REAL character counts a per-1k-char chat model must
+        no longer cost a hard $0.
+
+        Fails without the per-1k-character branch (falls through to Unknown ->
+        $0); passes with it.
+        """
+        # Real character counts are supplied, so this branch prices correctly.
+        token_usage = {"input_characters": 50000, "output_characters": 10000}
+
+        result = calculate_total_cost("gemini-1.5-pro", token_usage)
+
+        # gemini-1.5-pro: $0.007 / 1k input chars and $0.007 / 1k output chars.
+        expected_prompt_cost = round((50000 / 1_000) * 0.007, 6)
+        expected_completion_cost = round((10000 / 1_000) * 0.007, 6)
+
+        assert result["total_cost"] > 0.0  # the core regression assertion
+        assert result["prompt_cost"] == expected_prompt_cost
+        assert result["completion_cost"] == expected_completion_cost
+        assert result["total_cost"] == round(
+            expected_prompt_cost + expected_completion_cost, 6
+        )
+
+    def test_calculate_cost_per_1k_char_uses_only_real_characters(self):
+        """The branch prices from character counts only; token counts that
+        happen to be present alongside them are ignored (not added in)."""
+        token_usage = {
+            "input_characters": 50000,
+            "output_characters": 10000,
+            # Token counts are present but MUST NOT influence the char cost.
+            "prompt_tokens": 999999,
+            "completion_tokens": 999999,
+        }
+
+        result = calculate_total_cost("gemini-1.5-pro", token_usage)
+
+        expected_prompt_cost = round((50000 / 1_000) * 0.007, 6)
+        expected_completion_cost = round((10000 / 1_000) * 0.007, 6)
+
+        assert result["prompt_cost"] == expected_prompt_cost
+        assert result["completion_cost"] == expected_completion_cost
+
+    def test_calculate_cost_per_1k_char_tokens_only_does_not_fabricate(self):
+        """Core P1 regression: when NO real character counts are present (the
+        normal Gemini chat case, which reports only token counts) the branch
+        must NOT approximate a cost from tokens.
+
+        Instead the model falls through to the unrecognized-pricing fallback
+        and is not priced by this branch ($0), because a precise-looking cost
+        derived from a 1-token==1-char guess is systematically wrong and worse
+        than not pricing. (The pre-fix token-fallback implementation would have
+        returned a fabricated non-zero cost here.)
+        """
+        token_usage = {"prompt_tokens": 10000, "completion_tokens": 2000}
+
+        result = calculate_total_cost("gemini-1.5-pro", token_usage)
+
+        # No fabricated char-from-token cost — falls through to Unknown -> $0.
+        assert result["prompt_cost"] == 0.0
+        assert result["completion_cost"] == 0.0
+        assert result["total_cost"] == 0.0
+
+    def test_calculate_cost_per_1k_char_handles_na_placeholder_price(self):
+        """A non-numeric placeholder price (e.g. "N/A" on
+        text-multilingual-embedding-002) must yield $0, not a TypeError.
+
+        Real character counts are supplied so the per-1k-character branch is
+        actually entered and its "N/A" -> 0.0 coercion guard is exercised.
+        """
+        token_usage = {"input_characters": 1000, "output_characters": 0}
+
+        result = calculate_total_cost(
+            "text-multilingual-embedding-002", token_usage
+        )
+
+        assert result["total_cost"] == 0.0
+        assert result["prompt_cost"] == 0.0
+        assert result["completion_cost"] == 0.0
+
+
+# =============================================================================
 # Unit Tests - Minute-Based Pricing (STT Models)
 # =============================================================================
 
@@ -233,6 +348,37 @@ class TestMinuteBasedPricing:
         assert result["prompt_cost"] == expected_cost
         assert result["completion_cost"] == 0.0
         assert result["total_cost"] == expected_cost
+
+    def test_azure_whisper_pricing_uses_per_minute_audio_alias(self):
+        """azure/whisper-1 is priced with the `per_minute_audio` alias key."""
+        pricing = get_model_pricing("azure/whisper-1")
+
+        assert pricing is not None
+        assert "per_minute_audio" in pricing
+        assert pricing["per_minute_audio"] == 0.006
+
+    def test_calculate_cost_azure_whisper_equals_openai_whisper(self):
+        """Regression: azure/whisper-1 must cost the same as openai whisper-1.
+
+        Both are $0.006/min, but azure/whisper-1 uses the `per_minute_audio`
+        alias. Before the fix the STT branch only handled `input_per_minute`,
+        so azure/whisper-1 fell through to Unknown -> $0.
+
+        Fails without the alias (azure -> $0.0 != whisper-1 -> $0.06);
+        passes with it.
+        """
+        token_usage = {"audio_seconds": 600.0}  # 10 minutes
+
+        azure_result = calculate_total_cost("azure/whisper-1", token_usage)
+        openai_result = calculate_total_cost("whisper-1", token_usage)
+
+        # 10 min * $0.006 = $0.06
+        expected_cost = round((600.0 / 60.0) * 0.006, 6)
+
+        assert azure_result["total_cost"] > 0.0  # the core regression assertion
+        assert azure_result["prompt_cost"] == expected_cost
+        assert azure_result["completion_cost"] == 0.0
+        assert azure_result["total_cost"] == openai_result["total_cost"]
 
 
 # =============================================================================
