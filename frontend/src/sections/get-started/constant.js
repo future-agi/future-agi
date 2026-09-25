@@ -8,7 +8,7 @@ const docLinks = {
 
 const navigationLinks = {
   dataset: "/dashboard/develop",
-  experiment: "/dashboard/prototype",
+  experiment: "/dashboard/develop",
   evaluate: "/dashboard/evaluations",
 };
 

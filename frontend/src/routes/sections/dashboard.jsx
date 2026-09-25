@@ -122,9 +122,6 @@ const EvalsIndividualGroup = lazyWithRetry(
 const AddNewPrompt = lazyWithRetry(
   () => import("src/pages/dashboard/Prompt/AddNewPrompt"),
 );
-const ProjectList = lazyWithRetry(
-  () => import("src/pages/dashboard/projects/ProjectList"),
-);
 const GatewayOverview = lazyWithRetry(
   () => import("src/pages/dashboard/gateway/GatewayOverview"),
 );
@@ -172,9 +169,6 @@ const ObserveList = lazyWithRetry(
 );
 const ProjectWrapper = lazyWithRetry(
   () => import("src/pages/dashboard/projects/ProjectWrapper"),
-);
-const ProjectDetail = lazyWithRetry(
-  () => import("src/pages/dashboard/projects/ProjectDetail"),
 );
 const HuggingFacePage = lazyWithRetry(
   () => import("src/pages/dashboard/huggingface/HuggingFace"),
@@ -224,9 +218,6 @@ const IndividualExperimentSummary = lazyWithRetry(
 );
 const PreviewScreen = lazyWithRetry(
   () => import("src/sections/develop-detail/AnnotationsTab/PreviewScreen"),
-);
-const RunInsidePage = lazyWithRetry(
-  () => import("src/pages/dashboard/run-inside/run-inside"),
 );
 const ObserverWrapper = lazyWithRetry(
   () => import("src/pages/dashboard/observe/ObserverWrapper"),
@@ -846,7 +837,7 @@ export const dashboardRoutes = (
   const dashboardChildren = [
     {
       index: true,
-      element: <Navigate to="/dashboard/prototype" replace />,
+      element: <Navigate to="/dashboard/develop" replace />,
     },
     {
       path: "/dashboard/get-started",
@@ -1017,29 +1008,29 @@ export const dashboardRoutes = (
     //     },
     //   ],
     // },
-    {
-      path: "prototype",
-      element: <ProjectWrapper />,
-      children: [
-        {
-          index: true,
-          element: <ProjectList />,
-        },
-      ],
-    },
-    {
-      path: "prototype/:projectId",
-      children: [
-        {
-          index: true,
-          element: <ProjectDetail />,
-        },
-        {
-          path: ":runId",
-          element: <RunInsidePage />,
-        },
-      ],
-    },
+    // {
+    //   path: "prototype",
+    //   element: <ProjectWrapper />,
+    //   children: [
+    //     {
+    //       index: true,
+    //       element: <ProjectList />,
+    //     },
+    //   ],
+    // },
+    // {
+    //   path: "prototype/:projectId",
+    //   children: [
+    //     {
+    //       index: true,
+    //       element: <ProjectDetail />,
+    //     },
+    //     {
+    //       path: ":runId",
+    //       element: <RunInsidePage />,
+    //     },
+    //   ],
+    // },
     // {
     //   path: "projects",
     //   element: <ProjectWrapper />,
