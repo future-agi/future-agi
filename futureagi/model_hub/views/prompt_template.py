@@ -2178,6 +2178,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                         "eval_group": (
                             config.eval_group.name if config.eval_group else None
                         ),
+                        "pinned_version_id": str(config.pinned_version_id) if config.pinned_version_id else None,
                     }
                 )
 
@@ -2289,6 +2290,9 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 prompt_eval.error_localizer = new_config.get(
                     "error_localizer", False
                 )
+                prompt_eval.pinned_version_id = new_config.get(
+                    "pinned_version_id"
+                )
                 prompt_eval.save(
                     update_fields=[
                         "name",
@@ -2297,6 +2301,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                         "config",
                         "kb",
                         "error_localizer",
+                        "pinned_version",
                         "updated_at",
                     ]
                 )
@@ -2310,6 +2315,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     user=request.user,
                     kb=kb,
                     error_localizer=new_config.get("error_localizer", False),
+                    pinned_version_id=new_config.get("pinned_version_id"),
                 )
 
             # If is_run is true, run evaluations on specified versions
@@ -2417,6 +2423,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 {
                     "message": "Evaluation configuration updated successfully",
                     "prompt_eval_config_id": str(prompt_eval.id),
+                    "pinned_version_id": str(prompt_eval.pinned_version_id) if prompt_eval.pinned_version_id else None,
                 }
             )
 
