@@ -13,7 +13,6 @@ import { MOCK_WORLD } from "src/api/simulate-environments/_fixtures/world";
 import { generatedPool } from "src/api/simulate-environments/_fixtures/scenarioPool";
 import { getScenarioSelection } from "../../../buildEnvironment/console/scenarioSelectionBus";
 import ScenariosStep from "../ScenariosStep";
-import { filterParamKey } from "../scenarioEditor.constants";
 import {
   TEST_ENV,
   SERVER_ROWS,
@@ -413,16 +412,5 @@ describe("groupKeyOf fallbacks", () => {
   it("labels a sub-goal-less row 'No sub-goals'", async () => {
     const { groupKeyOf } = await import("../scenarios.constants");
     expect(groupKeyOf(null, "subgoal")).toEqual({ id: "subgoal:none", label: "No sub-goals" });
-  });
-});
-
-describe("filterParamKey", () => {
-  it("carries the operator as the suffix the server reads", () => {
-    expect(filterParamKey("name", "contains")).toBe("name_contains");
-    expect(filterParamKey("name", "not_contains")).toBe("name_not_contains");
-    expect(filterParamKey("use_case", "is_not")).toBe("use_case_not");
-    expect(filterParamKey("name", "not_equals")).toBe("name_not");
-    expect(filterParamKey("use_case", "is")).toBe("use_case");
-    expect(filterParamKey("name", "equals")).toBe("name");
   });
 });

@@ -96,46 +96,6 @@ def test_a_field_that_is_proved_rather_than_described_is_refused(user, workspace
     assert "not editable" in receipt["why"]
 
 
-def test_a_field_outside_the_agents_contract_is_refused_even_with_a_reproof(user, workspace):
-    job = _job(user, workspace, SUITE)
-    job.payload = {**job.payload, "agent": {"connector": "phone"}}
-    job.save(update_fields=["payload"])
-    with patch(
-        "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
-        return_value=False,
-    ), patch(
-        "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
-        return_value=None,
-    ):
-        response = _post(user, job, [
-            {"op": "set_field", "scenario": "one", "field": "max_turns", "value": 20}
-        ], rework=True)
-    receipt = response.json()["receipts"][0]
-    assert receipt["outcome"] == "refused"
-    assert "does not apply" in receipt["why"]
-    output = HostedHarnessStageOutput.no_workspace_objects.get(job=job, kind="scenarios")
-    assert output.data[0]["max_turns"] == 10
-
-
-def test_a_chat_persona_takes_no_accent(user, workspace):
-    job = _job(user, workspace, SUITE)
-    job.payload = {**job.payload, "agent": {"connector": "http"}}
-    job.save(update_fields=["payload"])
-    with patch(
-        "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
-        return_value=False,
-    ), patch(
-        "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
-        return_value=None,
-    ):
-        response = _post(user, job, [
-            {"op": "set_persona", "scenario": "two", "persona": {"accent": "Indian"}}
-        ], rework=True)
-    receipt = response.json()["receipts"][0]
-    assert receipt["outcome"] == "refused"
-    assert "accent" in receipt["why"]
-
-
 def test_declining_a_reproof_keeps_the_run_unchanged(user, workspace):
     job = _job(user, workspace, SUITE)
     with patch(
@@ -186,34 +146,6 @@ def test_the_suite_is_read_a_page_at_a_time(user, workspace):
         "current_page",
     }
     assert body["current_page"] == 1
-
-
-def test_a_text_filter_matches_part_of_the_value(user, workspace):
-    job = _job(user, workspace, [
-        {"name": "refund_after_deadline", "tests": "t"},
-        {"name": "booking_change", "tests": "t"},
-    ])
-    client = _client(user, job)
-    base = f"/simulate/api/harness-jobs/{job.id}/scenarios/"
-
-    found = client.get(f"{base}?name_contains=DEADLINE").json()
-    missed = client.get(f"{base}?name_not_contains=deadline").json()
-    exact = client.get(f"{base}?name=deadline").json()
-
-    assert [row["name"] for row in found["results"]] == ["refund_after_deadline"]
-    assert [row["name"] for row in missed["results"]] == ["booking_change"]
-    assert exact["count"] == 0
-
-
-def test_coverage_names_the_attacks_every_suite_covers(user, workspace):
-    job = _job(user, workspace, SUITE)
-    body = _client(user, job).get(
-        f"/simulate/api/harness-jobs/{job.id}/scenarios/coverage/"
-    ).json()
-
-    required = {one["value"]: one["label"] for one in body["required_overlays"]}
-    assert required["privacy_pii"] == "Personal data"
-    assert "none" not in required
 
 
 class TestScenarioNumbersSurviveADeletion:

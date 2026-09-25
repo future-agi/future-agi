@@ -30,11 +30,7 @@ import {
   useHarnessScenarioCoverage,
   useHarnessScenarios,
 } from "src/api/harness/scenarios";
-import {
-  FILTER_OPERATOR_SUFFIXES,
-  filterParamKey,
-  noiseValue,
-} from "src/sections/simulate/environments/workspace/scenarios/scenarioEditor.constants";
+import { noiseValue } from "src/sections/simulate/environments/workspace/scenarios/scenarioEditor.constants";
 import ScenarioEditForm from "./ScenarioEditForm";
 
 const selectableCheckboxSx = {
@@ -80,7 +76,9 @@ const toQueryParams = (result) => {
       ? token.value
       : [token.value].filter(Boolean);
     if (!held.length) return;
-    const key = filterParamKey(token.field, token.operator);
+    const negated =
+      token.operator === "is_not" || token.operator === "not_equals";
+    const key = negated ? `${token.field}_not` : token.field;
     flat[key] = [...(flat[key] || []), ...held];
   });
   return flat;
@@ -805,7 +803,6 @@ export default function ScenarioSuite({
         filterFields={filterFields}
         currentFilters={activeFilters ? filters : null}
         onApply={applyFilters}
-        operatorSuffixes={FILTER_OPERATOR_SUFFIXES}
         aiPlaceholder="e.g. 'Indian accent callers carrying an attack'"
       />
 

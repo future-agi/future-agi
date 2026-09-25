@@ -9,22 +9,11 @@ from django.db.models.functions import Replace
 
 from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 
-# The operators a text filter honours; each maps to a query-param suffix in `apply_filters`.
-_TEXT_OPERATORS = ["contains", "not_contains", "equals", "not_equals"]
-# Longest first, so `_not_contains` is not read as `_not`.
-_FILTER_SUFFIXES = (("_not_contains", True, True), ("_contains", False, True), ("_not", True, False))
-
 # Filter panel properties; a dotted `value` reads into that JSON column.
 FIELDS: tuple[dict[str, Any], ...] = (
-    {"value": "name", "label": "Scenario", "type": "string", "category": "scenario", "operators": _TEXT_OPERATORS},
+    {"value": "name", "label": "Scenario", "type": "string", "category": "scenario"},
     {"value": "use_case", "label": "Use case", "type": "enum", "category": "scenario"},
-    {
-        "value": "instruction",
-        "label": "Situation",
-        "type": "string",
-        "category": "scenario",
-        "operators": _TEXT_OPERATORS,
-    },
+    {"value": "instruction", "label": "Situation", "type": "string", "category": "scenario"},
     {"value": "persona.name", "label": "Name", "type": "enum", "category": "persona"},
     {"value": "persona.accent", "label": "Accent", "type": "enum", "category": "persona"},
     {
@@ -169,8 +158,6 @@ LEVEL_LABELS: dict[str, str] = {
     "non_native": "Non-native speaker",
     "code_switching": "Switches language",
 }
-# Attack overlays a suite covers whatever its size, as the harness plans them.
-REQUIRED_OVERLAYS = ("destructive", "minor_vulnerable", "emergency_crisis", "privacy_pii")
 # What each background a caller can be heard over sounds like, for the noise column only.
 NOISE_LABELS: dict[str, str] = {
     "quiet line": "Quiet line",
@@ -276,14 +263,11 @@ def index_scenarios(
 
 
 def apply_filters(queryset: QuerySet, params) -> QuerySet:
-    """Narrow the suite by the filter panel's query params: repeated keys OR, `_not` negates, `_contains` is partial."""
+    """Narrow the suite by the filter panel's query params: repeated keys OR, a `_not` suffix negates."""
     for key in params.keys():
-        field, negated, partial = key, False, False
-        for suffix, negates, contains in _FILTER_SUFFIXES:
-            if key.endswith(suffix) and key[: -len(suffix)] in _BY_VALUE:
-                field, negated, partial = key[: -len(suffix)], negates, contains
-                break
-        if field not in _BY_VALUE or (partial and _BY_VALUE[field]["type"] != "string"):
+        negated = key.endswith("_not")
+        field = key[:-4] if negated else key
+        if field not in _BY_VALUE:
             continue
         values = [one for one in params.getlist(key) if one not in (None, "")]
         if not values:
@@ -292,10 +276,7 @@ def apply_filters(queryset: QuerySet, params) -> QuerySet:
         lookup = f"{path}__contains" if _BY_VALUE[field]["value"] in _LIST_FIELDS else f"{path}__in"
         matches = Q()
         for value in values:
-            if partial:
-                matches |= Q(**{f"{path}__icontains": value})
-            else:
-                matches |= Q(**{lookup: [value] if lookup.endswith("contains") else [value]})
+            matches |= Q(**{lookup: [value] if lookup.endswith("contains") else [value]})
         queryset = queryset.exclude(matches) if negated else queryset.filter(matches)
     return queryset
 
@@ -403,9 +384,6 @@ def coverage_grid(
         ],
         "axes": list(AXES),
         "axis_labels": {axis: axis_label(axis, spoken) for axis in AXES},
-        "required_overlays": [
-            {"value": overlay, "label": level_label(overlay)} for overlay in REQUIRED_OVERLAYS
-        ],
         "level_labels": {
             level: level_label(level)
             for axis in levels

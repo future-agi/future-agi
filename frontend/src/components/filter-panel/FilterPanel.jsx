@@ -1676,7 +1676,7 @@ QueryInput.propTypes = {
 
 // Collapse rows into the `{field: [values]}` shape callers receive. Rows with
 // no value drop out; an all-empty set applies as null rather than `{}`.
-const buildFilterResult = (rows, operatorSuffixes) => {
+const buildFilterResult = (rows) => {
   const result = {};
   for (const row of rows) {
     const val = row.value;
@@ -1684,11 +1684,7 @@ const buildFilterResult = (rows, operatorSuffixes) => {
     if (isEmpty) continue;
     const values = Array.isArray(val) ? val : [val];
     const isNeg = row.operator === "is_not" || row.operator === "not_equals";
-    const key = operatorSuffixes
-      ? `${row.field}${operatorSuffixes[row.operator] || ""}`
-      : isNeg
-        ? `${row.field}_not`
-        : row.field;
+    const key = isNeg ? `${row.field}_not` : row.field;
     if (!result[key]) result[key] = [];
     // Rows sharing a key merge, so a value picked in two of them would
     // otherwise go out twice.
@@ -1697,24 +1693,6 @@ const buildFilterResult = (rows, operatorSuffixes) => {
     }
   }
   return Object.keys(result).length > 0 ? result : null;
-};
-
-// With `operatorSuffixes`, a key's suffix names its operator; a bare key is the
-// field's plain match.
-const parseSuffixedKey = (key, fieldMap, operatorSuffixes) => {
-  const bySuffix = Object.entries(operatorSuffixes).sort(
-    ([, a], [, b]) => b.length - a.length,
-  );
-  for (const [op, suffix] of bySuffix) {
-    const field = key.slice(0, -suffix.length);
-    if (
-      key.endsWith(suffix) &&
-      fieldMap[field] &&
-      getOperators(fieldMap[field]).some((o) => o.value === op)
-    )
-      return [field, op];
-  }
-  return [key, fieldMap[key]?.type === "enum" ? "is" : "equals"];
 };
 
 // Key order follows row order, which the user can change without changing the
@@ -1756,9 +1734,6 @@ const FilterPanel = ({
   // "bottom-start" grows the popover rightwards from the trigger; use
   // "bottom-end" when the trigger sits near the right edge of the viewport.
   placement = "bottom-start",
-  // {operator: key suffix}. When set, every operator travels in the applied
-  // key, e.g. `name_contains`; otherwise only a negation does, as `_not`.
-  operatorSuffixes,
 }) => {
   const popoverEdge = placement === "bottom-end" ? "right" : "left";
   const fieldMap = useMemo(
@@ -1827,16 +1802,15 @@ const FilterPanel = ({
       // Convert object-style filters to rows
       const initial = [];
       for (const [key, val] of Object.entries(currentFilters)) {
-        const [suffixedField, suffixedOp] = operatorSuffixes
-          ? parseSuffixedKey(key, fieldMap, operatorSuffixes)
-          : [];
-        const isNeg = !operatorSuffixes && key.endsWith("_not");
-        const field = suffixedField || (isNeg ? key.slice(0, -4) : key);
+        const isNeg = key.endsWith("_not");
+        const field = isNeg ? key.slice(0, -4) : key;
         const fieldDef = fieldMap[field];
         if (Array.isArray(val)) {
-          const op =
-            suffixedOp ||
-            (isNeg ? "is_not" : fieldDef?.type === "enum" ? "is" : "contains");
+          const op = isNeg
+            ? "is_not"
+            : fieldDef?.type === "enum"
+              ? "is"
+              : "contains";
           if (fieldDef?.type === "enum") {
             // An enum row holds the whole set and shows it as chips, so keep
             // the values together — one row per value would come back as a
@@ -1851,7 +1825,7 @@ const FilterPanel = ({
         } else if (val) {
           initial.push({
             field,
-            operator: suffixedOp || (isNeg ? "not_equals" : "contains"),
+            operator: isNeg ? "not_equals" : "contains",
             value: val,
           });
         }
@@ -1865,9 +1839,7 @@ const FilterPanel = ({
     setRows(initialRows);
     // Seed the guard with what these rows would apply to, so merely opening
     // the panel doesn't re-emit filters the caller already holds.
-    lastAppliedRef.current = serializeFilters(
-      buildFilterResult(initialRows, operatorSuffixes),
-    );
+    lastAppliedRef.current = serializeFilters(buildFilterResult(initialRows));
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-apply on row changes (debounced)
@@ -1875,7 +1847,7 @@ const FilterPanel = ({
     if (!open) return;
     if (applyTimerRef.current) clearTimeout(applyTimerRef.current);
     applyTimerRef.current = setTimeout(() => {
-      const result = buildFilterResult(rows, operatorSuffixes);
+      const result = buildFilterResult(rows);
       // `result` is rebuilt on every run, so callers keying off its identity
       // (an AG Grid datasource, a memo) would refetch even when nothing
       // changed. Compare by value and stay quiet when it hasn't.
@@ -2205,7 +2177,6 @@ FilterPanel.propTypes = {
   source: PropTypes.string,
   basicOnly: PropTypes.bool,
   placement: PropTypes.oneOf(["bottom-start", "bottom-end"]),
-  operatorSuffixes: PropTypes.object,
 };
 
 export { QueryInput };

@@ -6,7 +6,6 @@ import Iconify from "src/components/iconify";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import { FilterPanel } from "src/components/filter-panel";
 import { SCENARIOS_COPY } from "./scenarios.constants";
-import { FILTER_OPERATOR_SUFFIXES } from "./scenarioEditor.constants";
 
 // Per-axis icon, keyed by the server grouping `value`. Falls back to a neutral
 // icon for any axis the backend adds later.
@@ -144,7 +143,6 @@ export default function ScenarioToolbar({
         filterFields={filterFields}
         currentFilters={filters}
         onApply={onApplyFilters}
-        operatorSuffixes={FILTER_OPERATOR_SUFFIXES}
         placement="bottom-start"
         // The grounded AI filter has no `scenarios` source in model-hub yet
         // (README §8), so hide the AI box here — Basic + Query still work.

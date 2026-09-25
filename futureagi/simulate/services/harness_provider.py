@@ -1852,9 +1852,6 @@ class HostedHarnessProvider:
                     status=status.HTTP_409_CONFLICT,
                 )
             by_name = {str(one.get("name") or ""): one for one in suite}
-            from simulate.services.harness_environment import AGENT_TYPE_VOICE, agent_type
-
-            contract = self._editing_contract(agent_type(job) == AGENT_TYPE_VOICE)
             receipts = []
             touched = False
             # One change may name many scenarios; each gets its own receipt.
@@ -1911,24 +1908,24 @@ class HostedHarnessProvider:
                     continue
                 if op == "set_field":
                     field = str(change.get("field") or "")
-                    if field not in contract["editable_fields"]:
-                        known = field in self._DESCRIPTIVE_FIELDS | self._BEHAVIOURAL_FIELDS
+                    if field in self._DESCRIPTIVE_FIELDS:
+                        pass
+                    elif field in self._BEHAVIOURAL_FIELDS:
+                        if not rework:
+                            receipts.append(
+                                {
+                                    "scenario": name,
+                                    "outcome": "refused",
+                                    "why": f"{field} changes what the run does, so it needs a re-proof",
+                                }
+                            )
+                            continue
+                    else:
                         receipts.append(
                             {
                                 "scenario": name,
                                 "outcome": "refused",
-                                "why": f"{field} does not apply to this agent"
-                                if known
-                                else f"{field} is not editable: it is proved, not described",
-                            }
-                        )
-                        continue
-                    if field in self._BEHAVIOURAL_FIELDS and not rework:
-                        receipts.append(
-                            {
-                                "scenario": name,
-                                "outcome": "refused",
-                                "why": f"{field} changes what the run does, so it needs a re-proof",
+                                "why": f"{field} is not editable: it is proved, not described",
                             }
                         )
                         continue
@@ -1949,7 +1946,7 @@ class HostedHarnessProvider:
                         )
                         continue
                     given = dict(change.get("persona") or {})
-                    unknown = sorted(set(given) - set(contract["persona_fields"]))
+                    unknown = sorted(set(given) - self._PERSONA_FIELDS)
                     if unknown:
                         receipts.append(
                             {
