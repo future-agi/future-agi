@@ -211,3 +211,46 @@ def test_usage_never_serves_a_snapshot_computed_under_the_old_rule(
     result = response.json()["result"]
     assert result["query_status"] == "pending"
     assert result["stats"]["error_count"] == 0
+
+
+@pytest.mark.django_db
+def test_evaluations_usage_page_counts_only_successful_runs(
+    auth_client, organization, workspace, seeded_runs
+):
+    """Evaluations > Usage (the tab on the Groups page) reads "30 Days run"
+    from get_all_templates. On dev, toxicity read 245 there with 115
+    successful runs, and lateny_test read 3 with one."""
+
+    template, _success, failures, _in_flight = seeded_runs
+    busier = _template(organization, workspace)
+    for _ in range(2):
+        _ledger_row(
+            busier,
+            organization,
+            workspace,
+            status=APICallStatusChoices.SUCCESS.value,
+            source="eval_playground",
+            config={"output": {"output": "Passed"}},
+        )
+
+    response = auth_client.post(
+        "/model-hub/get-eval-templates",
+        {
+            "search_text": "usage-success-only-",
+            "current_page_index": 0,
+            "page_size": 10,
+            "sort": [{"column_id": "last_30_run", "type": "descending"}],
+        },
+        format="json",
+    )
+
+    assert response.status_code == 200, response.content
+    rows = response.data["result"]["row_data"]
+    assert [(row["id"], row["last30_run"]) for row in rows] == [
+        (busier.id, 2),
+        (template.id, 1),
+    ]
+    # The "30 days error rate" column counts error rows by design; whether it
+    # stays is an owner decision, so it is pinned unchanged here.
+    error_rate = rows[1]["error_rate"]
+    assert max(point["value"] for point in error_rate) == len(failures)

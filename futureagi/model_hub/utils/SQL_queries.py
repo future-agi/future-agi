@@ -365,6 +365,7 @@ class SQLQueryHandler:
                 OR (%s::boolean = TRUE AND workspace_id IS NULL)
             )
             AND created_at >= (CURRENT_DATE - INTERVAL '30 days')
+            AND status = 'success'
         ),
         joined AS (
             SELECT
