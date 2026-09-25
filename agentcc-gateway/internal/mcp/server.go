@@ -177,21 +177,24 @@ func (s *Server) HandlePost(w http.ResponseWriter, r *http.Request) {
 	// Per-key tool filtering: authenticate bearer token and inject allowed/denied tools into context.
 	req := r
 	if s.keyAuth != nil {
-		if rawKey := extractBearerToken(r); rawKey != "" {
-			allowed, denied, valid := s.keyAuth.AuthenticateKey(rawKey)
-			if !valid {
-				writeJSONRPCError(w, msg.ID, ErrCodeInvalidRequest, "invalid or inactive API key")
-				return
-			}
-			ctx := r.Context()
-			if len(allowed) > 0 {
-				ctx = context.WithValue(ctx, ctxKeyAllowedTools, allowed)
-			}
-			if len(denied) > 0 {
-				ctx = context.WithValue(ctx, ctxKeyDeniedTools, denied)
-			}
-			req = r.WithContext(ctx)
+		rawKey := extractBearerToken(r)
+		if rawKey == "" {
+			writeJSONRPCError(w, msg.ID, ErrCodeInvalidRequest, "missing API key")
+			return
 		}
+		allowed, denied, valid := s.keyAuth.AuthenticateKey(rawKey)
+		if !valid {
+			writeJSONRPCError(w, msg.ID, ErrCodeInvalidRequest, "invalid or inactive API key")
+			return
+		}
+		ctx := r.Context()
+		if len(allowed) > 0 {
+			ctx = context.WithValue(ctx, ctxKeyAllowedTools, allowed)
+		}
+		if len(denied) > 0 {
+			ctx = context.WithValue(ctx, ctxKeyDeniedTools, denied)
+		}
+		req = r.WithContext(ctx)
 	}
 
 	// Route by method.
