@@ -1,3 +1,4 @@
+import {startObservability, stopObservability} from './observability.mjs';
 import {readFile} from 'node:fs/promises';
 import {hostname} from 'node:os';
 import {pathToFileURL} from 'node:url';
@@ -82,6 +83,12 @@ async function publishHints(env,control,signal,onError) {
 }
 
 export async function runGroupingDaemon(env=process.env,signal) {
+  await startObservability({...env, FI_PROJECT_NAME: env.FI_PROJECT_NAME || 'error-feed-grouping'});
+  try { return await executeDaemon(env, signal); }
+  finally { await stopObservability(); }
+}
+
+async function executeDaemon(env=process.env,signal) {
   if(!signal) throw new Error('Shutdown signal required');
   const config=groupingConfig(env);
   const {gatewayConfig}=await import('./gateway-provider.mjs');

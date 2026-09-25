@@ -1,3 +1,4 @@
+import {prepareTelemetry} from './prepare-telemetry.mjs';
 import {copyFile, mkdir, readFile, readdir, unlink, writeFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {resolve, dirname, join} from 'node:path';
@@ -43,6 +44,9 @@ for (const [name, version] of [['kafkajs', '2.2.4'], ['kafkajs-snappy', '1.1.0']
   externalPackages.push({name, version, file,
     sha256: createHash('sha256').update(await readFile(join(context, file))).digest('hex')});
 }
+const telemetry = await prepareTelemetry(worker, context, manifest);
+installer.dependencies[telemetry.name] = 'file:' + telemetry.file;
+externalPackages.push(telemetry);
 await writeFile(join(context, 'package.json'), JSON.stringify(installer, null, 2) + '\n');
 // npm keeps the previous integrity when a file: tarball is replaced at the same version.
 await unlink(join(context, 'package-lock.json')).catch(error => {

@@ -218,3 +218,78 @@ report arrives is not yet wired. An oversized checkpoint fails closed without
 Feed publication. Paid-call receipts survive a checkpoint failure; exact received
 results are reused on retry instead of automatically spending again. These
 limits need capacity testing before broad rollout.
+
+## FutureAGI observability
+
+Both daemons support traceAI instrumentation with content capture off by default. At runtime set
+`OMEGA_OBSERVABILITY_ENABLED=true` and mount `FI_API_KEY_FILE` / `FI_SECRET_KEY_FILE`. Direct `FI_API_KEY` /
+`FI_SECRET_KEY` values work for local development. Set `FI_BASE_URL` for a
+custom collector; otherwise the SDK uses FutureAGI cloud. Credentials must
+belong to the internal telemetry workspace. Keep Error Feed scanning disabled
+on both projects to prevent recursive investigation of worker traces.
+
+The investigation daemon defaults to the internal Observe project
+`error-feed-investigation`. The grouping daemon defaults to `error-feed-grouping`,
+including feature preparation and severity. Override `FI_PROJECT_NAME` separately
+on each deployment. Use the same name for a shared internal project, or different names for separate projects.
+
+The source claim's `organization_id` is exported as `user.id` on every root
+and descendant span. This identifies the customer organization using Error Feed.
+Updated Django claims also supply `organization_name` and `project_name`, exported
+as `user.name`, `error_feed.organization_name`, and `error_feed.project_name`.
+The stable user ID does not change when the organization is renamed.
+The existing `error_feed.organization_id` and `error_feed.project_id` retain
+source scope; they are distinct from the internal Observe project. Concurrent
+organizations remain isolated, and an absent organization does not inherit a
+user from another root trace.
+
+Each investigation, grouping, feature preparation and severity attempt gets a
+separate trace. Investigation includes nested Omega agent stages and evidence
+tools; model spans include usage, gateway request ID and reported cost. Filter
+by `error_feed.attempt_id` (or `error_feed.feature_attempt_id`) and source
+`error_feed.project_id`. Investigation also records the source trace and job
+IDs. Customer trace IDs are attributes, not parent trace IDs. Investigation
+retries share a session based on the job ID.
+
+Set `OMEGA_OBSERVABILITY_CAPTURE_CONTENT=true` to also export actual work inputs,
+agent responses, model requests/responses and tool arguments/results as
+`input.value` / `output.value` JSON. It is off by default and only operates when
+observability itself is enabled. Content may include customer evidence and
+recording URLs. Each field is bounded to 32 KiB with a visible truncation marker.
+Control claims are allowlisted to omit lease tokens; known credential object keys
+are redacted. This is not a general PII/secret scrubber for free-form content.
+Exception messages and stacks are never exported.
+
+Model spans use the routed model as `llm.model_name`, preserving the requested
+alias in `gen_ai.request.model`. `gen_ai.cost.total` receives the exact six-decimal
+USD charge from AgentCC's response header (including explicit zero), so Observe
+does not reprice a known charge. Missing receipts remain unknown in
+`error_feed.gateway.cost_status`; Observe may still estimate cost from tokens.
+This reflects AgentCC accounting, not a reconciliation with a cloud invoice.
+Usage belongs only to model spans: do not copy it to parents and double-count
+span/session totals. The current Observe trace list displays root-span usage;
+it needs child aggregation to display these trace totals. Session IDs propagate
+to every child, allowing whole-session detail aggregation.
+Tracing is disabled by default, fails open on configuration/export errors,
+and shuts down after active work with a five-second drain limit. Billing and
+publication continue to use durable Django receipts.
+
+`telemetry/package-lock.json` pins the traceAI dependency tree. Image preparation
+runs `npm ci` and bundles it into a checksum-verified tarball, which is reused
+for offline builds while its source digest matches. The final Docker install
+remains network-free. The pinned fi-core 1.0.0 uses its working simple exporter;
+its batch option does not attach the batch processor correctly with OTel 2.x.
+
+Validation: `node --test workers/error-feed-node/*.test.mjs
+workers/error-feed-node/grouping/*.test.mjs
+workers/error-feed-node/grouping/f6/*.test.mjs` (put the command on one line).
+The export test sends real SDK spans to a local HTTP receiver using fixture
+credentials. It does not send customer data or verify delivery to a live account.
+See the [FutureAGI quickstart](https://docs.futureagi.com/docs/observe/quickstart)
+and [collector endpoint reference](https://docs.futureagi.com/docs/observe/reference/export-formats).
+
+Completed operations explicitly export OTel `OK`. Thrown errors and returned
+failed investigations export `ERROR`; a detected customer failure still counts
+as a completed investigation. Historical trace statuses are unchanged.
+
+Feature preparation uses the trace name `error_feed.prepare_findings_for_grouping`: it prepares embeddings and lookup features from investigation findings before grouping compares them.
