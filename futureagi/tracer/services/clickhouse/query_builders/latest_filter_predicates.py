@@ -6,6 +6,7 @@ import math
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from itertools import chain, product
 from typing import Any
 
@@ -108,6 +109,25 @@ def _values_fit_second_inline_budget(normalized_values: tuple[object, ...]) -> b
     )
 
 
+@lru_cache(maxsize=256)
+def _kelvin_sign_spellings(value: str) -> tuple[str, ...]:
+    """Every spelling of ``value`` with any of its "k"s as U+212A KELVIN SIGN.
+
+    Joining whole "k"-separated segments keeps each spelling one C-level pass
+    instead of a Python step per character. One list request still compiles
+    its filter plans hundreds to thousands of times over the same values, so
+    each value's spellings are built once, not once per compile. The caller
+    bounds count and bytes before asking, so an entry holds at most 256
+    spellings and 16 KiB of them.
+    """
+
+    segments = value.split("k")
+    return tuple(
+        "".join(chain.from_iterable(zip(segments, (*letters, ""), strict=True)))
+        for letters in product(("k", "\N{KELVIN SIGN}"), repeat=len(segments) - 1)
+    )
+
+
 def _legacy_ascii_lower_bloom_predicate(
     *,
     normalized_values: tuple[object, ...],
@@ -121,27 +141,29 @@ def _legacy_ascii_lower_bloom_predicate(
     lowercase has one non-ASCII inverse: U+212A KELVIN SIGN maps to ``k``.
     Enumerating every Kelvin-sign substitution therefore makes the legacy
     expression a necessary condition without changing the authoritative
-    Unicode comparison. Non-ASCII values and pathological variant counts
-    decline the optimization and keep the Unicode-only path.
+    Unicode comparison. Non-ASCII values and pathological variant counts or
+    sizes decline the optimization and keep the Unicode-only path.
     """
 
     variants: set[str] = set()
+    spelling_bytes = 0
     for raw_value in normalized_values:
         if not isinstance(raw_value, str) or not raw_value.isascii():
             return None
         # Each "k" doubles the spellings, so the cap is decided by the count
-        # before any is built. A value may be 16 KiB and one list request
-        # compiles its plans a few hundred times: joining whole segments keeps
-        # each spelling one C-level pass instead of a Python step per
-        # character, which cost seconds per request on the long values.
+        # before any is built.
         kelvin_slots = raw_value.count("k")
         if 1 << kelvin_slots > _MAX_LEGACY_ASCII_BLOOM_VARIANTS:
             return None
-        segments = raw_value.split("k")
-        variants.update(
-            "".join(chain.from_iterable(zip(segments, (*letters, ""), strict=True)))
-            for letters in product(("k", "\N{KELVIN SIGN}"), repeat=kelvin_slots)
-        )
+        # Every spelling is the whole value again, in the statement and in
+        # each compile, so their bytes share the companion budget too: 256
+        # spellings of a 16 KiB value were 4 MiB per compile, seconds of
+        # Python per request, and a seed past the parser limit. Within it the
+        # witness never writes more than one "k"-free max-length value does.
+        spelling_bytes += len(raw_value) << kelvin_slots
+        if spelling_bytes > _MAX_INDEX_COMPANION_VALUE_UTF8_BYTES:
+            return None
+        variants.update(_kelvin_sign_spellings(raw_value))
         if len(variants) > _MAX_LEGACY_ASCII_BLOOM_VARIANTS:
             return None
 
