@@ -63,10 +63,29 @@ describe("Observe API response contracts", () => {
     };
 
     expect(parseTraceGraphResponse(body).metric_statistic).toBe("median");
+  });
+
+  it("accepts a series statistic this client does not know", () => {
+    // The statistic is an open vocabulary for clients: a newer server may add
+    // one (for example p95) while an older tab is still open. Rejecting it
+    // would fail the whole graph; the label logic falls back instead.
+    const body = {
+      status: true,
+      result: {
+        metric_name: "latency",
+        metric_statistic: "p95",
+        data: [],
+        query_complete: true,
+        query_status: "complete",
+        query_sampled: false,
+      },
+    };
+
+    expect(parseTraceGraphResponse(body).metric_statistic).toBe("p95");
     expect(() =>
       parseTraceGraphResponse({
         ...body,
-        result: { ...body.result, metric_statistic: "average" },
+        result: { ...body.result, metric_statistic: 95 },
       }),
     ).toThrow();
   });

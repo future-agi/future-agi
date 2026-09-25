@@ -1570,6 +1570,23 @@ describe("PrimaryGraph", () => {
       expect(screen.queryByTestId("graph-metric-statistic")).toBeNull();
     });
 
+    it("draws a statistic it does not know under the plain latency label", async () => {
+      // A newer server may name a statistic this tab predates. The graph
+      // still renders; the label falls back to the plain name.
+      axios.post.mockResolvedValue(graphResponse({ metric_statistic: "p95" }));
+      renderWithQueryClient(
+        <PrimaryGraph observeIdOverride="project-override" />,
+      );
+
+      await waitFor(() =>
+        expect(screen.getByTestId("apex-chart")).toHaveAttribute(
+          "data-primary-series-name",
+          "Latency (ms)",
+        ),
+      );
+      expect(screen.queryByTestId("graph-metric-statistic")).toBeNull();
+    });
+
     it("adds no median caption to a summed series", async () => {
       axios.post.mockResolvedValue(
         graphResponse({ metric_name: "tokens", metric_statistic: "sum" }),
