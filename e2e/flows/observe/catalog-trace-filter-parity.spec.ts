@@ -81,7 +81,9 @@ test('OBS-E2E-005: discovered attributes filter traces and graph traffic consist
       { name: 'both', values: ['00123456', '123456'],
         typedValues: ['00123456', 123456], types: ['string', 'number'],
         ids: [stringTrace.traceId, numberTrace.traceId], names: allNames,
-        spans: stringTrace.spanIds.length + numberTrace.spanIds.length, latency: 85 },
+        // Latency is the median: the four spans are [50, 50, 120, 120] ms, and
+        // ClickHouse's t-digest median of so few values is the lower median.
+        spans: stringTrace.spanIds.length + numberTrace.spanIds.length, latency: 50 },
       { name: 'missing', values: [`absent-${suffix}`], typedValues: [`absent-${suffix}`],
         types: ['string'], ids: [], names: [], spans: 0, latency: 0 },
     ];
@@ -147,7 +149,7 @@ test('OBS-E2E-005: discovered attributes filter traces and graph traffic consist
       expect(graph.result.data.reduce((sum: number, point: { primary_traffic: number | null }) =>
         sum + (point.primary_traffic ?? 0), 0)).toBe(scenario.spans);
       // TimeSeriesQueryBuilder aggregates all spans of a matched trace. These
-      // fresh two-span trees have one time bucket and distinct mean latencies.
+      // fresh two-span trees have one time bucket and distinct median latencies.
       expect(graph.result.data.filter((point: { primary_traffic: number }) => point.primary_traffic > 0)
         .map((point: { value: number }) => point.value)).toEqual(scenario.spans ? [scenario.latency] : []);
       await expect.poll(async () => (await traceNames.allTextContents()).sort(), { timeout: UI_READY })
