@@ -35,7 +35,7 @@ export const WORKSPACE_COPY = {
   failedLabel: "Failed",
   liveTooltip: "Environment is live. You can edit via the builder or inline.",
   buildingTooltip: "Environment is still being built…",
-  finalizingTooltip: "Wrapping up the build. You can run it in a moment.",
+  finalizingTooltip: "Wrapping up the build…",
   cancellingLabel: "Cancelling",
   cancellingTooltip: "Stopping the build and cleaning up its sandbox.",
   cancelledLabel: "Cancelled",

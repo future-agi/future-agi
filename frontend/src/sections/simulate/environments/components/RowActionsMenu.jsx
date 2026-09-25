@@ -21,7 +21,7 @@ export default function RowActionsMenu({ menuFor, onClose, onOpen, onRun, onDele
     ENV_STATUS.CANCELLING,
   ].includes(active?.status);
   const runLabel =
-    active?.runsTotal > 0 && active?.status !== ENV_STATUS.BUILDING
+    active?.runsTotal > 0 && !buildingActive
       ? ROW_ACTION_LABEL.rerun
       : ROW_ACTION_LABEL.run;
 

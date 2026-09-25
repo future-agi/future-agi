@@ -83,7 +83,10 @@ export default function LivePill({ env, building }) {
             height: 6,
             borderRadius: "50%",
             bgcolor: tone,
-            animation: (isBuilding || isFinalizing || isCancelling) && !isCancelled ? "env-pulse 1.4s ease-in-out infinite" : undefined,
+            animation:
+              isBuilding || isFinalizing || isCancelling
+                ? "env-pulse 1.4s ease-in-out infinite"
+                : undefined,
             "@keyframes env-pulse": {
               "0%,100%": { opacity: 0.4 },
               "50%": { opacity: 1 },

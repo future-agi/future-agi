@@ -255,8 +255,6 @@ const overlayDefined = (base, extra) => {
 // Resolve an environment id to its record. Order: an adopted client env in the
 // store, then the harness backend, then the prebuilt template catalogue. An
 // unknown id whose harness fetch 404s (and that no template claims) is notFound.
-const CANCEL_STATUSES = new Set([ENV_STATUS.CANCELLING, ENV_STATUS.CANCELLED]);
-
 export function useEnvironment(envId) {
   const clientEnv = useEnvironmentsStore((s) => s.workspaceEnvs[envId]);
   const prebuilt = usePrebuiltEnvironments();
@@ -324,8 +322,10 @@ export function useEnvironment(envId) {
     // the previous job-poll path.
     const detailReady = Boolean(detail?.env?.detailReady);
     const base = harness?.env ?? {};
-    const merged = detailReady ? overlayDefined(base, detail.env) : harness?.env ?? detail?.env;
-    const env = CANCEL_STATUSES.has(base.status) ? { ...merged, status: base.status } : merged;
+    const merged = detailReady
+      ? overlayDefined(base, detail.env)
+      : (harness?.env ?? detail?.env);
+    const env = base.status ? { ...merged, status: base.status } : merged;
 
     // Gate the bootstrap on the detail settling so a slightly-later §6 success is
     // not lost to useEnvState's write-once seed: use the real detail state when

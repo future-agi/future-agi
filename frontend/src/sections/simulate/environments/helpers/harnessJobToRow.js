@@ -17,14 +17,20 @@ export const VOICE_CONNECTORS = [
   "pipecat",
 ];
 
-const FINALIZING_STAGES = new Set([HARNESS_STAGE.FINALIZING, HARNESS_STAGE.CLEANING_UP]);
+const FINALIZING_STAGES = new Set([
+  HARNESS_STAGE.FINALIZING,
+  HARNESS_STAGE.CLEANING_UP,
+]);
 
-const STAGE_LED_STAGES = new Set([...FINALIZING_STAGES, HARNESS_STAGE.CANCELED]);
+const STAGE_LED_STAGES = new Set([
+  ...FINALIZING_STAGES,
+  HARNESS_STAGE.CANCELED,
+]);
 
 // The harness pipeline reports fine-grained stages; the table only needs the
-// four run-states its status pill knows. "failed" and "canceled" are both
-// outcomes the pill draws in red, and every stage before the terminal ones is
-// still assembling the environment.
+// states its status pill knows. "failed" is a real failure, "canceled" is the
+// user's own cancel, cleanup reads as finalizing, and every stage before the
+// terminal ones is still assembling the environment.
 export const stageToStatus = (stage) => {
   if (stage === HARNESS_STAGE.COMPLETED) return ENV_STATUS.COMPLETED;
   if (stage === HARNESS_STAGE.FAILED) return ENV_STATUS.FAILED;
