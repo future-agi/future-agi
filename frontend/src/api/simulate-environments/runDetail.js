@@ -442,10 +442,29 @@ function callEvalResult(evalId, data) {
 
   return {
     id: evalId,
+    eval_config_id: data.id || evalId,
     name: data.name || evalId,
     score,
     passed,
     reason: data.reason || "",
+    output_type: data.type,
+    status: data.status,
+    error: data.error === true,
+    skipped: data.skipped === true || data.status === "skipped",
+    template_type: data.template_type,
+    error_localizer: data.error_localizer === true,
+    error_analysis: data.error_analysis,
+    error_localizer_status: data.error_localizer_status,
+    error_localizer_message: data.error_localizer_message,
+    selected_input_key: data.selected_input_key,
+    datapoint: {
+      selectedInputKey: data.selected_input_key,
+      selected_input_key: data.selected_input_key,
+      inputData: data.input_data,
+      input_data: data.input_data,
+      inputTypes: data.input_types,
+      input_types: data.input_types,
+    },
     // A removed eval's verdict is still returned, carrying `removed: true` —
     // never hidden or rewritten; the drawer marks it.
     removed: data.removed === true,

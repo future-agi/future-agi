@@ -7,7 +7,11 @@ from unittest.mock import Mock
 import pytest
 
 from ee.evals.localizer.agentcc_transport import MediaRegistry
-from ee.evals.localizer.claude_harness import LocalizationCase, create_localizer
+from ee.evals.localizer.claude_harness import (
+    SYSTEM_PROMPT,
+    LocalizationCase,
+    create_localizer,
+)
 from ee.evals.localizer.conversation_audio import (
     create_utterance_segments,
     simulation_audio_snapshot,
@@ -15,6 +19,12 @@ from ee.evals.localizer.conversation_audio import (
 from ee.tests.test_localizer_claude_harness import finding, localizer, submission
 
 pytestmark = pytest.mark.unit
+
+
+def test_audio_prompt_requires_evidence_and_does_not_penalize_backchannels():
+    assert "instead of paraphrasing the evaluation" in SYSTEM_PROMPT
+    assert "brief\nbackchannels" in SYSTEM_PROMPT
+    assert "ordinary overlap alone is not evidence" in SYSTEM_PROMPT
 
 
 @pytest.mark.parametrize(
@@ -127,6 +137,61 @@ def test_cuts_exact_utterances_preserving_overlap_and_metadata(conversation):
     assert units["segment_2"]["utterance_id"] == "agent-1"
 
 
+def test_duplicate_partial_and_final_utterance_become_one_finding_unit(conversation):
+    raw, turns = conversation
+    duplicated = [
+        turns[0],
+        {
+            "utterance_id": "agent-partial",
+            "speaker_role": "assistant",
+            "content": "Wrong",
+            "start_time": 0.65,
+            "end_time": 1.85,
+        },
+        turns[1],
+        turns[2],
+    ]
+
+    units, _, _ = create_utterance_segments(raw, duplicated)
+
+    assert list(units) == ["segment_1", "segment_2", "segment_3"]
+    assert units["segment_2"]["utterance_id"] == "agent-1"
+    assert units["segment_2"]["content"] == "Wrong answer"
+
+
+def test_snapshot_deduplicates_provider_partial_and_final_rows():
+    from simulate.models.test_execution import CallTranscript
+
+    partial = CallTranscript(
+        speaker_role="assistant",
+        content="I'm transferring",
+        start_time_ms=15866,
+        end_time_ms=30918,
+    )
+    final = CallTranscript(
+        speaker_role="assistant",
+        content="I'm transferring you to a human agent now.",
+        start_time_ms=15866,
+        end_time_ms=30918,
+    )
+    call = SimpleNamespace(
+        simulation_call_type="voice",
+        transcripts=Mock(),
+        call_metadata={},
+        provider_call_data={"livekit": {"id": "test"}},
+    )
+    call.transcripts.exclude.return_value = [partial, final]
+    config = SimpleNamespace(mapping={"conversation": "voice_recording"})
+
+    snapshot = simulation_audio_snapshot(call, config, {"conversation": "audio"})
+
+    assert len(snapshot["conversation"]) == 1
+    assert (
+        snapshot["conversation"][0]["content"]
+        == "I'm transferring you to a human agent now."
+    )
+
+
 @pytest.mark.parametrize(
     "start,end", [(None, 1), (0, None), (0, 0), (-1, 1), (1, 9), (float("nan"), 1)]
 )
@@ -170,6 +235,45 @@ async def test_agent_only_findings_and_ranked_utterance_metadata(conversation):
     assert first["orgSegment"]["speaker_role"] == "assistant"
     assert first["orgSegment"]["start_time"] == 0.65
     assert second["orgSegment"]["utterance_id"] == "agent-2"
+
+
+async def test_rejects_two_findings_for_the_same_audio_interval(conversation):
+    raw, _ = conversation
+    loc = localizer({"output": raw}, {"output": "audio"})
+    loc.simulation_audio = {"output": []}
+    case = LocalizationCase(loc, MediaRegistry())
+    duplicate_units = {
+        "segment_1": {
+            "utterance_id": "partial",
+            "speaker_role": "assistant",
+            "content": "I'm transferring",
+            "start_time": 0.65,
+            "end_time": 1.85,
+            "duration": 1.2,
+            "audio_bytes": "unused",
+            "url": "https://example.test/partial.mp3",
+            "eligible_for_findings": True,
+        },
+        "segment_2": {
+            "utterance_id": "final",
+            "speaker_role": "assistant",
+            "content": "I'm transferring you now.",
+            "start_time": 0.65,
+            "end_time": 1.85,
+            "duration": 1.2,
+            "audio_bytes": "unused",
+            "url": "https://example.test/final.mp3",
+            "eligible_for_findings": True,
+        },
+    }
+    case.inputs["output"] = ("audio", raw, duplicate_units, [], None)
+    case.inspected["output"] = set(duplicate_units)
+
+    with pytest.raises(ValueError, match="one finding per unique audio"):
+        await case.submit_findings(
+            submission(entries=[finding("segment_1", "1"), finding("segment_2", "2")])
+        )
+    assert case.result is None
 
 
 async def test_missing_snapshot_cannot_use_legacy_chunks(conversation):
