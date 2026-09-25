@@ -22,6 +22,10 @@ from tracer.services.clickhouse.query_builders.filters import (
     ClickHouseFilterBuilder,
     build_numeric_filter_predicate,
 )
+from tracer.services.clickhouse.query_builders.latency_statistic import (
+    STORED_LATENCY_QUANTILE_LEVELS,
+    median_latency_from_states_sql,
+)
 from tracer.services.clickhouse.query_builders.session_filters import (
     SESSION_ID_FILTER_COLS,
     build_session_id_filter_clause,
@@ -344,9 +348,14 @@ _ROLLUP_METRIC_PLAN: dict[str, tuple[str, str, str]] = {
         "avg(dateDiff('second', session_start, coalesce(session_end, session_start)))",
         "avg_duration",
     ),
+    # Pooled median: each session's stored states are merged into one state
+    # per session, and the bucket merges those states, so the value is the
+    # t-digest p50 of every latency row of the sessions starting in the
+    # bucket. Per-session medians are never averaged.
     "latency": (
-        "(quantilesTDigestMerge(0.5, 0.95, 0.99)(sps.latency_q))[1] AS session_latency",
-        "avg(session_latency)",
+        f"quantilesTDigestMergeState({STORED_LATENCY_QUANTILE_LEVELS})(sps.latency_q)"
+        " AS session_latency_state",
+        median_latency_from_states_sql("session_latency_state"),
         "avg_latency",
     ),
 }

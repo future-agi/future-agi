@@ -175,3 +175,102 @@ class TestTraceAndSpanGraphMedian:
 
         assert f"{median_latency_sql('latency_ms')} AS avg_latency" in query
         _assert_no_mean_of_latency(query)
+
+
+# ---------------------------------------------------------------------------
+# Session graphs: the pooled median of the sessions that start in the bucket.
+# ---------------------------------------------------------------------------
+
+_WINDOW_FILTER = {
+    "column_id": "created_at",
+    "filter_config": {
+        "col_type": "SYSTEM_METRIC",
+        "filter_type": "datetime",
+        "filter_op": "between",
+        "filter_value": [START.isoformat(), END.isoformat()],
+    },
+}
+
+
+class _CapturingAnalytics:
+    def __init__(self):
+        self.statements: list[str] = []
+
+    def execute_ch_query(self, query, params, **_options):
+        from types import SimpleNamespace
+
+        self.statements.append(query)
+        return SimpleNamespace(data=[], columns=[])
+
+
+class TestSessionGraphMedian:
+    def _rollup(self, metric_id: str) -> str:
+        from tracer.services.clickhouse.query_builders.session_time_series import (
+            SessionRollupTimeSeriesQueryBuilder,
+        )
+
+        query, _ = SessionRollupTimeSeriesQueryBuilder(
+            project_id=PROJECT_ID,
+            filters=[_WINDOW_FILTER],
+            interval="day",
+            metric_id=metric_id,
+        ).build()
+        return query
+
+    def test_rollup_merges_session_states_into_a_pooled_median(self):
+        query = self._rollup("latency")
+        flat = _normalized(query)
+
+        assert (
+            "quantilesTDigestMergeState(0.5, 0.95, 0.99)(sps.latency_q)"
+            " AS session_latency_state" in flat
+        )
+        assert (
+            f"{median_latency_from_states_sql('session_latency_state')} AS avg_latency"
+            in flat
+        )
+        # No per-session median is materialised, so none can be averaged.
+        assert "AS session_latency," not in flat
+        assert "AS session_latency\n" not in query
+        _assert_no_mean_of_latency(query)
+
+    def _exact_statement(self, metric_id: str) -> str:
+        from tracer.services.clickhouse import exact_graph_reads
+
+        analytics = _CapturingAnalytics()
+        exact_graph_reads.read_exact_session_system_graph(
+            analytics=analytics,
+            project_id=PROJECT_ID,
+            filters=[_WINDOW_FILTER],
+            interval="day",
+            metric_id=metric_id,
+        )
+        (statement,) = analytics.statements
+        return statement
+
+    def test_exact_session_graph_is_pooled_median_over_root_latencies(self):
+        query = self._exact_statement("latency")
+        flat = _normalized(query)
+
+        assert (
+            "groupArrayIf(toInt32(rs.latency_ms), isNotNull(rs.latency_ms))"
+            " AS session_latencies" in flat
+        )
+        assert f"{median_latency_from_arrays_sql('session_latencies')} AS value" in flat
+        assert "avg(session_avg_latency)" not in query
+
+    @pytest.mark.parametrize("metric_id", ["tokens", "cost", "session_count"])
+    def test_only_the_latency_graph_carries_latency_values(self, metric_id):
+        assert "session_latencies" not in self._exact_statement(metric_id)
+
+    def test_session_membership_selector_carries_no_latency_values(self):
+        from tracer.services.clickhouse import exact_graph_reads
+
+        sql, _ = exact_graph_reads._session_trace_membership_sql(
+            project_id=PROJECT_ID,
+            filters=[_WINDOW_FILTER],
+            start_date=START,
+            end_date=END,
+            candidate_trace_ids_param="candidate_traces",
+        )
+        assert "session_latencies" not in sql

@@ -52,6 +52,10 @@ from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
 from tracer.services.clickhouse.query_builders.filters import (
     build_numeric_filter_predicate,
 )
+from tracer.services.clickhouse.query_builders.latency_statistic import (
+    latency_values_sql,
+    median_latency_from_arrays_sql,
+)
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     compile_exact_graph_filter_predicates,
     compile_span_attribute_row_predicate,
@@ -3289,8 +3293,13 @@ def _session_aggregate_source_sql(
     candidate_trace_ids_sql: str | None = None,
     candidate_trace_ids_param: str | None = None,
     use_scalar_witness: bool = False,
+    include_latency_values: bool = False,
 ) -> tuple[str, dict[str, Any]]:
     """Build one full-window, remap-resolved per-session source.
+
+    ``include_latency_values`` adds ``session_latencies``, each session's
+    non-NULL root latencies as ``Array(Int32)``, for the latency graph's
+    pooled median. Every other consumer leaves it off and pays nothing.
 
     System, eval, and annotation session graphs must agree on membership. Raw
     trace/span leaves are intersected after grouping their independent matches
@@ -3581,6 +3590,11 @@ def _session_aggregate_source_sql(
         if include_trace_ids
         else ""
     )
+    latency_values_select = (
+        f",\n        {latency_values_sql('rs.latency_ms')} AS session_latencies"
+        if include_latency_values
+        else ""
+    )
     source = f"""
     WITH
     candidate_physical_session_ids AS (
@@ -3620,6 +3634,7 @@ def _session_aggregate_source_sql(
         dateDiff('second', session_start, session_end) AS session_duration
         {message_aggregate_select}
         {trace_ids_select}
+        {latency_values_select}
     FROM (
         {session_root_rows}
     ) AS rs
@@ -4749,7 +4764,9 @@ def read_exact_session_system_graph(
         )
     bucket_fn = BaseQueryBuilder.time_bucket_expr(interval)
     session_value = {
-        "latency": "avg(session_avg_latency)",
+        # Pooled median over every root latency of the sessions starting in
+        # the bucket; never an average of per-session values.
+        "latency": median_latency_from_arrays_sql("session_latencies"),
         "tokens": "sum(session_total_tokens)",
         "total_tokens": "sum(session_total_tokens)",
         "prompt_tokens": "sum(session_prompt_tokens)",
@@ -4776,6 +4793,7 @@ def read_exact_session_system_graph(
             include_trace_ids=False,
             anchor_by_session_start=True,
             use_scalar_witness=use_scalar_witness,
+            include_latency_values=metric_id == "latency",
         )
         query_params = {
             **query_params,

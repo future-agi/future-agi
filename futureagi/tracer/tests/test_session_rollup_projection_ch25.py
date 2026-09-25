@@ -328,7 +328,10 @@ def legacy_rows(ch_client):
     return rows
 
 
-@pytest.mark.parametrize("metric_id", sorted(METRIC_COLUMNS))
+# The legacy statement averaged per-session medians for latency. Latency is now
+# the pooled median, so it is pinned against the seeded rows directly below
+# instead of against that oracle.
+@pytest.mark.parametrize("metric_id", sorted(set(METRIC_COLUMNS) - {"latency"}))
 def test_projected_statement_returns_todays_numbers(ch_client, legacy_rows, metric_id):
     column = METRIC_COLUMNS[metric_id]
     query, params = _builder(metric_id).build()
@@ -347,6 +350,31 @@ def test_projected_statement_returns_todays_numbers(ch_client, legacy_rows, metr
         row["traffic_count"] for row in legacy_rows
     ]
     assert [row[column] for row in rows] == [row[column] for row in legacy_rows]
+
+
+def test_latency_is_the_pooled_median_not_a_mean_of_session_medians(
+    ch_client, legacy_rows
+):
+    """Day 1: session A's two spans (120, 300). Day 2: B (90) and C (45).
+
+    The pooled lower median is 120 and 45. Averaging per-session medians,
+    which the legacy statement did, gives 67.5 on day 2.
+    """
+
+    query, params = _builder("latency").build()
+
+    rows = _rows(
+        ch_client,
+        query,
+        params,
+        settings={"max_threads": 4, "optimize_aggregation_in_order": 1},
+    )
+
+    assert [row["traffic_count"] for row in rows] == [
+        row["traffic_count"] for row in legacy_rows
+    ]
+    assert [row["avg_latency"] for row in rows] == [120.0, 45.0]
+    assert [row["avg_latency"] for row in legacy_rows] == [120.0, 67.5]
 
 
 def test_legacy_statement_reads_every_state_column(ch_client):
