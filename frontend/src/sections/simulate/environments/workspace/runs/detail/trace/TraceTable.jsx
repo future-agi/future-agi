@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Box,
   Stack,
@@ -35,8 +35,13 @@ export default function TraceTable({
   evals,
   onOpen,
   columns,
+  activeCallId = null,
 }) {
   const [collapsed, setCollapsed] = useState(null);
+  const activeRowRef = useRef(null);
+  // The call already expanded for, so a group the user collapses afterwards
+  // stays collapsed across refetches.
+  const expandedForRef = useRef(null);
   const visible = columns || defaultTraceColumns();
   const show = (key) => visible.has(key);
   const showEvals = show("evals");
@@ -50,6 +55,24 @@ export default function TraceTable({
       else next.add(label);
       return next;
     });
+  // The open call's row must be visible: expand its group once per call, then
+  // bring the row into view.
+  const activeGroupLabel = activeCallId
+    ? groups.find((g) => g.rows.some((row) => row.id === activeCallId))?.label
+    : undefined;
+  useEffect(() => {
+    if (!activeGroupLabel || expandedForRef.current === activeCallId) return;
+    expandedForRef.current = activeCallId;
+    setCollapsed((prev) => {
+      const next = new Set(prev ?? groups.map((g) => g.label));
+      next.delete(activeGroupLabel);
+      return next;
+    });
+  }, [activeCallId, activeGroupLabel, groups]);
+  useEffect(() => {
+    activeRowRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [activeCallId, activeGroupLabel]);
+
   const allCollapsed =
     groups.length > 0 && groups.every((g) => collapsedSet.has(g.label));
   const toggleAllGroups = () =>
@@ -59,12 +82,15 @@ export default function TraceTable({
 
   const renderRow = (t) => {
     const outcome = runOutcome(t.status);
+    const active = t.id === activeCallId;
     return (
       <TableRow
         key={t.id}
+        ref={active ? activeRowRef : undefined}
+        aria-selected={active}
         sx={{
           cursor: "pointer",
-          bgcolor: "transparent",
+          bgcolor: active ? "action.selected" : "transparent",
         }}
       >
 
@@ -377,4 +403,5 @@ TraceTable.propTypes = {
   evals: PropTypes.array.isRequired,
   onOpen: PropTypes.func,
   columns: PropTypes.instanceOf(Set),
+  activeCallId: PropTypes.string,
 };

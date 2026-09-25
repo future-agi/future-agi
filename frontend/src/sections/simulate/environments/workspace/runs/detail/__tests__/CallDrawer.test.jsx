@@ -20,9 +20,15 @@ vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => {
 // test proves the routing without mounting the heavy component (imagine store,
 // saved views, share dialog).
 vi.mock("src/components/VoiceDetailDrawerV2", () => ({
-  default: ({ data }) => (
+  default: ({ data, onPrev, onNext, hasPrev, hasNext }) => (
     <div data-testid="voice-drawer">
       voice:{data?.id}:{data?.transcript?.map((turn) => turn.content).join("|")}
+      <button type="button" onClick={onPrev} disabled={!hasPrev}>
+        prev
+      </button>
+      <button type="button" onClick={onNext} disabled={!hasNext}>
+        next
+      </button>
     </div>
   ),
 }));
@@ -356,5 +362,48 @@ describe("CallDrawer — voice branch", () => {
     expect(timeline.indexOf("Found it.")).toBeLessThan(
       timeline.indexOf("untimed_tool"),
     );
+  });
+
+  it("hands prev/next to the product voice drawer", async () => {
+    const user = userEvent.setup();
+    useCallExecutionV3Detail.mockReturnValue({
+      data: { id: "voice-2", transcript: [] },
+      isPending: false,
+    });
+    const onPrev = vi.fn();
+    const onNext = vi.fn();
+    render(
+      <CallDrawer
+        task={{ id: "voice-2", simulationCallType: "voice" }}
+        agentType="voice"
+        hasPrev
+        hasNext={false}
+        onPrev={onPrev}
+        onNext={onNext}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "next" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "prev" }));
+    expect(onPrev).toHaveBeenCalledTimes(1);
+    expect(onNext).not.toHaveBeenCalled();
+  });
+
+  it("disables both arrows when nothing is passed (the header defaults them on)", () => {
+    useCallExecutionV3Detail.mockReturnValue({
+      data: { id: "voice-3", transcript: [] },
+      isPending: false,
+    });
+    render(
+      <CallDrawer
+        task={{ id: "voice-3", simulationCallType: "voice" }}
+        agentType="voice"
+        onClose={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "prev" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "next" })).toBeDisabled();
   });
 });

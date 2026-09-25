@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Box, Stack, Button, Pagination } from "@mui/material";
 
 import Iconify from "src/components/iconify";
@@ -37,12 +37,17 @@ const filterButtonSx = {
   "&:hover": { borderColor: "text.disabled", bgcolor: "transparent" },
 };
 
+const PAGE_SIZE = 50;
+
 // The per-call table owns server-backed grouping, filtering, columns and paging
 // for read-only execution results.
 export default function RunTraceTable({
   executionId,
   onOpenCall,
+  onQueryChange,
   initialFilters = {},
+  activeCallId = null,
+  activePage = null,
 }) {
   const [groupBy, setGroupBy] = useState("useCase");
   const [statusChip, setStatusChip] = useState("all");
@@ -62,6 +67,30 @@ export default function RunTraceTable({
     return next;
   }, [filters, statusChip]);
 
+  // Follow the drawer: when prev/next lands on a call on another page, show
+  // that page. Keyed on the call too, so a manual page change doesn't stick.
+  useEffect(() => {
+    if (activePage) setPage(activePage);
+  }, [activeCallId, activePage]);
+
+  // Exactly what this table asks the list for. It's reported up so the call
+  // drawer's prev/next read the same cache entry, in the same results order.
+  const listQuery = useMemo(
+    () => ({
+      page,
+      limit: PAGE_SIZE,
+      search: "",
+      filters: serverFilters,
+      groupBy: GROUP_BY_API[groupBy],
+    }),
+    [page, serverFilters, groupBy],
+  );
+  useEffect(() => {
+    onQueryChange?.(listQuery);
+  }, [listQuery, onQueryChange]);
+  // Unmounting (another tab) takes the table's state with it.
+  useEffect(() => () => onQueryChange?.(null), [onQueryChange]);
+
   const {
     tasks,
     columns,
@@ -71,12 +100,7 @@ export default function RunTraceTable({
     totalPages = 1,
     isLoading,
     error,
-  } = useRunCalls(executionId, {
-    page,
-    limit: 50,
-    filters: serverFilters,
-    groupBy: GROUP_BY_API[groupBy],
-  });
+  } = useRunCalls(executionId, listQuery);
 
   // The eval columns to render come from the data-driven column descriptors.
   const evals = useMemo(
@@ -252,6 +276,7 @@ export default function RunTraceTable({
             groups={groups}
             evals={evals}
             onOpen={onOpenCall}
+            activeCallId={activeCallId}
           />
         )}
         {!isLoading && count > 0 && totalPages > 1 && (
@@ -285,5 +310,8 @@ export default function RunTraceTable({
 RunTraceTable.propTypes = {
   executionId: PropTypes.string,
   onOpenCall: PropTypes.func,
+  onQueryChange: PropTypes.func,
   initialFilters: PropTypes.object,
+  activeCallId: PropTypes.string,
+  activePage: PropTypes.number,
 };

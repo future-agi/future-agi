@@ -56,7 +56,14 @@ StatePane.propTypes = { children: PropTypes.node, onClose: PropTypes.func };
 // `VoiceDetailDrawerV2` — a content-only component that renders its own header,
 // recording player and analytics. We only tag `module`/`origin` = "simulate"
 // (the fields the panels branch on) and hide the annotation actions.
-export default function VoiceCallDrawer({ task, onClose }) {
+export default function VoiceCallDrawer({
+  task,
+  onClose,
+  onPrev,
+  onNext,
+  hasPrev = false,
+  hasNext = false,
+}) {
   const { data, isPending, isError } = useCallExecutionV3Detail(
     task.id,
     !!task.id,
@@ -106,6 +113,12 @@ export default function VoiceCallDrawer({ task, onClose }) {
         scenarioId={data?.scenario_id}
         isLoading={isPending}
         hiddenActionIds={HIDDEN_VOICE_ACTIONS}
+        // The product header defaults both arrows to enabled, so always pass
+        // real values.
+        onPrev={onPrev}
+        onNext={onNext}
+        hasPrev={hasPrev}
+        hasNext={hasNext}
       />
     </Box>
   );
@@ -113,4 +126,8 @@ export default function VoiceCallDrawer({ task, onClose }) {
 VoiceCallDrawer.propTypes = {
   task: PropTypes.shape({ id: PropTypes.string }).isRequired,
   onClose: PropTypes.func,
+  onPrev: PropTypes.func,
+  onNext: PropTypes.func,
+  hasPrev: PropTypes.bool,
+  hasNext: PropTypes.bool,
 };

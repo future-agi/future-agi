@@ -27,6 +27,7 @@ import FixMyAgentDrawer from "./fixmyagent/FixMyAgentDrawer";
 import OptimizationRunsList from "./fixmyagent/OptimizationRunsList";
 import LaunchOptimizationDrawer from "./fixmyagent/LaunchOptimizationDrawer";
 import RunAnalytics from "./RunAnalytics";
+import useCallListNavigation from "./useCallListNavigation";
 
 // Terminal execution failures/cancellations outrank call-level outcomes.
 // Otherwise mixed pass/fail results are a completed run with findings.
@@ -65,12 +66,23 @@ export default function RunDetail({
   const [tab, setTab] = useState("tasks");
   const [analyticsFilters, setAnalyticsFilters] = useState({});
   const [addingEvals, setAddingEvals] = useState(false);
+  // The open call, where it was opened from ("table" or "analytics") and, after
+  // a prev/next step, the table page it sits on so the table can follow.
   const [openCall, setOpenCall] = useState(null);
+  // The exact query the trace table reads, or null when it isn't mounted.
+  const [tableQuery, setTableQuery] = useState(null);
   const [debugging, setDebugging] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [exporting, setExporting] = useState(false);
   const { identity, stats } = useRunDetail(testId, executionId, {
     envName: env?.name,
+  });
+  const callNav = useCallListNavigation({
+    executionId,
+    openCall,
+    tableQuery,
+    live: identity?.status === "running",
+    onStep: setOpenCall,
   });
 
   // The past self-improvement (optimization) runs for this execution — REAL,
@@ -284,7 +296,12 @@ export default function RunDetail({
           {tab === "tasks" && (
             <RunTraceTable
               executionId={executionId}
-              onOpenCall={setOpenCall}
+              onOpenCall={(task) =>
+                setOpenCall({ task, source: "table", page: null })
+              }
+              onQueryChange={setTableQuery}
+              activeCallId={openCall?.task.id ?? null}
+              activePage={openCall?.page ?? null}
               initialFilters={analyticsFilters}
             />
           )}
@@ -324,7 +341,9 @@ export default function RunDetail({
           {tab === "analytics" && (
             <RunAnalytics
               executionId={executionId}
-              onOpenCall={setOpenCall}
+              onOpenCall={(task) =>
+                setOpenCall({ task, source: "analytics", page: null })
+              }
               onOpenCalls={(filters) => {
                 setAnalyticsFilters(filters);
                 setTab("tasks");
@@ -361,9 +380,13 @@ export default function RunDetail({
       )}
 
       <CallDrawer
-        task={openCall}
+        task={openCall?.task ?? null}
         agentType={stats.agentType}
         onClose={() => setOpenCall(null)}
+        hasPrev={callNav.hasPrev}
+        hasNext={callNav.hasNext}
+        onPrev={callNav.onPrev}
+        onNext={callNav.onNext}
       />
 
       <FixMyAgentDrawer

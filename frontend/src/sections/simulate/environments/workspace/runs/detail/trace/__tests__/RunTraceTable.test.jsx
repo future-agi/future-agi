@@ -209,6 +209,63 @@ describe("RunTraceTable", () => {
     );
   });
 
+  it("reports the exact list query it reads, and clears it on unmount", async () => {
+    const user = userEvent.setup();
+    const onQueryChange = vi.fn();
+    const { unmount } = renderTable({ onQueryChange });
+
+    const base = { page: 1, limit: 50, search: "", filters: {}, groupBy: "goal" };
+    expect(onQueryChange).toHaveBeenLastCalledWith(base);
+    // What it reports is what it asked the list for — the drawer reads the
+    // same cache entry.
+    expect(useRunCalls).toHaveBeenLastCalledWith("ex1", base);
+
+    await user.click(screen.getByRole("button", { name: /Group by/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Status" }));
+    expect(onQueryChange).toHaveBeenLastCalledWith({ ...base, groupBy: "status" });
+
+    await user.click(screen.getByRole("button", { name: "Failing" }));
+    expect(onQueryChange).toHaveBeenLastCalledWith({
+      ...base,
+      groupBy: "status",
+      filters: { status: ["failed"] },
+    });
+
+    unmount();
+    expect(onQueryChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it("follows the drawer: switches page, expands the call's group, highlights its row", () => {
+    const onQueryChange = vi.fn();
+    const { rerender } = renderTable({ onQueryChange });
+    // Groups start collapsed, so no call rows are visible.
+    expect(screen.queryByText("Escalate to a human · Trial 1")).toBeNull();
+    expect(screen.queryAllByRole("row", { selected: true })).toHaveLength(0);
+
+    rerender(
+      <RunTraceTable
+        executionId="ex1"
+        onOpenCall={vi.fn()}
+        onQueryChange={onQueryChange}
+        activeCallId="t2"
+        activePage={2}
+      />,
+    );
+
+    expect(useRunCalls).toHaveBeenLastCalledWith(
+      "ex1",
+      expect.objectContaining({ page: 2 }),
+    );
+    expect(onQueryChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 2 }),
+    );
+    const selected = screen.getAllByRole("row", { selected: true });
+    expect(selected).toHaveLength(1);
+    expect(selected[0]).toHaveTextContent("Angry caller");
+    // Only the open call's group expanded; the others stay collapsed.
+    expect(screen.queryByText("Impatient caller")).toBeNull();
+  });
+
   it("narrows the rows when a status chip is clicked", async () => {
     const user = userEvent.setup();
     renderTable();
