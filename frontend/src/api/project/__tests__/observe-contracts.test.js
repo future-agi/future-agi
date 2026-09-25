@@ -47,6 +47,30 @@ describe("Observe API response contracts", () => {
     expect(() => parseTraceGraphResponse(body.result)).toThrow();
   });
 
+  it("keeps the declared series statistic through the generated parser", () => {
+    // Zod strips undeclared keys: this fails if the OpenAPI contract or its
+    // generated parser loses metric_statistic.
+    const body = {
+      status: true,
+      result: {
+        metric_name: "latency",
+        metric_statistic: "median",
+        data: [],
+        query_complete: true,
+        query_status: "complete",
+        query_sampled: false,
+      },
+    };
+
+    expect(parseTraceGraphResponse(body).metric_statistic).toBe("median");
+    expect(() =>
+      parseTraceGraphResponse({
+        ...body,
+        result: { ...body.result, metric_statistic: "average" },
+      }),
+    ).toThrow();
+  });
+
   it("accepts exact graph gaps represented by nullable values", () => {
     const body = {
       status: true,
