@@ -53,7 +53,7 @@ describe("StopRunControl", () => {
     expect(cancelMutate).toHaveBeenCalledWith("ex-1", expect.any(Object));
     expect(spy).toHaveBeenCalledWith({ queryKey: ["run-test-executions"] });
     expect(spy).toHaveBeenCalledWith({ queryKey: ["simulation-run-results-v3", "ex-1"] });
-    expect(enqueueSnackbar).toHaveBeenCalledWith("Run stopped", { variant: "success" });
+    expect(enqueueSnackbar).toHaveBeenCalledWith("Cancelling the run", { variant: "success" });
   });
 
   it("surfaces a failed stop", () => {

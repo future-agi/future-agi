@@ -41,7 +41,7 @@ function StopRunButton({ executionId, label }) {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: ["run-test-executions"] });
         queryClient.invalidateQueries({ queryKey: ["simulation-run-results-v3", executionId] });
-        enqueueSnackbar("Run stopped", { variant: "success" });
+        enqueueSnackbar("Cancelling the run", { variant: "success" });
       },
       onError: () => enqueueSnackbar("Couldn't stop the run — try again", { variant: "error" }),
     });

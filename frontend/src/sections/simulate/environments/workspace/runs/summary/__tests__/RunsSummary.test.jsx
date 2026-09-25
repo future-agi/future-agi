@@ -151,4 +151,21 @@ describe("RunsSummary", () => {
     // A finished run reads green in the table, like the design.
     expect(STATUS_META.finished).toEqual({ color: BUILD_TONES.green, label: "Completed" });
   });
+
+  it("shows a stopped run as Cancelling, without a second Stop", () => {
+    useEnvironmentRuns.mockReturnValue({
+      runs: [{ ...RUNS[0], runState: "cancelling", stoppable: false }],
+      isLoading: false,
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <RunsSummary env={env} envState={envState} onStart={vi.fn()} onOpenRun={vi.fn()} onGo={vi.fn()} />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText("Cancelling")).toBeInTheDocument();
+    expect(screen.queryByText("Running")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Stop simulation" })).toBeNull();
+  });
 });

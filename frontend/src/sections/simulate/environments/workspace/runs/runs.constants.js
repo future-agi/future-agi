@@ -2,7 +2,7 @@ import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 
 // The statuses whose dot animates — a run in one of these phases is still
 // moving, so the chip breathes.
-export const LIVE_STATUSES = ["running", "booting", "grading"];
+export const LIVE_STATUSES = ["running", "booting", "grading", "cancelling"];
 
 // TestExecution lifecycle states that can still advance and need polling.
 export const ACTIVE_EXECUTION_STATUSES = new Set([
@@ -38,6 +38,8 @@ export const STATUS_META = {
   finished: { color: BUILD_TONES.green, label: "Completed" },
   failed: { color: BUILD_TONES.red, label: "Failed" },
   error: { color: BUILD_TONES.orange, label: "Error" },
+  // A stopped run until the backend confirms its sandbox is gone.
+  cancelling: { color: BUILD_TONES.zinc, label: "Cancelling" },
   cancelled: { color: BUILD_TONES.zinc, label: "Cancelled" },
 };
 
