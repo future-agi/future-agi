@@ -2517,3 +2517,20 @@ def test_hosted_execution_cancel_signals_workflow_without_deleting_sandbox(
     job.refresh_from_db()
     assert job.state == HostedHarnessJob.State.CLEANING_UP
     assert job.cancel_reason == "user_canceled"
+
+
+def test_platform_simulator_material_carries_observe_credentials(monkeypatch):
+    for name, value in {
+        "HARNESS_OBSERVABILITY": "on",
+        "FI_API_KEY": "observe-key",
+        "FI_SECRET_KEY": "observe-secret",
+        "FI_HARNESS_PROJECT": "hosted-harness",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    values, _credentials = _platform_simulator_material()
+
+    assert values["FI_API_KEY"] == "observe-key"
+    assert values["FI_SECRET_KEY"] == "observe-secret"
+    assert values["FI_HARNESS_PROJECT"] == "hosted-harness"
+    assert values["HARNESS_OBSERVABILITY"] == "on"
