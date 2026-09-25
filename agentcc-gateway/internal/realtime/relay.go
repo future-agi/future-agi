@@ -91,6 +91,15 @@ func (r *Relay) readFromClient() {
 func (r *Relay) writeToProvider() {
 	defer r.wg.Done()
 
+	// Ping from this write goroutine so we never race gorilla's writer
+	// (Conn is not safe for concurrent WriteMessage / WriteControl).
+	var ping <-chan time.Time
+	if r.config.PingInterval > 0 {
+		ticker := time.NewTicker(r.config.PingInterval)
+		defer ticker.Stop()
+		ping = ticker.C
+	}
+
 	for {
 		select {
 		case msg, ok := <-r.clientToProvider:
@@ -105,6 +114,14 @@ func (r *Relay) writeToProvider() {
 			if err := r.session.ProviderConn.WriteMessage(msg.messageType, msg.data); err != nil {
 				if !r.session.IsClosed() {
 					r.logger.Warn("provider write error", "session_id", r.session.ID, "error", err)
+				}
+				r.session.Close("provider_write_error")
+				return
+			}
+		case <-ping:
+			if err := r.session.ProviderConn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second)); err != nil {
+				if !r.session.IsClosed() {
+					r.logger.Warn("provider ping error", "session_id", r.session.ID, "error", err)
 				}
 				r.session.Close("provider_write_error")
 				return
@@ -150,6 +167,15 @@ func (r *Relay) readFromProvider() {
 func (r *Relay) writeToClient() {
 	defer r.wg.Done()
 
+	// Ping from this write goroutine so we never race gorilla's writer
+	// (Conn is not safe for concurrent WriteMessage / WriteControl).
+	var ping <-chan time.Time
+	if r.config.PingInterval > 0 {
+		ticker := time.NewTicker(r.config.PingInterval)
+		defer ticker.Stop()
+		ping = ticker.C
+	}
+
 	for {
 		select {
 		case msg, ok := <-r.providerToClient:
@@ -163,6 +189,14 @@ func (r *Relay) writeToClient() {
 			if err := r.session.ClientConn.WriteMessage(msg.messageType, msg.data); err != nil {
 				if !r.session.IsClosed() {
 					r.logger.Warn("client write error", "session_id", r.session.ID, "error", err)
+				}
+				r.session.Close("client_write_error")
+				return
+			}
+		case <-ping:
+			if err := r.session.ClientConn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second)); err != nil {
+				if !r.session.IsClosed() {
+					r.logger.Warn("client ping error", "session_id", r.session.ID, "error", err)
 				}
 				r.session.Close("client_write_error")
 				return
