@@ -112,7 +112,9 @@ export default function TraceTable({
         }}
       >
         {show("callDetails") && (
-          <TableCell sx={bodyCellSx} onClick={() => onOpen(t)}>
+          // Indented past the group row's chevron so a call reads as nested
+          // under its group, lined up with the group name.
+          <TableCell sx={{ ...bodyCellSx, pl: 5 }} onClick={() => onOpen(t)}>
             <Box minWidth={0}>
               <Stack
                 direction="row"
