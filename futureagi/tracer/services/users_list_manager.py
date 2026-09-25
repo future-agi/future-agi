@@ -24,6 +24,9 @@ from tracer.services.clickhouse.query_builders.filters import (
     EvalFilterMetadata,
     resolve_eval_filter_metadata,
 )
+from tracer.services.clickhouse.query_builders.user_list import (
+    MatchingActivityWitness,
+)
 from tracer.services.clickhouse.read_budget import (
     ReadDeadline,
     ReadDeadlineExceeded,
@@ -574,6 +577,14 @@ class UsersListManager:
         # The number/boolean predicate the current walk is decided on, set by
         # ``matching_activity_walk_applies`` for the page it applies to.
         self._walked_typed_filter: WalkedTypedFilter | None = None
+        # The witness the current walk discovers on, chosen once by
+        # ``matching_activity_walk_applies``; the walk's builder reads it.
+        self._walk_witness: MatchingActivityWitness | None = None
+        # Newest live span per user and native leaf (filter index) that
+        # satisfies the leaf's existence flag: a native walk's certified order
+        # key. Its own cache: an attribute key may share a native column's
+        # name, so the two can never share ``_matching_activity_by_user``.
+        self._native_matching_activity_by_user: dict[str, dict[int, datetime]] = {}
         # Public cost rounding/JSON dates are presentation, never filter truth.
         self._native_filter_values_by_user: dict[str, dict[str, Any]] = {}
         # Per page user, each native leaf's decision keyed by filter index.
@@ -1053,12 +1064,16 @@ class UsersListManager:
         rows: list[dict],
         builder: UserListQueryBuilderV2,
         deadline: ReadDeadline | None,
+        *,
+        newest: int | None = None,
     ) -> None:
         """Cache each page user's decision of every native span-dimension leaf.
 
         The statement decides the leaves with the users graph's own membership
         SQL (``build_native_span_dimension_query``); a page user it returns no
-        row for has no latest live span in the window and matches none.
+        row for has no latest live span in the window and matches none. With
+        ``newest`` (a native walk's witness leaf) it also caches each user's
+        order key for that leaf in ``_native_matching_activity_by_user``.
         """
 
         end_user_ids = [
@@ -1067,7 +1082,7 @@ class UsersListManager:
         if not end_user_ids or not self.native_dimension_leaves:
             return
         query, params = builder.build_native_span_dimension_query(
-            end_user_ids, self.native_dimension_leaves
+            end_user_ids, self.native_dimension_leaves, newest=newest
         )
         if not query:
             return
@@ -1092,6 +1107,15 @@ class UsersListManager:
                 index: bool(decided.get(f"native_leaf_{index}"))
                 for index, _item in self.native_dimension_leaves
             }
+            if newest is None:
+                continue
+            key = decided.get(f"native_leaf_{newest}_newest")
+            if isinstance(key, datetime) and key.tzinfo is None:
+                key = key.replace(tzinfo=UTC)
+            # ``maxIf`` with no matching latest live span is the epoch.
+            self._native_matching_activity_by_user[user_id] = (
+                {newest: key} if isinstance(key, datetime) and key > _EPOCH else {}
+            )
 
     def _native_dimension_matches(
         self, *, row: dict[str, Any], filter_index: int
@@ -1300,12 +1324,13 @@ class UsersListManager:
         certification reads when the walk applies.
         """
         self._walked_typed_filter = None
+        self._walk_witness = None
         if self.sort_params:
             return False
         witness = builder.matching_activity_witness()
         if witness is None:
             return False
-        key, kind = witness[0], witness[1]
+        key, kind = witness.key, witness.kind
         items = [
             item
             for item in self.filters
@@ -1317,11 +1342,15 @@ class UsersListManager:
         if len(items) != 1:
             return False
         if kind == "text":
-            return key in self.attribute_exact_text_filters
+            if key not in self.attribute_exact_text_filters:
+                return False
+            self._walk_witness = witness
+            return True
         typed = typed_walk_filter(witness, items[0])
         if typed is None:
             return False
         self._walked_typed_filter = typed
+        self._walk_witness = witness
         return True
 
     def _prune_attribute_candidate_batch(
@@ -2074,7 +2103,9 @@ class UsersListManager:
         self._attribute_value_types_by_user.clear()
         self._native_dimension_matches_by_user.clear()
         self._matching_activity_by_user.clear()
+        self._native_matching_activity_by_user.clear()
         self._walked_typed_filter = None
+        self._walk_witness = None
         self._native_filter_values_by_user.clear()
         self._relation_matching_user_ids.clear()
         base_builder = UserListQueryBuilderV2(

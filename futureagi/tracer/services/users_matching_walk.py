@@ -1303,11 +1303,14 @@ def walk_matching_activity_page(
         filters=manager.filters,
         empty_scope=manager.empty_scope,
     )
-    witness = builder.matching_activity_witness()
+    # The witness ``matching_activity_walk_applies`` chose, carried to every
+    # statement: slices, instants and probes never recompute it.
+    witness = manager._walk_witness
     if witness is None:
         raise ListCursorError(
             "invalid_cursor", "User ordering changed; restart pagination."
         )
+    builder.walk_witness = witness
     open_instant = False
     if cursor_order is None:
         last_key, last_id, coverage = None, None, window_end
@@ -1334,7 +1337,7 @@ def walk_matching_activity_page(
     state = _WalkState(
         manager=manager,
         builder=builder,
-        walked_key=witness[0],
+        walked_key=witness.key,
         page_size=page_size,
         window_start=window_start,
         window_end=window_end,

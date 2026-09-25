@@ -452,3 +452,52 @@ def test_every_native_leaf_matches_the_users_graph_on_the_deployed_schema(
     members = _list_members(ch_client, seeded, item)
     assert members == _graph_members(ch_client, seeded, item)
     assert _graph_active_users(ch_client, item) == len(members)
+
+
+NEWEST_EXPECTED = [
+    # The newest latest live in-window span satisfying the witness flag: D's
+    # stale gpt-4o version, E's tombstone and G's out-of-window span never
+    # count.
+    ("equals", "gpt-4o", "SYSTEM_METRIC", {"A": 1, "C": 4, "F": 8}),
+    # A negation without a family witnesses on its presence flag.
+    ("not_equals", "gpt-4o", None, {"B": 2, "C": 3, "D": 5, "E": 7, "G": 9}),
+]
+
+
+@pytest.mark.parametrize(
+    ("operation", "value", "col_type", "expected"),
+    NEWEST_EXPECTED,
+    ids=["equals", "not_equals-no-family"],
+)
+@pytest.mark.parametrize("column_id", ["model", "trace_name"])
+def test_the_native_statement_returns_each_users_newest_witnessed_span(
+    ch_client, seeded, column_id, operation, value, col_type, expected
+):
+    item = _leaf(column_id, operation, value, col_type=col_type)
+    filters = [_date_filter(), item]
+    manager = UsersListManager(
+        organization_id=ORGANIZATION,
+        allowed_project_ids=[PROJECT],
+        project_id=PROJECT,
+        requested_columns=[],
+        filters=filters,
+    )
+    builder = UserListQueryBuilderV2(
+        organization_id=ORGANIZATION, project_ids=[PROJECT], filters=filters
+    )
+    assert builder.native_matching_activity_witness().leaf_index == 1
+    users = [user for label, user in USERS.items() if label != "F"] + [seeded]
+    with patch(SERVICE, return_value=_LiveExecutor(ch_client)):
+        manager._read_native_span_dimensions(
+            [{"end_user_id": user} for user in users], builder, None, newest=1
+        )
+    labels = _labels(seeded)
+    newest = {
+        labels[user]: keys[1]
+        for user, keys in manager._native_matching_activity_by_user.items()
+        if keys
+    }
+    start = WINDOW_START.replace(tzinfo=UTC)
+    assert newest == {
+        label: start + timedelta(hours=hours) for label, hours in expected.items()
+    }

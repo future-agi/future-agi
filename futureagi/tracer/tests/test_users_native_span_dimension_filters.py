@@ -13,16 +13,21 @@ negations mean "some span differs", comparisons are case-insensitive). The
 live proof is ``test_users_native_span_dimension_parity_ch25.py``.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
-from tracer.services.clickhouse.exact_graph_reads import _user_membership_having
+from tracer.services.clickhouse.exact_graph_reads import (
+    _user_membership_having,
+    compile_user_membership_leaf,
+)
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 from tracer.services.clickhouse.query_builders.user_list import (
     USER_NATIVE_SPAN_DIMENSIONS,
+    MatchingActivityWitness,
+    UnsupportedBoundedUserListQuery,
 )
 from tracer.services.clickhouse.read_budget import ReadDeadline
 from tracer.services.clickhouse.v2.query_builders.user_list import (
@@ -285,7 +290,8 @@ def test_a_raw_attribute_of_a_native_name_still_narrows_acquisition():
         organization_id=ORG, project_ids=[PROJECT], filters=[item]
     )
     witness = builder.matching_activity_witness()
-    assert witness is not None and witness[0] == "status"
+    assert witness is not None and witness.key == "status"
+    assert witness.family == "raw" and witness.index_pruned is True
     query, _params = builder.build_dimension_candidate_query(limit=26, **WINDOW)
     assert "mapContains(attrs_string" in query
 
@@ -306,11 +312,11 @@ def _raw_tag(value="gold"):
 def test_certification_skips_native_leaves_and_the_replay_decides_them(
     native_decision,
 ):
-    # The matching-activity walk certifies a user on the raw attribute
-    # leaves alone (``_attribute_filters_match``); a native leaf has no
-    # attribute-map value, so certifying it there rejected every user and
-    # published an empty page labelled exact. The native decision is read
-    # after the replay, in ``_row_matches_filters``.
+    # ``_attribute_filters_match`` decides the raw attribute leaves alone; a
+    # native leaf has no attribute-map value, so deciding it there rejected
+    # every user and published an empty page labelled exact. The native
+    # decision comes from the native statement (read at the walk's
+    # certification), and ``_row_matches_filters`` re-decides it.
     manager = manager_for(_raw_tag(), leaf("status", "equals", "ERROR"))
     assert "tag" in manager.attribute_exact_text_filters
     manager._attribute_values_by_user[UID] = {"tag": "gold"}
@@ -385,3 +391,182 @@ def test_a_leaf_without_col_type_keeps_the_graphs_collection_shape():
     assert f"({renamed(graph_condition)}) AS native_leaf_2" in flat
     for name, value in graph_params.items():
         assert params[renamed(name)] == value
+
+
+# --------------------------------------------------------------------------
+# A native leaf as the matching-activity walk's witness (design §2, §3).
+# --------------------------------------------------------------------------
+
+_NEGATIONS = {"not_equals", "not_in", "not_contains"}
+
+
+def _builder(*filters):
+    return UserListQueryBuilderV2(
+        organization_id=ORG, project_ids=[PROJECT], filters=list(filters)
+    )
+
+
+@pytest.mark.parametrize("col_type", ["SYSTEM_METRIC", None], ids=["system", "none"])
+@pytest.mark.parametrize("column_id", sorted(USER_NATIVE_SPAN_DIMENSIONS))
+@pytest.mark.parametrize(("operation", "value"), OPERATIONS)
+def test_a_native_witness_is_the_leafs_existence_flag(
+    column_id, operation, value, col_type
+):
+    """Every leaf whose graph condition has ``countIf(flag) > 0`` is eligible.
+
+    The witness predicate is that flag's own SQL and parameters; a negation
+    without a family witnesses on its presence flag (its forbidden term is
+    decided at certification); ``is_null`` without a family has only an
+    absence term and is never a witness.
+    """
+    item = leaf(column_id, operation, value, col_type=col_type)
+    date = {
+        "column_id": "created_at",
+        "filter_config": {
+            "filter_type": "datetime",
+            "filter_op": "between",
+            "filter_value": ["2026-09-01T00:00:00", "2026-09-02T00:00:00"],
+        },
+    }
+    builder = _builder(date, item)
+    witness = builder.native_matching_activity_witness()
+    flags, condition, params = compile_user_membership_leaf(
+        item, project_id=PROJECT, namespace="native_leaf_1"
+    )
+    if col_type is None and operation == "is_null":
+        assert condition == "countIf(native_leaf_1_match_0) = 0"
+        assert witness is None
+        return
+    assert witness == MatchingActivityWitness(
+        family="native",
+        key=USER_NATIVE_SPAN_DIMENSIONS[column_id],
+        kind="native",
+        sql=flags[0].removesuffix(" AS native_leaf_1_match_0"),
+        params=params,
+        leaf_index=1,
+        flag_alias="native_leaf_1_match_0",
+        index_pruned=False,
+    )
+    if col_type is None and operation in _NEGATIONS:
+        assert condition == (
+            "countIf(native_leaf_1_match_0) > 0 AND countIf(native_leaf_1_match_1) = 0"
+        )
+    else:
+        assert condition == "countIf(native_leaf_1_match_0) > 0"
+    # The raw attribute-map witness never takes a native leaf.
+    assert builder.matching_activity_witness() is None
+
+
+def test_the_lowest_eligible_native_leaf_is_the_witness():
+    date = {
+        "column_id": "created_at",
+        "filter_config": {
+            "filter_type": "datetime",
+            "filter_op": "between",
+            "filter_value": ["2026-09-01T00:00:00", "2026-09-02T00:00:00"],
+        },
+    }
+    is_null = leaf("model", "is_null", col_type=None)
+    status = leaf("status", "equals", "ERROR")
+    model = leaf("model", "equals", "gpt-4o")
+    witness = _builder(date, is_null, status, model).native_matching_activity_witness()
+    assert (witness.leaf_index, witness.key) == (2, "status")
+    witness = _builder(model, status).native_matching_activity_witness()
+    assert (witness.leaf_index, witness.key) == (0, "model")
+    assert _builder(date, is_null).native_matching_activity_witness() is None
+    # A raw attribute of a native name is a raw leaf, never a native witness.
+    raw = leaf("status", "equals", "OK", col_type="SPAN_ATTRIBUTE")
+    assert _builder(raw).native_matching_activity_witness() is None
+    assert _builder(raw).matching_activity_witness().family == "raw"
+
+
+def test_the_walk_statements_carry_the_chosen_witness_and_never_recompute_it():
+    item = leaf("status", "not_equals", "ok", col_type=None)
+    builder = _builder(item)
+    with pytest.raises(UnsupportedBoundedUserListQuery):
+        builder.build_matching_activity_slice_query(
+            slice_start=datetime(2026, 9, 1, tzinfo=UTC),
+            slice_end=datetime(2026, 9, 2, tzinfo=UTC),
+            limit=10,
+        )
+    builder.walk_witness = builder.native_matching_activity_witness()
+    flags, _condition, params = compile_user_membership_leaf(
+        item, project_id=PROJECT, namespace="native_leaf_0"
+    )
+    presence = flags[0].removesuffix(" AS native_leaf_0_match_0")
+    start = datetime(2026, 9, 1, tzinfo=UTC)
+    end = datetime(2026, 9, 2, tzinfo=UTC)
+    statements = [
+        builder.build_matching_activity_slice_query(
+            slice_start=start, slice_end=end, limit=10
+        ),
+        builder.build_matching_activity_instant_query(instant=start, limit=10),
+        builder.build_matching_activity_existence_query(
+            range_start=start, range_end=end
+        ),
+        builder.build_matching_activity_existence_estimate_query(
+            range_start=start, range_end=end
+        ),
+    ]
+    for query, statement_params in statements:
+        flat = " ".join(query.split())
+        assert f"WHERE {' '.join(presence.split())}" in flat
+        # The forbidden term is certified over the window, never a row filter.
+        assert "native_leaf_0_0_forbidden" not in flat
+        for name, value in params.items():
+            if f"%({name})s" in presence:
+                assert statement_params[name] == value
+
+
+def test_the_native_statement_projects_the_witness_leafs_order_key():
+    status = leaf("status", "equals", "OK")
+    negation = leaf("model", "not_equals", "gpt-4o", col_type=None)
+    builder = _builder(status, negation)
+    query, _params = builder.build_native_span_dimension_query(
+        [UID], [(0, status), (1, negation)], newest=1
+    )
+    flat = " ".join(query.split())
+    assert "latest_start_time AS native_span_start_time" in flat
+    assert (
+        "maxIf(native_span_start_time, native_leaf_1_match_0) AS native_leaf_1_newest"
+        in flat
+    )
+    assert "native_leaf_0_newest" not in flat
+    plain, _ = builder.build_native_span_dimension_query(
+        [UID], [(0, status), (1, negation)]
+    )
+    assert "_newest" not in plain
+    with pytest.raises(ValueError):
+        builder.build_native_span_dimension_query(
+            [UID], [(0, leaf("model", "is_null", col_type=None))], newest=0
+        )
+
+
+def test_the_native_read_caches_the_order_key_and_reads_the_epoch_as_none():
+    manager = manager_for(leaf("status", "equals", "OK"))
+    builder = _builder(*manager.filters)
+    other = "00000000-0000-4000-8000-000000000009"
+    newest = datetime(2026, 9, 1, 12, 30)
+    rows = [{"end_user_id": UID}, {"end_user_id": other}]
+    with patch("tracer.services.users_list_manager.V2AnalyticsQueryService") as service:
+        service.return_value.execute_ch_query.return_value = SimpleNamespace(
+            data=[
+                {
+                    "end_user_id": UID,
+                    "native_leaf_0": 1,
+                    "native_leaf_0_newest": newest,
+                },
+                {
+                    "end_user_id": other,
+                    "native_leaf_0": 0,
+                    "native_leaf_0_newest": datetime(1970, 1, 1),
+                },
+            ]
+        )
+        manager._read_native_span_dimensions(rows, builder, None, newest=0)
+    assert manager._native_matching_activity_by_user == {
+        UID: {0: newest.replace(tzinfo=UTC)},
+        other: {},
+    }
+    # An attribute key of the same name never shares this cache.
+    assert manager._matching_activity_by_user == {}
