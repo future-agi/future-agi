@@ -30,7 +30,10 @@ import {
   useHarnessScenarioCoverage,
   useHarnessScenarios,
 } from "src/api/harness/scenarios";
-import { noiseValue } from "src/sections/simulate/environments/workspace/scenarios/scenarioEditor.constants";
+import {
+  noiseValue,
+  withServedLabels,
+} from "src/sections/simulate/environments/workspace/scenarios/scenarioEditor.constants";
 import ScenarioEditForm from "./ScenarioEditForm";
 
 const selectableCheckboxSx = {
@@ -179,11 +182,7 @@ export default function ScenarioSuite({
   const levelLabels = served?.levelLabels || {};
   const noiseChoices =
     fields.find((one) => one.value === "background_noise")?.choices || [];
-  const filterFields = fields.map((one) =>
-    one.value === "background_noise"
-      ? { ...one, choiceLabels: levelLabels }
-      : one,
-  );
+  const filterFields = withServedLabels(fields, levelLabels);
 
   const activeFilters = Object.keys(filters).length;
   const applyFilters = (result) => {

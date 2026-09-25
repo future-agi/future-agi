@@ -20,6 +20,7 @@ import {
   clearScenarioSelection,
 } from "../../buildEnvironment/console/scenarioSelectionBus";
 import { SCENARIOS_COPY } from "./scenarios.constants";
+import { withServedLabels } from "./scenarioEditor.constants";
 import { ENV_SHAPE, ENV_STATE_SHAPE } from "./scenarios.shapes";
 import useScenarioPage, { PAGE_SIZE } from "./useScenarioPage";
 import { isScenarioSampleMode, SAMPLE_PAGE_SIZE } from "src/api/simulate-environments/scenariosSampleMode";
@@ -175,10 +176,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   // over the searched suite so an OR stays buildable; it drops into the shared
   // FilterPanel unchanged.
   const filterFields = useMemo(
-    () =>
-      (pageData.fields || []).map((f) =>
-        f.value === "background_noise" ? { ...f, choiceLabels: pageData.levelLabels } : f,
-      ),
+    () => withServedLabels(pageData.fields || [], pageData.levelLabels),
     [pageData.fields, pageData.levelLabels],
   );
   // The editor's background-noise choices come from the server field catalogue

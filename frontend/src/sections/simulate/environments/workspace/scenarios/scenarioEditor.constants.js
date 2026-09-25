@@ -30,6 +30,16 @@ export const STYLE_OPTIONS = ["concise", "verbose", "formal", "casual", "chatty"
 export const ACCENT_OPTIONS = ["US", "UK", "IN", "BR", "AE", "JP", "other"];
 export const LANGUAGE_OPTIONS = ["English", "Spanish", "Portuguese", "Hindi", "Japanese", "Arabic"];
 // The server lists noise on/off as "present" and "quiet line"; a scenario stores them as true/false.
+// Fields whose values the server names in `level_labels`: noise beds, sub-goals and coverage levels.
+export const withServedLabels = (fields = [], levelLabels = {}) =>
+  fields.map((field) =>
+    field.value === "background_noise" ||
+    field.value === "sub_goals" ||
+    String(field.value).startsWith("coverage.")
+      ? { ...field, choiceLabels: levelLabels }
+      : field,
+  );
+
 export const noiseKey = (value) => {
   if (typeof value === "string") return value;
   if (value === true) return "present";

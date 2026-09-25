@@ -16,12 +16,7 @@ from simulate.serializers.harness_job import (
     HarnessJobAdjustmentSerializer,
     HarnessJobCreateSerializer,
     HarnessJobExtendSerializer,
-    HarnessScenarioAmendResponseSerializer,
     HarnessScenarioAmendSerializer,
-    HarnessScenarioCoverageQuerySerializer,
-    HarnessScenarioCoverageResponseSerializer,
-    HarnessScenarioListQuerySerializer,
-    HarnessScenarioListResponseSerializer,
     HarnessJobReadSerializer,
     HarnessPreflightResponseSerializer,
     HarnessPreflightSerializer,
@@ -298,38 +293,16 @@ class HarnessJobViewSet(viewsets.ViewSet):
     def extend(self, request, pk=None):
         return get_harness_provider().extend(request, pk)
 
-    @validated_request(
-        query_serializer=HarnessScenarioListQuerySerializer,
-        responses={
-            200: HarnessScenarioListResponseSerializer,
-            404: ApiTextErrorResponseSerializer,
-            501: ApiTextErrorResponseSerializer,
-        },
-    )
     @action(detail=True, methods=["get"], url_path="scenarios")
     def scenarios(self, request, pk=None):
         return get_harness_provider().list_scenarios(request, pk)
 
-    @validated_request(
-        query_serializer=HarnessScenarioCoverageQuerySerializer,
-        responses={
-            200: HarnessScenarioCoverageResponseSerializer,
-            404: ApiTextErrorResponseSerializer,
-            501: ApiTextErrorResponseSerializer,
-        },
-    )
     @action(detail=True, methods=["get"], url_path="scenarios/coverage")
     def scenario_coverage(self, request, pk=None):
         return get_harness_provider().scenario_coverage(request, pk)
 
     @validated_request(
         request_serializer=HarnessScenarioAmendSerializer,
-        responses={
-            200: HarnessScenarioAmendResponseSerializer,
-            404: ApiTextErrorResponseSerializer,
-            409: ApiTextErrorResponseSerializer,
-            501: ApiTextErrorResponseSerializer,
-        },
         reject_unknown_fields=True,
     )
     @action(detail=True, methods=["post"], url_path="scenarios/amend")

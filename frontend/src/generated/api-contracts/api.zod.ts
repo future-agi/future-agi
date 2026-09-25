@@ -37198,99 +37198,6 @@ export const SimulateApiHarnessJobsScenariosParams = zod.object({
   id: zod.string(),
 });
 
-export const SimulateApiHarnessJobsScenariosQueryParams = zod.object({
-  page: zod.number().min(1).optional(),
-  limit: zod.number().optional(),
-  search: zod.string().optional(),
-  group_by: zod.string().optional(),
-  ordering: zod.string().optional(),
-});
-
-export const SimulateApiHarnessJobsScenariosResponse = zod.object({
-  count: zod.number(),
-  next: zod.string().min(1),
-  previous: zod.string().min(1),
-  total_pages: zod.number(),
-  current_page: zod.number(),
-  results: zod.array(
-    zod.object({
-      id: zod.string().uuid(),
-      scenario_id: zod.string().uuid(),
-      scenario_key: zod.string().min(1),
-      number: zod.number(),
-      name: zod.string(),
-      use_case: zod.string(),
-      instruction: zod.string(),
-      branch: zod.string(),
-      tests: zod.string(),
-      persona: zod.object({
-        name: zod.string().optional(),
-        gender: zod.string().optional(),
-        age_group: zod.string().optional(),
-        occupation: zod.string().optional(),
-        location: zod.string().optional(),
-        personality: zod.string().optional(),
-        communication_style: zod.string().optional(),
-        accent: zod.string().optional(),
-        initial_message: zod.string().optional(),
-        languages: zod.array(zod.string().min(1)).optional(),
-        multilingual: zod.boolean().optional(),
-        metadata: zod
-          .record(
-            zod.string(),
-            zod.object({}).passthrough().describe("Any valid JSON value."),
-          )
-          .optional(),
-        scripted_caller: zod
-          .object({})
-          .passthrough()
-          .optional()
-          .describe("Any valid JSON value."),
-        keywords: zod.array(zod.string().min(1)).optional(),
-      }),
-      coverage: zod.record(zod.string(), zod.string()),
-      sub_goals: zod.array(zod.string().min(1)),
-      keywords: zod.array(zod.string().min(1)),
-      background_noise: zod.string(),
-      max_turns: zod.number(),
-      status: zod.string().min(1),
-      call_execution_id: zod.string().uuid(),
-      group: zod.string().min(1).optional(),
-    }),
-  ),
-  groups: zod.array(
-    zod.object({
-      name: zod.string().min(1),
-      count: zod.number(),
-      total: zod.number().optional(),
-    }),
-  ),
-  group_by: zod.string(),
-  fields: zod.array(
-    zod.object({
-      value: zod.string().min(1),
-      label: zod.string().min(1),
-      type: zod.string().min(1),
-      category: zod.string().min(1),
-      choices: zod.array(zod.string().min(1)).optional(),
-      counts: zod.record(zod.string(), zod.number()).optional(),
-    }),
-  ),
-  scenario_editing: zod.object({
-    editable_fields: zod.array(zod.string().min(1)),
-    persona_fields: zod.array(zod.string().min(1)),
-    persona_choices: zod.record(zod.string(), zod.array(zod.string().min(1))),
-    rework_fields: zod.array(zod.string().min(1)),
-  }),
-  groupings: zod.array(
-    zod.object({
-      value: zod.string(),
-      label: zod.string().min(1),
-    }),
-  ),
-  level_labels: zod.record(zod.string(), zod.string().min(1)),
-});
-
 /**
  * Validates the v1.6 request contract and delegates execution to the public backend selected by
 ``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
@@ -37329,18 +37236,6 @@ export const SimulateApiHarnessJobsScenariosAmendScenariosBody = zod.object({
     .default(simulateApiHarnessJobsScenariosAmendScenariosBodyReworkDefault),
 });
 
-export const SimulateApiHarnessJobsScenariosAmendScenariosResponse = zod.object(
-  {
-    receipts: zod.array(
-      zod.object({
-        scenario: zod.string(),
-        outcome: zod.enum(["applied", "queued", "refused"]),
-        why: zod.string(),
-      }),
-    ),
-  },
-);
-
 /**
  * Validates the v1.6 request contract and delegates execution to the public backend selected by
 ``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
@@ -37352,42 +37247,6 @@ export const SimulateApiHarnessJobsScenariosScenarioCoverageParams = zod.object(
     id: zod.string(),
   },
 );
-
-export const SimulateApiHarnessJobsScenariosScenarioCoverageQueryParams =
-  zod.object({
-    search: zod.string().optional(),
-    row_axis: zod.string().optional(),
-    col_axis: zod.string().optional(),
-  });
-
-export const SimulateApiHarnessJobsScenariosScenarioCoverageResponse =
-  zod.object({
-    per_axis: zod.array(
-      zod.object({
-        axis: zod.string().min(1),
-        label: zod.string().min(1),
-        levels: zod.number(),
-        scenarios: zod.number(),
-        counts: zod.record(zod.string(), zod.number()),
-      }),
-    ),
-    row_axis: zod.string().min(1),
-    row_axis_label: zod.string().min(1),
-    col_axis: zod.string().min(1),
-    col_axis_label: zod.string().min(1),
-    rows: zod.array(zod.string().min(1)),
-    columns: zod.array(zod.string().min(1)),
-    cells: zod.array(
-      zod.object({
-        row: zod.string().min(1),
-        column: zod.string().min(1),
-        count: zod.number(),
-      }),
-    ),
-    axes: zod.array(zod.string().min(1)),
-    axis_labels: zod.record(zod.string(), zod.string().min(1)),
-    level_labels: zod.record(zod.string(), zod.string().min(1)),
-  });
 
 export const SimulateApiHarnessAttemptsArtifactsArtifactManifestParams =
   zod.object({
