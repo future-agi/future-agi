@@ -1,3 +1,4 @@
+import math
 import uuid
 
 import jsonschema
@@ -58,7 +59,6 @@ class Node(BaseModel):
         help_text="Node-specific configuration (validated against node_template.config_schema for atomic nodes)",
     )
 
-    # TODO: Need to add a Validation for this structure
     position = models.JSONField(
         default=dict, help_text='UI coordinates {"x": 0, "y": 0}'
     )
@@ -128,6 +128,53 @@ class Node(BaseModel):
             )
         except jsonschema.ValidationError as e:
             raise ValidationError(f"Invalid config: {e.message}")
+
+    def _validate_position(self) -> None:
+        """
+        Validate position is UI coordinates: {"x": <number>, "y": <number>}.
+
+        Deliberately narrow, so no row the system already writes can be
+        rejected:
+
+        - ``{}`` is valid. The field defaults to it and several write paths omit
+          position entirely (``node_crud.create_node``, ``version_content``), so
+          an empty dict means "not positioned yet", not "malformed".
+        - Extra keys are allowed. Positions carrying a ``z`` are already
+          persisted and round-tripped (see
+          tests/serializers/test_node_serializers.py), so this checks that x and
+          y are present and numeric rather than pinning the whole object.
+
+        What it does reject is the shape that reaches the UI as a broken node:
+        a non-object, a missing axis, or an axis that is not a finite number.
+        """
+        if not self.position:
+            return
+
+        if not isinstance(self.position, dict):
+            raise ValidationError(
+                f"Node position must be an object like "
+                f'{{"x": 0, "y": 0}}, got {type(self.position).__name__}'
+            )
+
+        missing = [axis for axis in ("x", "y") if axis not in self.position]
+        if missing:
+            raise ValidationError(
+                f"Node position is missing required {'key' if len(missing) == 1 else 'keys'}: "
+                f"{', '.join(missing)}"
+            )
+
+        for axis in ("x", "y"):
+            value = self.position[axis]
+            # bool is a subclass of int; True as a coordinate is a bug, not a 1.
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValidationError(
+                    f"Node position '{axis}' must be a number, "
+                    f"got {type(value).__name__}"
+                )
+            if not math.isfinite(value):
+                raise ValidationError(
+                    f"Node position '{axis}' must be finite, got {value}"
+                )
 
     def _validate_subgraph_node_config(self) -> None:
         """
@@ -237,6 +284,7 @@ class Node(BaseModel):
         self._validate_atomic_node_fields()
         self._validate_config_schema()
         self._validate_subgraph_node_config()
+        self._validate_position()
         self._validate_no_self_reference()
         self._validate_ref_is_validated_version()
         self._validate_single_version_per_graph()
