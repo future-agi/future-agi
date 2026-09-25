@@ -23,8 +23,6 @@ criteria: "You are evaluating the agent's behaviour whenever the user's audio wa
   \ in a language the prompt forbids, or made a third plain repeat request without guidance.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n\
   <conversation>{{conversation}}</conversation>"
 eval_tags:
-- Agents
-- Conversation
 - Audio
 visible_ui: true
 permissions:
