@@ -30,6 +30,25 @@ import TraceGroupHeaderRow from "./TraceGroupHeaderRow";
  * `RunTask` scalars (no mock derivations); each evaluation renders as a heat-
  * tinted score column. Row-click opens the call; past results are read-only.
  */
+// The free-text columns stay narrow so a collapsed table (one count per group)
+// doesn't stretch; long text is cut at four lines — the drawer has the rest.
+const TEXT_COL_WIDTH = { long: 260, short: 200 };
+const textCellSx = (width) => ({
+  ...bodyCellSx,
+  width,
+  minWidth: width,
+  maxWidth: width,
+  typography: "s2",
+  color: "text.secondary",
+});
+const clampSx = {
+  display: "-webkit-box",
+  WebkitLineClamp: 4,
+  WebkitBoxOrient: "vertical",
+  overflow: "hidden",
+  wordBreak: "break-word",
+};
+
 export default function TraceTable({
   groups,
   evals,
@@ -45,7 +64,6 @@ export default function TraceTable({
   const visible = columns || defaultTraceColumns();
   const show = (key) => visible.has(key);
   const showEvals = show("evals");
-
 
   const collapsedSet = collapsed ?? new Set(groups.map((g) => g.label));
   const toggleCollapsed = (label) =>
@@ -93,7 +111,6 @@ export default function TraceTable({
           bgcolor: active ? "action.selected" : "transparent",
         }}
       >
-
         {show("callDetails") && (
           <TableCell sx={bodyCellSx} onClick={() => onOpen(t)}>
             <Box minWidth={0}>
@@ -196,43 +213,28 @@ export default function TraceTable({
 
         {show("scenario") && (
           <TableCell
-            sx={{
-              ...bodyCellSx,
-              minWidth: 420,
-              typography: "s2",
-              color: "text.secondary",
-            }}
+            sx={textCellSx(TEXT_COL_WIDTH.long)}
             onClick={() => onOpen(t)}
           >
-            {t.scenarioDetails || t.scenario || "-"}
+            <Box sx={clampSx}>{t.scenarioDetails || t.scenario || "-"}</Box>
           </TableCell>
         )}
 
         {show("idealOutcome") && (
           <TableCell
-            sx={{
-              ...bodyCellSx,
-              minWidth: 420,
-              typography: "s2",
-              color: "text.secondary",
-            }}
+            sx={textCellSx(TEXT_COL_WIDTH.long)}
             onClick={() => onOpen(t)}
           >
-            {t.idealOutcome || "-"}
+            <Box sx={clampSx}>{t.idealOutcome || "-"}</Box>
           </TableCell>
         )}
 
         {show("conversationBranch") && (
           <TableCell
-            sx={{
-              ...bodyCellSx,
-              minWidth: 320,
-              typography: "s2",
-              color: "text.secondary",
-            }}
+            sx={textCellSx(TEXT_COL_WIDTH.short)}
             onClick={() => onOpen(t)}
           >
-            {t.conversationBranch || "-"}
+            <Box sx={clampSx}>{t.conversationBranch || "-"}</Box>
           </TableCell>
         )}
 
@@ -335,17 +337,17 @@ export default function TraceTable({
                 </TableCell>
               )}
               {show("scenario") && (
-                <TableCell sx={{ ...headCellSx, width: 420, minWidth: 420 }}>
+                <TableCell sx={{ ...headCellSx, width: TEXT_COL_WIDTH.long }}>
                   Scenario
                 </TableCell>
               )}
               {show("idealOutcome") && (
-                <TableCell sx={{ ...headCellSx, width: 420, minWidth: 420 }}>
+                <TableCell sx={{ ...headCellSx, width: TEXT_COL_WIDTH.long }}>
                   Ideal outcome
                 </TableCell>
               )}
               {show("conversationBranch") && (
-                <TableCell sx={{ ...headCellSx, width: 320, minWidth: 320 }}>
+                <TableCell sx={{ ...headCellSx, width: TEXT_COL_WIDTH.short }}>
                   Conversation branch
                 </TableCell>
               )}
