@@ -210,14 +210,19 @@ def test_full_system_reader_uses_one_outer_definition_and_frozen_bounds(
     sql, params, settings = analytics.calls[0]
     assert len(re.findall(r"\blatest_spans AS \(", sql)) == 1
     assert len(re.findall(r"\beu_survivor_map AS \(", sql)) == 1
-    assert sql.count("FROM spans FINAL") == 1
+    # Attribute membership fuses into the reduced population, so the whole
+    # window is read once, in sort-key order, with no FINAL merge.
+    assert "FROM spans FINAL" not in sql
+    assert sql.count("FROM spans") == 1
+    assert len(re.findall(r"\bFROM latest_spans\b", sql)) == 1
     assert "candidate_trace_ids AS" not in sql
     assert "candidate_end_user_remap" not in sql
     assert params["start_date"] == params["snapshot_start_date"] == START
     assert params["end_date"] == params["snapshot_end_date"] == END
-    assert "WHERE snapshot_spans.is_deleted = 0" in sql
+    assert "HAVING latest_state.2 = 0" in sql
     assert settings["optimize_move_to_prewhere_if_final"] == 0
     assert settings["use_skip_indexes_if_final"] == 0
+    assert settings["max_threads"] == graph.settings.DASHBOARD_TRACE_READ_MAX_THREADS
     assert set(re.findall(r"%\((\w+)\)s", sql)) <= params.keys()
     assert result["query_complete"] and not result["query_sampled"]
 

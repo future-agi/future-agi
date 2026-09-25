@@ -2125,3 +2125,23 @@ func TestTranslateResponse_FoldsThinkingTokensIntoCompletion(t *testing.T) {
 		t.Fatalf("PromptTokens = %d, want %d", got, want)
 	}
 }
+
+func TestTranslateResponse_PreservesCachedTokensWithoutInventingCacheHits(t *testing.T) {
+	for _, value := range []*int{nil, new(int)} {
+		resp := &geminiResponse{UsageMetadata: &geminiUsageMetadata{PromptTokenCount: 100,
+			CachedContentTokenCount: value}}
+		out := translateResponse(resp, "gemini-3.8-flash")
+		if value == nil && out.Usage.PromptTokensDetails != nil {
+			t.Fatal("absent provider cache usage must remain unknown")
+		}
+		if value != nil && (out.Usage.PromptTokensDetails == nil || string(*out.Usage.PromptTokensDetails) != `{"cached_tokens":0}`) {
+			t.Fatal("explicit zero cache usage must be preserved")
+		}
+	}
+	cached := 75
+	out := translateResponse(&geminiResponse{UsageMetadata: &geminiUsageMetadata{
+		PromptTokenCount: 100, CachedContentTokenCount: &cached}}, "gemini-3.8-flash")
+	if out.Usage.PromptTokens != 100 || string(*out.Usage.PromptTokensDetails) != `{"cached_tokens":75}` {
+		t.Fatal("cached tokens must be retained without subtracting input context")
+	}
+}

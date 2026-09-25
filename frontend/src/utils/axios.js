@@ -26,10 +26,12 @@ import { SS_KEY_ORG_ID, SS_KEY_WORKSPACE_ID } from "./sessionKeys";
 // ----------------------------------------------------------------------
 //
 const axiosInstance = axios.create({ baseURL: HOST_API });
+const MAX_PICKER_GET_URL_LENGTH = 8192;
 
 // Only source-declared read aliases use POST; unrelated reads remain GET.
 export const readQuery = (url, { params = {}, ...config } = {}) => {
-  if (!findOpenApiEndpoint(url, "post")?.contract.readQueryPost) {
+  const endpoint = findOpenApiEndpoint(url, "post");
+  if (!endpoint?.contract.readQueryPost) {
     return axiosInstance.get(url, { params, ...config });
   }
   if (config.data !== undefined)
@@ -43,7 +45,28 @@ export const readQuery = (url, { params = {}, ...config } = {}) => {
       throw new Error("Duplicate read query parameter.");
     data[key] = value;
   }
-  return axiosInstance.post(path, data, config);
+  return axiosInstance.post(path, data, config).catch((error) => {
+    // Older backends expose these picker reads through GET only.
+    if (
+      error.statusCode !== 405 ||
+      ![
+        "/tracer/dashboard/metrics/",
+        "/tracer/dashboard/filter_values/",
+      ].includes(endpoint.template)
+    ) {
+      throw error;
+    }
+    const getConfig = { ...config, params: data };
+    if (
+      axiosInstance.getUri({ ...getConfig, url: path }).length >
+      MAX_PICKER_GET_URL_LENGTH
+    ) {
+      throw new Error(
+        "This picker request is too large for legacy GET compatibility. Upgrade the backend or reduce the selected projects and filters.",
+      );
+    }
+    return axiosInstance.get(path, getConfig);
+  });
 };
 
 const avoidRedirect = [

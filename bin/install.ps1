@@ -210,7 +210,6 @@ $persistentVolumeSuffixes = @(
   'peerdb-catalog-data',
   'peerdb-minio-data',
   'property-catalog-kafka-data',
-  'property-catalog-sequencer-data',
   'fi-collector-data'
 )
 $existingVolumes = @()
@@ -421,7 +420,7 @@ if ($pullHelp -match '--ignore-buildable') {
 } else {
   $activeServices = @(& $DcCmd @DcArgs config --services)
   $pullArgs += @($activeServices | Where-Object {
-    $_ -and $_ -notin @('fi-collector', 'fi-property-catalog-sequencer', 'fi-property-catalog-consumer')
+    $_ -and $_ -notin @('fi-collector', 'fi-property-catalog-consumer')
   })
 }
 Append-Log @("running: $DcCmd $($DcArgs -join ' ') $($pullArgs -join ' ')")
@@ -433,16 +432,12 @@ Ok "Images pulled"
 
 # ---- bring up ----
 Step "Starting the stack"
-$attempt = 0
-while ($true) {
-  Invoke-Compose up -d --build --remove-orphans
-  if ($LASTEXITCODE -eq 0) { break }
-  $attempt++
-  if ($attempt -ge 3) {
-    Die "docker compose up failed after $attempt attempts. Check 'docker compose logs'."
-  }
-  Warn "compose up failed (attempt $attempt) -- retrying in 30s..."
-  Start-Sleep -Seconds 30
+# One attempt, as in bin/e2e: replaying compose up can rerun an exited schema
+# or mirror job after an uncertain write. Inspect retained state before resuming.
+# Preserve services omitted by an upgrade; legacy retirement is an explicit step.
+Invoke-Compose up -d --build --wait --wait-timeout 1200
+if ($LASTEXITCODE -ne 0) {
+  Die "docker compose startup failed or timed out; partial state retained, no automatic retry. Inspect 'docker compose ps -a' and 'docker compose logs' before explicitly resuming."
 }
 Ok "Containers started"
 
@@ -500,11 +495,8 @@ function Save-ReadinessDiagnostics {
     'property-catalog-runtime-volume-init',
     'property-catalog-topic-init',
     'property-catalog-clickhouse-bootstrap',
-    'property-catalog-postgres-bootstrap',
     'fi-collector',
-    'fi-property-catalog-sequencer',
     'fi-property-catalog-consumer',
-    'property-catalog-supervisor',
     'backend'
   )
   $psOutput = @(& $DcCmd @DcArgs ps -a 2>&1 | ForEach-Object { [string]$_ })
@@ -535,14 +527,11 @@ $catalogJobs = @(
   'property-catalog-kafka-volume-init',
   'property-catalog-runtime-volume-init',
   'property-catalog-topic-init',
-  'property-catalog-clickhouse-bootstrap',
-  'property-catalog-postgres-bootstrap'
+  'property-catalog-clickhouse-bootstrap'
 )
 $catalogServices = @(
   'fi-collector',
-  'fi-property-catalog-sequencer',
-  'fi-property-catalog-consumer',
-  'property-catalog-supervisor'
+  'fi-property-catalog-consumer'
 )
 
 while ($true) {
@@ -577,7 +566,7 @@ while ($true) {
     foreach ($service in $catalogServices) {
       $snapshot = Get-ComposeServiceSnapshot $service
       $signatureParts += "$service`:$($snapshot.Id):$($snapshot.RestartCount):$($snapshot.StartedAt)"
-      if ($snapshot.Status -ne 'running' -or ($service -eq 'property-catalog-supervisor' -and $snapshot.Health -ne 'healthy')) {
+      if ($snapshot.Status -ne 'running') {
         $allReady = $false
         if (-not $pendingGate) { $pendingGate = "$service to report healthy" }
         if ($snapshot.Status -eq 'dead') { $fatalReason = "$service entered dead state" }
@@ -619,8 +608,8 @@ while ($true) {
       $lastReadySignature = $readySignature
       $readySince = $now
     } elseif ($readySince -and ($now - $readySince).TotalSeconds -ge $stabilitySeconds) {
-      Ok "Kafka healthy; candidate and ordered topics plus catalog bootstraps completed"
-      Ok "Collector, sequencer, property-catalog consumer, and supervisor stable for ${stabilitySeconds}s"
+      Ok "Kafka healthy; observation topic and isolated catalog bootstrap completed"
+      Ok "Collector and observation consumer stable for ${stabilitySeconds}s"
       Ok "Backend healthy at http://localhost:$BackendPort"
       break
     }
@@ -676,7 +665,7 @@ if ($Full) {
 Say ""
 Say "  Existing-data catalog backfill"
 Say "    Restarts do not scan historical data automatically. After an upgrade:"
-Say "    .\bin\property-catalog-backfill.ps1 -Execute"
+Say "    See fi-collector/PROPERTY_CATALOG_OSS.md for the bounded backfill command."
 if ($AccountState -eq $AccountCreated -or $AccountState -eq $AccountExists) {
   Say ""
   Say "  Sign in as $UserEmail"

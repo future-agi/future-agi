@@ -6,7 +6,11 @@ import {
   QueryClient,
   QueryClientProvider,
 } from "@tanstack/react-query";
-import { asRequestError, useUpdateProvider } from "./useGatewayConfig";
+import {
+  asRequestError,
+  useFetchProviderModels,
+  useUpdateProvider,
+} from "./useGatewayConfig";
 
 const { post } = vi.hoisted(() => ({ post: vi.fn() }));
 
@@ -67,5 +71,55 @@ describe("useUpdateProvider", () => {
     await save();
 
     expect(post.mock.calls[0][2]).toEqual({ timeout: 30000 });
+  });
+});
+
+describe("useFetchProviderModels", () => {
+  beforeEach(() => post.mockReset());
+
+  const fetchWith = (vars) => {
+    post.mockResolvedValue({ data: { result: { models: [] } } });
+    const { result } = renderHook(() => useFetchProviderModels(), { wrapper });
+    return result.current.mutateAsync(vars);
+  };
+
+  it("sends the stored provider's prefix so discovery probes the right path", async () => {
+    await fetchWith({
+      providerName: "perplexity",
+      apiFormat: "openai",
+      apiPathPrefix: "/openai/v1",
+    });
+
+    expect(post.mock.calls[0][1]).toEqual({
+      provider_name: "perplexity",
+      api_path_prefix: "/openai/v1",
+    });
+  });
+
+  it("keeps an explicitly empty prefix, which is the headline case", async () => {
+    await fetchWith({
+      baseUrl: "https://provider.example",
+      apiKey: "sk-test",
+      apiFormat: "openai",
+      apiPathPrefix: "",
+    });
+
+    expect(post.mock.calls[0][1]).toEqual({
+      base_url: "https://provider.example",
+      api_key: "sk-test",
+      api_format: "openai",
+      api_path_prefix: "",
+    });
+  });
+
+  it("omits the prefix for a non-OpenAI format, as saving does", async () => {
+    await fetchWith({
+      baseUrl: "https://api.anthropic.com",
+      apiKey: "sk-ant",
+      apiFormat: "anthropic",
+      apiPathPrefix: "/v1",
+    });
+
+    expect(post.mock.calls[0][1]).not.toHaveProperty("api_path_prefix");
   });
 });

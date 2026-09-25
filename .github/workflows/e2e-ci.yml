@@ -51,6 +51,9 @@ jobs:
               - 'e2e/**'
               - 'bin/e2e'
               - 'docker-compose.yml'
+              - 'docker-compose.dev.yml'
+              - 'deploy/**'
+              - 'bin/install*'
               - '.github/workflows/e2e-ci.yml'
       - id: always
         if: github.event_name != 'pull_request'
@@ -66,7 +69,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.any == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: read
       packages: write # ghcr build-cache: read on PRs, written on pushes
@@ -75,7 +78,11 @@ jobs:
       # Always from source: specs land with the frontend behavior they assert,
       # so the released frontend image can be too old for them (TH-7733).
       BUILD_FRONTEND: "true"
-      BUILD_GATEWAY: ${{ needs.changes.outputs.gateway }}
+      # Always from source for the same reason: gateway flows (GW-E2E-002)
+      # land with the gateway behavior they assert, so a PR that does not
+      # touch agentcc-gateway/ would otherwise run them against a released
+      # :latest that predates that behavior.
+      BUILD_GATEWAY: "true"
     steps:
       - uses: actions/checkout@v4
 

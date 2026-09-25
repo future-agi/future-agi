@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import os
 import uuid
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
-from clickhouse_driver import Client
 from django.test import override_settings
 
+from conftest import _ch_test_native_client
 from tracer.selectors.trace_filter_reads import read_bounded_filter_page
 from tracer.services.clickhouse import eval_logger_table as eval_logger_table_config
 from tracer.services.clickhouse.query_builders.voice_call_list import VAPI_PHONE_NUMBERS
@@ -28,18 +27,11 @@ from tracer.services.clickhouse.v2.trace_detail_reads import (
 
 pytestmark = pytest.mark.integration
 
-CH_HOST = os.environ.get("CH25_HOST", "127.0.0.1")
-CH_NATIVE_PORT = int(os.environ.get("CH25_NATIVE_PORT", "19000"))
-
 
 @pytest.fixture(scope="module")
 def ch_client():
-    client = Client(host=CH_HOST, port=CH_NATIVE_PORT, connect_timeout=3)
-    try:
-        client.execute("SELECT 1")
-    except Exception as exc:
-        pytest.skip(f"CH25 is not reachable on {CH_HOST}:{CH_NATIVE_PORT} ({exc!r})")
-    return client
+    with _ch_test_native_client() as client:
+        yield client
 
 
 @pytest.fixture()

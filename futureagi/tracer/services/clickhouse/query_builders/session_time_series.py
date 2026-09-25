@@ -282,6 +282,76 @@ class SessionTimeSeriesQueryBuilder(BaseQueryBuilder):
         }
 
 
+# One rollup graph answers ONE metric. Each entry is
+# (per-session merge state, outer aggregate expression, result column). The
+# session key and ``minMerge(first_seen)`` are always read — the outer window
+# predicate binds ``session_start`` — and the outer ``count() AS traffic_count``
+# is always projected because ``format_system_metric_graph`` reads the traffic
+# series for every metric's ``primary_traffic``. Everything else is only read
+# when the requested metric needs it; in particular the ``latency_q`` t-digest
+# state, by far the widest column on ``spans_per_session``, is read only for
+# ``latency``.
+_ROLLUP_METRIC_PLAN: dict[str, tuple[str, str, str]] = {
+    "traffic": ("", "count()", "traffic_count"),
+    "session_count": ("", "count()", "session_count"),
+    "cost": (
+        "sumMerge(sps.cost_sum) AS session_total_cost",
+        "avg(session_total_cost)",
+        "avg_cost",
+    ),
+    "total_cost": (
+        "sumMerge(sps.cost_sum) AS session_total_cost",
+        "sum(session_total_cost)",
+        "total_cost_sum",
+    ),
+    "tokens": (
+        "sumMerge(sps.total_tokens_sum) AS session_total_tokens",
+        "sum(session_total_tokens)",
+        "total_tokens",
+    ),
+    "total_tokens": (
+        "sumMerge(sps.total_tokens_sum) AS session_total_tokens",
+        "sum(session_total_tokens)",
+        "total_tokens",
+    ),
+    "prompt_tokens": (
+        "sumMerge(sps.prompt_tokens_sum) AS session_prompt_tokens",
+        "sum(session_prompt_tokens)",
+        "prompt_tokens",
+    ),
+    "input_tokens": (
+        "sumMerge(sps.prompt_tokens_sum) AS session_prompt_tokens",
+        "sum(session_prompt_tokens)",
+        "prompt_tokens",
+    ),
+    "completion_tokens": (
+        "sumMerge(sps.completion_tokens_sum) AS session_completion_tokens",
+        "sum(session_completion_tokens)",
+        "completion_tokens",
+    ),
+    "output_tokens": (
+        "sumMerge(sps.completion_tokens_sum) AS session_completion_tokens",
+        "sum(session_completion_tokens)",
+        "completion_tokens",
+    ),
+    "error_rate": (
+        "countIfMerge(sps.error_count) AS session_error_count",
+        "countIf(session_error_count > 0) * 100.0 / greatest(count(), 1)",
+        "error_rate",
+    ),
+    "avg_duration": (
+        "maxMerge(sps.last_seen) AS session_end",
+        "avg(dateDiff('second', session_start, coalesce(session_end, session_start)))",
+        "avg_duration",
+    ),
+    "latency": (
+        "(quantilesTDigestMerge(0.5, 0.95, 0.99)(sps.latency_q))[1] AS session_latency",
+        "avg(session_latency)",
+        "avg_latency",
+    ),
+}
+
+
 class SessionRollupTimeSeriesQueryBuilder(SessionTimeSeriesQueryBuilder):
     """Build an interactive date-only graph from retained session states.
 
@@ -289,9 +359,37 @@ class SessionRollupTimeSeriesQueryBuilder(SessionTimeSeriesQueryBuilder):
     remap join defeats the purpose of the row-reduced fast path on projects
     with billions of spans. The response is consequently labelled as a
     materialized-rollup estimate by the dispatcher rather than exact data.
+
+    The statement is metric-driven: only the aggregate states the requested
+    ``metric_id`` consumes are merged, so a traffic or session-count graph
+    never pays for the per-session t-digest. ``format_result`` still returns
+    every metric key; the ones this statement did not compute default to zero
+    and the dispatcher reads only the requested one.
     """
 
     ROLLUP_TABLE = "spans_per_session"
+
+    def __init__(
+        self,
+        project_id: str,
+        filters: list[dict] | None = None,
+        interval: str = "day",
+        metric_id: str = "session_count",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(project_id, filters=filters, interval=interval, **kwargs)
+        normalized = str(metric_id or "").strip().lower()
+        if normalized not in _ROLLUP_METRIC_PLAN:
+            raise ValueError(f"session rollup graphs cannot answer {metric_id!r}")
+        self.metric_id = normalized
+
+    @property
+    def result_columns(self) -> frozenset[str]:
+        """Columns this statement projects, for the dispatcher's shape check."""
+
+        return frozenset(
+            {"time_bucket", "traffic_count", _ROLLUP_METRIC_PLAN[self.metric_id][2]}
+        )
 
     def build(self) -> tuple[str, dict[str, Any]]:
         if any(
@@ -332,23 +430,17 @@ class SessionRollupTimeSeriesQueryBuilder(SessionTimeSeriesQueryBuilder):
         *,
         bucket_fn: str,
     ) -> str:
+        _state, outer_expr, result_column = _ROLLUP_METRIC_PLAN[self.metric_id]
+        metric_column = (
+            ""
+            if result_column == "traffic_count"
+            else f",\n            {outer_expr} AS {result_column}"
+        )
         source = self._rollup_session_source()
         return f"""
         SELECT
             {bucket_fn}(session_start) AS time_bucket,
-            avg(session_latency) AS avg_latency,
-            sum(session_total_tokens) AS total_tokens,
-            avg(session_total_cost) AS avg_cost,
-            count() AS traffic_count,
-            sum(session_prompt_tokens) AS prompt_tokens,
-            sum(session_completion_tokens) AS completion_tokens,
-            countIf(session_error_count > 0) * 100.0
-                / greatest(count(), 1) AS error_rate,
-            count() AS session_count,
-            avg(dateDiff('second', session_start,
-                coalesce(session_end, session_start))) AS avg_duration,
-            CAST(NULL, 'Nullable(Float64)') AS avg_traces_per_session,
-            sum(session_total_cost) AS total_cost_sum
+            count() AS traffic_count{metric_column}
         FROM ({source}) AS sessions
         WHERE session_start >= %(start_date)s
           AND session_start < %(end_date)s
@@ -357,19 +449,12 @@ class SessionRollupTimeSeriesQueryBuilder(SessionTimeSeriesQueryBuilder):
         """
 
     def _rollup_session_source(self) -> str:
+        state = _ROLLUP_METRIC_PLAN[self.metric_id][0]
+        metric_state = f",\n                {state}" if state else ""
         return f"""
             SELECT
                 sps.trace_session_id AS session_id,
-                minMerge(sps.first_seen) AS session_start,
-                maxMerge(sps.last_seen) AS session_end,
-                sumMerge(sps.total_tokens_sum) AS session_total_tokens,
-                sumMerge(sps.prompt_tokens_sum) AS session_prompt_tokens,
-                sumMerge(sps.completion_tokens_sum)
-                    AS session_completion_tokens,
-                sumMerge(sps.cost_sum) AS session_total_cost,
-                (quantilesTDigestMerge(0.5, 0.95, 0.99)(sps.latency_q))[1]
-                    AS session_latency,
-                countIfMerge(sps.error_count) AS session_error_count
+                minMerge(sps.first_seen) AS session_start{metric_state}
             FROM {self.ROLLUP_TABLE} AS sps
             PREWHERE sps.project_id = toUUID(%(project_id)s)
               AND sps.hour_first_seen >= %(rollup_scan_start)s

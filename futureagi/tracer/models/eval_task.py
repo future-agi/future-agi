@@ -41,6 +41,16 @@ class EvalTaskStatus(models.TextChoices):
     DELETED = "deleted", _("Deleted")
 
 
+# What Resume accepts, on every surface that offers it: the unpause endpoint,
+# the AI tool, and the task UIs (``isResumableTaskStatus`` in
+# ``frontend/src/sections/common/EvalsTasks/task_status.js``). FAILED is
+# resumable for the same reason PAUSED is: both leave the entries untouched and
+# exit the workflow, so a fresh run reconciles, reaps and drains whatever is
+# left. A task fails when one control activity exhausts its retry budget, so
+# without FAILED here a brief infrastructure blip strands every remaining entry.
+RESUMABLE_TASK_STATUSES = frozenset({EvalTaskStatus.PAUSED, EvalTaskStatus.FAILED})
+
+
 class EvalTask(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     project = models.ForeignKey(
