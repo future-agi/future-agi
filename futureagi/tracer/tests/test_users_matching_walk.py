@@ -8,6 +8,7 @@ so each guard can see which statement decided what.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import itertools
 import re
@@ -895,6 +896,48 @@ def test_the_witness_is_one_leaf_whatever_the_request_order(leaves):
             leaf = manager.filters[witness.leaf_index]
             assert canonical_filter_leaf(leaf) == witness.identity
     assert len(chosen) == 1, chosen
+
+
+def test_a_repeated_raw_leaf_is_the_one_leaf_the_cursor_binds():
+    # The signed cursor deduplicates identical leaves
+    # (``normalize_filter_conjunction``), so ``[A, A]`` binds as ``[A]`` and
+    # must choose the same witness. It was declined as two items on its key,
+    # so the two requests walked different leaves and the continuation
+    # failed closed (invalid_cursor) after one user.
+    tag = _raw_leaf("tag", "in", ["gold", "silver"])
+    _manager_once, once = _chosen_witness([tag, _native_status_leaf()])
+    _manager_twice, twice = _chosen_witness(
+        [tag, copy.deepcopy(tag), _native_status_leaf()]
+    )
+    assert (once.family, once.key) == ("raw", "tag")
+    assert walk.witness_fingerprint(twice) == walk.witness_fingerprint(once)
+    # Two different items on one key are still two: the key is declined.
+    _manager_two, two = _chosen_witness(
+        [tag, _raw_leaf("tag", "is_not_null"), _native_status_leaf()]
+    )
+    assert two.family == "native"
+
+
+def test_a_cursor_followed_with_a_repeated_raw_leaf_publishes_each_user_once():
+    # Review r2765: the same filters with the raw leaf sent once on even
+    # requests and twice on odd ones.
+    world = World()
+    for n in range(1, 6):
+        moment = minutes_before_end(10 * n)
+        world.user(n, key=moment, raw=(moment,), native=True)
+    tag = _raw_leaf("tag", "in", ["gold", "silver"])
+    once = [*_date_only(), tag, _native_status_leaf()]
+    twice = [*_date_only(), tag, copy.deepcopy(tag), _native_status_leaf()]
+    names, cursor = [], None
+    for hop in range(10):
+        read, _engine = _page(
+            world, page_size=1, cursor=cursor, filters=twice if hop % 2 else once
+        )
+        names.extend(_names(read))
+        if not read.has_more:
+            break
+        cursor = _signed_cursor(read)
+    assert names == [f"user-{n}" for n in range(1, 6)]
 
 
 def _observation_leaf():

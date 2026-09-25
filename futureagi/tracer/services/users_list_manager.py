@@ -18,7 +18,11 @@ from typing import Any
 import structlog
 from django.conf import settings
 
-from tracer.services.clickhouse.list_cursor import ListCursor, ListCursorError
+from tracer.services.clickhouse.list_cursor import (
+    ListCursor,
+    ListCursorError,
+    canonical_filter_leaf,
+)
 from tracer.services.clickhouse.query_builders.base import _unix_microseconds
 from tracer.services.clickhouse.query_builders.filters import (
     EvalFilterMetadata,
@@ -1341,7 +1345,9 @@ class UsersListManager:
         The first candidate the walk accepts is the witness:
 
         * a raw attribute witness, when it is the ONLY filter item on its key
-          and either (text) the manager accelerates that key as an
+          as the cursor binds the filters (identical leaves, which
+          ``normalize_filter_conjunction`` deduplicates, count once) and
+          either (text) the manager accelerates that key as an
           exact-text filter, or (number/boolean) the item is a shape whose
           Python and SQL comparisons are provably the same
           (``users_walk_witness``): the walk reuses that one witness to
@@ -1377,14 +1383,20 @@ class UsersListManager:
         """Whether the walk accepts the raw witness; stores it when it does."""
 
         key, kind = witness.key, witness.kind
-        items = [
-            item
-            for item in self.filters
-            if not UserListQueryBuilderV2._is_date_filter(item)
-            and not UserListQueryBuilderV2._is_relation_filter(item)
-            and str(item.get("column_id") or item.get("columnId")) == key
-            and not UserListQueryBuilderV2._is_output_filter(item)
-        ]
+        # One item per leaf as the signed cursor binds it: ``[A, A]`` is
+        # ``[A]``, so the choice is a function of the bound filter set, not of
+        # a repeated leaf in the request (the exact-text values are a set
+        # already, ``attribute_exact_text_filters``).
+        items = list(
+            {
+                canonical_filter_leaf(item): item
+                for item in self.filters
+                if not UserListQueryBuilderV2._is_date_filter(item)
+                and not UserListQueryBuilderV2._is_relation_filter(item)
+                and str(item.get("column_id") or item.get("columnId")) == key
+                and not UserListQueryBuilderV2._is_output_filter(item)
+            }.values()
+        )
         if len(items) != 1:
             return False
         if kind == "text":
