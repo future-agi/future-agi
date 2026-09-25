@@ -85,6 +85,40 @@ def test_unknown_eval_output_type_raises_config_error(user_alert_monitor) -> Non
             )
 
 
+def test_missing_project_raises_config_error_at_builder(
+    user_alert_monitor,
+) -> None:
+    # A monitor without a project (unset or removed) must raise MonitorConfigError
+    # at builder construction time so that 'None' is never sent as project_id to CH.
+    user_alert_monitor.project = None
+    user_alert_monitor.project_id = None
+    with pytest.raises(MonitorConfigError, match="has no project"):
+        build_monitor_ch_builder(user_alert_monitor)
+
+
+def test_string_none_project_raises_config_error_at_builder(
+    user_alert_monitor,
+) -> None:
+    user_alert_monitor.project = None
+    user_alert_monitor.project_id = "None"
+    with pytest.raises(MonitorConfigError, match="has no project"):
+        build_monitor_ch_builder(user_alert_monitor)
+
+
+def test_missing_project_monitor_task_is_non_retryable(
+    user_alert_monitor,
+) -> None:
+    # A monitor missing a project must be skipped with a logged misconfiguration,
+    # without raising/retrying in Temporal or issuing any statements to ClickHouse.
+    user_alert_monitor.project = None
+    user_alert_monitor.project_id = None
+    user_alert_monitor.save()
+    task_fn = getattr(process_monitor_task, "_original_func", process_monitor_task)
+    with _patch_ch([]):  # must return without any CH call
+        task_fn(str(user_alert_monitor.id), timezone.now().isoformat())
+    assert UserAlertMonitorLog.objects.count() == 0
+
+
 def _ch_result(rows: List[dict]) -> SimpleNamespace:
     return SimpleNamespace(data=rows)
 
