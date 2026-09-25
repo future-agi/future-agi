@@ -10,7 +10,12 @@ import { paths } from "src/routes/paths";
 import { useDeleteEnvironment } from "src/api/simulate-environments/environments";
 import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { ENTRY_TAB } from "../environmentOptions";
-import { DELETE_DIALOG_COPY, DELETE_TONE, BUILD_STATUS } from "../myEnvironments.constants";
+import {
+  DELETE_DIALOG_COPY,
+  DELETE_TONE,
+  BUILD_STATUS,
+  ENV_STATUS,
+} from "../myEnvironments.constants";
 import CancelBuildControl from "../buildEnvironment/building/CancelBuildControl";
 import SurfaceIcon from "../components/SurfaceIcon";
 import LivePill from "./LivePill";
@@ -54,7 +59,9 @@ export default function WorkspaceHeader({
   const scenarioCount = envState?.scenarios?.length ?? 0;
   // Cancel is offered only while the build is actually running (not once it has
   // failed/canceled). CancelBuildControl self-hides otherwise.
-  const building = env?.buildStatus === BUILD_STATUS.BUILDING;
+  const building =
+    env?.buildStatus === BUILD_STATUS.BUILDING &&
+    env?.status !== ENV_STATUS.CANCELLING;
   const deleteEnv = useDeleteEnvironment();
   // Rename (§8) is live for a real backend-backed env. Its response is the §6
   // body, which the mutation writes back into the §6 cache; the workspace
@@ -221,6 +228,7 @@ WorkspaceHeader.propTypes = {
     name: PropTypes.string,
     tagline: PropTypes.string,
     surface: PropTypes.string,
+    status: PropTypes.string,
     buildStatus: PropTypes.string,
     platform: PropTypes.shape({
       runTestId: PropTypes.string,

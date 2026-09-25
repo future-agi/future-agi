@@ -49,6 +49,17 @@ describe("LivePill", () => {
     expect(screen.queryByText("Live")).toBeNull();
     expect(screen.queryByText("Building")).toBeNull();
   });
+
+  it.each([
+    [{ buildStatus: "building", status: "finalizing" }, "Finalizing"],
+    [{ buildStatus: "building", status: "cancelling" }, "Cancelling"],
+    [{ buildStatus: "failed", status: "cancelled" }, "Cancelled"],
+  ])("labels %o as %s, not Building or Failed", (env, label) => {
+    render(<LivePill env={env} />);
+    expect(screen.getByText(label)).toBeInTheDocument();
+    expect(screen.queryByText("Building")).toBeNull();
+    expect(screen.queryByText("Failed")).toBeNull();
+  });
 });
 
 describe("EnvVersionPin", () => {
@@ -161,6 +172,20 @@ describe("WorkspaceHeader", () => {
       ),
     );
     expect(screen.getByRole("button", { name: /Cancel build/ })).toBeInTheDocument();
+  });
+
+  it("hides Cancel build once a cancel is in flight", () => {
+    render(
+      withRouter(
+        <WorkspaceHeader
+          {...baseProps}
+          env={{ ...ENV, buildStatus: "building", status: "cancelling" }}
+          canRun={false}
+          locked
+        />,
+      ),
+    );
+    expect(screen.queryByRole("button", { name: /Cancel build/ })).toBeNull();
   });
 
   it("does not render the mock env-version pin (hidden until the contract has a real version)", () => {

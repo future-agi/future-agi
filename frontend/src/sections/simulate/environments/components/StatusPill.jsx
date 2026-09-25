@@ -15,7 +15,11 @@ export default function StatusPill({ status, progress }) {
     status === ENV_STATUS.BUILDING && progress
       ? `${progress.done}/${progress.total} steps`
       : "";
-  const isAnimated = status === ENV_STATUS.BUILDING || status === ENV_STATUS.RUNNING;
+  const isAnimated =
+    status === ENV_STATUS.BUILDING ||
+    status === ENV_STATUS.FINALIZING ||
+    status === ENV_STATUS.CANCELLING ||
+    status === ENV_STATUS.RUNNING;
 
   return (
     <CustomTooltip show={!!detail} arrow size="small" title={detail}>

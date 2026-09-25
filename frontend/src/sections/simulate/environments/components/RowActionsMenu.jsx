@@ -15,9 +15,13 @@ const ICON_SX = { minWidth: 0, mr: 1 };
 
 export default function RowActionsMenu({ menuFor, onClose, onOpen, onRun, onDeleteRequest }) {
   const active = menuFor?.row;
-  const buildingActive = active?.status === ENV_STATUS.BUILDING;
+  const buildingActive = [
+    ENV_STATUS.BUILDING,
+    ENV_STATUS.FINALIZING,
+    ENV_STATUS.CANCELLING,
+  ].includes(active?.status);
   const runLabel =
-    active?.runsTotal > 0 && active?.status !== ENV_STATUS.BUILDING
+    active?.runsTotal > 0 && !buildingActive
       ? ROW_ACTION_LABEL.rerun
       : ROW_ACTION_LABEL.run;
 

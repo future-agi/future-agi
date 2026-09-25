@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { harnessJobToRow, harnessEnvToRow, buildStatusFor } from "../harnessJobToRow";
+import {
+  harnessJobToRow,
+  harnessEnvToRow,
+  buildStatusFor,
+  jobStatusFor,
+  envStatusFor,
+} from "../harnessJobToRow";
 import { ENV_STATUS, BUILD_STATUS } from "../../myEnvironments.constants";
 
 const item = ({ stage, connectors, metadata, jobId = "job-1", updatedAt } = {}) => ({
@@ -25,8 +31,10 @@ describe("harnessJobToRow", () => {
   it.each([
     ["completed", ENV_STATUS.COMPLETED],
     ["failed", ENV_STATUS.FAILED],
-    ["canceled", ENV_STATUS.FAILED],
+    ["canceled", ENV_STATUS.CANCELLED],
     ["running", ENV_STATUS.RUNNING],
+    ["cleaning_up", ENV_STATUS.FINALIZING],
+    ["finalizing", ENV_STATUS.FINALIZING],
     ["queued", ENV_STATUS.BUILDING],
     ["generating_environment", ENV_STATUS.BUILDING],
   ])("maps stage %s to status %s", (stage, status) => {
@@ -165,5 +173,61 @@ describe("buildStatusFor", () => {
     ["queued", "acquiring_source", "generating_environment", "generating_scenarios", undefined].forEach(
       (s) => expect(buildStatusFor(s)).toBe(BUILD_STATUS.BUILDING),
     );
+  });
+});
+
+describe("jobStatusFor", () => {
+  const cancel = "2026-09-25T08:00:00Z";
+
+  it.each([
+    ["cleaning_up", cancel, ENV_STATUS.CANCELLING],
+    ["running", cancel, ENV_STATUS.CANCELLING],
+    ["generating_scenarios", cancel, ENV_STATUS.CANCELLING],
+    ["canceled", cancel, ENV_STATUS.CANCELLED],
+    ["completed", cancel, ENV_STATUS.COMPLETED],
+    ["failed", cancel, ENV_STATUS.FAILED],
+    ["cleaning_up", null, ENV_STATUS.FINALIZING],
+    ["running", null, ENV_STATUS.RUNNING],
+  ])("stage %s with cancel_requested_at=%s reads %s", (stage, cancelAt, expected) => {
+    expect(jobStatusFor({ stage, cancel_requested_at: cancelAt })).toBe(expected);
+  });
+
+  it("drives the jobs-list row, so a cancel in flight reads Cancelling there too", () => {
+    const row = harnessJobToRow({
+      job: { job_id: "job-1" },
+      status: { stage: "cleaning_up", cancel_requested_at: cancel },
+    });
+    expect(row.status).toBe(ENV_STATUS.CANCELLING);
+  });
+});
+
+describe("envStatusFor", () => {
+  it.each([
+    ["cleaning_up", ENV_STATUS.RUNNING, ENV_STATUS.FINALIZING],
+    ["finalizing", ENV_STATUS.RUNNING, ENV_STATUS.FINALIZING],
+    ["canceled", ENV_STATUS.FAILED, ENV_STATUS.CANCELLED],
+    ["running", ENV_STATUS.RUNNING, ENV_STATUS.RUNNING],
+    ["failed", ENV_STATUS.FAILED, ENV_STATUS.FAILED],
+    ["generating_scenarios", ENV_STATUS.BUILDING, ENV_STATUS.BUILDING],
+    ["completed", ENV_STATUS.COMPLETED, ENV_STATUS.COMPLETED],
+  ])("stage %s with backend status %s reads %s", (stage, status, expected) => {
+    expect(envStatusFor(stage, status)).toBe(expected);
+  });
+});
+
+describe("harnessEnvToRow cleanup and cancel stages", () => {
+  const row = (stage, status) =>
+    harnessEnvToRow({ id: "env-1", name: "Support Line", agent_type: "voice", stage, status });
+
+  it("shows Finalizing for a build in cleanup, where the backend reports running", () => {
+    expect(row("cleaning_up", "running").status).toBe(ENV_STATUS.FINALIZING);
+  });
+
+  it("shows Cancelled for a cancelled build, where the backend reports failed", () => {
+    expect(row("canceled", "failed").status).toBe(ENV_STATUS.CANCELLED);
+  });
+
+  it("keeps a real failure as Failed", () => {
+    expect(row("failed", "failed").status).toBe(ENV_STATUS.FAILED);
   });
 });

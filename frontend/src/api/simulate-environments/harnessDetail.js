@@ -2,6 +2,7 @@ import { environmentName } from "src/pages/dashboard/harness/harnessShared";
 import {
   stageToStatus,
   buildStatusFor,
+  envStatusFor,
 } from "src/sections/simulate/environments/helpers/harnessJobToRow";
 import { BUILD_STATUS } from "src/sections/simulate/environments/myEnvironments.constants";
 
@@ -108,7 +109,9 @@ export function harnessDetailToEnvironment(detail) {
     domain: overview.domain ?? null,
     agentType: AGENT_TYPE[overview.agent_type] || overview.agent_type || null,
     surface: contract?.modality || overview.agent_type || undefined,
-    status: overview.status ? stageToStatus(overview.status) : undefined,
+    status: overview.status
+      ? envStatusFor(overview.stage, stageToStatus(overview.status))
+      : undefined,
     buildStatus: overview.status ? buildStatusFor(overview.status) : BUILD_STATUS.BUILDING,
     tools: derivedWorld.tools,
     rules: derivedWorld.rules,

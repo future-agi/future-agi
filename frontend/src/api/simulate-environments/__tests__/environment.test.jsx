@@ -379,13 +379,56 @@ describe("harnessJobToEnvironment", () => {
 
 describe("canRunHeader", () => {
   it("requires both a persisted RunTest and real runnable scenarios", () => {
-    expect(canRunHeader("harness", { platform: { runTestId: "rt1" } }, true)).toBe(true);
-    expect(canRunHeader("harness", { platform: { runTestId: "rt1" } }, false)).toBe(false);
-    expect(canRunHeader("harness", { platform: {} }, true)).toBe(false);
+    const completed = { status: "completed", platform: { runTestId: "rt1" } };
+    expect(canRunHeader("harness", completed, true)).toBe(true);
+    expect(canRunHeader("harness", completed, false)).toBe(false);
+    expect(canRunHeader("harness", { status: "completed", platform: {} }, true)).toBe(false);
+    expect(canRunHeader("harness", { ...completed, status: "finalizing" }, true)).toBe(false);
   });
 
   it("falls back to canRun for non-harness sources", () => {
     expect(canRunHeader("client", {}, true)).toBe(true);
     expect(canRunHeader("client", { platform: { runTestId: "rt1" } }, false)).toBe(false);
+  });
+});
+
+describe("useEnvironment status when the detail is older than the job poll", () => {
+  const DETAIL_FROM_VALIDATION = {
+    id: "job-fin",
+    overview: {
+      id: "job-fin",
+      name: "Finalizing Environment",
+      agent_type: "voice",
+      status: "building",
+      stage: "validating_scenarios",
+    },
+    contract: { one_liner: "A returns-and-orders phone line." },
+  };
+  const jobInCleanup = (status) => ({
+    ...RUNNING_JOB,
+    job: { ...RUNNING_JOB.job, job_id: "job-fin" },
+    status: { stage: "cleaning_up", updated_at: "2026-09-15T09:05:00Z", ...status },
+    platform: { run_test_id: "rt1", test_execution_id: "ex1" },
+  });
+
+  const renderEnv = async (job) => {
+    getHarnessJob.mockResolvedValue(job);
+    getHarnessEnvironment.mockResolvedValue(DETAIL_FROM_VALIDATION);
+    const { Wrapper } = makeWrapper();
+    const { result } = renderHook(() => useEnvironment("job-fin"), { wrapper: Wrapper });
+    await waitFor(() => expect(result.current.env?.description).toBe("A returns-and-orders phone line."));
+    return result.current.env;
+  };
+
+  it("shows Finalizing from the job poll, not the detail's stale Building, and keeps Run disabled", async () => {
+    const env = await renderEnv(jobInCleanup());
+    expect(env.status).toBe(ENV_STATUS.FINALIZING);
+    expect(canRunHeader("harness", env, true)).toBe(false);
+  });
+
+  it("shows Cancelling when the job poll carries a requested cancel", async () => {
+    const env = await renderEnv(jobInCleanup({ cancel_requested_at: "2026-09-15T09:04:00Z" }));
+    expect(env.status).toBe(ENV_STATUS.CANCELLING);
+    expect(canRunHeader("harness", env, true)).toBe(false);
   });
 });

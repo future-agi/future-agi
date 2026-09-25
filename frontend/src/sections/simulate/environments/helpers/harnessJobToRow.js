@@ -1,5 +1,9 @@
 import { AGENT_TYPES } from "src/sections/agents/constants";
-import { environmentName, HARNESS_STAGE } from "src/pages/dashboard/harness/harnessShared";
+import {
+  environmentName,
+  HARNESS_STAGE,
+  terminalStages,
+} from "src/pages/dashboard/harness/harnessShared";
 import { ENV_STATUS, BUILD_STATUS } from "../myEnvironments.constants";
 
 // ALK reports the transports it detected in the source under
@@ -13,16 +17,36 @@ export const VOICE_CONNECTORS = [
   "pipecat",
 ];
 
+const FINALIZING_STAGES = new Set([
+  HARNESS_STAGE.FINALIZING,
+  HARNESS_STAGE.CLEANING_UP,
+]);
+
+const STAGE_LED_STAGES = new Set([
+  ...FINALIZING_STAGES,
+  HARNESS_STAGE.CANCELED,
+]);
+
 // The harness pipeline reports fine-grained stages; the table only needs the
-// four run-states its status pill knows. "failed" and "canceled" are both
-// outcomes the pill draws in red, and every stage before the terminal ones is
-// still assembling the environment.
+// states its status pill knows. "failed" is a real failure, "canceled" is the
+// user's own cancel, cleanup reads as finalizing, and every stage before the
+// terminal ones is still assembling the environment.
 export const stageToStatus = (stage) => {
   if (stage === HARNESS_STAGE.COMPLETED) return ENV_STATUS.COMPLETED;
-  if (stage === HARNESS_STAGE.FAILED || stage === HARNESS_STAGE.CANCELED) return ENV_STATUS.FAILED;
+  if (stage === HARNESS_STAGE.FAILED) return ENV_STATUS.FAILED;
+  if (stage === HARNESS_STAGE.CANCELED) return ENV_STATUS.CANCELLED;
+  if (FINALIZING_STAGES.has(stage)) return ENV_STATUS.FINALIZING;
   if (stage === HARNESS_STAGE.RUNNING) return ENV_STATUS.RUNNING;
   return ENV_STATUS.BUILDING;
 };
+
+export const envStatusFor = (stage, status) =>
+  STAGE_LED_STAGES.has(stage) ? stageToStatus(stage) : status;
+
+export const jobStatusFor = (status) =>
+  status?.cancel_requested_at && !terminalStages.has(status?.stage)
+    ? ENV_STATUS.CANCELLING
+    : stageToStatus(status?.stage);
 
 // The environment's build lifecycle from a job stage. Three-way, unlike the old
 // inline `stage === "completed" ? "ready" : "building"` which mislabelled a
@@ -52,7 +76,7 @@ export function harnessJobToRow(item) {
   return {
     id: item?.job?.job_id,
     name: environmentName(item?.job),
-    status: stageToStatus(item?.status?.stage),
+    status: jobStatusFor(item?.status),
     agentType: agentTypeFor(item?.credentials?.detected_connectors),
     updatedAt: item?.status?.updated_at ?? null,
     description: null,
@@ -83,7 +107,7 @@ export function harnessEnvToRow(item) {
     // §1 always reports status and agent_type, so these are passed through
     // rather than defaulted — inventing "building"/"chat" for a missing value
     // would hide a real data gap. `agent_type` is one of two modalities.
-    status: item?.status,
+    status: envStatusFor(item?.stage, item?.status),
     agentType: ENV_AGENT_TYPE[item?.agent_type],
     updatedAt: item?.last_updated ?? item?.created_at ?? null,
     description: item?.description ?? null,
