@@ -625,6 +625,9 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
     skipped_count: skippedCount = 0,
     warnings_count: warningsCount = data?.warningsCount ?? 0,
     total_count: totalCount = 0,
+    // total_count is one per (target, eval) run; target_count is the
+    // distinct spans/traces/sessions/calls those runs cover.
+    target_count: targetCount = totalCount,
     start_time: startTime,
     end_time: endTime,
     row_type: rowType = "spans",
@@ -756,10 +759,19 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
         <StatCard
           icon="solar:layers-linear"
           label={totalLabel}
-          value={totalCount ?? 0}
+          value={targetCount ?? 0}
           color="info.main"
           bgColor={alpha(theme.palette.info.main, 0.1)}
         />
+        {targetCount !== totalCount && (
+          <StatCard
+            icon="solar:clipboard-list-linear"
+            label="Eval Runs"
+            value={totalCount ?? 0}
+            color="info.main"
+            bgColor={alpha(theme.palette.info.main, 0.1)}
+          />
+        )}
         {showDuration && (
           <StatCard
             icon="solar:clock-circle-linear"

@@ -58,6 +58,7 @@ from tracer.models.eval_task import (
     EvalTask,
     EvalTaskLogger,
     EvalTaskStatus,
+    RowType,
     RunType,
 )
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger, ObservationSpan
@@ -151,6 +152,16 @@ _EVAL_TASK_LIST_COMPATIBILITY_FILTER_UNITS = (
     settings.EVAL_TASK_LIST_COMPATIBILITY_FILTER_UNITS
 )
 _EVAL_TASK_ROOT_JSON_PREFLIGHT_UNITS = settings.EVAL_TASK_ROOT_JSON_PREFLIGHT_UNITS
+# The EvalLogger column that names an entry's target, per task row type. A task
+# materializes one entry per (target, eval), so its targets are the distinct
+# values here, not its entries. Trace entries also carry the root span id, so
+# they count by trace.
+_EVAL_TASK_TARGET_FIELD = {
+    RowType.SPANS: "observation_span_id",
+    RowType.VOICE_CALLS: "observation_span_id",
+    RowType.TRACES: "trace_id",
+    RowType.SESSIONS: "trace_session_id",
+}
 
 
 class _EvalTaskPageNumberPagination(ExtendedPageNumberPagination):
@@ -2073,6 +2084,14 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 deleted=False,
             ).aggregate(
                 total_count=Count("id"),
+                # Distinct spans/traces/sessions/calls the entries cover; the
+                # UI's "Total Spans" card reads this, not the per-eval total.
+                target_count=Count(
+                    _EVAL_TASK_TARGET_FIELD.get(
+                        eval_task.row_type, "observation_span_id"
+                    ),
+                    distinct=True,
+                ),
                 success_count=Count("id", filter=Q(status=EvalEntryStatus.COMPLETED)),
                 errors_count=Count("id", filter=Q(status=EvalEntryStatus.ERRORED)),
                 # Skipped: the eval never ran (e.g. a mapped span attribute
@@ -2161,6 +2180,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 "skipped_count": counts["skipped_count"],
                 "warnings_count": counts["warnings_count"],
                 "total_count": counts["total_count"],
+                "target_count": counts["target_count"],
                 "error_groups": error_groups,
                 "warning_groups": warning_groups,
                 # Indicates whether we capped at _ERROR_GROUPS_LIMIT — the
