@@ -22,6 +22,10 @@ from model_hub.models.choices import DataTypeChoices, SourceChoices
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.services.lifecycle import bulk_restore
 from tfc.temporal.agent_playground.client import start_graph_execution
+from tfc.temporal.agent_playground.types import (
+    DEFAULT_MAX_CONCURRENT_NODES,
+    validate_max_concurrent_nodes,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -238,6 +242,7 @@ def execute_rows(
     dataset,
     row_ids: list[UUID] | None = None,
     task_queue: str = "tasks_l",
+    max_concurrent_nodes: int | None = None,
 ) -> list[str]:
     """
     Execute dataset rows as individual graph executions.
@@ -247,10 +252,19 @@ def execute_rows(
         dataset: The Dataset containing rows.
         row_ids: Optional list of specific row IDs to execute. If None, executes all rows.
         task_queue: Temporal task queue used for dispatch.
+        max_concurrent_nodes: Max nodes that may run at once. If None, uses the
+            value stored on the agent (graph), defaulting to 10.
 
     Returns:
         List of graph_execution_id strings.
     """
+    if max_concurrent_nodes is None:
+        max_concurrent_nodes = getattr(
+            graph_version.graph, "max_concurrent_nodes", None
+        )
+    if max_concurrent_nodes is None:
+        max_concurrent_nodes = DEFAULT_MAX_CONCURRENT_NODES
+    max_concurrent_nodes = validate_max_concurrent_nodes(max_concurrent_nodes)
     rows_qs = Row.no_workspace_objects.filter(dataset=dataset).order_by("order")
 
     if row_ids:
@@ -267,6 +281,7 @@ def execute_rows(
             execution_id = start_graph_execution(
                 graph_version_id=str(graph_version.id),
                 input_payload={},
+                max_concurrent_nodes=max_concurrent_nodes,
                 task_queue=task_queue,
             )
             return [execution_id]
@@ -288,6 +303,7 @@ def execute_rows(
         execution_id = start_graph_execution(
             graph_version_id=str(graph_version.id),
             input_payload=payload,
+            max_concurrent_nodes=max_concurrent_nodes,
             task_queue=task_queue,
         )
         execution_ids.append(execution_id)

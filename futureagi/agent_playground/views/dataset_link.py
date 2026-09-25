@@ -323,10 +323,17 @@ class GraphDatasetViewSet(GenericViewSet):
 
             serializer = self.get_serializer(data=request.data)
             if not serializer.is_valid():
+                if serializer.errors.get("max_concurrent_nodes"):
+                    return self._gm.bad_request(
+                        get_error_message("MAX_CONCURRENT_NODES_NOT_POSITIVE")
+                    )
                 return self._gm.bad_request(serializer.errors)
 
             row_ids = serializer.validated_data.get("row_ids")
             task_queue = serializer.validated_data.get("task_queue")
+            max_concurrent_nodes = serializer.validated_data.get(
+                "max_concurrent_nodes"
+            )
             dataset = graph_dataset.dataset
 
             if row_ids is not None:
@@ -346,11 +353,15 @@ class GraphDatasetViewSet(GenericViewSet):
                 status=GraphVersionStatus.ACTIVE,
             )
 
+            if max_concurrent_nodes is None:
+                max_concurrent_nodes = graph_dataset.graph.max_concurrent_nodes
+
             execution_ids = execute_rows(
                 graph_version=graph_version,
                 dataset=dataset,
                 row_ids=row_ids,
                 task_queue=task_queue,
+                max_concurrent_nodes=max_concurrent_nodes,
             )
 
             return self._gm.create_response({"execution_ids": execution_ids})

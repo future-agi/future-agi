@@ -1020,6 +1020,9 @@ err_dict = {
     "GRAPH_VERSION_NOT_FOUND_FOR_GRAPH": ["Graph version not found for this graph."],
     "GRAPH_VERSION_NOT_ACTIVE": ["Graph version must be active to execute."],
     "FAILED_TO_EXECUTE_DATASET_ROWS": ["Failed to execute dataset rows."],
+    "MAX_CONCURRENT_NODES_NOT_POSITIVE": [
+        "Step concurrency must be an integer greater than zero."
+    ],
     "FAILED_TO_LIST_EXECUTIONS": ["Failed to list executions."],
     "GRAPH_EXECUTION_NOT_FOUND": ["Graph execution not found."],
     "FAILED_TO_GET_EXECUTION_DETAIL": ["Failed to retrieve execution detail."],

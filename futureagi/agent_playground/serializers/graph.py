@@ -7,6 +7,7 @@ from agent_playground.serializers.graph_version import (
     GraphVersionListSerializer,
     prefetch_version_detail,
 )
+from tfc.temporal.agent_playground.types import MAX_CONCURRENT_NODES_ERROR
 
 
 class UserBriefSerializer(serializers.Serializer):
@@ -52,6 +53,7 @@ class GraphListSerializer(serializers.ModelSerializer):
             "name",
             "description",
             "is_template",
+            "max_concurrent_nodes",
             "created_at",
             "updated_at",
             "created_by",
@@ -77,6 +79,7 @@ class GraphCreateResponseSerializer(serializers.ModelSerializer):
             "name",
             "description",
             "is_template",
+            "max_concurrent_nodes",
             "created_at",
             "updated_at",
             "created_by",
@@ -106,6 +109,7 @@ class GraphDetailSerializer(serializers.ModelSerializer):
             "name",
             "description",
             "is_template",
+            "max_concurrent_nodes",
             "created_at",
             "updated_at",
             "active_version",
@@ -129,6 +133,14 @@ class GraphCreateSerializer(serializers.Serializer):
     description = serializers.CharField(
         required=False, allow_blank=True, allow_null=True, default=None
     )
+    max_concurrent_nodes = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        error_messages={
+            "min_value": MAX_CONCURRENT_NODES_ERROR,
+            "invalid": MAX_CONCURRENT_NODES_ERROR,
+        },
+    )
 
 
 class GraphUpdateSerializer(serializers.Serializer):
@@ -137,6 +149,14 @@ class GraphUpdateSerializer(serializers.Serializer):
     name = serializers.CharField(required=False, max_length=255)
     description = serializers.CharField(
         required=False, allow_blank=True, allow_null=True
+    )
+    max_concurrent_nodes = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        error_messages={
+            "min_value": MAX_CONCURRENT_NODES_ERROR,
+            "invalid": MAX_CONCURRENT_NODES_ERROR,
+        },
     )
 
 
