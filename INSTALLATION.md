@@ -283,9 +283,11 @@ yours to set.
 python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-`PG_PASSWORD` and `MINIO_ROOT_PASSWORD` are written into their volume on first
-boot, so changing either one later means restoring the old value or wiping that
-volume. The other three can change at any time; restart the stack afterwards.
+`PG_PASSWORD` is written into the Postgres volume on first boot, so changing it
+later means restoring the old value or wiping that volume. The other four,
+`MINIO_ROOT_PASSWORD` included, change at any time: set them in `.env` and run
+`docker compose up -d`, which recreates the containers that use them with the
+new values and keeps their data volumes.
 
 ### Ports reference
 
@@ -539,9 +541,10 @@ Then re-run pre-flight. A default install needs no S3 credentials at all:
 compose fixes `S3_ENDPOINT_URL` at `http://minio:9000` and derives
 `S3_ACCESS_KEY` / `S3_SECRET_KEY` from `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`.
 `MINIO_ROOT_USER` defaults to `futureagi`; `MINIO_ROOT_PASSWORD` is generated for
-your install by `./bin/install`. To use your own, set both in `.env` and restart
-`minio` and `backend`. The three `S3_*` variables live in the compose `environment` block,
-which takes precedence over `.env`, so setting them there has no effect.
+your install by `./bin/install`. To use your own, set both in `.env` and run
+`docker compose up -d`, which recreates `minio`, the backend and every worker
+with the new values. The three `S3_*` variables live in the compose `environment`
+block, which takes precedence over `.env`, so setting them there has no effect.
 
 ### Pre-flight says **SSL/TLS certificate** failed
 
