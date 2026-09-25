@@ -2532,3 +2532,19 @@ protect_flash:
 # ─────────────────────────────────────────────────────────────────────────────
 
 # (Defined in system_eval_code.py — each eval has a Python function)
+
+code_execution_pass:
+  eval_type: code
+  output: score
+  required_keys: [output, expected]
+  description: Run candidate Python code against tests in an isolated subprocess. Returns passed over total.
+  tags: [Code, Execution]
+  rule_prompt: ""
+
+code_safety:
+  eval_type: code
+  output: score
+  required_keys: [output]
+  description: Static scan for risky patterns in candidate code. Returns 1.0 when clean.
+  tags: [Code, Safety]
+  rule_prompt: ""
