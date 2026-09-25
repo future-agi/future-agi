@@ -411,3 +411,257 @@ def test_non_latency_snapshot_without_a_marker_is_still_served(
 
     assert payload.get("query_status") == "complete", payload
     assert _served_values(payload) == [_OLD_WORKER_MEAN]
+
+
+# ---------------------------------------------------------------------------
+# The same guard with the task queue ENABLED. The tests above pin the queue
+# to None, which returns before the scheduler reads the cache a second time
+# (after enqueueing a refresh). With a real queue that second read is where a
+# rejected snapshot came back: the old worker's mean is still in the cache
+# while the new job runs, and it was served as complete, cached "median".
+# ``fetch_session_graph_ch`` always takes that path; trace and users take it
+# when the read is scheduled as too big for the interactive wall, and on an
+# explicit refresh.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def queue_accepts_without_running(monkeypatch):
+    """A configured queue whose worker took the job but has not published."""
+
+    from types import SimpleNamespace
+
+    from tracer.tasks import exact_aggregation
+
+    enqueued = []
+    monkeypatch.setattr(
+        exact_aggregation_cache,
+        "_configured_exact_aggregation_task_queue",
+        lambda: "exact-aggregation",
+    )
+
+    def apply_async(**call):
+        enqueued.append(call["kwargs"])
+        return SimpleNamespace(id=f"workflow-{len(enqueued)}")
+
+    monkeypatch.setattr(
+        exact_aggregation.refresh_exact_aggregation_snapshot,
+        "apply_async",
+        apply_async,
+    )
+    return enqueued
+
+
+def _seed_before_first_read(monkeypatch, module, payload):
+    """Like ``_seed_cache_on_first_read`` but leaves the task queue alone."""
+
+    real = module.read_or_schedule_exact_snapshot
+    seeded = []
+
+    def read(namespace, identity, **options):
+        if not seeded:
+            exact_aggregation_cache.publish_exact_snapshot(
+                namespace,
+                exact_aggregation_cache.normalize_exact_observe_identity(identity),
+                payload,
+            )
+            seeded.append(namespace)
+        return real(namespace, identity, **options)
+
+    monkeypatch.setattr(module, "read_or_schedule_exact_snapshot", read)
+    return seeded
+
+
+def _scheduled_trace_graph(monkeypatch, metric_id, *, refresh=False):
+    # Too big for the interactive wall: the REAL _schedule_unaffordable_graph_read
+    # hands it to the background lane.
+    monkeypatch.setattr(
+        graph_dispatch,
+        "_affordable_raw_graph_seed",
+        lambda **_: graph_dispatch._GraphReadUnaffordable(estimated_rows=None),
+    )
+    return graph_dispatch.fetch_system_metric_graph_ch(
+        analytics=_Analytics(),
+        project_id=PROJECT,
+        filters=[_WINDOW_FILTER, _MODEL_FILTER],
+        interval="day",
+        metric_id=metric_id,
+        organization_id=ORG,
+        refresh=refresh,
+    )
+
+
+def _refreshed_trace_graph(monkeypatch, metric_id):
+    # The user presses refresh on an interactive-sized read.
+    del monkeypatch
+    return graph_dispatch.fetch_system_metric_graph_ch(
+        analytics=_Analytics(),
+        project_id=PROJECT,
+        filters=[_WINDOW_FILTER, _MODEL_FILTER],
+        interval="day",
+        metric_id=metric_id,
+        organization_id=ORG,
+        refresh=True,
+    )
+
+
+def _scheduled_users_graph(monkeypatch, metric_id, *, refresh=False):
+    monkeypatch.setattr(
+        graph_dispatch,
+        "_affordable_user_graph_read",
+        lambda **_: graph_dispatch._GraphReadUnaffordable(estimated_rows=None),
+    )
+    return graph_dispatch.fetch_user_system_metric_graph_ch(
+        analytics=_Analytics(),
+        project_id=PROJECT,
+        filters=[_WINDOW_FILTER, _MODEL_FILTER],
+        interval="day",
+        metric_id=metric_id,
+        organization_id=ORG,
+        refresh=refresh,
+    )
+
+
+def _refreshed_users_graph(monkeypatch, metric_id):
+    return _scheduled_users_graph(monkeypatch, metric_id, refresh=True)
+
+
+def _queued_session_graph(monkeypatch, metric_id, *, refresh=False):
+    del monkeypatch
+    return session_graph.fetch_session_graph_ch(
+        analytics=_Analytics(),
+        project_id=PROJECT,
+        filters=[_WINDOW_FILTER, _MODEL_FILTER],
+        interval="day",
+        req_data_config={"type": "SYSTEM_METRIC", "id": metric_id},
+        organization_id=ORG,
+        refresh=refresh,
+    )
+
+
+def _refreshed_session_graph(monkeypatch, metric_id):
+    return _queued_session_graph(monkeypatch, metric_id, refresh=True)
+
+
+_QUEUED_SURFACES = [
+    pytest.param(session_graph, _queued_session_graph, id="session"),
+    pytest.param(session_graph, _refreshed_session_graph, id="session-refresh"),
+    pytest.param(graph_dispatch, _scheduled_trace_graph, id="trace-scheduled"),
+    pytest.param(graph_dispatch, _refreshed_trace_graph, id="trace-refresh"),
+    pytest.param(graph_dispatch, _scheduled_users_graph, id="users-scheduled"),
+    pytest.param(graph_dispatch, _refreshed_users_graph, id="users-refresh"),
+]
+
+
+@pytest.mark.usefixtures("clean_cache")
+@pytest.mark.parametrize(("module", "read_graph"), _QUEUED_SURFACES)
+def test_old_worker_latency_mean_is_not_served_while_a_refresh_is_queued(
+    monkeypatch, queue_accepts_without_running, module, read_graph
+):
+    seeded = _seed_before_first_read(monkeypatch, module, _cached_payload("latency"))
+    payload = read_graph(monkeypatch, "latency")
+
+    assert seeded, "the reader never consulted the snapshot cache"
+    # The refresh really was handed to the queue, so the post-enqueue re-read
+    # (not the first, already guarded, read) decided what was served.
+    assert [job["namespace"] for job in queue_accepts_without_running] == seeded
+    assert _OLD_WORKER_MEAN not in _served_values(payload), payload
+    assert payload.get("query_status") != "complete", payload
+    assert payload.get("query_cached") is not True, payload
+    assert payload.get("query_refreshing") is True, payload
+    assert payload.get("metric_statistic") == "median"
+
+
+@pytest.mark.usefixtures("clean_cache")
+@pytest.mark.parametrize(
+    ("module", "read_graph"),
+    [
+        pytest.param(session_graph, _refreshed_session_graph, id="session-refresh"),
+        pytest.param(graph_dispatch, _refreshed_trace_graph, id="trace-refresh"),
+        pytest.param(graph_dispatch, _refreshed_users_graph, id="users-refresh"),
+    ],
+)
+def test_median_snapshot_is_still_served_while_its_refresh_is_queued(
+    monkeypatch, queue_accepts_without_running, module, read_graph
+):
+    _seed_before_first_read(
+        monkeypatch,
+        module,
+        _cached_payload("latency", metric_statistic="median"),
+    )
+    payload = read_graph(monkeypatch, "latency")
+
+    assert queue_accepts_without_running, "no refresh was enqueued"
+    assert payload.get("query_status") == "complete", payload
+    assert payload.get("query_cached") is True
+    assert payload.get("query_refreshing") is True
+    assert _served_values(payload) == [_OLD_WORKER_MEAN]
+
+
+@pytest.mark.usefixtures("clean_cache")
+@pytest.mark.parametrize(("module", "read_graph"), _QUEUED_SURFACES)
+def test_non_latency_snapshot_is_still_served_while_a_refresh_is_queued(
+    monkeypatch, queue_accepts_without_running, module, read_graph
+):
+    _seed_before_first_read(monkeypatch, module, _cached_payload("tokens"))
+    payload = read_graph(monkeypatch, "tokens")
+
+    assert payload.get("query_status") == "complete", payload
+    assert _served_values(payload) == [_OLD_WORKER_MEAN]
+
+
+@pytest.mark.usefixtures("clean_cache")
+def test_old_mean_carried_into_a_refreshed_window_is_not_served(
+    queue_accepts_without_running,
+):
+    """An explicit refresh of a rolling window moves it forward and carries the
+    prior window's snapshot into the new key so the chart stays visible. A
+    carried old-worker mean must be rejected there too."""
+
+    from django.core.cache import cache
+
+    namespace = "observe-session-system-graph"
+    identity = {
+        "project_id": PROJECT,
+        "organization_id": ORG,
+        # No time filter: the default window is frozen once per alias.
+        "filters": [_MODEL_FILTER],
+        "interval": "day",
+        "metric_id": "latency",
+        "payload_version": OBSERVE_SYSTEM_GRAPH_PAYLOAD_VERSION,
+    }
+    prior = exact_aggregation_cache.normalize_exact_observe_identity(identity)
+    for item in prior["filters"]:
+        if item["column_id"] == "created_at":
+            item["filter_config"]["filter_value"] = [
+                "2026-05-01T00:00:00+00:00",
+                "2026-05-31T00:00:00+00:00",
+            ]
+    cache.set(
+        exact_aggregation_cache._observe_identity_alias_key(namespace, identity),
+        prior,
+    )
+    exact_aggregation_cache.publish_exact_snapshot(
+        namespace, prior, _cached_payload("latency")
+    )
+
+    from tracer.services.clickhouse.graph_metric_statistic import (
+        snapshot_names_its_statistic,
+    )
+
+    payload = exact_aggregation_cache.read_or_schedule_exact_snapshot(
+        namespace,
+        identity,
+        refresh=True,
+        pending_payload=graph_dispatch._pending_graph_payload("latency"),
+        accept_snapshot=lambda cached: snapshot_names_its_statistic(
+            namespace, "latency", cached
+        ),
+    )
+
+    (job,) = queue_accepts_without_running
+    # The window moved: the refresh runs for a new frozen identity.
+    assert job["identity"] != prior
+    assert _OLD_WORKER_MEAN not in _served_values(payload), payload
+    assert payload.get("query_status") != "complete", payload
+    assert payload.get("query_cached") is not True, payload
