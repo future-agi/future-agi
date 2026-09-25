@@ -379,9 +379,11 @@ describe("harnessJobToEnvironment", () => {
 
 describe("canRunHeader", () => {
   it("requires both a persisted RunTest and real runnable scenarios", () => {
-    expect(canRunHeader("harness", { platform: { runTestId: "rt1" } }, true)).toBe(true);
-    expect(canRunHeader("harness", { platform: { runTestId: "rt1" } }, false)).toBe(false);
-    expect(canRunHeader("harness", { platform: {} }, true)).toBe(false);
+    const completed = { status: "completed", platform: { runTestId: "rt1" } };
+    expect(canRunHeader("harness", completed, true)).toBe(true);
+    expect(canRunHeader("harness", completed, false)).toBe(false);
+    expect(canRunHeader("harness", { status: "completed", platform: {} }, true)).toBe(false);
+    expect(canRunHeader("harness", { ...completed, status: "finalizing" }, true)).toBe(false);
   });
 
   it("falls back to canRun for non-harness sources", () => {

@@ -9,6 +9,8 @@ import { STATUS_TYPES } from "src/utils/statusUtils";
 export const HARNESS_STAGE = {
   QUEUED: "queued",
   RUNNING: "running",
+  FINALIZING: "finalizing",
+  CLEANING_UP: "cleaning_up",
   COMPLETED: "completed",
   FAILED: "failed",
   CANCELED: "canceled",

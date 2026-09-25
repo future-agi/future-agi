@@ -25,7 +25,7 @@ describe("harnessJobToRow", () => {
   it.each([
     ["completed", ENV_STATUS.COMPLETED],
     ["failed", ENV_STATUS.FAILED],
-    ["canceled", ENV_STATUS.FAILED],
+    ["canceled", ENV_STATUS.CANCELLED],
     ["running", ENV_STATUS.RUNNING],
     ["queued", ENV_STATUS.BUILDING],
     ["generating_environment", ENV_STATUS.BUILDING],

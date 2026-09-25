@@ -10,10 +10,11 @@ import {
   completedStageCount,
 } from "src/pages/dashboard/harness/harnessShared";
 import { useEnvironmentsStore } from "src/sections/simulate/environments/store/useEnvironmentsStore";
+import { ENV_STATUS } from "src/sections/simulate/environments/myEnvironments.constants";
 import {
   VOICE_CONNECTORS,
-  stageToStatus,
   buildStatusFor,
+  jobStatusFor,
 } from "src/sections/simulate/environments/helpers/harnessJobToRow";
 import { usePrebuiltEnvironments } from "./prebuilt";
 import { conversationInFlight } from "./conversationProjection";
@@ -206,7 +207,7 @@ export function harnessJobToEnvironment(item) {
     id: job.job_id,
     name: environmentName(job),
     agentType: agentTypeFor(item?.credentials?.detected_connectors),
-    status: stageToStatus(status.stage),
+    status: jobStatusFor(status),
     buildStatus: buildStatusFor(status.stage),
     // The "whose fault" line for a failed build ({domain, stage, code, message},
     // see §7). Null unless the job stage is terminal-failed.
@@ -235,7 +236,9 @@ export function harnessJobToEnvironment(item) {
 // bridge as soon as it has a run-test id, even before the client canRun is met.
 export const canRunHeader = (source, env, canRun) =>
   source === "harness"
-    ? Boolean(env?.platform?.runTestId) && canRun
+    ? env?.status === ENV_STATUS.COMPLETED &&
+      Boolean(env?.platform?.runTestId) &&
+      canRun
     : canRun;
 
 // Overlay only the keys `extra` actually defines onto `base`, so a real §6 field
@@ -252,6 +255,8 @@ const overlayDefined = (base, extra) => {
 // Resolve an environment id to its record. Order: an adopted client env in the
 // store, then the harness backend, then the prebuilt template catalogue. An
 // unknown id whose harness fetch 404s (and that no template claims) is notFound.
+const CANCEL_STATUSES = new Set([ENV_STATUS.CANCELLING, ENV_STATUS.CANCELLED]);
+
 export function useEnvironment(envId) {
   const clientEnv = useEnvironmentsStore((s) => s.workspaceEnvs[envId]);
   const prebuilt = usePrebuiltEnvironments();
@@ -319,7 +324,8 @@ export function useEnvironment(envId) {
     // the previous job-poll path.
     const detailReady = Boolean(detail?.env?.detailReady);
     const base = harness?.env ?? {};
-    const env = detailReady ? overlayDefined(base, detail.env) : harness?.env ?? detail?.env;
+    const merged = detailReady ? overlayDefined(base, detail.env) : harness?.env ?? detail?.env;
+    const env = CANCEL_STATUSES.has(base.status) ? { ...merged, status: base.status } : merged;
 
     // Gate the bootstrap on the detail settling so a slightly-later §6 success is
     // not lost to useEnvState's write-once seed: use the real detail state when

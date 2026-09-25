@@ -15,30 +15,51 @@ import { WORKSPACE_COPY } from "./workspace.constants";
 // the pill inside the workspace matches the chip outside it (Building was amber
 // here vs purple in the table before this).
 export default function LivePill({ env, building }) {
+  const isCancelling = env?.status === ENV_STATUS.CANCELLING;
+  const isCancelled = env?.status === ENV_STATUS.CANCELLED;
+  const isFinalizing = env?.status === ENV_STATUS.FINALIZING;
   const isBuilding = building ?? env?.buildStatus === BUILD_STATUS.BUILDING;
   const isFailed = !isBuilding && env?.buildStatus === BUILD_STATUS.FAILED;
   const isRunning = !isBuilding && !isFailed && env?.status === ENV_STATUS.RUNNING;
-  const tone = isFailed
-    ? STATUS_META.failed.color
-    : isBuilding
-      ? STATUS_META.building.color
-      : isRunning
-        ? STATUS_META.running.color
-        : STATUS_META.passed.color;
-  const label = isFailed
-    ? WORKSPACE_COPY.failedLabel
-    : isBuilding
-      ? WORKSPACE_COPY.buildingLabel
-      : isRunning
-        ? STATUS_META.running.label
-        : WORKSPACE_COPY.live;
-  const tooltip = isFailed
-    ? WORKSPACE_COPY.failedTooltip
-    : isBuilding
-      ? WORKSPACE_COPY.buildingTooltip
-      : isRunning
-        ? WORKSPACE_COPY.runningTooltip
-        : WORKSPACE_COPY.liveTooltip;
+  const tone = isCancelled
+    ? STATUS_META.cancelled.color
+    : isCancelling
+      ? STATUS_META.cancelling.color
+      : isFailed
+        ? STATUS_META.failed.color
+        : isFinalizing
+          ? STATUS_META.finalizing.color
+          : isBuilding
+            ? STATUS_META.building.color
+            : isRunning
+              ? STATUS_META.running.color
+              : STATUS_META.passed.color;
+  const label = isCancelled
+    ? WORKSPACE_COPY.cancelledLabel
+    : isCancelling
+      ? WORKSPACE_COPY.cancellingLabel
+      : isFailed
+        ? WORKSPACE_COPY.failedLabel
+        : isFinalizing
+          ? WORKSPACE_COPY.finalizingLabel
+          : isBuilding
+            ? WORKSPACE_COPY.buildingLabel
+            : isRunning
+              ? STATUS_META.running.label
+              : WORKSPACE_COPY.live;
+  const tooltip = isCancelled
+    ? WORKSPACE_COPY.cancelledTooltip
+    : isCancelling
+      ? WORKSPACE_COPY.cancellingTooltip
+      : isFailed
+        ? WORKSPACE_COPY.failedTooltip
+        : isFinalizing
+          ? WORKSPACE_COPY.finalizingTooltip
+          : isBuilding
+            ? WORKSPACE_COPY.buildingTooltip
+            : isRunning
+              ? WORKSPACE_COPY.runningTooltip
+              : WORKSPACE_COPY.liveTooltip;
 
   return (
     <CustomTooltip show title={tooltip} size="small" arrow>
@@ -62,7 +83,7 @@ export default function LivePill({ env, building }) {
             height: 6,
             borderRadius: "50%",
             bgcolor: tone,
-            animation: isBuilding ? "env-pulse 1.4s ease-in-out infinite" : undefined,
+            animation: (isBuilding || isFinalizing || isCancelling) && !isCancelled ? "env-pulse 1.4s ease-in-out infinite" : undefined,
             "@keyframes env-pulse": {
               "0%,100%": { opacity: 0.4 },
               "50%": { opacity: 1 },
