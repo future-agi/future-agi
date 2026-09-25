@@ -386,15 +386,14 @@ services:
   # ===========================================
 
   redis:
-    image: redis:7-alpine
-    container_name: redis
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    command: ${REDIS_COMMAND:-redis-server --appendonly yes}
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes
+      - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "${REDIS_HEALTHCHECK_TEST:-redis-cli ping}"]
       interval: 10s
       timeout: 5s
       retries: 5
