@@ -264,6 +264,24 @@ class TestRewriteLeavesDeletedUntouched:
         v1 = "AND deleted = false"
         assert rewrite_v1_sql_to_v2(v1) == "AND deleted = false"
 
+    def test_entity_graph_candidate_eval_keeps_legacy_cdc_columns(self, settings):
+        # Session/Users EVAL graphs embed their ``candidate_eval`` read in SQL
+        # the v2 builder rewrites whole. The legacy table has no ``is_deleted``,
+        # so renaming its CDC columns there is ClickHouse code 47 (HTTP 500).
+        settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger"
+        _, pred = eval_logger_source("candidate_eval", include_cdc_tombstone_guard=True)
+        v1 = (
+            f"WHERE {pred} ORDER BY candidate_eval._peerdb_version"
+            " AND spans._peerdb_is_deleted = 0"
+        )
+
+        assert rewrite_v1_sql_to_v2(v1) == (
+            "WHERE candidate_eval._peerdb_is_deleted = 0 AND "
+            "(candidate_eval.deleted = 0 OR candidate_eval.deleted IS NULL) "
+            "ORDER BY candidate_eval._peerdb_version"
+            " AND spans.is_deleted = 0"
+        )
+
 
 # ===========================================================================
 # 3. EVAL_METRIC — SCORE numeric path (value/100 scaling on output_float).
