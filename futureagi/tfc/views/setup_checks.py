@@ -236,7 +236,7 @@ CHECKS = (
         "down_detail": "Nothing loads without it — check PG_HOST and PG_PASSWORD",
         "probe": _postgres_up,
         "fix": "Start it: `docker compose up -d postgres`. Check `PG_HOST` and `PG_PASSWORD` in `.env`.",
-        "docs_url": "https://docs.futureagi.com/docs/self-hosting#core-database",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-core-application-database-failed",
         LIVE: {
             "required": True,
             "on_down": FAILED,
@@ -252,7 +252,7 @@ CHECKS = (
         "down_detail": "Traces, spans and dashboards will not load",
         "probe": _clickhouse_up,
         "fix": "Start it: `docker compose up -d clickhouse`.",
-        "docs_url": "https://docs.futureagi.com/docs/self-hosting#tracing-warehouse",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-tracing-data-warehouse-failed",
         LIVE: {
             "required": True,
             "on_down": FAILED,
@@ -268,7 +268,7 @@ CHECKS = (
         "down_detail": "Sessions, caching and rate limits will not work",
         "probe": _redis_up,
         "fix": "Start it: `docker compose up -d redis`.",
-        "docs_url": "https://docs.futureagi.com/docs/self-hosting#cache-and-sessions",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-cache-and-session-store-failed",
         LIVE: {
             "required": True,
             "on_down": FAILED,
@@ -284,7 +284,7 @@ CHECKS = (
         "down_detail": "Live updates will not reach the browser",
         "probe": _rabbitmq_up,
         "fix": "Start it: `docker compose up -d rabbitmq`.",
-        "docs_url": "https://docs.futureagi.com/docs/self-hosting#websockets",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-websocket-connection-failed",
         LIVE: {
             "required": True,
             "on_down": FAILED,
@@ -316,7 +316,7 @@ CHECKS = (
         "down_detail": "Every LLM call fails — evaluations, playground and agents",
         "probe": _gateway_up,
         "fix": "Start it: `docker compose up -d agentcc-gateway`.",
-        "docs_url": "https://docs.futureagi.com/docs/self-hosting#llm-gateway",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-llm-request-gateway-failed",
         LIVE: {
             "required": True,
             "on_down": FAILED,
@@ -332,7 +332,7 @@ CHECKS = (
         "down_detail": "Evaluations, optimizations and scheduled jobs will not run",
         "probe": _temporal_up,
         "fix": "Start it: `docker compose up -d temporal`.",
-        "docs_url": "https://docs.futureagi.com/docs/self-hosting#async-tasks",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-async-task-engine-failed",
         LIVE: {
             "required": True,
             "on_down": FAILED,
@@ -348,7 +348,7 @@ CHECKS = (
         "down_detail": "Spans sent by the SDK will not arrive",
         "probe": _collector_up,
         "fix": "Start it: `docker compose up -d fi-collector`.",
-        "docs_url": "https://docs.futureagi.com/docs/self-hosting#trace-ingestion",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-trace-ingestion-failed",
         LIVE: {
             "required": True,
             "on_down": FAILED,
@@ -363,7 +363,7 @@ CHECKS = (
         "label": "Django backend",
         "probe": lambda: True,
         "fix": "Start it: `docker compose up -d backend`.",
-        "docs_url": "https://docs.futureagi.com/docs/self-hosting#backend",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-django-backend-failed",
         LIVE: {"required": True, "on_down": FAILED},
         EXPERIMENT: {"required": True, "on_down": FAILED},
     },
@@ -372,7 +372,7 @@ CHECKS = (
         "label": "React frontend",
         "probe": lambda: True,
         "fix": "Start it: `docker compose up -d frontend`.",
-        "docs_url": "https://docs.futureagi.com/docs/self-hosting#frontend",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-react-frontend-failed",
         LIVE: {"required": True, "on_down": FAILED},
         EXPERIMENT: {"required": True, "on_down": FAILED},
     },
@@ -382,7 +382,7 @@ CHECKS = (
         "down_detail": "Built-in evaluations and guardrails will not run",
         "probe": _model_serving_up,
         "fix": "Start it: `docker compose up -d serving`. Only evals and guardrails need it.",
-        "docs_url": "https://docs.futureagi.com/docs/self-hosting#agent-fixer",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-agent-fixer-failed",
         LIVE: {
             "required": True,
             "on_down": FAILED,
@@ -398,7 +398,7 @@ CHECKS = (
         "down_detail": "Custom code evaluations will not run",
         "probe": _code_executor_up,
         "fix": "Start it: `docker compose up -d code-executor`. The host has to allow `privileged: true`.",
-        "docs_url": "https://docs.futureagi.com/docs/self-hosting#code-sandbox",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-code-execution-sandbox-failed",
         LIVE: {
             "required": True,
             "on_down": FAILED,

@@ -12,6 +12,8 @@ first — otherwise a second request in the same test returns the first one's
 verdict and the assertions pass for the wrong reason.
 """
 
+import re
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -27,6 +29,15 @@ from tfc.views.setup_checks import (
     SKIPPED,
     WARNING,
 )
+
+INSTALLATION = Path(__file__).resolve().parents[3] / "INSTALLATION.md"
+
+
+def _github_anchor(heading):
+    """GitHub's heading slug: lowercase, drop every character that is not a word
+    character, a space or a hyphen, then spaces to hyphens."""
+    return re.sub(r"[^\w\- ]", "", heading.lower()).strip().replace(" ", "-")
+
 
 SETUP_CHECKS_URL = "/api/setup-checks/"
 
@@ -459,6 +470,22 @@ class TestCheckInventory:
             assert check.get("docs_url", "").startswith("https://"), (
                 f"{check['id']} has no docs link"
             )
+
+    def test_every_docs_url_points_at_a_heading_that_exists(self):
+        """A dead anchor drops the operator at the top of a page instead of at
+        the service that failed, which is the bug this screen is fixing."""
+        headings = {
+            _github_anchor(line.lstrip("#").strip())
+            for line in INSTALLATION.read_text(encoding="utf-8").splitlines()
+            if line.startswith("#")
+        }
+
+        for check in CHECKS:
+            page, _, anchor = check["docs_url"].partition("#")
+            assert page.endswith("/INSTALLATION.md"), (
+                f"{check['id']} links to {page}, where no test can see the anchor"
+            )
+            assert anchor in headings, f"{check['id']} links to a missing #{anchor}"
 
     def test_down_detail_lives_on_the_check_not_the_mode(self):
         """Hoisted so the two modes cannot drift into describing one outage
