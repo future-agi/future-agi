@@ -383,9 +383,18 @@ const PrimaryGraph = ({
     : "traces";
   const theme = useTheme();
   const aggregationSourceId = useId();
-  const [selectedMetric, setSelectedMetric] = useState(
-    defaultMetric || "latency",
-  );
+  const initialMetric = defaultMetric || "latency";
+  const [selectedMetric, setSelectedMetric] = useState(initialMetric);
+  // A metric selected in one project may not exist in the next one's catalog,
+  // so a project change returns to the default. Only the project and the
+  // user's own pick decide the selection: the catalog loads while the picker
+  // is open, one category at a time and in any order, and must not change it.
+  const [selectedMetricProject, setSelectedMetricProject] =
+    useState(effectiveObserveId);
+  if (selectedMetricProject !== effectiveObserveId) {
+    setSelectedMetricProject(effectiveObserveId);
+    setSelectedMetric(initialMetric);
+  }
   const [pickerAnchor, setPickerAnchor] = useState(null);
   const [pickerSearch, setPickerSearch] = useState("");
   const [dateAnchor, setDateAnchor] = useState(null);
@@ -493,14 +502,15 @@ const PrimaryGraph = ({
     return Object.values(metricGroups).flat();
   }, [metricGroups]);
 
-  // Current selected metric definition
+  // Current selected metric definition. Until the catalog lists the selection
+  // (the sessions and users catalogs never list latency), graph the system
+  // latency default rather than whichever catalog entry arrived first.
   const metricDef = useMemo(
     () =>
       allMetrics.find(
         (m) =>
           graphMetricIdentity(m) === selectedMetric || m.id === selectedMetric,
-      ) ||
-      allMetrics[0] || {
+      ) || {
         id: "latency",
         propertyId: `system_attribute:${graphPropertyNamespace}:latency`,
         source: graphTransportSource,
@@ -517,22 +527,6 @@ const PrimaryGraph = ({
     }
     return metricDef.propertyId || metricDef.property_id || "";
   }, [graphPropertyNamespace, metricDef]);
-
-  // A metric selected in one project may not exist in the next one's catalog.
-  // Drop it once loaded so the trigger label and picker highlight agree. The
-  // catalog-backed picker stores canonical property ids, while legacy entries
-  // may still be selected by metric id, so both identities must be accepted.
-  useEffect(() => {
-    if (!metricGroups || !allMetrics.length) return;
-    if (
-      !allMetrics.some(
-        (m) =>
-          graphMetricIdentity(m) === selectedMetric || m.id === selectedMetric,
-      )
-    ) {
-      setSelectedMetric(graphMetricIdentity(metricDef));
-    }
-  }, [metricGroups, allMetrics, selectedMetric, metricDef]);
 
   // Filter metrics by search term for the picker
   const filteredGroups = useMemo(() => {
