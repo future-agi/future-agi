@@ -161,7 +161,13 @@ def is_clickhouse_query_error(exc: Exception) -> bool:
     :func:`is_read_budget_error`.
     """
 
-    if isinstance(exc, (ClickHouseNetworkError, ClickHouseSocketTimeoutError)):
+    # The native driver's socket reader raises a bare EOFError, neither wrapped
+    # nor an OSError, when the server closes the connection mid-response. Only
+    # the bare exception qualifies: a coded error raised while one is being
+    # handled is still judged by its code below.
+    if isinstance(
+        exc, (ClickHouseNetworkError, ClickHouseSocketTimeoutError, EOFError)
+    ):
         return True
     if isinstance(exc, ClickHouseError):
         return getattr(exc, "code", None) in _TRANSIENT_CLICKHOUSE_ERROR_CODES

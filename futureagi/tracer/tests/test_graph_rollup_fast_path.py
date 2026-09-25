@@ -1311,6 +1311,56 @@ def test_filtered_graph_budget_failure_schedules_one_heavy_read(monkeypatch):
 
 
 @pytest.mark.unit
+def test_filtered_graph_mid_response_eof_schedules_one_heavy_read(monkeypatch):
+    # #3022: the native driver raises a bare EOFError when ClickHouse closes
+    # the connection mid-response. The filtered graph degrades and schedules
+    # its exact refresh instead of re-raising it as a 500.
+    pending = {
+        "metric_name": "latency",
+        "data": [],
+        "query_complete": False,
+        "query_status": "pending",
+        "query_sampled": False,
+        "query_refreshing": True,
+    }
+    cache_calls = []
+
+    def cache_read(*args, **kwargs):
+        cache_calls.append((args, kwargs))
+        if kwargs.get("schedule_on_miss") is False:
+            return {**pending, "query_refreshing": False}
+        return pending
+
+    monkeypatch.setattr(
+        graph_dispatch,
+        "read_or_schedule_exact_snapshot",
+        cache_read,
+    )
+    monkeypatch.setattr(
+        graph_dispatch,
+        "_fetch_direct_raw_system_metric_graph",
+        mock.Mock(side_effect=EOFError("Unexpected EOF while reading bytes")),
+    )
+
+    response = graph_dispatch.fetch_system_metric_graph_ch(
+        analytics=mock.Mock(),
+        project_id=PROJECT_ID,
+        filters=[_attribute_filter()],
+        interval="day",
+        metric_id="latency",
+        observe_type="trace",
+        organization_id="33333333-3333-4333-8333-333333333333",
+        workspace_id="44444444-4444-4444-8444-444444444444",
+    )
+
+    assert response == pending
+    assert len(cache_calls) == 2
+    assert cache_calls[0][1]["schedule_on_miss"] is False
+    assert cache_calls[1][1]["schedule_on_miss"] is True
+    assert cache_calls[1][1]["refresh"] is True
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("start", "end", "requested", "effective"),
     [
