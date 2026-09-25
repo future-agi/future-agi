@@ -597,7 +597,7 @@ export default function ScenarioSuite({
                             minWidth: 0,
                           }}
                         >
-                          {scenario.group}
+                          {levelLabels[scenario.group] ?? scenario.group}
                         </Typography>
                         <Typography
                           sx={{
@@ -634,7 +634,7 @@ export default function ScenarioSuite({
                   return (
                     <TableRow
                       hover
-                      key={scenario.name}
+                      key={`${scenario.group}:${scenario.name}`}
                       onClick={() => setEditing(scenario)}
                       sx={{ cursor: "pointer" }}
                     >
@@ -820,6 +820,7 @@ export default function ScenarioSuite({
               scenario={editing}
               editableFields={editableFields}
               personaFields={personaFields}
+              personaChoices={contract?.persona_choices}
               noiseChoices={noiseChoices}
               levelLabels={levelLabels}
               busy={busy}

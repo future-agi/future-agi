@@ -18,14 +18,6 @@ import React, { useMemo, useState } from "react";
 
 import Iconify from "src/components/iconify";
 import { noiseKey } from "src/sections/simulate/environments/workspace/scenarios/scenarioEditor.constants";
-import {
-  AccentOptions,
-  CommunicationStyleOptions,
-  LanguageOptions,
-  LocationOptions,
-  PersonalityOptions,
-  ProfessionOptions,
-} from "src/sections/persona/PersonaCreateEdit/common";
 
 // Edit one scenario.
 //
@@ -36,11 +28,11 @@ import {
 // out, because seeing what a scenario holds is most of why anyone opens it.
 const readable = (name) => String(name || "").replace(/[_-]+/g, " ").trim();
 
-// These lists carry a lowercase value and a display label. A scenario's persona is written with the
-// label casing, so matching on the label is what makes an existing accent or language select itself
-// instead of coming up blank.
-const pick = (options) =>
-  (options || []).map((one) => (typeof one === "string" ? one : one.label ?? one.value));
+// The server's choices, plus whatever the scenario already holds.
+const withHeld = (choices, held) => {
+  const kept = (Array.isArray(held) ? held : [held]).filter(Boolean);
+  return [...(choices || []), ...kept.filter((one) => !(choices || []).includes(one))];
+};
 
 const draftOf = (scenario) => {
   const persona = scenario.persona || {};
@@ -66,6 +58,7 @@ export default function ScenarioEditForm({
   onSave,
   editableFields,
   personaFields,
+  personaChoices = {},
   noiseChoices = [],
   levelLabels = {},
 }) {
@@ -80,11 +73,7 @@ export default function ScenarioEditForm({
 
   // Absent list means nothing is editable.
   const editable = (field) => (editableFields || []).includes(field);
-  const personaEditable = (field) => !personaFields || personaFields.includes(field);
-  const noiseOptions =
-    form.background_noise && !noiseChoices.includes(form.background_noise)
-      ? [...noiseChoices, form.background_noise]
-      : noiseChoices;
+  const shown = (on) => (on ? undefined : { display: "none" });
 
   return (
     <Stack sx={{ height: "100%" }}>
@@ -207,32 +196,31 @@ export default function ScenarioEditForm({
                 label="Personality"
                 value={form.personality}
                 onChange={set("personality")}
-                options={PersonalityOptions}
+                options={withHeld(personaChoices.personality, form.personality)}
               />
               <Choice
                 label="Communication style"
                 value={form.communication_style}
                 onChange={set("communication_style")}
-                options={CommunicationStyleOptions}
+                options={withHeld(personaChoices.communication_style, form.communication_style)}
               />
             </Stack>
 
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-              {personaEditable("accent") && (
-                <Autocomplete
-                  fullWidth
-                  size="small"
-                  options={pick(AccentOptions)}
-                  value={form.accent}
-                  onChange={(event, value) => set("accent")(value || "")}
-                  renderInput={(params) => <TextField {...params} label="Accent" />}
-                />
-              )}
+              <Autocomplete
+                fullWidth
+                size="small"
+                sx={shown(!personaFields || personaFields.includes("accent"))}
+                options={withHeld(personaChoices.accent, form.accent)}
+                value={form.accent}
+                onChange={(event, value) => set("accent")(value || "")}
+                renderInput={(params) => <TextField {...params} label="Accent" />}
+              />
               <Autocomplete
                 multiple
                 fullWidth
                 size="small"
-                options={pick(LanguageOptions)}
+                options={withHeld(personaChoices.languages, form.languages)}
                 value={form.languages}
                 onChange={(event, value) => set("languages")(value)}
                 renderInput={(params) => <TextField {...params} label="Language" />}
@@ -241,99 +229,90 @@ export default function ScenarioEditForm({
 
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
               <Autocomplete
-                freeSolo
                 fullWidth
                 size="small"
-                options={pick(ProfessionOptions)}
+                options={withHeld(personaChoices.occupation, form.occupation)}
                 value={form.occupation}
                 onChange={(event, value) => set("occupation")(value || "")}
                 renderInput={(params) => <TextField {...params} label="Profession" />}
               />
               <Autocomplete
-                freeSolo
                 fullWidth
                 size="small"
-                options={pick(LocationOptions)}
+                options={withHeld(personaChoices.location, form.location)}
                 value={form.location}
                 onChange={(event, value) => set("location")(value || "")}
                 renderInput={(params) => <TextField {...params} label="Location" />}
               />
             </Stack>
 
-            {(editable("max_turns") || editable("background_noise")) && (
-              <>
-                <SectionHeader
-                  title="Call constraints"
-                  hint="Every scenario carries defaults. Overriding them here is safe."
-                />
+            <SectionHeader
+              sx={shown(editable("max_turns") || editable("background_noise"))}
+              title="Call constraints"
+              hint="Every scenario carries defaults. Overriding them here is safe."
+            />
 
-                {editable("max_turns") && (
-                <Box>
-                  <Stack direction="row" alignItems="center" spacing={1}>
-                    <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>
-                      Max turns
-                    </Typography>
-                    <Typography sx={{ typography: "s2", fontVariantNumeric: "tabular-nums" }}>
-                      {form.max_turns ?? "Default"}
-                    </Typography>
-                  </Stack>
-                  <Slider
-                    size="small"
-                    min={2}
-                    max={40}
-                    value={form.max_turns ?? 10}
-                    onChange={(event, value) => set("max_turns")(value)}
-                  />
-                  <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                    How long the call may go before it is called off.
-                  </Typography>
-                </Box>
-                )}
+            <Box sx={shown(editable("max_turns"))}>
+              <Stack direction="row" alignItems="center" spacing={1}>
+                <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>
+                  Max turns
+                </Typography>
+                <Typography sx={{ typography: "s2", fontVariantNumeric: "tabular-nums" }}>
+                  {form.max_turns ?? "Default"}
+                </Typography>
+              </Stack>
+              <Slider
+                size="small"
+                min={2}
+                max={40}
+                value={form.max_turns ?? 10}
+                onChange={(event, value) => set("max_turns")(value)}
+              />
+              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                How long the call may go before it is called off.
+              </Typography>
+            </Box>
 
-                {editable("background_noise") && (
-                <Box>
-                  <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.75 }}>
-                    Background noise
-                  </Typography>
-                  <ToggleButtonGroup
-                    size="small"
-                    exclusive
-                    value={form.background_noise}
-                    onChange={(event, value) => value && set("background_noise")(value)}
-                    sx={{
-                      flexWrap: "wrap",
-                      gap: 0.5,
-                      "& .MuiToggleButton-root": {
-                        typography: "s2",
-                        fontWeight: 600,
-                        textTransform: "none",
-                        px: 1.5,
-                        py: 0.375,
-                        color: "text.secondary",
-                        border: "1px solid",
-                        borderColor: "divider",
-                        borderRadius: 1,
-                        "&.Mui-selected": {
-                          bgcolor: (theme) => alpha(theme.palette.primary.main, 0.12),
-                          color: "primary.main",
-                          borderColor: "primary.main",
-                        },
-                      },
-                    }}
-                  >
-                    {noiseOptions.map((one) => (
-                      <ToggleButton key={one} value={one}>
-                        {levelLabels[one] ?? readable(one)}
-                      </ToggleButton>
-                    ))}
-                  </ToggleButtonGroup>
-                  <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.75 }}>
-                    Where the call is made from. Each of these is a real ambience the run plays.
-                  </Typography>
-                </Box>
-                )}
-              </>
-            )}
+            <Box sx={shown(editable("background_noise"))}>
+              <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.75 }}>
+                Background noise
+              </Typography>
+              <ToggleButtonGroup
+                size="small"
+                exclusive
+                value={form.background_noise}
+                onChange={(event, value) => value && set("background_noise")(value)}
+                sx={{
+                  flexWrap: "wrap",
+                  gap: 0.5,
+                  "& .MuiToggleButton-root": {
+                    typography: "s2",
+                    fontWeight: 600,
+                    textTransform: "none",
+                    px: 1.5,
+                    py: 0.375,
+                    color: "text.secondary",
+                    border: "1px solid",
+                    borderColor: "divider",
+                    borderRadius: 1,
+                    "&.Mui-selected": {
+                      bgcolor: (theme) => alpha(theme.palette.primary.main, 0.12),
+                      color: "primary.main",
+                      borderColor: "primary.main",
+                    },
+                  },
+                }}
+              >
+                {withHeld(noiseChoices, form.background_noise).map((one) => (
+                  <ToggleButton key={one} value={one}>
+                    {levelLabels[one] ?? readable(one)}
+                  </ToggleButton>
+                ))}
+              </ToggleButtonGroup>
+              <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 0.75 }}>
+                Where the call is made from. Each of these is a real ambience the run plays.
+              </Typography>
+            </Box>
           </>
         )}
 
@@ -396,13 +375,14 @@ ScenarioEditForm.propTypes = {
   onSave: PropTypes.func.isRequired,
   editableFields: PropTypes.arrayOf(PropTypes.string),
   personaFields: PropTypes.arrayOf(PropTypes.string),
+  personaChoices: PropTypes.objectOf(PropTypes.arrayOf(PropTypes.string)),
   noiseChoices: PropTypes.arrayOf(PropTypes.string),
   levelLabels: PropTypes.object,
 };
 
-function SectionHeader({ title, hint }) {
+function SectionHeader({ title, hint, sx }) {
   return (
-    <Box>
+    <Box sx={sx}>
       <Typography
         sx={{
           typography: "s3",
@@ -420,7 +400,7 @@ function SectionHeader({ title, hint }) {
   );
 }
 
-SectionHeader.propTypes = { title: PropTypes.string, hint: PropTypes.string };
+SectionHeader.propTypes = { title: PropTypes.string, hint: PropTypes.string, sx: PropTypes.object };
 
 // One text field, whether or not it accepts a change. A read-only field is the same control as the
 // one above it rather than a different kind of thing, which is what keeps the panel one form.

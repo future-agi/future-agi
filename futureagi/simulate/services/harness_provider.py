@@ -1670,16 +1670,30 @@ class HostedHarnessProvider:
         }
     )
 
-    def _editing_contract(self, spoken: bool = True) -> dict[str, list[str]]:
+    def _editing_contract(self, spoken: bool = True) -> dict[str, Any]:
         """Which fields an amend will take, and which of them cannot be taken without a re-proof."""
+        from simulate.models.persona import Persona
+
         # A call has no turn budget; a chat has no accent or room behind the caller.
         behavioural = self._BEHAVIOURAL_FIELDS - (
             {"max_turns"} if spoken else {"background_noise"}
         )
         persona = self._PERSONA_FIELDS - (set() if spoken else {"accent"})
+        vocabulary = {
+            "personality": Persona.PersonalityChoices,
+            "communication_style": Persona.CommunicationStyleChoices,
+            "accent": Persona.AccentChoices,
+            "languages": Persona.LanguageChoices,
+            "occupation": Persona.ProfessionChoices,
+            "location": Persona.LocationChoices,
+        }
         return {
             "editable_fields": sorted(self._DESCRIPTIVE_FIELDS | behavioural),
             "persona_fields": sorted(persona),
+            "persona_choices": {
+                field: [value for value, _ in vocabulary[field].choices]
+                for field in sorted(persona)
+            },
             "rework_fields": sorted(behavioural | persona),
         }
 

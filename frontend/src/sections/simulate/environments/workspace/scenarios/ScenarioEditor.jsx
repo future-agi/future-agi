@@ -2,7 +2,7 @@ import PropTypes from "prop-types";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
 import {
-  Box, Stack, Typography, Button, TextField, Slider,
+  Autocomplete, Box, Stack, Typography, Button, TextField, Slider,
   ToggleButton, ToggleButtonGroup,
 } from "@mui/material";
 
@@ -22,7 +22,7 @@ const selectedToggleSx = (t) => ({
 // (editable_fields + persona_fields), and which force a re-proof (rework_fields).
 // The drawer renders every field but disables the ones the server does not name,
 // so the read-only set is the server's answer, never a hardcoded list.
-const READ_ONLY_HINT = "Proved, not editable — this was verified when the scenario was generated.";
+const READ_ONLY_HINT = "Proved, so not editable: this was verified when the scenario was generated.";
 const REPROOF_HINT = "Editing this re-proves the scenario.";
 
 export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEditing, noiseOptions = [], levelLabels = {} }) {
@@ -224,14 +224,23 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
               InputProps={{ sx: fieldSx }}
             />
           </Stack>
-          {canEditPersona("accent") && (
-            <PersonaField label="Accent" k="accent" draft={draft} onChange={setPersona} canEditPersona={canEditPersona} reworkFields={reworkFields} serverKey="accent" />
-          )}
-          <PersonaField label="Communication style" k="communicationStyle" draft={draft} onChange={setPersona} canEditPersona={canEditPersona} reworkFields={reworkFields} serverKey="communication_style" />
-          <PersonaField label="Personality" k="personality" draft={draft} onChange={setPersona} canEditPersona={canEditPersona} reworkFields={reworkFields} serverKey="personality" />
-          <PersonaField label="Occupation" k="occupation" draft={draft} onChange={setPersona} canEditPersona={canEditPersona} reworkFields={reworkFields} serverKey="occupation" />
-          <PersonaField label="Location" k="location" draft={draft} onChange={setPersona} canEditPersona={canEditPersona} reworkFields={reworkFields} serverKey="location" />
-          <PersonaField label="Languages" k="languages" draft={draft} onChange={setPersona} canEditPersona={canEditPersona} reworkFields={reworkFields} serverKey="languages" hint="Comma-separated." />
+          {[
+            ["Accent", "accent", "accent"],
+            ["Communication style", "communicationStyle", "communication_style"],
+            ["Personality", "personality", "personality"],
+            ["Occupation", "occupation", "occupation"],
+            ["Location", "location", "location"],
+            ["Languages", "languages", "languages"],
+          ]
+            .filter(([, , serverKey]) => serverKey !== "accent" || canEditPersona("accent"))
+            .map(([label, k, serverKey]) => (
+              <PersonaField
+                key={serverKey} label={label} k={k} serverKey={serverKey} draft={draft}
+                onChange={setPersona} canEditPersona={canEditPersona} reworkFields={reworkFields}
+                choices={scenarioEditing?.persona_choices?.[serverKey] ?? []}
+                multiple={serverKey === "languages"}
+              />
+            ))}
           <TextField
             size="small" label="Keywords" value={draft.keywords || ""}
             disabled={!canEdit("keywords")}
@@ -262,7 +271,8 @@ export default function ScenarioEditor({ open, onClose, row, onSave, scenarioEdi
                     size="small" exclusive value={draft.backgroundNoise || ""}
                     onChange={(_, v) => v && set("backgroundNoise")(v)}
                     sx={{
-                      flexWrap: "wrap", gap: 0.75,
+                      display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 0.75,
+                      "& .MuiToggleButtonGroup-grouped": { m: 0, border: "1px solid", borderRadius: 1 },
                       "& .MuiToggleButton-root": {
                         typography: "s2", fontWeight: "fontWeightSemiBold", textTransform: "none",
                         px: 1.5, py: 0.375, color: "text.secondary", borderColor: "divider",
@@ -309,6 +319,7 @@ ScenarioEditor.propTypes = {
   scenarioEditing: PropTypes.shape({
     editable_fields: PropTypes.arrayOf(PropTypes.string),
     persona_fields: PropTypes.arrayOf(PropTypes.string),
+    persona_choices: PropTypes.objectOf(PropTypes.arrayOf(PropTypes.string)),
     rework_fields: PropTypes.arrayOf(PropTypes.string),
   }),
   // Background-noise choices from the server field catalogue (values the agent
@@ -317,20 +328,29 @@ ScenarioEditor.propTypes = {
   levelLabels: PropTypes.object,
 };
 
-// One persona text field, gated by the server's persona_fields. Read-only when
-// the server does not name it; otherwise editable with a re-proof hint (persona
-// edits force a re-proof).
-function PersonaField({ label, k, serverKey, draft, onChange, canEditPersona, reworkFields, hint }) {
+// One persona field, gated by the server's persona_fields, choosing from the
+// server's persona_choices. The current value stays selectable even when the
+// server does not list it.
+function PersonaField({ label, k, serverKey, draft, onChange, canEditPersona, reworkFields, choices, multiple }) {
   const editable = canEditPersona(serverKey);
   const reproof = reworkFields.includes(serverKey);
+  const raw = draft.persona?.[k] || "";
+  const value = multiple
+    ? String(raw).split(",").map((one) => one.trim()).filter(Boolean)
+    : raw || null;
+  const held = multiple ? value : value ? [value] : [];
+  const options = [...choices, ...held.filter((one) => !choices.includes(one))];
   return (
-    <TextField
-      size="small" label={label}
-      value={draft.persona?.[k] || ""}
-      disabled={!editable}
-      onChange={(e) => onChange(k)(e.target.value)}
-      helperText={editable ? [hint, reproof ? REPROOF_HINT : null].filter(Boolean).join(" ") : READ_ONLY_HINT}
-      InputProps={{ sx: fieldSx }}
+    <Autocomplete
+      size="small" multiple={multiple} options={options} value={value}
+      disabled={!editable} disableClearable={!multiple}
+      onChange={(_, next) => onChange(k)(multiple ? next.join(", ") : next || "")}
+      renderInput={(params) => (
+        <TextField
+          {...params} label={label}
+          helperText={editable ? (reproof ? REPROOF_HINT : undefined) : READ_ONLY_HINT}
+        />
+      )}
     />
   );
 }
@@ -342,7 +362,8 @@ PersonaField.propTypes = {
   onChange: PropTypes.func,
   canEditPersona: PropTypes.func,
   reworkFields: PropTypes.arrayOf(PropTypes.string),
-  hint: PropTypes.string,
+  choices: PropTypes.arrayOf(PropTypes.string),
+  multiple: PropTypes.bool,
 };
 
 function SectionHeader({ title, hint }) {

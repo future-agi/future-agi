@@ -55,6 +55,18 @@ def test_a_call_offers_no_turn_budget_and_a_chat_no_voice_fields():
     assert "background_noise" not in typed["editable_fields"] and "accent" not in typed["persona_fields"]
 
 
+def test_the_contract_serves_each_editable_persona_fields_choices():
+    from simulate.models.persona import Persona
+    from simulate.services.harness_provider import HostedHarnessProvider
+
+    spoken = HostedHarnessProvider._editing_contract(HostedHarnessProvider, spoken=True)
+    typed = HostedHarnessProvider._editing_contract(HostedHarnessProvider, spoken=False)
+
+    assert set(spoken["persona_choices"]) == set(spoken["persona_fields"])
+    assert spoken["persona_choices"]["accent"] == [value for value, _ in Persona.AccentChoices.choices]
+    assert "accent" not in typed["persona_choices"]
+
+
 def test_a_call_reports_no_turn_budget_among_its_end_conditions():
     from types import SimpleNamespace
 
@@ -89,3 +101,25 @@ def test_filter_choices_off_the_page_are_labelled_too():
     assert labels["quiet line"] == "Quiet line"
     assert labels["street"] == "Street"
     assert labels["none"] == "No attack"
+
+
+def test_a_scenario_sits_under_every_sub_goal_it_carries():
+    from simulate.services.harness_scenarios import group_counts, grouped
+
+    rows = grouped(
+        [
+            {"name": "a", "number": 1, "sub_goals": ["greets", "books"]},
+            {"name": "b", "number": 2, "sub_goals": ["books"]},
+            {"name": "c", "number": 3, "sub_goals": []},
+        ],
+        "sub_goal",
+    )
+    suite = _Rows([["greets", "books"], ["books"], [], ["greets"]])
+    suite.values_list = lambda *paths, flat=False: suite._rows
+
+    assert [(row["group"], row["name"]) for row in rows] == [
+        ("Ungrouped", "c"), ("books", "a"), ("books", "b"), ("greets", "a")
+    ]
+    assert {one["name"]: one["total"] for one in group_counts(rows, suite, "sub_goal")} == {
+        "Ungrouped": 1, "books": 2, "greets": 2
+    }

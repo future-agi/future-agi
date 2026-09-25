@@ -484,13 +484,14 @@ def grouped(rows: list[dict[str, Any]], group_by: str) -> list[dict[str, Any]]:
     if not field:
         return rows
     head, _, tail = field.partition(".")
+    tagged: list[dict[str, Any]] = []
     for row in rows:
         held = (row.get(head) or {}).get(tail) if tail else row.get(head)
-        if isinstance(held, list):
-            held = (held or [None])[0]
-        row["group"] = held or "Ungrouped"
-    rows.sort(key=lambda row: (str(row.get("group") or ""), row.get("number") or 0))
-    return rows
+        # A scenario carrying several values of a list field sits in each of their sections.
+        for value in (held or [None]) if isinstance(held, list) else [held]:
+            tagged.append({**row, "group": value or "Ungrouped"})
+    tagged.sort(key=lambda row: (str(row.get("group") or ""), row.get("number") or 0))
+    return tagged
 
 
 def group_counts(
@@ -514,11 +515,8 @@ def group_counts(
         return sections
     totals: dict[str, int] = {}
     for held in queryset.values_list(_orm_path(field), flat=True):
-        if isinstance(held, list):
-            key = (held or ["Ungrouped"])[0]
-        else:
-            key = held or "Ungrouped"
-        totals[key] = totals.get(key, 0) + 1
+        for key in (held or ["Ungrouped"]) if isinstance(held, list) else [held or "Ungrouped"]:
+            totals[key] = totals.get(key, 0) + 1
     for section in sections:
         section["total"] = totals.get(section["name"], section["count"])
     return sections
