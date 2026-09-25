@@ -226,15 +226,50 @@ vi.mock(
   () => ({ default: () => null }),
 );
 
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// Every chunk LLMTracingView lazy-loads. Resolving them before mounting keeps
+// a late Suspense resolution on a loaded runner out of the idle window.
+const LAZY_CHILDREN = [
+  () => import("../GraphSection/PrimaryGraph"),
+  () => import("../GraphSection/AgentGraph"),
+  () => import("../GraphSection/AgentPath"),
+  () => import("src/sections/agents/CallLogs/CallLogsGrid"),
+  () => import("../LLMFiltersDrawer"),
+  () => import("src/components/traceDetailDrawer/addToDataset/add-dataset"),
+  () => import("src/components/traceDetail/AddTagsPopover"),
+  () =>
+    import("src/sections/annotations/queues/components/add-to-queue-dialog"),
+  () => import("src/components/traceDetailDrawer/AnnotateDrawer"),
+  () =>
+    import(
+      "src/sections/project-detail/ColumnDropdown/ColumnConfigureDropDown"
+    ),
+];
 
-// Mount work (lazy children, disabled queries) finishes at its own pace on a
-// busy runner; take the idle baseline once commits stop, or after 6 s.
-const waitForMountToSettle = async (counts) => {
-  let previous = -1;
-  for (let i = 0; i < 30 && counts.commits !== previous; i += 1) {
-    previous = counts.commits;
-    await wait(200);
+// React's scheduler keeps the real setImmediate it captured at import, so a
+// render loop still runs between these turns while component timers are fake.
+const schedulerTurn = () =>
+  new Promise((resolve) => globalThis.setImmediate(resolve));
+const QUIET_TURNS = 50;
+const MAX_SETTLE_TURNS = 500;
+const IDLE_TURNS = 200;
+
+// Settled means no query fetching or mutating, no timer pending and no commit
+// across QUIET_TURNS scheduler turns. Nothing here reads the wall clock.
+const settle = async ({ counts, queryClient }) => {
+  let quietTurns = 0;
+  for (
+    let turn = 0;
+    turn < MAX_SETTLE_TURNS && quietTurns < QUIET_TURNS;
+    turn += 1
+  ) {
+    const before = counts.commits;
+    vi.runOnlyPendingTimers();
+    await schedulerTurn();
+    const busy =
+      queryClient.isFetching() > 0 ||
+      queryClient.isMutating() > 0 ||
+      vi.getTimerCount() > 0;
+    quietTurns = !busy && counts.commits === before ? quietTurns + 1 : 0;
   }
 };
 
@@ -242,11 +277,12 @@ let previousActEnvironment;
 let root;
 let host;
 
-beforeAll(() => {
+beforeAll(async () => {
   // The loop is driven by React's scheduler, so observe it the way a browser
   // tab does: outside act(), which would otherwise flush it forever.
   previousActEnvironment = globalThis.IS_REACT_ACT_ENVIRONMENT;
   globalThis.IS_REACT_ACT_ENVIRONMENT = false;
+  await Promise.all(LAZY_CHILDREN.map((load) => load()));
 });
 
 afterAll(() => {
@@ -254,11 +290,11 @@ afterAll(() => {
 });
 
 afterEach(() => {
-  vi.useRealTimers();
   root?.unmount();
   host?.remove();
   root = null;
   host = null;
+  vi.useRealTimers();
 });
 
 const mountView = () => {
@@ -283,7 +319,7 @@ const mountView = () => {
       </React.Suspense>
     </QueryClientProvider>,
   );
-  return counts;
+  return { counts, queryClient };
 };
 
 describe("LLMTracingView idle rendering", () => {
@@ -291,21 +327,28 @@ describe("LLMTracingView idle rendering", () => {
     "commits nothing while a %s project's Trace tab sits idle",
     async (source) => {
       harness.projectDetail = { source };
-      const counts = mountView();
-      await waitForMountToSettle(counts);
-      expect(counts.commits).toBeGreaterThan(0);
+      vi.useFakeTimers({
+        toFake: [
+          "setTimeout",
+          "clearTimeout",
+          "setInterval",
+          "clearInterval",
+          "Date",
+        ],
+      });
+      const view = mountView();
+      await settle(view);
+      expect(view.counts.commits).toBeGreaterThan(0);
 
-      // One idle second with auto-refresh off and no input.
-      const settled = counts.commits;
-      await wait(1000);
-      expect(counts.commits - settled).toBe(0);
-
-      // Then ten simulated idle minutes of timers.
-      vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "Date"] });
+      // Ten idle minutes of timers with auto-refresh off and no input, then
+      // enough scheduler turns for a render loop to commit many times over.
+      const settledCommits = view.counts.commits;
       vi.advanceTimersByTime(10 * 60 * 1000);
-      vi.useRealTimers();
-      await wait(50);
-      expect(counts.commits - settled).toBe(0);
+      for (let turn = 0; turn < IDLE_TURNS; turn += 1) {
+        await schedulerTurn();
+      }
+      expect(view.counts.commits - settledCommits).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
     },
   );
 });
