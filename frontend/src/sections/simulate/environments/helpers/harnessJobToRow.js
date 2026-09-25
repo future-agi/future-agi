@@ -43,9 +43,11 @@ export const stageToStatus = (stage) => {
 
 // The list endpoint still reports a built environment as "completed"; it reads
 // as Ready here for the same reason stageToStatus says so.
+const LIST_STATUS_COMPLETED = "completed";
+
 export const envStatusFor = (stage, status) => {
   if (STAGE_LED_STAGES.has(stage)) return stageToStatus(stage);
-  return status === HARNESS_STAGE.COMPLETED ? ENV_STATUS.READY : status;
+  return status === LIST_STATUS_COMPLETED ? ENV_STATUS.READY : status;
 };
 
 export const jobStatusFor = (status) =>

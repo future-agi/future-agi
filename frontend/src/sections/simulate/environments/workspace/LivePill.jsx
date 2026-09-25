@@ -33,7 +33,7 @@ export default function LivePill({ env, building }) {
             ? STATUS_META.building.color
             : isRunning
               ? STATUS_META.running.color
-              : STATUS_META.passed.color;
+              : STATUS_META.ready.color;
   const label = isCancelled
     ? WORKSPACE_COPY.cancelledLabel
     : isCancelling
