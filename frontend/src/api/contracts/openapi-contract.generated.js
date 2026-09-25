@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1037,
+  endpointCount: 1053,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -110432,6 +110432,64 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    TraceAvailableEvent: {
+      required: [
+        "version",
+        "event_id",
+        "organization_id",
+        "workspace_id",
+        "project_id",
+        "event_kind",
+        "traces",
+        "emitted_at",
+      ],
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "integer",
+          maximum: 1,
+          minimum: 1,
+        },
+        event_id: {
+          title: "Event id",
+          type: "string",
+          format: "uuid",
+        },
+        organization_id: {
+          title: "Organization id",
+          type: "string",
+          format: "uuid",
+        },
+        workspace_id: {
+          title: "Workspace id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        event_kind: {
+          title: "Event kind",
+          type: "string",
+          enum: ["root_span_written"],
+        },
+        traces: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/TraceAvailableItem",
+          },
+        },
+        emitted_at: {
+          title: "Emitted at",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
     MetricStats: {
       required: [
         "average",
@@ -111121,64 +111179,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         evaluations: {
           title: "Evaluations",
           type: "object",
-        },
-      },
-    },
-    TraceAvailableEvent: {
-      required: [
-        "version",
-        "event_id",
-        "organization_id",
-        "workspace_id",
-        "project_id",
-        "event_kind",
-        "traces",
-        "emitted_at",
-      ],
-      type: "object",
-      properties: {
-        version: {
-          title: "Version",
-          type: "integer",
-          maximum: 1,
-          minimum: 1,
-        },
-        event_id: {
-          title: "Event id",
-          type: "string",
-          format: "uuid",
-        },
-        organization_id: {
-          title: "Organization id",
-          type: "string",
-          format: "uuid",
-        },
-        workspace_id: {
-          title: "Workspace id",
-          type: "string",
-          format: "uuid",
-          "x-nullable": true,
-        },
-        project_id: {
-          title: "Project id",
-          type: "string",
-          format: "uuid",
-        },
-        event_kind: {
-          title: "Event kind",
-          type: "string",
-          enum: ["root_span_written"],
-        },
-        traces: {
-          type: "array",
-          items: {
-            $ref: "#/definitions/TraceAvailableItem",
-          },
-        },
-        emitted_at: {
-          title: "Emitted at",
-          type: "string",
-          format: "date-time",
         },
       },
     },
@@ -114608,6 +114608,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    TraceAvailableItem: {
+      required: ["trace_id", "root_span_id", "root_end_time"],
+      type: "object",
+      properties: {
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          format: "uuid",
+        },
+        root_span_id: {
+          title: "Root span id",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        root_end_time: {
+          title: "Root end time",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
     RunDashboardSegment: {
       required: ["label", "count", "share"],
       type: "object",
@@ -114717,28 +114739,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Failure label",
           type: "string",
           minLength: 1,
-        },
-      },
-    },
-    TraceAvailableItem: {
-      required: ["trace_id", "root_span_id", "root_end_time"],
-      type: "object",
-      properties: {
-        trace_id: {
-          title: "Trace id",
-          type: "string",
-          format: "uuid",
-        },
-        root_span_id: {
-          title: "Root span id",
-          type: "string",
-          maxLength: 64,
-          minLength: 1,
-        },
-        root_end_time: {
-          title: "Root end time",
-          type: "string",
-          format: "date-time",
         },
       },
     },
