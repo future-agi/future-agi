@@ -189,7 +189,7 @@ export default function SelectionBar({
 
       {/* TRIALS — reliability dial */}
       {onTrialsChange && (
-        <Tooltip arrow title="How many times to run each scenario — reliability across trials">
+        <Tooltip arrow title="How many times to run each scenario (reliability across trials)">
           <Button
             size="small"
             variant="outlined"

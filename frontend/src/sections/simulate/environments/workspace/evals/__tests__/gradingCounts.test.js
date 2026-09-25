@@ -12,7 +12,7 @@ describe("gradingCountsSentence (the run-level add's 202 counts)", () => {
         completed_calls: 16,
       }),
     ).toBe(
-      "13 calls queued for grading, 2 already graded, 1 still being processed — of 16 calls that finished in this run.",
+      "13 calls queued for grading, 2 already graded, 1 still being processed (of 16 calls that finished in this run).",
     );
   });
 
@@ -26,7 +26,7 @@ describe("gradingCountsSentence (the run-level add's 202 counts)", () => {
         completed_calls: 12,
       }),
     ).toBe(
-      "Nothing new to grade, 12 queued a few minutes ago — of 12 calls that finished in this run.",
+      "Nothing new to grade, 12 queued a few minutes ago (of 12 calls that finished in this run).",
     );
   });
 
@@ -39,7 +39,7 @@ describe("gradingCountsSentence (the run-level add's 202 counts)", () => {
         skipped_in_flight: 0,
         completed_calls: 1,
       }),
-    ).toBe("1 call queued for grading — of 1 call that finished in this run.");
+    ).toBe("1 call queued for grading (of 1 call that finished in this run).");
   });
 
   it("treats a missing body's buckets as zero, but never invents a finished-call count", () => {
@@ -49,7 +49,7 @@ describe("gradingCountsSentence (the run-level add's 202 counts)", () => {
     // in this run" would be a false claim that no call finished, when the
     // truth is only that the count wasn't sent.
     expect(gradingCountsSentence()).toBe(
-      "Nothing new to grade — how many calls finished in this run isn't known.",
+      "Nothing new to grade (how many calls finished in this run isn't known).",
     );
     expect(gradingCountsSentence()).not.toMatch(/of 0 calls/);
   });
@@ -67,7 +67,7 @@ describe("gradingCountsSentence (the run-level add's 202 counts)", () => {
         skipped_in_flight: 0,
         completed_calls: 0,
       }),
-    ).toBe("Nothing new to grade — of 0 calls that finished in this run.");
+    ).toBe("Nothing new to grade (of 0 calls that finished in this run).");
   });
 
   // The four buckets are meant to partition `completed_calls`, so a gap
@@ -84,7 +84,7 @@ describe("gradingCountsSentence (the run-level add's 202 counts)", () => {
       completed_calls: 16,
     });
     expect(sentence).toBe(
-      "Nothing new to grade, 16 calls unaccounted for — of 16 calls that finished in this run.",
+      "Nothing new to grade, 16 calls unaccounted for (of 16 calls that finished in this run).",
     );
     expect(sentence).not.toMatch(/queue/);
   });
@@ -99,7 +99,7 @@ describe("gradingCountsSentence (the run-level add's 202 counts)", () => {
         completed_calls: 7,
       }),
     ).toBe(
-      "3 calls queued for grading, 2 already graded, 1 still being processed, 1 call unaccounted for — of 7 calls that finished in this run.",
+      "3 calls queued for grading, 2 already graded, 1 still being processed, 1 call unaccounted for (of 7 calls that finished in this run).",
     );
   });
 
@@ -109,7 +109,7 @@ describe("gradingCountsSentence (the run-level add's 202 counts)", () => {
   // and nothing else.
   it("never reports a gap out of a body that carries the total but no buckets", () => {
     const sentence = gradingCountsSentence({ completed_calls: 16 });
-    expect(sentence).toBe("Nothing new to grade — of 16 calls that finished in this run.");
+    expect(sentence).toBe("Nothing new to grade (of 16 calls that finished in this run).");
     expect(sentence).not.toMatch(/unaccounted for/);
   });
 

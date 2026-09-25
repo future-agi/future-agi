@@ -68,7 +68,7 @@ export default function OverviewPanel({ env, envState, patch, onGo, agentConnect
   // detected connector, e.g. "livekit"). No transports field is served, so this
   // replaces the old hardcoded transports fact.
   const connector = envState?.agent?.typeId;
-  const connectorLabel = connector ? CONNECTOR_LABEL[connector] || connector : "—";
+  const connectorLabel = connector ? CONNECTOR_LABEL[connector] || connector : "-";
 
   const parallelism = env.parallelism;
   const degradeReasons = parallelism?.degrade_reasons || [];

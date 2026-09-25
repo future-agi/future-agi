@@ -73,6 +73,6 @@ export const UNIDENTIFIED_MODALITY = {
 export const CALL_DIRECTION = { INBOUND: "inbound", OUTBOUND: "outbound" };
 
 export const CALL_DIRECTION_LABEL = {
-  [CALL_DIRECTION.INBOUND]: "Inbound — we call your agent",
-  [CALL_DIRECTION.OUTBOUND]: "Outbound — your agent dials us",
+  [CALL_DIRECTION.INBOUND]: "Inbound: we call your agent",
+  [CALL_DIRECTION.OUTBOUND]: "Outbound: your agent dials us",
 };

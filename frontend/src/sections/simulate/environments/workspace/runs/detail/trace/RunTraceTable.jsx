@@ -276,7 +276,7 @@ export default function RunTraceTable({
           applyFilters(result);
           setPage(1);
         }}
-        aiPlaceholder="Ask AI — e.g. 'show calls that failed the refund eval'"
+        aiPlaceholder="Ask AI, e.g. 'show calls that failed the refund eval'"
         placement="bottom-start"
       />
     </>

@@ -97,7 +97,7 @@ export default function DiagnosisPane({ analysis, isLoading }) {
         <Box sx={{ px: 2.5, pt: 2.5 }}>
           <Typography sx={{ typography: "s2", color: "text.subtitle", textAlign: "center", py: 4 }}>
             No recommended fixes for now. This may mean issues are rare,
-            inconsistent, or below the current threshold — consider adding more
+            inconsistent, or below the current threshold. Consider adding more
             nuanced evaluations to your simulation.
           </Typography>
         </Box>

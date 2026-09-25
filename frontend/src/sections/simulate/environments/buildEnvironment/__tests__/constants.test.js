@@ -104,6 +104,6 @@ describe("build stage constants", () => {
   });
 
   it("uses the designer deriving copy", () => {
-    expect(DERIVING_LABEL.understand).toBe("Reading your agent — extracting tools and rules");
+    expect(DERIVING_LABEL.understand).toBe("Reading your agent: extracting tools and rules");
   });
 });

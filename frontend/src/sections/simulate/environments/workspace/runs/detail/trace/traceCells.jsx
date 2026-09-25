@@ -12,7 +12,7 @@ import { isBad } from "./traceTable.constants";
 // pick up a warning glyph, so the eye lands on them without the column shifting.
 export function MetricValue({ metric, value, suffix = "" }) {
   if (value == null) {
-    return <Typography component="span" sx={{ typography: "s2", color: "text.disabled" }}>—</Typography>;
+    return <Typography component="span" sx={{ typography: "s2", color: "text.disabled" }}>-</Typography>;
   }
   const bad = isBad(metric, typeof value === "number" ? value : Number(value));
   return (
@@ -41,7 +41,7 @@ export function Score({ result }) {
   if (result?.score == null) {
     return (
       <Box sx={{ p: 2, typography: "s2", color: "text.secondary" }}>
-        {result?.label || "—"}
+        {result?.label || "-"}
       </Box>
     );
   }

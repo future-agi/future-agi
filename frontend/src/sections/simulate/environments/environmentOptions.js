@@ -17,9 +17,9 @@ export const OPTIONS = [
     title: "Prebuilt Environments",
     icon: "solar:widget-linear",
     blurb:
-      "Skip world setup — pick a prebuilt world, then connect your agent to it.",
+      "Skip world setup: pick a prebuilt world, then connect your agent to it.",
     setupSubtitle:
-      "Prebuilt environments you can adapt in minutes — pick one, then wire your agent.",
+      "Prebuilt environments you can adapt in minutes. Pick one, then wire your agent.",
     status: OPTION_STATUS.COMING_SOON,
   },
   {
@@ -35,7 +35,7 @@ export const OPTIONS = [
     title: "Source repository",
     icon: "solar:code-linear",
     blurb:
-      "Read the code straight from a git host. Scenarios and tools stay in sync with the real code as it changes — no manual updates when your agent evolves.",
+      "Read the code straight from a git host. Scenarios and tools stay in sync with the real code as it changes. No manual updates when your agent evolves.",
     preview: ["GitHub", "GitLab", "Bitbucket"],
     setupSubtitle:
       "We read the code so scenarios stay in sync with your actual tools.",
@@ -58,7 +58,7 @@ export const OPTIONS = [
     title: "MCP server",
     icon: "solar:plug-circle-linear",
     blurb:
-      "Any MCP server can back the environment. Its tools become the action space your agent operates against, one-to-one — no adapter code required.",
+      "Any MCP server can back the environment. Its tools become the action space your agent operates against, one-to-one. No adapter code required.",
     preview: ["HTTP", "SSE", "stdio"],
     setupSubtitle:
       "The MCP server exposes tools; those tools become the environment's action space.",
@@ -81,7 +81,7 @@ export const OPTIONS = [
     title: "Build locally",
     icon: "solar:laptop-2-linear",
     blurb:
-      "Run the environment on your own machine over a secure tunnel. Nothing leaves your laptop — great for regulated code, air-gapped setups, or offline dev.",
+      "Run the environment on your own machine over a secure tunnel. Nothing leaves your laptop. Great for regulated code, air-gapped setups, or offline dev.",
     preview: ["macOS", "Linux", "Windows"],
     setupSubtitle:
       "The CLI runs on your machine and streams simulations back over a secure tunnel.",
@@ -109,13 +109,13 @@ export const HERO_COPY = {
   templates: {
     tag: "Fastest",
     description:
-      "Prebuilt worlds with seeded state, tools, and rules. Pick one, then wire your agent — you'll be running scenarios in under a minute.",
+      "Prebuilt worlds with seeded state, tools, and rules. Pick one, then wire your agent. You'll be running scenarios in under a minute.",
     moreLabel: "+ 10 more",
   },
   web: {
     tag: "Live SaaS sandboxes",
     description:
-      "Your agent calls the real SDKs — Slack, Notion, Salesforce — but the calls land in a sandbox we own, seeded to your prompt and torn down between runs.",
+      "Your agent calls the real SDKs (Slack, Notion, Salesforce), but the calls land in a sandbox we own, seeded to your prompt and torn down between runs.",
     moreLabel: "+ 8 more",
   },
 };
@@ -143,7 +143,7 @@ export const ENV_TABS_SX = {
 export const ENVIRONMENTS_HEADER = {
   title: "Environments",
   subtitle:
-    "An environment is the world your agent runs in — seeded state, tools, and rules. Pick how you want to bring your agent in and we take care of the rest.",
+    "An environment is the world your agent runs in: seeded state, tools, and rules. Pick how you want to bring your agent in and we take care of the rest.",
   connectHeading: "Or connect your own agent",
-  connectSub: "We work with what you already have — no rewrite, no adapter.",
+  connectSub: "We work with what you already have: no rewrite, no adapter.",
 };

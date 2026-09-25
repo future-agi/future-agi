@@ -11,7 +11,7 @@ import StatusChip from "../StatusChip";
 import StopRunControl from "../StopRunControl";
 
 // The dashed placeholder a not-yet-backed cell shows.
-const DASH = "—";
+const DASH = "-";
 
 // The run comparison table. Real columns (pass, avg duration) plus the derived
 // eval columns render live values; the columns with no backend field yet show a

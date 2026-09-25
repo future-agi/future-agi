@@ -79,7 +79,7 @@ describe("ActorsPanel create / edit / remove flow", () => {
     render(<ActorsPanel env={voiceEnv} envState={{}} onGo={vi.fn()} />);
     expect(screen.queryByRole("button", { name: /create actor/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /remove from this environment/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /edit — saving creates a new version/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /edit: saving creates a new version/i })).toBeNull();
   });
 
   it("shows the Create actor button and opens the editor drawer when patch is provided", () => {
@@ -105,6 +105,6 @@ describe("ActorsPanel create / edit / remove flow", () => {
     render(<ActorsPanel env={voiceEnv} envState={{ actors: ["act-competing-colleague"] }} patch={vi.fn()} onGo={vi.fn()} locked />);
     expect(screen.getByRole("button", { name: /create actor/i })).toBeDisabled();
     expect(screen.queryByRole("button", { name: /remove from this environment/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /edit — saving creates a new version/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /edit: saving creates a new version/i })).toBeNull();
   });
 });

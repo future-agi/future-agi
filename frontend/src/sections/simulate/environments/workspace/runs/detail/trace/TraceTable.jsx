@@ -91,7 +91,7 @@ export default function TraceTable({
                   <CustomTooltip
                     show
                     arrow
-                    title="Critical — a failure here is a release blocker"
+                    title="Critical: a failure here is a release blocker"
                   >
                     <Box sx={{ display: "flex" }}>
                       <Iconify
@@ -162,7 +162,7 @@ export default function TraceTable({
               </Stack>
             ) : (
               <Typography sx={{ typography: "s3", color: "text.disabled" }}>
-                —
+                -
               </Typography>
             )}
           </TableCell>
@@ -178,7 +178,7 @@ export default function TraceTable({
             }}
             onClick={() => onOpen(t)}
           >
-            {t.scenarioDetails || t.scenario || "—"}
+            {t.scenarioDetails || t.scenario || "-"}
           </TableCell>
         )}
 
@@ -192,7 +192,7 @@ export default function TraceTable({
             }}
             onClick={() => onOpen(t)}
           >
-            {t.idealOutcome || "—"}
+            {t.idealOutcome || "-"}
           </TableCell>
         )}
 
@@ -206,7 +206,7 @@ export default function TraceTable({
             }}
             onClick={() => onOpen(t)}
           >
-            {t.conversationBranch || "—"}
+            {t.conversationBranch || "-"}
           </TableCell>
         )}
 
@@ -244,7 +244,7 @@ export default function TraceTable({
                   <Score result={r} />
                 ) : (
                   <Box sx={{ p: 2, typography: "s2", color: "text.disabled" }}>
-                    —
+                    -
                   </Box>
                 )}
               </TableCell>
