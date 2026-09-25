@@ -30,6 +30,7 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
     {
         "ch25_apply_schema",
         "ch25_remove_pg",
+        "backfill_legacy_scans",
         "backfill_score_tracer_project",
         "createcachetable",
         "drop_legacy_observation_span",
