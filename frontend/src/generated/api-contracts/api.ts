@@ -584,6 +584,8 @@ import type {
   HarnessSecretFileUploadResponseApi,
   HarnessSecretValuesApi,
   HarnessSourceUploadResponseApi,
+  HarnessUsageRequestApi,
+  HarnessUsageResponseApi,
   HealthCheckResponseApi,
   HeartbeatApi,
   HuggingFaceAddRowsRequestApi,
@@ -58991,6 +58993,56 @@ export const simulateApiHarnessAttemptsScenarios = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(harnessScenarioOperationApi),
+    },
+  );
+};
+
+export type simulateApiHarnessAttemptsUsageResponse200 = {
+  data: HarnessUsageResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessAttemptsUsageResponse402 = {
+  data: HarnessUsageResponseApi;
+  status: 402;
+};
+
+export type simulateApiHarnessAttemptsUsageResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 402>;
+};
+
+export type simulateApiHarnessAttemptsUsageResponseSuccess =
+  simulateApiHarnessAttemptsUsageResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessAttemptsUsageResponseError = (
+  | simulateApiHarnessAttemptsUsageResponse402
+  | simulateApiHarnessAttemptsUsageResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateApiHarnessAttemptsUsageResponse =
+  | simulateApiHarnessAttemptsUsageResponseSuccess
+  | simulateApiHarnessAttemptsUsageResponseError;
+
+export const getSimulateApiHarnessAttemptsUsageUrl = (id: string) => {
+  return `/simulate/api/harness/attempts/${id}/usage/`;
+};
+
+export const simulateApiHarnessAttemptsUsage = async (
+  id: string,
+  harnessUsageRequestApi: HarnessUsageRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessAttemptsUsageResponse> => {
+  return apiMutator<simulateApiHarnessAttemptsUsageResponse>(
+    getSimulateApiHarnessAttemptsUsageUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessUsageRequestApi),
     },
   );
 };

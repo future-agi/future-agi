@@ -16861,6 +16861,8 @@ export interface CallExecutionErrorResponseApi {
 
 export type HarnessJobReadApiReceiptsItem = { [key: string]: unknown };
 
+export type HarnessJobReadApiUsageLimit = { [key: string]: unknown };
+
 export type HarnessJobInfoApiSource = { [key: string]: string };
 
 export type HarnessJobInfoApiMetadata = { [key: string]: string };
@@ -16956,6 +16958,17 @@ export interface HarnessRuntimeReadApi {
   diagnostics?: HarnessDiagnosticsApi;
 }
 
+export interface HarnessConsumptionApi {
+  /** @minimum 0 */
+  text_sim_tokens: number;
+  /** @minimum 0 */
+  voice_sim_minutes: number;
+  /** @minimum 0 */
+  ai_credits: number;
+  /** @minimum 0 */
+  sandbox_seconds: number;
+}
+
 export interface HarnessJobReadApi {
   job: HarnessJobInfoApi;
   status: HarnessJobStatusApi;
@@ -16965,6 +16978,8 @@ export interface HarnessJobReadApi {
   receipts: HarnessJobReadApiReceiptsItem[];
   platform: HarnessPlatformApi;
   runtime?: HarnessRuntimeReadApi;
+  consumption?: HarnessConsumptionApi;
+  usage_limit?: HarnessJobReadApiUsageLimit;
 }
 
 export type HarnessJobCreateApiSchemaVersion =
@@ -17632,6 +17647,103 @@ export interface HarnessScenarioOperationResultApi {
 
 export interface HarnessScenarioOperationResponseApi {
   result: HarnessScenarioOperationResultApi;
+}
+
+export type HarnessUsageRequestApiOperation =
+  (typeof HarnessUsageRequestApiOperation)[keyof typeof HarnessUsageRequestApiOperation];
+
+export const HarnessUsageRequestApiOperation = {
+  check: "check",
+  report: "report",
+} as const;
+
+export type HarnessUsageRequestApiAction =
+  (typeof HarnessUsageRequestApiAction)[keyof typeof HarnessUsageRequestApiAction];
+
+export const HarnessUsageRequestApiAction = {
+  text_call: "text_call",
+  voice_call: "voice_call",
+} as const;
+
+export type HarnessUsageRequestApiSchemaVersion =
+  (typeof HarnessUsageRequestApiSchemaVersion)[keyof typeof HarnessUsageRequestApiSchemaVersion];
+
+export const HarnessUsageRequestApiSchemaVersion = {
+  "futureagiharness-usagev1": "futureagi.harness-usage.v1",
+} as const;
+
+export type HarnessUsageRecordApiAction =
+  (typeof HarnessUsageRecordApiAction)[keyof typeof HarnessUsageRecordApiAction];
+
+export const HarnessUsageRecordApiAction = {
+  text_call: "text_call",
+  voice_call: "voice_call",
+} as const;
+
+export type HarnessUsageRecordApiFunding =
+  (typeof HarnessUsageRecordApiFunding)[keyof typeof HarnessUsageRecordApiFunding];
+
+export const HarnessUsageRecordApiFunding = {
+  platform: "platform",
+  customer: "customer",
+} as const;
+
+export type HarnessUsageRecordApiOutcome =
+  (typeof HarnessUsageRecordApiOutcome)[keyof typeof HarnessUsageRecordApiOutcome];
+
+export const HarnessUsageRecordApiOutcome = {
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export type HarnessUsageRecordApiFailureDomain =
+  (typeof HarnessUsageRecordApiFailureDomain)[keyof typeof HarnessUsageRecordApiFailureDomain];
+
+export const HarnessUsageRecordApiFailureDomain = {
+  agent: "agent",
+  simulator: "simulator",
+  environment: "environment",
+  connectivity: "connectivity",
+  infrastructure: "infrastructure",
+  grading: "grading",
+  artifact: "artifact",
+  platform_sync: "platform_sync",
+} as const;
+
+export interface HarnessUsageRecordApi {
+  id: string;
+  action: HarnessUsageRecordApiAction;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  scenario_key: string;
+  /** @minimum 0 */
+  amount: number;
+  occurred_at: string;
+  funding: HarnessUsageRecordApiFunding;
+  outcome?: HarnessUsageRecordApiOutcome;
+  failure_domain?: HarnessUsageRecordApiFailureDomain;
+}
+
+export interface HarnessUsageRequestApi {
+  operation: HarnessUsageRequestApiOperation;
+  action?: HarnessUsageRequestApiAction;
+  schema_version?: HarnessUsageRequestApiSchemaVersion;
+  records?: HarnessUsageRecordApi[];
+}
+
+export type HarnessUsageResponseApiUpgradeCta = { [key: string]: unknown };
+
+export interface HarnessUsageResponseApi {
+  allowed?: boolean;
+  accepted?: boolean;
+  reason?: string;
+  error_code?: string;
+  dimension?: string;
+  current_usage?: number;
+  limit?: number;
+  upgrade_cta?: HarnessUsageResponseApiUpgradeCta;
 }
 
 export type LiveKitCallConfigResponseApiCallMetadata = {
