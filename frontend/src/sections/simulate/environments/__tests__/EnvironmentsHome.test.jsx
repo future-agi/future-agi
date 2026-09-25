@@ -155,7 +155,7 @@ describe("EnvironmentsHome", () => {
     expect(screen.getByText("Environments")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "An environment is the world your agent runs in — seeded state, tools, and rules. Pick how you want to bring your agent in and we take care of the rest.",
+        "An environment is the world your agent runs in: seeded state, tools, and rules. Pick how you want to bring your agent in and we take care of the rest.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("Start from scratch")).toBeNull();

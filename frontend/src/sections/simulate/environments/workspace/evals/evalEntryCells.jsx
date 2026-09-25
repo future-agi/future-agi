@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import { Box, Chip, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { EVAL_ENTRY_SHAPE, costLabel, inputRowsOf, sourceLabel } from "./evalEntry";
+import { EVAL_ENTRY_SHAPE, inputRowsOf, sourceLabel } from "./evalEntry";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
@@ -14,27 +14,17 @@ const chipSx = {
   "& .MuiChip-label": { px: 0.75 },
 };
 
-// Library/Custom and the cost line, both read straight off the entry:
-// "0.5 credits per run" or "0.5 credits per run + judge tokens", built from
-// `credits_per_run` and `charges_judge_tokens` — never from `eval_type` or
-// the name. `runMode` (the picker opened from inside a run) swaps the cost
-// chip to "0.5 credits per call graded" / "… + judge tokens" — see
-// `costLabel`.
-//
-// Both fields are optional, and neither has a stand-in value: whichever one
-// the entry does not carry simply draws no chip, rather than an empty one or
-// a made-up default.
-export function EvalEntryChips({ entry, runMode = false }) {
+// Library/Custom, read straight off the entry. An entry without a known
+// source draws no chip.
+export function EvalEntryChips({ entry }) {
   const source = sourceLabel(entry);
-  const cost = costLabel(entry, runMode);
   return (
     <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0 }}>
       {source && <Chip size="small" label={source} sx={chipSx} />}
-      {cost && <Chip size="small" label={cost} sx={chipSx} />}
     </Stack>
   );
 }
-EvalEntryChips.propTypes = { entry: EVAL_ENTRY_SHAPE, runMode: PropTypes.bool };
+EvalEntryChips.propTypes = { entry: EVAL_ENTRY_SHAPE };
 
 // "required key → what fills it", one row per `inputs[]` entry, in the order
 // the API sent them. The right-hand side is `label` and nothing else: the

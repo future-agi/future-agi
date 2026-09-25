@@ -200,6 +200,7 @@ class TestAgentccGatewayAPI:
                     "max_concurrent": 3,
                     "conn_pool_size": 5,
                     "base_url": "https://api.example.com/v1",
+                    "api_path_prefix": "",
                 },
             },
             format="json",
@@ -219,6 +220,7 @@ class TestAgentccGatewayAPI:
         assert credential.display_name == "Gateway Action Provider"
         assert credential.models_list == ["gpt-4o-mini"]
         assert credential.default_timeout_seconds == 17
+        assert credential.extra_config == {"api_path_prefix": ""}
         assert CredentialManager.decrypt(credential.encrypted_credentials) == {
             "api_key": "sk-gateway-action-secret"
         }
@@ -365,9 +367,7 @@ class TestAgentccGatewayAPI:
             mock_client.provider_health.side_effect = GatewayClientError("down")
             mock_get.return_value = mock_client
 
-            response = auth_client.get(
-                f"/agentcc/gateways/{gateway_id}/providers/"
-            )
+            response = auth_client.get(f"/agentcc/gateways/{gateway_id}/providers/")
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["result"] == {"providers": []}
 
@@ -1020,7 +1020,9 @@ class TestAgentccAPIKeyAPI:
         assert "key" not in data
         assert data["key_prefix"] == "pk-retrieve"
 
-    def test_retrieve_api_key_unauthenticated(self, api_client, organization, workspace):
+    def test_retrieve_api_key_unauthenticated(
+        self, api_client, organization, workspace
+    ):
         key = AgentccAPIKey.objects.create(
             gateway_key_id="gw-retrieve-unauth",
             name="unauth",
@@ -1034,9 +1036,7 @@ class TestAgentccAPIKeyAPI:
             status.HTTP_403_FORBIDDEN,
         ]
 
-    def test_destroy_api_key_removes_row(
-        self, auth_client, organization, workspace
-    ):
+    def test_destroy_api_key_removes_row(self, auth_client, organization, workspace):
         key = AgentccAPIKey.objects.create(
             gateway_key_id="gw-destroy",
             name="destroy-me",
@@ -1068,9 +1068,7 @@ class TestAgentccAPIKeyAPI:
         assert response.json()["result"] == {"synced": 3}
         mock_bridge.sync_keys.assert_called_once()
         # Sync is scoped to the active-request organization.
-        assert (
-            mock_bridge.sync_keys.call_args.kwargs["org"].id == organization.id
-        )
+        assert mock_bridge.sync_keys.call_args.kwargs["org"].id == organization.id
 
     def test_sync_api_keys_unauthenticated(self, api_client):
         response = api_client.post("/agentcc/api-keys/sync/")
@@ -1127,9 +1125,7 @@ class TestAgentccAPIKeyAPI:
         assert response.status_code == status.HTTP_404_NOT_FOUND
         mock_bridge.update_key.assert_not_called()
 
-    def test_patch_api_key_updates_name(
-        self, auth_client, organization, workspace
-    ):
+    def test_patch_api_key_updates_name(self, auth_client, organization, workspace):
         key = AgentccAPIKey.objects.create(
             gateway_key_id="gw-patch",
             name="before",
@@ -1137,6 +1133,7 @@ class TestAgentccAPIKeyAPI:
             workspace=workspace,
         )
         with patch("agentcc.views.api_key.auth_bridge") as mock_bridge:
+
             def _update(api_key, **kwargs):
                 for k, v in kwargs.items():
                     setattr(api_key, k, v)
@@ -1153,9 +1150,7 @@ class TestAgentccAPIKeyAPI:
         key.refresh_from_db()
         assert key.name == "after"
 
-    def test_revoke_api_key_idempotence(
-        self, auth_client, organization, workspace
-    ):
+    def test_revoke_api_key_idempotence(self, auth_client, organization, workspace):
         key = AgentccAPIKey.objects.create(
             gateway_key_id="gw-revoke-twice",
             name="revoke-twice",
@@ -1276,6 +1271,16 @@ class TestAgentccRequestLogAPI:
     def test_list_request_logs_authenticated(self, auth_client):
         response = auth_client.get("/agentcc/request-logs/")
         assert response.status_code == status.HTTP_200_OK
+
+    def test_list_request_logs_keeps_accepting_large_limits(self, auth_client):
+        """Documenting the list query must not cap `limit`; limit=200 worked
+        before the query serializer existed."""
+        response = auth_client.get("/agentcc/request-logs/?limit=200")
+        assert response.status_code == status.HTTP_200_OK
+
+    def test_list_request_logs_still_rejects_non_positive_limit(self, auth_client):
+        response = auth_client.get("/agentcc/request-logs/?limit=0")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_list_request_logs_unauthenticated(self, api_client):
         response = api_client.get("/agentcc/request-logs/")

@@ -60,7 +60,7 @@ export function Attr({ label, value }) {
       >
         {label}
       </Typography>
-      <Typography sx={{ typography: "s2", color: "text.secondary" }}>{value || "—"}</Typography>
+      <Typography sx={{ typography: "s2", color: "text.secondary" }}>{value || "-"}</Typography>
     </Stack>
   );
 }

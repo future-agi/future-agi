@@ -29,7 +29,7 @@ export const AGENT_CARD_COPY = {
   credentialsSubtitle: "Rotates whenever you reset the environment",
   testPhoneLabel: "Test phone number",
   envTokenLabel: "Environment token",
-  removeSource: "Remove source — the environment will need a new one before it can run",
+  removeSource: "Remove source. The environment will need a new one before it can run",
   removeAdditional: "Remove from this environment",
   additionalTested: "Tested against the source's scenarios, tools and rules.",
   expand: "Expand details",

@@ -16,8 +16,8 @@ import { CONTRACT_COPY } from "./contract.constants";
 // fixture `episodeContract`. `ended_reasons` is the vocabulary a finished call may
 // carry (terminate); the two limits are the run's truncation ceilings.
 const CLOCK_NOTE = {
-  "real-time": "Wall-clock time — the voice call runs in real time.",
-  stepped: "Stepped — the chat advances a turn at a time.",
+  "real-time": "Wall-clock time: the voice call runs in real time.",
+  stepped: "Stepped: the chat advances a turn at a time.",
 };
 function realEpisode(env) {
   const ec = env?.endConditions;
@@ -25,7 +25,7 @@ function realEpisode(env) {
   const truncate = [
     ec.max_turns != null && {
       when: `${ec.max_turns} turns`,
-      note: "Ceiling across the suite — each scenario carries its own.",
+      note: "Ceiling across the suite. Each scenario carries its own.",
     },
     ec.max_duration_seconds != null && {
       when: `${ec.max_duration_seconds}s`,
@@ -36,7 +36,7 @@ function realEpisode(env) {
     terminate: (ec.ended_reasons || []).map((reason) => ({ when: reason, note: "" })),
     truncate,
     clock: {
-      mode: ec.clock || "—",
+      mode: ec.clock || "-",
       note: CLOCK_NOTE[ec.clock] || "How run time is measured.",
     },
     // No §6 field for the deterministic seed note; keep the fixture's copy.
@@ -73,7 +73,7 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
           {CONTRACT_COPY.heading}
         </Typography>
         <Typography sx={{ typography: "s2", color: "text.secondary", maxWidth: 780 }}>
-          What this environment is made of — the world runs execute against, the code
+          What this environment is made of: the world runs execute against, the code
           behind every tool call and grader, and how each run ends.
         </Typography>
       </Box>
@@ -118,7 +118,7 @@ export default function RlContractPanel({ env, envState, patch, locked = false, 
           <Box sx={{ p: 2.5, bgcolor: "background.paper" }}>
             <Label>Truncate</Label>
             <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 1.25 }}>
-              Not a failure, and not terminal — bootstrap from the last state.
+              Not a failure, and not terminal. Bootstrap from the last state.
             </Typography>
             <Stack spacing={1}>
               {episode.truncate.map((e) => (

@@ -39,7 +39,7 @@ export default function ContactInformation({
     effectiveMode === "phone"
       ? {
           title: "Telephony simulation (PSTN)",
-          body: "A real phone call is placed over PSTN — requires a configured telephony provider.",
+          body: "A real phone call is placed over PSTN (requires a configured telephony provider).",
         }
       : {
           title: "Web simulation (WebRTC)",

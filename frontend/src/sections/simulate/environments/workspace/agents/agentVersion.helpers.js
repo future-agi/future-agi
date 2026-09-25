@@ -76,7 +76,7 @@ export function connectionRowsFor(agent, type, values) {
     return [
       { label: "Channel", value: type?.channel || "Voice" },
       { label: "Provider", value: values.provider, mono: true },
-      { label: "Agent name", value: values.agentId || values.assistantId || "—", mono: true },
+      { label: "Agent name", value: values.agentId || values.assistantId || "-", mono: true },
       { label: "Call direction", value: values.direction || "inbound", mono: true },
     ];
   }

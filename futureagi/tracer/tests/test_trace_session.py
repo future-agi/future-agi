@@ -3083,20 +3083,14 @@ class TestSessionListLatency:
         if session_ids:
             from concurrent.futures import ThreadPoolExecutor
 
-            def _content():
-                cq, cp = builder.build_content_query(session_ids)
-                if cq:
-                    analytics.execute_ch_query(cq, cp, timeout_ms=10000)
-
-            def _attrs():
-                aq, ap = builder.build_span_attributes_query(session_ids)
-                if aq:
-                    analytics.execute_ch_query(aq, ap, timeout_ms=5000)
+            def _hydrate():
+                hq, hp = builder.build_page_hydration_query(session_ids)
+                if hq:
+                    analytics.execute_ch_query(hq, hp, timeout_ms=10000)
 
             t1 = time.time()
             with ThreadPoolExecutor(max_workers=3) as pool:
-                pool.submit(_content)
-                pool.submit(_attrs)
+                pool.submit(_hydrate)
             enrichment_ms = (time.time() - t1) * 1000
 
         return main_ms, enrichment_ms, len(session_ids)

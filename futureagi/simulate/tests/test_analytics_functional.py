@@ -907,7 +907,10 @@ class TestRunResultsV3Views:
         serializer = RunDashboardV3Serializer(data=dashboard)
         assert serializer.is_valid(), serializer.errors
         metrics = {row["key"]: row for row in dashboard["metrics"]}
-        assert len(metrics) == 14
+        assert len(metrics) == 13
+        assert "turn_count" not in metrics
+        assert metrics["total"]["label"] == "Total calls"
+        assert {"wpm", "stop", "talk"} <= metrics.keys()
         assert metrics["csat"]["value"] == 7
         assert metrics["csat"]["measured"] == 1
         tools = {row["name"]: row for row in dashboard["tools"]["failures"]}
@@ -922,6 +925,33 @@ class TestRunResultsV3Views:
         )
         assert "failure_attribution" in {
             row["key"] for row in dashboard["unavailable_features"]
+        }
+
+    def test_dashboard_labels_a_chat_run_and_hides_voice_only_tiles(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        for call in analytics_call_executions:
+            call.simulation_call_type = "text"
+            call.save(update_fields=["simulation_call_type"])
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/analytics/"
+        )
+        assert response.status_code == 200
+        metrics = {row["key"]: row for row in response.json()["dashboard"]["metrics"]}
+        assert len(metrics) == 10
+        assert not {"wpm", "stop", "talk", "turn_count"} & metrics.keys()
+        assert {key: metrics[key]["label"] for key in metrics} == {
+            "total": "Total chats",
+            "connected": "Chats connected",
+            "connected_rate": "Chats connected (%)",
+            "csat": "Avg CSAT score",
+            "agent_latency": "Agent response time",
+            "duration": "Avg chat duration",
+            "turns": "Avg turns/chat",
+            "latency_p90": "Chat duration p90",
+            "cost_per_pass": "Cost / pass",
+            "total_cost": "Total cost",
         }
 
     def test_dashboard_task_success_is_independent_of_provider_verdict(

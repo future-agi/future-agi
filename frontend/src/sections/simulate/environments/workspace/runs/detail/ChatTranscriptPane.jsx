@@ -109,7 +109,7 @@ export default function ChatTranscriptPane({ turns }) {
         ))}
         {shown.length === 0 && (
           <Typography sx={{ px: 1.75, py: 2, typography: "s2", color: "text.subtitle" }}>
-            {turns.length === 0 ? "No transcript captured for this call." : "No turns match that filter."}
+            {turns.length === 0 ? "No messages captured for this conversation." : "No turns match that filter."}
           </Typography>
         )}
       </Stack>

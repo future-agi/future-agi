@@ -24,7 +24,7 @@ export default function DashboardHistogram({ data, kind }) {
         <Typography sx={{ fontSize: 11 }}>
           {csat
             ? data.agreement?.percent == null
-              ? "Read: Provider/evaluation agreement is not measured — both verdicts are required."
+              ? "Read: Provider/evaluation agreement is not measured. Both verdicts are required."
               : `Read: The provider's own success judgement (its analysis) agrees with your evals on ${format(data.agreement.percent, "percent")} of comparable calls (${data.agreement.agreed}/${data.agreement.compared}).`
             : data.measured
               ? `Read: ${format(data.at_or_above_target_percent, "percent")} of measured calls were at or over the ${format(data.target_ms, "ms")} target. p50 ${format(data.p50, "ms")}, p95 ${format(data.p95, "ms")}.`

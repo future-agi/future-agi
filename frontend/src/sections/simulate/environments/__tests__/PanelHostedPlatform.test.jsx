@@ -154,7 +154,7 @@ describe("PanelHostedPlatform", () => {
     render(<PanelHostedPlatform />);
     expect(screen.getByRole("button", { name: "Run preflight" })).toBeDisabled();
     expect(buildBtn()).toBeDisabled();
-    expect(screen.getByText("Run preflight to continue")).toBeInTheDocument();
+    expect(screen.getByText("Run preflight to check your setup before building")).toBeInTheDocument();
 
     fillCreds();
     expect(screen.getByRole("button", { name: "Run preflight" })).toBeEnabled();

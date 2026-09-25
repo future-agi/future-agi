@@ -172,7 +172,7 @@ describe("NextStepsChecklist", () => {
   it("counts completed steps and retires their CTAs as progress is made", () => {
     renderChecklist({ envState: { scenarios: [{}, {}], evals: [{}] } });
     // created + scenarios + evals are done; agent + run remain.
-    expect(screen.getByText("3 of 5 complete — 2 left to run your first simulation")).toBeInTheDocument();
+    expect(screen.getByText("3 of 5 complete, 2 left to run your first simulation")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /connect agent/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /add scenarios/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /add evaluations/i })).not.toBeInTheDocument();

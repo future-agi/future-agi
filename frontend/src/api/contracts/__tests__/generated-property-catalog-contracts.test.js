@@ -8,6 +8,38 @@ import {
 const ACTIVATION = "a".repeat(64);
 
 describe("generated unified property catalog contracts", () => {
+  it("accepts current metadata without activation or exact observation windows", () => {
+    const metadata = {
+      query_complete: true,
+      query_status: "complete",
+      query_exact: false,
+      query_provenance: "current_property_catalog",
+      has_more: false,
+      next_cursor: null,
+    };
+    expect(
+      TracerDashboardMetricsResponse.safeParse({
+        status: true,
+        result: {
+          ...metadata,
+          metrics: [],
+          total: null,
+          total_is_exact: false,
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      TracerDashboardFilterValuesResponse.safeParse({
+        status: true,
+        result: {
+          ...metadata,
+          values: [{ value: true, type: "array", label: "true" }],
+          attribute_types: ["array"],
+          attribute_types_exact: false,
+        },
+      }).success,
+    ).toBe(true);
+  });
   it("accepts an exact terminal definition page with nullable cursor metadata", () => {
     const parsed = TracerDashboardMetricsResponse.safeParse({
       status: true,

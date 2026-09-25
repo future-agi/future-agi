@@ -37,7 +37,7 @@ export const REACH_KINDS = [
   },
   {
     id: "mcp",
-    label: "MCP — your agent connects to us",
+    label: "MCP: your agent connects to us",
     blurb: "Point your own MCP client at the environment.",
     icon: "solar:plug-circle-linear",
   },
@@ -116,6 +116,6 @@ export const ADD_VERSION_COPY = {
   notePlaceholder: 'e.g. "GPT-4o rewrite, comparison against source"',
   noteHelp: "Optional. Shows next to this version in the history.",
   subtitle:
-    "Point the new version at its endpoint or source. The previous version stays in the history — you can switch back any time.",
+    "Point the new version at its endpoint or source. The previous version stays in the history. You can switch back any time.",
   cancel: "Cancel",
 };

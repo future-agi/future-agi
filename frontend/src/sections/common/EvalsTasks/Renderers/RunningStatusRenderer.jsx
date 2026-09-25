@@ -10,6 +10,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { black, green, orange, red } from "src/theme/palette";
 import { alpha } from "@mui/material";
+import { isResumableTaskStatus } from "../task_status";
 
 const statusColorMap = {
   pending: {
@@ -105,7 +106,7 @@ const RunningStatusRenderer = ({ value, data, api }) => {
           }
         />
       </ShowComponent>
-      <ShowComponent condition={value === "paused"}>
+      <ShowComponent condition={isResumableTaskStatus(value)}>
         <CustomIconButton
           variant="outlined"
           onClick={onResume}

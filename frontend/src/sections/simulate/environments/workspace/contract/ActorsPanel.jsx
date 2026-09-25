@@ -216,7 +216,7 @@ function ActorRow({ actor, action, onEdit }) {
         </Typography>
 
         {onEdit && (
-          <Tooltip arrow title="Edit — saving creates a new version">
+          <Tooltip arrow title="Edit: saving creates a new version">
             <IconButton size="small" onClick={onEdit} sx={{ flexShrink: 0 }}>
               <Iconify icon="solar:pen-new-square-linear" width={15} sx={{ color: "text.subtitle" }} />
             </IconButton>
@@ -235,7 +235,7 @@ function ActorRow({ actor, action, onEdit }) {
         <Stack spacing={1.5} sx={{ px: 2.5, pb: 2, pl: 7 }}>
           <DetailBlock label={C.detail.does} body={actor.blurb} />
           <DetailBlock label={C.detail.tests} body={actor.tests} />
-          <DetailBlock label={C.detail.entry} body={`${entry.label} — ${entry.blurb}`} />
+          <DetailBlock label={C.detail.entry} body={`${entry.label} - ${entry.blurb}`} />
           <Box>
             <Label>{C.detail.modalities}</Label>
             <Stack direction="row" spacing={0.75} flexWrap="wrap" rowGap={0.75}>
@@ -315,7 +315,7 @@ function ActorEditor({ actor, onClose }) {
           <Box sx={{ pl: 2.5, pr: 6, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}>
             <Typography sx={{ typography: "s1", fontWeight: "fontWeightBold" }}>{existing ? actor.name : "Create actor"}</Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              {existing ? `Editing ${actor.version} — saving creates a new version` : "Available to every environment once saved"}
+              {existing ? `Editing ${actor.version}: saving creates a new version` : "Available to every environment once saved"}
             </Typography>
           </Box>
 
@@ -323,7 +323,7 @@ function ActorEditor({ actor, onClose }) {
             <TextField size="small" label="Name" defaultValue={actor.name} fullWidth />
             <TextField
               size="small" label="What they want" defaultValue={actor.goal} fullWidth multiline minRows={2}
-              helperText="The goal, and it must not be the task's goal — that is what makes this an actor."
+              helperText="The goal, and it must not be the task's goal. That is what makes this an actor."
             />
             <TextField size="small" label="What they do" defaultValue={actor.blurb} fullWidth multiline minRows={3} />
 
@@ -347,7 +347,7 @@ function ActorEditor({ actor, onClose }) {
 
             <TextField
               size="small" label="Traits" defaultValue={(actor.traits || []).join(", ")} fullWidth
-              helperText="Comma separated — decoration on top of the goal, not a substitute for it"
+              helperText="Comma separated. Decoration on top of the goal, not a substitute for it"
             />
 
             <Box>

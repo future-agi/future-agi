@@ -22,7 +22,7 @@ export const BUILDER_MODES = [
   {
     id: "auto",
     label: "Auto",
-    hint: "Build without asking — I'll fill in reasonable defaults",
+    hint: "Build without asking. I'll fill in reasonable defaults",
     icon: "solar:magic-stick-3-linear",
   },
   {

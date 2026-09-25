@@ -16,6 +16,14 @@ from simulate.services.hosted_harness import (
     register_attempt,
 )
 from simulate.tests.test_hosted_harness_channels import BASE, _headers, _payload
+from tfc.ee_loader import has_ee
+
+# Credit amounts come from billing.yaml, which ships only with the private
+# cloud overlay (ee/cloud); without it BillingConfig falls open to empty
+# defaults and prices differently.
+requires_cloud_billing = pytest.mark.skipif(
+    not has_ee("ee.cloud"), reason="requires ee/cloud billing.yaml (OSS lane)"
+)
 
 
 @pytest.fixture
@@ -126,6 +134,7 @@ def _provision(attempt):
 
 @pytest.mark.django_db
 @pytest.mark.requires_ee
+@requires_cloud_billing
 def test_authoring_tokens_become_deterministic_ai_credit_events(
     metered_attempt, django_capture_on_commit_callbacks
 ):
@@ -198,6 +207,7 @@ def test_saved_simulation_run_does_not_rebill_authoring(
 
 @pytest.mark.django_db
 @pytest.mark.requires_ee
+@requires_cloud_billing
 def test_live_authoring_estimates_refresh_without_charging_or_double_counting(
     metered_attempt, django_capture_on_commit_callbacks
 ):

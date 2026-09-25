@@ -255,7 +255,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
     try {
       keys = await resolveSelection((r) => r.scenario_key);
     } catch {
-      enqueueSnackbar("Couldn't start the run — try again", { variant: "error" });
+      enqueueSnackbar("Couldn't start the run. Try again", { variant: "error" });
       return;
     }
     if (keys.length) onStartRun?.(keys, k || trials);
@@ -299,7 +299,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
     try {
       names = await pending.resolve();
     } catch {
-      enqueueSnackbar("Couldn't delete — try again", { variant: "error" });
+      enqueueSnackbar("Couldn't delete. Try again", { variant: "error" });
       return;
     }
     if (!names.length) return;
@@ -313,7 +313,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
             names.length === 1 ? "Deleted 1 scenario" : `Deleted ${names.length} scenarios`,
           );
         },
-        onError: () => enqueueSnackbar("Couldn't delete — try again", { variant: "error" }),
+        onError: () => enqueueSnackbar("Couldn't delete. Try again", { variant: "error" }),
       },
     );
   };
@@ -335,7 +335,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
       { rework, changes },
       {
         onSuccess: (data) => surfaceReceipts(data, "Saved"),
-        onError: () => enqueueSnackbar("Couldn't save — try again", { variant: "error" }),
+        onError: () => enqueueSnackbar("Couldn't save. Try again", { variant: "error" }),
       },
     );
   };

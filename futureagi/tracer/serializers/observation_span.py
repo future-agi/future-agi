@@ -13,6 +13,7 @@ from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
+from tracer.serializers.attribute_key import ExactAttributeKeyField
 from tracer.serializers.cursor_pagination import (
     CURSOR_HELP_TEXT,
     validate_cursor_exclusivity,
@@ -23,7 +24,6 @@ from tracer.serializers.filters import (
     bounded_filter_list_query_param_field,
     filter_list_query_param_field,
 )
-from tracer.services.clickhouse.attribute_reads import validate_attribute_key
 
 
 class ProjectScopeQueryParamField(serializers.CharField):
@@ -62,17 +62,7 @@ class ObservationAttributeListQuerySerializer(serializers.Serializer):
         required=False,
         default="spans",
     )
-    q = serializers.CharField(
-        required=False,
-        allow_blank=False,
-        max_length=512,
-    )
-
-    def validate_q(self, value):
-        try:
-            return validate_attribute_key(value)
-        except ValueError as exc:
-            raise serializers.ValidationError(str(exc)) from exc
+    q = ExactAttributeKeyField(required=False)
 
 
 class ObservationAttributeListResponseSerializer(serializers.Serializer):
@@ -439,6 +429,11 @@ class SpanListMetadataSerializer(serializers.Serializer):
         r"^[0-9a-f]{64}$", required=False
     )
     query_applied_filter_count = serializers.IntegerField(required=False, min_value=0)
+    # Exactness is published on every successful list page, next to the
+    # completeness it qualifies; see tracer.services.clickhouse.
+    # list_page_contract.
+    query_exact = serializers.BooleanField(required=False)
+    ordering_exact = serializers.BooleanField(required=False)
 
 
 class SpanListColumnConfigSerializer(serializers.Serializer):

@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
-import { useMemo, useState } from "react";
-import { Box, Stack, Button, Pagination } from "@mui/material";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Box, Stack, Button, Pagination, Typography } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { FilterPanel } from "src/components/filter-panel";
@@ -37,12 +37,21 @@ const filterButtonSx = {
   "&:hover": { borderColor: "text.disabled", bgcolor: "transparent" },
 };
 
+const PAGE_SIZE = 50;
+// Room left under the table box for the pager row and the page's bottom gutter.
+const BELOW_TABLE_PX = 88;
+const PAGER_ROW_PX = 57;
+const MIN_TABLE_PX = 360;
+
 // The per-call table owns server-backed grouping, filtering, columns and paging
 // for read-only execution results.
 export default function RunTraceTable({
   executionId,
   onOpenCall,
+  onQueryChange,
   initialFilters = {},
+  activeCallId = null,
+  activePage = null,
 }) {
   const [groupBy, setGroupBy] = useState("useCase");
   const [statusChip, setStatusChip] = useState("all");
@@ -62,6 +71,50 @@ export default function RunTraceTable({
     return next;
   }, [filters, statusChip]);
 
+  // A pager click opens the new page at its first row. Not on a drawer step:
+  // there the open call's row scrolls itself into view.
+  const scrollRef = useRef(null);
+  // The table box runs to the bottom of the window whatever the row count, so
+  // the card never hugs a few rows. Measured, because the header above it
+  // varies in height; re-measured on resize.
+  const [boxHeight, setBoxHeight] = useState(null);
+  useLayoutEffect(() => {
+    const measure = () => {
+      const top = scrollRef.current?.getBoundingClientRect().top;
+      if (top == null) return;
+      setBoxHeight(
+        Math.max(MIN_TABLE_PX, window.innerHeight - top - BELOW_TABLE_PX),
+      );
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
+
+  // Follow the drawer: when prev/next lands on a call on another page, show
+  // that page. Keyed on the call too, so a manual page change doesn't stick.
+  useEffect(() => {
+    if (activePage) setPage(activePage);
+  }, [activeCallId, activePage]);
+
+  // Exactly what this table asks the list for. It's reported up so the call
+  // drawer's prev/next read the same cache entry, in the same results order.
+  const listQuery = useMemo(
+    () => ({
+      page,
+      limit: PAGE_SIZE,
+      search: "",
+      filters: serverFilters,
+      groupBy: GROUP_BY_API[groupBy],
+    }),
+    [page, serverFilters, groupBy],
+  );
+  useEffect(() => {
+    onQueryChange?.(listQuery);
+  }, [listQuery, onQueryChange]);
+  // Unmounting (another tab) takes the table's state with it.
+  useEffect(() => () => onQueryChange?.(null), [onQueryChange]);
+
   const {
     tasks,
     columns,
@@ -71,12 +124,7 @@ export default function RunTraceTable({
     totalPages = 1,
     isLoading,
     error,
-  } = useRunCalls(executionId, {
-    page,
-    limit: 50,
-    filters: serverFilters,
-    groupBy: GROUP_BY_API[groupBy],
-  });
+  } = useRunCalls(executionId, listQuery);
 
   // The eval columns to render come from the data-driven column descriptors.
   const evals = useMemo(
@@ -230,37 +278,84 @@ export default function RunTraceTable({
       <TraceColumnsPicker value={visibleColumns} onChange={setVisibleColumns} />
     </Stack>
   );
+  const showPager = !isLoading && count > 0 && totalPages > 1;
+  const rangeStart = count ? (page - 1) * PAGE_SIZE + 1 : 0;
+  const rangeEnd = Math.min(page * PAGE_SIZE, count);
+
   return (
     <>
       <SectionCard title={title} action={action}>
-        {isLoading ? (
-          <EmptyState icon="solar:hourglass-linear" title="Loading calls…" />
-        ) : error ? (
-          <EmptyState
-            icon="solar:danger-triangle-linear"
-            title="Couldn't load calls"
-            body="Something went wrong loading this run's calls. Try again."
-          />
-        ) : tasks.length === 0 ? (
-          <EmptyState
-            icon="solar:filter-linear"
-            title="No calls match that filter"
-          />
-        ) : (
-          <TraceTable
-            columns={visibleColumns}
-            groups={groups}
-            evals={evals}
-            onOpen={onOpenCall}
-          />
-        )}
-        {!isLoading && count > 0 && totalPages > 1 && (
-          <Stack direction="row" justifyContent="center" sx={{ py: 2 }}>
+        {/* A fixed-height scroll box, like the Scenarios tab: the card keeps
+            its size whatever the row count, and the pager below never moves. */}
+        <Box
+          ref={scrollRef}
+          sx={{
+            // Without a pager, the box takes the pager's room too.
+            height:
+              boxHeight == null
+                ? "calc(100dvh - 400px)"
+                : boxHeight + (showPager ? 0 : PAGER_ROW_PX),
+            overflowY: "auto",
+          }}
+        >
+          {isLoading ? (
+            <EmptyState icon="solar:hourglass-linear" title="Loading calls…" />
+          ) : error ? (
+            <EmptyState
+              icon="solar:danger-triangle-linear"
+              title="Couldn't load calls"
+              body="Something went wrong loading this run's calls. Try again."
+            />
+          ) : tasks.length === 0 ? (
+            <EmptyState
+              icon="solar:filter-linear"
+              title="No calls match that filter"
+            />
+          ) : (
+            <TraceTable
+              columns={visibleColumns}
+              groups={groups}
+              evals={evals}
+              onOpen={onOpenCall}
+              activeCallId={activeCallId}
+            />
+          )}
+        </Box>
+        {showPager && (
+          <Stack
+            direction="row"
+            alignItems="center"
+            justifyContent="space-between"
+            flexWrap="wrap"
+            gap={1}
+            sx={{
+              px: 2,
+              py: 1.5,
+              borderTop: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Typography
+              sx={{
+                typography: "s3",
+                color: "text.subtitle",
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              Showing {rangeStart.toLocaleString()}–{rangeEnd.toLocaleString()}{" "}
+              of {count.toLocaleString()}
+            </Typography>
             <Pagination
+              size="small"
+              shape="rounded"
               count={totalPages}
               page={page}
-              onChange={(_, value) => setPage(value)}
-              size="small"
+              onChange={(_, value) => {
+                setPage(value);
+                scrollRef.current?.scrollTo?.({ top: 0 });
+              }}
+              siblingCount={1}
+              boundaryCount={1}
             />
           </Stack>
         )}
@@ -276,7 +371,8 @@ export default function RunTraceTable({
           applyFilters(result);
           setPage(1);
         }}
-        aiPlaceholder="Ask AI — e.g. 'show calls that failed the refund eval'"
+        // The AI box isn't wired for run calls; Basic/Query cover the filters.
+        showAiFilter={false}
         placement="bottom-start"
       />
     </>
@@ -285,5 +381,8 @@ export default function RunTraceTable({
 RunTraceTable.propTypes = {
   executionId: PropTypes.string,
   onOpenCall: PropTypes.func,
+  onQueryChange: PropTypes.func,
   initialFilters: PropTypes.object,
+  activeCallId: PropTypes.string,
+  activePage: PropTypes.number,
 };

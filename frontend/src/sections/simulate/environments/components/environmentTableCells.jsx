@@ -24,7 +24,7 @@ export const NumberCell = ({ getValue }) => {
   const value = getValue?.();
   // A dummy column (tools/scenarios/sub-goals) has no value in the harness
   // payload; show a dash rather than an empty cell.
-  return <Typography sx={NUM_SX}>{value ?? "—"}</Typography>;
+  return <Typography sx={NUM_SX}>{value ?? "-"}</Typography>;
 };
 NumberCell.propTypes = { getValue: PropTypes.func };
 

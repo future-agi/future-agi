@@ -17,7 +17,7 @@ export const BUILD_MODE_TABS = [
 
 export const CLOUD_CARD = {
   title: "Build in the cloud",
-  subtitle: "Spins up in an isolated sandbox — ready to run in seconds.",
+  subtitle: "Spins up in an isolated sandbox, ready to run in seconds.",
 };
 
 export const CLOUD_BULLETS = [
@@ -37,16 +37,16 @@ export const CLOUD_BULLETS = [
 
 export const STATS_CARD = {
   title: "What this template gives you",
-  subtitle: "Already built — you are not deriving it",
+  subtitle: "Already built: you are not deriving it",
 };
 
-export const AGENT_STAT_VALUE = "Seeded baseline — swap in yours after";
+export const AGENT_STAT_VALUE = "Seeded baseline (swap in yours after)";
 
 export const NOTHING_TOUCHES_PRODUCTION = {
   icon: "solar:shield-keyhole-linear",
   heading: "Nothing touches production.",
   body:
-    "Seeded data and test credentials in an isolated sandbox — your deployed systems are never called.",
+    "Seeded data and test credentials in an isolated sandbox. Your deployed systems are never called.",
 };
 
 export const LOCAL_CARD = {
@@ -67,7 +67,7 @@ const LOCAL_STEP_META = [
   {
     n: 2,
     title: "Run a simulation",
-    body: "Run the core pack locally against the seeded agent — nothing leaves your laptop.",
+    body: "Run the core pack locally against the seeded agent. Nothing leaves your laptop.",
     cmd: (slug) => `fai sim run --env ${slug} --pack core`,
   },
   {

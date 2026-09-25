@@ -26,7 +26,7 @@ export default function StatusFilterChips({ value, counts, onChange, blocked = [
             show={blockedByGrouping}
             arrow
             title={blockedByGrouping
-              ? "Not available while grouping by a failure view — passing runs have no failure bucket"
+              ? "Not available while grouping by a failure view. Passing runs have no failure bucket"
               : ""}
           >
             <Box

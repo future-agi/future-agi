@@ -31,7 +31,7 @@ export function buildEnvironmentColumns({ onRowActions }) {
       enableSorting: false,
       cell: ({ getValue }) => (
         <Typography noWrap sx={{ typography: "s2", color: "text.secondary" }}>
-          {getValue() || "—"}
+          {getValue() || "-"}
         </Typography>
       ),
     },

@@ -281,7 +281,11 @@ def public_list(route):
             elif "SELECT count() AS total" in sql:
                 phase, rows = "count", [{"total": 1}]
             elif "sum(total_tokens) AS total_tokens" in sql:
-                phase = "metrics"
+                # One statement carries the aggregates, the messages and the
+                # root attribute payloads the page used to read three times.
+                assert "AS first_message" in sql
+                assert "latest_attrs_number AS session_attribute_number" in sql
+                phase = "hydration"
                 rows = [
                     {
                         "session_id": uid(100),
@@ -291,25 +295,12 @@ def public_list(route):
                         "total_cost": 12.0,
                         "total_tokens": 40,
                         "traces_count": 3,
-                    }
-                ]
-            elif "AS first_message" in sql:
-                phase = "content"
-                rows = [
-                    {
-                        "session_id": uid(100),
                         "first_message": "first",
                         "last_message": "last",
-                    }
-                ]
-            elif "latest_attrs_number AS attrs_number" in sql:
-                phase = "attributes"
-                rows = [
-                    {
-                        "session_id": uid(100),
-                        "attrs_number": {"company_id": 2},
-                        "attrs_string": {},
-                        "attrs_bool": {"failed": False},
+                        "session_attribute_json_list": ["{}"],
+                        "session_attribute_string_list": [{}],
+                        "session_attribute_number_list": [{"company_id": 2}],
+                        "session_attribute_bool_list": [{"failed": False}],
                     }
                 ]
             else:
@@ -347,20 +338,10 @@ def test_public_list_hydration_and_exact_empty_page_count(public_list, method, e
     data = response.data["result"]
     assert data["metadata"]["total_rows"] == 1
     phases = {call["phase"] for call in calls}
-    assert phases == (
-        {"candidate", "count"}
-        if empty
-        else {"candidate", "metrics", "content", "attributes"}
-    )
+    assert phases == ({"candidate", "count"} if empty else {"candidate", "hydration"})
     assert len(calls) == len(phases)
     for call in calls:
-        maximum = (
-            2
-            if call["phase"] == "candidate"
-            else view.SESSION_LIST_ATTRIBUTE_RESULT_ROWS
-            if call["phase"] == "attributes"
-            else 1
-        )
+        maximum = 2 if call["phase"] == "candidate" else 1
         assert call["settings"] == view._session_read_settings(max_result_rows=maximum)
         assert call["timeout_ms"] > 0
         assert call["params"]["project_id"] == P

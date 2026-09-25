@@ -53,9 +53,19 @@ from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus, RunType
+from tracer.models.eval_task import (
+    RESUMABLE_TASK_STATUSES,
+    EvalTask,
+    EvalTaskLogger,
+    EvalTaskStatus,
+    RunType,
+)
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger, ObservationSpan
 from tracer.models.project import Project
+from tracer.selectors.eval_tasks.scope import (
+    eval_tasks_in_scope,
+    project_workspace_scope_q,
+)
 from tracer.serializers.eval_task import (
     EVAL_TASK_USAGE_MAX_PAGE,
     EditEvalTaskSerializer,
@@ -1439,6 +1449,7 @@ def _eval_task_progress_by_id(tasks):
     task.  The root route can return a large page, so serialize that field from
     one grouped query instead of allowing a page-sized N+1 query pattern.
     """
+    from tracer.selectors.eval_tasks.progress import progress_block
 
     historical_ids = [
         str(task.id) for task in tasks if task.run_type == RunType.HISTORICAL
@@ -1456,25 +1467,15 @@ def _eval_task_progress_by_id(tasks):
     for row in rows:
         counts_by_task[str(row["eval_task_id"])][row["status"]] = row["n"]
 
-    progress_by_id = {}
-    for task_id in historical_ids:
-        counts = counts_by_task[task_id]
-        done = (
-            counts.get(EvalEntryStatus.COMPLETED, 0)
-            + counts.get(EvalEntryStatus.ERRORED, 0)
-            + counts.get(EvalEntryStatus.SKIPPED, 0)
-        )
-        remaining = counts.get(EvalEntryStatus.PENDING, 0) + counts.get(
-            EvalEntryStatus.RUNNING, 0
-        )
-        total = done + remaining
-        progress_by_id[task_id] = {
-            "dispatched": total,
-            "completed": done,
-            "missing": remaining,
-            "percent": round(100.0 * done / total, 2) if total else None,
-        }
-    return progress_by_id
+    # Same arithmetic as ``EvalTaskSerializer.get_progress``, from the shared
+    # selector: this route drops the serializer's ``progress`` field and
+    # refills it from here, so a second copy of the formula meant the two
+    # endpoints answered differently about the same task. They did: this one
+    # counted skipped rows as completed, so a task that skipped every row
+    # reported 100 % on the route that renders the task table.
+    return {
+        task_id: progress_block(counts_by_task[task_id]) for task_id in historical_ids
+    }
 
 
 class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
@@ -1670,32 +1671,18 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         return getattr(user, "organization", None)
 
     def _project_workspace_scope_q(self, organization_id):
-        workspace = getattr(self.request, "workspace", None)
-        if not workspace:
-            return Q()
-        if getattr(workspace, "is_default", False):
-            return (
-                Q(project__workspace=workspace)
-                | Q(
-                    project__workspace__is_default=True,
-                    project__workspace__organization_id=organization_id,
-                )
-                | Q(
-                    project__workspace__isnull=True,
-                    project__organization_id=organization_id,
-                )
-            )
-        return Q(project__workspace=workspace)
+        return project_workspace_scope_q(
+            organization_id, getattr(self.request, "workspace", None)
+        )
 
     def _scope_eval_task_queryset(self, queryset):
-        organization = self._get_request_organization()
-        if organization is None:
-            return queryset.none()
-        organization_id = organization.id
-        return queryset.filter(
-            project__organization_id=organization_id,
-            project__deleted=False,
-        ).filter(self._project_workspace_scope_q(organization_id))
+        # Shared with the AI tool's Resume, so a task id resolves to the same
+        # task, or to none, whichever surface asks.
+        return eval_tasks_in_scope(
+            queryset,
+            organization=self._get_request_organization(),
+            workspace=getattr(self.request, "workspace", None),
+        )
 
     def _scope_project_queryset(self, queryset):
         organization = self._get_request_organization()
@@ -2843,18 +2830,32 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             except EvalTask.DoesNotExist:
                 return self._gm.bad_request("Eval task not found")
 
-            if eval_task.status != EvalTaskStatus.PAUSED:
+            # PAUSED and FAILED; ``RESUMABLE_TASK_STATUSES`` says why failed is
+            # in it. The AI tool and the task UIs accept the same set.
+            if eval_task.status not in RESUMABLE_TASK_STATUSES:
                 return self._gm.bad_request(
                     f"Cannot unpause eval task with status '{eval_task.status}'. "
-                    "Only paused tasks can be resumed."
+                    "Only paused or failed tasks can be resumed."
                 )
 
+            recovered_from = eval_task.status
+            undrained = EvalLogger.objects.filter(
+                eval_task_id=str(eval_task.id),
+                status__in=[EvalEntryStatus.PENDING, EvalEntryStatus.RUNNING],
+            ).count()
             eval_task.status = EvalTaskStatus.PENDING
             eval_task.save(update_fields=["status"])
 
             # Pause exits the workflow; resuming starts a fresh run that picks up
             # the remaining pending/running entries.
             start_eval_task_workflow_sync(eval_task, replace_existing=True)
+            # Counts and the previous status only — never an entry payload or
+            # any tenant-identifying value.
+            logger.info(
+                "eval_task_recovered",
+                recovered_from=str(recovered_from),
+                undrained_entries=undrained,
+            )
 
             return self._gm.success_response(
                 {"message": "Eval task unpaused successfully"}

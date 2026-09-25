@@ -56,14 +56,14 @@ export default function TraceGroupHeaderRow({
     if (key === "persona")
       return personaCount
         ? `${personaCount} persona${personaCount === 1 ? "" : "s"}`
-        : "—";
+        : "-";
     if (key === "scenario")
       return `${group.count} scenario${group.count === 1 ? "" : "s"}`;
     if (key === "idealOutcome")
       return `${group.count} outcome${group.count === 1 ? "" : "s"}`;
     if (key === "conversationBranch")
       return `${group.count} branch${group.count === 1 ? "" : "es"}`;
-    return "—";
+    return "-";
   };
 
   const numCell = (value, suffix = "", metric, aggregation = "Avg") => {
@@ -74,7 +74,7 @@ export default function TraceGroupHeaderRow({
       <TableCell sx={numCellSx}>
         {value == null ? (
           <Typography sx={{ typography: "s3", color: "text.disabled" }}>
-            —
+            -
           </Typography>
         ) : (
           <Stack alignItems="flex-start" spacing={0.25}>
@@ -182,7 +182,7 @@ export default function TraceGroupHeaderRow({
             return (
               <TableCell key={`eval-${e.id}`} sx={numCellSx}>
                 <Typography sx={{ typography: "s3", color: "text.disabled" }}>
-                  —
+                  -
                 </Typography>
               </TableCell>
             );

@@ -15,7 +15,7 @@ export const ADD_COPY = {
     "Your agent's scenarios are already here. These add the ones deriving it could not know to write.",
   routeLabel: "Generated from your agent",
   routeBlurb:
-    "Fresh probes derived from this environment's rules, tools and seed data — the ones not already on the list.",
+    "Fresh probes derived from this environment's rules, tools and seed data, the ones not already on the list.",
   searchPlaceholder: "Search generated scenarios…",
   selectAll: "Select all",
   emptyTitle: "Nothing left to add",

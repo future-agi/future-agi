@@ -88,7 +88,7 @@ describe("AddEvaluationDrawer — the row", () => {
   // Every entry in ONE `available` response carries the same `agent_type`,
   // so all three here are `"chat"` — mixing a voice entry in would build a
   // response the server cannot produce.
-  it("shows Library/Custom and the cost line, built from the two fields", async () => {
+  it("shows Library/Custom and no cost chip", async () => {
     getAvailableEvaluations.mockResolvedValue({
       evaluations: [LIBRARY_TEXT_EVAL, CUSTOM_EVAL, CODE_EVAL],
     });
@@ -97,8 +97,7 @@ describe("AddEvaluationDrawer — the row", () => {
     await screen.findByText("no_pii_leak");
     expect(screen.getAllByText("Library")).toHaveLength(2);
     expect(screen.getAllByText("Custom")).toHaveLength(1);
-    expect(screen.getAllByText("0.5 credits per run + judge tokens")).toHaveLength(2);
-    expect(screen.getAllByText("0.5 credits per run")).toHaveLength(1);
+    expect(screen.queryByText(/credits per/)).toBeNull();
   });
 
   it("gives the row's expander an accessible name and announces its state", async () => {
@@ -265,7 +264,7 @@ describe("AddEvaluationDrawer — adding to the environment", () => {
     });
     render(<AddEvaluationDrawer open env={ENV} executionId="ex-1" onClose={vi.fn()} />);
 
-    await screen.findByText("Already on this environment — grade this run's finished calls");
+    await screen.findByText("Already on this environment: grade this run's finished calls");
     expect(screen.queryByText(/maximum 8 evaluations/i)).toBeNull();
   });
 
@@ -557,7 +556,7 @@ describe("AddEvaluationDrawer — adding from inside a run", () => {
     expect(addEvaluation).not.toHaveBeenCalled();
     expect(
       await screen.findByText(
-        "13 calls queued for grading, 2 already graded, 1 still being processed — of 16 calls that finished in this run.",
+        "13 calls queued for grading, 2 already graded, 1 still being processed (of 16 calls that finished in this run).",
       ),
     ).toBeInTheDocument();
     // Grading is asynchronous and this drawer never polls — the receipt
@@ -578,7 +577,7 @@ describe("AddEvaluationDrawer — adding from inside a run", () => {
     await screen.findByText("no_misselling");
 
     const sentence = screen.getByText(
-      "Expand a row to see what fills each input. Each row below also grades this run's 16 finished calls — any that already have a verdict for it are left alone.",
+      "Expand a row to see what fills each input. Each row below also grades this run's 16 finished calls. Any that already have a verdict for it are left alone.",
     );
     expect(sentence).toBeInTheDocument();
     // No credit figure before the click — the sentence names only the
@@ -604,7 +603,7 @@ describe("AddEvaluationDrawer — adding from inside a run", () => {
 
     expect(
       screen.getByText(
-        "Expand a row to see what fills each input. Each row below also grades this run's 1 finished call — any that already have a verdict for it are left alone.",
+        "Expand a row to see what fills each input. Each row below also grades this run's 1 finished call. Any that already have a verdict for it are left alone.",
       ),
     ).toBeInTheDocument();
   });
@@ -615,7 +614,7 @@ describe("AddEvaluationDrawer — adding from inside a run", () => {
 
     expect(
       screen.getByText(
-        "Expand a row to see what fills each input. Each row below also grades this run's finished calls — any that already have a verdict for it are left alone.",
+        "Expand a row to see what fills each input. Each row below also grades this run's finished calls. Any that already have a verdict for it are left alone.",
       ),
     ).toBeInTheDocument();
   });
@@ -645,12 +644,11 @@ describe("AddEvaluationDrawer — adding from inside a run", () => {
     expect(screen.getByRole("button", { name: /^Add$/ })).toBeEnabled();
   });
 
-  it("reads the row's cost chip as 'per call graded', not 'per run' — run mode only", async () => {
+  it("shows no cost chip in run mode either", async () => {
     render(<AddEvaluationDrawer open env={ENV} executionId="ex-1" onClose={vi.fn()} />);
     await screen.findByText("no_misselling");
 
-    expect(screen.getByText("0.5 credits per call graded + judge tokens")).toBeInTheDocument();
-    expect(screen.queryByText("0.5 credits per run + judge tokens")).toBeNull();
+    expect(screen.queryByText(/credits per/)).toBeNull();
   });
 
   it("passes an add refusal through untouched — nothing was queued", async () => {
@@ -691,7 +689,7 @@ describe("AddEvaluationDrawer — adding from inside a run", () => {
 
     expect(
       await screen.findByText(
-        "13 calls queued for grading, 2 already graded, 1 still being processed — of 16 calls that finished in this run.",
+        "13 calls queued for grading, 2 already graded, 1 still being processed (of 16 calls that finished in this run).",
       ),
     ).toBeInTheDocument();
 
@@ -754,7 +752,7 @@ describe("AddEvaluationDrawer — adding from inside a run", () => {
     rerender(wrap(<AddEvaluationDrawer open env={ENV} executionId="ex-1" onClose={onClose} />));
     expect(
       await screen.findByText(
-        "13 calls queued for grading, 2 already graded, 1 still being processed — of 16 calls that finished in this run.",
+        "13 calls queued for grading, 2 already graded, 1 still being processed (of 16 calls that finished in this run).",
       ),
     ).toBeInTheDocument();
   });
@@ -770,7 +768,7 @@ describe("AddEvaluationDrawer — adding from inside a run", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
 
     expect(
-      await screen.findByText("Nothing new to grade — how many calls finished in this run isn't known."),
+      await screen.findByText("Nothing new to grade (how many calls finished in this run isn't known)."),
     ).toBeInTheDocument();
     expect(screen.getByText("Reload this run to see the new verdicts.")).toBeInTheDocument();
     // An empty body means the count is unknown, not zero — "of 0 calls"
@@ -786,7 +784,7 @@ describe("AddEvaluationDrawer — the environment's own evals, in run mode", () 
   // that can grade those calls, and the run-level add's backfill path is
   // unreachable from the UI.
   const BOUND = { evaluations: { selected: [selectedEntry(NO_MISSELLING, "cfg-1")] } };
-  const GROUP_TITLE = "Already on this environment — grade this run's finished calls";
+  const GROUP_TITLE = "Already on this environment: grade this run's finished calls";
 
   it("lists a bound eval as its own group and grades this run with it", async () => {
     getAvailableEvaluations.mockResolvedValue({ evaluations: [] });
@@ -818,7 +816,7 @@ describe("AddEvaluationDrawer — the environment's own evals, in run mode", () 
     // The same receipt an offered eval's add shows.
     expect(
       await screen.findByText(
-        "13 calls queued for grading, 2 already graded, 1 still being processed — of 16 calls that finished in this run.",
+        "13 calls queued for grading, 2 already graded, 1 still being processed (of 16 calls that finished in this run).",
       ),
     ).toBeInTheDocument();
   });
@@ -834,7 +832,7 @@ describe("AddEvaluationDrawer — the environment's own evals, in run mode", () 
     render(<AddEvaluationDrawer open env={ENV} executionId="ex-1" onClose={vi.fn()} />);
 
     expect(
-      await screen.findByText("Every eval is already on this environment — grade this run below."),
+      await screen.findByText("Every eval is already on this environment. Grade this run below."),
     ).toBeInTheDocument();
     expect(
       screen.queryByText("There's nothing this environment can be graded by right now."),
@@ -846,14 +844,14 @@ describe("AddEvaluationDrawer — the environment's own evals, in run mode", () 
     expect(screen.getByRole("button", { name: "Grade this run" })).toBeInTheDocument();
   });
 
-  it("shows the same entry cells on a bound row, with the run-mode cost chip", async () => {
+  it("shows the same entry cells on a bound row, with no cost chip", async () => {
     getAvailableEvaluations.mockResolvedValue({ evaluations: [] });
     getHarnessEnvironment.mockResolvedValue(BOUND);
     render(<AddEvaluationDrawer open env={ENV} executionId="ex-1" onClose={vi.fn()} />);
 
     await screen.findByText(GROUP_TITLE);
     expect(screen.getByText("Library")).toBeInTheDocument();
-    expect(screen.getByText("0.5 credits per call graded + judge tokens")).toBeInTheDocument();
+    expect(screen.queryByText(/credits per/)).toBeNull();
 
     // The inputs are behind the same expander, with the API's labels.
     fireEvent.click(screen.getByRole("button", { name: "Expand no_misselling" }));
@@ -1027,7 +1025,7 @@ describe("AddEvaluationDrawer — the environment's own evals, in run mode", () 
     ).toBeNull();
     // And no claim that everything is already on the environment either.
     expect(
-      screen.queryByText("Every eval is already on this environment — grade this run below."),
+      screen.queryByText("Every eval is already on this environment. Grade this run below."),
     ).toBeNull();
   });
 

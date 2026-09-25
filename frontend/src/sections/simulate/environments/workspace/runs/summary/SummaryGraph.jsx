@@ -77,7 +77,7 @@ export default function SummaryGraph({ categories, series }) {
           tooltip: {
             shared: true,
             intersect: false,
-            y: { formatter: (v) => (v == null ? "—" : `${v}%`) },
+            y: { formatter: (v) => (v == null ? "-" : `${v}%`) },
           },
         }}
       />

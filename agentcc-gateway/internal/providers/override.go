@@ -95,6 +95,7 @@ func (c *OrgProviderCache) GetOrCreateWithTenantConfig(orgID, providerID, apiKey
 			BaseURL:            tenantCfg.BaseURL,
 			APIKey:             apiKey,
 			APIFormat:          apiFormat,
+			APIPathPrefix:      tenantCfg.APIPathPrefix,
 			DefaultTimeout:     timeout,
 			MaxConcurrent:      maxConc,
 			ConnPoolSize:       poolSize,
@@ -111,9 +112,7 @@ func (c *OrgProviderCache) GetOrCreateWithTenantConfig(orgID, providerID, apiKey
 		return nil, fmt.Errorf("no base config for provider %q", providerID)
 	}
 
-	// Clone the config with the org's API key.
-	orgCfg := baseCfg
-	orgCfg.APIKey = apiKey
+	orgCfg := resolveOrgConfig(baseCfg, apiKey, tenantCfg)
 
 	p, err := createProvider(providerID+"_org_"+orgID, orgCfg)
 	if err != nil {
@@ -129,6 +128,18 @@ func (c *OrgProviderCache) GetOrCreateWithTenantConfig(orgID, providerID, apiKey
 	)
 
 	return p, nil
+}
+
+// resolveOrgConfig clones a base provider config for one org: the org's API
+// key always wins, and a tenant that states a path prefix wins over the one in
+// config.yaml, including when it states an empty one.
+func resolveOrgConfig(baseCfg config.ProviderConfig, apiKey string, tenantCfg *tenant.ProviderConfig) config.ProviderConfig {
+	orgCfg := baseCfg
+	orgCfg.APIKey = apiKey
+	if tenantCfg != nil && tenantCfg.APIPathPrefix != nil {
+		orgCfg.APIPathPrefix = tenantCfg.APIPathPrefix
+	}
+	return orgCfg
 }
 
 // isPrivateIP returns true if the given IP is in a private/reserved range.

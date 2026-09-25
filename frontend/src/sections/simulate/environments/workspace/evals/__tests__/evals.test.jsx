@@ -335,12 +335,12 @@ describe("EvalsStep — remove on a backend-backed env", () => {
     deleteAppliedEvaluation.mockRestore();
   });
 
-  it("shows where the eval came from, whether it costs, and what fills its inputs", async () => {
+  it("shows where the eval came from and what fills its inputs, with no cost chip", async () => {
     render(<Harness backed initial={state} patchSpy={vi.fn()} />);
 
     expect(await screen.findByText("no_misselling")).toBeInTheDocument();
     expect(screen.getByText("Library")).toBeInTheDocument();
-    expect(screen.getByText("0.5 credits per run + judge tokens")).toBeInTheDocument();
+    expect(screen.queryByText(/credits per/)).toBeNull();
     expect(screen.getByText("{{conversation}}")).toBeInTheDocument();
     expect(screen.getByText("Call recording")).toBeInTheDocument();
     // The raw source never reaches the screen.

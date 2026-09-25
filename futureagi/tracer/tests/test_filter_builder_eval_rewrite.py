@@ -41,6 +41,9 @@ from tracer.services.clickhouse.query_builders.filters import (
     EvalFilterMetadata,
     resolve_eval_filter_metadata,
 )
+from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+    UnsupportedFilterShapeError,
+)
 from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
     rewrite_v1_sql_to_v2,
@@ -843,23 +846,70 @@ class TestHasEvalHasAnnotationShape:
         )
         assert "trace_id NOT IN" in where
 
-    @pytest.mark.parametrize(
-        "column_id", ["has_eval", "has_annotation", "my_annotations"]
-    )
-    @pytest.mark.parametrize("filter_op", ["not_equals", "is_null", "is_not_null"])
-    def test_boolean_meta_filters_reject_non_equals_operations(
-        self,
-        column_id: str,
-        filter_op: str,
-    ) -> None:
-        filter_item = self._bool_filter(column_id, True)[0]
+    def _meta_filter(self, column_id: str, filter_op: str, value=True) -> dict:
+        filter_item = self._bool_filter(column_id, value)[0]
         filter_item["filter_config"]["filter_op"] = filter_op
         if column_id == "my_annotations":
             filter_item["filter_config"]["user_id"] = (
                 "00000000-0000-4000-8000-000000000002"
             )
+        return filter_item
 
-        with pytest.raises(ValueError, match="supports only the equals operation"):
+    @pytest.mark.parametrize(
+        "column_id", ["has_eval", "has_annotation", "my_annotations"]
+    )
+    @pytest.mark.parametrize(
+        ("filter_op", "expected"), [("is_null", "0 = 1"), ("is_not_null", "1 = 1")]
+    )
+    def test_boolean_meta_presence_operators_compile_a_total_flag(
+        self,
+        column_id: str,
+        filter_op: str,
+        expected: str,
+    ) -> None:
+        # The flags are derived per row and are never NULL, so is_not_null
+        # constrains nothing and is_null matches nothing.
+        where, _ = ClickHouseFilterBuilder(
+            project_id="p1", candidate_ids_param="candidate_trace_ids"
+        ).translate([self._meta_filter(column_id, filter_op)])
+
+        assert where == expected
+
+    @pytest.mark.parametrize("value", [True, False])
+    def test_has_eval_not_equals_negates_the_requested_value(self, value: bool) -> None:
+        where, _ = ClickHouseFilterBuilder(
+            project_id="p1", candidate_ids_param="candidate_trace_ids"
+        ).translate([self._meta_filter("has_eval", "not_equals", value)])
+
+        expected = "trace_id IN" if value is False else "trace_id NOT IN"
+        assert where.startswith(expected)
+
+    @pytest.mark.parametrize("value", [True, False])
+    def test_has_annotation_not_equals_negates_the_requested_value(
+        self, value: bool
+    ) -> None:
+        where, _ = ClickHouseFilterBuilder(project_id="p1").translate(
+            [self._meta_filter("has_annotation", "not_equals", value)]
+        )
+
+        expected = "trace_id IN" if value is False else "trace_id NOT IN"
+        assert where.startswith(expected)
+
+    @pytest.mark.parametrize(
+        "column_id", ["has_eval", "has_annotation", "my_annotations"]
+    )
+    def test_boolean_meta_filters_reject_uncompilable_operations(
+        self, column_id: str
+    ) -> None:
+        with pytest.raises(UnsupportedFilterShapeError, match="supports only equals"):
             ClickHouseFilterBuilder(
                 project_id="p1", candidate_ids_param="candidate_trace_ids"
-            ).translate([filter_item])
+            ).translate([self._meta_filter(column_id, "contains")])
+
+    def test_unbounded_negative_has_eval_is_a_rejected_filter_not_a_crash(self) -> None:
+        # A bare ValueError here reached the views' generic handler and
+        # answered HTTP 500 for a filter the caller can correct.
+        with pytest.raises(UnsupportedFilterShapeError, match="bounded candidate"):
+            ClickHouseFilterBuilder(project_id="p1").translate(
+                [self._meta_filter("has_eval", "not_equals", True)]
+            )
