@@ -122,9 +122,6 @@ const EvalsIndividualGroup = lazyWithRetry(
 const AddNewPrompt = lazyWithRetry(
   () => import("src/pages/dashboard/Prompt/AddNewPrompt"),
 );
-const ProjectList = lazyWithRetry(
-  () => import("src/pages/dashboard/projects/ProjectList"),
-);
 const GatewayOverview = lazyWithRetry(
   () => import("src/pages/dashboard/gateway/GatewayOverview"),
 );
@@ -172,9 +169,6 @@ const ObserveList = lazyWithRetry(
 );
 const ProjectWrapper = lazyWithRetry(
   () => import("src/pages/dashboard/projects/ProjectWrapper"),
-);
-const ProjectDetail = lazyWithRetry(
-  () => import("src/pages/dashboard/projects/ProjectDetail"),
 );
 const HuggingFacePage = lazyWithRetry(
   () => import("src/pages/dashboard/huggingface/HuggingFace"),
@@ -224,9 +218,6 @@ const IndividualExperimentSummary = lazyWithRetry(
 );
 const PreviewScreen = lazyWithRetry(
   () => import("src/sections/develop-detail/AnnotationsTab/PreviewScreen"),
-);
-const RunInsidePage = lazyWithRetry(
-  () => import("src/pages/dashboard/run-inside/run-inside"),
 );
 const ObserverWrapper = lazyWithRetry(
   () => import("src/pages/dashboard/observe/ObserverWrapper"),
