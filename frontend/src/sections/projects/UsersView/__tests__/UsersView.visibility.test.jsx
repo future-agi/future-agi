@@ -116,6 +116,7 @@ vi.mock(
 );
 
 import UsersView from "../UsersView";
+import useUsersStore from "../Store/usersStore";
 import * as listCursorPagination from "../../LLMTracing/listCursorPagination";
 import { OBSERVE_LIST_REFRESH_EVENT } from "../../observeEvents";
 
@@ -214,6 +215,51 @@ describe("Users view content visibility", () => {
       rowCount: 0,
     });
     expect(screen.getByText("Confirmed empty users")).toBeVisible();
+  });
+
+  it("keeps the grid on screen while a search reloads the confirmed-empty page", async () => {
+    // A same-query refresh is answered from the cursor's completed-page
+    // cache, so its loading state is brief. A search is a new query: its
+    // page-0 read goes to the network while searchState is still "empty".
+    let resolveSearch;
+    getMock.mockResolvedValueOnce(emptyUsersResponse()).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSearch = resolve;
+      }),
+    );
+    await renderUsersView();
+    const params = makeGridParams();
+    gridState.api = params.api;
+    await act(async () => {
+      await gridState.props.serverSideDatasource.getRows(params);
+    });
+    expect(screen.getByText("Confirmed empty users")).toBeVisible();
+    const emptyDatasource = gridState.props.serverSideDatasource;
+
+    act(() => useUsersStore.setState({ searchQuery: "acme" }));
+    expect(gridState.props.serverSideDatasource).not.toBe(emptyDatasource);
+    const searchParams = makeGridParams();
+    gridState.api = searchParams.api;
+    let searchRead;
+    act(() => {
+      searchRead = gridState.props.serverSideDatasource.getRows(searchParams);
+    });
+    await waitFor(() => expect(getMock).toHaveBeenCalledTimes(2));
+    expect(getMock.mock.calls[1][1].params.search).toBe("acme");
+    expect(screen.queryByText("Confirmed empty users")).not.toBeInTheDocument();
+    expect(usersGrid()).toBeVisible();
+
+    await act(async () => {
+      resolveSearch(emptyUsersResponse());
+      await searchRead;
+    });
+    expect(searchParams.success).toHaveBeenCalledWith({
+      rowData: [],
+      rowCount: 0,
+    });
+    // A search with no match is not the project's empty state.
+    expect(usersGrid()).toBeVisible();
+    expect(screen.queryByText("Confirmed empty users")).not.toBeInTheDocument();
   });
 
   it("shows Continue search when the first page stops at the continuation limit", async () => {
