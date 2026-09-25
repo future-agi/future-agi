@@ -264,6 +264,20 @@ class TestGetKpiMetricsQuery:
         assert m["failed_calls"] == 1
         assert m["completed_calls"] == 2
 
+
+    def test_excludes_soft_deleted_calls(self, voice_call_executions, test_execution):
+        """Soft-deleted calls should not contribute to KPI totals."""
+        voice_call_executions[0].delete()
+
+        query, params = get_kpi_metrics_query(test_execution.id)
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            columns = [col[0] for col in cursor.description]
+            row = cursor.fetchone()
+
+        metrics = dict(zip(columns, row))
+        assert metrics["total_calls"] == 4
+
     def test_voice_metric_averages(self, voice_call_executions, test_execution):
         """Test that voice metric averages are computed correctly."""
         query, params = get_kpi_metrics_query(test_execution.id)
