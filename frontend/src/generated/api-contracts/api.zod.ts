@@ -9495,6 +9495,8 @@ export const ApiSetupChecksListResponse = zod.object({
         status: zod.enum(["passed", "warning", "failed", "skipped"]),
         required: zod.boolean(),
         detail: zod.string(),
+        fix: zod.string(),
+        docs_url: zod.string(),
       }),
     ),
   }),

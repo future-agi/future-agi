@@ -12,11 +12,15 @@ first — otherwise a second request in the same test returns the first one's
 verdict and the assertions pass for the wrong reason.
 """
 
+import re
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from django.core.cache import cache
 from rest_framework import status
+
+from botocore.exceptions import ClientError, EndpointConnectionError
 
 from tfc.views.setup_checks import (
     CHECKS,
@@ -26,7 +30,18 @@ from tfc.views.setup_checks import (
     PASSED,
     SKIPPED,
     WARNING,
+    _object_storage_up,
+    _safe,
 )
+
+INSTALLATION = Path(__file__).resolve().parents[3] / "INSTALLATION.md"
+
+
+def _github_anchor(heading):
+    """GitHub's heading slug: lowercase, drop every character that is not a word
+    character, a space or a hyphen, then spaces to hyphens."""
+    return re.sub(r"[^\w\- ]", "", heading.lower()).strip().replace(" ", "-")
+
 
 SETUP_CHECKS_URL = "/api/setup-checks/"
 
@@ -101,7 +116,15 @@ class TestSetupChecksResponseShape:
         result = get_checks(api_client)
 
         for check in result["checks"]:
-            assert set(check) == {"id", "label", "status", "required", "detail"}
+            assert set(check) == {
+                "id",
+                "label",
+                "status",
+                "required",
+                "detail",
+                "fix",
+                "docs_url",
+            }
             assert check["status"] in {PASSED, WARNING, FAILED, SKIPPED}
             assert isinstance(check["required"], bool)
             assert isinstance(check["detail"], str)
@@ -329,6 +352,27 @@ class TestDetail:
             c["id"]: c["detail"] for c in experiment["checks"]
         }
 
+    def test_fix_is_empty_when_the_check_passed(self, api_client):
+        result = get_checks(api_client)
+
+        assert all(c["fix"] == "" for c in result["checks"])
+        assert all(c["docs_url"] == "" for c in result["checks"])
+
+    def test_fix_and_docs_url_are_served_when_down(self, api_client):
+        result = get_checks(api_client, probe_results=all_down())
+
+        for check in result["checks"]:
+            assert check["fix"], f"{check['id']} came back down with no fix"
+            assert check["docs_url"].startswith("https://")
+
+    def test_fix_does_not_vary_by_mode(self, api_client):
+        live = get_checks(api_client, mode=LIVE, probe_results=all_down())
+        experiment = get_checks(api_client, mode=EXPERIMENT, probe_results=all_down())
+
+        assert {c["id"]: c["fix"] for c in live["checks"]} == {
+            c["id"]: c["fix"] for c in experiment["checks"]
+        }
+
     def test_detail_never_mentions_the_launch_mode(self, api_client):
         """Copy is shared across modes, so mode wording would be wrong in one."""
         result = get_checks(api_client, mode=LIVE, probe_results=all_down())
@@ -362,6 +406,30 @@ class TestFailsClosed:
         result = get_checks(api_client, mode=LIVE, probe_results={})
 
         assert all(c["status"] != PASSED for c in result["checks"])
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestObjectStorageProbe:
+    def test_a_bucket_that_does_not_exist_yet_is_not_an_outage(self):
+        """The upload bucket is created on the first upload, so a fresh install
+        has none and every operator saw a red row with nothing behind it."""
+        missing = ClientError(
+            {"ResponseMetadata": {"HTTPStatusCode": 404}}, "HeadBucket"
+        )
+
+        with patch("tfc.views.setup_checks.boto3.client") as factory:
+            factory.return_value.head_bucket.side_effect = missing
+
+            assert _object_storage_up() is True
+
+    def test_an_endpoint_that_does_not_answer_is_down(self):
+        with patch("tfc.views.setup_checks.boto3.client") as factory:
+            factory.return_value.head_bucket.side_effect = EndpointConnectionError(
+                endpoint_url="http://minio:9000"
+            )
+
+            assert _safe(_object_storage_up) is False
 
 
 @pytest.mark.integration
@@ -423,6 +491,29 @@ class TestCheckInventory:
                 assert mode in check, f"{check['id']} is missing {mode}"
                 assert "required" in check[mode]
                 assert "on_down" in check[mode]
+
+    def test_every_check_declares_a_fix_and_a_docs_url(self):
+        for check in CHECKS:
+            assert check.get("fix"), f"{check['id']} has no fix line"
+            assert check.get("docs_url", "").startswith("https://"), (
+                f"{check['id']} has no docs link"
+            )
+
+    def test_every_docs_url_points_at_a_heading_that_exists(self):
+        """A dead anchor drops the operator at the top of a page instead of at
+        the service that failed, which is the bug this screen is fixing."""
+        headings = {
+            _github_anchor(line.lstrip("#").strip())
+            for line in INSTALLATION.read_text(encoding="utf-8").splitlines()
+            if line.startswith("#")
+        }
+
+        for check in CHECKS:
+            page, _, anchor = check["docs_url"].partition("#")
+            assert page.endswith("/INSTALLATION.md"), (
+                f"{check['id']} links to {page}, where no test can see the anchor"
+            )
+            assert anchor in headings, f"{check['id']} links to a missing #{anchor}"
 
     def test_down_detail_lives_on_the_check_not_the_mode(self):
         """Hoisted so the two modes cannot drift into describing one outage
