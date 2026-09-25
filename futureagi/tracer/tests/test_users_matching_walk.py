@@ -9,6 +9,7 @@ so each guard can see which statement decided what.
 from __future__ import annotations
 
 import hashlib
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -69,6 +70,7 @@ class World:
         aliases: int = 0,
         curated: bool = True,
         typed_values: list[tuple[str, str]] | None = None,
+        native: bool | None = None,
     ) -> str:
         uid = str(uuid.UUID(int=1000 + ordinal))
         alias_ids = tuple(
@@ -83,6 +85,8 @@ class World:
             "curated": curated,
             "name": f"user-{ordinal}",
             "typed_values": typed_values or [("string", '"Gold"')],
+            # A native span-dimension leaf's decision; None: no live span.
+            "native": native,
         }
         for alias in (uid, *alias_ids):
             self.canonical[alias] = uid
@@ -108,6 +112,8 @@ class World:
 
 
 def kind_of(query: str) -> str:
+    if "native_span_flags" in query:
+        return "native"
     if "AS raw_end_user_id" in query:
         return "slice"
     if "AS instant_end_user_id" in query:
@@ -184,6 +190,8 @@ class Engine:
             return self._remap(params)
         if kind == "enrich":
             return self._enrich(params)
+        if kind == "native":
+            return self._native(query, params)
         return self._replay(params)
 
     def _witnessed(self, params, ranges):
@@ -291,6 +299,20 @@ class Engine:
                     "latest_matching_start_time": key,
                 }
             )
+        return SimpleNamespace(data=data, query_time_ms=1.0)
+
+    def _native(self, query, params):
+        """Each native leaf's decision: the user's ``native`` answer."""
+
+        leaves = re.findall(r"AS (native_leaf_\d+)(?!_)", query)
+        data = [
+            {
+                "end_user_id": uid,
+                **dict.fromkeys(leaves, int(self.world.users[uid]["native"])),
+            }
+            for uid in params["candidate_end_user_ids"]
+            if self.world.users[uid]["native"] is not None
+        ]
         return SimpleNamespace(data=data, query_time_ms=1.0)
 
     def _replay(self, params):
@@ -421,6 +443,38 @@ def test_filtered_page_orders_by_newest_matching_activity_and_never_seeds():
     assert read.payload["query_exact"] is True
     assert all("scalar_witness_identities" not in call for call in engine.calls)
     assert set(_kinds(engine)) <= {"slice", "remap", "enrich", "replay", "probe"}
+
+
+def test_a_raw_leaf_plus_a_native_leaf_publishes_only_native_members():
+    # The walk certifies on the raw text leaf; the native leaf (status) is
+    # decided after the replay by the native page statement. A native leaf
+    # certified as a raw attribute rejected every user: an empty exact page.
+    world = World()
+    world.user(
+        1, key=minutes_before_end(30), raw=(minutes_before_end(30),), native=True
+    )
+    world.user(2, key=minutes_before_end(5), raw=(minutes_before_end(5),), native=False)
+    world.user(
+        3, key=minutes_before_end(90), raw=(minutes_before_end(90),), native=True
+    )
+    world.user(4, key=minutes_before_end(60), raw=(minutes_before_end(60),))
+    native = {
+        "column_id": "status",
+        "property_id": "system_attribute:traces:status",
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "text",
+            "filter_op": "equals",
+            "filter_value": "ERROR",
+        },
+    }
+
+    read, engine = _page(world, page_size=25, filters=[*_filters(), native])
+
+    assert _names(read) == ["user-1", "user-3"]
+    assert read.payload["query_provenance"] == "matching_activity_walk"
+    assert read.payload["query_exact"] is True
+    assert "native" in _kinds(engine)
 
 
 def test_populated_slice_resolves_aliases_through_the_bounded_survivor_statement():

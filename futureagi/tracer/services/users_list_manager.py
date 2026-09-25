@@ -1951,6 +1951,8 @@ class UsersListManager:
         The matching-activity walk decides these before it spends a replay on
         a user; ``_row_matches_filters`` re-decides them, unchanged, on the
         replayed row together with every native and relation predicate.
+        A native span-dimension leaf has no attribute-map value: the page's
+        native statement decides it after the replay.
         """
         for item in self.filters:
             if UserListQueryBuilderV2._is_date_filter(item):
@@ -1959,6 +1961,8 @@ class UsersListManager:
                 continue
             column_id = item.get("column_id") or item.get("columnId")
             if not column_id or UserListQueryBuilderV2._is_output_filter(item):
+                continue
+            if UserListQueryBuilderV2.native_span_dimension(item):
                 continue
             if (
                 column_id == "eval_score"

@@ -288,3 +288,39 @@ def test_a_raw_attribute_of_a_native_name_still_narrows_acquisition():
     assert witness is not None and witness[0] == "status"
     query, _params = builder.build_dimension_candidate_query(limit=26, **WINDOW)
     assert "mapContains(attrs_string" in query
+
+
+def _raw_tag(value="gold"):
+    return {
+        "column_id": "tag",
+        "filter_config": {
+            "col_type": "SPAN_ATTRIBUTE",
+            "filter_type": "text",
+            "filter_op": "equals",
+            "filter_value": value,
+        },
+    }
+
+
+@pytest.mark.parametrize("native_decision", [True, False])
+def test_certification_skips_native_leaves_and_the_replay_decides_them(
+    native_decision,
+):
+    # The matching-activity walk certifies a user on the raw attribute
+    # leaves alone (``_attribute_filters_match``); a native leaf has no
+    # attribute-map value, so certifying it there rejected every user and
+    # published an empty page labelled exact. The native decision is read
+    # after the replay, in ``_row_matches_filters``.
+    manager = manager_for(_raw_tag(), leaf("status", "equals", "ERROR"))
+    assert "tag" in manager.attribute_exact_text_filters
+    manager._attribute_values_by_user[UID] = {"tag": "gold"}
+    row = {"end_user_id": UID}
+    assert manager._attribute_filters_match(row) is True
+    manager._native_dimension_matches_by_user[UID] = {1: native_decision}
+    assert manager._row_matches_filters(row) is native_decision
+
+
+def test_certification_still_rejects_a_raw_leaf_that_does_not_match():
+    manager = manager_for(_raw_tag(), leaf("status", "equals", "ERROR"))
+    manager._attribute_values_by_user[UID] = {"tag": "silver"}
+    assert manager._attribute_filters_match({"end_user_id": UID}) is False
