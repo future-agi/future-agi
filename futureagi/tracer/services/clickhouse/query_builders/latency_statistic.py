@@ -36,9 +36,12 @@ def median_latency_sql(value_expr: str, cond: str | None = None) -> str:
 def latency_values_sql(value_expr: str, cond: str | None = None) -> str:
     """Carry a group's non-NULL latencies as ``Array(Int32)``.
 
-    For a later ``median_latency_from_arrays_sql``. ``latency_ms`` is
-    ``Nullable(Int32)`` in storage, so the cast loses nothing and costs 4 B
-    per contributing span (a t-digest state costs about 325 B per group).
+    For a later ``median_latency_from_arrays_sql``. The v2 ``spans.latency_ms``
+    column is ``Int32 DEFAULT 0``, so the cast is lossless and costs 4 B per
+    contributing span (a t-digest state costs about 325 B per group). A
+    missing latency is stored as 0 and counts in the median, as it did in the
+    old mean. The ``isNotNull`` guard only matters for ``Nullable`` sources,
+    such as an outer-join column or a legacy table.
     """
 
     present = f"isNotNull({value_expr})"
