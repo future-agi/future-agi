@@ -968,9 +968,7 @@ def _certify(state: _WalkState, batch: list[_Candidate]) -> int:
                 state.witness.leaf_index
             )
             if native_witness
-            else manager._matching_activity_by_user.get(uid, {}).get(
-                state.witness.key
-            )
+            else manager._matching_activity_by_user.get(uid, {}).get(state.witness.key)
         )
         member = (
             order_key is not None
