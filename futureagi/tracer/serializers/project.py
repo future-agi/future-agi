@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from tracer.models.project import Project
 from tracer.serializers.filters import (
+    OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES,
     JsonValueField,
     MetricSortParamListField,
     ObserveGraphMetricConfigField,
@@ -191,6 +192,15 @@ class ProjectGraphDataResultSerializer(serializers.Serializer):
     """
 
     system_metrics = JsonValueField()
+    system_metric_statistics = serializers.DictField(
+        child=serializers.ChoiceField(choices=OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES),
+        required=False,
+        help_text=(
+            "Statistic of each ``system_metrics`` series per bucket, e.g. "
+            '{"latency": "median", "tokens": "sum", "cost": "mean", '
+            '"traffic": "count"}. Latency is always the t-digest median (p50).'
+        ),
+    )
     evaluations = JsonValueField()
 
 

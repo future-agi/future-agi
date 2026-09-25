@@ -24,6 +24,9 @@ from tracer.services.clickhouse.graph_dispatch import (
     fetch_eval_graph_ch,
     format_system_metric_graph,
 )
+from tracer.services.clickhouse.graph_metric_statistic import (
+    stamps_metric_statistic,
+)
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.session_time_series import (
     SessionRollupTimeSeriesQueryBuilder,
@@ -669,6 +672,14 @@ def _session_scoped_filters(
     ]
 
 
+def _requested_session_system_metric(call: dict[str, Any]) -> str | None:
+    config = call.get("req_data_config") or {}
+    if str(config.get("type") or "") != "SYSTEM_METRIC":
+        return None
+    return str(config.get("id") or "session_count")
+
+
+@stamps_metric_statistic("session", _requested_session_system_metric)
 def fetch_session_graph_ch(
     *,
     analytics: QueryExecutor,

@@ -4880,7 +4880,7 @@ def test_users_graph_serves_a_cached_exact_snapshot_without_reading_clickhouse(
     )
 
     assert reads == []
-    assert response == cached
+    assert response == {**cached, "metric_statistic": "count"}
     assert graph_dispatch.graph_payload_is_publishable(response, allow_sampled=False)
     assert len(calls) == 1
     namespace, identity, options = calls[0]

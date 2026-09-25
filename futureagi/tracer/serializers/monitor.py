@@ -14,6 +14,7 @@ from tracer.models.monitor import (
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.serializers.filters import (
+    OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES,
     StrictInputSerializer,
     filter_list_field,
     filter_list_query_param_field,
@@ -567,6 +568,10 @@ _FETCH_GRAPH_METADATA_PROPERTIES = {
     "query_elapsed_ms": {"type": "number"},
     "query_rows_returned": {"type": "integer"},
 }
+_FETCH_GRAPH_METRIC_STATISTIC_SCHEMA = {
+    "type": "string",
+    "enum": list(OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES),
+}
 _FETCH_GRAPH_SERIES_SCHEMA = {
     "type": "object",
     "required": ["data", "query_complete", "query_status", "query_sampled"],
@@ -574,6 +579,8 @@ _FETCH_GRAPH_SERIES_SCHEMA = {
         "metric_name": {"type": "string"},
         "id": {"type": "string"},
         "name": {"type": "string"},
+        # System-metric series only; latency is always "median".
+        "metric_statistic": _FETCH_GRAPH_METRIC_STATISTIC_SCHEMA,
         "data": {"type": "array", "items": _FETCH_GRAPH_POINT_SCHEMA},
         **_FETCH_GRAPH_METADATA_PROPERTIES,
     },
@@ -593,6 +600,10 @@ _FETCH_ALL_SYSTEM_METRICS_SCHEMA = {
         **{
             metric: {"type": "array", "items": _FETCH_GRAPH_POINT_SCHEMA}
             for metric in ("latency", "tokens", "cost", "traffic")
+        },
+        "system_metric_statistics": {
+            "type": "object",
+            "additionalProperties": _FETCH_GRAPH_METRIC_STATISTIC_SCHEMA,
         },
         **_FETCH_GRAPH_METADATA_PROPERTIES,
     },

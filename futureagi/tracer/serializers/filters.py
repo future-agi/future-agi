@@ -1141,6 +1141,17 @@ class MetricSortParamListQueryParamField(serializers.CharField):
         return MetricSortParamListField().run_validation(sort_params)
 
 
+# The statistic of a published system-metric series. Kept equal to
+# ``graph_metric_statistic.METRIC_STATISTIC_CHOICES`` (pinned by a test).
+OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES = (
+    "count",
+    "sum",
+    "mean",
+    "median",
+    "percentage",
+)
+
+
 class ObserveGraphDataRequestSerializer(StrictInputSerializer):
     project_id = serializers.UUIDField()
     filters = BoundedFilterListField(required=False, default=list)
@@ -1150,7 +1161,14 @@ class ObserveGraphDataRequestSerializer(StrictInputSerializer):
         default="day",
     )
     property = serializers.CharField(
-        required=False, allow_blank=True, default="average"
+        required=False,
+        allow_blank=True,
+        default="average",
+        help_text=(
+            "Accepted for older clients and ignored for SYSTEM_METRIC graphs: "
+            "each system metric has one statistic, named by the response's "
+            "metric_statistic. Latency is always the median (p50)."
+        ),
     )
     req_data_config = ObserveGraphMetricConfigField()
 
@@ -1182,6 +1200,15 @@ class ObserveGraphDataPointSerializer(serializers.Serializer):
 class ObserveGraphDataResultSerializer(serializers.Serializer):
     metric_name = serializers.CharField(allow_blank=True)
     name = serializers.CharField(required=False, allow_blank=True)
+    metric_statistic = serializers.ChoiceField(
+        choices=OBSERVE_GRAPH_METRIC_STATISTIC_CHOICES,
+        required=False,
+        help_text=(
+            "Statistic of the published system-metric series per bucket. "
+            "Latency is always the t-digest median (p50) of span latency. "
+            "Absent for eval and annotation series."
+        ),
+    )
     data = ObserveGraphDataPointSerializer(
         many=True,
         help_text=(

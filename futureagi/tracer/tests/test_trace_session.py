@@ -680,7 +680,7 @@ class TestTraceSessionGraphAPI:
                 req_data_config={"id": "cost", "type": "SYSTEM_METRIC"},
             )
 
-        assert graph == exact_graph
+        assert graph == {**exact_graph, "metric_statistic": "mean"}
         namespace, identity = exact_read.call_args.args
         assert namespace == "observe-session-system-graph"
         assert identity == {
@@ -1057,7 +1057,7 @@ class TestTraceSessionGraphAPI:
                 refresh=True,
             )
 
-        assert graph == pending
+        assert graph == {**pending, "metric_statistic": "count"}
         assert exact_read.call_args.kwargs["refresh"] is True
         analytics.execute_ch_query.assert_not_called()
 

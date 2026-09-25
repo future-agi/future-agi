@@ -39,6 +39,9 @@ from tracer.services.clickhouse.exact_graph_reads import (
     read_exact_eval_graph,
     read_exact_user_system_graph,
 )
+from tracer.services.clickhouse.graph_metric_statistic import (
+    stamps_metric_statistic,
+)
 from tracer.services.clickhouse.graph_read_cost import (
     estimate_raw_graph_scan_rows,
     estimate_user_graph_scan_rows,
@@ -1835,6 +1838,7 @@ def fetch_background_raw_system_metric_graph(
     )
 
 
+@stamps_metric_statistic("trace", lambda call: call.get("metric_id"))
 def fetch_system_metric_graph_ch(
     *,
     analytics: Any,
@@ -2166,6 +2170,7 @@ def _affordable_user_graph_read(
     return _GraphReadUnaffordable(estimated_rows)
 
 
+@stamps_metric_statistic("users", lambda call: call.get("metric_id"))
 def fetch_user_system_metric_graph_ch(
     *,
     analytics: Any,

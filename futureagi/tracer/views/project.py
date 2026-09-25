@@ -59,6 +59,9 @@ from tracer.services.clickhouse.graph_dispatch import (
     fetch_user_system_metric_graph_ch,
     graph_payload_is_publishable,
 )
+from tracer.services.clickhouse.graph_metric_statistic import (
+    chart_bundle_statistics,
+)
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
 )
@@ -889,6 +892,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 )
             graph_data = {
                 "system_metrics": response_data,
+                "system_metric_statistics": chart_bundle_statistics(),
                 "evaluations": {},
             }
             return self._gm.success_response(graph_data)
