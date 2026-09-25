@@ -2500,7 +2500,9 @@ class HostedHarnessGateway:
             simulator_env,
             platform_host,
         )
-        _validate_resolved_egress_domains(allowed_domains)
+        _validate_resolved_egress_domains(
+            allowed_domains, max_domains=self.client.max_egress_domains
+        )
         ttl_seconds = max(
             300, int(getattr(settings, "ALK_HOSTED_CHAT_TTL_SECONDS", 1800))
         )
