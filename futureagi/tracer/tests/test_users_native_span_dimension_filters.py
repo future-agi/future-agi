@@ -417,12 +417,13 @@ def _builder(*filters):
 def test_a_native_witness_is_the_leafs_existence_flag(
     column_id, operation, value, col_type
 ):
-    """Every leaf whose graph condition has ``countIf(flag) > 0`` is eligible.
+    """Every native leaf is eligible.
 
-    The witness predicate is that flag's own SQL and parameters; a negation
-    without a family witnesses on its presence flag (its forbidden term is
-    decided at certification); ``is_null`` without a family has only an
-    absence term and is never a witness.
+    The witness predicate is the flag of the graph's ``countIf(flag) > 0``
+    term, its own SQL and parameters; a negation without a family witnesses
+    on its presence flag (its forbidden term is decided at certification);
+    ``is_null`` without a family has only an absence term,
+    ``countIf(present) = 0``, and witnesses on ``NOT present``.
     """
     item = leaf(column_id, operation, value, col_type=col_type)
     date = {
@@ -440,7 +441,17 @@ def test_a_native_witness_is_the_leafs_existence_flag(
     )
     if col_type is None and operation == "is_null":
         assert condition == "countIf(native_leaf_1_match_0) = 0"
-        assert witness is None
+        present = flags[0].removesuffix(" AS native_leaf_1_match_0")
+        assert witness == MatchingActivityWitness(
+            family="native",
+            key=USER_NATIVE_SPAN_DIMENSIONS[column_id],
+            kind="native",
+            sql=f"(NOT ifNull({present}, 0))",
+            params=params,
+            leaf_index=1,
+            flag_alias="native_leaf_1_match_0_absent",
+            index_pruned=False,
+        )
         return
     assert witness == MatchingActivityWitness(
         family="native",
@@ -482,7 +493,12 @@ def test_the_native_witness_is_one_leaf_whatever_the_filter_order():
     assert (witness.leaf_index, witness.key) == (1, "status")
     witness = _builder(status, model).native_matching_activity_witness()
     assert (witness.leaf_index, witness.key) == (0, "status")
-    assert _builder(date, is_null).native_matching_activity_witness() is None
+    # Alone, an is_null without a family witnesses on its absence flag.
+    witness = _builder(date, is_null).native_matching_activity_witness()
+    assert (witness.leaf_index, witness.flag_alias) == (
+        1,
+        "native_leaf_1_match_0_absent",
+    )
     # A raw attribute of a native name is a raw leaf, never a native witness.
     raw = leaf("status", "equals", "OK", col_type="SPAN_ATTRIBUTE")
     assert _builder(raw).native_matching_activity_witness() is None
@@ -545,9 +561,24 @@ def test_the_native_statement_projects_the_witness_leafs_order_key():
         [UID], [(0, status), (1, negation)]
     )
     assert "_newest" not in plain
+    # An absence witness: its flag is added to the leaf's own, and keys it.
+    absent = leaf("model", "is_null", col_type=None)
+    query, _params = _builder(absent).build_native_span_dimension_query(
+        [UID], [(0, absent)], newest=0
+    )
+    flat = " ".join(query.split())
+    assert (
+        "(NOT ifNull(((model IS NOT NULL AND model != '')), 0)) "
+        "AS native_leaf_0_match_0_absent" in flat
+    )
+    assert (
+        "maxIf(native_span_start_time, native_leaf_0_match_0_absent) "
+        "AS native_leaf_0_newest" in flat
+    )
+    assert "countIf(native_leaf_0_match_0) = 0" in flat
     with pytest.raises(ValueError):
         builder.build_native_span_dimension_query(
-            [UID], [(0, leaf("model", "is_null", col_type=None))], newest=0
+            [UID], [(0, status), (1, negation)], newest=2
         )
 
 

@@ -17,7 +17,10 @@ and whole-window totals that sit on spans the witness never sees.
 * the walk and the seeded page (the walk switched off) publish the same set
   with identical totals, for a native-only and a raw + native page;
 * an empty 30-day tail on a native witness is proven by one costed existence
-  statement.
+  statement;
+* a family-less ``is_null``, whose graph condition is one absence term, walks
+  on ``NOT present`` and publishes exactly the graph's members, never sending
+  the whole-window candidate statement.
 """
 
 from __future__ import annotations
@@ -465,8 +468,9 @@ def test_a_native_walk_publishes_the_graphs_members_once_in_order(
         [_native("model", "equals", "gpt-4o")],
         [_native("status", "equals", "error")],
         [TAG_GOLD, _native("status", "equals", "error")],
+        [_native("model", "is_null", None, col_type=None)],
     ],
-    ids=["model", "status", "tag-and-status"],
+    ids=["model", "status", "tag-and-status", "model-is_null-no-family"],
 )
 def test_the_walk_and_the_seeded_page_publish_the_same_set_and_totals(
     ch_client, survivor_of_e, items
@@ -503,3 +507,25 @@ def test_an_empty_thirty_day_native_tail_is_proven_by_one_costed_existence_state
     assert "AS raw_end_user_id" in statements[0]
     assert statements[1].lstrip().startswith("EXPLAIN ESTIMATE")
     assert "AS witnessed" in statements[2] and "LIMIT 1" in statements[2]
+
+
+def test_a_family_less_is_null_walks_on_its_absence_flag(ch_client, survivor_of_e):
+    # ``countIf(model present) = 0``: only G has no model on any latest live
+    # span in the window (g1, its gpt-4o span, lies before it; g2 stores
+    # ''). Every other user has a model on a live span: D on d2 (its d1 is
+    # tombstoned), C on both its versions. The walk discovers on
+    # ``NOT present`` and never sends the whole-window candidate statement
+    # (``_walk_page`` refuses it).
+    item = _native("model", "is_null", None, col_type=None)
+    rows, statements, manager, _pages = _walk_all(ch_client, [item])
+
+    witness = manager._walk_witness
+    assert (witness.family, witness.key) == ("native", "model")
+    assert witness.flag_alias.endswith("_absent")
+    names = [row["user_id"] for row in rows]
+    assert names == _ordered(survivor_of_e, {"G": 30})
+    assert set(names) == _graph_members(ch_client, survivor_of_e, item)
+    slices = [s for s in statements if "AS raw_end_user_id" in s]
+    assert slices and all("NOT ifNull(" in s for s in slices)
+    natives = [s for s in statements if "native_span_flags" in s]
+    assert natives and all("_absent) AS native_leaf_1_newest" in s for s in natives)

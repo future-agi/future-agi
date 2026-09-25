@@ -660,10 +660,11 @@ class UserListQueryBuilder(BaseQueryBuilder):
         witness, and the member's newest such span is its order key. The rest
         of the condition (a negation's ``countIf(forbidden) = 0``) and every
         other leaf are decided at certification over the whole window. A
-        condition with only absence terms (``is_null`` without a family:
-        ``countIf(present) = 0``) says nothing any row predicate can find, and
-        is never a witness. The terms come from the compiler as data, never
-        from parsing its SQL.
+        condition that is one absence term (``is_null`` without a family:
+        ``countIf(present) = 0``) is witnessed by ``NOT present``
+        (``native_span_dimension_witness_flag``); its order key is then the
+        member's newest latest live span. The terms come from the compiler as
+        data, never from parsing its SQL.
         """
         for index, item in enumerate(self.filters):
             if self._is_date_filter(item):
@@ -1951,12 +1952,23 @@ class UserListQueryBuilder(BaseQueryBuilder):
     def native_span_dimension_witness_flag(
         self, item: dict[str, Any], *, index: int
     ) -> tuple[str, str] | None:
-        """``(alias, predicate)`` of native leaf ``index``'s existence flag.
+        """``(alias, predicate)`` of native leaf ``index``'s witness flag.
 
         The first term of the graph's condition for the leaf that is
         ``countIf(alias) > 0`` (``compile_user_membership_leaf_terms``, same
-        namespace and parameters as ``native_span_dimension_membership``);
-        ``None`` when the condition has only absence terms.
+        namespace and parameters as ``native_span_dimension_membership``).
+
+        A condition that is one absence term, ``countIf(present) = 0`` (an
+        ``is_null`` without a family), has a witness too: a member has a
+        latest live span in the window (the graph answers no row, and no
+        match, for a user without one) and ``present`` holds for none of
+        them, so its newest latest live span satisfies ``NOT present``, and
+        that span's latest version is a physical row satisfying it at the
+        same ``start_time``. The flag is ``NOT ifNull((present), 0)``: exactly
+        the spans ``countIf(present)`` does not count, a NULL included. Its
+        alias, ``<present alias>_absent``, is not among the leaf's own flags;
+        a statement that projects it adds it (``build_native_span_dimension_query``).
+        ``None`` for any other condition with no existence term.
         """
 
         from tracer.services.clickhouse.exact_graph_reads import (
@@ -1970,6 +1982,9 @@ class UserListQueryBuilder(BaseQueryBuilder):
         for alias, predicate, comparison in terms:
             if comparison.strip() == "> 0":
                 return alias, predicate
+        if len(terms) == 1 and terms[0][2].strip() == "= 0":
+            alias, predicate, _comparison = terms[0]
+            return f"{alias}_absent", f"NOT ifNull(({predicate}), 0)"
         return None
 
     def build_native_span_dimension_query(
@@ -2006,14 +2021,17 @@ class UserListQueryBuilder(BaseQueryBuilder):
             flags, condition, leaf_params = self.native_span_dimension_membership(
                 item, index=index
             )
-            compiled.append((index, flags, condition))
-            params.update(leaf_params)
-            columns[column] = None
             if index == newest:
                 existence = self.native_span_dimension_witness_flag(item, index=index)
                 if existence is None:
                     raise ValueError(f"native leaf {index} has no existence flag")
-                newest_alias = existence[0]
+                newest_alias, flag = existence
+                if not any(f.endswith(f" AS {newest_alias}") for f in flags):
+                    # An absence witness: its flag is not one of the leaf's.
+                    flags = (*flags, f"({flag}) AS {newest_alias}")
+            compiled.append((index, flags, condition))
+            params.update(leaf_params)
+            columns[column] = None
         if newest is not None and newest_alias is None:
             raise ValueError(f"native leaf {newest} is not among the leaves")
         if not end_user_ids or not compiled:

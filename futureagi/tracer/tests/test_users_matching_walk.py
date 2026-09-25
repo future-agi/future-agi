@@ -801,7 +801,17 @@ def test_a_native_witness_certifies_its_negation_over_the_whole_window():
             ],
             ("native", "status", 3),
         ),
-        ([_native_leaf("model", "is_null", None)], None),
+        # An is_null without a family, alone: its absence flag.
+        ([_native_leaf("model", "is_null", None)], ("native", "model", 1)),
+        # Nothing to walk on: a raw leaf with no walkable witness alone.
+        (
+            [
+                _attribute_filter(
+                    filter_type="text", filter_op="contains", filter_value="go"
+                )
+            ],
+            None,
+        ),
     ],
     ids=[
         "raw-wins",
@@ -809,6 +819,7 @@ def test_a_native_witness_certifies_its_negation_over_the_whole_window():
         "raw-unwalkable",
         "most-selective-native",
         "absence-only",
+        "no-witness",
     ],
 )
 def test_the_walk_witness_precedence(filters, expected):
@@ -1187,6 +1198,34 @@ def test_an_empty_page_keeps_deciding_until_its_count_has_grown_to_the_ceiling()
         plain_names, plain_sizes = _hops(world, filters, max_hops=200)
     assert plain_names == ["user-2400"]
     assert 3 * len(sizes) <= len(plain_sizes), (sizes, plain_sizes)
+
+
+def test_a_family_less_is_null_page_walks_on_its_absence_flag_and_never_seeds():
+    # ``model is_null`` without a family is one absence term,
+    # ``countIf(present) = 0``. It sent the whole-window candidate statement
+    # with no server cap on every refill; it now walks on ``NOT present``
+    # (``raw`` holds the spans with no model), keyed by each member's newest
+    # latest live span, and the certification decides the absence over the
+    # whole window: a user with a model on any live span is rejected.
+    world = World()
+    world.user(
+        1, key=minutes_before_end(10), raw=(minutes_before_end(10),), native=True
+    )
+    world.user(2, key=minutes_before_end(4), raw=(minutes_before_end(4),), native=True)
+    has_a_model = world.user(
+        3, key=minutes_before_end(2), raw=(minutes_before_end(2),), native=False
+    )
+    filters = [*_date_only(), _native_leaf("model", "is_null", None)]
+
+    read, engine = _page(world, page_size=25, filters=filters)
+
+    assert _names(read) == ["user-2", "user-1"]
+    assert read.payload["query_provenance"] == "matching_activity_walk"
+    slices = [call for call in engine.calls if kind_of(call) == "slice"]
+    assert slices and all("NOT ifNull(" in call for call in slices)
+    natives = [call for call in engine.calls if kind_of(call) == "native"]
+    assert all("AS native_leaf_1_newest" in call for call in natives)
+    assert all(has_a_model not in ids for ids in engine.replayed)
 
 
 def test_sort_params_never_walk_a_native_leaf():

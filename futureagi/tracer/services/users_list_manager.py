@@ -219,6 +219,21 @@ def _statement_timeout(
     return {"timeout_ms": timeout_ms}
 
 
+def _candidate_statement_timeout(deadline: ReadDeadline | None) -> dict[str, Any]:
+    """The whole-window candidate statement's timeout, and its server cap.
+
+    A refill runs under the page wall: the server stops the statement at
+    ``USER_LIST_QUERY_TIMEOUT_MS`` or what is left of that wall, whichever is
+    less, and the page is published as it stands, resuming from its last
+    proven checkpoint (``_is_page_wall_stop``). The first batch has no
+    deadline and runs as before.
+    """
+    if deadline is None:
+        return {"timeout_ms": None}
+    timeout_ms = deadline.remaining_ms(USER_LIST_QUERY_TIMEOUT_MS)
+    return {"timeout_ms": timeout_ms, "server_execution_cap_ms": timeout_ms}
+
+
 def _log_user_read_failure(event: str, exc: Exception, **context: object) -> None:
     """Log operational reads compactly and programming defects with a stack."""
 
@@ -1491,9 +1506,7 @@ class UsersListManager:
         result = analytics.execute_ch_query(
             query,
             params,
-            timeout_ms=deadline.remaining_ms(USER_LIST_QUERY_TIMEOUT_MS)
-            if deadline
-            else None,
+            **_candidate_statement_timeout(deadline),
             settings=_page_read_settings(max_result_rows=limit),
         )
         raw_rows = list(result.data or [])
@@ -1506,9 +1519,7 @@ class UsersListManager:
         remap_result = analytics.execute_ch_query(
             remap_query,
             remap_params,
-            timeout_ms=deadline.remaining_ms(USER_LIST_QUERY_TIMEOUT_MS)
-            if deadline
-            else None,
+            **_candidate_statement_timeout(deadline),
             settings=_page_read_settings(max_result_rows=_USER_LIST_ATTR_RESULT_ROWS),
         )
         aliases_by_survivor: dict[str, set[str]] = {}
@@ -2200,8 +2211,10 @@ class UsersListManager:
 
         # Only a seeded page reaches this point: the matching-activity walk
         # above owns the filtered page it serves and starts its own wall. Here
-        # the refill walk after the first batch runs at the page wall; the
-        # first batch runs unbounded as before.
+        # the refill walk after the first batch runs at the page wall, and its
+        # candidate statements ask the server to stop there
+        # (``_candidate_statement_timeout``); the first batch runs unbounded
+        # as before.
         page_wall_deadline = (
             ReadDeadline.start(USER_LIST_PAGE_WALL_MS) if page_wall else None
         )

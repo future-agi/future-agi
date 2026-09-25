@@ -13,7 +13,10 @@ once by ``UsersListManager.matching_activity_walk_applies``):
   on its key, discovered through the deployed key and value blooms;
 * native: otherwise, a native span-dimension leaf whose users-graph
   condition has an existence term ``countIf(flag) > 0``, discovered on that
-  flag. Every member has a latest live span satisfying it, and that span's
+  flag, or is one absence term ``countIf(present) = 0`` (``is_null`` without
+  a family), discovered on ``NOT present``
+  (``native_span_dimension_witness_flag``). Every member has a latest live
+  span satisfying it, and that span's
   latest version is a physical row satisfying it at the same ``start_time``,
   so the raw-row argument below holds word for word. No skip index serves the
   flag (``idx_status`` alone does, and not by design), so an empty native
