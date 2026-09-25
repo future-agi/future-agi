@@ -65,6 +65,12 @@ describe("ContinueRow", () => {
     expect(screen.getByRole("button", { name: /Build environment/ })).toBeDisabled();
   });
 
+  it("disabled explains the hint in a tooltip on the button", async () => {
+    render(<ContinueRow disabled hint="Add a repository" onClick={vi.fn()} />);
+    fireEvent.mouseOver(screen.getByTestId("continue-row-action"));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Add a repository");
+  });
+
   it("enabled hides the hint and fires on click", () => {
     const onClick = vi.fn();
     render(<ContinueRow hint="Add a repository" onClick={onClick} />);
