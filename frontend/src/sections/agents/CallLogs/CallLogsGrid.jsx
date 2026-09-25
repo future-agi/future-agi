@@ -171,7 +171,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     useState(cursorQuerySignature);
   const [callLogsColumnDefs, setCallLogsColumnDefs] = useState(null);
   const previousConfigRef = useRef({
-    configLength: undefined,
+    configIdentity: undefined,
     showMetricsIds: undefined,
     isLoading: undefined,
   });
@@ -484,15 +484,15 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
   }, [hasRetainedRefreshRows, responseRows, showLoadingSkeletons]);
 
   // Pass full column list to parent (base + eval/annotation) for DisplayPanel.
-  // Use a ref to avoid re-firing when callLogsColumnDefs reference changes
-  // but content is the same (prevents render loops).
-  const lastReportedDefsLenRef = useRef(null);
+  // Hidden grids mount before the project source is known. Do not consume
+  // their initial config, and do not use column count as a content identity.
+  const lastReportedConfigRef = useRef(null);
   useEffect(() => {
-    if (
-      callLogsColumnDefs?.length > 0 &&
-      callLogsColumnDefs.length !== lastReportedDefsLenRef.current
-    ) {
-      lastReportedDefsLenRef.current = callLogsColumnDefs.length;
+    if (!enabled) {
+      lastReportedConfigRef.current = null;
+      return;
+    }
+    if (callLogsColumnDefs?.length > 0) {
       const colConfig = callLogsColumnDefs
         .filter((c) => c.field)
         .map((c) => ({
@@ -504,9 +504,13 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
             ? "Evaluation Metrics"
             : "Call Columns",
         }));
-      onConfigLoaded(colConfig);
+      const identity = JSON.stringify([module, id, colConfig]);
+      if (identity !== lastReportedConfigRef.current) {
+        lastReportedConfigRef.current = identity;
+        onConfigLoaded(colConfig);
+      }
     }
-  }, [callLogsColumnDefs, onConfigLoaded]);
+  }, [callLogsColumnDefs, enabled, id, module, onConfigLoaded]);
 
   // Numbered agent-definition pages are safe to prefetch. Project pages use
   // a mutable, forward-only signed cursor chain; speculative reads can be
@@ -543,14 +547,14 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     responseRows.length,
   ]);
 
-  const configLength = data?.config?.length;
+  const configIdentity = JSON.stringify([module, id, data?.config]);
   if (
-    previousConfigRef.current.configLength !== configLength ||
+    previousConfigRef.current.configIdentity !== configIdentity ||
     previousConfigRef.current.showMetricsIds !== showMetricsIds ||
     previousConfigRef.current.isLoading !== showLoadingSkeletons
   ) {
     previousConfigRef.current = {
-      configLength,
+      configIdentity,
       showMetricsIds,
       isLoading: showLoadingSkeletons,
     };

@@ -5,17 +5,19 @@ Replaces ``get_all_system_metrics()`` and ``get_system_metric_data()`` from
 ``tracer.utils.graphs_optimized`` with ClickHouse-native queries.
 
 Strategy:
-- Unfiltered dashboard queries read from the ``spans_hourly_rollup``
-  pre-aggregated AggregatingMergeTree (v2 schema 010) using ``countMerge`` /
-  ``sumMerge`` / ``quantilesTDigestMerge`` combinators. The rollup is fed
-  directly from the v2 typed-JSON ``spans`` table via an incremental MV.
-- When attribute filters are present, falls back to scanning the v2
-  ``spans`` table directly.
+- Unfiltered queries read ``spans``'s own hourly aggregate states through
+  ``hourly_aggregate_state_source`` and combine them with ``countMerge`` /
+  ``sumMerge`` / ``quantilesTDigestMerge``. The states live in projections
+  maintained inside ``spans``, per physical part: unmerged row versions and
+  retained ``is_deleted`` tombstones are counted, so the result is an
+  approximation of the latest live rows and is published as inexact.
+- When attribute filters are present, scans the v2 ``spans`` table directly.
 
-CH25 close-out (2026-05-28): cut over from the legacy ``span_metrics_hourly``
-(fed by ``spans_mv`` ← ``tracer_observation_span`` CDC mirror) to
-``spans_hourly_rollup``. Removes the last dashboard read-path dependency on
-the legacy CDC-based aggregate.
+Both branches therefore read one physical table. The unfiltered branch used to
+read the separate ``spans_hourly_rollup`` materialized view, which counted
+insert deliveries the ``ReplacingMergeTree`` base had already collapsed and so
+answered "All" at a multiple of the sum of its own filtered parts; see
+``hourly_aggregate_states`` for the mechanism and the measurements.
 """
 
 import re
@@ -23,6 +25,10 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.query_builders.hourly_aggregate_states import (
+    ERROR_RATE_MERGE_EXPRESSION,
+    hourly_aggregate_state_source,
+)
 
 _SAFE_CLUSTER_NAME_RE = re.compile(r"\A[A-Za-z0-9_-]+\Z")
 
@@ -50,15 +56,8 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             reserved for future per-model breakdowns).
     """
 
-    # Pre-aggregated table (AggregatingMergeTree)
-    # CH25 close-out (2026-05-28): switched from the legacy
-    # `span_metrics_hourly` (fed by `spans_mv` ← `tracer_observation_span` CDC
-    # mirror) to the v2 `spans_hourly_rollup` (fed directly from the v2 typed-
-    # JSON `spans` table — no CDC). The v2 rollup uses AggregateFunction
-    # columns + `*Merge()` combinators (real AggregatingMergeTree pattern)
-    # whereas the legacy table stored already-summed Int64s.
-    AGG_TABLE = "spans_hourly_rollup"
-    # Denormalized raw table (for filtered queries)
+    # Denormalized raw table. Both the filtered scan and the unfiltered
+    # aggregate-state read target it; only the shape of the aggregates differs.
     RAW_TABLE = "spans"
 
     def __init__(
@@ -331,20 +330,23 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
     # ------------------------------------------------------------------
 
     def _build_agg_query(self) -> tuple[str, dict[str, Any]]:
-        """Build a query against the pre-aggregated ``spans_hourly_rollup`` table.
+        """Build the unfiltered query from ``spans``'s own hourly states.
 
-        Uses ``*Merge()`` aggregate combinators (``countMerge``,
-        ``sumMerge``, ``quantilesTDigestMerge``) to reconstruct metrics
-        from the ``AggregatingMergeTree`` state columns. See
-        ``tracer/services/clickhouse/v2/schema/010_hourly_downsample.sql``
-        for the rollup table definition.
+        The inner source emits aggregate states at ``(project_id, hour,
+        status)`` grain — the grain ``spans``'s aggregate projections are
+        maintained at — and this level merges them into the requested bucket.
+        Those states are rebuilt with the parts they belong to, so replayed
+        deliveries stop counting once merged, which the separate hourly rollup
+        this replaced never did. They are still per part, not latest-live:
+        see ``hourly_aggregate_states``.
         """
         bucket_fn = self.time_bucket_expr(self.interval)
 
         # quantilesTDigestMerge returns a Tuple; index [1] is the 0.5 (median).
-        # The v2 rollup stores 3 quantiles (0.5, 0.95, 0.99) vs the legacy 4
+        # The stored states hold 3 quantiles (0.5, 0.95, 0.99) vs the legacy 4
         # (0.5, 0.9, 0.95, 0.99) — we still surface the median as avg_latency
-        # to preserve the dashboard contract.
+        # to preserve the dashboard contract. This is the same statistic the
+        # retired rollup rendered, so the line does not change meaning here.
         query = f"""
         SELECT
             {bucket_fn}(hour) AS time_bucket,
@@ -356,12 +358,11 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
             countMerge(n) AS traffic_count,
             sumMerge(prompt_tokens_sum) AS prompt_tokens,
             sumMerge(completion_tokens_sum) AS completion_tokens,
-            countIfMerge(error_count) * 100.0 / greatest(countMerge(n), 1)
-                AS error_rate
-        FROM {self.AGG_TABLE}
-        WHERE project_id = %(project_id)s
-          AND hour >= %(start_date)s
-          AND hour < %(end_date)s
+            {ERROR_RATE_MERGE_EXPRESSION} AS error_rate
+        FROM {hourly_aggregate_state_source(
+            self.project_filter_sql(),
+            table=self.RAW_TABLE,
+        )}
         GROUP BY time_bucket
         ORDER BY time_bucket
         """
@@ -597,8 +598,13 @@ class TimeSeriesQueryBuilder(BaseQueryBuilder):
                     f"duplicate raw trace candidate params: {duplicate_params}"
                 )
             self.params.update(self.raw_trace_candidate_params)
+            # GLOBAL IN broadcasts one materialised set to every shard and is
+            # required only when the source is a cluster table. On a single
+            # node it forces that same temporary set where a plain IN lets the
+            # reader use the subquery as an index condition instead.
+            set_operator = "GLOBAL IN" if self.raw_replica_shard_cluster else "IN"
             candidate_trace_fragment = f"""
-              AND trace_id GLOBAL IN (
+              AND trace_id {set_operator} (
                   SELECT trace_id
                   FROM {candidate_source}
                   PREWHERE project_id = toUUID(%(project_id)s)

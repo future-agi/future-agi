@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "fb937435e59eb4a95e2dc37d848ad84a254a34a3d20b7645383e36735948487e",
+  "source_contract_sha256": "e8ed1095099a02ac2e280f648f4bcd6003df72f58eb454a515b1687d989cf1cf",
   "tool_count": 92,
   "tools": [
     {
@@ -9793,7 +9793,7 @@
           "cursor": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 16384
+            "maxLength": 262144
           }
         },
         "additionalProperties": false
@@ -9844,7 +9844,7 @@
           "property_id": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 1024,
+            "maxLength": 4113,
             "description": "Stable namespaced property identity returned by the metrics catalog. Legacy metric_name/metric_type remain accepted during migration."
           },
           "metric_name": {
@@ -9899,7 +9899,7 @@
           "cursor": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 16384
+            "maxLength": 262144
           },
           "attribute_type": {
             "type": "string",

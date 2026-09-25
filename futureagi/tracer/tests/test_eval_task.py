@@ -612,6 +612,38 @@ class TestEvalTaskUnpauseAPI:
         eval_task.refresh_from_db()
         assert eval_task.status == EvalTaskStatus.PENDING
 
+    def test_unpause_rejects_other_workspace_task(
+        self, auth_client, project, user, custom_eval_config
+    ):
+        """The endpoint's scope, now shared with the AI tool through
+        ``tracer.selectors.eval_tasks.scope``, still refuses a same-org task
+        in another workspace."""
+        other_task = make_other_workspace_eval_task(project, user, custom_eval_config)
+        EvalTask.objects.filter(id=other_task.id).update(status=EvalTaskStatus.PAUSED)
+
+        response = auth_client.post(
+            f"/tracer/eval-task/unpause_eval_task/?eval_task_id={other_task.id}",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        other_task.refresh_from_db()
+        assert other_task.status == EvalTaskStatus.PAUSED
+
+    def test_unpause_rejects_task_in_deleted_project(
+        self, auth_client, project, eval_task
+    ):
+        eval_task.status = EvalTaskStatus.PAUSED
+        eval_task.save()
+        Project.all_objects.filter(id=project.id).update(deleted=True)
+
+        response = auth_client.post(
+            f"/tracer/eval-task/unpause_eval_task/?eval_task_id={eval_task.id}",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        eval_task.refresh_from_db()
+        assert eval_task.status == EvalTaskStatus.PAUSED
+
 
 @pytest.mark.integration
 @pytest.mark.api

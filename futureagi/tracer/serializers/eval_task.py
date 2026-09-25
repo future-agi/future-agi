@@ -359,23 +359,15 @@ class EvalTaskSerializer(serializers.ModelSerializer):
     def get_progress(self, obj):
         if obj.run_type != RunType.HISTORICAL:
             return None
-        from tracer.selectors.eval_tasks.progress import count_by_status
-
-        counts = count_by_status(obj)
-        done = (
-            counts.get("completed", 0)
-            + counts.get("errored", 0)
-            + counts.get("skipped", 0)
+        from tracer.selectors.eval_tasks.progress import (
+            count_by_status,
+            progress_block,
         )
-        remaining = counts.get("pending", 0) + counts.get("running", 0)
-        total = done + remaining
-        percent = round(100.0 * done / total, 2) if total else None
-        return {
-            "dispatched": total,
-            "completed": done,
-            "missing": remaining,
-            "percent": percent,
-        }
+
+        # The arithmetic lives in the selector because the root list route
+        # answers the same question from its own batched query; see
+        # ``progress_block`` for why skipped is counted apart.
+        return progress_block(count_by_status(obj))
 
     def validate_evals(self, value):
         if not value:

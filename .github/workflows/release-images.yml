@@ -281,7 +281,7 @@ jobs:
       # drifts from the values files, the sanity check below fails the job
       # rather than silently bumping a subset.
       COMMON_PATHS: >-
-        .backend.image.tag .core_backend_beat.image.tag .core_backend_worker.image.tag
+        .core_backend_beat.image.tag .core_backend_worker.image.tag
         .temporal_worker_default.image.tag .temporal_worker_tasks_s.image.tag
         .temporal_worker_tasks_l.image.tag .temporal_worker_tasks_xl.image.tag
         .temporal_worker_agent_compass.image.tag .temporal_worker_simulation_runner.image.tag
@@ -305,9 +305,74 @@ jobs:
           ref: main
       - name: Install yq
         run: sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64 && sudo chmod +x /usr/local/bin/yq
-      - name: Bump platform tags
+      - name: Checkout release workflow for offline regression
+        uses: actions/checkout@v4
+        with:
+          path: .release-source
+          sparse-checkout: .github/workflows/release-images.yml
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify release scripts against deployment charts
+        env:
+          RELEASE_WORKFLOW: ${{ github.workspace }}/.release-source/.github/workflows/release-images.yml
         run: |
-          set -eu
+          python3 -m pip install PyYAML==6.0.3
+          python3 tests/test-release-digest-bump.py
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Resolve EE backend and collector release digests
+        id: catalog-images
+        timeout-minutes: 25
+        shell: bash
+        run: |
+          set -euo pipefail
+          # EE dispatch is asynchronous. Wait for the exact stable release tag;
+          # retries must never fall back to latest, the OSS backend, or old pins.
+          for component in backend collector; do
+            case "$component" in
+              backend) repository=futureagi/future-agi-ee ;;
+              collector) repository=futureagi/fi-collector ;;
+            esac
+            digest=""
+            for attempt in $(seq 1 40); do
+              if digest=$(timeout 30s docker buildx imagetools inspect "$repository:$VERSION" \
+                --format '{{json .Manifest}}' | jq -er '.digest'); then
+                if [[ ! "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+                  echo "::error::Invalid release digest for $repository:$VERSION"
+                  exit 1
+                fi
+                break
+              fi
+              if [ "$attempt" -eq 40 ]; then
+                echo "::error::Release image unavailable: $repository:$VERSION; retry after the EE/image release succeeds"
+                exit 1
+              fi
+              sleep 15
+            done
+            echo "${component}_digest=$digest" >> "$GITHUB_OUTPUT"
+          done
+      - name: Bump platform tags and digests
+        env:
+          BACKEND_DIGEST: ${{ steps.catalog-images.outputs.backend_digest }}
+          COLLECTOR_DIGEST: ${{ steps.catalog-images.outputs.collector_digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for digest in "$BACKEND_DIGEST" "$COLLECTOR_DIGEST" "$WORKER_DIGEST"; do
+            [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]] || {
+              echo "::error::All release digests must be valid before updating values"
+              exit 1
+            }
+          done
           bump() { # file, paths...
             f="$1"; shift
             for p in "$@"; do
@@ -323,11 +388,25 @@ jobs:
           # Only the active GCP regions are bumped by the pipeline; us/aws is the
           # decommissioned AWS deployment and is intentionally left untouched.
           # shellcheck disable=SC2086
-          bump eu/gcp/deployment/values.yaml  $COMMON_PATHS .fiCollector.image.tag
+          bump eu/gcp/deployment/values.yaml  $COMMON_PATHS
           # shellcheck disable=SC2086
-          bump us/gcp/deployment/values.yaml  $COMMON_PATHS .fiCollector.image.tag
+          bump us/gcp/deployment/values.yaml  $COMMON_PATHS
           for region in eu us; do
             file="$region/gcp/deployment/values.yaml"
+            # Keep regional mirror repositories. The pinned bytes come from
+            # their canonical Docker Hub EE/collector repositories above.
+            for component in backend fiCollector; do
+              test "$(yq ".$component.image.digest" "$file")" != 'null'
+            done
+            case "$(yq '.backend.image.repository' "$file")" in
+              futureagi/future-agi-ee|us-east5-docker.pkg.dev/futureagiprimary/dockerhub-mirror/futureagi/future-agi-ee) ;;
+              *) echo "::error::Unexpected backend repository in $file"; exit 1 ;;
+            esac
+            case "$(yq '.fiCollector.image.repository' "$file")" in
+              futureagi/fi-collector|us-east5-docker.pkg.dev/futureagiprimary/dockerhub-mirror/futureagi/fi-collector) ;;
+              *) echo "::error::Unexpected collector repository in $file"; exit 1 ;;
+            esac
+            yq -i '.backend.image.digest = strenv(BACKEND_DIGEST) | .fiCollector.image.digest = strenv(COLLECTOR_DIGEST)' "$file"
             test "$(yq '.errorFeed.image.repository' "$file")" = 'futureagi/omega-error-feed-worker'
             test "$(yq '.errorFeed.image.digest' "$file")" != 'null'
             yq -i '.errorFeed.image.digest = strenv(WORKER_DIGEST)' "$file"
@@ -342,7 +421,7 @@ jobs:
           git config user.email "release-bot@futureagi.com"
           # Idempotent: a re-run reuses the existing branch instead of failing.
           git switch -c "$branch" 2>/dev/null || git switch "$branch"
-          git add -A
+          git add eu/gcp/deployment/values.yaml us/gcp/deployment/values.yaml
           git diff --cached --quiet && { echo "values already at ${VERSION}; nothing to do"; exit 0; }
           git commit -m "chore(release): bump platform images to ${VERSION}"
           # Plain --force: the bump branch is bot-owned and regenerated from main

@@ -186,14 +186,25 @@ def test_user_detail_scalar_filters_keep_complete_user_session_population(
     assert "parent_span_id" not in scalar_seed
     assert "LIMIT" not in scalar_seed
     assert "attrs_string" not in scalar_seed
-    membership = sql.split("matching_scalar_sessions AS (", 1)[1].split(
-        "sessions AS (", 1
-    )[0]
-    assert membership.count("countIf(") == attribute_count
+    # The user's sessions are acquired by ``trace_session_id`` exactly once:
+    # their roots are a subset of the spans that scan replays, so ``sessions``
+    # stands on that replay and no second root scan is emitted.
+    assert "candidate_root_identities AS (" not in sql
+    assert "matching_scalar_sessions AS (" not in sql
+    assert sql.count("SELECT session_id FROM matching_user_root_ids") == 1
+    membership = sql.split("sessions AS (", 1)[1].split("FROM sessions", 1)[0]
+    assert "FROM resolved_candidate_scalar_spans" in membership
+    assert "minIf(latest_start_time, is_root) AS session_start" in membership
+    assert "countIf(is_root) > 0" in membership
+    assert "session_id IN (SELECT session_id FROM matching_user_sessions)" in membership
+    assert membership.count("countIf(") == attribute_count + 1
     assert "GROUP BY project_id, session_id" in membership
     assert "SAMPLE" not in sql
     assert "argMax(is_deleted, _version) AS latest_is_deleted" in sql
-    assert sql.index("matching_scalar_sessions AS (") < sql.index("FROM sessions")
+    assert sql.index("matching_user_root_ids AS (") < sql.index(
+        "SELECT session_id FROM matching_user_root_ids"
+    )
+    assert sql.index("sessions AS (") < sql.index("FROM sessions")
 
 
 @pytest.mark.parametrize(
@@ -211,7 +222,8 @@ def test_user_scalar_page_uses_existing_typed_entity_predicates(attribute):
     builder.filters.append(attribute)
     assert builder.supports_candidate_cursor_page()
     sql, _ = builder.build_candidate_cursor_page_query()
-    assert "matching_scalar_sessions AS" in sql
+    assert "matching_scalar_sessions AS" not in sql
+    assert "countIf(is_root) > 0" in sql
     assert "SELECT session_id FROM matching_user_root_ids" in sql
 
 
