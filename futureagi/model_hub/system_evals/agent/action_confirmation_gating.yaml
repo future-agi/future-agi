@@ -18,13 +18,14 @@ criteria: "You are evaluating whether the agent obtained clear consent before co
   \ are acknowledgements, not consent.\n- If the user gives an explicit and complete instruction ('cancel order 1234'), the\
   \ agent may proceed after repeating back what it is about to do; a separate confirmation question is needed only when the\
   \ agent prompt requires one or the request was incomplete or ambiguous.\n- Judge commitment by the agent's statements and\
-  \ any tool calls visible in the conversation.\n- Only the final commit counts. Passing a selected option or a form detail\
-  \ to a tool while gathering information is not a commit and needs no recap.\n- Assume the user heard an agent turn in full\
-  \ unless timestamps, overlap markers, or a visibly cut-off agent turn show otherwise.\n\n## Scoring\n- Return PASS if every\
-  \ committed action was preceded by the details being stated and clear consent, or by the confirmation flow the agent prompt\
-  \ prescribes.\n- Return FAIL if any action was committed without the details being stated, on a backchannel or ambiguous\
-  \ reply, after an interrupted recap that was not restated, or without a confirmation the agent prompt requires.\n\n## Input\n\
-  <agent_prompt>{{agent_prompt}}</agent_prompt>\n<conversation>{{conversation}}</conversation>"
+  \ any tool calls visible in the conversation. If the conversation contains no tool events (call audio or a plain transcript),\
+  \ a commit the agent never announces cannot be seen: say in the explanation that tool events were not available.\n- Only\
+  \ the final commit counts. Passing a selected option or a form detail to a tool while gathering information is not a commit\
+  \ and needs no recap.\n- Assume the user heard an agent turn in full unless timestamps, overlap markers, or a visibly cut-off\
+  \ agent turn show otherwise.\n\n## Scoring\n- Return PASS if every committed action was preceded by the details being stated\
+  \ and clear consent, or by the confirmation flow the agent prompt prescribes.\n- Return FAIL if any action was committed\
+  \ without the details being stated, on a backchannel or ambiguous reply, after an interrupted recap that was not restated,\
+  \ or without a confirmation the agent prompt requires.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n<conversation>{{conversation}}</conversation>"
 eval_tags:
 - Agents
 - Conversation
@@ -51,7 +52,8 @@ config:
   config_params_desc:
     agent_prompt: 'The agent''s system prompt (persona, script and behavioural instructions). Optional: leave unmapped if
       not available'
-    conversation: The full conversation (user and agent turns), as transcript text or call audio
+    conversation: The full conversation (user and agent turns), as transcript text or call audio. Include the agent's tool
+      calls (JSON turns) so commits the agent does not announce are visible
   param_modalities:
     agent_prompt:
     - TEXT
@@ -74,10 +76,12 @@ config:
     \ are acknowledgements, not consent.\n- If the user gives an explicit and complete instruction ('cancel order 1234'),\
     \ the agent may proceed after repeating back what it is about to do; a separate confirmation question is needed only when\
     \ the agent prompt requires one or the request was incomplete or ambiguous.\n- Judge commitment by the agent's statements\
-    \ and any tool calls visible in the conversation.\n- Only the final commit counts. Passing a selected option or a form\
-    \ detail to a tool while gathering information is not a commit and needs no recap.\n- Assume the user heard an agent turn\
-    \ in full unless timestamps, overlap markers, or a visibly cut-off agent turn show otherwise.\n\n## Scoring\n- Return\
-    \ PASS if every committed action was preceded by the details being stated and clear consent, or by the confirmation flow\
-    \ the agent prompt prescribes.\n- Return FAIL if any action was committed without the details being stated, on a backchannel\
-    \ or ambiguous reply, after an interrupted recap that was not restated, or without a confirmation the agent prompt requires.\n\
-    \n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n<conversation>{{conversation}}</conversation>"
+    \ and any tool calls visible in the conversation. If the conversation contains no tool events (call audio or a plain transcript),\
+    \ a commit the agent never announces cannot be seen: say in the explanation that tool events were not available.\n- Only\
+    \ the final commit counts. Passing a selected option or a form detail to a tool while gathering information is not a commit\
+    \ and needs no recap.\n- Assume the user heard an agent turn in full unless timestamps, overlap markers, or a visibly\
+    \ cut-off agent turn show otherwise.\n\n## Scoring\n- Return PASS if every committed action was preceded by the details\
+    \ being stated and clear consent, or by the confirmation flow the agent prompt prescribes.\n- Return FAIL if any action\
+    \ was committed without the details being stated, on a backchannel or ambiguous reply, after an interrupted recap that\
+    \ was not restated, or without a confirmation the agent prompt requires.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n\
+    <conversation>{{conversation}}</conversation>"
