@@ -2,7 +2,7 @@ eval_id: 218
 name: conversational_naturalness
 description: 'Checks that the agent''s language and delivery sound natural, like an experienced human agent in the same role:
   conversational phrasing, varied acknowledgments, and natural cadence. Lenient on isolated moments; fails only clear or pervasive
-  patterns. Turn-taking and interruptions are judged by customer_agent_interruption_handling, not here.'
+  patterns.'
 criteria: "You are evaluating whether the agent's language and delivery sound natural, like an experienced human agent in\
   \ the same role speaking to the same audience. Infer the role and audience from the conversation itself.\n\n## Criteria\n\
   1. Word choice and phrasing: The agent uses direct, conversational language suited to the audience and domain, rather than\
@@ -14,17 +14,17 @@ criteria: "You are evaluating whether the agent's language and delivery sound na
   \ flat, monotone, or mechanical cadence that persists. Isolated moments, such as one slightly fast or flat line or a quick\
   \ opening, do not fail.\n\n## Anti-bias Rules\n- A short conversation CAN pass if it is natural throughout; a long one with\
   \ one robotic moment should still pass.\n- When most of the conversation sounds natural, default to PASS.\n- Evaluate the\
-  \ agent's turns only.\n- Turn-taking and interruptions are out of scope; customer_agent_interruption_handling judges them.\n\
-  - Acoustic quality (TTS clarity, audio fidelity) is NOT what this eval measures.\n- Casual word choice alone is not enough\
-  \ to pass, but only a pervasively robotic cadence fails; friendly wording does not rescue robotic delivery that runs through\
-  \ the whole call.\n- Do NOT judge the outcome: a request for a human, an unresolved issue, or an escalation is not a naturalness\
-  \ signal.\n- A terse or formal register can be natural for its domain; judge whether it sounds like a person speaking in\
-  \ that register, not whether it is casual.\n- Regional accents, non-native phrasing, and transcription typos are not evidence\
-  \ of unnatural speech.\n\n## Scoring\n- Return PASS if the agent mostly sounds like an experienced human agent in its role:\
-  \ direct, efficient, with varied acknowledgments, and natural cadence overall. Isolated robotic or rushed moments do not\
-  \ fail.\n- Return FAIL if the agent leans on stilted chatbot formulas ('Allow me to...', 'Thank you for that information')\
-  \ or robotic transitions, repeats the same affirmation ('Great!', 'Perfect!') nearly every turn, or delivers in a pervasively\
-  \ robotic cadence across the call even when the word choice is casual.\n\n## Input\n<conversation>{{conversation}}</conversation>"
+  \ agent's turns only.\n- Turn-taking and interruptions are out of scope for this eval.\n- Acoustic quality (TTS clarity,\
+  \ audio fidelity) is NOT what this eval measures.\n- Casual word choice alone is not enough to pass, but only a pervasively\
+  \ robotic cadence fails; friendly wording does not rescue robotic delivery that runs through the whole call.\n- Do NOT judge\
+  \ the outcome: a request for a human, an unresolved issue, or an escalation is not a naturalness signal.\n- A terse or formal\
+  \ register can be natural for its domain; judge whether it sounds like a person speaking in that register, not whether it\
+  \ is casual.\n- Regional accents, non-native phrasing, and transcription typos are not evidence of unnatural speech.\n\n\
+  ## Scoring\n- Return PASS if the agent mostly sounds like an experienced human agent in its role: direct, efficient, with\
+  \ varied acknowledgments, and natural cadence overall. Isolated robotic or rushed moments do not fail.\n- Return FAIL if\
+  \ the agent leans on stilted chatbot formulas ('Allow me to...', 'Thank you for that information') or robotic transitions,\
+  \ repeats the same affirmation ('Great!', 'Perfect!') nearly every turn, or delivers in a pervasively robotic cadence across\
+  \ the call even when the word choice is casual.\n\n## Input\n<conversation>{{conversation}}</conversation>"
 eval_tags:
 - Agents
 - Conversation
@@ -63,15 +63,14 @@ config:
     \ robotic throughout: a flat, monotone, or mechanical cadence that persists. Isolated moments, such as one slightly fast\
     \ or flat line or a quick opening, do not fail.\n\n## Anti-bias Rules\n- A short conversation CAN pass if it is natural\
     \ throughout; a long one with one robotic moment should still pass.\n- When most of the conversation sounds natural, default\
-    \ to PASS.\n- Evaluate the agent's turns only.\n- Turn-taking and interruptions are out of scope; customer_agent_interruption_handling\
-    \ judges them.\n- Acoustic quality (TTS clarity, audio fidelity) is NOT what this eval measures.\n- Casual word choice\
-    \ alone is not enough to pass, but only a pervasively robotic cadence fails; friendly wording does not rescue robotic\
-    \ delivery that runs through the whole call.\n- Do NOT judge the outcome: a request for a human, an unresolved issue,\
-    \ or an escalation is not a naturalness signal.\n- A terse or formal register can be natural for its domain; judge whether\
-    \ it sounds like a person speaking in that register, not whether it is casual.\n- Regional accents, non-native phrasing,\
-    \ and transcription typos are not evidence of unnatural speech.\n\n## Scoring\n- Return PASS if the agent mostly sounds\
-    \ like an experienced human agent in its role: direct, efficient, with varied acknowledgments, and natural cadence overall.\
-    \ Isolated robotic or rushed moments do not fail.\n- Return FAIL if the agent leans on stilted chatbot formulas ('Allow\
-    \ me to...', 'Thank you for that information') or robotic transitions, repeats the same affirmation ('Great!', 'Perfect!')\
-    \ nearly every turn, or delivers in a pervasively robotic cadence across the call even when the word choice is casual.\n\
-    \n## Input\n<conversation>{{conversation}}</conversation>"
+    \ to PASS.\n- Evaluate the agent's turns only.\n- Turn-taking and interruptions are out of scope for this eval.\n- Acoustic\
+    \ quality (TTS clarity, audio fidelity) is NOT what this eval measures.\n- Casual word choice alone is not enough to pass,\
+    \ but only a pervasively robotic cadence fails; friendly wording does not rescue robotic delivery that runs through the\
+    \ whole call.\n- Do NOT judge the outcome: a request for a human, an unresolved issue, or an escalation is not a naturalness\
+    \ signal.\n- A terse or formal register can be natural for its domain; judge whether it sounds like a person speaking\
+    \ in that register, not whether it is casual.\n- Regional accents, non-native phrasing, and transcription typos are not\
+    \ evidence of unnatural speech.\n\n## Scoring\n- Return PASS if the agent mostly sounds like an experienced human agent\
+    \ in its role: direct, efficient, with varied acknowledgments, and natural cadence overall. Isolated robotic or rushed\
+    \ moments do not fail.\n- Return FAIL if the agent leans on stilted chatbot formulas ('Allow me to...', 'Thank you for\
+    \ that information') or robotic transitions, repeats the same affirmation ('Great!', 'Perfect!') nearly every turn, or\
+    \ delivers in a pervasively robotic cadence across the call even when the word choice is casual.\n\n## Input\n<conversation>{{conversation}}</conversation>"
