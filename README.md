@@ -34,10 +34,10 @@
   <a href="#-quickstart"><img src="https://img.shields.io/badge/docker-self--host%20ready-0db7ed?style=flat-square" alt="Docker self-host ready"></a>
   <a href="https://discord.com/invite/n2tCUKBkAw"><img src="https://img.shields.io/badge/discord-join-5865F2?style=flat-square" alt="Discord"></a>
   <br>
-  <a href="https://pypi.org/project/ai-evaluation/"><img src="https://img.shields.io/pypi/v/ai-evaluation?style=flat-square&label=pypi%20ai-evaluation" alt="PyPI ai-evaluation"></a>
+  <a href="https://pypi.org/project/agent-learning-kit/"><img src="https://img.shields.io/pypi/v/agent-learning-kit?style=flat-square&label=pypi%20agent-learning-kit" alt="PyPI agent-learning-kit"></a>
   <a href="https://www.npmjs.com/package/@traceai/fi-core"><img src="https://img.shields.io/npm/v/@traceai/fi-core?style=flat-square&label=npm%20%40traceai%2Ffi-core" alt="npm @traceai/fi-core"></a>
   <a href="https://pypi.org/project/agentcc/"><img src="https://img.shields.io/pypi/v/agentcc?style=flat-square&label=pypi%20agentcc" alt="PyPI agentcc"></a>
-  <a href="https://pypi.org/project/ai-evaluation/"><img src="https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square" alt="Python 3.10+"></a>
+  <a href="https://pypi.org/project/agent-learning-kit/"><img src="https://img.shields.io/badge/python-3.10%2B-blue?style=flat-square" alt="Python 3.10+"></a>
 </p>
 
 <p>
@@ -134,13 +134,17 @@ Generous free-tier, no credit card required.
 
 **One command, full stack. Published images, no source build.**
 
+**macOS / Linux / WSL**
+
 ```bash
-# macOS / Linux / WSL
 git clone https://github.com/future-agi/future-agi.git
 cd future-agi
 ./bin/install
+```
 
-# Windows (PowerShell)
+**Windows (PowerShell)**
+
+```powershell
 git clone https://github.com/future-agi/future-agi.git
 cd future-agi
 .\bin\install.ps1
@@ -152,11 +156,15 @@ Open [http://localhost:3000](http://localhost:3000).
 When upgrading an installation that already contains traces, initialize any
 inactive unified property catalogs explicitly after the new stack is healthy:
 
-```bash
-# macOS / Linux / WSL
-./bin/property-catalog-backfill --execute
+**macOS / Linux / WSL**
 
-# Windows PowerShell
+```bash
+./bin/property-catalog-backfill --execute
+```
+
+**Windows PowerShell**
+
+```powershell
 .\bin\property-catalog-backfill.ps1 -Execute
 ```
 
@@ -349,7 +357,7 @@ Future AGI is an **open-source ecosystem** — each SDK is independently usable,
 | Repo | Install | Languages | Purpose |
 |---|---|---|---|
 | [**traceAI**](https://github.com/future-agi/traceAI) | `pip install fi-instrumentation-otel`<br>`npm i @traceai/fi-core` | Python · TS · Java · C# | **Zero-config OTel tracing** for 50+ AI frameworks |
-| [**ai-evaluation**](https://github.com/future-agi/ai-evaluation) | `pip install ai-evaluation`<br>`npm i @future-agi/ai-evaluation` | Python · TS | **50+ evaluation metrics** + guardrail scanners |
+| [**agent-learning-kit**](https://github.com/future-agi/agent-learning-kit) | `pip install agent-learning-kit` | Python · TS | **Local-first testing, simulation, red teaming, and optimization** for AI agents |
 | [**futureagi**](https://github.com/future-agi/futureagi-sdk) | `pip install futureagi` | Python | Platform SDK — datasets, prompts, KB, experiments |
 | [**agent-opt**](https://github.com/future-agi/agent-opt) | `pip install agent-opt` | Python | **6 prompt-optimization algorithms** (GEPA, PromptWizard, …) |
 | [**simulate-sdk**](https://github.com/future-agi/simulate-sdk) | `pip install agent-simulate` | Python | Voice-agent simulation via LiveKit + Silero VAD |
