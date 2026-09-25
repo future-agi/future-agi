@@ -10,6 +10,9 @@ import {
   TableHead,
   TableRow,
   Button,
+  tableCellClasses,
+  tableHeadClasses,
+  tableRowClasses,
 } from "@mui/material";
 
 import Iconify from "src/components/iconify";
@@ -24,6 +27,20 @@ import {
 } from "./traceTable.constants";
 import { MetricValue, Score, Field } from "./traceCells";
 import TraceGroupHeaderRow from "./TraceGroupHeaderRow";
+
+// The theme hides every border on a table's last row, which here is the head
+// row and the final call row. The column dividers are cell left borders, so put
+// those back, and the head's bottom line; the body's last bottom line stays
+// hidden so it doesn't double up with the container edge.
+const lastRowDividersSx = {
+  minWidth: 1000,
+  tableLayout: "auto",
+  [`& .${tableRowClasses.root}:last-of-type .${tableCellClasses.root}:not(:first-of-type)`]:
+    { borderLeftColor: "divider" },
+  [`& .${tableHeadClasses.root} .${tableCellClasses.root}`]: {
+    borderBottomColor: "divider",
+  },
+};
 
 /**
  * The per-call traces, as a grouped table. Real data only: rows read the mapped
@@ -328,7 +345,7 @@ export default function TraceTable({
         </Typography>
       </Stack>
       <Box sx={{ overflowX: "auto" }}>
-        <Table size="small" sx={{ minWidth: 1000, tableLayout: "auto" }}>
+        <Table size="small" sx={lastRowDividersSx}>
           <TableHead>
             <TableRow>
               {show("callDetails") && (
