@@ -163,7 +163,7 @@ def test_trace_detail_binds_v2_handler_and_service_when_routing_is_disabled(
     request = SimpleNamespace()
     view.request = request
 
-    response = view.retrieve(request, pk="trace-1")
+    response = unwrap(trace_view.TraceView.retrieve)(view, request, pk="trace-1")
 
     assert response == ("ok", {"trace": {"id": "trace-1"}})
     assert isinstance(captured["handler"], TraceDetailHandlerV2)

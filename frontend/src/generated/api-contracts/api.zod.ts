@@ -62260,6 +62260,13 @@ export const TracerTraceVoiceCallDetailQueryParams = zod.object({
     .describe(
       "Legacy alias for trace_id; when both are supplied they must match.",
     ),
+  project_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "Project the detail was opened from. The same id can exist in several projects; when supplied, only that project's copy is read.",
+    ),
 });
 
 export const TracerTraceVoiceCallDetailResponse = zod.object({
@@ -62340,10 +62347,22 @@ export const TracerTraceVoiceCallDetailResponse = zod.object({
 });
 
 /**
- * Retrieve a trace by its ID.
+ * Query params:
+- project_id (optional) — the project the trace was opened from.
+ * @summary Retrieve a trace by its ID.
  */
 export const TracerTraceReadParams = zod.object({
   id: zod.string(),
+});
+
+export const TracerTraceReadQueryParams = zod.object({
+  project_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "Project the detail was opened from. The same id can exist in several projects; when supplied, only that project's copy is read.",
+    ),
 });
 
 export const tracerTraceReadResponseStatusDefault = true;

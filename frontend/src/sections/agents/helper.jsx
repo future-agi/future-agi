@@ -1183,12 +1183,19 @@ export const useCallExecutionDetail = (callExecutionId, enabled = false) => {
   });
 };
 
-export const useVoiceCallDetail = (traceId, enabled = false) => {
+// Pass the project the call was opened from whenever it is known: the same
+// trace id can exist in several projects.
+export const useVoiceCallDetail = (traceId, enabled = false, projectId) => {
   return useQuery({
-    queryKey: ["voiceCallDetail", traceId],
+    queryKey: projectId
+      ? ["voiceCallDetail", traceId, projectId]
+      : ["voiceCallDetail", traceId],
     queryFn: () =>
       axios.get(endpoints.project.getVoiceCallDetail, {
-        params: { trace_id: traceId },
+        params: {
+          trace_id: traceId,
+          ...(projectId ? { project_id: projectId } : {}),
+        },
       }),
     enabled: !!traceId && enabled,
     select: (data) => data?.data?.result,

@@ -1321,6 +1321,7 @@ import type {
   TracerTraceListTracesOfSessionParams,
   TracerTraceListTracesParams,
   TracerTraceListVoiceCallsParams,
+  TracerTraceReadParams,
   TracerTraceSessionGetSessionFilterValuesParams,
   TracerTraceSessionGetSessionGraphDataParams,
   TracerTraceSessionGetTraceSessionExportDataParams,
@@ -79161,6 +79162,7 @@ export const getTracerTraceVoiceCallDetailUrl = (
 /**
  * Query params:
 - trace_id or legacy traceId (required) — UUID of the voice call trace.
+- project_id (optional) — the project the call was opened from.
  * @summary Return the heavy / detail-only fields for a single voice call.
  */
 export const tracerTraceVoiceCallDetail = async (
@@ -79217,21 +79219,46 @@ export type tracerTraceReadResponse =
   | tracerTraceReadResponseSuccess
   | tracerTraceReadResponseError;
 
-export const getTracerTraceReadUrl = (id: string) => {
-  return `/tracer/trace/${id}/`;
+export const getTracerTraceReadUrl = (
+  id: string,
+  params?: TracerTraceReadParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/trace/${id}/?${stringifiedParams}`
+    : `/tracer/trace/${id}/`;
 };
 
 /**
- * Retrieve a trace by its ID.
+ * Query params:
+- project_id (optional) — the project the trace was opened from.
+ * @summary Retrieve a trace by its ID.
  */
 export const tracerTraceRead = async (
   id: string,
+  params?: TracerTraceReadParams,
   options?: RequestInit,
 ): Promise<tracerTraceReadResponse> => {
-  return apiMutator<tracerTraceReadResponse>(getTracerTraceReadUrl(id), {
-    ...options,
-    method: "GET",
-  });
+  return apiMutator<tracerTraceReadResponse>(
+    getTracerTraceReadUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
 };
 
 export type tracerTraceUpdateResponse200 = {

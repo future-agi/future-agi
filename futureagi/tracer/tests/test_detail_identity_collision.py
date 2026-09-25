@@ -7,6 +7,10 @@ of those projects are inside the caller's scope, the detail endpoints must
 serve one project's copy instead of answering 503 "retry" forever, and must
 still never select a copy from a project outside that scope.
 
+Opened from a specific project, the caller passes ``project_id`` and gets that
+project's copy even when another in-scope project holds a newer one; a
+``project_id`` outside the caller's scope answers exactly like a missing id.
+
 The ClickHouse row layer is faked; Postgres scope, the views and the bounded
 readers run for real.
 """
@@ -142,6 +146,7 @@ def replayed_trace(user, workspace, monkeypatch):
 
     older = _project(user.organization, workspace, "older")
     newer = _project(user.organization, workspace, "newer")
+    empty = _project(user.organization, workspace, "empty")
     foreign_org = Organization.objects.create(name=f"Foreign {uuid.uuid4().hex[:8]}")
     foreign_workspace = Workspace.no_workspace_objects.create(
         name="Foreign Workspace",
@@ -170,10 +175,15 @@ def replayed_trace(user, workspace, monkeypatch):
     monkeypatch.setattr(
         "tracer.views.observation_span.V2AnalyticsQueryService", lambda: analytics
     )
+    monkeypatch.setattr(
+        "tracer.views.trace.ObservabilityService.process_raw_logs",
+        lambda *_args, **_kwargs: {},
+    )
     return SimpleNamespace(
         trace_id=trace_id,
         older=older,
         newer=newer,
+        empty=empty,
         foreign=foreign,
         analytics=analytics,
     )
@@ -219,14 +229,7 @@ def test_span_detail_serves_newest_in_scope_copy(auth_client, replayed_trace):
 
 
 @pytest.mark.django_db
-def test_voice_call_detail_serves_newest_in_scope_copy(
-    auth_client, replayed_trace, monkeypatch
-):
-    monkeypatch.setattr(
-        "tracer.views.trace.ObservabilityService.process_raw_logs",
-        lambda *_args, **_kwargs: {},
-    )
-
+def test_voice_call_detail_serves_newest_in_scope_copy(auth_client, replayed_trace):
     response = auth_client.get(
         "/tracer/trace/voice_call_detail/", {"trace_id": replayed_trace.trace_id}
     )
@@ -237,3 +240,86 @@ def test_voice_call_detail_serves_newest_in_scope_copy(
     assert [span["id"] for span in result["observation_span"]] == ["root", "child"]
     assert json.loads(result["observation_span"][1]["input"]) == {"copy": "newer"}
     assert _read_projects(replayed_trace.analytics) == {str(replayed_trace.newer.id)}
+
+
+# (request for an id, served project of a 200 response) per detail endpoint.
+_ENDPOINTS = {
+    "trace": (
+        lambda trace_id, params: (f"/tracer/trace/{trace_id}/", params),
+        lambda result: result["observation_spans"][0]["observation_span"]["project"],
+    ),
+    "span": (
+        lambda trace_id, params: (
+            "/tracer/observation-span/child/"
+            if trace_id
+            else "/tracer/observation-span/missing/",
+            params,
+        ),
+        lambda result: result["observation_span"]["project"],
+    ),
+    "voice": (
+        lambda trace_id, params: (
+            "/tracer/trace/voice_call_detail/",
+            {"trace_id": trace_id or str(uuid.uuid4()), **params},
+        ),
+        lambda result: result["project_id"],
+    ),
+}
+
+
+def _get(auth_client, endpoint, trace_id, **params):
+    url, query = _ENDPOINTS[endpoint][0](trace_id, params)
+    return auth_client.get(url, query)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("endpoint", _ENDPOINTS)
+def test_pinned_project_serves_its_copy_over_a_newer_one(
+    auth_client, replayed_trace, endpoint
+):
+    older = str(replayed_trace.older.id)
+
+    response = _get(auth_client, endpoint, replayed_trace.trace_id, project_id=older)
+
+    assert response.status_code == status.HTTP_200_OK, response.data
+    assert _ENDPOINTS[endpoint][1](response.data["result"]) == older
+    assert all(
+        params["detail_project_ids"] == (older,)
+        for _query, params in replayed_trace.analytics.calls
+        if "detail_project_ids" in params
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("endpoint", _ENDPOINTS)
+@pytest.mark.parametrize("pin", ["foreign", "unknown", "empty"])
+def test_pin_outside_scope_or_without_the_id_answers_like_a_missing_id(
+    auth_client, replayed_trace, endpoint, pin
+):
+    project_id = {
+        "foreign": str(replayed_trace.foreign.id),
+        "unknown": str(uuid.uuid4()),
+        "empty": str(replayed_trace.empty.id),
+    }[pin]
+    missing = _get(auth_client, endpoint, None)
+    replayed_trace.analytics.calls.clear()
+
+    response = _get(
+        auth_client, endpoint, replayed_trace.trace_id, project_id=project_id
+    )
+
+    assert missing.status_code in (
+        status.HTTP_400_BAD_REQUEST,
+        status.HTTP_404_NOT_FOUND,
+    )
+    assert (response.status_code, response.data) == (
+        missing.status_code,
+        missing.data,
+    )
+    # A project outside the caller's scope never reaches ClickHouse.
+    bound = {
+        project
+        for _query, params in replayed_trace.analytics.calls
+        for project in params.get("detail_project_ids", ())
+    }
+    assert bound <= {str(replayed_trace.empty.id)}

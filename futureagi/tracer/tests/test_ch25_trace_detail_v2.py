@@ -279,7 +279,9 @@ def test_trace_view_retrieve_routes_v2_detail_to_split_ch25_host():
     reset_v2_query_client()
     try:
         with patch.object(TraceDetailHandlerV2, "fetch", _fetch):
-            response = TraceView().retrieve(MagicMock(), pk="T1")
+            response = unwrap(TraceView.retrieve)(
+                TraceView(), SimpleNamespace(), pk="T1"
+            )
         analytics = captured["analytics"]
         assert response.status_code == 200
         assert isinstance(analytics, V2AnalyticsQueryService)

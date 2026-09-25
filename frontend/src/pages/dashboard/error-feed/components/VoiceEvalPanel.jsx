@@ -497,8 +497,12 @@ function toTranscriptLines(detail) {
     }));
 }
 
-function useVoiceCallData(traceId) {
-  const { data: detail, isLoading } = useVoiceCallDetail(traceId, !!traceId);
+function useVoiceCallData(traceId, projectId) {
+  const { data: detail, isLoading } = useVoiceCallDetail(
+    traceId,
+    !!traceId,
+    projectId,
+  );
   const lines = useMemo(() => toTranscriptLines(detail), [detail]);
   const recordingUrl =
     detail?.recording_url ||
@@ -598,14 +602,22 @@ CallColumn.propTypes = {
 };
 
 // ── Main VoiceEvalPanel ──────────────────────────────────────────────────────
-export default function VoiceEvalPanel({ trace, evalScore, successTraceId }) {
+export default function VoiceEvalPanel({
+  trace,
+  evalScore,
+  successTraceId,
+  projectId,
+}) {
   const traceSeed = trace?.id ?? "default";
   const [splitView, setSplitView] = useState(false);
   const [activeSide, setActiveSide] = useState("fail");
 
-  const failCall = useVoiceCallData(trace?.id);
+  const failCall = useVoiceCallData(trace?.id, projectId);
   // Only fetched once the user opens the comparison.
-  const passCall = useVoiceCallData(splitView ? successTraceId : null);
+  const passCall = useVoiceCallData(
+    splitView ? successTraceId : null,
+    projectId,
+  );
 
   const evidence = trace?.evidence ?? {};
   const judgeReason = evidence.judge_reason ?? null;
@@ -739,4 +751,5 @@ VoiceEvalPanel.propTypes = {
   trace: PropTypes.object,
   evalScore: PropTypes.number,
   successTraceId: PropTypes.string,
+  projectId: PropTypes.string,
 };

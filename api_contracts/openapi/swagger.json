@@ -69020,7 +69020,7 @@
             "get": {
                 "operationId": "tracer_trace_voice_call_detail",
                 "summary": "Return the heavy / detail-only fields for a single voice call.",
-                "description": "Query params:\n- trace_id or legacy traceId (required) — UUID of the voice call trace.",
+                "description": "Query params:\n- trace_id or legacy traceId (required) — UUID of the voice call trace.\n- project_id (optional) — the project the call was opened from.",
                 "parameters": [
                     {
                         "name": "trace_id",
@@ -69034,6 +69034,14 @@
                         "name": "traceId",
                         "in": "query",
                         "description": "Legacy alias for trace_id; when both are supplied they must match.",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "description": "Project the detail was opened from. The same id can exist in several projects; when supplied, only that project's copy is read.",
                         "required": false,
                         "type": "string",
                         "format": "uuid"
@@ -69088,8 +69096,18 @@
         "/tracer/trace/{id}/": {
             "get": {
                 "operationId": "tracer_trace_read",
-                "description": "Retrieve a trace by its ID.",
-                "parameters": [],
+                "summary": "Retrieve a trace by its ID.",
+                "description": "Query params:\n- project_id (optional) — the project the trace was opened from.",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "description": "Project the detail was opened from. The same id can exist in several projects; when supplied, only that project's copy is read.",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "",
@@ -69124,7 +69142,9 @@
                 },
                 "tags": [
                     "tracer"
-                ]
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "put": {
                 "operationId": "tracer_trace_update",

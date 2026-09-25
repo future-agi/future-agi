@@ -506,7 +506,10 @@ const TraceDetailDrawerV2 = ({
   }, []);
 
   const queryClient = useQueryClient();
-  const { data, isLoading } = useGetTraceDetail(open ? traceId : null);
+  const { data, isLoading } = useGetTraceDetail(
+    open ? traceId : null,
+    projectId,
+  );
 
   const handleRefresh = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["trace-detail", traceId] });

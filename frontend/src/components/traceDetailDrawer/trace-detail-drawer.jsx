@@ -157,10 +157,19 @@ const TraceDetailDrawerChild = ({
     });
   };
 
+  // Pin the trace and span reads to the page's project: the same ids can
+  // exist in several projects.
+  const projectParams = projectIdToUse
+    ? { params: { project_id: projectIdToUse } }
+    : undefined;
+
   const { data: traceDetail, isLoading } = useQuery({
-    queryKey: ["trace-detail", traceData.trace_id],
+    queryKey: ["trace-detail", traceData.trace_id, projectIdToUse],
     queryFn: () => {
-      return axios.get(endpoints.project.getTrace(traceData.trace_id));
+      return axios.get(
+        endpoints.project.getTrace(traceData.trace_id),
+        projectParams,
+      );
     },
     select: (data) => data.data?.result,
   });
@@ -270,7 +279,10 @@ const TraceDetailDrawerChild = ({
     queryKey: ["observationSpan", selectedNode?.id, fetch],
     enabled: Boolean(selectedNode?.id) && !showEvalLoadingStates && fetch,
     queryFn: () =>
-      axios.get(endpoints.project.getObservationSpan(selectedNode?.id)),
+      axios.get(
+        endpoints.project.getObservationSpan(selectedNode?.id),
+        projectParams,
+      ),
     select: (data) => data?.data?.result,
   });
 
@@ -281,7 +293,10 @@ const TraceDetailDrawerChild = ({
     queryKey: ["observationSpan-loading", selectedNode?.id, fetch],
     enabled: Boolean(selectedNode?.id) && showEvalLoadingStates && fetch,
     queryFn: () =>
-      axios.get(endpoints.project.getObservationSpan(selectedNode?.id)),
+      axios.get(
+        endpoints.project.getObservationSpan(selectedNode?.id),
+        projectParams,
+      ),
     select: (data) => data?.data?.result,
     refetchInterval: (data) => {
       const evalsMetrics = data?.state?.data?.data?.result?.evals_metrics;

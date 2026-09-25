@@ -33845,6 +33845,17 @@ export type TracerTraceVoiceCallDetailParams = {
    * Legacy alias for trace_id; when both are supplied they must match.
    */
   traceId?: string;
+  /**
+   * Project the detail was opened from. The same id can exist in several projects; when supplied, only that project's copy is read.
+   */
+  project_id?: string;
+};
+
+export type TracerTraceReadParams = {
+  /**
+   * Project the detail was opened from. The same id can exist in several projects; when supplied, only that project's copy is read.
+   */
+  project_id?: string;
 };
 
 export type TracerUserAlertLogsListParams = {

@@ -10,7 +10,7 @@ function TraceVoicePanel({ traceId, projectId }) {
     data: voiceCallData,
     isFetching,
     error,
-  } = useVoiceCallDetail(traceId, !!traceId);
+  } = useVoiceCallDetail(traceId, !!traceId, projectId);
 
   if (error) {
     return (

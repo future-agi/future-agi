@@ -71,6 +71,7 @@ from tracer.serializers.filters import (
 from tracer.serializers.trace import (
     TraceAgentGraphQuerySerializer,
     TraceAgentGraphResponseSerializer,
+    TraceDetailQuerySerializer,
     TraceDetailResponseSerializer,
     TraceExportQuerySerializer,
     TraceIndexQuerySerializer,
@@ -2028,7 +2029,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
     def perform_destroy(self, instance):
         _soft_delete_trace_tree([instance])
 
-    @swagger_auto_schema(
+    @validated_request(
+        query_serializer=TraceDetailQuerySerializer,
         responses={
             200: TraceDetailResponseSerializer,
             **ERROR_RESPONSES,
@@ -2038,6 +2040,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
     def retrieve(self, request, *args, **kwargs):
         """
         Retrieve a trace by its ID.
+
+        Query params:
+        - project_id (optional) — the project the trace was opened from.
         """
         from tracer.services.clickhouse.v2.trace_detail_reads import (
             TraceDetailReadUnavailable,
@@ -2054,6 +2059,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 request=request,
                 pk=trace_id,
                 analytics=V2AnalyticsQueryService(),
+                project_id=getattr(request, "validated_query_data", {}).get(
+                    "project_id"
+                ),
             )
             return self._gm.success_response(handler.fetch())
         except Trace.DoesNotExist:
@@ -3883,6 +3891,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         Query params:
         - trace_id or legacy traceId (required) — UUID of the voice call trace.
+        - project_id (optional) — the project the call was opened from.
         """
         trace_id = ""
         try:
@@ -3891,12 +3900,18 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             # Scope the ClickHouse identity read up front.  The exact reader
             # resolves latest span versions/tombstones inside only these
             # authorized projects, so a colliding public trace id cannot select
-            # another tenant via an arbitrary LIMIT 1.
+            # another tenant via an arbitrary LIMIT 1.  A project_id pins the
+            # read to the project the call was opened from; outside the
+            # caller's scope it resolves like a missing trace.
+            project_scope = _project_queryset_for_request(request)
+            pinned_project_id = request.validated_query_data.get("project_id")
+            if pinned_project_id:
+                project_scope = project_scope.filter(id=pinned_project_id)
             project_ids = [
                 str(project_id)
-                for project_id in _project_queryset_for_request(request)
-                .values_list("id", flat=True)
-                .order_by("id")[:4097]
+                for project_id in project_scope.values_list("id", flat=True).order_by(
+                    "id"
+                )[:4097]
             ]
             eval_configs_by_project: dict[str, list[CustomEvalConfig]] = {}
 

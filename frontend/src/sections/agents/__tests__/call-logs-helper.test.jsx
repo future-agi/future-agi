@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 const axiosMocks = vi.hoisted(() => ({
   get: vi.fn(),
   projectGetCallLogs: "/tracer/trace/list_voice_calls/",
+  projectGetVoiceCallDetail: "/tracer/trace/voice_call_detail/",
   agentGetCallLogs: vi.fn((id, version) => {
     if (!id || !version) {
       throw new Error("missing path param");
@@ -23,6 +24,7 @@ vi.mock("src/utils/axios", () => ({
   endpoints: {
     project: {
       getCallLogs: axiosMocks.projectGetCallLogs,
+      getVoiceCallDetail: axiosMocks.projectGetVoiceCallDetail,
     },
     agentDefinitions: {
       getCallLogs: axiosMocks.agentGetCallLogs,
@@ -518,6 +520,7 @@ import {
   getAgentLatencyFilterValue,
   prefetchCallLogs,
   useCallLogs,
+  useVoiceCallDetail,
 } from "../helper";
 import { createListCursorPagination } from "src/sections/projects/LLMTracing/listCursorPagination";
 import { VOICE_CALL_FILTER_FIELDS } from "src/sections/projects/LLMTracing/voiceCallFilterFields";
@@ -559,5 +562,36 @@ describe("getAgentLatencyFilterValue", () => {
     expect(
       getAgentLatencyFilterValue({ data: { avg_agent_latency_ms: "n/a" } }),
     ).toBeNull();
+  });
+});
+
+describe("useVoiceCallDetail", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    axiosMocks.get.mockResolvedValue({ data: { result: {} } });
+  });
+
+  it("pins the read to the project the call was opened from", async () => {
+    renderHook(() => useVoiceCallDetail("trace-1", true, "project-1"), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(axiosMocks.get).toHaveBeenCalledTimes(1));
+    expect(axiosMocks.get).toHaveBeenCalledWith(
+      axiosMocks.projectGetVoiceCallDetail,
+      { params: { trace_id: "trace-1", project_id: "project-1" } },
+    );
+  });
+
+  it("omits project_id when the caller has no project in context", async () => {
+    renderHook(() => useVoiceCallDetail("trace-1", true), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(axiosMocks.get).toHaveBeenCalledTimes(1));
+    expect(axiosMocks.get).toHaveBeenCalledWith(
+      axiosMocks.projectGetVoiceCallDetail,
+      { params: { trace_id: "trace-1" } },
+    );
   });
 });

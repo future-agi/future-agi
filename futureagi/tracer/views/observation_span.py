@@ -800,7 +800,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             TraceDetailReadUnavailable,
         )
 
-        physical_reference = getattr(request, "validated_query_data", {}) or None
+        selector = getattr(request, "validated_query_data", {}) or {}
+        # ``project_id`` alone pins a bare span id to the project the span was
+        # opened from; any other selector is a full physical reference.
+        physical_reference = selector if selector.keys() - {"project_id"} else None
+        pinned_project_id = None if physical_reference else selector.get("project_id")
         try:
             observation_span_id = kwargs.get("pk")
             organization = _get_request_organization(request)
@@ -822,13 +826,17 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     authorized_project_ids=[str(physical_reference["project_id"])],
                     physical_reference=physical_reference,
                 )
+            project_scope = project_manager.filter(
+                _project_workspace_scope_q(request, project_prefix=""),
+                organization=organization,
+                deleted=False,
+            )
+            if pinned_project_id:
+                # Outside the caller's scope this resolves like a missing span.
+                project_scope = project_scope.filter(id=pinned_project_id)
             authorized_project_ids = [
                 str(project_id)
-                for project_id in project_manager.filter(
-                    _project_workspace_scope_q(request, project_prefix=""),
-                    organization=organization,
-                    deleted=False,
-                ).values_list("id", flat=True)[:4097]
+                for project_id in project_scope.values_list("id", flat=True)[:4097]
             ]
             if len(authorized_project_ids) > 4096:
                 raise TraceDetailReadUnavailable("project_scope_too_large")

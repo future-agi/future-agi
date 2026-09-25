@@ -264,7 +264,10 @@ const ChatDetailsBar = ({ data, onAction }) => {
   // detail so the chip row stays in sync.
   const traceId = data?.trace_id;
   const isObserve = data?.module === DRAWER_MODULE.OBSERVE;
-  const { data: traceDetail } = useGetTraceDetail(isObserve ? traceId : null);
+  const { data: traceDetail } = useGetTraceDetail(
+    isObserve ? traceId : null,
+    data?.project_id,
+  );
   const tags =
     traceDetail?.trace?.tags ||
     traceDetail?.tags ||

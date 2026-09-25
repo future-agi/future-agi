@@ -110,6 +110,7 @@ const TestDetailSideDrawerChild = ({
     useVoiceCallDetail(
       traceId,
       urlModule === "project" && isVoiceCall && !!traceId,
+      resolvedProjectId,
     );
 
   // Fetch full call execution detail for simulate calls. The list response

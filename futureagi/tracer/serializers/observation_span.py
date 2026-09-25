@@ -129,7 +129,8 @@ class _SpanReferenceVersionField(serializers.CharField):
 
 
 class SpanReferenceQuerySerializer(StrictInputSerializer):
-    """An empty selector preserves bare GET; any selector requires every field."""
+    """An empty selector preserves bare GET; ``project_id`` alone pins the bare
+    span id to one project; any other selector requires every field."""
 
     project_id = serializers.UUIDField(required=False)
     trace_id = serializers.CharField(
@@ -156,7 +157,7 @@ class SpanReferenceQuerySerializer(StrictInputSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
-        if not attrs:
+        if not attrs or attrs.keys() == {"project_id"}:
             return attrs
         missing = self.fields.keys() - attrs.keys()
         if missing:

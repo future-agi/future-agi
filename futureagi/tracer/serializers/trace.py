@@ -563,6 +563,20 @@ class TraceVoiceCallListResponseSerializer(serializers.Serializer):
     query_applied_filter_count = serializers.IntegerField(required=False, min_value=0)
 
 
+_DETAIL_PROJECT_ID_HELP = (
+    "Project the detail was opened from. The same id can exist in several "
+    "projects; when supplied, only that project's copy is read."
+)
+
+
+class TraceDetailQuerySerializer(StrictInputSerializer):
+    """Optional project pin for the trace-detail identity."""
+
+    project_id = serializers.UUIDField(
+        required=False, help_text=_DETAIL_PROJECT_ID_HELP
+    )
+
+
 class TraceVoiceCallDetailQuerySerializer(StrictInputSerializer):
     """Strict compatibility contract for the voice-call detail identity."""
 
@@ -573,6 +587,9 @@ class TraceVoiceCallDetailQuerySerializer(StrictInputSerializer):
     traceId = serializers.UUIDField(  # noqa: N815 - public compatibility alias
         required=False,
         help_text="Legacy alias for trace_id; when both are supplied they must match.",
+    )
+    project_id = serializers.UUIDField(
+        required=False, help_text=_DETAIL_PROJECT_ID_HELP
     )
 
     def validate(self, attrs):
