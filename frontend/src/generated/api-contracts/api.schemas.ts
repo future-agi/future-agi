@@ -30768,6 +30768,7 @@ export type ModelHubDevelopsGetDatasetTableListParams = {
 
 export type ModelHubDevelopsGetEvalStructureReadParams = {
   eval_type: ModelHubDevelopsGetEvalStructureReadEvalType;
+  experiment_id?: string;
 };
 
 export type ModelHubDevelopsGetEvalStructureReadEvalType =

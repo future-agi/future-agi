@@ -30445,6 +30445,13 @@
                             "user",
                             "previously_configured"
                         ]
+                    },
+                    {
+                        "name": "experiment_id",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
                     }
                 ],
                 "responses": {

@@ -1118,6 +1118,7 @@ class EvalStructureQuerySerializer(StrictInputSerializer):
     eval_type = serializers.ChoiceField(
         choices=["preset", "user", "previously_configured"]
     )
+    experiment_id = serializers.UUIDField(required=False)
 
 
 PERFORMANCE_FILTER_TYPES = ("property", "performanceMetric", "performanceTag")

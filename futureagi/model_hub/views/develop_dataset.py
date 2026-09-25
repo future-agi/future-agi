@@ -414,6 +414,37 @@ def _request_user_eval_metric_queryset(request, dataset_id=None):
     return queryset
 
 
+def _request_scoped_user_eval_metric_queryset(request, dataset_id, experiment_id=None):
+    """Resolve an eval lookup for either a dataset page or an experiment page.
+
+    An experiment snapshots its dataset on creation and its evals are written
+    against that snapshot (``experiment.snapshot_dataset or experiment.dataset``),
+    while the experiment URL still carries the original dataset id. Filtering by
+    the URL dataset therefore misses every experiment eval, so resolve the eval
+    dataset from the experiment instead. The experiment itself stays bound to the
+    URL dataset so a foreign experiment id cannot reach another tenant's evals.
+    """
+    if not experiment_id:
+        return _request_user_eval_metric_queryset(request, dataset_id)
+
+    try:
+        experiment = (
+            _request_experiment_queryset(request)
+            .filter(Q(dataset_id=dataset_id) | Q(snapshot_dataset_id=dataset_id))
+            .filter(id=experiment_id)
+            .first()
+        )
+    except (ValidationError, ValueError):
+        experiment = None
+    if not experiment:
+        return UserEvalMetric.objects.none()
+
+    eval_dataset = experiment.snapshot_dataset or experiment.dataset
+    return _request_user_eval_metric_queryset(request, eval_dataset.id).filter(
+        source_id=str(experiment.id)
+    )
+
+
 def _request_experiment_dataset_queryset(request):
     organization = _request_organization(request)
     fk_scope = Q(experiment__dataset__organization=organization) & (
@@ -8098,6 +8129,7 @@ class GetEvalStructureView(APIView):
                     eval_id,
                     dataset_id,
                     request,
+                    request.validated_query_data.get("experiment_id"),
                 )
 
         except Exception as e:
@@ -8166,9 +8198,11 @@ class GetEvalStructureView(APIView):
 
         return self._gm.success_response({"eval": eval_data})
 
-    def _get_user_structure(self, eval_id, dataset_id, request):
+    def _get_user_structure(self, eval_id, dataset_id, request, experiment_id=None):
         eval = (
-            _request_user_eval_metric_queryset(request, dataset_id)
+            _request_scoped_user_eval_metric_queryset(
+                request, dataset_id, experiment_id
+            )
             .filter(id=eval_id)
             .first()
         )
@@ -8411,12 +8445,9 @@ class DeleteEvalsView(APIView):
             if not dataset:
                 return self._gm.not_found("Dataset not found")
             now = timezone.now()
-            # Experiment-scoped evals live under source_id=experiment_id, not
-            # dataset_id. Branch the lookup so experiment eval deletion doesn't
-            # 404 against the dataset-scoped record.
-            eval_queryset = _request_user_eval_metric_queryset(request, dataset_id)
-            if experiment_id:
-                eval_queryset = eval_queryset.filter(source_id=str(experiment_id))
+            eval_queryset = _request_scoped_user_eval_metric_queryset(
+                request, dataset_id, experiment_id
+            )
             eval_metric = eval_queryset.filter(id=eval_id).first()
             if not eval_metric:
                 return self._gm.not_found("Eval not found")
@@ -8623,12 +8654,9 @@ class EditAndRunUserEvalView(APIView):
                 if not dataset:
                     return self._gm.not_found("Dataset not found")
 
-                # When editing an eval attached to an experiment, retain the
-                # source_id=experiment_id discriminator, but keep the lookup bound to
-                # the active workspace dataset from the URL.
-                eval_queryset = _request_user_eval_metric_queryset(request, dataset_id)
-                if experiment_id:
-                    eval_queryset = eval_queryset.filter(source_id=str(experiment_id))
+                eval_queryset = _request_scoped_user_eval_metric_queryset(
+                    request, dataset_id, experiment_id
+                )
                 eval_metric = (
                     eval_queryset.filter(id=eval_id)
                     .select_related("dataset", "template")
@@ -9225,9 +9253,9 @@ class StopUserEvalView(APIView):
             if not dataset:
                 return self._gm.not_found("Dataset not found")
 
-            eval_queryset = _request_user_eval_metric_queryset(request, dataset_id)
-            if experiment_id:
-                eval_queryset = eval_queryset.filter(source_id=str(experiment_id))
+            eval_queryset = _request_scoped_user_eval_metric_queryset(
+                request, dataset_id, experiment_id
+            )
             eval_metric = (
                 eval_queryset.filter(id=eval_id)
                 .select_related("dataset", "template")
