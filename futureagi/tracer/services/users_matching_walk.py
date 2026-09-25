@@ -105,9 +105,10 @@ request, up to
 statements (4,095 over 24 h) per enrichment statement, outside the statement
 budget. The native span-dimension statement is never split: when it runs out
 of a read budget for the head-of-line user, the request raises a retryable
-error, as an attribute read that fails at its least bucket does. The split has no deadline after the uncapped slice, or once
-the analytics wall is already spent, and otherwise runs against what is left
-of it (``_admission_deadline``). One stall is known and left open: a split
+error, as an attribute read that fails at its least bucket does. The split
+has no deadline after the uncapped slice, or once the analytics wall is
+already spent, and otherwise runs against what is left of it
+(``_admission_deadline``). One stall is known and left open: a split
 that starts with some of the wall left and outlasts it stops every request at
 that user, having decided no one. Any other user whose read runs out of a read
 budget stops the request (``read_budget``), and so does a batch the page wall
