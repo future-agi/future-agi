@@ -509,6 +509,29 @@ def test_the_native_statement_is_a_finish_statement_the_server_stops():
         assert engine.settings[index]["max_threads"] == 8
 
 
+def test_the_statement_budget_counts_the_native_statement_materialisation_sends():
+    # One materialisation of a raw + native page sends the replay and the
+    # native statement; the budget must reserve exactly what it sends.
+    world = World()
+    for ordinal, minutes in enumerate((3, 7), start=1):
+        world.user(
+            ordinal,
+            key=minutes_before_end(minutes),
+            raw=(minutes_before_end(minutes),),
+            native=True,
+        )
+    filters = [*_filters(), _native_status_leaf()]
+
+    read, engine = _page(world, page_size=25, filters=filters)
+
+    assert _names(read) == ["user-1", "user-2"]
+    kinds = _kinds(engine)
+    assert kinds.count("replay") == 1
+    sent = sum(kinds.count(kind) for kind in ("replay", "native", "metrics"))
+    assert walk._materialisation_statement_count(_manager(filters)) == sent == 2
+    assert walk._materialisation_statement_count(_manager(_filters())) == 1
+
+
 def test_populated_slice_resolves_aliases_through_the_bounded_survivor_statement():
     """The slice reads spans alone; a populated slice is followed by one remap.
 

@@ -365,7 +365,9 @@ def _materialisation_statement_count(manager: Any) -> int:
 
     The replay; the relation statement, when relation filters are set; one
     metrics statement per group with a requested field, sessions and spans
-    (``build_requested_page_metric_queries``); and the evals statement.
+    (``build_requested_page_metric_queries``); the native span-dimension
+    statement, when native leaves are set (``_read_native_span_dimensions``);
+    and the evals statement.
     """
     metrics = manager.metric_keys
     return (
@@ -373,6 +375,7 @@ def _materialisation_statement_count(manager: Any) -> int:
         + bool(manager.relation_filters)
         + bool(metrics & set(REQUESTED_PAGE_SESSION_METRIC_FIELDS))
         + bool(metrics & set(REQUESTED_PAGE_SPAN_METRIC_FIELDS))
+        + bool(manager.native_dimension_leaves)
         + bool(manager.needs_evals)
     )
 
