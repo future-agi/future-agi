@@ -7243,6 +7243,15 @@ class UsersView(APIView):
                 status.HTTP_400_BAD_REQUEST, str(exc), code=exc.code
             )
         except UnsupportedBoundedUserListQuery:
+            if not query_data.get("sort_params"):
+                # Raw-span, eval/annotation and derived-metric filters decide
+                # membership after the page is read, so a numbered OFFSET page
+                # cannot be exact. The cursor contract (the UI's) serves them.
+                return self._gm.custom_error_response(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "These user filters need cursor pagination. Retry with cursor_mode=true.",
+                    code="user_filter_requires_cursor",
+                )
             # A globally sorted page over a derived metric requires evaluating
             # every matching user before LIMIT.  The bounded cursor path cannot
             # preserve that contract, so fail explicitly instead of leaking a
