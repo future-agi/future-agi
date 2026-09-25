@@ -314,6 +314,7 @@ describe("RunTraceTable", () => {
       };
     });
     renderTable();
+    expect(screen.getByText("Showing 1–50 of 200")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Go to page 2" }));
 
@@ -322,6 +323,8 @@ describe("RunTraceTable", () => {
       "ex1",
       expect.objectContaining({ page: 2, limit: 50 }),
     );
+    // Same pager as the Scenarios tab: the range on the left, rounded pages.
+    expect(screen.getByText("Showing 51–100 of 200")).toBeInTheDocument();
   });
 
   it("applies column picker choices to the rendered table", async () => {
@@ -352,6 +355,16 @@ describe("RunTraceTable", () => {
     expect(screen.getByText("Passed")).toBeInTheDocument();
     expect(screen.getByText("Failed")).toBeInTheDocument();
     expect(screen.getAllByText("Errored")).not.toHaveLength(0);
+  });
+
+  it("has no AI filter box — it isn't wired for run calls", async () => {
+    const user = userEvent.setup();
+    renderTable();
+
+    await user.click(screen.getByRole("button", { name: /Filter/ }));
+
+    expect(screen.getByRole("tab", { name: "Basic" })).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/Ask AI/)).toBeNull();
   });
 
   it("offers only Goal, Sub goal, and Status filters", async () => {

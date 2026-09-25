@@ -20,15 +20,27 @@ const { default: useCallListNavigation } = await import(
 );
 
 const row = (id) => ({ id, scenario: `Scenario ${id}`, status: "completed" });
-// Two pages of two calls: c1 c2 | c3 c4.
-const PAGES = { 1: ["c1", "c2"], 2: ["c3", "c4"] };
-const pageData = (page, totalPages = 2) => ({
+// Two pages. `results` is the server order; the table shows each page's rows
+// bucketed into groups, so what's on screen differs:
+//   page 1 results c1 c2 c3 → on screen [c2] [c1 c3]
+//   page 2 results c4 c5    → on screen [c5] [c4]
+// Prev/next follow the screen: c2 c1 c3 | c5 c4.
+const PAGES = {
+  1: { results: ["c1", "c2", "c3"], groups: [["c2"], ["c1", "c3"]] },
+  2: { results: ["c4", "c5"], groups: [["c5"], ["c4"]] },
+};
+const pageData = (page) => ({
   execution: { status: "completed" },
-  count: 4,
+  count: 5,
   page,
-  total_pages: totalPages,
-  results: (PAGES[page] ?? []).map(row),
-  groups: [],
+  total_pages: 2,
+  results: (PAGES[page]?.results ?? []).map(row),
+  groups: (PAGES[page]?.groups ?? []).map((ids, i) => ({
+    key: `g${i}`,
+    label: `Group ${i}`,
+    result_ids: ids,
+    total: ids.length,
+  })),
   evaluation_columns: [],
 });
 
@@ -80,47 +92,56 @@ beforeEach(() => {
 });
 
 describe("useCallListNavigation", () => {
-  it("steps within the page to the full neighbour row", async () => {
-    const { result, onStep } = setup({ callId: "c1" });
-    await waitFor(() => expect(result.current.hasNext).toBe(true));
-    expect(result.current.hasPrev).toBe(false);
-
-    act(() => result.current.onNext());
-    expect(onStep).toHaveBeenCalledWith({
-      task: expect.objectContaining({ id: "c2", scenario: "Scenario c2" }),
+  it("steps in the order the rows are on screen, not the results order", async () => {
+    // c2 is first on screen although it's second in results.
+    const first = setup({ callId: "c2" });
+    await waitFor(() => expect(first.result.current.hasNext).toBe(true));
+    expect(first.result.current.hasPrev).toBe(false);
+    act(() => first.result.current.onNext());
+    expect(first.onStep).toHaveBeenCalledWith({
+      task: expect.objectContaining({ id: "c1", scenario: "Scenario c1" }),
       source: "table",
       page: 1,
     });
+    first.unmount();
+
+    // c1 is first in results but second on screen: prev goes up to c2.
+    const second = setup({ callId: "c1" });
+    await waitFor(() => expect(second.result.current.hasPrev).toBe(true));
+    act(() => second.result.current.onPrev());
+    expect(second.onStep).toHaveBeenCalledWith(
+      expect.objectContaining({ task: expect.objectContaining({ id: "c2" }) }),
+    );
   });
 
-  it("crosses from the last row of a page to the first row of the next", async () => {
-    const { result, onStep } = setup({ callId: "c2" });
+  it("crosses from the last row on screen to the next page's first row on screen", async () => {
+    const { result, onStep } = setup({ callId: "c3" });
     await waitFor(() => expect(result.current.hasNext).toBe(true));
     // The next page is preloaded as soon as the open call sits on the edge.
     await waitFor(() => expect(pagesRequested()).toContain(2));
 
     await act(() => result.current.onNext());
     expect(onStep).toHaveBeenCalledWith({
-      task: expect.objectContaining({ id: "c3" }),
+      task: expect.objectContaining({ id: "c5" }),
       source: "table",
       page: 2,
     });
   });
 
-  it("crosses from the first row of a page back to the last row of the previous", async () => {
-    const { result, onStep } = setup({ callId: "c3", page: 2 });
+  it("crosses from the first row on screen back to the previous page's last row on screen", async () => {
+    const { result, onStep } = setup({ callId: "c5", page: 2 });
     await waitFor(() => expect(result.current.hasPrev).toBe(true));
 
     await act(() => result.current.onPrev());
     expect(onStep).toHaveBeenCalledWith({
-      task: expect.objectContaining({ id: "c2" }),
+      task: expect.objectContaining({ id: "c3" }),
       source: "table",
       page: 1,
     });
   });
 
   it("stops at both ends of the list", async () => {
-    const first = setup({ callId: "c1" });
+    const first = setup({ callId: "c2" });
     await waitFor(() => expect(first.result.current.hasNext).toBe(true));
     expect(first.result.current.hasPrev).toBe(false);
     first.unmount();
@@ -138,7 +159,7 @@ describe("useCallListNavigation", () => {
   });
 
   it("gives a call opened from Analytics no prev/next and reads nothing", () => {
-    const { result } = setup({ callId: "c1", source: "analytics" });
+    const { result } = setup({ callId: "c2", source: "analytics" });
     expect(result.current.hasPrev).toBe(false);
     expect(result.current.hasNext).toBe(false);
     expect(axios.get).not.toHaveBeenCalled();
@@ -156,7 +177,7 @@ describe("useCallListNavigation", () => {
         ? Promise.reject(new Error("boom"))
         : Promise.resolve({ data: pageData(params.page) }),
     );
-    const { result, onStep } = setup({ callId: "c2" });
+    const { result, onStep } = setup({ callId: "c3" });
     await waitFor(() => expect(result.current.hasNext).toBe(true));
 
     await act(() => result.current.onNext());

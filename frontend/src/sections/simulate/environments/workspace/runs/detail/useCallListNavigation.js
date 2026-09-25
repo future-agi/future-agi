@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 
@@ -8,12 +8,26 @@ import {
   useRunCalls,
 } from "src/api/simulate-environments/runCalls";
 
+// A fetched page's raw rows in on-screen order: each group's result ids, in
+// group order, the same way the table lays them out.
+function onScreenRows(data) {
+  const results = data?.results ?? [];
+  const groups = data?.groups ?? [];
+  if (!groups.length) return results;
+  const byId = new Map(results.map((row) => [row.id, row]));
+  return groups
+    .flatMap((group) => group.result_ids ?? [])
+    .map((id) => byId.get(id))
+    .filter(Boolean);
+}
+
 /**
  * Prev/next for the call drawer, worked out in the browser the way LLM Tracing
  * does it: the neighbours are the rows either side of the open call in the
- * list the trace table is showing, in the list's `results` order (grouping is
- * not applied). The table only holds one page, so at a page edge the adjacent
- * page is fetched through the same query the table uses.
+ * order the trace table shows them — its groups top to bottom, then the rows
+ * inside each group. The table only holds one page, so at a page edge the
+ * adjacent page is fetched through the same query the table uses, and the
+ * step lands on that page's first (or last) row on screen.
  *
  * `tableQuery` is the exact query the table reads (null when the table isn't
  * mounted), so reading it here is a cache hit that shares the table's live
@@ -37,16 +51,22 @@ export default function useCallListNavigation({
   const [crossing, setCrossing] = useState(false);
 
   const enabled = openCall?.source === "table" && !!tableQuery;
-  const { tasks, totalPages } = useRunCalls(executionId, {
+  const { tasks, groups, totalPages } = useRunCalls(executionId, {
     ...(tableQuery ?? {}),
     enabled,
   });
+  // The rows as they appear on screen: the table always groups, but fall back
+  // to the results order if a response has no groups.
+  const onScreen = useMemo(
+    () => (groups.length ? groups.flatMap((group) => group.rows) : tasks),
+    [groups, tasks],
+  );
   const page = tableQuery?.page ?? 1;
   const index = enabled
-    ? tasks.findIndex((task) => task.id === openCall.task.id)
+    ? onScreen.findIndex((task) => task.id === openCall.task.id)
     : -1;
   const onFirstRow = index === 0;
-  const onLastRow = index >= 0 && index === tasks.length - 1;
+  const onLastRow = index >= 0 && index === onScreen.length - 1;
 
   const pageOptions = useCallback(
     (target) =>
@@ -73,7 +93,7 @@ export default function useCallListNavigation({
         // A live run's rows shift, so don't step onto an old copy of the page.
         ...(live ? { staleTime: 0 } : {}),
       });
-      const rows = data?.results ?? [];
+      const rows = onScreenRows(data);
       const row = direction > 0 ? rows[0] : rows[rows.length - 1];
       if (!row) return;
       onStep({
@@ -96,8 +116,8 @@ export default function useCallListNavigation({
   const step = (direction) => {
     if (index < 0 || crossing) return undefined;
     const next = index + direction;
-    if (next >= 0 && next < tasks.length) {
-      onStep({ task: tasks[next], source: "table", page });
+    if (next >= 0 && next < onScreen.length) {
+      onStep({ task: onScreen[next], source: "table", page });
       return undefined;
     }
     return cross(direction);
@@ -106,7 +126,9 @@ export default function useCallListNavigation({
   return {
     hasPrev: !crossing && index >= 0 && (index > 0 || page > 1),
     hasNext:
-      !crossing && index >= 0 && (index < tasks.length - 1 || page < totalPages),
+      !crossing &&
+      index >= 0 &&
+      (index < onScreen.length - 1 || page < totalPages),
     onPrev: () => step(-1),
     onNext: () => step(1),
   };
