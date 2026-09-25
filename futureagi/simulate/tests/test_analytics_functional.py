@@ -628,6 +628,62 @@ class TestRunResultsV3Views:
         assert row["harness_outcome_status"] == "error"
         assert row["execution_status"] == "completed"
 
+    def test_calls_expose_pending_value_flags(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        from simulate.views.run_results_v3 import RunCallSerializer
+
+        scoring, scored, not_started, no_metadata = analytics_call_executions
+        metadata_by_call = {
+            scoring: {"eval_started": True, "csat_status": "running"},
+            scored: {
+                "eval_started": True,
+                "eval_completed": True,
+                "csat_status": "completed",
+            },
+            not_started: {
+                "eval_started": False,
+                "csat_status": "failed",
+                "csat_error": "CSAT scorer returned no result",
+            },
+        }
+        for call, metadata in metadata_by_call.items():
+            call.call_metadata = metadata
+            call.save(update_fields=["call_metadata"])
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        flags = {
+            row["id"]: (row["eval_started"], row["eval_completed"], row["csat_status"])
+            for row in response.json()["results"]
+        }
+        csat_errors = {
+            row["id"]: row["csat_error"] for row in response.json()["results"]
+        }
+        assert csat_errors == {
+            str(scoring.id): None,
+            str(scored.id): None,
+            str(not_started.id): "CSAT scorer returned no result",
+            str(no_metadata.id): None,
+        }
+        assert flags == {
+            str(scoring.id): (True, False, "running"),
+            str(scored.id): (True, True, "completed"),
+            str(not_started.id): (False, False, "failed"),
+            str(no_metadata.id): (False, False, None),
+        }
+        for row in response.json()["results"]:
+            data = RunCallSerializer(row).data
+            assert (
+                data["eval_started"],
+                data["eval_completed"],
+                data["csat_status"],
+            ) == flags[row["id"]]
+            assert data["csat_error"] == csat_errors[row["id"]]
+
     def test_persona_is_not_a_grouping_option(
         self, auth_client, test_execution, analytics_call_executions
     ):

@@ -97825,6 +97825,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "persona_details",
         "sub_goals",
         "harness_outcome_status",
+        "eval_started",
+        "eval_completed",
+        "csat_status",
+        "csat_error",
         "source_scenario_key",
         "trial_index",
         "outcome",
@@ -97897,6 +97901,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         harness_outcome_status: {
           title: "Harness outcome status",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        eval_started: {
+          title: "Eval started",
+          type: "boolean",
+        },
+        eval_completed: {
+          title: "Eval completed",
+          type: "boolean",
+        },
+        csat_status: {
+          title: "Csat status",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        csat_error: {
+          title: "Csat error",
           type: "string",
           minLength: 1,
           "x-nullable": true,

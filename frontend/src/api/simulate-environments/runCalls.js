@@ -9,6 +9,10 @@ import { ACTIVE_EXECUTION_STATUSES } from "src/sections/simulate/environments/wo
 
 const to01 = (n) => (n == null ? null : n <= 1 ? n : n / 100);
 
+// The backend marks an eval whose scoring broke as "Failed" (or "error");
+// it has no score, only the reason it failed.
+const ERRORED_EVAL_STATUSES = new Set(["failed", "error"]);
+
 // One cell from a live `evaluations[]` entry — the array shape the isolated
 // v3 run-results contract sends, where the server has already scored the eval.
 function liveEvalCell(col, data) {
@@ -23,6 +27,7 @@ function liveEvalCell(col, data) {
     reason: data.reason || "",
     threshold: 0.5,
     removed: data.removed === true,
+    errored: ERRORED_EVAL_STATUSES.has(String(data.status ?? "").toLowerCase()),
   };
 }
 
@@ -71,13 +76,62 @@ function evalResultFor(row, col) {
   return null;
 }
 
+// A value still coming stops loading this long after its call ended, so a
+// stuck scoring job can't load or poll forever.
+export const PENDING_VALUE_STALE_MS = 10 * 60 * 1000;
+
+const SCORING_CSAT_STATUSES = new Set(["pending", "running"]);
+const IN_PROGRESS_CALL_STATUSES = new Set([
+  "pending",
+  "queued",
+  "ongoing",
+  "analyzing",
+]);
+
+function isFresh(row, now) {
+  const at = row?.completed_at ?? row?.started_at;
+  if (!at) return false;
+  const time = new Date(at).getTime();
+  return Number.isFinite(time) && now - time < PENDING_VALUE_STALE_MS;
+}
+
+// The backend has no per-eval status, so a call's empty eval cells load
+// together while the call is being scored.
+export function isEvalScoring(row, now) {
+  return (
+    row?.eval_started === true &&
+    row?.eval_completed !== true &&
+    isFresh(row, now)
+  );
+}
+
+export function isCsatScoring(row, now) {
+  return SCORING_CSAT_STATUSES.has(row?.csat_status) && isFresh(row, now);
+}
+
+// A stopped run halts its scoring jobs, so a call it left mid-scoring will
+// never finish; a completed run can still be scoring.
+const STOPPED_RUN_STATUSES = new Set(["cancelling", "cancelled", "failed"]);
+
+// The run's status is the cap here: a call left in progress after its run
+// ended will never fill in.
+export function isCallInProgress(row, runActive) {
+  return IN_PROGRESS_CALL_STATUSES.has(row?.execution_status) && !!runActive;
+}
+
 /**
  * Maps one raw call row → a `RunTask`. Pure.
  * @param {Object} row          A `results[]` row from `testExecutions.list`.
  * @param {Array} evalColumns   The `column_order` entries of type "evaluation".
+ * @param {{ now?: number, runActive?: boolean, runStopped?: boolean }} [opts]
+ *   Decide which empty values are still coming.
  * @returns {import("./runDetail").RunTask}
  */
-export function mapCallRow(row, evalColumns = []) {
+export function mapCallRow(
+  row,
+  evalColumns = [],
+  { now = Date.now(), runActive = false, runStopped = false } = {},
+) {
   const evalResults = evalColumns
     .map((col) => evalResultFor(row, col))
     .filter(Boolean);
@@ -116,6 +170,8 @@ export function mapCallRow(row, evalColumns = []) {
     executionStatus: row?.execution_status ?? row?.status ?? null,
     critical: false,
     csat: row?.csat != null ? Math.round(row.csat * 10) / 10 : null,
+    csatFailed: row?.csat == null && row?.csat_status === "failed",
+    csatError: row?.csat_error ?? null,
     turns: row?.turn_count ?? null,
     latencyMs: row?.latency_ms ?? row?.avg_agent_latency ?? null,
     tokens: row?.tokens ?? row?.total_tokens ?? null,
@@ -129,6 +185,17 @@ export function mapCallRow(row, evalColumns = []) {
     simulationCallType: row?.modality ?? row?.simulation_call_type ?? null,
     provider: row?.provider ?? null,
     evalResults,
+    // A running call's evals and (voice-only) CSAT are still to come too.
+    pending: {
+      evals:
+        (!runStopped && isEvalScoring(row, now)) ||
+        isCallInProgress(row, runActive),
+      csat:
+        (!runStopped && isCsatScoring(row, now)) ||
+        (isCallInProgress(row, runActive) &&
+          (row?.modality ?? row?.simulation_call_type) === "voice"),
+      metrics: isCallInProgress(row, runActive),
+    },
   };
 }
 
@@ -217,13 +284,25 @@ export function useRunCalls(executionId, opts = {}) {
   const query = useQuery({
     ...runCallsQueryOptions(executionId, listOpts),
     enabled: !!executionId && enabled,
-    refetchInterval: (query) =>
-      ACTIVE_EXECUTION_STATUSES.has(query.state.data?.execution?.status)
+    // Keep polling a finished run while any call's evals or CSAT are still
+    // scoring — the same checks that make its cells load.
+    refetchInterval: (query) => {
+      const polled = query.state.data;
+      if (ACTIVE_EXECUTION_STATUSES.has(polled?.execution?.status)) return 3000;
+      if (STOPPED_RUN_STATUSES.has(polled?.execution?.status)) return false;
+      const now = query.state.dataUpdatedAt || Date.now();
+      return (polled?.results ?? []).some(
+        (row) => isEvalScoring(row, now) || isCsatScoring(row, now),
+      )
         ? 3000
-        : false,
+        : false;
+    },
   });
 
   const data = query.data;
+  // Judge freshness as of each fetch: a poll that returns the same payload
+  // keeps `data` identical, and a stuck scoring job must still stop loading.
+  const fetchedAt = query.dataUpdatedAt;
   const { tasks, columns, count, groups, facets, summary, totalPages } =
     useMemo(() => {
       if (!data) {
@@ -238,7 +317,14 @@ export function useRunCalls(executionId, opts = {}) {
         };
       }
       const evalColumns = data.evaluation_columns ?? [];
-      const rows = (data.results ?? []).map((r) => mapCallRow(r, evalColumns));
+      const mapOpts = {
+        now: fetchedAt || Date.now(),
+        runActive: ACTIVE_EXECUTION_STATUSES.has(data.execution?.status),
+        runStopped: STOPPED_RUN_STATUSES.has(data.execution?.status),
+      };
+      const rows = (data.results ?? []).map((r) =>
+        mapCallRow(r, evalColumns, mapOpts),
+      );
       const rowsById = new Map(rows.map((row) => [row.id, row]));
       const serverGroups = (data.groups ?? []).map((group) => {
         const groupRows = (group.result_ids ?? [])
@@ -279,7 +365,7 @@ export function useRunCalls(executionId, opts = {}) {
         summary: data.summary ?? null,
         totalPages: data.total_pages ?? 1,
       };
-    }, [data]);
+    }, [data, fetchedAt]);
 
   return {
     tasks,

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 
 import TraceTable from "../TraceTable";
 
@@ -89,5 +89,156 @@ describe("TraceTable — the open call's row scrolls into view", () => {
     );
 
     expect(activeRow()).toBeNull();
+  });
+});
+
+// An empty cell whose value is still coming loads; one that will never come
+// shows "-". Default columns: details, persona, CSAT, turns, latency, tokens,
+// then one per eval.
+describe("TraceTable — cells whose value is still coming", () => {
+  const EVALS = [
+    { id: "e1", name: "Refund" },
+    { id: "e2", name: "Tone" },
+  ];
+  const renderRow = (overrides) => {
+    const call = { ...row("a1"), ...overrides };
+    render(
+      <TraceTable
+        groups={[{ label: "A", count: 1, rows: [call], agg: {} }]}
+        evals={EVALS}
+        onOpen={vi.fn()}
+        activeCallId="a1"
+      />,
+    );
+    const [, , csat, turns, latency, tokens, e1, e2] =
+      activeRow().querySelectorAll("td");
+    return { csat, turns, latency, tokens, e1, e2 };
+  };
+  const loading = (cell) => cell.querySelector(".MuiSkeleton-root") !== null;
+
+  it("loads an unscored eval while the call is scoring, next to a scored one", () => {
+    const { e1, e2 } = renderRow({
+      evalResults: [{ id: "e1", name: "Refund", score: 0.8, passed: true }],
+      pending: { evals: true, csat: false, metrics: false },
+    });
+    expect(loading(e1)).toBe(false);
+    expect(e1).toHaveTextContent("80%");
+    expect(loading(e2)).toBe(true);
+    expect(e2).not.toHaveTextContent("-");
+  });
+
+  it("loads CSAT while it is scoring", () => {
+    const { csat } = renderRow({
+      csat: null,
+      pending: { evals: false, csat: true, metrics: false },
+    });
+    expect(loading(csat)).toBe(true);
+  });
+
+  it("loads turns and latency while the call runs, never tokens", () => {
+    const { turns, latency, tokens } = renderRow({
+      turns: null,
+      latencyMs: null,
+      tokens: null,
+      pending: { evals: true, csat: true, metrics: true },
+    });
+    expect(loading(turns)).toBe(true);
+    expect(loading(latency)).toBe(true);
+    expect(loading(tokens)).toBe(false);
+    expect(tokens).toHaveTextContent("-");
+  });
+
+  it("shows a present value even while it is marked pending", () => {
+    const { csat, turns, latency } = renderRow({
+      csat: 7.5,
+      turns: 4,
+      latencyMs: 250,
+      pending: { evals: true, csat: true, metrics: true },
+    });
+    expect(loading(csat)).toBe(false);
+    expect(csat).toHaveTextContent("7.5");
+    expect(loading(turns)).toBe(false);
+    expect(turns).toHaveTextContent("4");
+    expect(loading(latency)).toBe(false);
+    expect(latency).toHaveTextContent("250ms");
+  });
+
+  it.each([
+    ["nothing is pending", { evals: false, csat: false, metrics: false }],
+    ["the row has no pending flags", undefined],
+  ])('shows "-" when %s', (_, pending) => {
+    const cells = renderRow({
+      csat: null,
+      turns: null,
+      latencyMs: null,
+      tokens: null,
+      pending,
+    });
+    Object.values(cells).forEach((cell) => {
+      expect(loading(cell)).toBe(false);
+      expect(cell).toHaveTextContent("-");
+    });
+  });
+});
+
+describe("TraceTable — cells whose scoring failed", () => {
+  const EVALS = [
+    { id: "e1", name: "Refund" },
+    { id: "e2", name: "Tone" },
+  ];
+  const renderRow = (overrides) => {
+    const call = { ...row("a1"), ...overrides };
+    render(
+      <TraceTable
+        groups={[{ label: "A", count: 1, rows: [call], agg: {} }]}
+        evals={EVALS}
+        onOpen={vi.fn()}
+        activeCallId="a1"
+      />,
+    );
+    const [, , csat, , , , e1, e2] = activeRow().querySelectorAll("td");
+    return { csat, e1, e2 };
+  };
+
+  it("shows Error on a failed eval, with its reason on hover", async () => {
+    const { e1, e2 } = renderRow({
+      evalResults: [
+        {
+          id: "e1",
+          name: "Refund",
+          score: null,
+          errored: true,
+          reason: "Judge timed out",
+        },
+        { id: "e2", name: "Tone", score: 0.8, passed: true },
+      ],
+      pending: { evals: true, csat: false, metrics: false },
+    });
+    expect(e1).toHaveTextContent("Error");
+    expect(e1.querySelector(".MuiSkeleton-root")).toBeNull();
+    expect(e2).toHaveTextContent("80%");
+    fireEvent.mouseOver(within(e1).getByText("Error"));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Judge timed out",
+    );
+  });
+
+  it("shows Error on a failed CSAT, with its reason on hover", async () => {
+    const { csat } = renderRow({
+      csat: null,
+      csatFailed: true,
+      csatError: "CSAT scorer returned no result",
+      pending: { evals: false, csat: false, metrics: false },
+    });
+    expect(csat).toHaveTextContent("Error");
+    fireEvent.mouseOver(within(csat).getByText("Error"));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "CSAT scorer returned no result",
+    );
+  });
+
+  it("keeps a CSAT score even if an older attempt failed", () => {
+    const { csat } = renderRow({ csat: 7.5, csatFailed: false });
+    expect(csat).not.toHaveTextContent("Error");
   });
 });

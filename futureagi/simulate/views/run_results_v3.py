@@ -215,6 +215,10 @@ class RunCallSerializer(serializers.Serializer):
     persona_details = PersonaDetailsSerializer(allow_null=True)
     sub_goals = serializers.ListField(child=serializers.CharField())
     harness_outcome_status = serializers.CharField(allow_null=True)
+    eval_started = serializers.BooleanField()
+    eval_completed = serializers.BooleanField()
+    csat_status = serializers.CharField(allow_null=True)
+    csat_error = serializers.CharField(allow_null=True)
     source_scenario_key = serializers.CharField(allow_null=True)
     trial_index = serializers.IntegerField(allow_null=True)
     outcome = serializers.ChoiceField(

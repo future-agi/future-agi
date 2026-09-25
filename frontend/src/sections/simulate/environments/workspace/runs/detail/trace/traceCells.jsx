@@ -35,6 +35,24 @@ export function MetricValue({ metric, value, suffix = "" }) {
 }
 MetricValue.propTypes = { metric: PropTypes.string, value: PropTypes.any, suffix: PropTypes.string };
 
+// A value whose scoring failed — red "Error" with the reason on hover, like the
+// dataset grid's errored cells.
+export function ErrorValue({ reason }) {
+  return (
+    <CustomTooltip
+      show={!!reason}
+      arrow
+      size="small"
+      title={<Box sx={{ whiteSpace: "pre-line" }}>{reason}</Box>}
+    >
+      <Typography sx={{ typography: "s2", color: "error.main" }}>
+        Error
+      </Typography>
+    </CustomTooltip>
+  );
+}
+ErrorValue.propTypes = { reason: PropTypes.string };
+
 // A single eval cell — a score heat-tint with the reason on hover. Choice evals
 // carry no numeric score, so they render their label plainly instead.
 export function Score({ result }) {
