@@ -18,21 +18,33 @@ The fixture below reproduces both shapes a trace-level graph can get wrong:
 from __future__ import annotations
 
 import uuid
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
+from django.core.cache import cache
+from django.test import override_settings
 from rest_framework import status
 
 from conftest import _ch_test_native_client, _ch_test_owned_database
+from tracer.services.clickhouse.graph_dispatch import (
+    fetch_background_raw_system_metric_graph,
+)
 from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
     compile_exact_graph_row_predicates,
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     compile_exact_graph_filter_predicates,
+    is_internal_trace_root_filter,
 )
 from tracer.services.clickhouse.query_builders.voice_call_list import (
     VOICE_CALL_ROOT_FILTER,
+)
+from tracer.services.exact_aggregation_cache import (
+    normalize_exact_observe_identity,
+    snapshot_cache_key,
 )
 
 PROJECT_ID = "00000000-0000-4000-8000-00000000f0ce"
@@ -297,3 +309,176 @@ def test_voice_graph_counts_the_voice_list_population(
     voice_result = voice_graph.json().get("result", voice_graph.json())
     # Attestation names the voice surface and only the caller's own leaves.
     assert voice_result["query_applied_filter_count"] == 0
+
+
+# --------------------------------------------------------------------------
+# Cached and background reads: the population must survive the exact
+# identity. The chart's refresh (``?refresh=true``), a read too costly for the
+# interactive wall and a degraded interactive read all hand the graph to the
+# exact-aggregation worker through ``normalize_exact_observe_identity``, and
+# the cache serves what that worker published to every later page load.
+# --------------------------------------------------------------------------
+
+
+def _voice_identity(window_start, window_end, voice_leaf=VOICE_CALL_ROOT_FILTER):
+    return {
+        "project_id": PROJECT_ID,
+        "filters": [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "col_type": "SYSTEM_METRIC",
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": [
+                        window_start.isoformat(),
+                        window_end.isoformat(),
+                    ],
+                },
+            },
+            voice_leaf,
+        ],
+        "interval": "day",
+        "metric_id": "latency",
+        "observe_type": "trace",
+    }
+
+
+@pytest.mark.unit
+def test_exact_graph_identity_keeps_the_voice_invariant():
+    end = datetime(2026, 9, 25, tzinfo=UTC)
+    identity = normalize_exact_observe_identity(
+        _voice_identity(end - timedelta(days=7), end)
+    )
+
+    root_leaves = [
+        item for item in identity["filters"] if is_internal_trace_root_filter(item)
+    ]
+    assert len(root_leaves) == 1
+    # The worker compiles exactly this conjunction.
+    worker_plan = compile_exact_graph_row_predicates(
+        root_leaves,
+        project_id=PROJECT_ID,
+        observe_type="trace",
+    )
+    assert worker_plan.predicates[0].startswith(f"{ROOT_GUARD} AND (")
+    # Lease, publish and read re-derive the key from the identity they carry.
+    assert normalize_exact_observe_identity(identity) == identity
+    # A public leaf spelled like the private one is an any-span filter, so it
+    # must not share the voice graph's cached payload.
+    lookalike = normalize_exact_observe_identity(
+        _voice_identity(
+            end - timedelta(days=7),
+            end,
+            voice_leaf=_public_observation_type_leaf("INTERNAL_ROOT_METRIC"),
+        )
+    )
+    assert snapshot_cache_key("observe-system-graph", lookalike) != (
+        snapshot_cache_key("observe-system-graph", identity)
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_public_graph_request_cannot_carry_the_private_root_marker(
+    auth_client, observe_project
+):
+    # Keeping the marker in the exact identity is safe only while no request
+    # can put it there.
+    response = auth_client.post(
+        "/tracer/trace/get_graph_methods/",
+        {
+            "project_id": str(observe_project.id),
+            "interval": "day",
+            "req_data_config": {"id": "latency", "type": "SYSTEM_METRIC"},
+            "filters": [VOICE_CALL_ROOT_FILTER],
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert "_eval_task_trace_root" in response.content.decode()
+
+
+@pytest.mark.integration
+def test_background_voice_graph_counts_the_voice_list_population(ch_spans):
+    ch_spans.load(PROJECT_ID)
+    identity = normalize_exact_observe_identity(
+        _voice_identity(
+            ch_spans.hour - timedelta(days=3),
+            ch_spans.hour + timedelta(days=1),
+        )
+    )
+
+    graph = fetch_background_raw_system_metric_graph(
+        analytics=_LiveAnalytics(ch_spans.client),
+        project_id=PROJECT_ID,
+        filters=identity["filters"],
+        interval=identity["interval"],
+        metric_id=identity["metric_id"],
+        observe_type=identity["observe_type"],
+    )
+
+    assert graph["query_status"] == "complete"
+    assert sum(point["primary_traffic"] for point in graph["data"]) == len(VOICE_TRACES)
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+@override_settings(EXACT_AGGREGATION_TASK_QUEUE="exact_aggregation")
+def test_refreshed_voice_graph_worker_counts_the_voice_list_population(
+    auth_client, observe_project, ch_spans, monkeypatch
+):
+    # The chart's refresh button: the view schedules the worker, which then
+    # publishes the payload every later page load is served from cache.
+    from tracer.tasks import exact_aggregation
+
+    cache.clear()
+    ch_spans.load(observe_project.id)
+    analytics = _LiveAnalytics(ch_spans.client)
+    monkeypatch.setattr("tracer.views.trace.V2AnalyticsQueryService", lambda: analytics)
+    monkeypatch.setattr(
+        exact_aggregation, "_exact_observe_analytics", lambda: nullcontext(analytics)
+    )
+    window_start = ch_spans.hour - timedelta(days=3)
+    window_end = ch_spans.hour + timedelta(days=1)
+
+    with patch(
+        "tracer.tasks.exact_aggregation.refresh_exact_aggregation_snapshot.apply_async"
+    ) as enqueue:
+        response = auth_client.post(
+            "/tracer/trace/get_graph_methods/?refresh=true",
+            {
+                "project_id": str(observe_project.id),
+                "interval": "day",
+                "req_data_config": {"id": "latency", "type": "SYSTEM_METRIC"},
+                "filters": [
+                    {
+                        "column_id": "created_at",
+                        "filter_config": {
+                            "col_type": "SYSTEM_METRIC",
+                            "filter_type": "datetime",
+                            "filter_op": "between",
+                            "filter_value": [
+                                window_start.isoformat(),
+                                window_end.isoformat(),
+                            ],
+                        },
+                    }
+                ],
+                "observe_type": "voice",
+            },
+            format="json",
+        )
+    cache.clear()
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    assert enqueue.call_count == 1
+    task = enqueue.call_args.kwargs["kwargs"]
+    assert task["namespace"] == "observe-system-graph"
+    payload = exact_aggregation._observe_payload(task["namespace"], task["identity"])
+
+    assert payload["query_status"] == "complete"
+    assert sum(point["primary_traffic"] for point in payload["data"]) == len(
+        VOICE_TRACES
+    )
