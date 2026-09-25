@@ -323,6 +323,11 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "HARNESS_BACKGROUND_NOISE_VOLUME",
         # Off has to travel: decided here, enforced inside the sandbox.
         "ALK_VOICEMAIL_SCENARIOS",
+        # Temporary Uber Guest Booking POC authoring policy. These values are read only from
+        # deployment configuration and travel on the platform simulator-secret channel; they
+        # never come from the customer's RL-environment values.
+        "ALK_UBER_GUEST_POC_TARGET_PHONE_NUMBER",
+        "ALK_UBER_GUEST_POC_PIN",
         "ALK_HARNESS_WORKERS_AT_ONCE",
         "ALK_VALIDATION_INSTANCES",
     ):

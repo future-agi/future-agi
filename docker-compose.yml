@@ -82,6 +82,10 @@ x-backend-env: &backend-env
   ALK_HOSTED_AGENTCC_MODEL: ${ALK_HOSTED_AGENTCC_MODEL:-vertex_ai/gemini-3.7-flash}
   SIMULATOR_LLM_PROVIDER: ${SIMULATOR_LLM_PROVIDER:-vertex}
   SIMULATOR_LLM_MODEL: ${SIMULATOR_LLM_MODEL:-gemini-3.7-flash}
+  # Temporary, disabled-by-default Uber Guest Booking POC policy. The target value stays in
+  # deployment configuration and is sent only through the platform simulator-secret channel.
+  ALK_UBER_GUEST_POC_TARGET_PHONE_NUMBER: ${ALK_UBER_GUEST_POC_TARGET_PHONE_NUMBER:-}
+  ALK_UBER_GUEST_POC_PIN: ${ALK_UBER_GUEST_POC_PIN:-}
   DAYTONA_API_KEY: ${DAYTONA_API_KEY:-}
   DAYTONA_API_URL: ${DAYTONA_API_URL:-}
   DAYTONA_TARGET: ${DAYTONA_TARGET:-}

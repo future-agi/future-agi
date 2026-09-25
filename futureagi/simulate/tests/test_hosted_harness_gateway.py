@@ -97,6 +97,10 @@ def test_platform_simulator_material_uses_deployment_credentials_only(
     monkeypatch.setenv("LIVEKIT_API_SECRET", "platform-livekit-secret")
     monkeypatch.setenv("LIVEKIT_OUTBOUND_TRUNK_ID", "ST_platform-outbound")
     monkeypatch.setenv("PSTN_CALLER_NUMBER", "+14155550123")
+    monkeypatch.setenv(
+        "ALK_UBER_GUEST_POC_TARGET_PHONE_NUMBER", "+15551234567"
+    )
+    monkeypatch.setenv("ALK_UBER_GUEST_POC_PIN", "7682")
 
     values, credential_bytes = _platform_simulator_material()
 
@@ -110,6 +114,8 @@ def test_platform_simulator_material_uses_deployment_credentials_only(
     assert values["LIVEKIT_API_SECRET"] == "platform-livekit-secret"
     assert values["SIP_OUTBOUND_TRUNK_ID"] == "ST_platform-outbound"
     assert values["SIP_OUTBOUND_FROM_NUMBER"] == "+14155550123"
+    assert values["ALK_UBER_GUEST_POC_TARGET_PHONE_NUMBER"] == "+15551234567"
+    assert values["ALK_UBER_GUEST_POC_PIN"] == "7682"
     assert values["ALK_HARNESS"] == "claude"
     assert values["ALK_HARNESS_MODEL"] == "vertex_ai/gemini-3.7-flash"
     assert values["ALK_CLAUDE_GATEWAY_URL"] == "https://gateway.futureagi.test"
