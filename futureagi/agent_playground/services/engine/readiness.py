@@ -217,6 +217,13 @@ def check_node_readiness(
                 if has_default:
                     continue  # Fall back to default
                 else:
+                    # Upstream produced invalid data and port has no fallback.
+                    # This state is unresolvable — mark for skip, not perpetual pending.
+                    should_skip = True
+                    skip_reason = (
+                        f"Upstream node {source_node_id} produced invalid data, "
+                        f"port '{port.routing_key}' has no default value"
+                    )
                     unsatisfied_ports.append(
                         PortSatisfactionInfo(
                             port_id=port.id,
@@ -232,6 +239,13 @@ def check_node_readiness(
             elif has_default:
                 continue  # Satisfied with default (no data produced)
             else:
+                # Upstream succeeded but wrote no output and port has no fallback.
+                # This state is unresolvable — mark for skip, not perpetual pending.
+                should_skip = True
+                skip_reason = (
+                    f"Upstream node {source_node_id} succeeded but produced no data, "
+                    f"port '{port.routing_key}' has no default value"
+                )
                 unsatisfied_ports.append(
                     PortSatisfactionInfo(
                         port_id=port.id,
