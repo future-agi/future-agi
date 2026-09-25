@@ -75,6 +75,34 @@ class FetchDatasetColumnValuesTests(unittest.TestCase):
             self.assertEqual(call.args[1]["result_limit"], 101)
             self.assertLessEqual(call.kwargs["timeout_ms"], 4000)
 
+    def test_column_scope_is_read_before_the_final_merge(self):
+        """The CDC mirror is ordered by cell id; a WHERE-only scope under
+        FINAL reads every cell's value in the table."""
+        from model_hub.views import ai_filter
+
+        with (
+            mock.patch(
+                "tracer.services.clickhouse.client.is_clickhouse_enabled",
+                return_value=True,
+            ),
+            mock.patch(
+                "tracer.services.clickhouse.query_service.AnalyticsQueryService"
+            ) as aq,
+            mock.patch("model_hub.models.develop_dataset.Column.objects") as cols,
+        ):
+            aq.return_value.execute_ch_query.return_value = mock.Mock(data=[])
+            cols.only.return_value.get.return_value = mock.Mock(data_type="text")
+
+            ai_filter._fetch_dataset_column_values("ds-1", "col-1", search_query="x")
+            sql = aq.return_value.execute_ch_query.call_args.args[0]
+            self.assertIn(
+                "FROM model_hub_cell FINAL "
+                "PREWHERE dataset_id = toUUID(%(dataset_id)s) "
+                "AND column_id = toUUID(%(column_id)s) "
+                "WHERE _peerdb_is_deleted = 0 AND value != '' ",
+                sql,
+            )
+
     def test_array_column_flattens_list_elements(self):
         """Array cells stored as JSON lists should surface their elements."""
         from model_hub.views import ai_filter

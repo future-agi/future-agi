@@ -456,6 +456,28 @@ def test_scope_search_deadline_and_cursor_are_forwarded_unchanged(reader, origin
     assert reader.deadline.remaining_ms.call_count == 2
 
 
+# The CDC mirror is ordered by cell id, and FINAL never moves a non-key WHERE
+# predicate to PREWHERE, so a WHERE-only scope reads and merges every cell's
+# value in the table (dev: 14.3M rows / 19.5 GB for a 12-cell column).
+SCOPE_PREWHERE = (
+    "FROM model_hub_cell FINAL "
+    "PREWHERE dataset_id = toUUID(%(dataset_id)s) "
+    "AND column_id = toUUID(%(column_id)s) "
+    "WHERE _peerdb_is_deleted = 0 AND value != '' "
+)
+
+
+@pytest.mark.parametrize("origin", ["evaluation", "others"])
+def test_column_scope_is_read_before_the_final_merge(reader, origin):
+    reader.column.source = origin
+    reader.invoke(["west"], search="west")
+    sql = reader.analytics.execute_ch_query.call_args.args[0]
+    assert SCOPE_PREWHERE in sql
+    # Latest-state and value predicates stay after the merge.
+    where = sql.split(" WHERE ", 1)[1]
+    assert "dataset_id" not in where and "column_id" not in where
+
+
 def test_deadline_and_inventory_remain_fail_closed(reader):
     reader.deadline.remaining_ms.side_effect = [1000, DeadlineExceeded()]
     assert reader.invoke(["west"])["status"] == 503

@@ -5642,12 +5642,16 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "AND (%(search)s = '' OR "
                     "positionCaseInsensitiveUTF8(value, %(search)s) > 0) "
                 )
+            # The CDC mirror is ordered by cell id, and FINAL keeps a non-key
+            # WHERE out of PREWHERE, so a WHERE-only scope reads every cell's
+            # value in the table. A cell never changes dataset or column, so
+            # dropping other cells before the merge keeps the latest state.
             sql = (CHOICE_INTERPRETATION_CTE if evaluation_choices else "") + (
                 f"SELECT {projection} "
                 "FROM model_hub_cell FINAL "
-                "WHERE _peerdb_is_deleted = 0 "
-                "AND dataset_id = toUUID(%(dataset_id)s) "
+                "PREWHERE dataset_id = toUUID(%(dataset_id)s) "
                 "AND column_id = toUUID(%(column_id)s) "
+                "WHERE _peerdb_is_deleted = 0 "
                 "AND value != '' "
                 f"{search_clause}"
                 f"{'GROUP BY value ' if evaluation_choices else ''}"

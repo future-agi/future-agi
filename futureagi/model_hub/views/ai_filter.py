@@ -682,12 +682,13 @@ def _fetch_dataset_column_values(
 
     analytics = AnalyticsQueryService()
     try:
+        # Scope before the FINAL merge; see _filter_values_dataset_column.
         sql = (
             "SELECT DISTINCT value AS val "
             "FROM model_hub_cell FINAL "
-            "WHERE _peerdb_is_deleted = 0 "
-            "AND dataset_id = toUUID(%(dataset_id)s) "
+            "PREWHERE dataset_id = toUUID(%(dataset_id)s) "
             "AND column_id = toUUID(%(column_id)s) "
+            "WHERE _peerdb_is_deleted = 0 "
             "AND value != '' "
             "AND positionCaseInsensitiveUTF8(value, %(search)s) > 0 "
             "ORDER BY val "
