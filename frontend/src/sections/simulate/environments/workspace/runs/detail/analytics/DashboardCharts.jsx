@@ -205,7 +205,16 @@ export function Donut({ data, onOpen }) {
           <Typography sx={{ fontSize: 10, color: "text.secondary" }}>
             {data.headline ? pieLabel(data.headline.label) : "Calls"}
           </Typography>
-          <Typography sx={{ fontSize: 22, fontWeight: 600 }}>
+          <Typography
+            sx={{
+              fontSize: 22,
+              fontWeight: data.headline && data.headline.share == null ? 400 : 600,
+              color:
+                data.headline && data.headline.share == null
+                  ? "text.disabled"
+                  : "text.primary",
+            }}
+          >
             {data.headline
               ? format(data.headline.share, "percent")
               : number(data.total, 0)}

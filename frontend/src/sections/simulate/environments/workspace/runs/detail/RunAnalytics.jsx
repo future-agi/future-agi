@@ -389,7 +389,14 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
                 >
                   {label}
                 </Typography>
-                <Typography sx={{ fontSize: 21, fontWeight: 600, my: 0.5 }}>
+                <Typography
+                  sx={{
+                    fontSize: 21,
+                    my: 0.5,
+                    fontWeight: row.p90 == null ? 400 : 600,
+                    color: row.p90 == null ? "text.disabled" : "text.primary",
+                  }}
+                >
                   {format(row.p90, unit)}{" "}
                   <Typography
                     component="span"
@@ -531,7 +538,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
                   minWidth: 0,
                 }}
               >
-                <Typography sx={{ fontSize: 10, color: "text.secondary" }}>
+                <Typography sx={{ fontSize: 10,fontWeight: 600, color: "text.secondary" }}>
                   {metric.label}
                 </Typography>
                 <Typography

@@ -412,6 +412,7 @@ def build_run_dashboard(
         )
     )
     voice = queryset.filter(simulation_call_type="voice")
+    noun = "chat" if total and not voice.exists() else "call"
     values = queryset.aggregate(
         csat=Avg("dashboard_csat"),
         csat_measured=Count("dashboard_csat"),
@@ -454,17 +455,18 @@ def build_run_dashboard(
             }
         )
 
-    metric("total", "Total calls", total, measured=total)
+    is_voice = noun == "call"
+    metric("total", f"Total {noun}s", total, measured=total)
     metric(
         "connected",
-        "Connected",
+        f"{noun.capitalize()}s connected",
         values["connected"],
         measured=total,
-        note="Calls with recorded conversation evidence",
+        note=f"{noun.capitalize()}s with recorded conversation evidence",
     )
     metric(
         "connected_rate",
-        "Calls connected",
+        f"{noun.capitalize()}s connected (%)",
         round(values["connected"] * 100 / total, 2) if total else None,
         "percent",
         total,
@@ -472,43 +474,46 @@ def build_run_dashboard(
     metric("csat", "Avg CSAT score", values["csat"], measured=values["csat_measured"])
     metric(
         "agent_latency",
-        "Agent latency",
+        "Agent latency" if is_voice else "Agent response time",
         summary["latency"]["average"],
         "ms",
         summary["latency"]["measured"],
     )
-    metric(
-        "wpm", "Agent WPM", voice_values["wpm"], measured=voice_values["wpm_measured"]
-    )
-    metric(
-        "stop",
-        "Agent stop latency",
-        voice_values["stop"],
-        "ms",
-        voice_values["stop_measured"],
-    )
-    metric(
-        "turn_count",
-        "Avg turn count",
-        values["turns"],
-        measured=values["turns_measured"],
-    )
-    metric(
-        "talk",
-        "Talk ratio",
-        voice_values["talk"],
-        "ratio",
-        voice_values["talk_measured"],
-        "Mean agent/customer speaking share for measured voice calls",
-    )
+    if is_voice:
+        metric(
+            "wpm",
+            "Agent WPM",
+            voice_values["wpm"],
+            measured=voice_values["wpm_measured"],
+        )
+        metric(
+            "stop",
+            "Agent stop latency",
+            voice_values["stop"],
+            "ms",
+            voice_values["stop_measured"],
+        )
+        metric(
+            "talk",
+            "Talk ratio (agent/user)",
+            voice_values["talk"],
+            "ratio",
+            voice_values["talk_measured"],
+            "Mean agent/customer speaking share for measured voice calls",
+        )
     metric(
         "duration",
-        "Avg duration",
+        f"Avg {noun} duration",
         summary["duration"]["average"],
         "seconds",
         summary["duration"]["measured"],
     )
-    metric("turns", "Avg turns", values["turns"], measured=values["turns_measured"])
+    metric(
+        "turns",
+        f"Avg turns/{noun}",
+        values["turns"],
+        measured=values["turns_measured"],
+    )
     duration_stats = _stats(
         queryset,
         {
@@ -520,7 +525,7 @@ def build_run_dashboard(
     )
     metric(
         "latency_p90",
-        "Latency p90",
+        f"{noun.capitalize()} duration p90",
         (
             duration_stats["duration_seconds"]["p90"] * 1000
             if duration_stats["duration_seconds"]["p90"] is not None
