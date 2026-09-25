@@ -106,9 +106,13 @@ split in time (``UsersListManager._read_span_attributes``): one user a
 request, up to
 ``2 ** (ceil(log2(window / _USER_LIST_ATTRIBUTE_MIN_BUCKET)) + 1) - 1``
 statements (4,095 over 24 h) per enrichment statement, outside the statement
-budget. The native span-dimension statement is never split: when it runs out
-of a read budget for the head-of-line user, the request raises a retryable
-error, as an attribute read that fails at its least bucket does. The split
+budget. The native span-dimension statement is never split, and it always
+carries a server cap: ``USER_LIST_ENRICHMENT_TIMEOUT_MS`` or what admits it,
+whichever is less, and the cap alone on the head-of-line escape
+(``_native_certification_deadline``). A stop at that cap is a read-budget
+failure like any other; when it (or any read budget) ends the head-of-line
+user's own statement, the request raises a retryable error, as an attribute
+read that fails at its least bucket does. The split
 has no deadline after the uncapped slice, or once the analytics wall is
 already spent, and otherwise runs against what is left of it
 (``_admission_deadline``). One stall is known and left open: a split
@@ -161,7 +165,7 @@ from __future__ import annotations
 
 import hashlib
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -606,14 +610,16 @@ def _read_slice(
     request has decided something, a stopped slice it cannot narrow, or
     whose retry the page wall refuses, ends it.
 
-    What stays unbounded. Survivor, instant, enrichment (the native
-    span-dimension statement included) and tail-probe statements never carry
-    a server cap (the application's no-abort policy): a wall only decides
-    whether they start. The escape lifts even that, once per request, for the
-    head-of-line decision: the uncapped slice, its survivor statement, the
-    instant read and its survivor statement when the slice comes back tied at
-    one instant, and one batch's certification (and its head-of-line user's
-    alone when that fails) start with no wall at all.
+    What stays unbounded. Survivor, instant, attribute enrichment and
+    tail-probe statements never carry a server cap (the application's
+    no-abort policy): a wall only decides whether they start. The native
+    span-dimension statement is the exception: the server stops it at its
+    cap (``_native_certification_deadline``). The escape lifts the walls,
+    once per request, for the head-of-line decision: the uncapped slice, its
+    survivor statement, the instant read and its survivor statement when the
+    slice comes back tied at one instant, and one batch's certification (and
+    its head-of-line user's alone when that fails) start with no wall at all;
+    the native statement among them still runs under its own cap.
     The finish's uncapped replay is not part of it: ``_materialise`` sends it
     when a page that has published nothing had its head-of-line user's
     capped replay stopped or refused, whether or not a slice was uncapped.
@@ -973,7 +979,8 @@ def _certify(state: _WalkState, batch: list[_Candidate]) -> int:
     native_witness = state.witness.family == "native"
     try:
         if manager.native_dimension_leaves:
-            manager._read_native_span_dimensions(
+            _read_native_certification(
+                state,
                 rows,
                 manager._exact_candidate_builder(
                     candidate_ids=[candidate.end_user_id for candidate in batch],
@@ -981,7 +988,6 @@ def _certify(state: _WalkState, batch: list[_Candidate]) -> int:
                     candidate_end_user_id_map=alias_map,
                     frozen_filters=state.frozen_filters,
                 ),
-                _admission_deadline(state),
                 newest=state.witness.leaf_index if native_witness else None,
             )
         manager._read_span_attributes(
@@ -997,7 +1003,12 @@ def _certify(state: _WalkState, batch: list[_Candidate]) -> int:
         state.budget.exhausted_by = "wall"
         return 0
     except Exception as exc:
-        if head or not is_read_budget_error(exc):
+        stopped = isinstance(exc, _NativeCertificationStopped)
+        if head and stopped:
+            # A retryable read-budget error, as a head-of-line attribute read
+            # that fails at its least bucket is.
+            raise ReadDeadlineExceeded(str(exc)) from exc
+        if head or not (stopped or is_read_budget_error(exc)):
             raise
         if len(batch) == 1:
             # Not the head of line: the request stops above this batch.
@@ -1031,6 +1042,65 @@ def _certify(state: _WalkState, batch: list[_Candidate]) -> int:
             order_key=order_key if member else None,
         )
     return len(batch)
+
+
+class _NativeCertificationStopped(Exception):
+    """The server stopped a native certification statement at its own cap.
+
+    A read-budget failure (``is_read_budget_error``), not the request's wall:
+    ``_certify`` certifies the batch's head-of-line user alone, stops the
+    request above a user that fails alone, and raises it for the head of line.
+    """
+
+
+def _native_certification_deadline(state: _WalkState) -> ReadDeadline:
+    """The deadline the native certification statement runs, and is stopped, under.
+
+    The statement is a whole-window latest-state replay, like the finish's
+    replay and metrics statements, so it carries their cap: the server stops
+    it at ``USER_LIST_ENRICHMENT_TIMEOUT_MS`` or what admits it, whichever is
+    less (``_statement_timeout`` on an ``enforce_on_server`` deadline). On the
+    head-of-line escape nothing admits it (``_admission_deadline`` is
+    ``None``), and the cap alone bounds it: no certification runs without one.
+    """
+    from tracer.services.users_list_manager import USER_LIST_ENRICHMENT_TIMEOUT_MS
+
+    admission = _admission_deadline(state)
+    if admission is None:
+        return ReadDeadline.start(
+            USER_LIST_ENRICHMENT_TIMEOUT_MS, enforce_on_server=True
+        )
+    return replace(admission, enforce_on_server=True)
+
+
+def _read_native_certification(
+    state: _WalkState, rows: list[dict], builder: Any, *, newest: int | None
+) -> None:
+    """The batch's native span-dimension statement, under a server cap.
+
+    A stop the admission deadline explains (nothing of it left) is the wall
+    and propagates as ``ReadDeadlineExceeded``; a stop with admission time
+    left is the statement's own cap, a read-budget failure
+    (``_NativeCertificationStopped``).
+    """
+    deadline = _native_certification_deadline(state)
+    try:
+        state.manager._read_native_span_dimensions(
+            rows, builder, deadline, newest=newest
+        )
+    except ReadDeadlineExceeded as exc:
+        admission = _admission_deadline(state)
+        if admission is not None:
+            try:
+                admission.remaining_ms()
+            except ReadDeadlineExceeded:
+                raise exc from None
+        logger.info(
+            "users_matching_walk_native_certification_stopped",
+            users=len(rows),
+            cap_ms=deadline.total_ms,
+        )
+        raise _NativeCertificationStopped(str(exc)) from exc
 
 
 def _native_filters_match(manager: Any, end_user_id: str) -> bool:

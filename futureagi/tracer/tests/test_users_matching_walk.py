@@ -614,10 +614,10 @@ def test_native_non_members_ahead_of_a_member_do_not_degrade_the_page():
 
 def test_the_native_statement_is_a_certification_statement():
     # The native read decides membership at certification, before any
-    # replay: like the attribute enrichment it is admitted by the search's
-    # deadline under the enrichment cap, carries no server cap (the
-    # application's no-abort policy for enrichment reads), and runs with the
-    # page-replay read settings. The finish never sends it.
+    # replay: it is admitted by the search's deadline under the enrichment
+    # cap and, a whole-window replay like the finish's statements, asks the
+    # server to stop it there too; it runs with the page-replay read
+    # settings. The finish never sends it.
     world = World()
     for ordinal, minutes in enumerate((3, 7), start=1):
         world.user(
@@ -638,7 +638,7 @@ def test_the_native_statement_is_a_certification_statement():
     for index in native:
         assert engine.timeouts[index] is not None
         assert engine.timeouts[index] <= ulm.USER_LIST_ENRICHMENT_TIMEOUT_MS
-        assert engine.caps[index] is None
+        assert engine.caps[index] == engine.timeouts[index]
         assert engine.settings[index]["max_threads"] == 8
     replay = kinds.index("replay")
     assert "native" not in kinds[replay:]
@@ -1964,11 +1964,13 @@ class _NativeDriver:
         return rows, [(name, "String") for name in columns]
 
 
-def _real_service_page(world: World, driver: _NativeDriver, *, cursor=None):
+def _real_service_page(
+    world: World, driver: _NativeDriver, *, cursor=None, filters=None
+):
     from tracer.services.clickhouse.client import ClickHouseClient
 
     client = ClickHouseClient(host="localhost", port=39999, pool_size=1)
-    manager = _manager()
+    manager = _manager(filters)
     with (
         patch.object(client, "_get_client", return_value=driver),
         patch.object(client, "_return_client"),
@@ -2006,6 +2008,57 @@ def test_finish_mode_reaches_the_native_driver_as_max_execution_time():
     assert 0 < slice_cap <= walk.USER_LIST_WALK_FINISH_WALL_MS / 2000
     for kind in ("remap", "enrich"):
         assert sent[kind]["max_execution_time"] == 0, kind
+
+
+def test_the_native_certification_reaches_the_driver_with_a_cap():
+    """The native statement arrives with a real ``max_execution_time``.
+
+    A whole-window replay of the batch's identities, it is stopped by the
+    server at the enrichment cap (8,000 ms) or what admits it, like the
+    finish's replay; it used to arrive with the application policy's 0.
+    """
+
+    world = World()
+    world.user(1, key=minutes_before_end(3), raw=(minutes_before_end(3),), native=True)
+    driver = _NativeDriver(Engine(world))
+
+    read = _real_service_page(
+        world, driver, filters=[*_date_only(), _native_status_leaf()]
+    )
+
+    assert _names(read) == ["user-1"]
+    sent = dict(driver.sent)
+    assert 0 < sent["native"]["max_execution_time"] <= 8.0
+    assert sent["native"]["timeout_overflow_mode"] == "throw"
+
+
+@pytest.mark.parametrize("users", [3, 1])
+def test_a_native_certification_the_server_stops_for_its_head_raises(users):
+    """Stopped at its cap for the head-of-line user alone: a retryable error.
+
+    A batch the server stops is certified again for its head-of-line user
+    alone; when that statement is stopped too, nothing narrower exists (the
+    native statement has no time split), so the request raises the read
+    budget error instead of publishing, and hands out no cursor.
+    """
+
+    world = World()
+    for n in range(1, users + 1):
+        world.user(
+            n, key=minutes_before_end(n), raw=(minutes_before_end(n),), native=True
+        )
+    driver = _NativeDriver(Engine(world))
+    driver.fail_kind = "native"
+
+    with pytest.raises(ReadDeadlineExceeded):
+        _real_service_page(
+            world, driver, filters=[*_date_only(), _native_status_leaf()]
+        )
+
+    natives = [settings for kind, settings in driver.sent if kind == "native"]
+    assert len(natives) == (2 if users > 1 else 1)
+    assert all(float(s["max_execution_time"]) > 0 for s in natives)
+    assert "replay" not in [kind for kind, _settings in driver.sent]
 
 
 def test_a_finish_the_server_stops_on_an_empty_page_is_retried_without_the_cap():

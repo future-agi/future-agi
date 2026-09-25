@@ -1781,6 +1781,123 @@ def test_a_head_of_line_native_statement_that_fails_raises(users):
             assert "replay" not in memory.kinds
 
 
+def test_the_escape_certifies_under_the_native_statements_own_cap():
+    """No certification runs without a cap, not even on the head-of-line escape.
+
+    Every slice that returns rows outlasts the whole request, so each request
+    reads its head-of-line slice without a cap and decides its first batch
+    with no wall (``_admission_deadline`` is ``None``). The native statement
+    among them still carries the enrichment cap, as its server
+    ``max_execution_time``; it used to carry none.
+    """
+    world, expected = _spread_world(4, 5)
+    for user in world.users.values():
+        user["native"] = True
+    clock = _Clock()
+    names, escaped_caps = [], []
+    cursor = None
+    with _shipped_walls(), _scripted_clock(clock):
+        for _hop in range(8):
+            engine = _CappedEngine(world, clock=clock, slice_ms=_every_slice(40_000))
+            with capture_logs() as logs:
+                read, _engine = _page(
+                    world,
+                    page_size=25,
+                    cursor=cursor,
+                    engine=engine,
+                    filters=_family_filters("native"),
+                )
+            names.extend(_names(read))
+            caps = [
+                (engine.caps[i], engine.timeouts[i])
+                for i, kind in enumerate(engine.kinds)
+                if kind == "native"
+            ]
+            for cap, timeout in caps:
+                assert cap is not None and cap == timeout, caps
+                assert cap <= ulm.USER_LIST_ENRICHMENT_TIMEOUT_MS
+            if _logged(logs, "users_matching_walk_uncapped_slice"):
+                escaped_caps.extend(cap for cap, _timeout in caps)
+            if not read.has_more:
+                break
+            cursor = _signed_cursor(read)
+    assert names == expected
+    # On the escape nothing admits it: the cap alone, in full.
+    assert escaped_caps
+    assert set(escaped_caps) == {ulm.USER_LIST_ENRICHMENT_TIMEOUT_MS}
+
+
+class _CappedNativeBatchEngine(_MemoryEngine):
+    """A native statement of more than one user outlasts its cap; one user's does not."""
+
+    def execute_ch_query(
+        self,
+        query,
+        params=None,
+        timeout_ms=None,
+        settings=None,
+        *,
+        server_execution_cap_ms=None,
+    ):
+        if (
+            _statement_kind(query, params) == "native"
+            and server_execution_cap_ms is not None
+            and len(params["candidate_end_user_ids"]) > 1
+        ):
+            self.calls.append(query)
+            self.kinds.append("native")
+            self.clock.spend(server_execution_cap_ms)
+            raise ReadDeadlineExceeded("ClickHouse statement exceeded its cap")
+        return super().execute_ch_query(
+            query,
+            params,
+            timeout_ms,
+            settings,
+            server_execution_cap_ms=server_execution_cap_ms,
+        )
+
+
+def test_a_native_batch_the_server_stops_at_its_cap_certifies_one_user_at_a_time():
+    """A stop at the native statement's own cap is a read budget, not the wall.
+
+    The batch is certified again for its head-of-line user alone, and the
+    rest of the request one user at a time; a stop off the head of line ends
+    the request above that user (``read_budget``) and the next one decides
+    it first. Every user is published once, in order.
+    """
+    world, expected = _spread_world(6, 5)
+    for user in world.users.values():
+        user["native"] = True
+    clock = _Clock()
+    names, stopped = [], 0
+    cursor = None
+    with _shipped_walls(), _scripted_clock(clock):
+        for _hop in range(12):
+            engine = _CappedNativeBatchEngine(world, clock=clock)
+            with capture_logs() as logs:
+                read, _engine = _page(
+                    world,
+                    page_size=25,
+                    cursor=cursor,
+                    engine=engine,
+                    filters=_family_filters("native"),
+                )
+            names.extend(_names(read))
+            stopped += len(
+                [
+                    entry
+                    for entry in logs
+                    if entry["event"]
+                    == "users_matching_walk_native_certification_stopped"
+                ]
+            )
+            if not read.has_more:
+                break
+            cursor = _signed_cursor(read)
+    assert names == expected
+    assert stopped >= 1
+
+
 @pytest.mark.parametrize("size", [401, 601])
 def test_a_native_tied_cohort_larger_than_one_request_publishes_everyone_once(size):
     """The tied-instant proof, walked on a native leaf.

@@ -1086,8 +1086,10 @@ class UsersListManager:
         )
         if not query:
             return
-        # A page-scoped latest-state replay like its sibling enrichments: the
-        # walk's finish deadline also reaches the server as its execution cap.
+        # A page-scoped latest-state replay like its sibling enrichments: a
+        # deadline enforced on the server (the walk's certification sends one,
+        # ``_native_certification_deadline``) also reaches it as its execution
+        # cap.
         result = V2AnalyticsQueryService().execute_ch_query(
             query,
             params,
