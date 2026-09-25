@@ -158,6 +158,7 @@ const pieLabel = (label) =>
   })[label.toLowerCase()] || label;
 export function Donut({ data, onOpen }) {
   if (!data?.total) return <NoMeasurement />;
+  const emptyHeadline = Boolean(data.headline) && data.headline.share == null;
   return (
     <Box sx={{ px: 1.5, pb: 2 }}>
       <Box sx={{ height: 165, position: "relative" }}>
@@ -208,11 +209,8 @@ export function Donut({ data, onOpen }) {
           <Typography
             sx={{
               fontSize: 22,
-              fontWeight: data.headline && data.headline.share == null ? 400 : 600,
-              color:
-                data.headline && data.headline.share == null
-                  ? "text.disabled"
-                  : "text.primary",
+              fontWeight: emptyHeadline ? 400 : 600,
+              color: emptyHeadline ? "text.disabled" : "text.primary",
             }}
           >
             {data.headline

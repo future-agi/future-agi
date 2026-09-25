@@ -412,6 +412,7 @@ def build_run_dashboard(
         )
     )
     voice = queryset.filter(simulation_call_type="voice")
+    # A run is one modality in practice; a mixed run counts as voice.
     noun = "chat" if total and not voice.exists() else "call"
     values = queryset.aggregate(
         csat=Avg("dashboard_csat"),

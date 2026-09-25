@@ -538,7 +538,13 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
                   minWidth: 0,
                 }}
               >
-                <Typography sx={{ fontSize: 10,fontWeight: 600, color: "text.secondary" }}>
+                <Typography
+                  sx={{
+                    fontSize: 10,
+                    fontWeight: 600,
+                    color: "text.secondary",
+                  }}
+                >
                   {metric.label}
                 </Typography>
                 <Typography
