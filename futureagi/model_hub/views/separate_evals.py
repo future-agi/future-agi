@@ -151,6 +151,7 @@ from tracer.services.clickhouse.query_builders.base import (
 )
 from tracer.services.clickhouse.read_budget import ReadDeadline, ReadDeadlineExceeded
 from tracer.services.exact_aggregation_cache import (
+    exact_refresh_state,
     mark_refresh_failed,
     publish_exact_snapshot,
     read_exact_snapshot,
@@ -5834,18 +5835,40 @@ def _pending_eval_usage_payload(template_id, page, page_size):
 # activities cap one run at an hour (``time_limit=3600``).
 _EVAL_USAGE_IN_FLIGHT_WINDOW = timedelta(hours=1)
 
+# A snapshot younger than this is served without an automatic refresh. The
+# browser polls until a refresh publishes; on a template that runs every few
+# seconds a newer run already exists by then, so without a minimum age every
+# poll would start another exact read. The frontend's longest configurable
+# poll delay (60 s) plus one request (30 s) lands inside this window.
+_EVAL_USAGE_AUTO_REFRESH_MIN_AGE = timedelta(minutes=2)
 
-def _eval_usage_changed_since(organization, template_id, snapshot) -> bool:
-    """Whether a usage row for ``template_id`` was written after ``snapshot``.
+# Rows written up to this long before a snapshot published also count as newer:
+# the snapshot's time is its publish time, not when ClickHouse was read, and
+# ClickHouse reads a CDC copy that lags Postgres by seconds. Must not exceed
+# the minimum age, or a quiet template would refresh on every visit.
+_EVAL_USAGE_LATE_ROW_MARGIN = _EVAL_USAGE_AUTO_REFRESH_MIN_AGE
+
+
+def _eval_usage_snapshot_is_stale(
+    organization, template_id, cache_identity, snapshot
+) -> bool:
+    """Whether a public request should refresh ``snapshot`` in the background.
 
     Exact snapshots are served until refreshed and are keyed by period, not by
     data, so without this a period's first-visit snapshot kept serving for the
-    whole cache TTL while newer runs existed. Rows created after the snapshot
-    and in-flight rows that settled after it both count. The scan stays on the
-    ``(organization, source_id, -created_at)`` index.
+    whole cache TTL while newer runs existed. A snapshot is stale when a usage
+    row for ``template_id`` was written after it (a newer run, or an in-flight
+    run that settled after it) and all of these hold:
 
-    ClickHouse reads a CDC copy of this table: a refresh that runs before a row
-    replicates publishes without it and is not re-triggered until the next run.
+    - it is at least ``_EVAL_USAGE_AUTO_REFRESH_MIN_AGE`` old, so the polls that
+      follow a refresh settle on the new snapshot instead of chaining reads;
+    - no refresh is running or has just failed. A failed refresh never
+      publishes, so its snapshot stays old; retrying it waits for the user's
+      Refresh instead of resubmitting a failing read on every poll.
+
+    The row scan stays on the ``(organization, source_id, -created_at)`` index.
+    A read that takes longer than ``_EVAL_USAGE_LATE_ROW_MARGIN`` can still miss
+    rows that landed as it started; the next run or a Refresh picks them up.
     """
     completed_at = (snapshot or {}).get("query_completed_at")
     if not isinstance(completed_at, str):
@@ -5854,11 +5877,18 @@ def _eval_usage_changed_since(organization, template_id, snapshot) -> bool:
         completed_at = datetime.fromisoformat(completed_at)
     except ValueError:
         return False
+    if completed_at.tzinfo is None:
+        completed_at = completed_at.replace(tzinfo=UTC)
+    if timezone.now() - completed_at < _EVAL_USAGE_AUTO_REFRESH_MIN_AGE:
+        return False
+    if exact_refresh_state("eval-usage", cache_identity) is not None:
+        return False
+    written_after = completed_at - _EVAL_USAGE_LATE_ROW_MARGIN
     return APICallLog.objects.filter(
         organization=organization,
         source_id=str(template_id),
-        created_at__gte=completed_at - _EVAL_USAGE_IN_FLIGHT_WINDOW,
-        updated_at__gt=completed_at,
+        created_at__gte=written_after - _EVAL_USAGE_IN_FLIGHT_WINDOW,
+        updated_at__gt=written_after,
     ).exists()
 
 
@@ -5995,8 +6025,11 @@ class EvalUsageStatsView(APIView):
                             # Serve the snapshot, refreshing it in the
                             # background once newer runs exist.
                             refresh=bool(query["refresh"])
-                            or _eval_usage_changed_since(
-                                organization, template_id, previous_exact
+                            or _eval_usage_snapshot_is_stale(
+                                organization,
+                                template_id,
+                                cache_identity,
+                                previous_exact,
                             ),
                             pending_payload=_pending_eval_usage_payload(
                                 template_id,

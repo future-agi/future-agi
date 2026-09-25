@@ -2768,7 +2768,7 @@ class EvaluationRunner:
         if value == CellStatus.ERROR.value and api_call_log_row:
             try:
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
-                api_call_log_row.save(update_fields=["status"])
+                api_call_log_row.save(update_fields=["status", "updated_at"])
 
                 refund_config = {"evaluation_id": str(self.user_eval_metric_id)}
                 if refund_cost_for_api_call is not None:
@@ -2778,7 +2778,7 @@ class EvaluationRunner:
         elif value == CellStatus.PASS.value and api_call_log_row:
             try:
                 api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-                api_call_log_row.save(update_fields=["status"])
+                api_call_log_row.save(update_fields=["status", "updated_at"])
             except Exception as e:
                 logger.error(f"Error updating success api call status: {str(e)}")
 
