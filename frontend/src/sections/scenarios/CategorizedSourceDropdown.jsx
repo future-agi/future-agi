@@ -8,6 +8,7 @@ import React, {
 import {
   Box,
   Divider,
+  Chip,
   InputAdornment,
   List,
   ListItemButton,
@@ -23,6 +24,7 @@ import {
 import { Controller } from "react-hook-form";
 import PropTypes from "prop-types";
 import _ from "lodash";
+import { useNavigate } from "react-router";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import { useScrollEnd } from "src/hooks/use-scroll-end";
@@ -81,6 +83,7 @@ const CategorizedSourceDropdownInner = React.forwardRef(
     _ref,
   ) => {
     const theme = useTheme();
+    const navigate = useNavigate();
     const [openDropdown, setOpenDropdown] = useState(false);
     const [searchedValue, setSearchedValue] = useState("");
     const [selectedCategory, setSelectedCategory] = useState("all");
@@ -486,13 +489,40 @@ const CategorizedSourceDropdownInner = React.forwardRef(
                       </MenuItem>
                     );
                   })}
-                  {filteredOptions.length === 0 && (
+                  {filteredOptions.length === 0 && options.length === 0 ? (
+                    <MenuItem disabled sx={{ opacity: 1 }}>
+                      <Box
+                        sx={{
+                          display: "flex",
+                          flexDirection: "column",
+                          alignItems: "flex-start",
+                          gap: 1,
+                        }}
+                      >
+                        <Typography typography="s1" color="text.disabled">
+                          No agent definitions yet
+                        </Typography>
+                        <Chip
+                          label="Create agent definition"
+                          icon={<Iconify icon="mdi:plus" />}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onClose();
+                            navigate(
+                              "/dashboard/simulate/agent-definitions/create-new-agent-definition",
+                            );
+                          }}
+                          sx={{ cursor: "pointer" }}
+                        />
+                      </Box>
+                    </MenuItem>
+                  ) : filteredOptions.length === 0 ? (
                     <MenuItem disabled>
                       <Typography typography="s1" color="text.disabled">
                         No results found
                       </Typography>
                     </MenuItem>
-                  )}
+                  ) : null}
                 </MenuList>
                 {isFetchingNextPage && (
                   <Box sx={{ px: 1 }}>
