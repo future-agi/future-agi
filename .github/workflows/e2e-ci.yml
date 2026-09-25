@@ -74,7 +74,11 @@ jobs:
       contents: read
       packages: write # ghcr build-cache: read on PRs, written on pushes
     env:
-      BUILD_BACKEND: ${{ needs.changes.outputs.backend }}
+      # Always from source: the stack's compose file runs backend modules at
+      # boot (e.g. tracer.services.clickhouse.oss_cdc_install), so a released
+      # :latest that predates them fails the boot for every PR that does not
+      # touch futureagi/ — the same drift BUILD_FRONTEND/BUILD_GATEWAY avoid.
+      BUILD_BACKEND: "true"
       # Always from source: specs land with the frontend behavior they assert,
       # so the released frontend image can be too old for them (TH-7733).
       BUILD_FRONTEND: "true"
@@ -125,9 +129,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # A backend/gateway image whose filter did not fire is NOT built from
-      # this PR — the stack runs the released :latest for it. Deliberate speed
-      # trade. The frontend is exempt (see BUILD_FRONTEND above).
+      # The backend, frontend and gateway images are always built from this
+      # PR's code (see the env block above); the registry cache keeps the
+      # backend build short.
       - name: Build backend image from PR code
         if: env.BUILD_BACKEND == 'true'
         uses: docker/build-push-action@v5
