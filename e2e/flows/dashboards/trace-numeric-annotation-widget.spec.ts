@@ -470,8 +470,10 @@ test('DASH-E2E-010: a saved trace annotation widget retains numeric scores', {
             .toEqual(expected.map(row => `${prefix}-${row.key}-root`).sort());
           const detailSince = Date.now(); await cells.getByText(`${prefix}-${seed.key}-root`, { exact: true }).click();
           type DetailNode = { observation_span: Wire; children: DetailNode[] };
+          // useGetTraceDetail (api/project/trace-detail.js) pins the read to the page's project:
+          // the same trace id can exist in several projects.
           const detail = await readNative<{ result: { trace: { id: string; project: string; name: string }; observation_spans: DetailNode[] } }>(
-            `/tracer/trace/${seed.traceId}/`, {}, detailSince, 'GET', owner);
+            `/tracer/trace/${seed.traceId}/`, { project_id: projectId }, detailSince, 'GET', owner);
           expect(detail.body!.result.trace).toMatchObject({ id: seed.traceId, project: projectId, name: `${prefix}-${seed.key}-root` });
           // Trace detail is a root/children tree, not the flat source-storage list.
           expect(detail.body!.result.observation_spans).toHaveLength(1);
@@ -500,7 +502,9 @@ test('DASH-E2E-010: a saved trace annotation widget retains numeric scores', {
           // AnnotationSidebarContent includes keyboard shortcut glyphs in this name.
           const saveSince = Date.now(); await drawer.getByRole('button', { name: /^Save(?:\s|$)/ }).click();
           const payload = { source_type: 'trace', source_id: seed.traceId,
-            scores: [{ label_id: labelId, value: { value: seed.value }, notes: '', score_source: 'human' }], notes: '' };
+            scores: [{ label_id: labelId, value: { value: seed.value }, notes: '', score_source: 'human' }], notes: '',
+            // AnnotationSidebarContent → useBulkCreateScores (api/scores/scores.js) sends the drawer's project.
+            project_id: projectId };
           const receipt = await readNative<{ result: { scores: NativeScore[]; errors: unknown[] } }>(BULK, undefined, saveSince, 'POST', owner);
           expect(receipt.input).toEqual(payload); expect(receipt.body!.result.errors).toEqual([]); expect(receipt.body!.result.scores).toHaveLength(1);
           const score = receipt.body!.result.scores[0]; expect(score.id).toMatch(/^[0-9a-f-]{36}$/); expect(score.queue_item).toMatch(/^[0-9a-f-]{36}$/);
