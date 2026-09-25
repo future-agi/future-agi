@@ -7,19 +7,21 @@ criteria: "You are evaluating the agent's behaviour whenever the user's audio wa
   \ background noise. Judge from the call audio, and only at moments where unclear audio or background noise can be heard\
   \ or the agent asks the user to repeat. The agent prompt, if provided, may define how clarification must be done.\n\n##\
   \ Criteria\n1. Clarify, do not guess or act: When the user's words are unintelligible or cut off, the agent briefly asks\
-  \ them to repeat (in the language the agent prompt specifies for clarification, otherwise the user's language), makes no\
-  \ tool call on that turn, and does not act on a guessed interpretation. If the agent prompt forbids fillers such as 'one\
-  \ moment' on unclear turns, saying one is also a failure.\n2. Background is not the caller: Speech or media in the background\
-  \ (TV, music, side conversations) is not treated as the user's request.\n3. Break persistent-noise loops: After two consecutive\
-  \ failed exchanges due to noise or unclear audio, the agent's next response gives actionable guidance (e.g. moving somewhere\
-  \ quieter) instead of a third plain repeat request.\n\n## Anti-bias Rules\n- If the audio contains no unclear audio or background\
-  \ noise, return PASS and begin the explanation with 'Not applicable: no unclear audio'.\n- Accents, code-switching, and\
-  \ non-native phrasing are not unclear audio.\n- One clarifying request followed by success is ideal handling, not a failure.\n\
-  - Do not penalise the agent for the environment itself, only for its response to it.\n\n## Scoring\n- Return PASS if the\
-  \ agent asked for clarification instead of guessing or acting, ignored background speech, and gave guidance by the third\
-  \ consecutive failed exchange.\n- Return FAIL if it acted on unclear input (including a tool call, or a filler the prompt\
-  \ forbids), responded to background audio as the caller, clarified in a language the prompt forbids, or made a third plain\
-  \ repeat request without guidance.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n<conversation>{{conversation}}</conversation>"
+  \ them to repeat (in the language the agent prompt specifies for clarification, otherwise the user's language) and does\
+  \ not act on a guessed interpretation, such as confirming a detail it did not clearly hear or answering a question the user\
+  \ did not ask. If the agent prompt forbids fillers such as 'one moment' on unclear turns, saying one is also a failure.\n\
+  2. Background is not the caller: Speech or media in the background (TV, music, side conversations) is not treated as the\
+  \ user's request.\n3. Break persistent-noise loops: After two consecutive failed exchanges due to noise or unclear audio,\
+  \ the agent's next response gives actionable guidance (e.g. moving somewhere quieter) instead of a third plain repeat request.\n\
+  \n## Anti-bias Rules\n- If the audio contains no unclear audio or background noise, return PASS and begin the explanation\
+  \ with 'Not applicable: no unclear audio'.\n- Tool calls cannot be heard in call audio and are out of scope; judge only\
+  \ what the agent says.\n- Accents, code-switching, and non-native phrasing are not unclear audio.\n- One clarifying request\
+  \ followed by success is ideal handling, not a failure.\n- Do not penalise the agent for the environment itself, only for\
+  \ its response to it.\n\n## Scoring\n- Return PASS if the agent asked for clarification instead of guessing or acting, ignored\
+  \ background speech, and gave guidance by the third consecutive failed exchange.\n- Return FAIL if it acted aloud on a guessed\
+  \ interpretation of unclear input, said a filler the prompt forbids, responded to background audio as the caller, clarified\
+  \ in a language the prompt forbids, or made a third plain repeat request without guidance.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n\
+  <conversation>{{conversation}}</conversation>"
 eval_tags:
 - Agents
 - Conversation
@@ -56,17 +58,18 @@ config:
     \ with background noise. Judge from the call audio, and only at moments where unclear audio or background noise can be\
     \ heard or the agent asks the user to repeat. The agent prompt, if provided, may define how clarification must be done.\n\
     \n## Criteria\n1. Clarify, do not guess or act: When the user's words are unintelligible or cut off, the agent briefly\
-    \ asks them to repeat (in the language the agent prompt specifies for clarification, otherwise the user's language), makes\
-    \ no tool call on that turn, and does not act on a guessed interpretation. If the agent prompt forbids fillers such as\
-    \ 'one moment' on unclear turns, saying one is also a failure.\n2. Background is not the caller: Speech or media in the\
-    \ background (TV, music, side conversations) is not treated as the user's request.\n3. Break persistent-noise loops: After\
-    \ two consecutive failed exchanges due to noise or unclear audio, the agent's next response gives actionable guidance\
-    \ (e.g. moving somewhere quieter) instead of a third plain repeat request.\n\n## Anti-bias Rules\n- If the audio contains\
-    \ no unclear audio or background noise, return PASS and begin the explanation with 'Not applicable: no unclear audio'.\n\
-    - Accents, code-switching, and non-native phrasing are not unclear audio.\n- One clarifying request followed by success\
-    \ is ideal handling, not a failure.\n- Do not penalise the agent for the environment itself, only for its response to\
-    \ it.\n\n## Scoring\n- Return PASS if the agent asked for clarification instead of guessing or acting, ignored background\
-    \ speech, and gave guidance by the third consecutive failed exchange.\n- Return FAIL if it acted on unclear input (including\
-    \ a tool call, or a filler the prompt forbids), responded to background audio as the caller, clarified in a language the\
-    \ prompt forbids, or made a third plain repeat request without guidance.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n\
-    <conversation>{{conversation}}</conversation>"
+    \ asks them to repeat (in the language the agent prompt specifies for clarification, otherwise the user's language) and\
+    \ does not act on a guessed interpretation, such as confirming a detail it did not clearly hear or answering a question\
+    \ the user did not ask. If the agent prompt forbids fillers such as 'one moment' on unclear turns, saying one is also\
+    \ a failure.\n2. Background is not the caller: Speech or media in the background (TV, music, side conversations) is not\
+    \ treated as the user's request.\n3. Break persistent-noise loops: After two consecutive failed exchanges due to noise\
+    \ or unclear audio, the agent's next response gives actionable guidance (e.g. moving somewhere quieter) instead of a third\
+    \ plain repeat request.\n\n## Anti-bias Rules\n- If the audio contains no unclear audio or background noise, return PASS\
+    \ and begin the explanation with 'Not applicable: no unclear audio'.\n- Tool calls cannot be heard in call audio and are\
+    \ out of scope; judge only what the agent says.\n- Accents, code-switching, and non-native phrasing are not unclear audio.\n\
+    - One clarifying request followed by success is ideal handling, not a failure.\n- Do not penalise the agent for the environment\
+    \ itself, only for its response to it.\n\n## Scoring\n- Return PASS if the agent asked for clarification instead of guessing\
+    \ or acting, ignored background speech, and gave guidance by the third consecutive failed exchange.\n- Return FAIL if\
+    \ it acted aloud on a guessed interpretation of unclear input, said a filler the prompt forbids, responded to background\
+    \ audio as the caller, clarified in a language the prompt forbids, or made a third plain repeat request without guidance.\n\
+    \n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n<conversation>{{conversation}}</conversation>"
