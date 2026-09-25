@@ -8272,7 +8272,7 @@ def populate_log_row_data(
                         case "Updated At":
                             value = log.updated_at.strftime("%Y-%m-%d %H:%M:%S")
                         case "Evaluation ID":
-                            value = log.log_id
+                            value = str(log.log_id)
                         case "Source":
                             config_source = config.get("source")
                             value = (
@@ -8296,7 +8296,7 @@ def populate_log_row_data(
                     "search_results": {},
                 }
 
-            column_config["log_id"] = log.log_id
+            column_config["log_id"] = str(log.log_id)
             column_config["input_data_types"] = config.get("input_data_types", {})
 
             row_data.append(column_config)
