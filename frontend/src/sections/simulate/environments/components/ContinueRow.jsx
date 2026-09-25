@@ -1,36 +1,83 @@
 import PropTypes from "prop-types";
-import { Box, Stack, Typography, Button, CircularProgress } from "@mui/material";
+import {
+  Box,
+  Stack,
+  Typography,
+  Button,
+  CircularProgress,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 
-export default function ContinueRow({ disabled, busy = false, hint, label = "Build environment", onClick }) {
+export default function ContinueRow({
+  disabled,
+  busy = false,
+  hint,
+  label = "Build environment",
+  onClick,
+}) {
   return (
     <Stack
       direction="row"
       alignItems="center"
       justifyContent="space-between"
       spacing={2}
-      sx={{ pt: 1.25, borderTop: "1px solid", borderColor: "divider", mx: -2.5, px: 2.5, pb: 0 }}
+      sx={{
+        pt: 1.25,
+        borderTop: "1px solid",
+        borderColor: "divider",
+        mx: -2.5,
+        px: 2.5,
+        pb: 0,
+      }}
     >
       {disabled && hint ? (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {hint}
         </Typography>
-      ) : <Box />}
-      <Button
-        variant="contained"
-        color="primary"
-        disabled={disabled || busy}
-        onClick={onClick}
-        startIcon={
-          busy
-            ? <CircularProgress size={14} color="inherit" />
-            : <Iconify icon="solar:magic-stick-3-linear" width={14} />
-        }
-        endIcon={busy ? null : <Iconify icon="solar:alt-arrow-right-linear" width={14} />}
-        sx={{ typography: "s1", fontWeight: "fontWeightBold", px: 2, flexShrink: 0 }}
+      ) : (
+        <Box />
+      )}
+      <CustomTooltip
+        show={disabled && !busy && !!hint}
+        arrow
+        size="small"
+        title={hint ?? ""}
       >
-        {busy ? "Building…" : label}
-      </Button>
+        {/* A disabled button fires no mouse events; the span carries the hover. */}
+        <Box
+          component="span"
+          data-testid="continue-row-action"
+          sx={{ display: "inline-flex", flexShrink: 0 }}
+        >
+          <Button
+            variant="contained"
+            color="primary"
+            disabled={disabled || busy}
+            onClick={onClick}
+            startIcon={
+              busy ? (
+                <CircularProgress size={14} color="inherit" />
+              ) : (
+                <Iconify icon="solar:magic-stick-3-linear" width={14} />
+              )
+            }
+            endIcon={
+              busy ? null : (
+                <Iconify icon="solar:alt-arrow-right-linear" width={14} />
+              )
+            }
+            sx={{
+              typography: "s1",
+              fontWeight: "fontWeightBold",
+              px: 2,
+              flexShrink: 0,
+            }}
+          >
+            {busy ? "Building…" : label}
+          </Button>
+        </Box>
+      </CustomTooltip>
     </Stack>
   );
 }
