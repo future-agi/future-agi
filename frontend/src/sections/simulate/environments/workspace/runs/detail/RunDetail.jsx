@@ -167,7 +167,7 @@ export default function RunDetail({
             )}
             <Typography noWrap sx={{ typography: "s1_2", fontWeight: 700 }}>
               {identity
-                ? `Run ${identity.ordinal} · agent ${identity.agentVersion ?? "—"}`
+                ? `Run ${identity.ordinal} · agent ${identity.agentVersion ?? "-"}`
                 : "Run complete"}
             </Typography>
             {status && <StatusChip status={status} />}

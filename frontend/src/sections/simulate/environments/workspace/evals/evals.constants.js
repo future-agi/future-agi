@@ -13,15 +13,15 @@ export const EVALS_COPY = {
   addScenarios: "Add scenarios",
   toolCall: {
     title: "Enable tool call evaluation",
-    on: "Tool calling that happens during the calls will be evaluated — the right tool, with the right arguments, at the right time.",
-    off: "Connect your agent first — tool calls are read from it during the run.",
+    on: "Tool calling that happens during the calls will be evaluated: the right tool, with the right arguments, at the right time.",
+    off: "Connect your agent first. Tool calls are read from it during the run.",
     needsAgent: "Connect an agent to evaluate its tool calls.",
   },
   needsScenariosHint: "Add scenarios first",
   remove: "Remove evaluation",
   suggestedTitle: (n) => `Suggested evaluations (${n})`,
   suggestedSubtitle:
-    "The environment thinks these would matter — add the ones you want the run scored against.",
+    "The environment thinks these would matter. Add the ones you want the run scored against.",
   addAll: (n) => `Add all ${n}`,
   addOne: "Add",
   addedTitle: (n) => `Added evaluations (${n})`,
@@ -37,7 +37,7 @@ export const EVALS_COPY = {
   emptyTitle: "No evaluations added yet",
   emptyWithSuggestions: "Pick one from the suggestions above, or open the library for more.",
   emptyNoSuggestions:
-    "You can run without them — you'll get traces, but nothing will tell you whether the agent was right.",
+    "You can run without them. You'll get traces, but nothing will tell you whether the agent was right.",
   // Fallbacks the picker's returned config is normalised against.
   pickerBlurb: "Added from the eval library",
   pickerFallbackName: "Eval",

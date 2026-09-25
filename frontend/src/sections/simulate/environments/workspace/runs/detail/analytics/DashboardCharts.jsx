@@ -50,12 +50,12 @@ const OUTCOME_COLORS = {
 };
 export const number = (value, digits = 1) =>
   value == null
-    ? "—"
+    ? "-"
     : new Intl.NumberFormat(undefined, {
         maximumFractionDigits: digits,
       }).format(value);
 export const format = (value, unit = "number") => {
-  if (value == null) return "—";
+  if (value == null) return "-";
   if (unit === "cents") return `$${number(value / 100, 3)}`;
   if (unit === "ratio") return `${number(value, 0)}/${number(100 - value, 0)}`;
   return `${number(value)}${{ ms: "ms", seconds: "s", percent: "%" }[unit] || ""}`;

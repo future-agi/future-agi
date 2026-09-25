@@ -13,8 +13,8 @@ import EmptyState from "../../../components/EmptyState";
 import ChatTranscriptPane from "./ChatTranscriptPane";
 import { Meta, Cell, Attr } from "./chatDrawerCells";
 
-const num = (n) => (n == null ? "—" : Number(n).toLocaleString());
-const secs = (ms) => (ms == null ? "—" : `${(ms / 1000).toFixed(1)}s`);
+const num = (n) => (n == null ? "-" : Number(n).toLocaleString());
+const secs = (ms) => (ms == null ? "-" : `${(ms / 1000).toFixed(1)}s`);
 
 // This eval was removed from the environment after it graded this call.
 // The verdict stands as it was stored — it is marked, never hidden and
@@ -58,7 +58,7 @@ export default function ChatCallDrawer({ task, onClose }) {
   const turnCount = stats.turnCount ?? task.turns;
   const tokens = callDetail?.tokens ?? task.tokens;
   const talkRatio =
-    stats.aiPct != null && stats.userPct != null ? `${stats.aiPct}/${stats.userPct}` : "—";
+    stats.aiPct != null && stats.userPct != null ? `${stats.aiPct}/${stats.userPct}` : "-";
 
   return (
     <Stack sx={{ height: "100%" }}>
@@ -119,8 +119,8 @@ export default function ChatCallDrawer({ task, onClose }) {
               <Meta label="Type" value="Chat" />
               <Meta label="Status" value={task.status === "passed" ? "completed" : task.status} />
               <Meta label="Duration" value={secs(durationMs)} />
-              <Meta label="Turns" value={turnCount ?? "—"} />
-              <Meta label="Provider" value={callDetail?.provider || task.provider || "—"} />
+              <Meta label="Turns" value={turnCount ?? "-"} />
+              <Meta label="Provider" value={callDetail?.provider || task.provider || "-"} />
             </Stack>
           </Box>
 
@@ -173,9 +173,9 @@ export default function ChatCallDrawer({ task, onClose }) {
             {side === "analytics" && (
               <Box sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))" }}>
                 <Cell label="Duration" value={secs(durationMs)} />
-                <Cell label="Turns" value={turnCount ?? "—"} />
+                <Cell label="Turns" value={turnCount ?? "-"} />
                 <Cell label="Words" value={num(stats.words)} />
-                <Cell label="Latency" value={stats.latencyMs != null ? `${stats.latencyMs}ms` : "—"} />
+                <Cell label="Latency" value={stats.latencyMs != null ? `${stats.latencyMs}ms` : "-"} />
                 <Cell label="Talk ratio" value={talkRatio} />
                 <Cell label="Tool calls" value={num(stats.toolCalls)} />
                 <Cell label="Tokens" value={num(tokens)} />

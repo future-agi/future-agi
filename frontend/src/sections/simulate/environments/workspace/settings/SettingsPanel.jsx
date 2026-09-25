@@ -67,8 +67,8 @@ export default function SettingsPanel({ env, backed = false, locked = false }) {
       <Box sx={{ mb: 3 }}>
         <Typography sx={{ typography: "m2", fontWeight: 600 }}>Settings</Typography>
         <Typography sx={{ typography: "s1", color: "text.secondary", maxWidth: 760 }}>
-          How this environment was built. Everything here is fixed at build time —
-          only the name can be changed.
+          How this environment was built. Everything here is fixed at build time.
+          Only the name can be changed.
         </Typography>
       </Box>
 
@@ -128,7 +128,7 @@ export default function SettingsPanel({ env, backed = false, locked = false }) {
                     </Typography>
                   </>
                 ) : (
-                  <Typography sx={{ typography: "s2" }}>{currentName || "—"}</Typography>
+                  <Typography sx={{ typography: "s2" }}>{currentName || "-"}</Typography>
                 )}
               </Box>
               <Box sx={{ maxWidth: 460 }}>
@@ -142,7 +142,7 @@ export default function SettingsPanel({ env, backed = false, locked = false }) {
 
           <SectionCard
             title="Environment variables"
-            subtitle="Set when the environment was built. Read-only — secret values are never shown."
+            subtitle="Set when the environment was built. Read-only. Secret values are never shown."
           >
             <EnvVarsBody loading={detailQuery.isLoading} groups={groups} />
           </SectionCard>
@@ -152,7 +152,7 @@ export default function SettingsPanel({ env, backed = false, locked = false }) {
           {groups.credentialFiles.length > 0 && (
             <SectionCard
               title="Credential files"
-              subtitle="Mounted into the environment by name — contents and the original filename are not stored."
+              subtitle="Mounted into the environment by name. Contents and the original filename are not stored."
             >
               <Stack divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}>
                 {groups.credentialFiles.map((f) => (

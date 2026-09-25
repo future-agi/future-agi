@@ -180,12 +180,12 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
     : undefined;
   const subtitles = {
     call_success:
-      "Successful vs unsuccessful — the top-level task verdict; unknowns shown separately",
+      "Successful vs unsuccessful: the top-level task verdict; unknowns shown separately",
     goal_outcome: `${data.summary.total} tasks · shares use all tasks, including unknown outcomes`,
     sentiment: "How the counterparty came across during the task",
     disconnection: "Why each call ended",
     evaluations: `${dashboard.evaluation_summary.graders} graders · ${dashboard.evaluation_summary.passed} of ${dashboard.evaluation_summary.measured} measured checks passed (${format(dashboard.evaluation_summary.pass_rate, "percent")})`,
-    csat: "Existing score · scores the run already produced — no new cost",
+    csat: "Existing score · scores the run already produced; no new cost",
     response_time: "Platform, transcript timing",
     voice_slos: "p50 / p90 / p99 of recorded per-call pipeline timings (ms)",
     pipeline_cost:
@@ -241,10 +241,10 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
               {data.evaluations.map((row) => (
                 <TableRow key={row.id}>
                   <TableCell>{row.name}</TableCell>
-                  <TableCell>—</TableCell>
+                  <TableCell>-</TableCell>
                   <TableCell>
                     {row.pass_rate == null ? (
-                      "—"
+                      "-"
                     ) : (
                       <LinearProgress
                         variant="determinate"
@@ -497,7 +497,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
         onPrint={() =>
           printDashboard(
             printable.current,
-            `${data.execution?.name || "Simulation run"} — Analytics`,
+            `${data.execution?.name || "Simulation run"} - Analytics`,
           )
         }
       />
@@ -534,7 +534,15 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
                 <Typography sx={{ fontSize: 10, color: "text.secondary" }}>
                   {metric.label}
                 </Typography>
-                <Typography sx={{ fontSize: 22, fontWeight: 650, mt: 0.5 }}>
+                <Typography
+                  sx={{
+                    fontSize: 22,
+                    mt: 0.5,
+                    fontWeight: metric.value == null ? 400 : 650,
+                    color:
+                      metric.value == null ? "text.disabled" : "text.primary",
+                  }}
+                >
                   {format(metric.value, metric.unit)}
                 </Typography>
                 <Typography

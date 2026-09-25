@@ -188,7 +188,7 @@ export function mapOptimizationRuns(raw) {
     trials: row?.no_of_trials ?? 0,
     optimiserType: row?.optimiser_type ?? null,
     optimiserLabel:
-      KeyOptimizerMapping[row?.optimiser_type] ?? row?.optimiser_type ?? "—",
+      KeyOptimizerMapping[row?.optimiser_type] ?? row?.optimiser_type ?? "-",
     status: row?.status ?? null,
   }));
 }

@@ -23,12 +23,12 @@ export const SCENARIOS_COPY = {
   groupByLabel: "Group by",
   hideGroup: "Hide this group",
   showAll: "Show all",
-  allHidden: "Every group is hidden — click Show all to bring them back.",
+  allHidden: "Every group is hidden. Click Show all to bring them back.",
   noMatch: "No scenarios match your filters.",
   emptyTitle: "No scenarios yet",
   emptyBody:
     "Scenarios are normally derived from your agent when the environment is built.",
-  critical: "Critical — a failure here is a release blocker",
+  critical: "Critical: a failure here is a release blocker",
 };
 
 // The three axes a reader scans scenarios by. The trace table on the run view

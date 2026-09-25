@@ -23,7 +23,7 @@ export const MAP_COPY = {
   storesEmpty: "No stores seeded for this environment.",
   resolve: {
     question: (name) => `Does ${name} change data?`,
-    why: "Called from the agent's code, unnamed in the prompt — we can't tell from static analysis alone.",
+    why: "Called from the agent's code, unnamed in the prompt. We can't tell from static analysis alone.",
     confirm: (label) => `Confirm ${label.toLowerCase()}`,
     secondary: "Ask a teammate",
     options: [

@@ -3,7 +3,7 @@ import { alpha } from "@mui/material/styles";
 import { Box, Stack } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
 
-const DUMMY_TOOLTIP = "Placeholder — not provided by the current API";
+const DUMMY_TOOLTIP = "Placeholder: not provided by the current API";
 
 // A column header the harness-jobs list cannot fill: the plain label plus a
 // muted "dummy" pill. The label carries the DataGrid header class so it keeps

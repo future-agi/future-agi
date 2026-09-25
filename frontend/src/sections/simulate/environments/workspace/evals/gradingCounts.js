@@ -57,5 +57,5 @@ export function gradingCountsSentence(counts = {}) {
     ? `of ${calls(completed)} that finished in this run`
     : "how many calls finished in this run isn't known";
 
-  return `${parts.join(", ")} — ${total}.`;
+  return `${parts.join(", ")} (${total}).`;
 }

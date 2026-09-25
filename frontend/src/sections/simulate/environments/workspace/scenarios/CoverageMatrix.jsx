@@ -129,7 +129,7 @@ export default function CoverageMatrix({ jobId, search, filters, defaultExpanded
         What this panel answers
       </Typography>
       <Typography sx={{ typography: "s2", color: (t) => alpha(t.palette.common.white, 0.85), mb: 1.5 }}>
-        Not &quot;how many tests do we have&quot; — but{" "}
+        Not &quot;how many tests do we have&quot;, but{" "}
         <Box component="b" sx={{ color: "common.white" }}>
           &quot;what kinds of situations did we forget to test?&quot;
         </Box>
@@ -139,13 +139,13 @@ export default function CoverageMatrix({ jobId, search, filters, defaultExpanded
         Three numbers at a glance
       </Typography>
       <Typography component="ul" sx={{ typography: "s3", color: (t) => alpha(t.palette.common.white, 0.85), pl: 2, mb: 1.5 }}>
-        <li><Box component="b" sx={{ color: "common.white" }}>Axes</Box> — how many of the coverage axes the suite actually varies (more than one level).</li>
-        <li><Box component="b" sx={{ color: "common.white" }}>Pairs</Box> — of the two axes shown below, what fraction of the observed combinations are covered.</li>
-        <li><Box component="b" sx={{ color: "common.white" }}>Forced</Box> — how many of the five dangerous must-have overlays are present.</li>
+        <li><Box component="b" sx={{ color: "common.white" }}>Axes</Box> - how many of the coverage axes the suite actually varies (more than one level).</li>
+        <li><Box component="b" sx={{ color: "common.white" }}>Pairs</Box> - of the two axes shown below, what fraction of the observed combinations are covered.</li>
+        <li><Box component="b" sx={{ color: "common.white" }}>Forced</Box> - how many of the five dangerous must-have overlays are present.</li>
       </Typography>
 
       <Typography sx={{ typography: "s3", color: (t) => alpha(t.palette.common.white, 0.7) }}>
-        Empty red cells in the grid below are the actual gaps — they name a combination nothing in the suite tests yet.
+        Empty red cells in the grid below are the actual gaps. They name a combination nothing in the suite tests yet.
       </Typography>
     </Box>
   );
@@ -193,7 +193,7 @@ export default function CoverageMatrix({ jobId, search, filters, defaultExpanded
         }
         subtitle={expanded
           ? `${scenarioCount} scenarios · what kinds of situations did we forget to test?`
-          : `${scenarioCount} scenarios · click to expand — what did we forget to test?`}
+          : `${scenarioCount} scenarios · click to expand. What did we forget to test?`}
         action={
           <Stack direction="row" spacing={2.5} alignItems="center">
             <SummaryStat label="Axes" value={`${variedAxes}/${perAxis.length}`} color={toneColor(axesRatio)} />
@@ -362,8 +362,8 @@ export default function CoverageMatrix({ jobId, search, filters, defaultExpanded
                         <Tooltip
                           key={c} arrow
                           title={n
-                            ? `${n} scenario${n === 1 ? "" : "s"} — ${levelLabel(r)} × ${levelLabel(c)}`
-                            : `Empty — ${levelLabel(r)} × ${levelLabel(c)}`}
+                            ? `${n} scenario${n === 1 ? "" : "s"} - ${levelLabel(r)} × ${levelLabel(c)}`
+                            : `Empty - ${levelLabel(r)} × ${levelLabel(c)}`}
                         >
                           <Box
                             sx={{
@@ -386,7 +386,7 @@ export default function CoverageMatrix({ jobId, search, filters, defaultExpanded
                                   : alpha(RED, 0.85),
                               }}
                             >
-                              {n || "—"}
+                              {n || "-"}
                             </Typography>
                           </Box>
                         </Tooltip>

@@ -142,13 +142,13 @@ export default function PagedScenarioViews({
         <Collapse in={inspect}>
           <Box sx={{ p: 1.5, borderRadius: 1, bgcolor: "background.neutral", border: "1px dashed", borderColor: "divider" }}>
             <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 0.5 }}>
-              GET /scenarios — one request per page
+              GET /scenarios - one request per page
             </Typography>
             <Box component="pre" sx={{ m: 0, mb: 1.5, typography: "s3", fontFamily: "ui-monospace, Menlo, monospace", whiteSpace: "pre-wrap", color: "text.secondary" }}>
               {JSON.stringify(listPayload, null, 2)}
             </Box>
             <Typography sx={{ typography: "s3", color: "text.subtitle", mb: 0.5 }}>
-              POST /scenarios/bulk-delete — {selection.mode === "all" ? "by predicate + exclusions" : "by id list"}
+              POST /scenarios/bulk-delete - {selection.mode === "all" ? "by predicate + exclusions" : "by id list"}
             </Typography>
             <Box component="pre" sx={{ m: 0, typography: "s3", fontFamily: "ui-monospace, Menlo, monospace", whiteSpace: "pre-wrap", color: "text.secondary" }}>
               {JSON.stringify(bulkPayload, null, 2)}

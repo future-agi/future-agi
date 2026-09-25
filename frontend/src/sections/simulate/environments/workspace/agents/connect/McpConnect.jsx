@@ -28,7 +28,7 @@ export default function McpConnect({ target, type, onConnect, testing }) {
         <Typography sx={{ typography: "s2", color: "text.secondary", mb: 2 }}>
           We publish {target?.name || "this environment"} as MCP tools. Point your agent at the
           address below and it can act in the environment. Your agent keeps running wherever it
-          already runs — we never host or deploy it, and nothing of yours has to be reachable from
+          already runs. We never host or deploy it, and nothing of yours has to be reachable from
           our side.
         </Typography>
 
@@ -59,7 +59,7 @@ export default function McpConnect({ target, type, onConnect, testing }) {
         <Typography sx={{ typography: "s3", color: "text.subtitle", mt: 1 }}>
           {tab === "mcp"
             ? "Works in Claude Desktop, Cursor, VS Code or any MCP-capable client."
-            : "Any framework — the session yields the environment's tools."}
+            : "Any framework: the session yields the environment's tools."}
         </Typography>
 
         <Stack
