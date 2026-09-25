@@ -89405,7 +89405,9 @@
                 "label",
                 "status",
                 "required",
-                "detail"
+                "detail",
+                "fix",
+                "docs_url"
             ],
             "type": "object",
             "properties": {
@@ -89435,6 +89437,14 @@
                 },
                 "detail": {
                     "title": "Detail",
+                    "type": "string"
+                },
+                "fix": {
+                    "title": "Fix",
+                    "type": "string"
+                },
+                "docs_url": {
+                    "title": "Docs Url",
                     "type": "string"
                 }
             }

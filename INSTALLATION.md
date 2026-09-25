@@ -489,6 +489,39 @@ docker compose up -d frontend
 
 The container's entrypoint regenerates `/config.js` on each start, so no rebuild is needed.
 
+### Pre-flight says **Object storage service** failed
+
+The `minio` container is not answering, so dataset uploads, exports and media
+will fail. Tracing, prompts and evals keep working.
+
+```bash
+docker compose up -d minio
+```
+
+Then re-run pre-flight. A default install needs no S3 credentials: compose sets
+`S3_ENDPOINT_URL` to `http://minio:9000` and derives `S3_ACCESS_KEY` /
+`S3_SECRET_KEY` from `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`, both defaulting
+to `futureagi`. Set those five in `.env` only when moving to real S3 or changing
+the bundled credentials.
+
+### Pre-flight says **SSL/TLS certificate** failed
+
+Expected on a laptop, and the reason a **Production** launch blocks: the
+backend could not verify https on the URLs it serves, so browser and SDK traffic
+travels unencrypted. Nothing is broken.
+
+Either continue with **Test flight**, which does not run this check, or, for a
+real deployment, put a reverse proxy with a valid certificate in front and point
+both URLs at it in `.env`:
+
+```bash
+VITE_HOST_API=https://api.example.com
+FRONTEND_URL=https://app.example.com
+```
+
+Restart the stack and re-run pre-flight. See
+[`deploy/README.md`](deploy/README.md) for the reverse-proxy and TLS guide.
+
 ### `code-executor` crashes with `clone: Operation not permitted`
 
 The host kernel or container platform disallows `privileged: true` (Fargate, Cloud Run, some Kubernetes policies). Either run on a platform that allows privileged containers (EC2, GKE with privileged enabled, bare-metal) or disable code evaluation features.

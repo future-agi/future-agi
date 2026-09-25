@@ -101,7 +101,15 @@ class TestSetupChecksResponseShape:
         result = get_checks(api_client)
 
         for check in result["checks"]:
-            assert set(check) == {"id", "label", "status", "required", "detail"}
+            assert set(check) == {
+                "id",
+                "label",
+                "status",
+                "required",
+                "detail",
+                "fix",
+                "docs_url",
+            }
             assert check["status"] in {PASSED, WARNING, FAILED, SKIPPED}
             assert isinstance(check["required"], bool)
             assert isinstance(check["detail"], str)
@@ -329,6 +337,27 @@ class TestDetail:
             c["id"]: c["detail"] for c in experiment["checks"]
         }
 
+    def test_fix_is_empty_when_the_check_passed(self, api_client):
+        result = get_checks(api_client)
+
+        assert all(c["fix"] == "" for c in result["checks"])
+        assert all(c["docs_url"] == "" for c in result["checks"])
+
+    def test_fix_and_docs_url_are_served_when_down(self, api_client):
+        result = get_checks(api_client, probe_results=all_down())
+
+        for check in result["checks"]:
+            assert check["fix"], f"{check['id']} came back down with no fix"
+            assert check["docs_url"].startswith("https://")
+
+    def test_fix_does_not_vary_by_mode(self, api_client):
+        live = get_checks(api_client, mode=LIVE, probe_results=all_down())
+        experiment = get_checks(api_client, mode=EXPERIMENT, probe_results=all_down())
+
+        assert {c["id"]: c["fix"] for c in live["checks"]} == {
+            c["id"]: c["fix"] for c in experiment["checks"]
+        }
+
     def test_detail_never_mentions_the_launch_mode(self, api_client):
         """Copy is shared across modes, so mode wording would be wrong in one."""
         result = get_checks(api_client, mode=LIVE, probe_results=all_down())
@@ -423,6 +452,13 @@ class TestCheckInventory:
                 assert mode in check, f"{check['id']} is missing {mode}"
                 assert "required" in check[mode]
                 assert "on_down" in check[mode]
+
+    def test_every_check_declares_a_fix_and_a_docs_url(self):
+        for check in CHECKS:
+            assert check.get("fix"), f"{check['id']} has no fix line"
+            assert check.get("docs_url", "").startswith("https://"), (
+                f"{check['id']} has no docs link"
+            )
 
     def test_down_detail_lives_on_the_check_not_the_mode(self):
         """Hoisted so the two modes cannot drift into describing one outage
