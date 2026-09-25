@@ -36,21 +36,6 @@ services:
       # Root compose never passes the flag to peerdb-init, so the setup script
       # attempts the retired tracer_observation_span mirror.
       CH25_DROP_LEGACY_CDC_CHAIN: "true"
-  minio:
-    # quay.io/minio/minio refuses anonymous pulls (24 Sep 2026) and Docker Hub
-    # no longer serves minio/minio, so this ephemeral stack uses the pinned
-    # public bitnamilegacy build. Its image runs as uid 1001 and starts through
-    # its own entrypoint; the root file's `server /data` command and its root-
-    # owned volume need the plain binary as root. Ports, credentials, volume
-    # and the `mc ready local` healthcheck come from the root compose file.
-    image: bitnamilegacy/minio:2025.7.23-debian-12-r5
-    user: "0"
-    entrypoint: ["minio"]
-  peerdb-minio:
-    # Same image; its /bin/sh entrypoint in the root file runs minio and mc,
-    # both on this image's PATH.
-    image: bitnamilegacy/minio:2025.7.23-debian-12-r5
-    user: "0"
   mock-llm:
     image: node:22-alpine
     command: ["node", "/srv/server.mjs"]
