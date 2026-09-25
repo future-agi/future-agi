@@ -3297,9 +3297,16 @@ def _session_aggregate_source_sql(
 ) -> tuple[str, dict[str, Any]]:
     """Build one full-window, remap-resolved per-session source.
 
-    ``include_latency_values`` adds ``session_latencies``, each session's
-    non-NULL root latencies as ``Array(Int32)``, for the latency graph's
-    pooled median. Every other consumer leaves it off and pays nothing.
+    ``include_latency_values`` adds ``session_latencies``, the latency of
+    every live span of the session (roots and children) as ``Array(Int32)``,
+    for the latency graph's pooled median. That is the population the
+    unfiltered session rollup (``spans_per_session``) digests, so a filter
+    that removes no row cannot move the chart. The statement then reads every
+    live span of the window and keeps each other aggregate on the session's
+    root spans with ``-If`` combinators, so membership, ``session_start`` and
+    the HAVING filters are unchanged. Tokens and cost stay root-only here
+    while the rollup sums every span; that split is known and out of scope.
+    Every other consumer leaves it off and reads root spans only.
 
     System, eval, and annotation session graphs must agree on membership. Raw
     trace/span leaves are intersected after grouping their independent matches
@@ -3379,6 +3386,21 @@ def _session_aggregate_source_sql(
           AND (snapshot_roots.parent_span_id IS NULL OR
                snapshot_roots.parent_span_id = '')
           AND snapshot_roots.trace_session_id !=
+              toUUID('00000000-0000-0000-0000-000000000000')
+    """
+    # The latency graph pools every live span of a session (see docstring).
+    # Same FINAL collapse and window as the root source, without the root
+    # predicate; the root predicate moves into the per-session aggregates.
+    session_live_rows = f"""
+        SELECT *
+        FROM (
+            {_latest_session_rows_sql()}
+        ) AS snapshot_members
+        WHERE snapshot_members.start_time >= fromUnixTimestamp64Micro(%(snapshot_start_date_us)s)
+          AND snapshot_members.start_time < fromUnixTimestamp64Micro(%(snapshot_end_date_us)s)
+          {root_datetime_fragment}
+          AND snapshot_members.is_deleted = 0
+          AND snapshot_members.trace_session_id !=
               toUUID('00000000-0000-0000-0000-000000000000')
     """
     session_id_clause = build_session_id_filter_clause(
@@ -3566,6 +3588,21 @@ def _session_aggregate_source_sql(
     session_id_fragment = "WHERE " + " AND ".join(source_where_clauses)
     having_clause = _session_having_clause(filters, params)
     having_clauses: list[str] = []
+    if include_latency_values:
+        # Reading every live span, a session is still defined by its roots.
+        root_condition = "(rs.parent_span_id IS NULL OR rs.parent_span_id = '')"
+        aggregate_rows = session_live_rows
+
+        def root_aggregate(function: str, arguments: str) -> str:
+            return f"{function}If({arguments}, {root_condition})"
+
+        having_clauses.append(f"countIf({root_condition}) > 0")
+    else:
+        aggregate_rows = session_root_rows
+
+        def root_aggregate(function: str, arguments: str) -> str:
+            return f"{function}({arguments})"
+
     if anchor_by_session_start:
         having_clauses.append(
             "session_start >= fromUnixTimestamp64Micro(%(start_date_us)s) AND session_start < fromUnixTimestamp64Micro(%(end_date_us)s)"
@@ -3580,13 +3617,16 @@ def _session_aggregate_source_sql(
         for item in filters
     )
     message_aggregate_select = (
-        ",\n        argMin(rs.input, rs.start_time) AS first_message,"
-        "\n        argMax(rs.input, rs.start_time) AS last_message"
+        f",\n        {root_aggregate('argMin', 'rs.input, rs.start_time')}"
+        " AS first_message,"
+        f"\n        {root_aggregate('argMax', 'rs.input, rs.start_time')}"
+        " AS last_message"
         if needs_message_aggregates
         else ""
     )
     trace_ids_select = (
-        ",\n        groupUniqArray(toString(rs.trace_id)) AS session_trace_ids"
+        f",\n        {root_aggregate('groupUniqArray', 'toString(rs.trace_id)')}"
+        " AS session_trace_ids"
         if include_trace_ids
         else ""
     )
@@ -3620,23 +3660,23 @@ def _session_aggregate_source_sql(
     ){membership_ctes}
     SELECT
         {resolved_session_id} AS session_id,
-        min(rs.start_time) AS session_start,
-        max(if(rs.end_time < rs.start_time, rs.start_time, rs.end_time))
+        {root_aggregate("min", "rs.start_time")} AS session_start,
+        {root_aggregate("max", "if(rs.end_time < rs.start_time, rs.start_time, rs.end_time)")}
             AS session_end,
-        avg(rs.latency_ms) AS session_avg_latency,
-        sum(rs.total_tokens) AS session_total_tokens,
-        sum(rs.prompt_tokens) AS session_prompt_tokens,
-        sum(rs.completion_tokens) AS session_completion_tokens,
-        sum(rs.cost) AS session_total_cost,
-        uniqExact(rs.trace_id) AS session_traces,
-        max(toUInt8(upper(rs.status) IN ('ERROR', 'ERRORED', 'FAILED')))
+        {root_aggregate("avg", "rs.latency_ms")} AS session_avg_latency,
+        {root_aggregate("sum", "rs.total_tokens")} AS session_total_tokens,
+        {root_aggregate("sum", "rs.prompt_tokens")} AS session_prompt_tokens,
+        {root_aggregate("sum", "rs.completion_tokens")} AS session_completion_tokens,
+        {root_aggregate("sum", "rs.cost")} AS session_total_cost,
+        {root_aggregate("uniqExact", "rs.trace_id")} AS session_traces,
+        {root_aggregate("max", "toUInt8(upper(rs.status) IN ('ERROR', 'ERRORED', 'FAILED'))")}
             AS session_has_error,
         dateDiff('second', session_start, session_end) AS session_duration
         {message_aggregate_select}
         {trace_ids_select}
         {latency_values_select}
     FROM (
-        {session_root_rows}
+        {aggregate_rows}
     ) AS rs
     LEFT JOIN ts_survivor_map AS ts_remap
       ON rs.trace_session_id = ts_remap.any_id
@@ -4766,8 +4806,9 @@ def read_exact_session_system_graph(
         )
     bucket_fn = BaseQueryBuilder.time_bucket_expr(interval)
     session_value = {
-        # Pooled median over every root latency of the sessions starting in
-        # the bucket; never an average of per-session values.
+        # Pooled median over every live span latency of the sessions starting
+        # in the bucket (the rollup's population); never an average of
+        # per-session values.
         "latency": median_latency_from_arrays_sql("session_latencies"),
         "tokens": "sum(session_total_tokens)",
         "total_tokens": "sum(session_total_tokens)",

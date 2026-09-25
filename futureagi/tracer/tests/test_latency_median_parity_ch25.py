@@ -16,13 +16,15 @@ latencies:
 The filter is an always-true ``model`` predicate: every seeded span carries
 the model, so the filtered paths see the same rows as the unfiltered ones.
 
-**Population.** Every span is a trace root with a session and an end user.
-The session rollup digests all spans of a session, while the exact session
-statement reads root spans only. That difference is real, pre-existing and
-out of scope here, so the seed keeps the two populations identical. Every
-row is inserted once and merged (``OPTIMIZE FINAL``): the hourly states count
-unmerged versions and tombstones, which is a separate, documented
-approximation (``test_hourly_aggregate_state_exactness_ch25``).
+**Population.** Every trace is one root span plus child spans, and every
+span carries its trace's session and end user. Every path, the session paths
+included, pools the latency of every span: the session rollup digests all
+spans of a session, so the exact session statement must too (it once read
+root spans only, and a no-op filter moved the session chart about 5x). The
+roots alone have a different median in every hour, so a root-only producer
+cannot pass. Every row is inserted once and merged (``OPTIMIZE FINAL``): the
+hourly states count unmerged versions and tombstones, which is a separate,
+documented approximation (``test_hourly_aggregate_state_exactness_ch25``).
 
 ``spans.latency_ms`` is ``Int32 DEFAULT 0`` in the real schema, so no path
 can see a NULL latency here; the finite guard for empty buckets is pinned by
@@ -119,15 +121,26 @@ def _hour_c_latencies() -> list[int]:
     return [max(1, int(rng.lognormvariate(5.0, 1.0))) for _ in range(5_000)]
 
 
+def _span_id(hour, index) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{hour:%H}-span-{index}"))
+
+
 def _hour_seed(
     hour, latencies, *, spans_per_trace, traces_per_session, traces_per_user
 ):
-    """Rows for one hour: roots only, every trace in one session and one user."""
+    """Rows for one hour: each trace's first span is its root, the rest are
+    its children; every trace is in one session and one user."""
 
+    # A root span covers its children, so it is its trace's longest span. The
+    # multiset of latencies (and so every all-span median) is unchanged.
+    ordered = []
+    for first in range(0, len(latencies), spans_per_trace):
+        ordered.extend(sorted(latencies[first : first + spans_per_trace], reverse=True))
     rows = []
     users = set()
-    for index, latency in enumerate(latencies):
+    for index, latency in enumerate(ordered):
         trace_index = index // spans_per_trace
+        root_index = trace_index * spans_per_trace
         trace_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{hour:%H}-trace-{trace_index}"))
         session_id = uuid.uuid5(
             uuid.NAMESPACE_URL, f"{hour:%H}-session-{trace_index // traces_per_session}"
@@ -140,7 +153,10 @@ def _hour_seed(
         rows.append(
             {
                 "trace_id": trace_id,
-                "id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"{hour:%H}-span-{index}")),
+                "id": _span_id(hour, index),
+                "parent_span_id": (
+                    "" if index == root_index else _span_id(hour, root_index)
+                ),
                 "start_time": start,
                 "latency_ms": int(latency),
                 # Mixed statuses, so the hourly per-status states must merge.
@@ -157,7 +173,7 @@ def _seed():
         HOUR_A: _hour_seed(
             HOUR_A,
             _hour_a_latencies(),
-            spans_per_trace=5,
+            spans_per_trace=8,
             traces_per_session=4,
             traces_per_user=2,
         ),
@@ -215,7 +231,7 @@ def _load(client, hours) -> None:
                     row["start_time"] + timedelta(milliseconds=row["latency_ms"]),
                     row["trace_id"],
                     row["id"],
-                    "",
+                    row["parent_span_id"],
                     "parity",
                     row["latency_ms"],
                     row["status"],
@@ -460,3 +476,89 @@ def test_large_skewed_bucket_is_a_median_on_every_path_not_a_mean(observed, seed
         )
         assert p49 <= value <= p51, (label, value, p49, p51)
         assert abs(value - mean) > 0.05 * mean, (label, value, mean)
+
+
+def _root_latencies(seeded, hour):
+    rows, _users = seeded[hour]
+    return [row["latency_ms"] for row in rows if not row["parent_span_id"]]
+
+
+@pytest.mark.parametrize("hour", [HOUR_A, HOUR_B, HOUR_C], ids=["a", "b", "c"])
+def test_seed_separates_all_span_and_root_only_medians(seeded, hour):
+    """A root-only session producer must be detectable in every hour."""
+
+    all_spans = sorted(_latencies(seeded, hour))
+    roots = _root_latencies(seeded, hour)
+    assert len(roots) < len(all_spans)
+    root_median = statistics.median_low(roots)
+    p49 = all_spans[int(0.49 * (len(all_spans) - 1))]
+    p51 = all_spans[int(0.51 * (len(all_spans) - 1))]
+    assert root_median != statistics.median_low(all_spans)
+    assert not (p49 <= root_median <= p51), (root_median, p49, p51)
+
+
+@pytest.mark.parametrize("hour", [HOUR_A, HOUR_B, HOUR_C], ids=["a", "b", "c"])
+def test_session_latency_is_unchanged_by_an_always_true_filter(observed, seeded, hour):
+    """The unfiltered rollup and the filtered exact statement pool the same
+    spans (every span of the session), so a filter that removes no row moves
+    the session latency chart by at most the stated t-digest tolerance."""
+
+    paths, _envelopes = observed
+    unfiltered = paths["S-U"][hour]
+    filtered = paths["S-E"][hour]
+    assert unfiltered is not None and filtered is not None, (unfiltered, filtered)
+    assert abs(filtered - unfiltered) <= max(1.0, 0.005 * unfiltered), (
+        hour,
+        unfiltered,
+        filtered,
+        statistics.median_low(_root_latencies(seeded, hour)),
+    )
+
+
+_ALWAYS_TRUE_SESSION_FILTERS = [
+    # HAVING filters on root-span aggregates: every seeded session has at
+    # least one trace, and no seeded root carries an input message.
+    {
+        "column_id": "traces_count",
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "number",
+            "filter_op": "greater_than_or_equal",
+            "filter_value": 1,
+        },
+    },
+    {
+        "column_id": "first_message",
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "text",
+            "filter_op": "is_null",
+        },
+    },
+]
+
+
+def _sessions_per_hour(seeded, hour):
+    rows, _users = seeded[hour]
+    return len({row["trace_session_id"] for row in rows})
+
+
+def test_session_aggregate_filters_keep_sessions_and_the_all_span_median(
+    analytics, observed, seeded
+):
+    """The latency statement reads every live span but keeps each session's
+    aggregates (and the HAVING filters on them) on its root spans: always-true
+    session filters change nothing, and each session is counted once."""
+
+    paths, _envelopes = observed
+    payload = exact_graph_reads.read_exact_session_system_graph(
+        analytics=analytics,
+        project_id=PROJECT_ID,
+        filters=[_WINDOW_FILTER, _ALWAYS_TRUE_FILTER, *_ALWAYS_TRUE_SESSION_FILTERS],
+        interval="hour",
+        metric_id="latency",
+    )
+    assert _by_hour(payload["data"]) == paths["S-E"]
+    sessions = _by_hour(payload["data"], field="primary_traffic")
+    for hour in (HOUR_A, HOUR_B, HOUR_C):
+        assert sessions[hour] == _sessions_per_hour(seeded, hour), hour

@@ -248,7 +248,12 @@ class TestSessionGraphMedian:
         (statement,) = analytics.statements
         return statement
 
-    def test_exact_session_graph_is_pooled_median_over_root_latencies(self):
+    def test_exact_session_graph_is_pooled_median_over_every_session_span(self):
+        # The unfiltered rollup (spans_per_session) digests every span of a
+        # session, so the filtered exact statement must pool the same spans:
+        # the latency values carry no root predicate, while every other
+        # per-session aggregate (start, tokens, cost, traces, error, the
+        # HAVING filters) stays on the session's root spans.
         query = self._exact_statement("latency")
         flat = _normalized(query)
 
@@ -258,6 +263,23 @@ class TestSessionGraphMedian:
         )
         assert f"{median_latency_from_arrays_sql('session_latencies')} AS value" in flat
         assert "avg(session_avg_latency)" not in query
+        root = "(rs.parent_span_id IS NULL OR rs.parent_span_id = '')"
+        for aggregate in (
+            f"minIf(rs.start_time, {root}) AS session_start",
+            f"sumIf(rs.total_tokens, {root}) AS session_total_tokens",
+            f"sumIf(rs.cost, {root}) AS session_total_cost",
+            f"uniqExactIf(rs.trace_id, {root}) AS session_traces",
+        ):
+            assert aggregate in flat, aggregate
+        # A session with child spans but no root in the window is no session.
+        assert f"countIf({root}) > 0" in flat
+
+    @pytest.mark.parametrize("metric_id", ["tokens", "cost", "session_count"])
+    def test_other_session_graphs_keep_their_root_span_source(self, metric_id):
+        flat = _normalized(self._exact_statement(metric_id))
+
+        assert "min(rs.start_time) AS session_start" in flat
+        assert "minIf(" not in flat
 
     @pytest.mark.parametrize("metric_id", ["tokens", "cost", "session_count"])
     def test_only_the_latency_graph_carries_latency_values(self, metric_id):
