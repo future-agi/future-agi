@@ -1118,8 +1118,17 @@ _is_local = _IS_LOCAL
 _ssl = "http://" if _is_local else "https://"
 ssl = _ssl  # exported — used by accounts.utils, accounts.views.workspace_management
 
+# Only Future AGI Cloud defaults to its public API. A self-hosted install
+# defaults to its own, whatever its ENV_TYPE: WEBSOCKET_ENDPOINT and the
+# gateway's futureagi-eval guardrail derive from BASE_URL, and both authenticate
+# with the org's system API key and secret.
 BASE_URL = os.getenv(
-    "BASE_URL", "http://localhost:8000" if _is_local else "https://api.futureagi.com"
+    "BASE_URL",
+    (
+        "https://api.futureagi.com"
+        if CLOUD_DEPLOYMENT and not _is_local
+        else "http://localhost:8000"
+    ),
 )
 WEBSOCKET_ENDPOINT = os.getenv("WEBSOCKET_ENDPOINT", f"{BASE_URL}/call-websocket/")
 MINIO_URL = os.getenv(
