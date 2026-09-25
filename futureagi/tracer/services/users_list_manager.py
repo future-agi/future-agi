@@ -1071,15 +1071,15 @@ class UsersListManager:
         )
         if not query:
             return
+        # A page-scoped latest-state replay like its sibling enrichments: the
+        # walk's finish deadline also reaches the server as its execution cap.
         result = V2AnalyticsQueryService().execute_ch_query(
             query,
             params,
-            timeout_ms=(
-                deadline.remaining_ms(USER_LIST_ENRICHMENT_TIMEOUT_MS)
-                if deadline
-                else None
+            **_statement_timeout(deadline, USER_LIST_ENRICHMENT_TIMEOUT_MS),
+            settings=_page_replay_read_settings(
+                max_result_rows=max(1, len(end_user_ids))
             ),
-            settings=_read_settings(max_result_rows=max(1, len(end_user_ids))),
         )
         matches_by_user = {
             str(row.get("end_user_id") or ""): row for row in result.data or ()

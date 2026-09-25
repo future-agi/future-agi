@@ -324,3 +324,28 @@ def test_certification_still_rejects_a_raw_leaf_that_does_not_match():
     manager = manager_for(_raw_tag(), leaf("status", "equals", "ERROR"))
     manager._attribute_values_by_user[UID] = {"tag": "silver"}
     assert manager._attribute_filters_match({"end_user_id": UID}) is False
+
+
+@pytest.mark.parametrize("enforce_on_server", [True, False])
+def test_the_native_read_sends_the_statement_caps_its_siblings_send(
+    enforce_on_server,
+):
+    manager = manager_for(leaf("status", "equals", "OK"))
+    builder = UserListQueryBuilderV2(
+        organization_id=ORG, project_ids=[PROJECT], filters=manager.filters
+    )
+    with patch("tracer.services.users_list_manager.V2AnalyticsQueryService") as service:
+        service.return_value.execute_ch_query.return_value = SimpleNamespace(data=[])
+        manager._read_native_span_dimensions(
+            [{"end_user_id": UID}],
+            builder,
+            ReadDeadline.start(10_000, enforce_on_server=enforce_on_server),
+        )
+    kwargs = service.return_value.execute_ch_query.call_args.kwargs
+    assert 0 < kwargs["timeout_ms"] <= 10_000
+    if enforce_on_server:
+        assert kwargs["server_execution_cap_ms"] == kwargs["timeout_ms"]
+    else:
+        assert "server_execution_cap_ms" not in kwargs
+    assert kwargs["settings"]["max_threads"] == 8
+    assert kwargs["settings"]["max_result_rows"] == 1

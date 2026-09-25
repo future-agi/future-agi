@@ -445,6 +445,19 @@ def test_filtered_page_orders_by_newest_matching_activity_and_never_seeds():
     assert set(_kinds(engine)) <= {"slice", "remap", "enrich", "replay", "probe"}
 
 
+def _native_status_leaf(value="ERROR"):
+    return {
+        "column_id": "status",
+        "property_id": "system_attribute:traces:status",
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "text",
+            "filter_op": "equals",
+            "filter_value": value,
+        },
+    }
+
+
 def test_a_raw_leaf_plus_a_native_leaf_publishes_only_native_members():
     # The walk certifies on the raw text leaf; the native leaf (status) is
     # decided after the replay by the native page statement. A native leaf
@@ -458,23 +471,42 @@ def test_a_raw_leaf_plus_a_native_leaf_publishes_only_native_members():
         3, key=minutes_before_end(90), raw=(minutes_before_end(90),), native=True
     )
     world.user(4, key=minutes_before_end(60), raw=(minutes_before_end(60),))
-    native = {
-        "column_id": "status",
-        "property_id": "system_attribute:traces:status",
-        "filter_config": {
-            "col_type": "SYSTEM_METRIC",
-            "filter_type": "text",
-            "filter_op": "equals",
-            "filter_value": "ERROR",
-        },
-    }
 
-    read, engine = _page(world, page_size=25, filters=[*_filters(), native])
+    read, engine = _page(
+        world, page_size=25, filters=[*_filters(), _native_status_leaf()]
+    )
 
     assert _names(read) == ["user-1", "user-3"]
     assert read.payload["query_provenance"] == "matching_activity_walk"
     assert read.payload["query_exact"] is True
     assert "native" in _kinds(engine)
+
+
+def test_the_native_statement_is_a_finish_statement_the_server_stops():
+    # The native read runs inside the walk's finish, under the analytics wall
+    # enforced on the server: like the replay, metrics, evals and relation
+    # statements it must send that remainder as its server execution cap and
+    # run with the page-replay read settings.
+    world = World()
+    for ordinal, minutes in enumerate((3, 7), start=1):
+        world.user(
+            ordinal,
+            key=minutes_before_end(minutes),
+            raw=(minutes_before_end(minutes),),
+            native=True,
+        )
+
+    read, engine = _page(
+        world, page_size=25, filters=[*_filters(), _native_status_leaf()]
+    )
+
+    assert _names(read) == ["user-1", "user-2"]
+    native = [i for i, kind in enumerate(_kinds(engine)) if kind == "native"]
+    assert native
+    for index in native:
+        assert engine.timeouts[index] is not None
+        assert engine.caps[index] == engine.timeouts[index]
+        assert engine.settings[index]["max_threads"] == 8
 
 
 def test_populated_slice_resolves_aliases_through_the_bounded_survivor_statement():
