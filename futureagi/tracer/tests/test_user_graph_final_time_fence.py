@@ -4,6 +4,7 @@
 from collections import defaultdict
 from datetime import timedelta
 from fractions import Fraction
+from statistics import median_low
 from types import SimpleNamespace
 
 import pytest
@@ -177,26 +178,40 @@ def test_native_users_actual_paths(engine, path, minute):
         "candidate_trace_ids_param": "candidate_traces",
     }
     if path == "full_snapshot":
-        captured = []
 
-        def execute(sql, params, **_):
-            rows = run(sql, params)
-            captured.extend(rows)
-            return SimpleNamespace(data=rows, columns=list(rows[0]) if rows else [])
+        def read(metric_id):
+            captured = []
 
-        payload = graphs.read_exact_user_system_graph(
-            analytics=SimpleNamespace(execute_ch_query=execute),
-            project_id=PROJECT,
-            filters=FILTERS,
-            interval="day",
-            metric_id="active_users",
+            def execute(sql, params, **_):
+                rows = run(sql, params)
+                captured.extend(rows)
+                return SimpleNamespace(data=rows, columns=list(rows[0]) if rows else [])
+
+            payload = graphs.read_exact_user_system_graph(
+                analytics=SimpleNamespace(execute_ch_query=execute),
+                project_id=PROJECT,
+                filters=FILTERS,
+                interval="day",
+                metric_id=metric_id,
+            )
+            assert len(captured) == 1
+            return payload, captured[0]
+
+        # The users latency graph is the pooled t-digest median of every
+        # non-NULL span latency of the bucket's user traces (the lower median
+        # at this size). The latency values are rendered only for the latency
+        # graph; every other metric's statement carries a 0 placeholder.
+        pooled_median = float(
+            median_low(r["latency_ms"] for r in gold if r["latency_ms"] is not None)
         )
-        by_trace = defaultdict(list)
-        for row in gold:
-            if row["latency_ms"] is not None:
-                by_trace[row["trace_id"]].append(row["latency_ms"])
+        latency_payload, latency_row = read("latency")
+        assert latency_row["avg_latency"] == pooled_median
+        assert [p["value"] for p in latency_payload["data"] if p["value"]] == [
+            pooled_median
+        ]
+        payload, captured_row = read("active_users")
         expected = {
-            "avg_latency": mean([mean(v) for v in by_trace.values()]),
+            "avg_latency": 0,
             "total_tokens": 2 * total,
             "avg_cost": total,
             "traffic_count": 1,
@@ -209,8 +224,7 @@ def test_native_users_actual_paths(engine, path, minute):
             "avg_traces_per_user": len(expected_traces),
             "total_tokens_sum": 2 * total,
         }
-        assert len(captured) == 1
-        assert {k: captured[0][k] for k in expected} == expected
+        assert {k: captured_row[k] for k in expected} == expected
         assert sum(point["value"] for point in payload["data"]) == 1
     else:
         builder = (
