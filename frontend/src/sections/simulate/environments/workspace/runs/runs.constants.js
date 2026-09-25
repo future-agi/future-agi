@@ -12,6 +12,9 @@ export const ACTIVE_EXECUTION_STATUSES = new Set([
   "evaluating",
 ]);
 
+// The subset a user can still stop — `cancelling` is already on its way out.
+export const STOPPABLE_EXECUTION_STATUSES = new Set(["pending", "running", "evaluating"]);
+
 // Stable hook for the pulsing dot so callers (and tests) can target it without
 // depending on emotion's generated class name.
 export const PULSING_DOT_CLASS = "sim-status-dot--pulse";
@@ -30,6 +33,9 @@ export const STATUS_META = {
   flaky: { color: BUILD_TONES.amberBright, label: "Flaky" },
   unmeasured: { color: BUILD_TONES.ash, label: "Not measured" },
   completed: { color: BUILD_TONES.zinc, label: "Completed" },
+  // The runs table's lifecycle "Completed" — green like the design. Kept apart from
+  // `completed` above, which the run header uses for "finished with findings".
+  finished: { color: BUILD_TONES.green, label: "Completed" },
   failed: { color: BUILD_TONES.red, label: "Failed" },
   error: { color: BUILD_TONES.orange, label: "Error" },
   cancelled: { color: BUILD_TONES.zinc, label: "Cancelled" },

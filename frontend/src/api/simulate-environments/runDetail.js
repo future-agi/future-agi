@@ -5,6 +5,7 @@ import { extractKpis } from "src/sections/test-detail/common";
 import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 import {
   ACTIVE_EXECUTION_STATUSES,
+  STOPPABLE_EXECUTION_STATUSES,
   runColor,
 } from "src/sections/simulate/environments/workspace/runs/runs.constants";
 import useKpis from "src/hooks/useKpis";
@@ -205,6 +206,7 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
             : summary?.outcomes?.passed > 0
               ? "passed"
               : "failed",
+      stoppable: STOPPABLE_EXECUTION_STATUSES.has(execution.status),
       scenarioIds: execution.selected_scenario_keys?.length
         ? execution.selected_scenario_keys
         : undefined,
