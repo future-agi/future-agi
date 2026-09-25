@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 
 import pytest
@@ -8,6 +9,9 @@ from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     LatestFilterPredicate,
     compile_span_filter_plans,
     compile_trace_filter_plans,
+)
+from tracer.utils.attribute_suggestion_contract import (
+    TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES,
 )
 
 Compiler = Callable[[list[dict[str, object]]], list[LatestFilterPredicate]]
@@ -192,6 +196,106 @@ def test_ascii_filter_keeps_unicode_semantics_with_exhaustive_legacy_witness() -
         for key, value in plan.params.items()
         if key.startswith("latest_filter_legacy_index_0_")
     } == {"k", stored}
+
+
+def _kelvin_spellings(value: str) -> set[str]:
+    """Every spelling whose ASCII ``lower()`` is ``value``, by bitmask."""
+
+    slots = [position for position, char in enumerate(value) if char == "k"]
+    spellings = set()
+    for mask in range(1 << len(slots)):
+        chars = list(value)
+        for bit, position in enumerate(slots):
+            if mask >> bit & 1:
+                chars[position] = "\N{KELVIN SIGN}"
+        spellings.add("".join(chars))
+    return spellings
+
+
+@pytest.mark.parametrize(
+    ("operation", "picker_types"),
+    [("equals", False), ("in", False), ("in", True)],
+    ids=["equals", "in", "picker_in"],
+)
+@pytest.mark.parametrize("kelvin_slots", [0, 1, 2, 8, 9])
+def test_legacy_ascii_bloom_witness_enumerates_every_kelvin_spelling(
+    kelvin_slots: int,
+    operation: str,
+    picker_types: bool,
+) -> None:
+    value = "K".join(["seg"] * (kelvin_slots + 1))
+    leaf = _attribute_filter(
+        filter_type="text",
+        operation=operation,
+        value=[value] if operation == "in" else value,
+    )
+    if picker_types:
+        leaf["filter_config"]["attribute_value_types"] = ["string"]
+    (plan,) = compile_trace_filter_plans([leaf])
+
+    legacy = {
+        param_value
+        for key, param_value in plan.params.items()
+        if key.startswith("latest_filter_legacy_index_0_")
+    }
+    # Past 256 spellings (the ninth "k") the witness stands down entirely and
+    # the Unicode comparison stays the only value predicate.
+    expected = _kelvin_spellings(value.lower()) if kelvin_slots <= 8 else set()
+    assert legacy == expected
+
+
+def _python_lines_executed(call: Callable[[], object]) -> int:
+    """Count the Python lines one call executes, across every frame it enters."""
+
+    executed = 0
+
+    def trace(frame, event, arg):
+        nonlocal executed
+        if event == "line":
+            executed += 1
+        return trace
+
+    previous = sys.gettrace()
+    sys.settrace(trace)
+    try:
+        call()
+    finally:
+        sys.settrace(previous)
+    return executed
+
+
+@pytest.mark.parametrize(
+    "compiler",
+    [compile_trace_filter_plans, compile_span_filter_plans],
+    ids=["trace", "span"],
+)
+@pytest.mark.parametrize("short", ["absent", "k" * 8], ids=["no_k", "eight_k"])
+def test_max_length_text_equality_compiles_without_per_character_work(
+    compiler: Compiler,
+    short: str,
+) -> None:
+    """A 16 KiB equals value compiles with the Python work of a short one.
+
+    One Voice list request compiles its filter plans a few hundred times. On
+    dev a per-character loop in the legacy bloom witness made a max-length
+    absent value cost 6.0 s before the response headers while ClickHouse
+    answered in about 0.1 s; the same value at 32 bytes took 0.48 s.
+    """
+
+    long = short + "x" * (TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES - len(short))
+
+    def compile_equals(value: str) -> Callable[[], object]:
+        return lambda: _plan(
+            compiler,
+            filter_type="text",
+            operation="equals",
+            value=value,
+        )
+
+    short_lines = _python_lines_executed(compile_equals(short))
+    long_lines = _python_lines_executed(compile_equals(long))
+
+    assert long_lines <= short_lines + 64, (short_lines, long_lines)
 
 
 def test_non_ascii_filter_declines_legacy_ascii_bloom_witness() -> None:

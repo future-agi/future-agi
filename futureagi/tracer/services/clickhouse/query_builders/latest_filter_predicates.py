@@ -6,6 +6,7 @@ import math
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from itertools import chain, product
 from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
@@ -128,22 +129,19 @@ def _legacy_ascii_lower_bloom_predicate(
     for raw_value in normalized_values:
         if not isinstance(raw_value, str) or not raw_value.isascii():
             return None
-        value_variants = [""]
-        for character in raw_value:
-            replacements = (
-                (character, "\N{KELVIN SIGN}") if character == "k" else (character,)
-            )
-            if (
-                len(value_variants) * len(replacements)
-                > _MAX_LEGACY_ASCII_BLOOM_VARIANTS
-            ):
-                return None
-            value_variants = [
-                prefix + replacement
-                for prefix in value_variants
-                for replacement in replacements
-            ]
-        variants.update(value_variants)
+        # Each "k" doubles the spellings, so the cap is decided by the count
+        # before any is built. A value may be 16 KiB and one list request
+        # compiles its plans a few hundred times: joining whole segments keeps
+        # each spelling one C-level pass instead of a Python step per
+        # character, which cost seconds per request on the long values.
+        kelvin_slots = raw_value.count("k")
+        if 1 << kelvin_slots > _MAX_LEGACY_ASCII_BLOOM_VARIANTS:
+            return None
+        segments = raw_value.split("k")
+        variants.update(
+            "".join(chain.from_iterable(zip(segments, (*letters, ""), strict=True)))
+            for letters in product(("k", "\N{KELVIN SIGN}"), repeat=kelvin_slots)
+        )
         if len(variants) > _MAX_LEGACY_ASCII_BLOOM_VARIANTS:
             return None
 
