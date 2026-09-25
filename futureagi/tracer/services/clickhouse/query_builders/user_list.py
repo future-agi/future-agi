@@ -1756,58 +1756,107 @@ class UserListQueryBuilder(BaseQueryBuilder):
         """
         return query, params
 
+    def native_span_dimension_membership(
+        self, item: dict[str, Any], *, index: int
+    ) -> tuple[tuple[str, ...], str, dict[str, Any]]:
+        """The users graph's membership SQL for native leaf ``index``.
+
+        The per-span flags, the per-user condition over them and their
+        parameters, compiled by the graph's own compiler
+        (``compile_user_membership_leaf``) under a namespace unique to the
+        leaf. For a SYSTEM_METRIC leaf that is ``countIf(<span predicate>) >
+        0``: a user matches when ANY latest live span in the window satisfies
+        the span compiler's predicate, which treats ``''`` as null on these
+        non-nullable text columns and compares case-insensitively.
+        """
+
+        # exact_graph_reads imports this module; resolve it at call time.
+        from tracer.services.clickhouse.exact_graph_reads import (
+            compile_user_membership_leaf,
+        )
+
+        project_id = self.project_id or (self.project_ids or [""])[0]
+        return compile_user_membership_leaf(
+            item, project_id=str(project_id), namespace=f"native_leaf_{index}"
+        )
+
     def build_native_span_dimension_query(
         self,
         end_user_ids: list[str],
-        columns: tuple[str, ...] | list[str],
+        leaves: Iterable[tuple[int, dict[str, Any]]],
     ) -> tuple[str, dict[str, Any]]:
-        """Collect a page user's distinct values of native span dimensions.
+        """Decide each native span-dimension leaf for a finite user page.
 
-        These columns live on the span row, not in the attribute maps and not
-        in the per-user rollup, so membership is decided over the user's own
-        spans after latest-version replay.
+        ``leaves`` pairs each native leaf with its index in the request's
+        filters. One row per page user that has a latest live span in the
+        window, with a ``native_leaf_<index>`` boolean per leaf computed by
+        the users graph's own membership SQL over the user's latest-state
+        spans (``native_span_dimension_membership``); a page user with no
+        such span has no row and matches no leaf, as in the graph.
         """
 
-        native_columns = set(USER_NATIVE_SPAN_DIMENSIONS.values())
-        selected = tuple(
-            dict.fromkeys(
-                str(column) for column in columns if str(column) in native_columns
+        compiled: list[tuple[int, tuple[str, ...], str]] = []
+        params: dict[str, Any] = {}
+        columns: dict[str, None] = {}
+        for index, item in leaves:
+            column = self.native_span_dimension(item)
+            if column is None:
+                continue
+            flags, condition, leaf_params = self.native_span_dimension_membership(
+                item, index=index
             )
-        )
-        if not end_user_ids or not selected:
+            compiled.append((index, flags, condition))
+            params.update(leaf_params)
+            columns[column] = None
+        if not end_user_ids or not compiled:
             return "", {}
-        prefix, params = self._finite_user_activity_ctes(
+        # ``observation_type`` is part of the replay identity (grouped, so it
+        # is already its latest value); every other column is replayed.
+        replayed = [column for column in columns if column != "observation_type"]
+        prefix, replay_params = self._finite_user_activity_ctes(
             end_user_ids,
-            [f"argMax({column}, _version) AS latest_{column}" for column in selected],
+            [f"argMax({column}, _version) AS latest_{column}" for column in replayed],
         )
+        params.update(replay_params)
         resolved_eu = resolved_id_expr("latest_end_user_id", "dimension_eu_remap")
-        dimensions = ", ".join(
-            f"tuple('{column}', toString(latest_{column}))" for column in selected
+        projected = ",\n                    ".join(
+            column if column == "observation_type" else f"latest_{column} AS {column}"
+            for column in columns
+        )
+        flags_sql = ",\n                ".join(
+            flag for _index, flags, _condition in compiled for flag in flags
+        )
+        decisions = ",\n            ".join(
+            f"({condition}) AS native_leaf_{index}"
+            for index, _flags, condition in compiled
         )
         query = f"""
         {prefix}
         SELECT
             end_user_id,
-            dimension.1 AS dimension_name,
-            groupUniqArray(dimension.2) AS dimension_values
+            {decisions}
         FROM (
             SELECT
-                toString({resolved_eu}) AS end_user_id,
-                [{dimensions}] AS dimensions
-            FROM latest_candidate_spans
-            LEFT JOIN eu_survivor_map AS dimension_eu_remap
-                ON latest_end_user_id = dimension_eu_remap.any_id
-            WHERE latest_is_deleted = 0
-              AND latest_start_time >= fromUnixTimestamp64Micro(
-                  %(user_window_start_us)s, 'UTC'
-              )
-              AND latest_start_time < fromUnixTimestamp64Micro(
-                  %(user_window_end_us)s, 'UTC'
-              )
-              AND {resolved_eu} IN %(candidate_end_user_ids)s
-        )
-        ARRAY JOIN dimensions AS dimension
-        GROUP BY end_user_id, dimension_name
+                end_user_id,
+                {flags_sql}
+            FROM (
+                SELECT
+                    toString({resolved_eu}) AS end_user_id,
+                    {projected}
+                FROM latest_candidate_spans
+                LEFT JOIN eu_survivor_map AS dimension_eu_remap
+                    ON latest_end_user_id = dimension_eu_remap.any_id
+                WHERE latest_is_deleted = 0
+                  AND latest_start_time >= fromUnixTimestamp64Micro(
+                      %(user_window_start_us)s, 'UTC'
+                  )
+                  AND latest_start_time < fromUnixTimestamp64Micro(
+                      %(user_window_end_us)s, 'UTC'
+                  )
+                  AND {resolved_eu} IN %(candidate_end_user_ids)s
+            ) AS native_span_rows
+        ) AS native_span_flags
+        GROUP BY end_user_id
         """
         return query, params
 

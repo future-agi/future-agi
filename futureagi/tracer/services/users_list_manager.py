@@ -532,7 +532,8 @@ class UsersListManager:
         # as a custom attribute evaluates it as NULL for every user. Keep those
         # leaves in their own namespace, answered from the span row.
         native_dimension_filters: dict[str, str] = {}
-        for item in self.filters:
+        native_dimension_leaves: list[tuple[int, dict[str, Any]]] = []
+        for filter_index, item in enumerate(self.filters):
             if UserListQueryBuilderV2._is_date_filter(item):
                 continue
             if UserListQueryBuilderV2._is_relation_filter(item):
@@ -543,11 +544,15 @@ class UsersListManager:
             native_column = UserListQueryBuilderV2.native_span_dimension(item)
             if native_column:
                 native_dimension_filters[str(column_id)] = native_column
+                native_dimension_leaves.append((filter_index, item))
                 continue
             attribute_key = str(column_id)
             requested_attribute_keys.append(attribute_key)
             attribute_filter_items.setdefault(attribute_key, []).append(item)
         self.native_dimension_filters = native_dimension_filters
+        # Each native leaf keyed by its index in ``self.filters``: two leaves on
+        # one column are two decisions.
+        self.native_dimension_leaves = tuple(native_dimension_leaves)
         self.attribute_keys = tuple(dict.fromkeys(requested_attribute_keys))
         unsupported_attribute_keys = unsupported_user_attribute_keys(
             self.attribute_keys
@@ -571,10 +576,8 @@ class UsersListManager:
         self._walked_typed_filter: WalkedTypedFilter | None = None
         # Public cost rounding/JSON dates are presentation, never filter truth.
         self._native_filter_values_by_user: dict[str, dict[str, Any]] = {}
-        # Distinct native span-column values per user, keyed by filter column.
-        self._native_dimension_values_by_user: dict[
-            str, dict[str, tuple[str, ...]]
-        ] = {}
+        # Per page user, each native leaf's decision keyed by filter index.
+        self._native_dimension_matches_by_user: dict[str, dict[int, bool]] = {}
         self._unqualified_attribute_fallback_used = False
         exact_text_filters: dict[str, tuple[str, ...]] = {}
         for attribute_key, items in attribute_filter_items.items():
@@ -1051,15 +1054,21 @@ class UsersListManager:
         builder: UserListQueryBuilderV2,
         deadline: ReadDeadline | None,
     ) -> None:
-        """Cache each page user's distinct values of the filtered span columns."""
+        """Cache each page user's decision of every native span-dimension leaf.
+
+        The statement decides the leaves with the users graph's own membership
+        SQL (``build_native_span_dimension_query``); a page user it returns no
+        row for has no latest live span in the window and matches none.
+        """
 
         end_user_ids = [
             str(row["end_user_id"]) for row in rows if row.get("end_user_id")
         ]
-        if not end_user_ids or not self.native_dimension_filters:
+        if not end_user_ids or not self.native_dimension_leaves:
             return
-        columns = tuple(dict.fromkeys(self.native_dimension_filters.values()))
-        query, params = builder.build_native_span_dimension_query(end_user_ids, columns)
+        query, params = builder.build_native_span_dimension_query(
+            end_user_ids, self.native_dimension_leaves
+        )
         if not query:
             return
         result = V2AnalyticsQueryService().execute_ch_query(
@@ -1070,48 +1079,28 @@ class UsersListManager:
                 if deadline
                 else None
             ),
-            settings=_read_settings(
-                max_result_rows=max(1, len(end_user_ids) * len(columns))
-            ),
+            settings=_read_settings(max_result_rows=max(1, len(end_user_ids))),
         )
-        values_by_user: dict[str, dict[str, tuple[str, ...]]] = {}
-        for row in result.data or ():
-            user_id = str(row.get("end_user_id") or "")
-            column = str(row.get("dimension_name") or "")
-            if not user_id or not column:
-                continue
-            values_by_user.setdefault(user_id, {})[column] = tuple(
-                str(value) for value in (row.get("dimension_values") or ())
-            )
+        matches_by_user = {
+            str(row.get("end_user_id") or ""): row for row in result.data or ()
+        }
         # Absence is part of the answer, so replace the page's cache instead of
-        # letting an earlier batch's values satisfy a later predicate.
+        # letting an earlier batch's decision satisfy a later predicate.
         for user_id in end_user_ids:
-            by_column = values_by_user.get(user_id, {})
-            self._native_dimension_values_by_user[user_id] = {
-                column_id: by_column.get(column, ())
-                for column_id, column in self.native_dimension_filters.items()
+            decided = matches_by_user.get(user_id, {})
+            self._native_dimension_matches_by_user[user_id] = {
+                index: bool(decided.get(f"native_leaf_{index}"))
+                for index, _item in self.native_dimension_leaves
             }
 
     def _native_dimension_matches(
-        self,
-        *,
-        row: dict[str, Any],
-        column_id: str,
-        config: dict[str, Any],
+        self, *, row: dict[str, Any], filter_index: int
     ) -> bool:
-        """Any-span membership over a user's distinct native column values."""
+        """The page statement's decision of native leaf ``filter_index``."""
 
-        values = self._native_dimension_values_by_user.get(
+        return self._native_dimension_matches_by_user.get(
             str(row.get("end_user_id", "")), {}
-        ).get(column_id)
-        return self._candidate_value_matches(
-            list(values) if values else None,
-            config.get("filter_op") or config.get("filterOp"),
-            config.get("filter_value", config.get("filterValue")),
-            # The span filter compiler compares every column reachable here
-            # case-insensitively (_CASE_INSENSITIVE_COLUMNS).
-            case_insensitive=True,
-        )
+        ).get(filter_index, False)
 
     def _read_evals(
         self,
@@ -1983,7 +1972,7 @@ class UsersListManager:
         return True
 
     def _row_matches_filters(self, row: dict[str, Any]) -> bool:
-        for item in self.filters:
+        for filter_index, item in enumerate(self.filters):
             if UserListQueryBuilderV2._is_date_filter(item):
                 continue
             if UserListQueryBuilderV2._is_relation_filter(item):
@@ -1999,7 +1988,7 @@ class UsersListManager:
                 continue
             if UserListQueryBuilderV2.native_span_dimension(item):
                 if not self._native_dimension_matches(
-                    row=row, column_id=str(column_id), config=config
+                    row=row, filter_index=filter_index
                 ):
                     return False
                 continue
@@ -2072,7 +2061,7 @@ class UsersListManager:
         self._unqualified_attribute_fallback_used = False
         self._attribute_values_by_user.clear()
         self._attribute_value_types_by_user.clear()
-        self._native_dimension_values_by_user.clear()
+        self._native_dimension_matches_by_user.clear()
         self._matching_activity_by_user.clear()
         self._walked_typed_filter = None
         self._native_filter_values_by_user.clear()
@@ -2284,7 +2273,7 @@ class UsersListManager:
             # or relation memberships for every rejected batch in a sparse walk.
             self._attribute_values_by_user.clear()
             self._attribute_value_types_by_user.clear()
-            self._native_dimension_values_by_user.clear()
+            self._native_dimension_matches_by_user.clear()
             self._native_filter_values_by_user.clear()
             self._relation_matching_user_ids.clear()
             consumed_row = batch[consumed - 1]

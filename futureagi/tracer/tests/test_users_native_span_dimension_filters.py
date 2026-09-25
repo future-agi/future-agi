@@ -5,6 +5,12 @@
 maps. Reading them as custom attributes evaluates every user as NULL, so the
 list answers ``is_null`` with a full page and every other operator with zero
 rows while the users graph answers the identical leaf.
+
+The list decides each native leaf with the users graph's own membership SQL:
+a user matches when ANY of their latest live spans in the window satisfies the
+span compiler's predicate (``''`` is null on these non-nullable columns,
+negations mean "some span differs", comparisons are case-insensitive). The
+live proof is ``test_users_native_span_dimension_parity_ch25.py``.
 """
 
 from datetime import datetime
@@ -13,6 +19,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tracer.services.clickhouse.exact_graph_reads import _user_membership_having
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 from tracer.services.clickhouse.query_builders.user_list import (
     USER_NATIVE_SPAN_DIMENSIONS,
@@ -96,62 +103,133 @@ def test_a_custom_attribute_identity_wins_without_a_col_type(column_id):
     assert manager.native_dimension_filters == {}
 
 
-@pytest.mark.parametrize(
-    ("operation", "value", "expected"),
-    [
-        ("is_null", None, False),
-        ("is_not_null", None, True),
-        ("equals", "OK", True),
-        ("equals", "UNSET", False),
-        ("not_equals", "OK", False),
-        ("not_equals", "UNSET", True),
-        ("in", ["ok"], True),
-        ("in", ["UNSET"], False),
-        ("not_in", ["OK", "ERROR"], False),
-        ("contains", "R", True),
-        ("not_contains", "R", False),
-        ("starts_with", "O", True),
-        ("ends_with", "R", True),
-        ("ends_with", "Z", False),
-    ],
-)
-def test_every_operator_is_answered_from_the_users_span_values(
-    operation, value, expected
+OPERATIONS = [
+    ("equals", "OK"),
+    ("not_equals", "OK"),
+    ("in", ["OK", "Error"]),
+    ("not_in", ["OK"]),
+    ("contains", "R"),
+    ("not_contains", "R"),
+    ("starts_with", "O"),
+    ("ends_with", "K"),
+    ("is_null", None),
+    ("is_not_null", None),
+]
+
+
+@pytest.mark.parametrize("column_id", sorted(USER_NATIVE_SPAN_DIMENSIONS))
+@pytest.mark.parametrize(("operation", "value"), OPERATIONS)
+def test_native_leaf_is_the_users_graphs_own_membership_sql(
+    column_id, operation, value
 ):
-    item = leaf("status", operation, value)
-    manager = manager_for(item)
-    manager._native_dimension_values_by_user[UID] = {"status": ("OK", "ERROR")}
-    assert manager._row_matches_filters({"end_user_id": UID}) is expected
+    # The graph compiles this leaf with its default namespace; the list sends
+    # the identical SQL under the leaf's own namespace, nothing else changed.
+    item = leaf(column_id, operation, value)
+    graph_flags, graph_condition, graph_params = _user_membership_having(
+        [item], project_id=PROJECT
+    )
+    builder = UserListQueryBuilderV2(
+        organization_id=ORG, project_ids=[PROJECT], filters=[item]
+    )
+    flags, condition, params = builder.native_span_dimension_membership(item, index=3)
+
+    def renamed(text):
+        return text.replace("user_member", "native_leaf_3")
+
+    assert flags == tuple(renamed(flag) for flag in graph_flags)
+    assert condition == renamed(graph_condition)
+    assert params == {renamed(name): v for name, v in graph_params.items()}
 
 
-@pytest.mark.parametrize(
-    ("operation", "value", "expected"),
-    [
-        ("is_null", None, True),
-        ("is_not_null", None, False),
-        ("equals", "OK", False),
-        ("not_equals", "OK", False),
-    ],
-)
-def test_a_user_with_no_spans_in_the_window_has_no_value(operation, value, expected):
+@pytest.mark.parametrize("column_id", sorted(USER_NATIVE_SPAN_DIMENSIONS))
+@pytest.mark.parametrize(("operation", "value"), OPERATIONS)
+def test_every_operator_is_one_any_span_condition(column_id, operation, value):
+    # SYSTEM_METRIC leaves: a user matches when ANY latest live span satisfies
+    # the span compiler's predicate - negations included ("some span differs").
+    column = USER_NATIVE_SPAN_DIMENSIONS[column_id]
+    builder = UserListQueryBuilderV2(
+        organization_id=ORG, project_ids=[PROJECT], filters=[]
+    )
+    flags, condition, _params = builder.native_span_dimension_membership(
+        leaf(column_id, operation, value), index=0
+    )
+    assert len(flags) == 1
+    assert flags[0].endswith(" AS native_leaf_0_match_0")
+    assert condition == "countIf(native_leaf_0_match_0) > 0"
+    assert column in flags[0]
+    if operation == "is_null":
+        # Native text columns are non-nullable: '' is the missing value.
+        assert f"{column} = ''" in flags[0]
+    if operation == "is_not_null":
+        assert f"{column} != ''" in flags[0]
+    if operation not in {"is_null", "is_not_null"}:
+        assert f"lowerUTF8(toString({column}))" in flags[0]
+
+
+def test_each_native_leaf_is_decided_on_its_own_filter_index():
+    # Two leaves on one column are two decisions, never one merged value set.
+    first = leaf("status", "equals", "OK")
+    second = leaf("status", "not_equals", "ERROR")
+    manager = manager_for(first, second)
+    assert manager.native_dimension_leaves == ((0, first), (1, second))
+    row = {"end_user_id": UID}
+    manager._native_dimension_matches_by_user[UID] = {0: True, 1: True}
+    assert manager._row_matches_filters(row) is True
+    manager._native_dimension_matches_by_user[UID] = {0: True, 1: False}
+    assert manager._row_matches_filters(row) is False
+    manager._native_dimension_matches_by_user[UID] = {0: False, 1: True}
+    assert manager._row_matches_filters(row) is False
+
+
+@pytest.mark.parametrize(("operation", "value"), OPERATIONS)
+def test_a_user_with_no_spans_in_the_window_matches_no_leaf(operation, value):
+    # The graph aggregates only users with a latest live span in the window;
+    # a user the page statement returns no row for matches nothing, is_null
+    # included.
     manager = manager_for(leaf("status", operation, value))
-    manager._native_dimension_values_by_user[UID] = {"status": ()}
-    assert manager._row_matches_filters({"end_user_id": UID}) is expected
+    builder = UserListQueryBuilderV2(
+        organization_id=ORG, project_ids=[PROJECT], filters=manager.filters
+    )
+    row = {"end_user_id": UID}
+    with patch("tracer.services.users_list_manager.V2AnalyticsQueryService") as service:
+        service.return_value.execute_ch_query.return_value = SimpleNamespace(data=[])
+        manager._read_native_span_dimensions([row], builder, None)
+    assert manager._native_dimension_matches_by_user[UID] == {0: False}
+    assert manager._row_matches_filters(row) is False
 
 
-def test_the_dimension_query_projects_each_filtered_column():
+def test_the_dimension_query_decides_each_leaf_with_the_graph_sql():
+    status = leaf("status", "equals", "OK")
+    kind = leaf("node_type", "not_in", ["llm"])
     builder = UserListQueryBuilderV2(
         organization_id=ORG,
         project_ids=[PROJECT],
-        filters=[leaf("status", "equals", "OK")],
+        filters=[status, kind],
     )
-    query, params = builder.build_native_span_dimension_query([UID], ("status",))
+    query, params = builder.build_native_span_dimension_query(
+        [UID], [(1, status), (4, kind)]
+    )
+    flat = " ".join(query.split())
     assert "argMax(status, _version) AS latest_status" in query
-    assert "tuple('status', toString(latest_status))" in query
-    assert "ARRAY JOIN dimensions AS dimension" in query
+    assert "latest_status AS status" in query
+    # The replay identity already groups observation_type.
+    assert "argMax(observation_type" not in query
+    assert (
+        "(lowerUTF8(toString(status)) = %(native_leaf_1_0_col_1)s)"
+        " AS native_leaf_1_match_0" in flat
+    )
+    assert (
+        "(lowerUTF8(toString(observation_type)) NOT IN %(native_leaf_4_0_col_1)s)"
+        " AS native_leaf_4_match_0" in flat
+    )
+    assert "(countIf(native_leaf_1_match_0) > 0) AS native_leaf_1" in flat
+    assert "(countIf(native_leaf_4_match_0) > 0) AS native_leaf_4" in flat
+    assert "GROUP BY end_user_id" in query
+    assert params["native_leaf_1_0_col_1"] == "ok"
+    assert params["native_leaf_4_0_col_1"] == ("llm",)
     assert params["candidate_end_user_ids"] == (UID,)
     assert builder.build_native_span_dimension_query([UID], ()) == ("", {})
-    assert builder.build_native_span_dimension_query([], ("status",)) == ("", {})
+    assert builder.build_native_span_dimension_query([], [(1, status)]) == ("", {})
 
 
 def test_the_page_read_caches_only_the_page_and_replaces_absence():
@@ -164,13 +242,7 @@ def test_the_page_read_caches_only_the_page_and_replaces_absence():
     row = {"end_user_id": UID}
     with patch("tracer.services.users_list_manager.V2AnalyticsQueryService") as service:
         service.return_value.execute_ch_query.return_value = SimpleNamespace(
-            data=[
-                {
-                    "end_user_id": UID,
-                    "dimension_name": "status",
-                    "dimension_values": ["OK"],
-                }
-            ]
+            data=[{"end_user_id": UID, "native_leaf_0": 1}]
         )
         manager._read_native_span_dimensions([row], builder, ReadDeadline.start(10_000))
         assert manager._row_matches_filters(row) is True

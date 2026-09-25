@@ -3840,7 +3840,10 @@ def _user_filter_clauses(
 
 
 def _user_membership_having(
-    filters: list[dict[str, Any]], *, project_id: str
+    filters: list[dict[str, Any]],
+    *,
+    project_id: str,
+    namespace: str = "user_member",
 ) -> tuple[tuple[str, ...], str, dict[str, Any]]:
     """Match independent leaves across a user's complete latest-live spans.
 
@@ -3848,6 +3851,9 @@ def _user_membership_having(
     selected typed domain must exist and no value may satisfy the positive
     complement. Missing attributes cannot satisfy a negative. Null means no
     value in that typed domain on any of the user's spans.
+
+    ``namespace`` prefixes every row-flag alias and parameter, so several
+    independently compiled leaves can share one statement.
     """
     clauses: list[str] = []
     row_predicates: list[str] = []
@@ -3873,7 +3879,7 @@ def _user_membership_having(
         return predicate
 
     def group_match(predicate: str, comparison: str) -> str:
-        alias = f"user_member_match_{len(row_predicates)}"
+        alias = f"{namespace}_match_{len(row_predicates)}"
         row_predicates.append(f"({predicate}) AS {alias}")
         return f"countIf({alias}) {comparison}"
 
@@ -3886,7 +3892,7 @@ def _user_membership_having(
             continue
         config = item.get("filter_config") or item.get("filterConfig") or {}
         operation = config.get("filter_op") or config.get("filterOp")
-        prefix = f"user_member_{index}"
+        prefix = f"{namespace}_{index}"
         # Legacy raw keys without a family still follow the Users list's
         # attribute vocabulary; declared relation/system leaves keep theirs.
         family = UserListQueryBuilder._filter_col_type(item)
@@ -3916,6 +3922,20 @@ def _user_membership_having(
         else:
             clauses.append(group_match(compile_leaf(item, prefix), "> 0"))
     return tuple(row_predicates), " AND ".join(clauses) or "1 = 1", params
+
+
+def compile_user_membership_leaf(
+    item: dict[str, Any], *, project_id: str, namespace: str
+) -> tuple[tuple[str, ...], str, dict[str, Any]]:
+    """The users graph's own membership SQL for one filter leaf.
+
+    Returns the per-span flags (``(predicate) AS alias``), the per-user
+    condition over them (``countIf(alias) ...``) and their parameters, all
+    under ``namespace``. The Users list decides native span-dimension leaves
+    with exactly this SQL so both surfaces answer the same leaf identically.
+    """
+
+    return _user_membership_having([item], project_id=project_id, namespace=namespace)
 
 
 def _owned_user_eval_config_ids(
