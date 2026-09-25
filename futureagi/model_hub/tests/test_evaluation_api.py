@@ -1861,8 +1861,12 @@ class TestPreviewRunEvalView:
         input_cell,
         organization,
         workspace,
+        settings,
     ):
         """Preview should pass function params to code eval kwargs."""
+        # No code-executor runs under pytest; let the eval use the local runner.
+        settings.CODE_EXECUTOR_LOCAL_FALLBACK = True
+        settings.CLOUD_DEPLOYMENT = ""
         template = EvalTemplate.objects.create(
             name="word_count_preview_test",
             organization=organization,

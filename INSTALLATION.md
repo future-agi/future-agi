@@ -686,6 +686,12 @@ See [`clone: Operation not permitted`](#code-executor-crashes-with-clone-operati
 
 The host kernel or container platform disallows `privileged: true` (Fargate, Cloud Run, some Kubernetes policies). Either run on a platform that allows privileged containers (EC2, GKE with privileged enabled, bare-metal) or disable code evaluation features.
 
+### Code evals fail with `Code executor unavailable`
+
+Code evals run only on `code-executor`. When the workers cannot reach it (container not running, wrong `CODE_EXECUTOR_URL`), each code eval returns this error instead of a score. Start it with `docker compose up -d code-executor` and check `docker compose logs code-executor`.
+
+If your platform cannot run `code-executor` at all, you can set `CODE_EXECUTOR_LOCAL_FALLBACK=true` in `.env` and restart the backend and workers. Code evals then run inside the worker container when `code-executor` cannot be reached. Enable it only on installs where every user who can create or edit code evals is trusted. The setting is ignored when `CLOUD_DEPLOYMENT` is `US`, `EU` or `DEV`, and an HTTP error, timeout or invalid response from a running `code-executor` is always returned as an eval error.
+
 ### `temporal-server` keeps restarting
 
 Postgres connection is the usual cause. Check `docker compose logs postgres` for OOM. Raise Docker Desktop's RAM to 8 GB+.

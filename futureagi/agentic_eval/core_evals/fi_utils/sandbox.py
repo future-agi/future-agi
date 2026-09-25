@@ -19,10 +19,12 @@ The sandboxed process communicates results via stdout JSON.
 If it crashes, times out, or produces invalid output, the parent returns an error.
 """
 
+import errno
 import json
 import os
 import resource
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -31,12 +33,27 @@ import time
 from typing import Any
 
 import structlog
+import urllib.error
 import urllib.request
+from django.conf import settings
 
 logger = structlog.get_logger(__name__)
 
 # Code executor service URL (nsjail-based sandbox container)
 CODE_EXECUTOR_URL = os.environ.get("CODE_EXECUTOR_URL", "http://code-executor:8060")
+
+# FutureAGI cloud deployments always run the code executor, so they never run
+# eval code in the worker, whatever CODE_EXECUTOR_LOCAL_FALLBACK says.
+CLOUD_DEPLOYMENTS = frozenset({"US", "EU", "DEV"})
+
+# Connection errors that mean the executor was never reached.
+_UNREACHABLE_ERRNOS = frozenset(
+    {errno.ECONNREFUSED, errno.EHOSTUNREACH, errno.ENETUNREACH}
+)
+
+EXECUTOR_UNAVAILABLE_MESSAGE = (
+    "Code executor unavailable: the code-executor service could not be reached"
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -44,6 +61,7 @@ CODE_EXECUTOR_URL = os.environ.get("CODE_EXECUTOR_URL", "http://code-executor:80
 DEFAULT_TIMEOUT_SECONDS = 30
 MAX_MEMORY_BYTES = 1024 * 1024 * 1024  # 1 GB virtual address space (nltk/numpy/scipy reserve a lot of VM)
 MAX_OUTPUT_BYTES = 1 * 1024 * 1024  # 1 MB stdout limit
+MAX_EXECUTOR_RESPONSE_BYTES = 2 * MAX_OUTPUT_BYTES  # result plus JSON envelope
 MAX_FILE_SIZE_BYTES = 1 * 1024 * 1024  # 1 MB — allow stdout writes, but no large file creation
 MAX_PROCESSES = 50  # Python/Node need internal threads
 
@@ -451,8 +469,25 @@ def _set_resource_limits():
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+def _executor_unreachable(reason: object) -> bool:
+    """Whether a URLError reason means the request never reached the executor."""
+    if isinstance(reason, socket.gaierror):
+        return True
+    return isinstance(reason, OSError) and reason.errno in _UNREACHABLE_ERRNOS
+
+
+def _executor_error(language: str, message: str, error: str) -> dict:
+    logger.warning("code_executor_service_error", language=language, error=error)
+    return {"status": "error", "data": f"Code executor error: {message}"}
+
+
 def _call_executor_service(code: str, input_data: dict, language: str, timeout: int) -> dict | None:
-    """Call the nsjail code-executor service via HTTP. Returns None if unavailable."""
+    """Call the nsjail code-executor service via HTTP.
+
+    Returns None only when the executor cannot be reached (DNS failure,
+    connection refused, no route). Any answer from it, including an HTTP error,
+    a timeout or an unusable body, is returned as a result.
+    """
     try:
         # default=str so non-JSON-native types coming through trace/span column
         # mapping (Decimal from clickhouse-driver, datetime, UUID) serialize
@@ -472,25 +507,71 @@ def _call_executor_service(code: str, input_data: dict, language: str, timeout: 
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=timeout + 10) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-            logger.info("code_executor_service_used", language=language, status=result.get("status"))
-            return result
+            body = resp.read(MAX_EXECUTOR_RESPONSE_BYTES + 1)
+    except urllib.error.HTTPError as e:
+        return _executor_error(language, f"HTTP {e.code}", str(e))
+    except urllib.error.URLError as e:
+        if _executor_unreachable(e.reason):
+            logger.warning(
+                "code_executor_service_unavailable",
+                language=language,
+                error=str(e.reason),
+            )
+            return None
+        if isinstance(e.reason, TimeoutError):
+            return _executor_error(language, "timed out", str(e.reason))
+        return _executor_error(language, "request failed", str(e.reason))
+    except TimeoutError as e:
+        return _executor_error(language, "timed out", str(e))
     except Exception as e:
-        logger.debug("code_executor_service_unavailable", error=str(e))
-        return None  # Fall back to local sandbox
+        return _executor_error(language, "request failed", str(e))
+
+    if len(body) > MAX_EXECUTOR_RESPONSE_BYTES:
+        return _executor_error(language, "response too large", f"{len(body)} bytes")
+    try:
+        result = json.loads(body.decode("utf-8"))
+    except ValueError as e:
+        return _executor_error(language, "invalid response", str(e))
+    if not isinstance(result, dict) or "status" not in result:
+        return _executor_error(language, "invalid response", "no status in response")
+
+    logger.info("code_executor_service_used", language=language, status=result.get("status"))
+    return result
+
+
+def _local_fallback_allowed(language: str) -> bool:
+    """Whether eval code may run in this worker because the executor is unreachable.
+
+    Only self-hosted installs that set CODE_EXECUTOR_LOCAL_FALLBACK get the
+    local runner; cloud deployments refuse it.
+    """
+    if not getattr(settings, "CODE_EXECUTOR_LOCAL_FALLBACK", False):
+        return False
+    deployment = str(getattr(settings, "CLOUD_DEPLOYMENT", "") or "").strip().upper()
+    if deployment in CLOUD_DEPLOYMENTS:
+        logger.warning(
+            "code_executor_local_fallback_refused",
+            language=language,
+            cloud_deployment=deployment,
+        )
+        return False
+    logger.warning("code_executor_local_fallback", language=language)
+    return True
 
 
 def execute_sandboxed_python(code: str, input_data: dict, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict:
     """
     Execute Python code in a production-grade sandbox.
 
-    Tries the nsjail code-executor service first (Tier 1: full namespace isolation).
-    Falls back to RestrictedPython subprocess sandbox (Tier 2).
+    Runs on the nsjail code-executor service (Tier 1: full namespace isolation).
+    Uses the RestrictedPython subprocess sandbox (Tier 2) only when the executor
+    is unreachable and the local fallback is enabled.
     """
-    # Try nsjail executor service first
     result = _call_executor_service(code, input_data, "python", timeout)
     if result is not None:
         return result
+    if not _local_fallback_allowed("python"):
+        return {"status": "error", "data": EXECUTOR_UNAVAILABLE_MESSAGE}
     script = _build_python_sandbox_script(code, input_data)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, prefix="sandbox_") as f:
@@ -550,13 +631,15 @@ def execute_sandboxed_javascript(code: str, input_data: dict, timeout: int = DEF
     """
     Execute JavaScript code in a sandboxed subprocess.
 
-    Tries the nsjail code-executor service first (Tier 1).
-    Falls back to local Function() sandbox (Tier 2).
+    Runs on the nsjail code-executor service (Tier 1). Uses the local
+    Function() sandbox (Tier 2) only when the executor is unreachable and the
+    local fallback is enabled.
     """
-    # Try nsjail executor service first
     result = _call_executor_service(code, input_data, "javascript", timeout)
     if result is not None:
         return result
+    if not _local_fallback_allowed("javascript"):
+        return {"status": "error", "data": EXECUTOR_UNAVAILABLE_MESSAGE}
 
     # Fallback: local sandbox
     """
