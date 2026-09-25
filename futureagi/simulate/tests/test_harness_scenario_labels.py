@@ -20,7 +20,7 @@ def test_a_background_reads_as_what_the_caller_is_heard_over():
     )
 
     assert labels["transit"] == "Airport / station"
-    assert labels["quiet line"] == "Quiet line"
+    assert labels["quiet line"] == "Off"
     assert labels["none"] == "No attack"
 
 
@@ -98,7 +98,7 @@ def test_filter_choices_off_the_page_are_labelled_too():
         ],
     )
 
-    assert labels["quiet line"] == "Quiet line"
+    assert labels["quiet line"] == "Off"
     assert labels["street"] == "Street"
     assert labels["none"] == "No attack"
 

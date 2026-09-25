@@ -154,13 +154,13 @@ LEVEL_LABELS: dict[str, str] = {
     "destructive": "Destructive request",
     "spoken_caller": "Spoken by the caller",
     "absent": "No attack",
-    "quiet_line": "Quiet line",
+    "quiet_line": "No background noise",
     "non_native": "Non-native speaker",
     "code_switching": "Switches language",
 }
 # What each background a caller can be heard over sounds like, for the noise column only.
 NOISE_LABELS: dict[str, str] = {
-    "quiet line": "Quiet line",
+    "quiet line": "Off",
     "present": "Background noise",
     "street": "Street",
     "vehicle": "In a car",
