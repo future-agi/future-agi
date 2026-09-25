@@ -78,6 +78,59 @@ class MatchingActivityWitness:
     identity: str = field(default="", compare=False)
 
 
+# How selective a walk witness is expected to be, most selective first
+# (``witness_selectivity_rank``). A witness the page's matches are rare
+# under, but that matches most users, finds the same users again in every
+# slice: each request certifies them, rejects them and publishes nothing, for
+# as many requests as the window has slices. So the walk discovers on the
+# rarest leaf it can name without reading anything, by what the leaf asks for:
+#
+# 0  a raw text equality/``in``: a value of a key the user chose, served by
+#    the key and value blooms;
+# 1  ``status`` equal to ERROR alone: errors are the exception by definition;
+# 2  a span or trace name: one per operation, the widest native vocabulary;
+# 3  a model;
+# 4  a provider or an observation type (a handful of values), and a raw
+#    number or boolean (a range, or one of two values);
+# 5  a native pattern (``contains``, ``starts_with``, ``ends_with``);
+# 6  ``status`` with OK or UNSET among its values: what almost every span is;
+# 7  a native negation or null test: every span without the named value,
+#    or with any value at all.
+_WITNESS_RANK_NATIVE_EQUALITY = {
+    "name": 2,
+    "trace_name": 2,
+    "model": 3,
+    "provider": 4,
+    "observation_type": 4,
+}
+_WITNESS_RANK_DENSE_STATUS = frozenset({"ok", "unset"})
+_WITNESS_RANK_PATTERN_OPS = frozenset({"contains", "starts_with", "ends_with"})
+
+
+def witness_selectivity_rank(
+    item: dict[str, Any], witness: MatchingActivityWitness
+) -> int:
+    """The static selectivity rank of ``witness``, the witness of leaf ``item``."""
+
+    if witness.family == "raw":
+        return 0 if witness.kind == "text" else 4
+    config = item.get("filter_config") or item.get("filterConfig") or {}
+    operation = config.get("filter_op") or config.get("filterOp")
+    if operation in {"equals", "in"}:
+        if witness.key == "status":
+            raw = config.get("filter_value", config.get("filterValue"))
+            values = raw if isinstance(raw, (list, tuple)) else [raw]
+            dense = any(
+                str(value).strip().lower() in _WITNESS_RANK_DENSE_STATUS
+                for value in values
+            )
+            return 6 if dense else 1
+        return _WITNESS_RANK_NATIVE_EQUALITY.get(witness.key, 4)
+    if operation in _WITNESS_RANK_PATTERN_OPS:
+        return 5
+    return 7
+
+
 # The page metrics ``build_requested_page_metric_queries`` reads, one
 # statement per group that has a requested field: sessions, then spans.
 REQUESTED_PAGE_SESSION_METRIC_FIELDS = ("num_sessions", "avg_session_duration")
@@ -539,54 +592,61 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 return witness, params
         return "", {}
 
-    def matching_activity_witness(self) -> MatchingActivityWitness | None:
-        """The raw span-attribute witness the walk may discover on.
+    def matching_activity_witnesses(self) -> list[MatchingActivityWitness]:
+        """Every witness the walk may discover on, the most selective first.
 
-        The walk prefers a witness the seeded candidate page could seed on
-        (one whose compiler graph witness compares a value); when the page has
-        none it takes one that qualifies the walk alone (a boolean typed-map
-        witness, or a positive equality whose missing-key default the graph
-        witness declines). Among several, the least ``identity`` wins, never
-        the first in request order: the cursor binds the filters without
-        their order. It needs the key to read that
-        filter's certified order key back from the page enrichment. ``kind``
-        is ``text``, ``number`` or ``boolean``. Whether the walk accepts it is
-        the manager's decision (``matching_activity_walk_applies``); when it
-        does not, a native leaf may be the witness
-        (``native_matching_activity_witness``).
+        Raw span-attribute witnesses (``_scalar_user_witnesses``) and native
+        leaves with an existence term (``_native_user_witnesses``), ranked by
+        ``witness_selectivity_rank`` (a documented static order: no statement
+        is spent measuring it), then a raw witness before a native one (the
+        blooms serve it, so an empty slice costs only its overhead), then one
+        the seeded page could seed on before one that qualifies the walk
+        alone, then the least ``identity``. Never by position in the request:
+        the cursor binds the filters without their order, so every request a
+        cursor admits ranks them the same. Whether the walk accepts a raw
+        witness is the manager's decision
+        (``UsersListManager.matching_activity_walk_applies``); it takes the
+        first one it accepts.
         """
-        found = [
-            (
-                seedable,
-                MatchingActivityWitness(
-                    family="raw",
-                    key=str(item.get("column_id") or item.get("columnId")),
-                    kind=kind,
-                    sql=witness,
-                    params=params,
-                    identity=canonical_filter_leaf(item),
-                ),
+        ranked: list[tuple[int, int, bool, str, MatchingActivityWitness]] = []
+        for item, kind, witness, params, seedable in self._scalar_user_witnesses():
+            found = MatchingActivityWitness(
+                family="raw",
+                key=str(item.get("column_id") or item.get("columnId")),
+                kind=kind,
+                sql=witness,
+                params=params,
+                identity=canonical_filter_leaf(item),
             )
-            for item, kind, witness, params, seedable in self._scalar_user_witnesses()
-        ]
-        # Ranked on the leaf as the cursor binds it, never on its position:
-        # the same filters in another order choose the same witness.
-        found.sort(key=lambda pair: (not pair[0], pair[1].identity))
-        return found[0][1] if found else None
+            rank = witness_selectivity_rank(item, found)
+            ranked.append((rank, 0, not seedable, found.identity, found))
+        for found in self._native_user_witnesses():
+            rank = witness_selectivity_rank(self.filters[found.leaf_index], found)
+            ranked.append((rank, 1, False, found.identity, found))
+        ranked.sort(key=lambda entry: entry[:4])
+        return [entry[-1] for entry in ranked]
+
+    def matching_activity_witness(self) -> MatchingActivityWitness | None:
+        """The raw span-attribute witness ranked first (``matching_activity_witnesses``).
+
+        ``kind`` is ``text``, ``number`` or ``boolean``; the walk needs the
+        key to read that filter's certified order key back from the page
+        enrichment.
+        """
+        return next(
+            (w for w in self.matching_activity_witnesses() if w.family == "raw"),
+            None,
+        )
 
     def native_matching_activity_witness(self) -> MatchingActivityWitness | None:
-        """The native leaf the walk discovers on when no raw witness is accepted.
+        """The native leaf ranked first (``matching_activity_witnesses``).
 
-        Only the walk consults it, and only when no raw witness is accepted:
-        the seeded page never seeds on a native leaf
-        (``_scalar_user_witnesses``). The least ``identity`` wins, so the
-        choice is a function of the filters as the cursor binds them, in any
-        order, and stable across a cursor's requests.
+        Only the walk consults native witnesses: the seeded page never seeds
+        on a native leaf (``_scalar_user_witnesses``).
         """
-        return min(
-            self._native_user_witnesses(),
-            key=lambda witness: witness.identity,
-            default=None,
+        return next(
+            (w for w in self.matching_activity_witnesses() if w.family == "native"),
+            None,
         )
 
     def _native_user_witnesses(self) -> Iterator[MatchingActivityWitness]:

@@ -78,9 +78,12 @@ each populated slice, never twice in a row.
 
 Budget. The walk owns a wall (``USER_LIST_PAGE_WALL_MS``) and a statement
 budget (``USER_LIST_WALK_MAX_STATEMENTS``, never less than one batch's
-decision: ``_statement_budget``). On exhaustion it returns the users certified
-so far, in order, with a cursor; it never falls back to the whole-window
-statement. A slice that fails on a read budget is retried narrower, never
+decision: ``_statement_budget``). Until it publishes a user, the count grows
+one budget at a time while the wall lasts, up to
+``USER_LIST_WALK_EMPTY_PAGE_BUDGETS`` budgets (``_WalkBudget.affords``): an
+empty page is returned when the wall is spent, not when fast statements
+spent a count. On exhaustion it returns the users certified so far, in
+order, with a cursor; it never falls back to the whole-window statement. A slice that fails on a read budget is retried narrower, never
 wider. Until a request decides something, its search is admitted against the
 analytics wall rather than the page wall (``_admission_deadline``), a slice
 the server stops at its cap is retried narrower, and when it cannot be, the
@@ -209,6 +212,13 @@ USER_LIST_PAGE_WALL_MS = settings.USER_LIST_PAGE_WALL_MS
 # the finish by the analytics wall.
 USER_LIST_WALK_FINISH_WALL_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 USER_LIST_WALK_MAX_STATEMENTS = settings.USER_LIST_WALK_MAX_STATEMENTS
+# A request that has published nothing is not ended by its statement count
+# while its page wall lasts: the count grows one budget at a time, up to this
+# many budgets (``_WalkBudget.affords``). An empty degraded page is what the
+# UI shows as "preparing exact results", so it should cost the wall, not a
+# count the fast statements of a dense, rejecting slice spend in a fraction
+# of it.
+USER_LIST_WALK_EMPTY_PAGE_BUDGETS = settings.USER_LIST_WALK_EMPTY_PAGE_BUDGETS
 USER_LIST_WALK_INITIAL_SLICE = timedelta(
     seconds=settings.USER_LIST_WALK_INITIAL_SLICE_SECONDS
 )
@@ -250,14 +260,47 @@ class _Certified:
 
 
 class _WalkBudget:
-    """One wall and one statement budget; exhaustion is a result, not an error."""
+    """One wall and one statement budget; exhaustion is a result, not an error.
 
-    def __init__(self, *, wall_ms: int, max_statements: int) -> None:
+    Until the page publishes its first user (``growable``), a count that runs
+    out grows by one budget at a time while the page wall has time left, up
+    to ``ceiling``: a request that has only rejected users goes on deciding
+    until its wall, instead of returning an empty page after a count its
+    statements spent in a fraction of it (``affords``).
+    """
+
+    def __init__(
+        self, *, wall_ms: int, max_statements: int, ceiling: int | None = None
+    ) -> None:
         self.deadline = ReadDeadline.start(wall_ms)
         self.max_statements = int(max_statements)
+        self.step = self.max_statements
+        self.ceiling = max(self.max_statements, int(ceiling or 0))
+        self.growable = True
         self.statements = 0
         # "statements" (sticky), "wall", or "read_budget" (``_certify``).
         self.exhausted_by: str | None = None
+
+    def affords(self, statements: int) -> bool:
+        """Whether ``statements`` more fit the count, growing it first if it may.
+
+        It may grow while the page has published nothing and the page wall
+        has time left, never past ``ceiling``.
+        """
+        if self.statements + statements <= self.max_statements:
+            return True
+        if not self.growable or self.max_statements >= self.ceiling:
+            return False
+        try:
+            self.deadline.remaining_ms()
+        except ReadDeadlineExceeded:
+            return False
+        while (
+            self.statements + statements > self.max_statements
+            and self.max_statements < self.ceiling
+        ):
+            self.max_statements = min(self.ceiling, self.max_statements + self.step)
+        return self.statements + statements <= self.max_statements
 
     def take(self, statements: int, *, finish: bool = False) -> bool:
         """Spend ``statements``; ``finish`` spends past the wall, never past the count.
@@ -269,7 +312,7 @@ class _WalkBudget:
         """
         if self.exhausted_by == "statements":
             return False
-        if self.statements + statements > self.max_statements:
+        if not self.affords(statements):
             self.exhausted_by = "statements"
             return False
         if not finish:
@@ -906,7 +949,7 @@ def _certify(state: _WalkState, batch: list[_Candidate]) -> int:
     if state.certify_singly:
         batch = batch[:1]
     statements = _enrichment_statement_count(manager)
-    if not state.progress_owed and state.budget.remaining_statements() < (
+    if not state.progress_owed and not state.budget.affords(
         statements + _materialisation_statement_count(manager)
     ):
         # Off the head of line, only when one materialisation is paid too. On
@@ -1229,6 +1272,8 @@ def _publish(state: _WalkState, boundary: datetime | None) -> bool:
                 break
             entry.published = True
             state.published.append(entry.row)
+            # A page with a user to show ends at its count, as before.
+            state.budget.growable = False
             state.last_key, state.last_id = entry.order_key, entry.end_user_id
         if len(state.published) == state.page_size:
             return True
@@ -1395,7 +1440,9 @@ def walk_matching_activity_page(
         window_end=window_end,
         frozen_filters=frozen_filters,
         budget=_WalkBudget(
-            wall_ms=USER_LIST_PAGE_WALL_MS, max_statements=_statement_budget(manager)
+            wall_ms=USER_LIST_PAGE_WALL_MS,
+            max_statements=_statement_budget(manager),
+            ceiling=_statement_budget(manager) * USER_LIST_WALK_EMPTY_PAGE_BUDGETS,
         ),
         last_key=last_key,
         last_id=last_id,

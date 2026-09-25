@@ -376,6 +376,13 @@ INTERACTIVE_READ_SETTING_SPECS = {
             # unfiltered Users page does not read these.
             ("USER_LIST_PAGE_WALL_MS", 5_000, 100, 60_000),
             ("USER_LIST_WALK_MAX_STATEMENTS", 24, 1, 256),
+            # A walk that has published nothing is not ended by its statement
+            # count while its page wall lasts: the count grows one budget at a
+            # time, up to this many budgets. A dense witness whose users are
+            # all rejected spends 24 fast statements in a fraction of the
+            # wall; ending there returned empty pages for request after
+            # request. 1 keeps the plain budget.
+            ("USER_LIST_WALK_EMPTY_PAGE_BUDGETS", 4, 1, 16),
             ("USER_LIST_WALK_INITIAL_SLICE_SECONDS", 60 * 60, 1, 7 * 24 * 60 * 60),
             # A slice asks the server to stop it at half of what is left of
             # the request's analytics wall and is then retried a quarter as

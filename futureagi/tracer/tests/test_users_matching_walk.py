@@ -496,6 +496,12 @@ def _kinds(engine: Engine) -> list[str]:
     return [kind_of(call) for call in engine.calls]
 
 
+# The statement count alone ends a request, as it did before an empty page's
+# count could grow to its wall (``_WalkBudget.affords``): for tests of what a
+# request does when its count, not its wall, runs out.
+_plain_count = patch.object(walk, "USER_LIST_WALK_EMPTY_PAGE_BUDGETS", 1)
+
+
 def test_filtered_page_orders_by_newest_matching_activity_and_never_seeds():
     world = World()
     world.user(1, key=minutes_before_end(30), raw=(minutes_before_end(30),))
@@ -785,14 +791,15 @@ def test_a_native_witness_certifies_its_negation_over_the_whole_window():
             ],
             ("native", "model", 2),
         ),
-        # Native leaves only: the least identity, not the lowest index.
+        # Native leaves only: the most selective (ERROR over a model), not
+        # the lowest index.
         (
             [
                 _native_leaf("model", "is_null", None),
-                _native_status_leaf(),
                 _native_leaf(),
+                _native_status_leaf(),
             ],
-            ("native", "model", 3),
+            ("native", "status", 3),
         ),
         ([_native_leaf("model", "is_null", None)], None),
     ],
@@ -800,7 +807,7 @@ def test_a_native_witness_certifies_its_negation_over_the_whole_window():
         "raw-wins",
         "raw-declined",
         "raw-unwalkable",
-        "least-identity-native",
+        "most-selective-native",
         "absence-only",
     ],
 )
@@ -878,66 +885,72 @@ def test_the_witness_is_one_leaf_whatever_the_request_order(leaves):
     assert len(chosen) == 1, chosen
 
 
-def _two_leaf_world() -> tuple[World, list[str]]:
-    """Four users matching ``model = gpt-4o`` AND ``status = error``.
+def _observation_leaf():
+    return _native_leaf("observation_type", "equals", "llm", col_type="SYSTEM_METRIC")
 
-    Each leaf has its own newest match per user, in different orders: by
-    model U1 > U2 > U3 > U4, by status U4 > U2 > U3 > U1 (the review's
-    counterexample, in minutes before the window's end).
+
+def _provider_leaf():
+    return _native_leaf("provider", "equals", "openai", col_type="SYSTEM_METRIC")
+
+
+def _two_leaf_world() -> tuple[World, list[str]]:
+    """Four users matching ``observation_type = llm`` AND ``provider = openai``.
+
+    The two leaves rank alike (``witness_selectivity_rank``), so the leaf as
+    the cursor binds it decides: ``observation_type``. Each leaf has its own
+    newest match per user, in different orders: by observation type U1 > U2 >
+    U3 > U4, by provider U4 > U2 > U3 > U1 (the review's counterexample, in
+    minutes into the window).
     """
 
     world = World()
-    model = {1: 60, 2: 50, 3: 40, 4: 20}
-    status = {1: 10, 2: 55, 3: 40, 4: 58}
+    observation = {1: 60, 2: 50, 3: 40, 4: 20}
+    provider = {1: 10, 2: 55, 3: 40, 4: 58}
     uids = {}
     for ordinal in (1, 2, 3, 4):
-        key = WINDOW_END - timedelta(hours=24) + timedelta(minutes=model[ordinal])
+        key = WINDOW_START + timedelta(minutes=observation[ordinal])
         uids[ordinal] = world.user(ordinal, key=key, raw=(key,), native=True)
     world.native_leaf(
-        "error",
-        {
-            uids[n]: (
-                WINDOW_END - timedelta(hours=24) + timedelta(minutes=status[n]),
-                True,
-            )
-            for n in uids
-        },
+        "openai",
+        {uids[n]: (WINDOW_START + timedelta(minutes=provider[n]), True) for n in uids},
     )
     return world, ["user-1", "user-2", "user-3", "user-4"]
 
 
 def test_a_cursor_followed_with_the_filters_reordered_publishes_each_user_once():
-    # The review's reproduction: page 1 asked with model first, the rest with
-    # status first. Before the witness was ranked on the leaf as the cursor
-    # binds it, the second order walked status with model's keys and
-    # coverage: ['user-1', 'user-3', 'user-1'], user-2 and user-4 never.
+    # The review's reproduction: page 1 asked with one leaf first, the rest
+    # with the other first. Before the witness was ranked on the leaf as the
+    # cursor binds it, the second order walked the other leaf with the first
+    # one's keys and coverage: ['user-1', 'user-3', 'user-1'], user-2 and
+    # user-4 never.
     world, expected = _two_leaf_world()
-    model_first = [*_date_only(), _native_leaf(), _native_status_leaf("error")]
-    status_first = [*_date_only(), _native_status_leaf("error"), _native_leaf()]
-    read, _engine = _page(world, page_size=1, filters=model_first)
+    one = [*_date_only(), _observation_leaf(), _provider_leaf()]
+    other = [*_date_only(), _provider_leaf(), _observation_leaf()]
+    read, _engine = _page(world, page_size=1, filters=one)
     names = _names(read)
     for _hop in range(8):
         if not read.has_more:
             break
         read, _engine = _page(
-            world, page_size=1, filters=status_first, cursor=_signed_cursor(read)
+            world, page_size=1, filters=other, cursor=_signed_cursor(read)
         )
         names.extend(_names(read))
     assert names == expected
 
 
 def test_a_cursor_minted_on_another_witness_is_refused_not_misread():
-    # A pod whose precedence chose the status leaf minted this cursor. This
-    # pod chooses the model leaf for the same filters: the cursor's keys and
-    # coverage are status's, so it restarts instead of misreading them.
+    # A pod whose precedence chose the provider leaf minted this cursor. This
+    # pod chooses the observation-type leaf for the same filters: the
+    # cursor's keys and coverage are the provider's, so it restarts instead
+    # of misreading them.
     world, _expected = _two_leaf_world()
-    filters = [*_date_only(), _native_leaf(), _native_status_leaf("error")]
+    filters = [*_date_only(), _observation_leaf(), _provider_leaf()]
     witnesses = UserListQueryBuilderV2(
         organization_id=ORG, project_ids=[PROJECT], filters=filters
     )._native_user_witnesses()
-    status = next(w for w in witnesses if w.key == "status")
+    provider = next(w for w in witnesses if w.key == "provider")
     with patch.object(
-        UserListQueryBuilderV2, "native_matching_activity_witness", return_value=status
+        UserListQueryBuilderV2, "matching_activity_witnesses", return_value=[provider]
     ):
         read, _engine = _page(world, page_size=1, filters=filters)
     assert _names(read) == ["user-4"]
@@ -959,6 +972,221 @@ def test_a_v1_matching_cursor_restarts():
     with pytest.raises(ListCursorError) as raised:
         _page(world, page_size=1, filters=filters, cursor=cursor)
     assert raised.value.code == "invalid_cursor"
+
+
+def _trace_name_leaf(value="checkout"):
+    return _native_leaf("trace_name", "equals", value, col_type="SYSTEM_METRIC")
+
+
+def _model_leaf(operation="equals", value="gpt-4o"):
+    return _native_leaf("model", operation, value, col_type="SYSTEM_METRIC")
+
+
+@pytest.mark.parametrize(
+    ("leaves", "expected"),
+    [
+        # What almost every span is loses to a model.
+        ([_native_status_leaf("OK"), _model_leaf()], ("native", "model", "equals")),
+        # A trace name (one per operation) over a model (a handful).
+        ([_model_leaf(), _trace_name_leaf()], ("native", "trace_name", "equals")),
+        # Errors are the exception: ERROR over a model.
+        ([_model_leaf(), _native_status_leaf()], ("native", "status", "equals")),
+        # A negation (every span without the value) loses to an equality.
+        (
+            [
+                _native_leaf("model", "not_equals", "gpt-4o"),
+                _native_leaf("provider", "equals", "openai", col_type="SYSTEM_METRIC"),
+            ],
+            ("native", "provider", "equals"),
+        ),
+        # A pattern over "any value at all".
+        (
+            [_model_leaf("is_not_null", None), _model_leaf("contains", "gpt")],
+            ("native", "model", "contains"),
+        ),
+        # A raw text value, served by the blooms, over any native leaf.
+        (
+            [
+                _native_status_leaf(),
+                _raw_leaf("tag", "equals", "gold"),
+            ],
+            ("raw", "tag", "equals"),
+        ),
+        # A raw boolean (one of two values) loses to a model.
+        (
+            [
+                _attribute_filter(
+                    column_id="flag",
+                    filter_type="boolean",
+                    filter_op="equals",
+                    filter_value=True,
+                ),
+                _model_leaf(),
+            ],
+            ("native", "model", "equals"),
+        ),
+        # A raw number ranks with a provider; the blooms serve the raw one.
+        (
+            [
+                _native_leaf("provider", "equals", "openai", col_type="SYSTEM_METRIC"),
+                _attribute_filter(
+                    column_id="score",
+                    filter_type="number",
+                    filter_op="greater_than",
+                    filter_value=3,
+                ),
+            ],
+            ("raw", "score", "greater_than"),
+        ),
+        # A raw leaf the walk declines (two items on its key) gives way to
+        # the next raw leaf it accepts, before any native leaf.
+        (
+            [
+                _raw_leaf("tag", "equals", "gold"),
+                _raw_leaf("tag", "is_not_null"),
+                _raw_leaf("plan", "equals", "pro"),
+                _native_status_leaf(),
+            ],
+            ("raw", "plan", "equals"),
+        ),
+    ],
+    ids=[
+        "ok-status-vs-model",
+        "model-vs-trace-name",
+        "model-vs-error-status",
+        "negation-vs-provider",
+        "not-null-vs-pattern",
+        "native-vs-raw-text",
+        "raw-boolean-vs-model",
+        "provider-vs-raw-number",
+        "declined-raw-vs-raw-vs-native",
+    ],
+)
+def test_the_most_selective_leaf_is_the_witness(leaves, expected):
+    for order in (leaves, leaves[::-1]):
+        manager, witness = _chosen_witness(list(order))
+        item = next(
+            leaf
+            for leaf in manager.filters
+            if canonical_filter_leaf(leaf) == witness.identity
+        )
+        assert (
+            witness.family,
+            witness.key,
+            item["filter_config"]["filter_op"],
+        ) == expected
+
+
+def _dense_world(users: int, members: int) -> tuple[World, list[str]]:
+    """Every user calls gpt-4o every hour; only ``members`` ran the checkout trace.
+
+    ``model = gpt-4o`` is a leaf of its own that every user matches, with a
+    row per user per hour; ``trace_name = checkout`` answers from the
+    world's ``raw``, ``key`` and ``native``: the first ``members`` users,
+    newest first.
+    """
+
+    world = World()
+    dense: dict[str, tuple[datetime | None, bool]] = {}
+    rows: list[tuple[datetime, str]] = []
+    for n in range(1, users + 1):
+        member = n <= members
+        key = minutes_before_end(90 + n) if member else None
+        uid = world.user(n, key=key, raw=(key,) if member else (), native=bool(member))
+        offset = timedelta(minutes=n % 60, microseconds=n)
+        hours = [WINDOW_START + timedelta(hours=h) + offset for h in range(24)]
+        rows.extend((moment, uid) for moment in hours)
+        dense[uid] = (hours[-1], True)
+    world.native_leaf("gpt-4o", dense, rows)
+    return world, [f"user-{n}" for n in range(1, members + 1)]
+
+
+def _hops(world, filters, *, max_hops: int) -> tuple[list[str], list[int]]:
+    """Follow the cursor to the end: every name, and each request's page size."""
+
+    names, sizes, cursor = [], [], None
+    for _hop in range(max_hops):
+        read, _engine = _page(world, page_size=25, filters=filters, cursor=cursor)
+        names.extend(_names(read))
+        sizes.append(len(_names(read)))
+        if not read.has_more:
+            return names, sizes
+        cursor = _signed_cursor(read)
+    raise AssertionError(f"no end after {max_hops} requests: {sizes}")
+
+
+def _dense_first(original):
+    """The review's choice: the model leaf first, whatever it costs."""
+
+    def ranked(self):
+        return sorted(original(self), key=lambda witness: witness.key != "model")
+
+    return ranked
+
+
+def test_a_dense_witness_with_rare_matches_no_longer_pages_empty():
+    # 600 users on gpt-4o every hour, 3 of them on the checkout trace. On the
+    # model leaf every request finds the 600 users again below its coverage,
+    # certifies and rejects them and publishes nothing: at the statement
+    # count it had, 20 or more empty pages. The trace name is the more
+    # selective leaf: one request publishes all three and ends.
+    world, expected = _dense_world(600, 3)
+    filters = [*_date_only(), _model_leaf(), _trace_name_leaf()]
+
+    names, sizes = _hops(world, filters, max_hops=3)
+    assert names == expected
+    assert sizes == [3]
+
+    original = UserListQueryBuilderV2.matching_activity_witnesses
+    with (
+        _plain_count,
+        patch.object(
+            UserListQueryBuilderV2,
+            "matching_activity_witnesses",
+            _dense_first(original),
+        ),
+    ):
+        dense_names, dense_sizes = _hops(world, filters, max_hops=200)
+    assert sorted(dense_names) == sorted(expected)
+    assert dense_sizes.count(0) >= 20, dense_sizes
+
+
+def test_an_empty_page_keeps_deciding_until_its_count_has_grown_to_the_ceiling():
+    # One native leaf, discovered on its presence flag, whose forbidden value
+    # rejects all but the oldest user at certification: no other witness can
+    # narrow the page. 100 users are active in each hour, each in one hour
+    # only. A request that has published nothing is not ended by the
+    # statement count while its wall lasts; the count grows one budget at a
+    # time up to its ceiling, so each empty page decides four budgets' worth
+    # of users instead of one.
+    world = World()
+    for n in range(1, 2401):
+        moment = WINDOW_END - timedelta(
+            hours=(n - 1) // 100, minutes=30, microseconds=n
+        )
+        world.user(n, key=moment, raw=(moment,), native=n == 2400)
+    filters = [*_date_only(), _native_leaf(operation="not_equals")]
+    manager = _manager(filters)
+    budget = walk._statement_budget(manager)
+    ceiling = budget * walk.USER_LIST_WALK_EMPTY_PAGE_BUDGETS
+    assert ceiling > budget
+
+    read, engine = _page(world, page_size=25, filters=filters)
+
+    assert _names(read) == [] and read.has_more is True
+    assert read.payload["query_status"] == "degraded"
+    # It went on past the plain count and stopped only at the ceiling.
+    assert budget < len(engine.calls) <= ceiling
+    certification = walk._enrichment_statement_count(manager)
+    finish = walk._materialisation_statement_count(manager)
+    assert len(engine.calls) + certification + finish > ceiling
+
+    names, sizes = _hops(world, filters, max_hops=40)
+    assert names == ["user-2400"]
+    with _plain_count:
+        plain_names, plain_sizes = _hops(world, filters, max_hops=200)
+    assert plain_names == ["user-2400"]
+    assert 3 * len(sizes) <= len(plain_sizes), (sizes, plain_sizes)
 
 
 def test_sort_params_never_walk_a_native_leaf():
@@ -1299,6 +1527,7 @@ def test_a_tied_cohort_pages_exactly_when_pages_and_batches_do_not_align(page_si
     assert all(count == page_size for count in counts[:-1])
 
 
+@_plain_count
 def test_a_tie_that_outlasts_the_budget_below_one_slice_resumes_in_the_instant():
     """Fewer tied raw ids than a slice holds, but more certification than a request.
 
@@ -1485,6 +1714,7 @@ def test_a_six_element_cursor_must_say_the_instant_is_open(flag):
         _page(world, page_size=25, cursor=cursor)
 
 
+@_plain_count
 def test_budget_exhaustion_returns_partial_page_and_cursor_without_fallback():
     world = World()
     for ordinal, minutes in enumerate((3, 7, 11), start=1):
@@ -1603,6 +1833,7 @@ def test_wall_exhaustion_stops_between_statements():
     assert _kinds(engine) == ["slice", "remap", "enrich", "replay"]
 
 
+@_plain_count
 def test_an_exhausted_walk_publishes_degraded_and_incomplete_not_complete():
     """A short page must not look like a finished one.
 
@@ -1914,6 +2145,7 @@ def test_empty_default_window_is_proven_by_one_costed_existence_probe():
     assert "AND 0 = 1" not in probe
 
 
+@_plain_count
 def test_an_estimate_over_the_target_or_unreadable_licenses_no_wide_statement():
     """Nothing bounds a statement wider than the cap but its cost proof.
 
@@ -1998,6 +2230,7 @@ def test_a_probe_that_finds_a_row_leaves_the_walk_slicing_at_the_cap():
     assert len(engine.calls) <= walk.USER_LIST_WALK_MAX_STATEMENTS
 
 
+@_plain_count
 def test_a_probe_the_budget_refuses_or_that_fails_licenses_nothing():
     from clickhouse_driver.errors import ServerException
 
@@ -2068,6 +2301,7 @@ def test_the_estimate_runs_under_the_existence_statements_settings_in_the_probe_
     assert 0 < engine.timeouts[2] <= engine.timeouts[1]
 
 
+@_plain_count
 def test_an_estimate_over_its_time_budget_licenses_no_wide_statement():
     """A probe that cannot answer inside its budget is 'cannot answer'.
 
@@ -2095,6 +2329,7 @@ def test_an_estimate_over_its_time_budget_licenses_no_wide_statement():
     assert read.has_more is False
 
 
+@_plain_count
 def test_a_probe_deadline_raised_in_the_transport_ends_the_probe_not_the_page():
     """An executor that honours ``timeout_ms`` raises for the probe's deadline.
 
@@ -2561,3 +2796,6 @@ def test_walk_limits_are_runtime_settings_not_module_constants():
         settings.USER_LIST_WALK_PROBE_TARGET_READ_ROWS
     )
     assert walk.USER_LIST_WALK_PROBE_WALL_MS == settings.USER_LIST_WALK_PROBE_WALL_MS
+    assert walk.USER_LIST_WALK_EMPTY_PAGE_BUDGETS == (
+        settings.USER_LIST_WALK_EMPTY_PAGE_BUDGETS
+    )

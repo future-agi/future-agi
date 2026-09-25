@@ -474,14 +474,14 @@ def test_the_native_witness_is_one_leaf_whatever_the_filter_order():
     is_null = leaf("model", "is_null", col_type=None)
     status = leaf("status", "equals", "ERROR")
     model = leaf("model", "equals", "gpt-4o")
-    # The leaf as the cursor binds it decides, not its position; its
+    # The leaf decides (ERROR ranks above a model), not its position; its
     # position only names its parameters.
-    witness = _builder(date, is_null, status, model).native_matching_activity_witness()
-    assert (witness.leaf_index, witness.key) == (3, "model")
+    witness = _builder(date, is_null, model, status).native_matching_activity_witness()
+    assert (witness.leaf_index, witness.key) == (3, "status")
     witness = _builder(model, status).native_matching_activity_witness()
-    assert (witness.leaf_index, witness.key) == (0, "model")
+    assert (witness.leaf_index, witness.key) == (1, "status")
     witness = _builder(status, model).native_matching_activity_witness()
-    assert (witness.leaf_index, witness.key) == (1, "model")
+    assert (witness.leaf_index, witness.key) == (0, "status")
     assert _builder(date, is_null).native_matching_activity_witness() is None
     # A raw attribute of a native name is a raw leaf, never a native witness.
     raw = leaf("status", "equals", "OK", col_type="SPAN_ATTRIBUTE")

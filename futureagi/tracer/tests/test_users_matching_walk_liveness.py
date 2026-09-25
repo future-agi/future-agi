@@ -107,14 +107,14 @@ def _add(
 
 def _is_member(user: dict) -> bool:
     """A key (the witness leaf's newest live match), curated, and every native
-    leaf decided true when the page carries one (``status``: the second native
-    leaf of a ``reordered`` page, which answers from its own rows)."""
+    leaf decided true when the page carries one (``second``: the native leaf
+    of a ``reordered`` page that answers from its own rows)."""
 
     return (
         user["key"] is not None
         and user["curated"]
         and user["native"] is not False
-        and user.get("status") is not False
+        and user.get("second") is not False
     )
 
 
@@ -403,7 +403,10 @@ def _follow(
 
     Every hop must keep the coverage where it was or lower it, send no more
     statements than one decision or the page's budget (``_one_decision``,
-    every finishing statement included), and send at most one replay without
+    every finishing statement included) times the budgets an empty page's
+    count may grow to (``USER_LIST_WALK_EMPTY_PAGE_BUDGETS``); a hop that
+    returns an empty page because its count ran out must have spent that
+    whole ceiling or its page wall, and send at most one replay without
     a server cap, for one user, while the page has published nothing: right
     after its own capped replay was stopped, after a stopped batch it led
     when the budget could not afford its own attempt, or when the search had
@@ -470,6 +473,7 @@ def _follow_on(
         _one_decision(keys, finish, family),
     )
     assert walk._statement_budget(_keyed_manager(keys, finish, family)) == budget
+    ceiling = budget * walk.USER_LIST_WALK_EMPTY_PAGE_BUDGETS
     names: list[str] = []
     seen_states: set = set()
     coverage = WINDOW_END
@@ -507,7 +511,31 @@ def _follow_on(
         narrowed = sum(engine.split.values())
         assert len(engine.split) <= 1, (hop, engine.split)
         assert narrowed <= enrichment * (least - 1), (hop, narrowed)
-        assert len(engine.calls) - narrowed <= budget, (hop, len(engine.calls))
+        spent = len(engine.calls) - narrowed
+        assert spent <= ceiling, (hop, spent, ceiling)
+        if (
+            not engine.outage
+            and read.has_more
+            and not _names(read)
+            and _exhausted(logs) == ["statements"]
+        ):
+            # An empty page the count ended: the count had grown to its
+            # ceiling (the next certification, finish included, or slice
+            # did not fit), or the page wall was spent. The walk's own
+            # count, which charges a certification its statements whether
+            # or not each is sent.
+            (counted,) = [
+                entry["statements"]
+                for entry in logs
+                if entry["event"] == "users_matching_walk_budget_exhausted"
+            ]
+            wall_spent = engine._elapsed_ms() >= walk.USER_LIST_PAGE_WALL_MS - 25
+            assert wall_spent or counted + enrichment + finish > ceiling, (
+                hop,
+                counted,
+                ceiling,
+                engine._elapsed_ms(),
+            )
         if not engine.outage:
             _check_uncapped(
                 engine.replays,
@@ -586,12 +614,21 @@ FINISH_SHAPES = {
 # The page's witness: the raw ``tag`` leaf alone; a native ``status`` leaf
 # alone (the walk discovers on its flag, and no attribute is filtered); or
 # both, where the raw leaf is the witness and the native leaf is decided at
-# certification. ``reordered``: two native leaves, ``model`` and a ``status``
-# leaf with rows, keys and decisions of its own (``_with_native``), sent in
-# one order on even requests and the other on odd ones. The cursor binds the
-# filters without their order, so every request must walk the same leaf.
-FAMILIES = ["raw", "native", "mixed", "reordered"]
-REORDERED_STATUS = "error"
+# certification. ``reordered``: two native leaves that rank alike
+# (``witness_selectivity_rank``), ``observation_type = llm`` (the witness: the
+# least identity) and ``provider = openai`` with rows, keys and decisions of
+# its own (``_with_native``), sent in one order on odd requests and the other
+# on even ones. The cursor binds the filters without their order, so every
+# request must walk the same leaf. ``dense``: ``model = gpt-4o``, a leaf of its
+# own every user matches with a row every hour, and ``trace_name = checkout``
+# (the witness: a trace name ranks above a model), in alternating order. On
+# the dense leaf every slice finds every user again, and requests published
+# nothing for as long as the window has slices; the walk must discover on
+# the rarer leaf and key the page by it.
+FAMILIES = ["raw", "native", "mixed", "reordered", "dense"]
+NATIVE_WITNESS_FAMILIES = ("native", "reordered", "dense")
+REORDERED_SECOND = "openai"
+DENSE_MODEL = "gpt-4o"
 
 
 def _family_filters(family: str, hop: int = 0) -> list[dict]:
@@ -602,8 +639,14 @@ def _family_filters(family: str, hop: int = 0) -> list[dict]:
         return [date_and_tag[0], _native_status_leaf()]
     if family == "reordered":
         leaves = [
-            _native_leaf(col_type="SYSTEM_METRIC"),
-            _native_status_leaf(REORDERED_STATUS),
+            _native_leaf("observation_type", "equals", "llm", "SYSTEM_METRIC"),
+            _native_leaf("provider", "equals", REORDERED_SECOND, "SYSTEM_METRIC"),
+        ]
+        return [date_and_tag[0], *(leaves if hop % 2 else leaves[::-1])]
+    if family == "dense":
+        leaves = [
+            _native_leaf("model", "equals", DENSE_MODEL, "SYSTEM_METRIC"),
+            _native_leaf("trace_name", "equals", "checkout", "SYSTEM_METRIC"),
         ]
         return [date_and_tag[0], *(leaves if hop % 2 else leaves[::-1])]
     assert family == "mixed", family
@@ -2272,7 +2315,7 @@ def _slice_model(
     seed: int, family: str = "raw"
 ) -> Callable[[timedelta, bool], float] | None:
     model = SLICE_MODELS[(seed // len(LIMITS)) % len(SLICE_MODELS)]
-    if family == "native" and model is None and seed % 2:
+    if family in NATIVE_WITNESS_FAMILIES and model is None and seed % 2:
         return UNPRUNED_SLICE
     return model
 
@@ -2344,19 +2387,38 @@ def _with_native(world: World, seed: int, family: str) -> World:
     rng = random.Random(4_441 * seed + 17)
     forbid = rng.choice([0.0, 0.15, 0.4])
     for user in world.users.values():
-        if family in ("native", "reordered"):
+        if family in NATIVE_WITNESS_FAMILIES:
             user["native"] = user["key"] is not None and rng.random() >= forbid
         else:
             user["native"] = rng.random() >= forbid
     if family == "reordered":
-        _with_status_leaf(world, rng)
+        _with_second_leaf(world, rng)
+    if family == "dense":
+        _with_dense_leaf(world, rng)
     return world
 
 
-def _with_status_leaf(world: World, rng: random.Random) -> None:
-    """The ``reordered`` page's status leaf: rows, keys and decisions of its own.
+def _with_dense_leaf(world: World, rng: random.Random) -> None:
+    """The ``dense`` page's model leaf: every user matches it, every hour.
 
-    Its newest match per user is drawn independently of the model leaf's
+    A row per user per hour of the window, each carried by one of the
+    user's ids, at a minute of its own; the newest is the user's key on it.
+    """
+
+    members: dict[str, tuple[datetime | None, bool]] = {}
+    rows: list[tuple[datetime, str]] = []
+    for uid, user in world.users.items():
+        offset = timedelta(minutes=rng.randrange(60), microseconds=rng.randrange(10**6))
+        hours = [WINDOW_START + timedelta(hours=h) + offset for h in range(24)]
+        rows.extend((moment, rng.choice(user["aliases"])) for moment in hours)
+        members[uid] = (hours[-1], True)
+    world.native_leaf(DENSE_MODEL, members, rows)
+
+
+def _with_second_leaf(world: World, rng: random.Random) -> None:
+    """The ``reordered`` page's provider leaf: rows, keys and decisions of its own.
+
+    Its newest match per user is drawn independently of the witness leaf's
     (``key``), so reading one leaf's keys and coverage as the other's
     publishes users twice or never. It is a positive equality: a user is a
     member exactly when it has a newest match. Its rows also hold stale
@@ -2376,12 +2438,12 @@ def _with_status_leaf(world: World, rng: random.Random) -> None:
     for uid, user in world.users.items():
         key = None if rng.random() < 0.25 else moment()
         members[uid] = (key, key is not None)
-        user["status"] = key is not None
+        user["second"] = key is not None
         ids = user["aliases"]
         if key is not None:
             rows.append((key, rng.choice(ids)))
         rows += [(moment(), rng.choice(ids)) for _ in range(rng.choice([0, 0, 1]))]
-    world.native_leaf(REORDERED_STATUS, members, rows)
+    world.native_leaf(REORDERED_SECOND, members, rows)
 
 
 def _gap_world(rng: random.Random, n_users: int) -> World:
@@ -2421,10 +2483,14 @@ def _limits(seed: int):
     finishing statements its page makes."""
 
     slice_limit, max_statements, batch, finish = LIMITS[seed % len(LIMITS)]
+    # Half the worlds end an empty page at its count, as before its count
+    # could grow; the other half at the shipped four budgets or its wall.
+    empty_page_budgets = random.Random(8_191 * seed + 3).choice([1, 4])
     with (
         patch.object(walk, "USER_LIST_WALK_SLICE_USER_LIMIT", slice_limit),
         patch.object(walk, "USER_LIST_WALK_MAX_STATEMENTS", max_statements),
         patch.object(walk, "USER_LIST_WALK_CERTIFY_BATCH_SIZE", batch),
+        patch.object(walk, "USER_LIST_WALK_EMPTY_PAGE_BUDGETS", empty_page_budgets),
     ):
         yield max_statements, finish
 

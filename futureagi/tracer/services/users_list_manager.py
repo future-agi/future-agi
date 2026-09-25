@@ -1316,24 +1316,30 @@ class UsersListManager:
         signed cursor binds them (``canonical_filter_leaf``), never of their
         order in the request, and the walk binds the chosen witness into its
         cursor, so a continuation can never read one leaf's keys as
-        another's:
+        another's. The candidates come most selective first
+        (``builder.matching_activity_witnesses``: a static rank, then a raw
+        witness before a native one, then identity), because a witness most
+        users match while the page's matches are rare finds the same users
+        again in every slice and publishes nothing for request after request.
+        The first candidate the walk accepts is the witness:
 
-        1. The raw attribute witness, when the walk accepts it: it is the
-           ONLY filter item on its key and either (text) the manager
-           accelerates that key as an exact-text filter, or (number/boolean)
-           the item is a shape whose Python and SQL comparisons are provably
-           the same (``users_walk_witness``): the walk reuses that one
-           witness to discover users, to narrow their certification and to
-           project the order key. A key carrying more than one filter item
-           is not accepted: the walk's order key and its witness must be one
-           predicate, and the exact-text values of a key are the union of
-           all its items. A raw witness is served by the deployed blooms, so
-           it wins whenever it is accepted.
-        2. Otherwise the native leaf whose graph condition has an existence
-           term with the least identity (``native_matching_activity_witness``);
-           its order key is its own newest match, so two leaves on its column
-           need no special rule.
-        3. Otherwise no walk: every other filter shape keeps its path.
+        * a raw attribute witness, when it is the ONLY filter item on its key
+          and either (text) the manager accelerates that key as an
+          exact-text filter, or (number/boolean) the item is a shape whose
+          Python and SQL comparisons are provably the same
+          (``users_walk_witness``): the walk reuses that one witness to
+          discover users, to narrow their certification and to project the
+          order key. A key carrying more than one filter item is not
+          accepted: the walk's order key and its witness must be one
+          predicate, and the exact-text values of a key are the union of all
+          its items;
+        * a native leaf whose graph condition has an existence term
+          (``native_matching_activity_witness``); its order key is its own
+          newest match, so two leaves on its column need no special rule.
+
+        With none, the page does not walk: every other filter shape keeps
+        its path. The order key is always the witness leaf's newest matching
+        activity.
 
         Sets the typed predicate the certification reads when a typed raw
         witness is chosen.
@@ -1342,14 +1348,13 @@ class UsersListManager:
         self._walk_witness = None
         if self.sort_params:
             return False
-        witness = builder.matching_activity_witness()
-        if witness is not None and self._raw_walk_witness_applies(witness):
-            return True
-        native = builder.native_matching_activity_witness()
-        if native is None:
-            return False
-        self._walk_witness = native
-        return True
+        for witness in builder.matching_activity_witnesses():
+            if witness.family == "native":
+                self._walk_witness = witness
+                return True
+            if self._raw_walk_witness_applies(witness):
+                return True
+        return False
 
     def _raw_walk_witness_applies(self, witness: MatchingActivityWitness) -> bool:
         """Whether the walk accepts the raw witness; stores it when it does."""
