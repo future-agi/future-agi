@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 from inspect import unwrap
 from types import SimpleNamespace
 
 import pytest
+from django.utils import timezone
 from rest_framework import status
 
 from model_hub.models.choices import OwnerChoices
@@ -267,3 +269,105 @@ def test_eval_usage_programming_defect_re_raises_through_exact_worker(
 
     with pytest.raises(KeyError, match="eval usage application bug"):
         _usage_worker_response(template, organization, workspace)
+
+
+# ── Snapshot freshness ─────────────────────────────────────────────────────
+#
+# An exact usage snapshot is served until refreshed. On dev the 30D chart
+# snapshot for one template was computed at 00:40 with 2 successful runs and
+# kept serving that count at 01:23, while 7D (first computed 01:05) showed 17.
+
+
+def _usage_row(template, organization, workspace, **backdated):
+    from ee.usage.models.usage import APICallLog
+
+    row = APICallLog.objects.create(
+        organization=organization,
+        workspace=workspace,
+        cost=0,
+        status="success",
+        source="tracer",
+        source_id=str(template.id),
+    )
+    if backdated:
+        APICallLog.objects.filter(id=row.id).update(**backdated)
+    return row
+
+
+def _public_poll_refresh_flag(auth_client, template, monkeypatch, completed_at):
+    """The ``refresh`` flag a public poll hands the snapshot scheduler."""
+
+    monkeypatch.setattr(separate_evals, "is_clickhouse_enabled", lambda: True)
+    monkeypatch.setattr(
+        separate_evals,
+        "read_exact_snapshot",
+        lambda _namespace, _identity: {
+            "query_completed_at": completed_at.isoformat(),
+        },
+    )
+    seen = {}
+
+    def _schedule(_namespace, _identity, **kwargs):
+        seen["refresh"] = kwargs["refresh"]
+        return kwargs["pending_payload"]
+
+    monkeypatch.setattr(separate_evals, "read_or_schedule_exact_snapshot", _schedule)
+
+    response = auth_client.get(
+        f"/model-hub/eval-templates/{template.id}/usage/",
+        {"page": 0, "page_size": 1, "period": "30d"},
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    return seen["refresh"]
+
+
+@pytest.mark.django_db
+def test_eval_usage_refreshes_a_snapshot_taken_before_newer_runs(
+    auth_client, organization, workspace, monkeypatch
+):
+    template = _usage_template(organization, workspace)
+    completed_at = timezone.now() - timedelta(minutes=10)
+    _usage_row(template, organization, workspace)
+
+    assert _public_poll_refresh_flag(auth_client, template, monkeypatch, completed_at)
+
+
+@pytest.mark.django_db
+def test_eval_usage_refreshes_when_an_in_flight_run_settles_after_the_snapshot(
+    auth_client, organization, workspace, monkeypatch
+):
+    template = _usage_template(organization, workspace)
+    completed_at = timezone.now() - timedelta(minutes=10)
+    _usage_row(
+        template,
+        organization,
+        workspace,
+        created_at=completed_at - timedelta(minutes=1),
+        updated_at=completed_at + timedelta(minutes=1),
+    )
+
+    assert _public_poll_refresh_flag(auth_client, template, monkeypatch, completed_at)
+
+
+@pytest.mark.django_db
+def test_eval_usage_keeps_a_snapshot_no_run_has_changed_since(
+    auth_client, organization, workspace, monkeypatch
+):
+    template = _usage_template(organization, workspace)
+    other_template = _usage_template(organization, workspace)
+    now = timezone.now()
+    completed_at = now - timedelta(minutes=10)
+    _usage_row(
+        template,
+        organization,
+        workspace,
+        created_at=now - timedelta(minutes=20),
+        updated_at=now - timedelta(minutes=20),
+    )
+    # A newer run of a different template does not stale this one.
+    _usage_row(other_template, organization, workspace)
+
+    assert not _public_poll_refresh_flag(
+        auth_client, template, monkeypatch, completed_at
+    )

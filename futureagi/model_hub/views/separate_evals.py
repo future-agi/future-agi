@@ -5829,6 +5829,39 @@ def _pending_eval_usage_payload(template_id, page, page_size):
     }
 
 
+# How far before a snapshot a usage row can have been created and still change
+# afterwards: a row stays PROCESSING until its eval run settles, and the eval
+# activities cap one run at an hour (``time_limit=3600``).
+_EVAL_USAGE_IN_FLIGHT_WINDOW = timedelta(hours=1)
+
+
+def _eval_usage_changed_since(organization, template_id, snapshot) -> bool:
+    """Whether a usage row for ``template_id`` was written after ``snapshot``.
+
+    Exact snapshots are served until refreshed and are keyed by period, not by
+    data, so without this a period's first-visit snapshot kept serving for the
+    whole cache TTL while newer runs existed. Rows created after the snapshot
+    and in-flight rows that settled after it both count. The scan stays on the
+    ``(organization, source_id, -created_at)`` index.
+
+    ClickHouse reads a CDC copy of this table: a refresh that runs before a row
+    replicates publishes without it and is not re-triggered until the next run.
+    """
+    completed_at = (snapshot or {}).get("query_completed_at")
+    if not isinstance(completed_at, str):
+        return False
+    try:
+        completed_at = datetime.fromisoformat(completed_at)
+    except ValueError:
+        return False
+    return APICallLog.objects.filter(
+        organization=organization,
+        source_id=str(template_id),
+        created_at__gte=completed_at - _EVAL_USAGE_IN_FLIGHT_WINDOW,
+        updated_at__gt=completed_at,
+    ).exists()
+
+
 class EvalUsageStatsView(APIView):
     """
     GET /model-hub/eval-templates/<id>/usage/
@@ -5841,6 +5874,12 @@ class EvalUsageStatsView(APIView):
     The response is rendered through
     ``EvalUsageStatsResponseResultSerializer(instance=...).data`` at the
     boundary so shape drift surfaces here instead of shipping silently.
+
+    Counts the usage ledger (``APICallLog``): one row per evaluator run. An
+    eval-task run rejected by input validation before its evaluator starts
+    (e.g. every mapped input empty) writes no ledger row, so it shows in the
+    task's logs and usage but not here. Skipped runs (a mapped attribute is
+    absent) never start and are counted in neither.
     """
 
     _gm = GeneralMethods()
@@ -5953,7 +5992,12 @@ class EvalUsageStatsView(APIView):
                         read_or_schedule_exact_snapshot(
                             "eval-usage",
                             cache_identity,
-                            refresh=bool(query["refresh"]),
+                            # Serve the snapshot, refreshing it in the
+                            # background once newer runs exist.
+                            refresh=bool(query["refresh"])
+                            or _eval_usage_changed_since(
+                                organization, template_id, previous_exact
+                            ),
                             pending_payload=_pending_eval_usage_payload(
                                 template_id,
                                 page,
