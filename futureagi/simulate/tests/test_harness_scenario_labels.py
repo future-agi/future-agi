@@ -214,3 +214,13 @@ def test_the_scenarios_list_and_coverage_contracts_carry_the_served_shape():
         checked = serializer(data=payload)
         assert checked.is_valid(), checked.errors
         assert serializer(payload).data == payload
+
+
+def test_a_sub_goal_reads_as_words():
+    labels = level_labels_for(
+        [{"sub_goals": ["exact_opening_greeting"]}],
+        [{"value": "sub_goals", "choices": ["spoken_pin_guidance"]}],
+    )
+
+    assert labels["exact_opening_greeting"] == "Exact opening greeting"
+    assert labels["spoken_pin_guidance"] == "Spoken pin guidance"
