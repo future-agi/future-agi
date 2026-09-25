@@ -5,9 +5,6 @@ import { Box, ButtonBase, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import PersonaComponent from "src/components/persona/personaComponent";
 
-// Scenario summary for the chat compare view, with a "Show details" toggle
-// between dense pills and a full definition list.
-
 const COMPACT_VALUE_MAX_CHARS = 30;
 
 const formatValue = (raw) => {
@@ -37,10 +34,6 @@ const personaName = (raw) => {
   }
   return null;
 };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Compact: pill row
-// ─────────────────────────────────────────────────────────────────────────────
 
 const Pill = ({ label, value }) => (
   <Box
@@ -92,10 +85,6 @@ Pill.propTypes = {
   label: PropTypes.string.isRequired,
   value: PropTypes.node.isRequired,
 };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Expanded: definition list row
-// ─────────────────────────────────────────────────────────────────────────────
 
 const DetailRow = ({ label, value, isPersona, raw }) => (
   <Box
@@ -150,10 +139,6 @@ DetailRow.propTypes = {
   raw: PropTypes.any,
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Main
-// ─────────────────────────────────────────────────────────────────────────────
-
 const CompareScenarioSummary = ({ data }) => {
   const [expanded, setExpanded] = useState(false);
 
@@ -192,9 +177,6 @@ const CompareScenarioSummary = ({ data }) => {
 
   return (
     <Stack gap={0.75}>
-      {/* Header row — SCENARIO label + scenario name + Show/Hide
-          details toggle. The toggle button is plainly visible (no
-          icon-only / hover-to-discover trick). */}
       <Stack
         direction="row"
         alignItems="center"
@@ -264,7 +246,6 @@ const CompareScenarioSummary = ({ data }) => {
       </Stack>
 
       {hasDetails && !expanded && (
-        // Compact mode — wrapping pill row.
         <Stack
           direction="row"
           alignItems="center"
@@ -282,8 +263,6 @@ const CompareScenarioSummary = ({ data }) => {
       )}
 
       {hasDetails && expanded && (
-        // Expanded mode — definition list inside a single bordered
-        // block so it visually nests under the header.
         <Box
           sx={{
             border: "1px solid",

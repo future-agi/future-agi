@@ -1,9 +1,8 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
 import structlog
-from django.db.models import QuerySet
 
 from model_hub.models.choices import StatusType
 from simulate.models import AgentDefinition
@@ -18,7 +17,6 @@ from simulate.utils.session_comparison import (
 from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
 from tracer.models.project import Project
 from tracer.models.replay_session import ReplaySession
-from tracer.models.trace import Trace
 from tracer.services.clickhouse.span_attribute_lookups import (
     trace_ids_with_simulator_call_execution_id,
 )
@@ -28,37 +26,81 @@ from tracer.utils.sql_queries import SQL_query_handler
 logger = structlog.get_logger(__name__)
 
 
+# Bound for ``select_all``: the PG walk this replaces was unbounded, but a
+# project-wide CH scan needs a ceiling. Newest-first, so a replay of "all"
+# takes the most recent traces.
+_SELECT_ALL_TRACE_LIMIT = 1000
+
+
 def _build_trace_query(
     project_id: str,
     replay_type: str,
     ids: Optional[list[str]] = None,
     select_all: bool = False,
-) -> QuerySet:
+) -> list[dict]:
+    """Resolve the replay's source traces from ClickHouse.
+
+    Returns one dict per trace — ``{id, session_id, input, output, created_at}``
+    — ordered oldest-first, mirroring the fields the old ``Trace`` queryset was
+    read for.
+
+    Reads CH rather than PG because ``fi-collector`` writes spans straight to
+    ClickHouse and never inserts ``tracer_trace`` rows (it only upserts
+    ``tracer_project``). The PG query this replaces therefore returned nothing
+    for collector-ingested traces, so ``get_transcripts`` bailed, intent
+    extraction fell through to its propose-use-cases branch, and every
+    generated row got a synthetic ``UC-XX`` intent id instead of a baseline id.
+
+    A trace's input/output live on its root (parentless) span.
     """
-    Build base Trace queryset based on replay parameters.
-
-    Args:
-        project_id: The project UUID
-        replay_type: "session" or "trace"
-        ids: List of session/trace IDs (depending on replay_type)
-        select_all: If True, fetch all for the replay_type
-
-    Returns:
-        Trace queryset
-    """
-    base_query = Trace.objects.filter(project_id=project_id)
-
-    if replay_type == "session":
-        if select_all:
-            query = base_query.filter(session_id__isnull=False)
-            return query
-        return base_query.filter(session_id__in=ids or [])
-    elif replay_type == "trace":
-        if select_all:
-            return base_query
-        return base_query.filter(id__in=ids or [])
-    else:
+    if replay_type not in ("session", "trace"):
         raise ValueError(f"Invalid replay type: {replay_type}")
+
+    from tracer.services.clickhouse.v2 import get_reader
+
+    with get_reader() as reader:
+        if replay_type == "session" and not select_all:
+            # Session ids need the cutover-aware lookup (``list_by_session``
+            # resolves new->old ids through trace_session_id_remap), so query
+            # per session rather than hand-rolling the remap join here.
+            roots = []
+            for session_id in ids or []:
+                roots.extend(
+                    span
+                    for span in reader.list_by_session(str(session_id))
+                    if not span.parent_span_id
+                )
+        else:
+            if select_all:
+                trace_ids = reader.recent_root_trace_ids_by_project(
+                    str(project_id), limit=_SELECT_ALL_TRACE_LIMIT
+                )
+            else:
+                trace_ids = [str(i) for i in (ids or [])]
+            if not trace_ids:
+                return []
+            roots = reader.roots_by_trace_ids(trace_ids, project_id=str(project_id))
+            if replay_type == "session":
+                # select_all over sessions: keep only traces that belong to one.
+                roots = [span for span in roots if span.trace_session_id]
+
+    records = [
+        {
+            "id": str(span.trace_id),
+            "session_id": (
+                str(span.trace_session_id) if span.trace_session_id else None
+            ),
+            "input": span.input,
+            "output": span.output,
+            "created_at": span.start_time,
+        }
+        for span in roots
+    ]
+    # One row per trace — a trace can carry more than one parentless span.
+    deduped: dict[str, dict] = {}
+    for record in records:
+        deduped.setdefault(record["id"], record)
+    return sorted(deduped.values(), key=lambda r: r["created_at"])
 
 
 def get_system_prompt(
@@ -78,9 +120,9 @@ def get_system_prompt(
 
     Returns the first system prompt found, or None if not found.
     """
-    trace_query = _build_trace_query(project_id, replay_type, ids, select_all)
+    trace_records = _build_trace_query(project_id, replay_type, ids, select_all)
 
-    trace_ids = list(trace_query.values_list("id", flat=True))
+    trace_ids = [r["id"] for r in trace_records]
 
     if not trace_ids:
         logger.warning("No traces found for project", project_id=project_id)
@@ -458,7 +500,9 @@ def get_transcripts(
     }
 
 
-def _get_transcripts_from_trace_query(trace_query: QuerySet) -> dict[str, list[dict]]:
+def _get_transcripts_from_trace_query(
+    trace_records: list[dict],
+) -> dict[str, list[dict]]:
     """
     Get transcripts from a trace queryset.
     Each trace is treated as a separate conversation with one turn.
@@ -470,7 +514,7 @@ def _get_transcripts_from_trace_query(trace_query: QuerySet) -> dict[str, list[d
     # ``span_attributes`` (PG JSONB). The 77 GB GIN that backed it was
     # dropped (see migration 0074); the lookup now goes to ClickHouse which
     # has the same data shredded into ``span_attr_str`` maps.
-    traces = list(trace_query.values("id", "input", "output"))
+    traces = trace_records
     if not traces:
         return {}
 
@@ -536,70 +580,24 @@ def _chspan_to_legacy_dict(span) -> dict:
     }
 
 
-def _get_transcripts_from_session_query(trace_query: QuerySet) -> dict[str, list[dict]]:
+def _get_transcripts_from_session_query(
+    trace_records: list[dict],
+) -> dict[str, list[dict]]:
     """
-    Get transcripts from a session-filtered trace queryset, ordered by root span start time.
+    Get transcripts from session-scoped trace records, ordered by root span start time.
 
     Returns:
         Dictionary with session IDs as keys and transcript lists as values.
     """
-    # Replaces the prior cross-store Subquery+OuterRef pattern with a
-    # 2-step PG-then-CH join, unlocked by wave-3 reader extension
-    # ``CHSpanReader.per_trace_root_span_start_times`` (commit 93c5c415f).
-    #
-    # Original PG path was:
-    #     trace_query.annotate(
-    #         span_start_time=Coalesce(
-    #             Subquery(ObservationSpan.objects.filter(
-    #                 trace_id=OuterRef("id"), parent_span_id__isnull=True
-    #             ).values("start_time")[:1]),
-    #             F("created_at"),
-    #         )
-    #     ).order_by("span_start_time").values(...)
-    #
-    # Step 1 — pull the trace rows from PG (Trace itself stays in PG, so
-    # this is a single PG read on the existing queryset). We include
-    # ``created_at`` so we can preserve the Coalesce fallback for traces
-    # whose root span hasn't landed in CH yet (or never existed).
-    traces = list(
-        trace_query.values("id", "session_id", "input", "output", "created_at")
-    )
-
-    # Step 2 — bulk root-span start_time lookup in one CH query. Returns
-    # {trace_id: start_time or None} — empty dict iff trace_ids is empty
-    # (per-trace None when the trace has no CH root span yet).
-    from tracer.services.clickhouse.v2 import get_reader
-
-    trace_ids = [str(t["id"]) for t in traces]
-    if trace_ids:
-        with get_reader() as reader:
-            root_starts = reader.per_trace_root_span_start_times(trace_ids)
-    else:
-        root_starts = {}
-
-    # Step 3 — Python-side sort by Coalesce(root_start, created_at).
-    # Matches the prior PG ORDER BY exactly: the Subquery's first row
-    # (LIMIT 1 with no explicit ORDER BY) is implementation-defined in
-    # PG; the CH reader picks min(start_time) for ties, which is the
-    # only deterministic choice. For traces where CH has no root span,
-    # we fall back to ``created_at`` — same Coalesce semantic as before.
-    #
-    # Tz normalization: PG datetimes are tz-aware (USE_TZ=True) but the
-    # CH driver returns DateTime64 as naive UTC. Mixing the two
-    # raises ``TypeError: can't compare offset-naive and offset-aware``
-    # when the trace list is a mix of CH-present and CH-missing rows.
-    # Normalize both sides to tz-aware UTC before sorting.
-    def _as_aware_utc(d):
-        if d is None:
-            return None
-        return d if d.tzinfo is not None else d.replace(tzinfo=timezone.utc)
-
-    def _sort_key(t):
-        rs = root_starts.get(str(t["id"]))
-        ts = rs if rs is not None else t["created_at"]
-        return _as_aware_utc(ts)
-
-    traces.sort(key=_sort_key)
+    # ``_build_trace_query`` already reads the root span per trace from CH and
+    # returns the rows sorted by its start_time, so the prior PG-then-CH
+    # two-step (pull trace rows from PG, then bulk-fetch root-span start times
+    # via ``per_trace_root_span_start_times`` to sort by) is no longer needed —
+    # the sort key came from the same rows we now read directly. Traces without
+    # a session are dropped rather than bucketed under "None".
+    traces = [t for t in trace_records if t.get("session_id")]
+    if not traces:
+        return {}
 
     # The has-key check used to run as a Django Exists() subquery against
     # ``span_attributes`` (PG JSONB). Now sourced from ClickHouse — see
@@ -625,7 +623,7 @@ def _get_transcripts_from_session_query(trace_query: QuerySet) -> dict[str, list
     return sessions_map
 
 
-def _is_voice_trace_query(trace_query: QuerySet) -> bool:
+def _is_voice_trace_query(trace_records: list[dict]) -> bool:
     """
     Check if the traces in the query are voice traces by looking for
     conversation-type observation spans.
@@ -635,7 +633,7 @@ def _is_voice_trace_query(trace_query: QuerySet) -> bool:
     """
     from tracer.services.clickhouse.v2 import get_reader
 
-    trace_ids = list(trace_query.values_list("id", flat=True)[:10])
+    trace_ids = [r["id"] for r in trace_records[:10]]
     if not trace_ids:
         return False
 
@@ -648,11 +646,11 @@ def _is_voice_trace_query(trace_query: QuerySet) -> bool:
     return any(s.observation_type == "conversation" for s in spans)
 
 
-def _get_first_voice_span_raw_log(trace_query: QuerySet) -> dict | None:
-    """Fetch the raw_log from the first conversation span in the trace query."""
+def _get_first_voice_span_raw_log(trace_records: list[dict]) -> dict | None:
+    """Fetch the raw_log from the first conversation span in the trace records."""
     from tracer.services.clickhouse.v2 import get_reader
 
-    trace_id = trace_query.values_list("id", flat=True).first()
+    trace_id = trace_records[0]["id"] if trace_records else None
     if not trace_id:
         return None
 
@@ -720,11 +718,11 @@ def _extract_model_name_from_raw_log(raw_log: dict) -> str:
     return ""
 
 
-def _extract_voice_trace_original_config(trace_query: QuerySet) -> dict | None:
+def _extract_voice_trace_original_config(trace_records: list[dict]) -> dict | None:
     """Extract the original Vapi/Retell config from the first voice trace's raw_log.
     Returns a dict suitable for AgentVersion.configuration_snapshot.
     """
-    raw_log = _get_first_voice_span_raw_log(trace_query)
+    raw_log = _get_first_voice_span_raw_log(trace_records)
     if not raw_log:
         return None
 
@@ -758,7 +756,7 @@ def _extract_voice_trace_original_config(trace_query: QuerySet) -> dict | None:
 
 
 def _extract_voice_trace_system_prompt(
-    trace_query: QuerySet, _config: dict | None = None
+    trace_records: list[dict], _config: dict | None = None
 ) -> str | None:
     """Extract system prompt from the first voice trace.
     Uses pre-extracted config if available to avoid a redundant DB query.
@@ -766,14 +764,14 @@ def _extract_voice_trace_system_prompt(
     if _config is not None:
         return _config.get("description") or None
 
-    raw_log = _get_first_voice_span_raw_log(trace_query)
+    raw_log = _get_first_voice_span_raw_log(trace_records)
     if not raw_log:
         return None
 
     return _extract_system_prompt_from_raw_log(raw_log) or None
 
 
-def _load_voice_conversation_spans(trace_query: QuerySet) -> list[dict]:
+def _load_voice_conversation_spans(trace_records: list[dict]) -> list[dict]:
     """
     Load conversation-type spans for all traces in the query.
     Returns a list of dicts shaped like ``{trace_id, span_attributes, eval_attributes}``
@@ -784,7 +782,7 @@ def _load_voice_conversation_spans(trace_query: QuerySet) -> list[dict]:
     """
     from tracer.services.clickhouse.v2 import get_reader
 
-    trace_ids = list(trace_query.values_list("id", flat=True))
+    trace_ids = [r["id"] for r in trace_records]
     if not trace_ids:
         return []
 

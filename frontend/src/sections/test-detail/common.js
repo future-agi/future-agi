@@ -21,7 +21,10 @@ import {
 import { menuIcons } from "src/utils/MenuIconSet/svgIcons";
 import ColumnCellRenderer from "./CellRenderers/ColumnCellRenderer";
 import { useTestDetailStore, useTestExecutionStore } from "./states";
-import { AGENT_TYPES } from "src/sections/agents/constants";
+import {
+  AGENT_TYPES,
+  getSimulationTypeLabel,
+} from "src/sections/agents/constants";
 import useKpis from "src/hooks/useKpis";
 import { useMemo } from "react";
 import { LoadingHeader } from "./CellRenderers/ScenarioCellRenderer";
@@ -917,18 +920,20 @@ export const getTabsBasedOnAgentType = ({ agentType, testId, executionId }) => {
   return tabs;
 };
 
-export const getCompareBaselineTooltipTitle = (status) => {
+export const getCompareBaselineTooltipTitle = (status, simulationCallType) => {
+  const label = getSimulationTypeLabel(simulationCallType).toLowerCase();
+
   if (status === TestRunExecutionStatus.ONGOING) {
-    return "This chat is in progress. Please wait for it to complete before comparing with baseline chat.";
+    return `This ${label} is in progress. Please wait for it to complete before comparing with baseline ${label}.`;
   }
   if (status === TestRunExecutionStatus.PENDING) {
-    return "This chat has not been picked up yet. Please wait for it to be picked up before comparing with baseline chat.";
+    return `This ${label} has not been picked up yet. Please wait for it to be picked up before comparing with baseline ${label}.`;
   }
   if (status === TestRunExecutionStatus.FAILED) {
-    return "This chat has failed. Please try again.";
+    return `This ${label} has failed. Please try again.`;
   }
   if (status === TestRunExecutionStatus.CANCELLED) {
-    return "This chat has been cancelled. Please try again.";
+    return `This ${label} has been cancelled. Please try again.`;
   }
   return "";
 };
