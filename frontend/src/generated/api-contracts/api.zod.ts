@@ -22856,6 +22856,12 @@ Query params: page (0-based), page_size, period
 The response is rendered through
 ``EvalUsageStatsResponseResultSerializer(instance=...).data`` at the
 boundary so shape drift surfaces here instead of shipping silently.
+
+Counts the usage ledger (``APICallLog``): one row per evaluator run. An
+eval-task run rejected by input validation before its evaluator starts
+(e.g. every mapped input empty) writes no ledger row, so it shows in the
+task's logs and usage but not here. Skipped runs (a mapped attribute is
+absent) never start and are counted in neither.
  * @summary GET /model-hub/eval-templates/<id>/usage/
  */
 export const ModelHubEvalTemplatesUsageListParams = zod.object({

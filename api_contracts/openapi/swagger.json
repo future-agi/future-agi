@@ -33311,7 +33311,7 @@
             "get": {
                 "operationId": "model-hub_eval-templates_usage_list",
                 "summary": "GET /model-hub/eval-templates/<id>/usage/",
-                "description": "Returns usage stats, chart data, and the paginated usage table.\nQuery params: page (0-based), page_size, period\n(30m|6h|1d|7d|30d|90d|180d|365d), optional start_date/end_date pair\n(overrides period — sent by the FE for Today / Yesterday / Custom).\n\nThe response is rendered through\n``EvalUsageStatsResponseResultSerializer(instance=...).data`` at the\nboundary so shape drift surfaces here instead of shipping silently.",
+                "description": "Returns usage stats, chart data, and the paginated usage table.\nQuery params: page (0-based), page_size, period\n(30m|6h|1d|7d|30d|90d|180d|365d), optional start_date/end_date pair\n(overrides period — sent by the FE for Today / Yesterday / Custom).\n\nThe response is rendered through\n``EvalUsageStatsResponseResultSerializer(instance=...).data`` at the\nboundary so shape drift surfaces here instead of shipping silently.\n\nCounts the usage ledger (``APICallLog``): one row per evaluator run. An\neval-task run rejected by input validation before its evaluator starts\n(e.g. every mapped input empty) writes no ledger row, so it shows in the\ntask's logs and usage but not here. Skipped runs (a mapped attribute is\nabsent) never start and are counted in neither.",
                 "parameters": [
                     {
                         "name": "page",
