@@ -22859,11 +22859,13 @@ The response is rendered through
 ``EvalUsageStatsResponseResultSerializer(instance=...).data`` at the
 boundary so shape drift surfaces here instead of shipping silently.
 
-Counts the usage ledger (``APICallLog``): one row per evaluator run. An
-eval-task run rejected by input validation before its evaluator starts
-(e.g. every mapped input empty) writes no ledger row, so it shows in the
-task's logs and usage but not here. Skipped runs (a mapped attribute is
-absent) never start and are counted in neither.
+Counts and lists only successful runs from the usage ledger
+(``APICallLog`` rows with status ``success``), from every source: tasks,
+playground, composites, datasets and experiments. Errored and skipped runs
+are not usage but stay in the eval logs (task logs, template eval logs);
+an in-flight run counts once it succeeds. ``error_count`` is therefore 0
+and ``pass_rate`` 100 whenever there are runs; both remain for
+compatibility.
  * @summary GET /model-hub/eval-templates/<id>/usage/
  */
 export const ModelHubEvalTemplatesUsageListParams = zod.object({

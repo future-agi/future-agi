@@ -419,26 +419,11 @@ const EvalUsageTab = ({
               <Box
                 sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
               />
+              {/* Usage counts successful runs only; errors stay in the logs. */}
               <StatPill
                 label="Success"
                 value={stats.success_count ?? 0}
                 color="success.main"
-              />
-              <Box
-                sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
-              />
-              <StatPill
-                label="Errors"
-                value={stats.error_count ?? 0}
-                color="error.main"
-              />
-              <Box
-                sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
-              />
-              <StatPill
-                label="Task Completion Rate"
-                value={`${stats.pass_rate ?? 0}%`}
-                color="info.main"
               />
             </Box>
           )}

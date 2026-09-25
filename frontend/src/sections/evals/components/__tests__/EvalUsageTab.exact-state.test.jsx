@@ -499,4 +499,38 @@ describe("EvalUsageTab exact read states", () => {
     fireEvent.click(retryButtons[1]);
     expect(h.refetchLogs).toHaveBeenCalledTimes(2);
   });
+
+  it("summarizes successful runs only, without an error count or completion rate", () => {
+    h.chart = {
+      data: {
+        stats: {
+          runs_period: 3,
+          success_count: 3,
+          error_count: 0,
+          pass_rate: 100,
+        },
+        chart: [{ timestamp: "2026-08-03T00:00:00Z", calls: 3 }],
+        queryCompletedAt: "2026-08-03T02:00:00Z",
+        queryPending: false,
+      },
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+      refresh: h.refetchChart,
+    };
+    h.logs = {
+      data: { table: [], pagination: { total: 3 }, queryPending: false },
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+      refresh: h.refetchLogs,
+    };
+
+    render(<EvalUsageTab templateId="eval-1" />);
+
+    expect(screen.getByText(/Runs: 3/i)).toBeInTheDocument();
+    expect(screen.getByText(/Success: 3/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Errors:/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Task Completion Rate/i)).not.toBeInTheDocument();
+  });
 });
