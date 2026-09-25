@@ -102,6 +102,48 @@ def with_metric_statistic(payload: Any, surface: str, metric_id: Any) -> Any:
     return {**payload, "metric_statistic": statistic}
 
 
+# Exact snapshot namespace of each system-metric surface.
+SNAPSHOT_NAMESPACE_SURFACES: Mapping[str, str] = {
+    "observe-system-graph": "trace",
+    "observe-session-system-graph": "session",
+    "observe-user-system-graph": "users",
+}
+
+
+def stamp_snapshot_statistic(namespace: str, metric_id: Any, payload: Any) -> Any:
+    """Write the statistic into a payload a refresh worker is about to cache.
+
+    Only median-aware workers write it, so it is the marker
+    ``snapshot_names_its_statistic`` checks. Other namespaces pass through.
+    """
+
+    surface = SNAPSHOT_NAMESPACE_SURFACES.get(namespace)
+    if surface is None:
+        return payload
+    return with_metric_statistic(payload, surface, metric_id)
+
+
+def snapshot_names_its_statistic(namespace: str, metric_id: Any, payload: Any) -> bool:
+    """Whether a cached system-metric snapshot may be served.
+
+    During a rolling deploy a pre-median worker can take a refresh job keyed
+    by the new identity (it ignores ``payload_version``), compute the old mean
+    latency and cache it under the new key for up to 30 days. It never writes
+    ``metric_statistic``. So a latency snapshot is served only when its payload
+    says ``metric_statistic == "median"``; anything else is a cache miss that
+    a new worker recomputes. Non-latency series did not change meaning and
+    are always accepted.
+    """
+
+    surface = SNAPSHOT_NAMESPACE_SURFACES.get(namespace)
+    if surface is None:
+        return True
+    expected = system_metric_statistic(surface, metric_id)
+    if expected != LATENCY_STATISTIC:
+        return True
+    return isinstance(payload, dict) and payload.get("metric_statistic") == expected
+
+
 def stamps_metric_statistic(
     surface: str,
     metric_of: Callable[[dict[str, Any]], Any],
@@ -132,9 +174,12 @@ __all__ = [
     "CHART_BUNDLE_METRICS",
     "METRIC_STATISTIC_CHOICES",
     "SESSION_METRIC_STATISTICS",
+    "SNAPSHOT_NAMESPACE_SURFACES",
     "TRACE_METRIC_STATISTICS",
     "USER_METRIC_STATISTICS",
     "chart_bundle_statistics",
+    "snapshot_names_its_statistic",
+    "stamp_snapshot_statistic",
     "stamps_metric_statistic",
     "system_metric_statistic",
     "with_metric_statistic",

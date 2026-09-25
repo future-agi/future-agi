@@ -40,6 +40,7 @@ from tracer.services.clickhouse.exact_graph_reads import (
     read_exact_user_system_graph,
 )
 from tracer.services.clickhouse.graph_metric_statistic import (
+    snapshot_names_its_statistic,
     stamps_metric_statistic,
 )
 from tracer.services.clickhouse.graph_read_cost import (
@@ -896,12 +897,17 @@ def _read_or_refresh_exact_graph(
         identity["organization_id"] = str(organization_id)
     if workspace_id is not None:
         identity["workspace_id"] = str(workspace_id)
+    metric_id = identity.get("metric_id")
     return read_or_schedule_exact_snapshot(
         namespace,
         identity,
         refresh=refresh,
         pending_payload=pending_payload,
         schedule_on_miss=schedule_on_miss,
+        # A latency snapshot a pre-median worker cached is a miss.
+        accept_snapshot=lambda payload: snapshot_names_its_statistic(
+            namespace, metric_id, payload
+        ),
     )
 
 

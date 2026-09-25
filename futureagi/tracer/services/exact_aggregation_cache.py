@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -1459,12 +1460,16 @@ def read_or_schedule_exact_snapshot(
     refresh: bool,
     pending_payload: Any,
     schedule_on_miss: bool = True,
+    accept_snapshot: Callable[[Any], bool] | None = None,
 ) -> Any:
     """Serve an exact snapshot immediately and run slow refreshes out of band.
 
     A cache hit is never replaced by a pending response. A cold miss returns a
     non-chartable pending envelope. Failed cold jobs wait for another explicit
     refresh instead of being resubmitted by every polling request.
+    ``accept_snapshot`` lets a caller reject a cached payload it cannot serve
+    (for example one written by an older worker during a rolling deploy); a
+    rejected snapshot is treated exactly as a miss.
     """
 
     stale_identity = None
@@ -1485,6 +1490,12 @@ def read_or_schedule_exact_snapshot(
     previous = read_exact_snapshot(namespace, normalized_identity)
     if previous is None and stale_identity is not None:
         previous = read_exact_snapshot(namespace, stale_identity)
+    if (
+        previous is not None
+        and accept_snapshot is not None
+        and not accept_snapshot(previous)
+    ):
+        previous = None
     state = exact_refresh_state(namespace, normalized_identity)
     if previous is not None and not refresh:
         return _decorate_refresh_state(previous, state)

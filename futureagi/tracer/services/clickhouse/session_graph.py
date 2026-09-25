@@ -26,6 +26,7 @@ from tracer.services.clickhouse.graph_dispatch import (
     format_system_metric_graph,
 )
 from tracer.services.clickhouse.graph_metric_statistic import (
+    snapshot_names_its_statistic,
     stamps_metric_statistic,
 )
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
@@ -775,6 +776,10 @@ def fetch_session_graph_ch(
                 "query_sampled": False,
                 "query_refreshing": True,
             },
+            # A latency snapshot a pre-median worker cached is a miss.
+            accept_snapshot=lambda payload: snapshot_names_its_statistic(
+                "observe-session-system-graph", metric_id, payload
+            ),
         )
 
     # Eval and annotation graphs, like filtered system graphs, are exact
