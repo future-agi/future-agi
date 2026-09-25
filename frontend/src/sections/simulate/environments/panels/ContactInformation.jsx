@@ -4,6 +4,11 @@ import { Box, Stack, Typography, Switch } from "@mui/material";
 import Field from "../components/Field";
 import CountryCodeSelect from "../components/CountryCodeSelect";
 
+// E.164 caps a full number at 15 digits; the country code has its own select,
+// so the number field only ever holds digits.
+const MAX_CONTACT_DIGITS = 15;
+const toContactDigits = (value) => value.replace(/\D/g, "").slice(0, MAX_CONTACT_DIGITS);
+
 /*
   Voice contact details — how the test call reaches the agent. `mode` is web
   (WebRTC, no telephony provider) or phone (PSTN, needs a country code + number).
@@ -79,7 +84,8 @@ export default function ContactInformation({
               required
               placeholder="Number to call for the simulation"
               value={contactNumber}
-              onChange={onContactNumber}
+              onChange={(value) => onContactNumber(toContactDigits(value))}
+              inputProps={{ inputMode: "numeric" }}
               mono
             />
           </Box>

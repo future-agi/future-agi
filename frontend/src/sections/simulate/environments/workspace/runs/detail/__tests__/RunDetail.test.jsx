@@ -209,6 +209,21 @@ describe("RunDetail", () => {
     expect(screen.queryByText("Failed")).toBeNull();
   });
 
+  it("offers Stop simulation in the header only while the run can be stopped", () => {
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, status: "running", stoppable: true },
+      stats: STATS,
+      isLoading: false,
+    });
+    const { unmount } = renderDetail();
+    expect(screen.getByRole("button", { name: "Stop simulation" })).toHaveTextContent("Stop simulation");
+    unmount();
+
+    useRunDetail.mockReturnValue({ identity: IDENTITY, stats: STATS, isLoading: false });
+    renderDetail();
+    expect(screen.queryByRole("button", { name: "Stop simulation" })).toBeNull();
+  });
+
   it("shows terminal execution failure despite partial call success", () => {
     useRunDetail.mockReturnValue({
       identity: { ...IDENTITY, status: "failed" },

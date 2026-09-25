@@ -122,6 +122,35 @@ describe("executionToRun", () => {
     expect(run.durationS).toBe(11.9);
   });
 
+  it("maps the raw lifecycle to the Status column's runState", () => {
+    const state = (status) => executionToRun({ id: "x", status, total_chats: 1 }).runState;
+    expect(state("Pending")).toBe("queued");
+    expect(state("Running")).toBe("running");
+    expect(state("Evaluating")).toBe("running");
+    expect(state("Cancelling")).toBe("running");
+    // Its own key so the table can show a finished run green without recolouring
+    // the detail header's "Completed" (finished with findings).
+    expect(state("Completed")).toBe("finished");
+    expect(state("Failed")).toBe("failed");
+    expect(state("Cancelled")).toBe("cancelled");
+  });
+
+  it("marks only a pending, running or evaluating run as stoppable", () => {
+    const stoppable = (status) => executionToRun({ id: "x", status, total_chats: 1 }).stoppable;
+    expect(stoppable("Pending")).toBe(true);
+    expect(stoppable("Running")).toBe(true);
+    expect(stoppable("Evaluating")).toBe(true);
+    // Already stopping, or finished — nothing left to stop.
+    expect(stoppable("Cancelling")).toBe(false);
+    expect(stoppable("Completed")).toBe(false);
+    expect(stoppable("Cancelled")).toBe(false);
+  });
+
+  it("reads a stopped run as cancelled, not failed", () => {
+    const run = executionToRun({ id: "ex-c", status: "Cancelled", total_chats: 5, success_rate: 40 });
+    expect(run.status).toBe("cancelled");
+  });
+
   it("leaves durationS null when the execution row has no duration", () => {
     const run = executionToRun({ id: "ex-7", status: "Completed", total_chats: 4, success_rate: 100 });
     expect(run.durationS).toBeNull();

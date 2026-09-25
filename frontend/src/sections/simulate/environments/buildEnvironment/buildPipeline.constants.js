@@ -123,18 +123,6 @@ export const PIPELINE_PHASES = [
   { id: "run", label: "First run — putting the agent through it" },
 ];
 
-// A gentle, deterministic "duration" per step, so completed rows have a real
-// number to show on the loading screen. Not persisted anywhere.
-export const STEP_DURATION = {
-  understand: 2.4,
-  "generate-env": 1.6,
-  "build-env": 3.2,
-  "validate-env": 1.8,
-  "generate-data": 2.9,
-  "generate-scenarios": 3.6,
-  "validate-scenarios": 2.1,
-};
-
 // Compute the pipeline's live status. `done` is the builder's own set of
 // milestone ids, so the mapping is direct: a milestone being complete implies
 // every step under it is complete. The first pending step becomes the running

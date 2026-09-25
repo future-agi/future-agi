@@ -44,6 +44,8 @@ export function buildSummaryRow(run, scores) {
     label: run?.label,
     agentVersion: run?.agentVersion ?? null,
     status: run?.status,
+    runState: run?.runState ?? run?.status,
+    stoppable: !!run?.stoppable,
     at: run?.finishedAt || run?.startedAt || null,
     tasks: total,
     scenarioCount: run?.scenarioCount ?? null,
