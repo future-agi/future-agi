@@ -41,6 +41,7 @@ const {
   useRemoveAppliedEvaluation,
   SIMULATE_ENVIRONMENTS_KEY,
   availableEvaluationsKey,
+  myEnvironmentsQueryKey,
 } = await import("../environments");
 
 // The paginated harness-environments payload the hook maps into table rows.
@@ -148,6 +149,68 @@ describe("useMyEnvironments", () => {
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(result.current.data).toEqual({ rows: [], total: 0 });
+  });
+
+  describe("polling", () => {
+    const envRow = (id, status) => ({
+      id,
+      name: id,
+      agent_type: "chat",
+      status,
+      stage: status,
+    });
+
+    const renderList = async () => {
+      const { queryClient, Wrapper } = makeWrapper();
+      const view = renderHook(() => useMyEnvironments(), { wrapper: Wrapper });
+      await waitFor(() => expect(view.result.current.isSuccess).toBe(true));
+      const query = queryClient
+        .getQueryCache()
+        .find({ queryKey: myEnvironmentsQueryKey(0, 25) });
+      return { queryClient, query, unmount: view.unmount };
+    };
+
+    it("polls every 3s while a row is still building", async () => {
+      listHarnessEnvironments.mockResolvedValue({
+        count: 1,
+        results: [envRow("env-b", "building")],
+      });
+      const { query, unmount } = await renderList();
+      expect(query.options.refetchInterval(query)).toBe(3000);
+      unmount();
+    });
+
+    it("polls while one row is running among finished ones", async () => {
+      const { query, unmount } = await renderList();
+      expect(query.options.refetchInterval(query)).toBe(3000);
+      unmount();
+    });
+
+    it("stops polling once every row is finished", async () => {
+      listHarnessEnvironments.mockResolvedValue({
+        count: 1,
+        results: [envRow("env-b", "building")],
+      });
+      const { queryClient, query, unmount } = await renderList();
+      queryClient.setQueryData(query.queryKey, {
+        count: 2,
+        results: [envRow("a", "completed"), envRow("b", "failed")],
+      });
+      expect(query.options.refetchInterval(query)).toBe(false);
+      unmount();
+    });
+
+    it("does not poll an empty list or a payload without results", async () => {
+      listHarnessEnvironments.mockResolvedValue({ count: 0, results: [] });
+      const empty = await renderList();
+      expect(empty.query.options.refetchInterval(empty.query)).toBe(false);
+      empty.unmount();
+
+      listHarnessEnvironments.mockResolvedValue({});
+      const bare = await renderList();
+      expect(bare.query.options.refetchInterval(bare.query)).toBe(false);
+      bare.unmount();
+    });
   });
 });
 

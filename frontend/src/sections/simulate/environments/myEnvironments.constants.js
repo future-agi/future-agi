@@ -10,6 +10,14 @@ export const ENV_STATUS = {
   COMPLETED: "completed",
 };
 
+// The unfinished values of the list endpoint's own status (building | running |
+// completed | failed, from harness_environment.status_for). A cancel in flight
+// stays building/running until it lands as failed, so these two cover it.
+export const LIVE_ENV_STATUSES = new Set([
+  ENV_STATUS.BUILDING,
+  ENV_STATUS.RUNNING,
+]);
+
 // An environment's build lifecycle, distinct from the run-state pill (ENV_STATUS
 // above): "ready" once authoring finished, "failed" on a terminal build failure
 // (a failed/canceled job stage), "building" while it is still deriving. The
