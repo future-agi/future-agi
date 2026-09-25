@@ -708,8 +708,10 @@ class TestRunResultsV3Views:
             "Dataset-only goal"
         }
 
+    @pytest.mark.parametrize("layout", ["child_run", "direct_run"])
     def test_hosted_calls_group_by_their_authored_scenario_axes(
         self,
+        layout,
         auth_client,
         organization,
         workspace,
@@ -733,19 +735,32 @@ class TestRunResultsV3Views:
                 **fields,
             )
 
-        environment = job()
-        job(environment=environment, run_test=test_execution.run_test)
-        HostedHarnessScenario.no_workspace_objects.create(
-            job=environment,
-            scenario_key="pin-reset",
-            use_case="Verify the caller's guest PIN",
-            sub_goals=["pin_verified", "exact_greeting"],
-            persona={"accent": "Indian", "age_group": "40-50"},
-            coverage={"overlay": "prompt_injection", "task": "authenticate_pin"},
-        )
         call = analytics_call_executions[0]
-        call.call_metadata = {"harness_scenario_key": "pin-reset"}
-        call.save(update_fields=["call_metadata"])
+        authored = {
+            "scenario_key": "pin-reset",
+            "use_case": "Verify the caller's guest PIN",
+            "sub_goals": ["pin_verified", "exact_greeting"],
+            "persona": {"accent": "Indian", "age_group": "40-50"},
+            "coverage": {"overlay": "prompt_injection", "task": "authenticate_pin"},
+        }
+        if layout == "child_run":
+            # The suite lives on the environment; the run's call carries its key.
+            environment = job()
+            job(environment=environment, run_test=test_execution.run_test)
+            HostedHarnessScenario.no_workspace_objects.create(
+                job=environment, **authored
+            )
+            call.call_metadata = {"harness_scenario_key": "pin-reset"}
+            call.save(update_fields=["call_metadata"])
+        else:
+            # begin_scenarios(): the suite lives on the run's own job and each
+            # registration is linked to its call, which carries no key.
+            direct = job(
+                run_test=test_execution.run_test, test_execution=test_execution
+            )
+            HostedHarnessScenario.no_workspace_objects.create(
+                job=direct, call_execution=call, **authored
+            )
         url = f"/simulate/v3/test-executions/{test_execution.id}/calls/"
 
         expected = {

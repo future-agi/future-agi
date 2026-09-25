@@ -162,13 +162,19 @@ def run_calls_queryset(
         ),
         "created_at",
     )
-    # A hosted call carries only its scenario key; its use case, sub-goals,
-    # persona and coverage live on the environment's authored suite.
+    # A hosted call's use case, sub-goals, persona and coverage live on its
+    # authored scenario: linked to the call on a direct run, or found by the
+    # call's scenario key on the run's own job or its parent environment.
+    run_jobs = HostedHarnessJob.no_workspace_objects.filter(
+        run_test_id=execution.run_test_id
+    )
     authored = HostedHarnessScenario.no_workspace_objects.filter(
-        job_id__in=HostedHarnessJob.no_workspace_objects.filter(
-            run_test_id=execution.run_test_id, environment_id__isnull=False
-        ).values("environment_id"),
-        scenario_key=OuterRef("result_scenario_key"),
+        Q(call_execution_id=OuterRef("pk"))
+        | Q(
+            Q(job_id__in=run_jobs.values("id"))
+            | Q(job_id__in=run_jobs.values("environment_id")),
+            scenario_key=OuterRef("result_scenario_key"),
+        )
     ).order_by("-created_at")
     queryset = CallExecution.objects.filter(execution_filter).annotate(
         result_scenario_key=_json_text("call_metadata", "harness_scenario_key")
