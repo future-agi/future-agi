@@ -417,6 +417,34 @@ def _run_filter_value_pg_read(deadline, read):
         return read()
 
 
+def _run_filter_value_pg_statements(deadline, read):
+    """Run ``read(fetch)`` in one read-only snapshot, each statement timed.
+
+    Every statement gets the remaining request wall as its PostgreSQL
+    ``statement_timeout``, so a picker read is bounded server-side too.
+    """
+
+    def remaining_ms():
+        return deadline.remaining_ms(_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS)
+
+    with application_postgres_reads(
+        connection=connection,
+        atomic=transaction.atomic,
+        check_request=remaining_ms,
+        statement_timeout_ms=remaining_ms,
+        read_only=True,
+        repeatable_read=True,
+    ):
+        with connection.cursor() as cursor:
+
+            def fetch(sql, params):
+                cursor.execute(sql, params)
+                columns = [col[0] for col in cursor.description]
+                return [dict(zip(columns, row, strict=True)) for row in cursor]
+
+            return read(fetch)
+
+
 def _session_overlay_filter_value_ids(
     *,
     project_ids,
@@ -5545,9 +5573,10 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
         from model_hub.models.develop_dataset import Column
         from tracer.services.dataset_choice_values import (
-            CHOICE_INTERPRETATION_CTE,
+            MAX_CHOICE_TEXT,
             InvalidChoiceCell,
             evaluation_choice_labels,
+            literal_choice,
         )
 
         # --- Input validation --------------------------------------------
@@ -5583,14 +5612,6 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 code="service_unavailable",
             )
 
-        if not is_clickhouse_enabled():
-            return self._gm.custom_error_response(
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-                "Filter values are temporarily unavailable. Please retry.",
-                code="service_unavailable",
-            )
-
-        analytics = AnalyticsQueryService()
         search = query_params.get("search", "")
         evaluation_choices = column.data_type == "array" and column.source in (
             "evaluation",
@@ -5603,103 +5624,125 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             else _LEGACY_NATIVE_FILTER_VALUE_MAX
         )
         result_limit = max_values + 1
-        try:
-            # Choice search must run on decoded labels, not escaped storage.
-            # Same-cell metadata disambiguates literal '[west]' from a list.
-            # Read a bounded complete inventory or refuse it; never sample.
-            projection = (
-                "value AS val, groupBitOr(if(literal_choice, 2, 1)) AS choice_modes"
-                if evaluation_choices
-                else "DISTINCT value AS val"
-            )
-            # Choice labels are decoded in Python, so an eval-choice search
-            # cannot be answered by matching the stored text. It can still be
-            # *bounded* by it. A decoded label differs from its storage only at
-            # a backslash escape, and ClickHouse's case-insensitive match
-            # agrees with Python's casefold only while both sides stay ASCII,
-            # so keeping every row that satisfies any of those three arms can
-            # never drop a row the decoded filter below would have kept.
-            # Without it a narrow search still reads the whole inventory and a
-            # column above the cap answers 422 no matter what the user types,
-            # which the error's own advice cannot resolve.
-            choice_search = search.strip()
-            if evaluation_choices:
-                search_clause = (
-                    (
-                        "AND (positionCaseInsensitiveUTF8(value, %(choice_search)s) > 0 "
-                        # char(92) is a backslash: escaped storage may decode to
-                        # a label whose characters are not literally present.
-                        "OR position(value, char(92)) > 0 "
-                        # A non-ASCII cell may casefold differently than it
-                        # lowercases; never let this arm decide such a row.
-                        "OR lengthUTF8(value) != length(value)) "
-                    )
-                    if choice_search and choice_search.isascii()
-                    else ""
+        # Choice search must run on decoded labels, not escaped storage.
+        # Same-cell metadata disambiguates literal '[west]' from a list.
+        # Read a bounded complete inventory or refuse it; never sample.
+        #
+        # Choice labels are decoded in Python, so an eval-choice search cannot
+        # be answered by matching the stored text. It can still be *bounded*
+        # by it. A decoded label differs from its storage only at a backslash
+        # escape, and an ASCII-only case-insensitive match agrees with
+        # Python's casefold only while both sides stay ASCII, so keeping every
+        # row that satisfies any of those three arms can never drop a row the
+        # decoded filter below would have kept. Without it a narrow search
+        # still reads the whole inventory and a column above the cap answers
+        # 422 no matter what the user types, which the error's own advice
+        # cannot resolve.
+        choice_search = search.strip()
+        if evaluation_choices:
+            search_clause = (
+                (
+                    # The "C" collation lowercases ASCII letters only.
+                    'AND (strpos(lower(value COLLATE "C"), '
+                    'lower(%(choice_search)s COLLATE "C")) > 0 '
+                    # chr(92) is a backslash: escaped storage may decode to a
+                    # label whose characters are not literally present.
+                    "OR strpos(value, chr(92)) > 0 "
+                    # A non-ASCII cell may casefold differently than it
+                    # lowercases; never let this arm decide such a row.
+                    "OR octet_length(value) <> char_length(value)) "
                 )
-            else:
-                search_clause = (
-                    "AND (%(search)s = '' OR "
-                    "positionCaseInsensitiveUTF8(value, %(search)s) > 0) "
-                )
-            # The CDC mirror is ordered by cell id, and FINAL keeps a non-key
-            # WHERE out of PREWHERE, so a WHERE-only scope reads every cell's
-            # value in the table. A cell never changes dataset or column, so
-            # dropping other cells before the merge keeps the latest state.
-            sql = (CHOICE_INTERPRETATION_CTE if evaluation_choices else "") + (
-                f"SELECT {projection} "
-                "FROM model_hub_cell FINAL "
-                "PREWHERE dataset_id = toUUID(%(dataset_id)s) "
-                "AND column_id = toUUID(%(column_id)s) "
-                "WHERE _peerdb_is_deleted = 0 "
-                "AND value != '' "
-                f"{search_clause}"
-                f"{'GROUP BY value ' if evaluation_choices else ''}"
-                "ORDER BY val "
-                "LIMIT %(result_limit)s"
+                if choice_search and choice_search.isascii()
+                else ""
             )
-            params = {
-                "dataset_id": str(dataset_id),
-                "column_id": str(column_id),
-                "search": search,
-                "result_limit": result_limit,
-            }
-            if evaluation_choices and search_clause:
-                params["choice_search"] = choice_search
-            result = analytics.execute_ch_query(
-                sql,
+        else:
+            search_clause = (
+                "AND (%(search)s = '' OR strpos(lower(value), lower(%(search)s)) > 0) "
+            )
+        # PostgreSQL holds the dataset and is what the dataset table filters
+        # read. Its column index answers one column directly; the ClickHouse
+        # mirror is ordered by cell id and trails every write by a CDC batch.
+        scope = (
+            "FROM model_hub_cell "
+            "WHERE dataset_id = %(dataset_id)s "
+            "AND column_id = %(column_id)s "
+            "AND deleted = false "
+            "AND value <> '' "
+            f"{search_clause}"
+        )
+        params = {
+            "dataset_id": _uuid.UUID(str(dataset_id)),
+            "column_id": _uuid.UUID(str(column_id)),
+            "search": search,
+            "result_limit": result_limit,
+            "max_result_bytes": _FINITE_NATIVE_FILTER_VALUE_MAX_RESULT_BYTES,
+        }
+        if evaluation_choices and search_clause:
+            params["choice_search"] = choice_search
+
+        def fetch_bounded(fetch, select, *, size, order):
+            # PostgreSQL has no result-size cap. Stop one row past the budget
+            # so an oversized answer is refused without being transferred.
+            rows = fetch(
+                "SELECT * FROM ("
+                f"SELECT *, sum({size}) OVER (ORDER BY {order}) AS result_bytes "
+                f"FROM ({select}) AS inventory"
+                f") AS bounded WHERE result_bytes - ({size}) "
+                "<= %(max_result_bytes)s",
                 params,
-                timeout_ms=deadline.remaining_ms(_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS),
-                settings={
-                    "max_result_rows": result_limit,
-                    "max_result_bytes": _FINITE_NATIVE_FILTER_VALUE_MAX_RESULT_BYTES,
-                    "result_overflow_mode": "throw",
-                },
             )
-            raw = [row for row in result.data if row.get("val")]
-        except Exception as exc:
-            if is_clickhouse_api_read_unavailable_error(exc):
-                logger.warning(
-                    "dataset_column_filter_values_query_unavailable",
-                    dataset_id=str(dataset_id),
-                    column_id=str(column_id),
-                    error_type=type(exc).__name__,
-                )
-                return self._gm.custom_error_response(
-                    status.HTTP_503_SERVICE_UNAVAILABLE,
-                    "Filter values are temporarily unavailable. Please retry.",
-                    code="service_unavailable",
-                )
-            logger.exception(
-                "dataset_column_filter_values_query_failed",
+            if any(row["result_bytes"] > params["max_result_bytes"] for row in rows):
+                raise DashboardBoundedReadError("result_bytes")
+            return rows
+
+        def read_inventory(fetch):
+            rows = fetch_bounded(
+                fetch,
+                f"SELECT DISTINCT value AS val {scope}"
+                "ORDER BY val LIMIT %(result_limit)s",
+                size="octet_length(val)",
+                order="val",
+            )
+            if not evaluation_choices or len(rows) >= result_limit:
+                return rows
+            # Each cell contributes only an interpretation bit, never its
+            # reason or usage blob. Both bits can be present when the same
+            # storage text means a literal in one cell and a container in
+            # another.
+            modes = {}
+            for cell in fetch_bounded(
+                fetch,
+                "SELECT id, value AS val, "
+                f"CASE WHEN length(value_infos::text) <= {MAX_CHOICE_TEXT} "
+                "THEN value_infos::text ELSE '' END AS value_infos "
+                f"{scope}",
+                size="octet_length(val) + octet_length(value_infos)",
+                order="id",
+            ):
+                mode = 2 if literal_choice(cell["val"], cell["value_infos"]) else 1
+                modes[cell["val"]] = modes.get(cell["val"], 0) | mode
+            return [
+                {"val": row["val"], "choice_modes": modes.get(row["val"])}
+                for row in rows
+            ]
+
+        try:
+            raw = [
+                row
+                for row in _run_filter_value_pg_statements(deadline, read_inventory)
+                if row.get("val")
+            ]
+        except (ReadDeadlineExceeded, DatabaseError, DashboardBoundedReadError) as exc:
+            logger.warning(
+                "dataset_column_filter_values_query_unavailable",
                 dataset_id=str(dataset_id),
                 column_id=str(column_id),
                 error_type=type(exc).__name__,
             )
             return self._gm.custom_error_response(
-                status.HTTP_500_INTERNAL_SERVER_ERROR,
-                "Filter values could not be loaded",
-                code="server_error",
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Filter values are temporarily unavailable. Please retry.",
+                code="service_unavailable",
             )
 
         if len(raw) >= result_limit:

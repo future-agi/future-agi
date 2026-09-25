@@ -15,32 +15,6 @@ MAX_CHOICE_NODES = 1024
 MAX_CHOICES = 256
 MAX_CHOICE_DEPTH = 4
 
-# Each source row contributes only an interpretation bit, never its reason or
-# usage blob. GROUP BY value preserves the old distinct-value read bound. Both
-# bits can be present when the same storage text means a literal in one cell
-# and a container in another. JSONField's double-encoded history is supported.
-CHOICE_INTERPRETATION_CTE = f"""
-WITH
-    if(lengthUTF8(ifNull(value_infos, '')) <= {MAX_CHOICE_TEXT},
-       ifNull(value_infos, ''), '') AS bounded_choice_infos,
-    if(toString(JSONType(bounded_choice_infos)) = 'String',
-       JSONExtractString(bounded_choice_infos), bounded_choice_infos) AS choice_infos,
-    JSONExtractRaw(choice_infos, 'data') AS choice_data,
-    JSONExtractKeys(choice_infos) AS choice_info_keys,
-    JSONExtractKeys(choice_data) AS choice_data_keys,
-    if(toString(JSONType(choice_data)) = 'String', choice_data,
-       if(JSONHas(choice_data, 'result') AND NOT JSONHas(choice_data, 'choice'),
-          JSONExtractRaw(choice_data, 'result'),
-          if(JSONHas(choice_data, 'choice') AND NOT JSONHas(choice_data, 'result'),
-             JSONExtractRaw(choice_data, 'choice'), ''))) AS choice_result,
-    (isValidJSON(choice_infos)
-     AND length(choice_info_keys) = length(arrayDistinct(choice_info_keys))
-     AND length(choice_data_keys) = length(arrayDistinct(choice_data_keys))
-     AND JSONExtractString(choice_infos, 'output') = 'choices'
-     AND toString(JSONType(choice_result)) = 'String'
-     AND JSONExtractString(choice_result) = ifNull(value, '')) AS literal_choice
-"""
-
 
 class InvalidChoiceCell(ValueError):
     """The cell cannot provide an exact choice vocabulary."""
@@ -80,6 +54,45 @@ def _literal(node, depth=0, budget=None):
         if type(value) in (int, float):
             return -value
     _reject()
+
+
+class _RepeatedKeys(dict):
+    """A metadata object whose storage repeated a key."""
+
+
+def _metadata_object(pairs):
+    unique = dict(pairs)
+    return unique if len(unique) == len(pairs) else _RepeatedKeys(unique)
+
+
+def literal_choice(value, value_infos):
+    """Whether the cell's own metadata names ``value`` itself as the choice.
+
+    ``value_infos`` is the stored JSONField text. Historical cells hold that
+    JSON once more as a JSON string, so one string layer is unwrapped. Only
+    the metadata object and its ``data`` object must have unique keys.
+    """
+    if not isinstance(value_infos, str) or len(value_infos) > MAX_CHOICE_TEXT:
+        return False
+    try:
+        infos = json.loads(
+            value_infos, parse_constant=_reject, object_pairs_hook=_metadata_object
+        )
+        if isinstance(infos, str):
+            infos = json.loads(
+                infos, parse_constant=_reject, object_pairs_hook=_metadata_object
+            )
+    except (ValueError, RecursionError):
+        return False
+    if type(infos) is not dict or infos.get("output") != "choices":
+        return False
+    result = infos.get("data")
+    if isinstance(result, dict):
+        keys = result.keys() & {"result", "choice"}
+        if type(result) is not dict or len(keys) != 1:
+            return False
+        result = result[keys.pop()]
+    return isinstance(result, str) and result == value
 
 
 def _historical(text):

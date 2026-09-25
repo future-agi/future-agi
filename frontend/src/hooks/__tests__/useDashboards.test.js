@@ -2365,6 +2365,77 @@ describe("useDatasetColumnValues exact failure semantics", () => {
     expect(mocks.get.mock.calls[1][1].params.page_size).toBe(50);
   });
 
+  it("re-reads an empty vocabulary when the picker reopens", async () => {
+    mocks.get.mockReset();
+    mocks.get
+      .mockResolvedValueOnce({
+        data: { result: { values: [], has_more: false, next_cursor: null } },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          result: {
+            values: ["qa_value_alpha"],
+            has_more: false,
+            next_cursor: null,
+          },
+        },
+      });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const openPicker = () =>
+      renderHook(
+        () =>
+          useDatasetColumnValues({
+            datasetId: "dataset-1",
+            columnId: "column-1",
+          }),
+        { wrapper: createQueryWrapper(queryClient) },
+      );
+
+    const first = openPicker();
+    await waitFor(() => expect(first.result.current.isSuccess).toBe(true));
+    expect(first.result.current.data).toEqual([]);
+    first.unmount();
+
+    const reopened = openPicker();
+    await waitFor(() =>
+      expect(reopened.result.current.data).toEqual(["qa_value_alpha"]),
+    );
+    expect(mocks.get).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps serving a cached vocabulary when the picker reopens", async () => {
+    mocks.get.mockReset();
+    mocks.get.mockResolvedValue({
+      data: {
+        result: { values: ["alpha"], has_more: false, next_cursor: null },
+      },
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const openPicker = () =>
+      renderHook(
+        () =>
+          useDatasetColumnValues({
+            datasetId: "dataset-1",
+            columnId: "column-1",
+          }),
+        { wrapper: createQueryWrapper(queryClient) },
+      );
+
+    const first = openPicker();
+    await waitFor(() => expect(first.result.current.isSuccess).toBe(true));
+    first.unmount();
+
+    const reopened = openPicker();
+    expect(reopened.result.current.data).toEqual(["alpha"]);
+    await act(async () => {});
+    expect(reopened.result.current.isFetching).toBe(false);
+    expect(mocks.get).toHaveBeenCalledTimes(1);
+  });
+
   it("does not relabel a failed exact read as an empty vocabulary", async () => {
     mocks.get.mockRejectedValue(new Error("temporarily unavailable"));
     const queryClient = new QueryClient({

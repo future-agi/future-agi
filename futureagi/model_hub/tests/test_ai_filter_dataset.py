@@ -1,7 +1,7 @@
 """Unit tests for dataset-source support in the AI filter smart agent.
 
 TH-4400 follow-up. The trace AI filter grounds values against the real
-column values in ClickHouse; previously the dataset filter path fell
+column values; previously the dataset filter path fell
 through to schema-agnostic ``build_filters`` (no grounding). These
 tests lock in the refactor:
 
@@ -13,190 +13,127 @@ tests lock in the refactor:
   * ``_resolve_dataset_id`` rejects datasets outside the caller's
     workspace.
 
-The CH + LLM dependencies are mocked — we're testing plumbing, not
+The PostgreSQL read + LLM dependencies are mocked — we're testing plumbing, not
 the model or the query engine.
 """
 
 import json
 import unittest
+import uuid
 from types import SimpleNamespace
 from unittest import mock
 
 from rest_framework.test import APIRequestFactory, force_authenticate
 
+DATASET_ID = "11111111-1111-4111-8111-111111111111"
+COLUMN_ID = "22222222-2222-4222-8222-222222222222"
+
 
 class FetchDatasetColumnValuesTests(unittest.TestCase):
     """``_fetch_dataset_column_values`` parses array/json cells correctly."""
 
-    def _patch_ch(self, values):
-        """Patch CH + Column lookup so the helper sees `values` as raw rows."""
+    def _fetch(self, rows, data_type="text", search_query="ish"):
+        """Run the helper with ``rows`` as the PostgreSQL value read."""
+        from model_hub.views import ai_filter
 
-        class _Result:
-            def __init__(self, rows):
-                self.data = [{"val": v} for v in rows]
-
-        class _Col:
-            data_type = "text"
-
-        return (
-            mock.patch.multiple(
-                "model_hub.views.ai_filter",
-                is_clickhouse_enabled=mock.DEFAULT,
-                AnalyticsQueryService=mock.DEFAULT,
-            ),
-            _Result(values),
-            _Col,
-        )
+        with (
+            mock.patch.object(
+                ai_filter, "_dataset_column_value_rows", return_value=rows
+            ) as read,
+            mock.patch("model_hub.models.develop_dataset.Column.objects") as cols,
+        ):
+            cols.only.return_value.get.return_value = mock.Mock(data_type=data_type)
+            values = ai_filter._fetch_dataset_column_values(
+                DATASET_ID, COLUMN_ID, search_query=search_query
+            )
+        return values, read
 
     def test_text_column_returns_raw_values(self):
-        from model_hub.views import ai_filter
+        vals, read = self._fetch(["English", "Spanish", "French"])
+        self.assertEqual(vals, ["English", "Spanish", "French"])
+        sql, params = read.call_args.args
+        self.assertEqual(params["search"], "ish")
+        self.assertEqual(params["result_limit"], 101)
+        self.assertLessEqual(read.call_args.kwargs["deadline"].remaining_ms(), 4000)
 
-        with (
-            mock.patch(
-                "tracer.services.clickhouse.client.is_clickhouse_enabled",
-                return_value=True,
-            ),
-            mock.patch(
-                "tracer.services.clickhouse.query_service.AnalyticsQueryService"
-            ) as aq,
-            mock.patch("model_hub.models.develop_dataset.Column.objects") as cols,
-        ):
-            aq.return_value.execute_ch_query.return_value = mock.Mock(
-                data=[{"val": "English"}, {"val": "Spanish"}, {"val": "French"}]
-            )
-            cols.only.return_value.get.return_value = mock.Mock(data_type="text")
-
-            vals = ai_filter._fetch_dataset_column_values(
-                "ds-1", "col-1", search_query="ish"
-            )
-            self.assertEqual(vals, ["English", "Spanish", "French"])
-            call = aq.return_value.execute_ch_query.call_args
-            self.assertEqual(call.args[1]["search"], "ish")
-            self.assertEqual(call.args[1]["result_limit"], 101)
-            self.assertLessEqual(call.kwargs["timeout_ms"], 4000)
-
-    def test_column_scope_is_read_before_the_final_merge(self):
-        """The CDC mirror is ordered by cell id; a WHERE-only scope under
-        FINAL reads every cell's value in the table."""
-        from model_hub.views import ai_filter
-
-        with (
-            mock.patch(
-                "tracer.services.clickhouse.client.is_clickhouse_enabled",
-                return_value=True,
-            ),
-            mock.patch(
-                "tracer.services.clickhouse.query_service.AnalyticsQueryService"
-            ) as aq,
-            mock.patch("model_hub.models.develop_dataset.Column.objects") as cols,
-        ):
-            aq.return_value.execute_ch_query.return_value = mock.Mock(data=[])
-            cols.only.return_value.get.return_value = mock.Mock(data_type="text")
-
-            ai_filter._fetch_dataset_column_values("ds-1", "col-1", search_query="x")
-            sql = aq.return_value.execute_ch_query.call_args.args[0]
-            self.assertIn(
-                "FROM model_hub_cell FINAL "
-                "PREWHERE dataset_id = toUUID(%(dataset_id)s) "
-                "AND column_id = toUUID(%(column_id)s) "
-                "WHERE _peerdb_is_deleted = 0 AND value != '' ",
-                sql,
-            )
+    def test_values_are_read_from_postgres_not_the_cdc_mirror(self):
+        """The ClickHouse mirror is ordered by cell id and trails every write,
+        so grounding reads the column from PostgreSQL through its index."""
+        _vals, read = self._fetch([], search_query="x")
+        sql, params = read.call_args.args
+        self.assertIn(
+            "FROM model_hub_cell "
+            "WHERE dataset_id = %(dataset_id)s "
+            "AND column_id = %(column_id)s "
+            "AND deleted = false "
+            "AND value <> '' "
+            "AND strpos(lower(value), lower(%(search)s)) > 0 ",
+            sql,
+        )
+        self.assertNotIn("FINAL", sql)
+        self.assertEqual(params["dataset_id"], uuid.UUID(DATASET_ID))
+        self.assertEqual(params["column_id"], uuid.UUID(COLUMN_ID))
 
     def test_array_column_flattens_list_elements(self):
         """Array cells stored as JSON lists should surface their elements."""
-        from model_hub.views import ai_filter
-
-        with (
-            mock.patch(
-                "tracer.services.clickhouse.client.is_clickhouse_enabled",
-                return_value=True,
-            ),
-            mock.patch(
-                "tracer.services.clickhouse.query_service.AnalyticsQueryService"
-            ) as aq,
-            mock.patch("model_hub.models.develop_dataset.Column.objects") as cols,
-        ):
-            aq.return_value.execute_ch_query.return_value = mock.Mock(
-                data=[
-                    {"val": json.dumps(["English", "French"])},
-                    {"val": json.dumps(["Spanish"])},
-                    {"val": json.dumps(["English", "Spanish"])},
-                ]
-            )
-            cols.only.return_value.get.return_value = mock.Mock(data_type="array")
-
-            vals = ai_filter._fetch_dataset_column_values(
-                "ds-1", "col-1", search_query="ish"
-            )
-            # Dedup + order-preserving
-            self.assertEqual(sorted(vals), sorted(["English", "Spanish"]))
-            self.assertNotIn('["English", "French"]', vals)
+        vals, _read = self._fetch(
+            [
+                json.dumps(["English", "French"]),
+                json.dumps(["Spanish"]),
+                json.dumps(["English", "Spanish"]),
+            ],
+            data_type="array",
+        )
+        # Dedup + order-preserving
+        self.assertEqual(sorted(vals), sorted(["English", "Spanish"]))
+        self.assertNotIn('["English", "French"]', vals)
 
     def test_json_column_dict_extracts_leaf_strings(self):
-        from model_hub.views import ai_filter
-
-        with (
-            mock.patch(
-                "tracer.services.clickhouse.client.is_clickhouse_enabled",
-                return_value=True,
-            ),
-            mock.patch(
-                "tracer.services.clickhouse.query_service.AnalyticsQueryService"
-            ) as aq,
-            mock.patch("model_hub.models.develop_dataset.Column.objects") as cols,
-        ):
-            aq.return_value.execute_ch_query.return_value = mock.Mock(
-                data=[
-                    {"val": json.dumps({"name": "Arthur", "role": "admin"})},
-                    {"val": json.dumps({"name": "Betty", "role": "admin"})},
-                ]
-            )
-            cols.only.return_value.get.return_value = mock.Mock(data_type="json")
-
-            vals = ai_filter._fetch_dataset_column_values(
-                "ds-1", "col-1", search_query="arth"
-            )
-            self.assertIn("Arthur", vals)
-            self.assertNotIn("Betty", vals)
-            self.assertNotIn("admin", vals)
+        vals, _read = self._fetch(
+            [
+                json.dumps({"name": "Arthur", "role": "admin"}),
+                json.dumps({"name": "Betty", "role": "admin"}),
+            ],
+            data_type="json",
+            search_query="arth",
+        )
+        self.assertIn("Arthur", vals)
+        self.assertNotIn("Betty", vals)
+        self.assertNotIn("admin", vals)
 
     def test_array_column_unparseable_cell_falls_back_to_raw(self):
         """A cell that isn't valid JSON should still contribute a value."""
+        vals, _read = self._fetch(
+            ["not-json,just,text"], data_type="array", search_query="json"
+        )
+        self.assertEqual(vals, ["not-json,just,text"])
+
+    def test_read_failure_returns_typed_unavailable(self):
+        from django.db import OperationalError
+
         from model_hub.views import ai_filter
 
         with (
-            mock.patch(
-                "tracer.services.clickhouse.client.is_clickhouse_enabled",
-                return_value=True,
+            mock.patch.object(
+                ai_filter,
+                "_dataset_column_value_rows",
+                side_effect=OperationalError("canceling statement due to timeout"),
             ),
-            mock.patch(
-                "tracer.services.clickhouse.query_service.AnalyticsQueryService"
-            ) as aq,
             mock.patch("model_hub.models.develop_dataset.Column.objects") as cols,
         ):
-            aq.return_value.execute_ch_query.return_value = mock.Mock(
-                data=[{"val": "not-json,just,text"}]
-            )
-            cols.only.return_value.get.return_value = mock.Mock(data_type="array")
-
-            vals = ai_filter._fetch_dataset_column_values(
-                "ds-1", "col-1", search_query="json"
-            )
-            self.assertEqual(vals, ["not-json,just,text"])
-
-    def test_ch_disabled_returns_typed_unavailable(self):
-        from model_hub.views import ai_filter
-
-        with mock.patch(
-            "tracer.services.clickhouse.client.is_clickhouse_enabled",
-            return_value=False,
-        ):
+            cols.only.return_value.get.return_value = mock.Mock(data_type="text")
             with self.assertRaises(ai_filter.SmartFilterGroundingError) as error:
                 ai_filter._fetch_dataset_column_values(
-                    "ds-1", "col-1", search_query="english"
+                    DATASET_ID, COLUMN_ID, search_query="english"
                 )
             self.assertEqual(error.exception.status_code, 503)
+
+    def test_a_full_sentinel_page_is_typed_too_broad(self):
+        from model_hub.views import ai_filter
+
+        with self.assertRaises(ai_filter.SmartFilterGroundingError) as error:
+            self._fetch([f"value-{index}" for index in range(101)])
+        self.assertEqual(error.exception.status_code, 422)
 
     def test_missing_ids_return_typed_too_broad(self):
         from model_hub.views import ai_filter

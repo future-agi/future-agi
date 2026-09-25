@@ -1,7 +1,7 @@
 """Offline reader contracts: execute the real method, never import Django.
 
-ORM/CH boundaries are recording doubles; this does not attest CDC or PG filter
-membership. Run with -c /dev/null --noconftest, explicit root, network denied.
+ORM/PostgreSQL boundaries are recording doubles; this does not attest PG filter
+membership (test_dataset_column_values_pg.py does). Run with -c /dev/null --noconftest, explicit root, network denied.
 """
 
 import ast
@@ -10,6 +10,7 @@ import os
 import socket
 import subprocess
 import sys
+import uuid
 from hashlib import blake2b
 from importlib.util import find_spec
 from pathlib import Path
@@ -48,10 +49,12 @@ SHAPES = [
 # purpose: each arm is what makes it a provable superset of the decoded match
 # (see test_choice_prefilter_is_a_superset_of_the_decoded_match).
 CHOICE_SEARCH_SUPERSET = (
-    "AND (positionCaseInsensitiveUTF8(value, %(choice_search)s) > 0 "
-    "OR position(value, char(92)) > 0 "
-    "OR lengthUTF8(value) != length(value)) "
+    'AND (strpos(lower(value COLLATE "C"), '
+    'lower(%(choice_search)s COLLATE "C")) > 0 '
+    "OR strpos(value, chr(92)) > 0 "
+    "OR octet_length(value) <> char_length(value)) "
 )
+GENERIC_SEARCH = "strpos(lower(value), lower(%(search)s)) > 0"
 
 
 class DeadlineExceeded(Exception):
@@ -93,6 +96,47 @@ def literal_match_reference(value, infos):
         return False
 
 
+LITERAL_METADATA_CASES = [
+    ("[west]", {"output": "choices", "data": {"result": "[west]"}}),
+    ("[west]", {"output": "choices", "data": {"choice": "[west]"}}),
+    ("[west]", {"output": "choices", "data": "[west]"}),
+    ("[west]", {"output": "choices", "data": {"result": "[west]", "choice": "x"}}),
+    ("[west]", {"output": "choices", "data": {"result": ["[west]"]}}),
+    ("[west]", {"output": "choices", "data": {"result": "wrong"}}),
+    ("[west]", {"output": "score", "data": {"result": "[west]"}}),
+    ("[west]", {"data": {"result": "[west]"}}),
+    ("[west]", None),
+    ("[west]", "broken"),
+    ("[west]", '{"output":"choices","data":{"result":"[west]","result":"x"}}'),
+    ("[west]", '{"output":"choices","output":"choices","data":"[west]"}'),
+    ("[west]", '{"output":"choices","data":"[west]","score":NaN}'),
+    ('He said "雪"', {"output": "choices", "data": {"result": 'He said "雪"'}}),
+]
+
+
+@pytest.mark.parametrize("value,metadata", LITERAL_METADATA_CASES)
+@pytest.mark.parametrize("encodings", [0, 1])
+def test_literal_choice_agrees_with_the_fixture_oracle(value, metadata, encodings):
+    """The reader's decoder and this file's independent oracle cannot drift.
+
+    ``value_infos::text`` is the stored JSON; a historical cell stores that
+    JSON once more as a JSON string, which both unwrap exactly once.
+    """
+
+    from tracer.services.dataset_choice_values import literal_choice
+
+    text = json.dumps(metadata) if isinstance(metadata, dict) else metadata or ""
+    if encodings:
+        text = json.dumps(text)
+    try:
+        expected = literal_match_reference(value, text)
+    except ValueError:
+        expected = False
+    if "NaN" in text:
+        expected = False  # ClickHouse's isValidJSON and PostgreSQL both reject it
+    assert literal_choice(value, text) is expected
+
+
 @pytest.fixture(scope="session")
 def dashboard_source():
     # Optional genuine old-source red: no checkout/revert or application import.
@@ -123,7 +167,8 @@ def reader(dashboard_source):
         if isinstance(node, ast.FunctionDef)
         and node.name == "_filter_values_dataset_column"
     )
-    analytics = Mock()
+    postgres = Mock()
+    state = {"oversized_statement": None, "interpretations": True}
     column = NS(data_type="array", source="evaluation")
     manager = Mock()
     manager.select_related.return_value.get.return_value = column
@@ -147,9 +192,10 @@ def reader(dashboard_source):
     )
     scope = {
         "_run_filter_value_pg_read": lambda deadline, fn: fn(),
+        "_run_filter_value_pg_statements": lambda deadline, read: read(postgres),
         "ReadDeadlineExceeded": DeadlineExceeded,
-        "is_clickhouse_enabled": lambda: True,
-        "AnalyticsQueryService": lambda: analytics,
+        "DatabaseError": type("DatabaseError", (Exception,), {}),
+        "DashboardBoundedReadError": type("BoundedReadError", (Exception,), {}),
         "_FINITE_NATIVE_FILTER_VALUE_MAX": 5000,
         "_LEGACY_NATIVE_FILTER_VALUE_MAX": 1000,
         "_FINITE_NATIVE_FILTER_VALUE_MAX_RESULT_BYTES": 1048576,
@@ -159,7 +205,6 @@ def reader(dashboard_source):
             HTTP_500_INTERNAL_SERVER_ERROR=500,
             HTTP_422_UNPROCESSABLE_ENTITY=422,
         ),
-        "is_clickhouse_api_read_unavailable_error": lambda exc: True,
         "logger": Mock(),
     }
     search_method = next(
@@ -178,26 +223,40 @@ def reader(dashboard_source):
     )
 
     def invoke(raw, **params):
-        records = [
-            value if isinstance(value, dict) else {"val": value} for value in raw
-        ]
-        # The query returns one row per distinct raw value, with both observed
-        # interpretations retained. Explanations/usage never enter this key.
-        grouped = {}
-        for row in records:
-            value = row["val"]
-            mode = row.get(
-                "choice_modes",
-                2
-                if literal_match_reference(value, row.get("choice_value_infos"))
-                else 1,
+        # One stored cell per record: its text and its JSONField metadata as
+        # PostgreSQL renders ``value_infos::text``. ``literal`` stands for
+        # producer metadata naming the raw value itself as the choice.
+        cells = []
+        for record in raw:
+            record = record if isinstance(record, dict) else {"val": record}
+            infos = record.get("choice_value_infos")
+            if record.get("literal"):
+                infos = {"output": "choices", "data": {"result": record["val"]}}
+            cells.append(
+                (
+                    record["val"],
+                    json.dumps(infos) if isinstance(infos, dict) else infos or "",
+                )
             )
-            grouped[value] = grouped.get(value, 0) | mode
-        analytics.execute_ch_query.return_value = NS(
-            data=[
-                {"val": value, "choice_modes": mode} for value, mode in grouped.items()
-            ]
-        )
+
+        def fetch(sql, params):
+            if "value_infos" not in sql:
+                distinct = dict.fromkeys(value for value, _infos in cells)
+                rows = [{"val": value, "result_bytes": 0} for value in distinct]
+            else:
+                rows = [
+                    {"id": index, "val": value, "value_infos": infos}
+                    for index, (value, infos) in enumerate(cells)
+                    if state["interpretations"]
+                ]
+                for row in rows:
+                    row["result_bytes"] = 0
+            if rows and state["oversized_statement"] == postgres.call_count - 1:
+                rows[-1]["result_bytes"] = params["max_result_bytes"] + 1
+            return rows
+
+        postgres.reset_mock()
+        postgres.side_effect = fetch
         with patch.dict(sys.modules, {"model_hub.models.develop_dataset": model}):
             return scope[method.name](
                 view,
@@ -211,7 +270,8 @@ def reader(dashboard_source):
     return NS(
         invoke=invoke,
         column=column,
-        analytics=analytics,
+        postgres=postgres,
+        state=state,
         manager=manager,
         deadline=deadline,
         request=request,
@@ -321,7 +381,7 @@ def test_literal_metadata_does_not_authorize_surrogate_scalars(digesting_reader)
     with pytest.raises(InvalidChoiceCell):
         evaluation_choice_labels("\ud800", literal=True)
     assert (
-        digesting_reader.invoke([{"val": "\ud800", "choice_modes": 2}])["status"] == 503
+        digesting_reader.invoke([{"val": "\ud800", "literal": True}])["status"] == 503
     )
 
 
@@ -398,34 +458,47 @@ def test_untrusted_column_metadata_cannot_supply_or_replace_labels(reader):
     ]
 
 
+# PostgreSQL holds the dataset and is what the dataset table filters read. The
+# ClickHouse mirror is ordered by cell id (dev: 14.3M rows / 19.5 GB read for a
+# 12-cell column) and trails every write by a CDC batch (B04).
+CELL_SCOPE = (
+    "FROM model_hub_cell "
+    "WHERE dataset_id = %(dataset_id)s "
+    "AND column_id = %(column_id)s "
+    "AND deleted = false "
+    "AND value <> '' "
+)
+
+
 @pytest.mark.parametrize("origin", ["evaluation", "others"])
 def test_scope_search_deadline_and_cursor_are_forwarded_unchanged(reader, origin):
     reader.column.source = origin
     response = reader.invoke(["west"], search="we", cursor="bound-cursor")
-    sql, params = reader.analytics.execute_ch_query.call_args.args
-    assert "FROM model_hub_cell FINAL" in sql
-    assert "_peerdb_is_deleted = 0" in sql
-    assert ("positionCaseInsensitiveUTF8(value, %(search)s) > 0" in sql) == (
-        origin == "others"
-    )
-    # The eval-choice arm may bound the read, but never by the plain search
-    # parameter that the generic arm uses: its predicate is the full escape-
-    # and-non-ASCII-safe disjunction, so the decoded filter below still owns
-    # the verdict.
-    assert (CHOICE_SEARCH_SUPERSET in sql) == (origin == "evaluation")
-    assert ("groupBitOr(if(literal_choice, 2, 1)) AS choice_modes" in sql) == (
-        origin == "evaluation"
-    )
-    assert ("GROUP BY value ORDER BY val LIMIT %(result_limit)s" in sql) == (
-        origin == "evaluation"
-    )
-    assert "value_infos AS choice_value_infos" not in sql
-    assert "DISTINCT value AS val, value_infos" not in sql
+    statements = [call.args for call in reader.postgres.call_args_list]
+    # Eval choices read their interpretation metadata in a second statement of
+    # the same snapshot, only after the value inventory proved finite.
+    assert len(statements) == (2 if origin == "evaluation" else 1)
+    inventory, params = statements[0]
+    assert "SELECT DISTINCT value AS val FROM model_hub_cell " in inventory
+    assert "ORDER BY val LIMIT %(result_limit)s" in inventory
+    for sql, _params in statements:
+        assert CELL_SCOPE in sql
+        assert "FINAL" not in sql and "_peerdb" not in sql
+        assert (GENERIC_SEARCH in sql) == (origin == "others")
+        # The eval-choice arm may bound the read, but never by the plain
+        # search parameter that the generic arm uses: its predicate is the
+        # full escape- and non-ASCII-safe disjunction, so the decoded filter
+        # below still owns the verdict.
+        assert (CHOICE_SEARCH_SUPERSET in sql) == (origin == "evaluation")
+        assert "<= %(max_result_bytes)s" in sql
+    assert ("value_infos" in statements[-1][0]) == (origin == "evaluation")
+    assert "value_infos" not in inventory
     assert params == {
-        "dataset_id": DATASET,
-        "column_id": COLUMN,
+        "dataset_id": uuid.UUID(DATASET),
+        "column_id": uuid.UUID(COLUMN),
         "search": "we",
         "result_limit": 5001,
+        "max_result_bytes": 1048576,
         **({"choice_search": "we"} if origin == "evaluation" else {}),
     }
     assert reader.manager.select_related.return_value.get.call_args.kwargs == {
@@ -436,15 +509,6 @@ def test_scope_search_deadline_and_cursor_are_forwarded_unchanged(reader, origin
         "dataset__deleted": False,
         "deleted": False,
     }
-    options = reader.analytics.execute_ch_query.call_args.kwargs
-    assert options == {
-        "timeout_ms": 1000,
-        "settings": {
-            "max_result_rows": 5001,
-            "max_result_bytes": 1048576,
-            "result_overflow_mode": "throw",
-        },
-    }
     assert response["query_params"]["cursor"] == "bound-cursor"
     assert response["query"] == {
         "source": "dataset_column",
@@ -453,35 +517,31 @@ def test_scope_search_deadline_and_cursor_are_forwarded_unchanged(reader, origin
         "dataset_id": DATASET,
         "attribute_type": "array",
     }
-    assert reader.deadline.remaining_ms.call_count == 2
+    assert reader.deadline.remaining_ms.call_count == 1
 
 
-# The CDC mirror is ordered by cell id, and FINAL never moves a non-key WHERE
-# predicate to PREWHERE, so a WHERE-only scope reads and merges every cell's
-# value in the table (dev: 14.3M rows / 19.5 GB for a 12-cell column).
-SCOPE_PREWHERE = (
-    "FROM model_hub_cell FINAL "
-    "PREWHERE dataset_id = toUUID(%(dataset_id)s) "
-    "AND column_id = toUUID(%(column_id)s) "
-    "WHERE _peerdb_is_deleted = 0 AND value != '' "
-)
+@pytest.mark.parametrize("statement", [0, 1])
+def test_an_oversized_result_is_refused_not_truncated(reader, statement):
+    """PostgreSQL has no result-byte cap, so each read stops one row past it."""
 
-
-@pytest.mark.parametrize("origin", ["evaluation", "others"])
-def test_column_scope_is_read_before_the_final_merge(reader, origin):
-    reader.column.source = origin
-    reader.invoke(["west"], search="west")
-    sql = reader.analytics.execute_ch_query.call_args.args[0]
-    assert SCOPE_PREWHERE in sql
-    # Latest-state and value predicates stay after the merge.
-    where = sql.split(" WHERE ", 1)[1]
-    assert "dataset_id" not in where and "column_id" not in where
+    reader.state["oversized_statement"] = statement
+    assert reader.invoke(["west"])["status"] == 503
+    reader.view._finite_native_filter_values_response.assert_not_called()
 
 
 def test_deadline_and_inventory_remain_fail_closed(reader):
-    reader.deadline.remaining_ms.side_effect = [1000, DeadlineExceeded()]
+    reader.deadline.remaining_ms.side_effect = [DeadlineExceeded()]
     assert reader.invoke(["west"])["status"] == 503
     reader.deadline.remaining_ms.side_effect = None
+    run_statements = reader.scope["_run_filter_value_pg_statements"]
+    for error in (DeadlineExceeded, reader.scope["DatabaseError"]):
+        # A PostgreSQL statement_timeout surfaces as a DatabaseError.
+        def timed_out(deadline, read, error=error):
+            raise error("canceling statement due to statement timeout")
+
+        reader.scope["_run_filter_value_pg_statements"] = timed_out
+        assert reader.invoke(["west"])["status"] == 503
+    reader.scope["_run_filter_value_pg_statements"] = run_statements
     reader.scope["_FINITE_NATIVE_FILTER_VALUE_MAX"] = 1
     assert reader.invoke(["east", "west"])["status"] == 422
     assert reader.invoke(['["east", "west"]'])["status"] == 422
@@ -537,8 +597,8 @@ def test_search_matches_decoded_label_not_escaped_storage(reader, label, page_si
     # "0.2" occurs in the stored score text but is not a decoded label, so a
     # row the bounded pre-filter keeps is still dropped by the decoder. The
     # pre-filter may narrow the read; it may never decide the answer.
-    sql = reader.analytics.execute_ch_query.call_args.args[0]
-    assert "positionCaseInsensitiveUTF8(value, %(search)s) > 0" not in sql
+    sql = reader.postgres.call_args.args[0]
+    assert GENERIC_SEARCH not in sql
     assert CHOICE_SEARCH_SUPERSET in sql
 
 
@@ -609,7 +669,7 @@ def test_expanded_matching_choices_still_obey_the_distinct_cap(
 def test_choice_search_filters_both_interpretations_before_the_expanded_cap(reader):
     reader.scope["_FINITE_NATIVE_FILTER_VALUE_MAX"] = 1
     response = reader.invoke(
-        [{"val": '["west"]', "choice_modes": 3}], search='["'
+        [{"val": '["west"]', "literal": True}, '["west"]'], search='["'
     )
     assert response["status"] == 200
     assert response["values"] == [{"value": '["west"]', "label": '["west"]'}]
@@ -633,25 +693,26 @@ def test_a_narrow_search_bounds_the_read_instead_of_scanning_everything(reader):
     """
 
     reader.invoke(["west"], search="")
-    unfiltered = reader.analytics.execute_ch_query.call_args.args[0]
+    unfiltered = reader.postgres.call_args.args[0]
     reader.invoke(["west"], search="west")
-    narrowed, params = reader.analytics.execute_ch_query.call_args.args
+    narrowed, params = reader.postgres.call_args.args
     assert CHOICE_SEARCH_SUPERSET not in unfiltered
     assert CHOICE_SEARCH_SUPERSET in narrowed
     assert params["choice_search"] == "west"
 
 
 @pytest.mark.parametrize("search", ["雪", " 雪 ", "café", "İ", ""])
-def test_a_search_clickhouse_cannot_bound_safely_reads_everything(reader, search):
+def test_a_search_sql_cannot_bound_safely_reads_everything(reader, search):
     """Fail open to the full bounded inventory, never to a wrong answer.
 
-    ``positionCaseInsensitiveUTF8`` agrees with Python's ``casefold`` only
-    while both sides stay ASCII, so a non-ASCII needle may not be matchable in
-    ClickHouse at all. The read then stays unfiltered and the cap still applies.
+    An ASCII-only case-insensitive match agrees with Python's ``casefold``
+    only while both sides stay ASCII, so a non-ASCII needle may not be
+    matchable in SQL at all. The read then stays unfiltered and the cap still
+    applies.
     """
 
     reader.invoke(["west"], search=search)
-    sql, params = reader.analytics.execute_ch_query.call_args.args
+    sql, params = reader.postgres.call_args.args
     assert CHOICE_SEARCH_SUPERSET not in sql
     assert "choice_search" not in params
 
@@ -661,17 +722,20 @@ def test_the_prefilter_never_narrows_a_generic_array_column(reader):
 
     reader.column.source = "others"
     reader.invoke(['["west"]'], search="west")
-    sql, params = reader.analytics.execute_ch_query.call_args.args
+    sql, params = reader.postgres.call_args.args
     assert CHOICE_SEARCH_SUPERSET not in sql
     assert "choice_search" not in params
-    assert "positionCaseInsensitiveUTF8(value, %(search)s) > 0" in sql
+    assert GENERIC_SEARCH in sql
 
 
 @pytest.mark.parametrize(
     "arm",
     [
-        "OR position(value, char(92)) > 0 ",
-        "OR lengthUTF8(value) != length(value)) ",
+        "OR strpos(value, chr(92)) > 0 ",
+        "OR octet_length(value) <> char_length(value)) ",
+        # Any collation but "C" can lowercase ASCII into non-ASCII (Turkish
+        # dotted I), which would drop a row Python's casefold keeps.
+        'lower(value COLLATE "C")',
     ],
 )
 def test_every_arm_of_the_prefilter_is_load_bearing(reader, arm):
@@ -679,11 +743,11 @@ def test_every_arm_of_the_prefilter_is_load_bearing(reader, arm):
 
     Each arm is what keeps the predicate a superset: escaped storage can decode
     to characters it does not literally contain, and a non-ASCII cell can
-    casefold differently than ClickHouse lowercases it.
+    casefold differently than PostgreSQL lowercases it.
     """
 
     reader.invoke(["west"], search="west")
-    sql = reader.analytics.execute_ch_query.call_args.args[0]
+    sql = reader.postgres.call_args.args[0]
     assert arm in sql
 
 
@@ -733,12 +797,10 @@ def test_many_explanations_do_not_change_distinct_value_cardinality(reader):
     ]
     response = reader.invoke(records)
     assert response["values"] == [{"value": v, "label": v} for v in ("east", "west")]
-    assert len(reader.analytics.execute_ch_query.return_value.data) == 2
-    sql = reader.analytics.execute_ch_query.call_args.args[0]
-    assert "GROUP BY value ORDER BY val" in sql
-    assert "groupBitOr(if(literal_choice, 2, 1)) AS choice_modes" in sql
-    assert "DISTINCT value AS val, value_infos" not in sql
-    assert "any(value_infos)" not in sql and "groupArray" not in sql
+    # The value inventory, and so the cap, counts distinct storage texts only.
+    inventory = reader.postgres.call_args_list[0]
+    assert "SELECT DISTINCT value AS val FROM" in inventory.args[0]
+    assert len(reader.postgres.side_effect(*inventory.args)) == 2
 
 
 def test_metadata_for_one_value_cannot_classify_another(reader):
@@ -757,9 +819,10 @@ def test_metadata_for_one_value_cannot_classify_another(reader):
     assert response["status"] == 503
 
 
-@pytest.mark.parametrize("mode", [0, 4, 7])
-def test_invalid_aggregate_protocol_is_not_a_complete_vocabulary(reader, mode):
-    assert reader.invoke([{"val": "west", "choice_modes": mode}])["status"] == 503
+def test_a_value_without_an_interpretation_is_not_a_complete_vocabulary(reader):
+    reader.state["interpretations"] = False
+    assert reader.invoke(["west"])["status"] == 503
+    reader.view._finite_native_filter_values_response.assert_not_called()
 
 
 @pytest.fixture

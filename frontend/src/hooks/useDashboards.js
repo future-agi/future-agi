@@ -291,6 +291,16 @@ const SYSTEM_FILTER_VALUE_PAGE_FILL_DEADLINE_MS = ANALYTICS_REQUEST_TIMEOUT_MS;
 const SYSTEM_FILTER_VALUE_PAGE_FILL_MAX_CONTINUATIONS =
   CURSOR_MAX_EMPTY_CONTINUATIONS;
 
+// An empty vocabulary is the answer most likely to change next (a value just
+// typed into a dataset cell, a span still being ingested). Reopening a picker
+// re-reads it instead of replaying the cached "no values" for the stale time.
+const refetchEmptyFilterValuesOnMount = (query) => {
+  const pages = query.state.data?.pages || [];
+  return pages.length > 0 && pages.every((page) => !page?.values?.length)
+    ? "always"
+    : false;
+};
+
 const getFilterValueIdentity = (option) => {
   const value =
     option && typeof option === "object" && "value" in option
@@ -1139,7 +1149,7 @@ export function useDashboardFilterValues({
     staleTime: FILTER_VALUE_STALE_TIME_MS,
     gcTime: FILTER_VALUE_CACHE_TIME_MS,
     refetchOnWindowFocus: false,
-    refetchOnMount: false,
+    refetchOnMount: refetchEmptyFilterValuesOnMount,
     refetchOnReconnect: false,
     // This surface renders a deliberately generic retry state. Prevent the
     // global query handler from echoing a backend/ClickHouse error payload.

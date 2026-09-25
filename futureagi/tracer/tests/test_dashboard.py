@@ -12999,17 +12999,15 @@ class TestFilterValuesEndpoint:
         assert "temporarily unavailable" in json.dumps(payload)
 
     @pytest.mark.django_db
-    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
-    @patch("tracer.views.dashboard.AnalyticsQueryService")
     def test_dataset_column_flattens_array_cells(
-        self, mock_analytics_cls, _mock_ch, auth_client, organization, workspace
+        self, auth_client, organization, workspace
     ):
         from model_hub.models.choices import (
             DataTypeChoices,
             SourceChoices,
             StatusType,
         )
-        from model_hub.models.develop_dataset import Column, Dataset
+        from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 
         dataset = Dataset.objects.create(
             name="DS", organization=organization, workspace=workspace
@@ -13022,14 +13020,11 @@ class TestFilterValuesEndpoint:
             status=StatusType.RUNNING.value,
             dataset=dataset,
         )
-        mock_service = MagicMock()
-        mock_result = MagicMock()
-        mock_result.data = [
-            {"val": '["English","French"]'},
-            {"val": '["English","Spanish"]'},
-        ]
-        mock_service.execute_ch_query.return_value = mock_result
-        mock_analytics_cls.return_value = mock_service
+        for order, value in enumerate(
+            ['["English","French"]', '["English","Spanish"]']
+        ):
+            row = Row.objects.create(dataset=dataset, order=order)
+            Cell.objects.create(dataset=dataset, column=column, row=row, value=value)
 
         response = auth_client.get(
             self.URL,
