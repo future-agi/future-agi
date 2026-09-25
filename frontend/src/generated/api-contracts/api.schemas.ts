@@ -4090,6 +4090,8 @@ export interface SetupCheckApi {
   status: SetupCheckApiStatus;
   required: boolean;
   detail: string;
+  fix: string;
+  docs_url: string;
 }
 
 export interface SetupChecksResultApi {

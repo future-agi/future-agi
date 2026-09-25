@@ -60,7 +60,7 @@ export default function OssSetupView() {
       {step === 1 && (
         <ValidationStep
           mode={mode}
-          onBack={() => setStep(0)}
+          onSwitchMode={setMode}
           onContinue={handleValidationContinue}
           onProgress={setValidationProgress}
         />
