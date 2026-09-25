@@ -18,6 +18,7 @@ from tracer.services.clickhouse.bounded_graph_reads import (
     read_graph_candidates,
 )
 from tracer.services.clickhouse.graph_dispatch import (
+    OBSERVE_SYSTEM_GRAPH_PAYLOAD_VERSION,
     _require_rollup_result_shape,
     degraded_graph_response,
     fetch_annotation_graph_ch,
@@ -756,6 +757,7 @@ def fetch_session_graph_ch(
             "filters": filters,
             "interval": interval,
             "metric_id": metric_id,
+            "payload_version": OBSERVE_SYSTEM_GRAPH_PAYLOAD_VERSION,
         }
         if organization_id is not None:
             identity["organization_id"] = str(organization_id)
