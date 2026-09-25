@@ -32,6 +32,9 @@ Playwright config — and it imports nothing from `frontend/` or `futureagi/`.
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+Because code-executor is not started, `e2e/stack/e2e.env` sets `CODE_EXECUTOR_LOCAL_FALLBACK=true` so
+code evals run in the worker instead of failing with "Code executor unavailable".
+
 Eval results, annotation scores and the dataset/simulation dashboards reach ClickHouse **only**
 through the PeerDB mirrors — Django writes those rows to Postgres alone. That is why PeerDB is part
 of the stack and why anything asserting on them needs a CDC-sized poll budget.

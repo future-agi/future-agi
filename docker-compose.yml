@@ -117,6 +117,9 @@ x-backend-env: &backend-env
   DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-}
   SERVER_EMAIL: ${SERVER_EMAIL:-}
   CODE_EXECUTOR_URL: http://code-executor:8060
+  # Code evals run only on code-executor. true lets them run in the worker when
+  # code-executor cannot be reached; see INSTALLATION.md before enabling.
+  CODE_EXECUTOR_LOCAL_FALLBACK: ${CODE_EXECUTOR_LOCAL_FALLBACK:-false}
   SERVING_URL: http://serving:8080
 
   # Database — point Django's pgbouncer-aware config at postgres directly.
