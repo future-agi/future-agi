@@ -1242,6 +1242,86 @@ describe.each(["trace", "span"])("%s grid completion regression", (kind) => {
     },
   );
 
+  it("reloads the first page when a manual refresh cancels its read", async () => {
+    const first = deferredCompletion();
+    getMock
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce(listResponse({ rows: [currentRow], totalRows: 1 }));
+    const props = baseProps();
+    const ref = React.createRef();
+    render(renderGridSubject({ kind, ref, props, filters: props.filters }));
+    const grid = await completionGrid(gridState.props.serverSideDatasource);
+    try {
+      await waitFor(() => expect(getMock).toHaveBeenCalledTimes(1));
+      const firstSignal = getMock.mock.calls[0][1].signal;
+      // The header reload keeps the cache (purge: false). AG Grid does not
+      // re-mark a block that is still a loading stub, so the cancelled read's
+      // fail() is the last word on page 0 unless the grid retries it.
+      act(() => window.dispatchEvent(new Event("observe-refresh")));
+      expect(firstSignal.aborted).toBe(true);
+      await act(async () => {
+        await grid.reads[0].settled;
+      });
+      expect(grid.reads[0].fail).toHaveBeenCalledOnce();
+      expect(grid.reads[0].success).not.toHaveBeenCalled();
+      await waitFor(() =>
+        expect(grid.api.getDisplayedRowAtIndex(0)?.data).toEqual(currentRow),
+      );
+      expect(getMock).toHaveBeenCalledTimes(2);
+      expect(grid.reads[1].success).toHaveBeenCalledOnce();
+      expect(grid.reads[1].fail).not.toHaveBeenCalled();
+    } finally {
+      grid.close();
+      await act(async () => {
+        first.resolve(listResponse());
+        await Promise.all(grid.reads.map((read) => read.settled));
+      });
+    }
+  });
+
+  it("reloads visible rows when a manual refresh cancels an earlier refresh read", async () => {
+    const firstRow = { ...currentRow, trace_id: "first", span_id: "first" };
+    const refreshRead = deferredCompletion();
+    getMock
+      .mockResolvedValueOnce(listResponse({ rows: [firstRow], totalRows: 1 }))
+      .mockReturnValueOnce(refreshRead.promise)
+      .mockResolvedValueOnce(listResponse({ rows: [currentRow], totalRows: 1 }));
+    const props = baseProps();
+    const ref = React.createRef();
+    render(renderGridSubject({ kind, ref, props, filters: props.filters }));
+    const grid = await completionGrid(gridState.props.serverSideDatasource);
+    try {
+      await waitFor(() =>
+        expect(grid.api.getDisplayedRowAtIndex(0)?.data).toEqual(firstRow),
+      );
+      act(() => window.dispatchEvent(new Event("observe-refresh")));
+      await waitFor(() => expect(getMock).toHaveBeenCalledTimes(2));
+      // The first refresh keeps the exact rows on screen while it reads.
+      expect(grid.api.getDisplayedRowAtIndex(0)?.data).toEqual(firstRow);
+      const refreshSignal = getMock.mock.calls[1][1].signal;
+
+      act(() => window.dispatchEvent(new Event("observe-refresh")));
+      expect(refreshSignal.aborted).toBe(true);
+      await act(async () => {
+        await grid.reads[1].settled;
+      });
+      expect(grid.reads[1].fail).toHaveBeenCalledOnce();
+      // The cancelled refresh read replaced the visible rows with failed
+      // placeholders; the second refresh must still load the page.
+      await waitFor(() =>
+        expect(grid.api.getDisplayedRowAtIndex(0)?.data).toEqual(currentRow),
+      );
+      expect(getMock).toHaveBeenCalledTimes(3);
+      expect(grid.reads[2].success).toHaveBeenCalledOnce();
+    } finally {
+      grid.close();
+      await act(async () => {
+        refreshRead.resolve(listResponse());
+        await Promise.all(grid.reads.map((read) => read.settled));
+      });
+    }
+  });
+
   it("does not acquire transport or loading for an already-dead API", async () => {
     getMock.mockResolvedValueOnce(listResponse());
     const props = renderGrid(kind);
