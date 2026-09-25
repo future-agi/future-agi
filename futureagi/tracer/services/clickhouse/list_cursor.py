@@ -193,6 +193,19 @@ def _normalized_filter(item: Any) -> Any:
     return canonical_item
 
 
+def canonical_filter_leaf(item: Any) -> str:
+    """One filter leaf as a cursor binds it: the key ``normalize_filter_conjunction``
+    sorts and deduplicates the conjunction by.
+
+    Two leaves a cursor cannot tell apart (the same leaf in another position,
+    with another display label, or with its ``in`` values in another order)
+    have the same key, so a choice ranked on it is the same for every request
+    a cursor admits.
+    """
+
+    return _canonical_json(_normalized_filter(item))
+
+
 def normalize_filter_conjunction(filters: list[Any] | tuple[Any, ...]) -> list[Any]:
     """Canonicalize one AND-conjunction without presentation-only metadata."""
 

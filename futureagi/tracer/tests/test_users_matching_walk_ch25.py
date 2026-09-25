@@ -483,6 +483,7 @@ def test_empty_thirty_day_tail_is_proven_by_one_costed_existence_statement(
             search="",
             empty_scope=False,
         )
+        candidate.walk_witness = candidate.matching_activity_witness()
         sql, params = candidate.build_matching_activity_existence_estimate_query(
             range_start=WINDOW_START, range_end=WINDOW_END
         )

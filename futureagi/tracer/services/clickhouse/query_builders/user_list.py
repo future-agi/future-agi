@@ -1,10 +1,12 @@
 """ClickHouse query builder for Observe end-user list and detail metrics."""
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
 
 from tracer.services.clickhouse.eval_logger_table import eval_logger_source
+from tracer.services.clickhouse.list_cursor import canonical_filter_leaf
 from tracer.services.clickhouse.query_builders.base import (
     BaseQueryBuilder,
     _unix_microseconds,
@@ -17,9 +19,129 @@ from tracer.services.clickhouse.v2.id_remap_sql import (
     survivor_map_subquery,
 )
 
+# Native span dimensions the Users table has no per-user aggregate for.
+# ``SYSTEM_METRIC_MAP`` resolves each of these to a physical ``spans`` column,
+# and none of them has an ``OUTPUT_FILTER_MAP`` entry, so a Users filter on one
+# is answered from the user's own spans — the same any-span population the
+# users graph aggregates — instead of being looked up in the span attribute
+# maps, where a native column has no key and every user reads NULL.
+USER_NATIVE_SPAN_DIMENSIONS: dict[str, str] = {
+    "status": "status",
+    "model": "model",
+    "provider": "provider",
+    "observation_type": "observation_type",
+    "span_kind": "observation_type",
+    "node_type": "observation_type",
+    "name": "name",
+    "span_name": "name",
+    "trace_name": "trace_name",
+}
+
 
 class UnsupportedBoundedUserListQuery(ValueError):
     """Raised when an exact user page cannot use the bounded query path."""
+
+
+@dataclass(frozen=True)
+class MatchingActivityWitness:
+    """The one physical-row predicate the matching-activity walk discovers on.
+
+    ``family`` is ``raw`` (a span-attribute leaf, served by the deployed key
+    and value blooms) or ``native`` (a native span-dimension leaf, the users
+    graph's own per-span flag). ``sql``/``params`` are the predicate every
+    slice, instant, existence and estimate statement puts in ``WHERE``. A raw
+    witness names its attribute ``key`` and ``kind`` (``text``, ``number`` or
+    ``boolean``); a native one the filter index of its leaf (``leaf_index``),
+    the flag alias it certifies its order key on (``flag_alias``) and its
+    column (``key``, display only). ``index_pruned`` says whether a skip index
+    is known to serve the predicate, so an empty slice costs only its fixed
+    overhead; it is False for a native witness (only ``idx_status`` serves one
+    of them, and not by design).
+
+    ``identity`` is the leaf as the signed cursor binds it
+    (``canonical_filter_leaf``): the same for every request a cursor admits,
+    whatever position the leaf holds in it. ``leaf_index`` is only the
+    namespace of the leaf's parameters in this request. The choice among
+    witnesses ranks on ``identity``, never on position, and the walk binds
+    the chosen one into its cursor (``users_matching_walk``). It is left out
+    of equality: the predicate is what a witness is.
+    """
+
+    family: str
+    key: str
+    kind: str
+    sql: str
+    params: dict[str, Any] = field(default_factory=dict)
+    leaf_index: int | None = None
+    flag_alias: str | None = None
+    index_pruned: bool = True
+    identity: str = field(default="", compare=False)
+
+
+# How selective a walk witness is expected to be, most selective first
+# (``witness_selectivity_rank``). A witness the page's matches are rare
+# under, but that matches most users, finds the same users again in every
+# slice: each request certifies them, rejects them and publishes nothing, for
+# as many requests as the window has slices. So the walk discovers on the
+# rarest leaf it can name without reading anything, by what the leaf asks for:
+#
+# 0  a raw text equality/``in``: a value of a key the user chose, served by
+#    the key and value blooms;
+# 1  ``status`` equal to ERROR alone: errors are the exception by definition;
+# 2  a span or trace name: one per operation, the widest native vocabulary;
+# 3  a model;
+# 4  a provider or an observation type (a handful of values), and a raw
+#    number or boolean (a range, or one of two values);
+# 5  a native pattern (``contains``, ``starts_with``, ``ends_with``);
+# 6  ``status`` with OK or UNSET among its values: what almost every span is;
+# 7  a native negation or null test: every span without the named value,
+#    or with any value at all.
+#
+# Known limitation: the rank is static, a guess from what the leaf asks for,
+# never from the data. When the guess is wrong the walk still publishes every
+# member exactly once, in order; it only takes more requests, most of them
+# empty degraded pages. A raw text leaf always ranks first, so a common raw
+# value (``env = production``, ``plan = pro``) is walked ahead of a rare
+# native leaf such as ``status = ERROR``; ``trace_name`` ranks above
+# ``model`` even when it is the denser of the two; and ``observation_type``
+# ties with ``provider``, the tie going to the leaf's identity, so
+# ``observation_type`` wins. Measuring density per request (an ``EXPLAIN
+# ESTIMATE`` of each candidate witness, or catalog value counts) is not done:
+# a cost probe reads the bloom index cold on the largest projects, and the
+# rank must stay a function of the filters the cursor binds.
+_WITNESS_RANK_NATIVE_EQUALITY = {
+    "name": 2,
+    "trace_name": 2,
+    "model": 3,
+    "provider": 4,
+    "observation_type": 4,
+}
+_WITNESS_RANK_DENSE_STATUS = frozenset({"ok", "unset"})
+_WITNESS_RANK_PATTERN_OPS = frozenset({"contains", "starts_with", "ends_with"})
+
+
+def witness_selectivity_rank(
+    item: dict[str, Any], witness: MatchingActivityWitness
+) -> int:
+    """The static selectivity rank of ``witness``, the witness of leaf ``item``."""
+
+    if witness.family == "raw":
+        return 0 if witness.kind == "text" else 4
+    config = item.get("filter_config") or item.get("filterConfig") or {}
+    operation = config.get("filter_op") or config.get("filterOp")
+    if operation in {"equals", "in"}:
+        if witness.key == "status":
+            raw = config.get("filter_value", config.get("filterValue"))
+            values = raw if isinstance(raw, (list, tuple)) else [raw]
+            dense = any(
+                str(value).strip().lower() in _WITNESS_RANK_DENSE_STATUS
+                for value in values
+            )
+            return 6 if dense else 1
+        return _WITNESS_RANK_NATIVE_EQUALITY.get(witness.key, 4)
+    if operation in _WITNESS_RANK_PATTERN_OPS:
+        return 5
+    return 7
 
 
 # The page metrics ``build_requested_page_metric_queries`` reads, one
@@ -268,6 +390,11 @@ class UserListQueryBuilder(BaseQueryBuilder):
         # treats `project_ids=[]` as falsy and would otherwise drop project
         # scoping entirely, re-introducing a cross-workspace leak.)
         self.empty_scope = empty_scope
+        # The witness the matching-activity walk chose for this page, set once
+        # by the walk (``UsersListManager.matching_activity_walk_applies``
+        # decides it); every slice, instant and probe statement reads it and
+        # none recomputes it.
+        self.walk_witness: MatchingActivityWitness | None = None
 
     def _finite_end_user_map(
         self,
@@ -478,31 +605,104 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 return witness, params
         return "", {}
 
-    def matching_activity_witness(
-        self,
-    ) -> tuple[str, str, str, dict[str, Any]] | None:
-        """The scalar witness the walk discovers on: ``(key, kind, sql, params)``.
+    def matching_activity_witnesses(self) -> list[MatchingActivityWitness]:
+        """Every witness the walk may discover on, the most selective first.
 
-        The walk prefers exactly the witness the seeded candidate page would
-        have used, so both paths admit the same raw superset; when the page
-        has none it takes the first witness that qualifies the walk alone (a
-        boolean typed-map witness, or a positive equality whose missing-key
-        default the graph witness declines). It needs the key to read that
-        filter's certified order key back from the page enrichment. ``kind``
-        is ``text``, ``number`` or ``boolean``.
+        Raw span-attribute witnesses (``_scalar_user_witnesses``) and native
+        leaves with an existence term (``_native_user_witnesses``), ranked by
+        ``witness_selectivity_rank`` (a documented static order: no statement
+        is spent measuring it), then a raw witness before a native one (the
+        blooms serve it, so an empty slice costs only its overhead), then one
+        the seeded page could seed on before one that qualifies the walk
+        alone, then the least ``identity``. Never by position in the request:
+        the cursor binds the filters without their order, so every request a
+        cursor admits ranks them the same. Whether the walk accepts a raw
+        witness is the manager's decision
+        (``UsersListManager.matching_activity_walk_applies``); it takes the
+        first one it accepts.
         """
-        chosen = None
+        ranked: list[tuple[int, int, bool, str, MatchingActivityWitness]] = []
         for item, kind, witness, params, seedable in self._scalar_user_witnesses():
-            found = (
-                str(item.get("column_id") or item.get("columnId")),
-                kind,
-                witness,
-                params,
+            found = MatchingActivityWitness(
+                family="raw",
+                key=str(item.get("column_id") or item.get("columnId")),
+                kind=kind,
+                sql=witness,
+                params=params,
+                identity=canonical_filter_leaf(item),
             )
-            if seedable:
-                return found
-            chosen = chosen or found
-        return chosen
+            rank = witness_selectivity_rank(item, found)
+            ranked.append((rank, 0, not seedable, found.identity, found))
+        for found in self._native_user_witnesses():
+            rank = witness_selectivity_rank(self.filters[found.leaf_index], found)
+            ranked.append((rank, 1, False, found.identity, found))
+        ranked.sort(key=lambda entry: entry[:4])
+        return [entry[-1] for entry in ranked]
+
+    def matching_activity_witness(self) -> MatchingActivityWitness | None:
+        """The raw span-attribute witness ranked first (``matching_activity_witnesses``).
+
+        ``kind`` is ``text``, ``number`` or ``boolean``; the walk needs the
+        key to read that filter's certified order key back from the page
+        enrichment.
+        """
+        return next(
+            (w for w in self.matching_activity_witnesses() if w.family == "raw"),
+            None,
+        )
+
+    def native_matching_activity_witness(self) -> MatchingActivityWitness | None:
+        """The native leaf ranked first (``matching_activity_witnesses``).
+
+        Only the walk consults native witnesses: the seeded page never seeds
+        on a native leaf (``_scalar_user_witnesses``).
+        """
+        return next(
+            (w for w in self.matching_activity_witnesses() if w.family == "native"),
+            None,
+        )
+
+    def _native_user_witnesses(self) -> Iterator[MatchingActivityWitness]:
+        """Native leaves whose graph condition has an existence term, in filter order.
+
+        A native leaf decides membership with the users graph's own condition
+        (``compile_user_membership_leaf``). When that condition holds a term
+        ``countIf(flag) > 0``, every member has a latest live span satisfying
+        ``flag``, and that span's latest version is a physical row satisfying
+        it at the same ``start_time``: the flag is an exhaustive physical-row
+        witness, and the member's newest such span is its order key. The rest
+        of the condition (a negation's ``countIf(forbidden) = 0``) and every
+        other leaf are decided at certification over the whole window. A
+        condition that is one absence term (``is_null`` without a family:
+        ``countIf(present) = 0``) is witnessed by ``NOT present``
+        (``native_span_dimension_witness_flag``); its order key is then the
+        member's newest latest live span. The terms come from the compiler as
+        data, never from parsing its SQL.
+        """
+        for index, item in enumerate(self.filters):
+            if self._is_date_filter(item):
+                continue
+            column = self.native_span_dimension(item)
+            if column is None:
+                continue
+            existence = self.native_span_dimension_witness_flag(item, index=index)
+            if existence is None:
+                continue
+            alias, predicate = existence
+            _flags, _condition, params = self.native_span_dimension_membership(
+                item, index=index
+            )
+            yield MatchingActivityWitness(
+                family="native",
+                key=column,
+                kind="native",
+                sql=f"({predicate})",
+                params=dict(params),
+                leaf_index=index,
+                flag_alias=alias,
+                index_pruned=False,
+                identity=canonical_filter_leaf(item),
+            )
 
     def _scalar_user_witnesses(self):
         from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
@@ -517,6 +717,10 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 self._is_date_filter(item)
                 or self._is_relation_filter(item)
                 or self._is_output_filter(item)
+                # A native span column has no attribute-map witness: seeding
+                # it as one acquires only users carrying a same-named raw
+                # attribute, which is nobody.
+                or self.native_span_dimension(item)
                 or (
                     item.get("column_id") == "eval_score"
                     and self._filter_col_type(item) != "SPAN_ATTRIBUTE"
@@ -821,12 +1025,12 @@ class UserListQueryBuilder(BaseQueryBuilder):
     ) -> dict[str, Any]:
         if range_start is None or range_end is None or range_start >= range_end:
             raise ValueError("matching activity slice is invalid")
-        witness = self.matching_activity_witness()
+        witness = self.walk_witness
         if witness is None:
             raise UnsupportedBoundedUserListQuery(
-                "user list filters carry no scalar span attribute witness"
+                "the matching-activity walk chose no witness for this page"
             )
-        _key, _kind, witness_sql, witness_params = witness
+        witness_sql, witness_params = witness.sql, witness.params
         params: dict[str, Any] = {
             **witness_params,
             "slice_start_date": range_start,
@@ -1734,6 +1938,174 @@ class UserListQueryBuilder(BaseQueryBuilder):
         """
         return query, params
 
+    def native_span_dimension_membership(
+        self, item: dict[str, Any], *, index: int
+    ) -> tuple[tuple[str, ...], str, dict[str, Any]]:
+        """The users graph's membership SQL for native leaf ``index``.
+
+        The per-span flags, the per-user condition over them and their
+        parameters, compiled by the graph's own compiler
+        (``compile_user_membership_leaf``) under a namespace unique to the
+        leaf. For a SYSTEM_METRIC leaf that is ``countIf(<span predicate>) >
+        0``: a user matches when ANY latest live span in the window satisfies
+        the span compiler's predicate, which treats ``''`` as null on these
+        non-nullable text columns and compares case-insensitively.
+        """
+
+        # exact_graph_reads imports this module; resolve it at call time.
+        from tracer.services.clickhouse.exact_graph_reads import (
+            compile_user_membership_leaf,
+        )
+
+        project_id = self.project_id or (self.project_ids or [""])[0]
+        return compile_user_membership_leaf(
+            item, project_id=str(project_id), namespace=f"native_leaf_{index}"
+        )
+
+    def native_span_dimension_witness_flag(
+        self, item: dict[str, Any], *, index: int
+    ) -> tuple[str, str] | None:
+        """``(alias, predicate)`` of native leaf ``index``'s witness flag.
+
+        The first term of the graph's condition for the leaf that is
+        ``countIf(alias) > 0`` (``compile_user_membership_leaf_terms``, same
+        namespace and parameters as ``native_span_dimension_membership``).
+
+        A condition that is one absence term, ``countIf(present) = 0`` (an
+        ``is_null`` without a family), has a witness too: a member has a
+        latest live span in the window (the graph answers no row, and no
+        match, for a user without one) and ``present`` holds for none of
+        them, so its newest latest live span satisfies ``NOT present``, and
+        that span's latest version is a physical row satisfying it at the
+        same ``start_time``. The flag is ``NOT ifNull((present), 0)``: exactly
+        the spans ``countIf(present)`` does not count, a NULL included. Its
+        alias, ``<present alias>_absent``, is not among the leaf's own flags;
+        a statement that projects it adds it (``build_native_span_dimension_query``).
+        ``None`` for any other condition with no existence term.
+        """
+
+        from tracer.services.clickhouse.exact_graph_reads import (
+            compile_user_membership_leaf_terms,
+        )
+
+        project_id = self.project_id or (self.project_ids or [""])[0]
+        terms = compile_user_membership_leaf_terms(
+            item, project_id=str(project_id), namespace=f"native_leaf_{index}"
+        )
+        for alias, predicate, comparison in terms:
+            if comparison.strip() == "> 0":
+                return alias, predicate
+        if len(terms) == 1 and terms[0][2].strip() == "= 0":
+            alias, predicate, _comparison = terms[0]
+            return f"{alias}_absent", f"NOT ifNull(({predicate}), 0)"
+        return None
+
+    def build_native_span_dimension_query(
+        self,
+        end_user_ids: list[str],
+        leaves: Iterable[tuple[int, dict[str, Any]]],
+        *,
+        newest: int | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Decide each native span-dimension leaf for a finite user page.
+
+        ``leaves`` pairs each native leaf with its index in the request's
+        filters. One row per page user that has a latest live span in the
+        window, with a ``native_leaf_<index>`` boolean per leaf computed by
+        the users graph's own membership SQL over the user's latest-state
+        spans (``native_span_dimension_membership``); a page user with no
+        such span has no row and matches no leaf, as in the graph.
+
+        ``newest`` names the leaf a native matching-activity walk discovers
+        on: the row also carries ``native_leaf_<newest>_newest``, the newest
+        latest live span in the window satisfying that leaf's existence flag
+        (``native_span_dimension_witness_flag``), the user's order key. A user
+        with no such span reads the epoch there (``maxIf`` over nothing).
+        """
+
+        compiled: list[tuple[int, tuple[str, ...], str]] = []
+        params: dict[str, Any] = {}
+        columns: dict[str, None] = {}
+        newest_alias: str | None = None
+        for index, item in leaves:
+            column = self.native_span_dimension(item)
+            if column is None:
+                continue
+            flags, condition, leaf_params = self.native_span_dimension_membership(
+                item, index=index
+            )
+            if index == newest:
+                existence = self.native_span_dimension_witness_flag(item, index=index)
+                if existence is None:
+                    raise ValueError(f"native leaf {index} has no existence flag")
+                newest_alias, flag = existence
+                if not any(f.endswith(f" AS {newest_alias}") for f in flags):
+                    # An absence witness: its flag is not one of the leaf's.
+                    flags = (*flags, f"({flag}) AS {newest_alias}")
+            compiled.append((index, flags, condition))
+            params.update(leaf_params)
+            columns[column] = None
+        if newest is not None and newest_alias is None:
+            raise ValueError(f"native leaf {newest} is not among the leaves")
+        if not end_user_ids or not compiled:
+            return "", {}
+        # ``observation_type`` is part of the replay identity (grouped, so it
+        # is already its latest value); every other column is replayed.
+        replayed = [column for column in columns if column != "observation_type"]
+        prefix, replay_params = self._finite_user_activity_ctes(
+            end_user_ids,
+            [f"argMax({column}, _version) AS latest_{column}" for column in replayed],
+        )
+        params.update(replay_params)
+        resolved_eu = resolved_id_expr("latest_end_user_id", "dimension_eu_remap")
+        projected = ",\n                    ".join(
+            column if column == "observation_type" else f"latest_{column} AS {column}"
+            for column in columns
+        )
+        flags_sql = ",\n                ".join(
+            flag for _index, flags, _condition in compiled for flag in flags
+        )
+        decisions = ",\n            ".join(
+            f"({condition}) AS native_leaf_{index}"
+            for index, _flags, condition in compiled
+        )
+        if newest_alias is not None:
+            decisions += (
+                ",\n            maxIf(native_span_start_time, "
+                f"{newest_alias}) AS native_leaf_{newest}_newest"
+            )
+        query = f"""
+        {prefix}
+        SELECT
+            end_user_id,
+            {decisions}
+        FROM (
+            SELECT
+                end_user_id,
+                native_span_start_time,
+                {flags_sql}
+            FROM (
+                SELECT
+                    toString({resolved_eu}) AS end_user_id,
+                    latest_start_time AS native_span_start_time,
+                    {projected}
+                FROM latest_candidate_spans
+                LEFT JOIN eu_survivor_map AS dimension_eu_remap
+                    ON latest_end_user_id = dimension_eu_remap.any_id
+                WHERE latest_is_deleted = 0
+                  AND latest_start_time >= fromUnixTimestamp64Micro(
+                      %(user_window_start_us)s, 'UTC'
+                  )
+                  AND latest_start_time < fromUnixTimestamp64Micro(
+                      %(user_window_end_us)s, 'UTC'
+                  )
+                  AND {resolved_eu} IN %(candidate_end_user_ids)s
+            ) AS native_span_rows
+        ) AS native_span_flags
+        GROUP BY end_user_id
+        """
+        return query, params
+
     def _finite_user_activity_ctes(
         self,
         end_user_ids: list[str],
@@ -2532,6 +2904,29 @@ class UserListQueryBuilder(BaseQueryBuilder):
         return item.get("column_id") in ("created_at", "start_time") and config.get(
             "filter_type"
         ) in ("datetime", "date")
+
+    @classmethod
+    def native_span_dimension(cls, item: dict[str, Any]) -> str | None:
+        """Return the span column backing a native Users system filter.
+
+        Identity rules follow ``_is_output_filter``, plus the registry rule
+        ``is_native_user_id_filter`` states: a raw attribute sharing the name
+        keeps its own SPAN_ATTRIBUTE compiler whether it declares that through
+        ``col_type`` or only through ``property_id``, eval/annotation leaves
+        keep the relation path, and a per-user output column wins outright.
+        """
+
+        if cls._filter_col_type(item) == "SPAN_ATTRIBUTE" or cls._is_relation_filter(
+            item
+        ):
+            return None
+        property_id = str(item.get("property_id") or item.get("propertyId") or "")
+        if property_id and not property_id.startswith("system_attribute:"):
+            return None
+        column_id = str(item.get("column_id") or item.get("columnId") or "")
+        if column_id in cls.OUTPUT_FILTER_MAP:
+            return None
+        return USER_NATIVE_SPAN_DIMENSIONS.get(column_id)
 
     @classmethod
     def _is_output_filter(cls, item: dict[str, Any]) -> bool:

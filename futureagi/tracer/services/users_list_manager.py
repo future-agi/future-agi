@@ -18,11 +18,18 @@ from typing import Any
 import structlog
 from django.conf import settings
 
-from tracer.services.clickhouse.list_cursor import ListCursor, ListCursorError
+from tracer.services.clickhouse.list_cursor import (
+    ListCursor,
+    ListCursorError,
+    canonical_filter_leaf,
+)
 from tracer.services.clickhouse.query_builders.base import _unix_microseconds
 from tracer.services.clickhouse.query_builders.filters import (
     EvalFilterMetadata,
     resolve_eval_filter_metadata,
+)
+from tracer.services.clickhouse.query_builders.user_list import (
+    MatchingActivityWitness,
 )
 from tracer.services.clickhouse.read_budget import (
     ReadDeadline,
@@ -214,6 +221,21 @@ def _statement_timeout(
     if deadline.enforce_on_server:
         return {"timeout_ms": timeout_ms, "server_execution_cap_ms": timeout_ms}
     return {"timeout_ms": timeout_ms}
+
+
+def _candidate_statement_timeout(deadline: ReadDeadline | None) -> dict[str, Any]:
+    """The whole-window candidate statement's timeout, and its server cap.
+
+    A refill runs under the page wall: the server stops the statement at
+    ``USER_LIST_QUERY_TIMEOUT_MS`` or what is left of that wall, whichever is
+    less, and the page is published as it stands, resuming from its last
+    proven checkpoint (``_is_page_wall_stop``). The first batch has no
+    deadline and runs as before.
+    """
+    if deadline is None:
+        return {"timeout_ms": None}
+    timeout_ms = deadline.remaining_ms(USER_LIST_QUERY_TIMEOUT_MS)
+    return {"timeout_ms": timeout_ms, "server_execution_cap_ms": timeout_ms}
 
 
 def _log_user_read_failure(event: str, exc: Exception, **context: object) -> None:
@@ -528,16 +550,31 @@ class UsersListManager:
             if UserListQueryBuilderV2._is_relation_filter(item)
         )
         attribute_filter_items: dict[str, list[dict[str, Any]]] = {}
-        for item in self.filters:
+        # A native span column has no key in the attribute maps, so reading it
+        # as a custom attribute evaluates it as NULL for every user. Keep those
+        # leaves in their own namespace, answered from the span row.
+        native_dimension_filters: dict[str, str] = {}
+        native_dimension_leaves: list[tuple[int, dict[str, Any]]] = []
+        for filter_index, item in enumerate(self.filters):
             if UserListQueryBuilderV2._is_date_filter(item):
                 continue
             if UserListQueryBuilderV2._is_relation_filter(item):
                 continue
             column_id = item.get("column_id") or item.get("columnId")
-            if column_id and not UserListQueryBuilderV2._is_output_filter(item):
-                attribute_key = str(column_id)
-                requested_attribute_keys.append(attribute_key)
-                attribute_filter_items.setdefault(attribute_key, []).append(item)
+            if not column_id or UserListQueryBuilderV2._is_output_filter(item):
+                continue
+            native_column = UserListQueryBuilderV2.native_span_dimension(item)
+            if native_column:
+                native_dimension_filters[str(column_id)] = native_column
+                native_dimension_leaves.append((filter_index, item))
+                continue
+            attribute_key = str(column_id)
+            requested_attribute_keys.append(attribute_key)
+            attribute_filter_items.setdefault(attribute_key, []).append(item)
+        self.native_dimension_filters = native_dimension_filters
+        # Each native leaf keyed by its index in ``self.filters``: two leaves on
+        # one column are two decisions.
+        self.native_dimension_leaves = tuple(native_dimension_leaves)
         self.attribute_keys = tuple(dict.fromkeys(requested_attribute_keys))
         unsupported_attribute_keys = unsupported_user_attribute_keys(
             self.attribute_keys
@@ -559,8 +596,18 @@ class UsersListManager:
         # The number/boolean predicate the current walk is decided on, set by
         # ``matching_activity_walk_applies`` for the page it applies to.
         self._walked_typed_filter: WalkedTypedFilter | None = None
+        # The witness the current walk discovers on, chosen once by
+        # ``matching_activity_walk_applies``; the walk's builder reads it.
+        self._walk_witness: MatchingActivityWitness | None = None
+        # Newest live span per user and native leaf (filter index) that
+        # satisfies the leaf's existence flag: a native walk's certified order
+        # key. Its own cache: an attribute key may share a native column's
+        # name, so the two can never share ``_matching_activity_by_user``.
+        self._native_matching_activity_by_user: dict[str, dict[int, datetime]] = {}
         # Public cost rounding/JSON dates are presentation, never filter truth.
         self._native_filter_values_by_user: dict[str, dict[str, Any]] = {}
+        # Per page user, each native leaf's decision keyed by filter index.
+        self._native_dimension_matches_by_user: dict[str, dict[int, bool]] = {}
         self._unqualified_attribute_fallback_used = False
         exact_text_filters: dict[str, tuple[str, ...]] = {}
         for attribute_key, items in attribute_filter_items.items():
@@ -638,6 +685,7 @@ class UsersListManager:
         self.filters_need_enrichment = bool(
             self.relation_filters
             or attribute_filter_items
+            or native_dimension_filters
             or filter_columns
             & (_USER_LIST_EXTRA_METRIC_FIELDS | _USER_LIST_EVAL_FIELDS)
         )
@@ -1030,6 +1078,75 @@ class UsersListManager:
                     continue
                 entry[key] = value
 
+    def _read_native_span_dimensions(
+        self,
+        rows: list[dict],
+        builder: UserListQueryBuilderV2,
+        deadline: ReadDeadline | None,
+        *,
+        newest: int | None = None,
+    ) -> None:
+        """Cache each page user's decision of every native span-dimension leaf.
+
+        The statement decides the leaves with the users graph's own membership
+        SQL (``build_native_span_dimension_query``); a page user it returns no
+        row for has no latest live span in the window and matches none. With
+        ``newest`` (a native walk's witness leaf) it also caches each user's
+        order key for that leaf in ``_native_matching_activity_by_user``.
+        """
+
+        end_user_ids = [
+            str(row["end_user_id"]) for row in rows if row.get("end_user_id")
+        ]
+        if not end_user_ids or not self.native_dimension_leaves:
+            return
+        query, params = builder.build_native_span_dimension_query(
+            end_user_ids, self.native_dimension_leaves, newest=newest
+        )
+        if not query:
+            return
+        # A page-scoped latest-state replay like its sibling enrichments: a
+        # deadline enforced on the server (the walk's certification sends one,
+        # ``_native_certification_deadline``) also reaches it as its execution
+        # cap.
+        result = V2AnalyticsQueryService().execute_ch_query(
+            query,
+            params,
+            **_statement_timeout(deadline, USER_LIST_ENRICHMENT_TIMEOUT_MS),
+            settings=_page_replay_read_settings(
+                max_result_rows=max(1, len(end_user_ids))
+            ),
+        )
+        matches_by_user = {
+            str(row.get("end_user_id") or ""): row for row in result.data or ()
+        }
+        # Absence is part of the answer, so replace the page's cache instead of
+        # letting an earlier batch's decision satisfy a later predicate.
+        for user_id in end_user_ids:
+            decided = matches_by_user.get(user_id, {})
+            self._native_dimension_matches_by_user[user_id] = {
+                index: bool(decided.get(f"native_leaf_{index}"))
+                for index, _item in self.native_dimension_leaves
+            }
+            if newest is None:
+                continue
+            key = decided.get(f"native_leaf_{newest}_newest")
+            if isinstance(key, datetime) and key.tzinfo is None:
+                key = key.replace(tzinfo=UTC)
+            # ``maxIf`` with no matching latest live span is the epoch.
+            self._native_matching_activity_by_user[user_id] = (
+                {newest: key} if isinstance(key, datetime) and key > _EPOCH else {}
+            )
+
+    def _native_dimension_matches(
+        self, *, row: dict[str, Any], filter_index: int
+    ) -> bool:
+        """The page statement's decision of native leaf ``filter_index``."""
+
+        return self._native_dimension_matches_by_user.get(
+            str(row.get("end_user_id", "")), {}
+        ).get(filter_index, False)
+
     def _read_evals(
         self,
         rows: list[dict],
@@ -1144,6 +1261,7 @@ class UsersListManager:
         candidate_scan_ids: list[str] | None = None,
         candidate_end_user_id_map: dict[str, str] | None = None,
         skip_attribute_read: bool = False,
+        skip_native_read: bool = False,
     ) -> None:
         """Run only explicitly requested finite enrichments.
 
@@ -1151,6 +1269,9 @@ class UsersListManager:
         span attributes in ``_attribute_values_by_user`` (the matching-activity
         walk reads them before it decides which users to replay); the values
         are applied from that cache instead of being read a second time.
+        ``skip_native_read`` is the same for the native span-dimension
+        decisions in ``_native_dimension_matches_by_user``, which the walk
+        certifies before it replays anyone.
         """
 
         # ClickHouse read caps apply per statement, while concurrent statements
@@ -1159,6 +1280,8 @@ class UsersListManager:
         if self.metric_keys:
             metrics = self._read_page_metrics(rows, builder, deadline)
             self._apply_page_metrics(rows, metrics)
+        if self.native_dimension_filters and not skip_native_read:
+            self._read_native_span_dimensions(rows, builder, deadline)
         if self.attribute_keys and skip_attribute_read:
             self._apply_span_attributes(
                 rows,
@@ -1209,41 +1332,83 @@ class UsersListManager:
     def matching_activity_walk_applies(self, builder: UserListQueryBuilderV2) -> bool:
         """Whether this page walks newest matching activity instead of seeding.
 
-        True exactly when the first scalar witness is the ONLY filter item on
-        its key and either (text) the manager accelerates that key as an
-        exact-text filter, or (number/boolean) the item is a shape whose
-        Python and SQL comparisons are provably the same
-        (``users_walk_witness``): the walk reuses that one witness to discover
-        users, to narrow their certification and to project the order key.
-        A key carrying more than one filter item keeps the seeded page: the
-        walk's order key and its witness must be one predicate, and the
-        exact-text values of a key are the union of all its items.
-        Every other filter shape keeps its path. Sets the typed predicate the
-        certification reads when the walk applies.
+        The witness is chosen here, once, and stored for the walk
+        (``_walk_witness``); precedence is a function of the filters as the
+        signed cursor binds them (``canonical_filter_leaf``), never of their
+        order in the request, and the walk binds the chosen witness into its
+        cursor, so a continuation can never read one leaf's keys as
+        another's. The candidates come most selective first
+        (``builder.matching_activity_witnesses``: a static rank, then a raw
+        witness before a native one, then identity), because a witness most
+        users match while the page's matches are rare finds the same users
+        again in every slice and publishes nothing for request after request.
+        The first candidate the walk accepts is the witness:
+
+        * a raw attribute witness, when it is the ONLY filter item on its key
+          as the cursor binds the filters (identical leaves, which
+          ``normalize_filter_conjunction`` deduplicates, count once) and
+          either (text) the manager accelerates that key as an
+          exact-text filter, or (number/boolean) the item is a shape whose
+          Python and SQL comparisons are provably the same
+          (``users_walk_witness``): the walk reuses that one witness to
+          discover users, to narrow their certification and to project the
+          order key. A key carrying more than one filter item is not
+          accepted: the walk's order key and its witness must be one
+          predicate, and the exact-text values of a key are the union of all
+          its items;
+        * a native leaf whose graph condition has an existence term
+          (``native_matching_activity_witness``); its order key is its own
+          newest match, so two leaves on its column need no special rule.
+
+        With none, the page does not walk: every other filter shape keeps
+        its path. The order key is always the witness leaf's newest matching
+        activity.
+
+        Sets the typed predicate the certification reads when a typed raw
+        witness is chosen.
         """
         self._walked_typed_filter = None
+        self._walk_witness = None
         if self.sort_params:
             return False
-        witness = builder.matching_activity_witness()
-        if witness is None:
-            return False
-        key, kind = witness[0], witness[1]
-        items = [
-            item
-            for item in self.filters
-            if not UserListQueryBuilderV2._is_date_filter(item)
-            and not UserListQueryBuilderV2._is_relation_filter(item)
-            and str(item.get("column_id") or item.get("columnId")) == key
-            and not UserListQueryBuilderV2._is_output_filter(item)
-        ]
+        for witness in builder.matching_activity_witnesses():
+            if witness.family == "native":
+                self._walk_witness = witness
+                return True
+            if self._raw_walk_witness_applies(witness):
+                return True
+        return False
+
+    def _raw_walk_witness_applies(self, witness: MatchingActivityWitness) -> bool:
+        """Whether the walk accepts the raw witness; stores it when it does."""
+
+        key, kind = witness.key, witness.kind
+        # One item per leaf as the signed cursor binds it: ``[A, A]`` is
+        # ``[A]``, so the choice is a function of the bound filter set, not of
+        # a repeated leaf in the request (the exact-text values are a set
+        # already, ``attribute_exact_text_filters``).
+        items = list(
+            {
+                canonical_filter_leaf(item): item
+                for item in self.filters
+                if not UserListQueryBuilderV2._is_date_filter(item)
+                and not UserListQueryBuilderV2._is_relation_filter(item)
+                and str(item.get("column_id") or item.get("columnId")) == key
+                and not UserListQueryBuilderV2._is_output_filter(item)
+            }.values()
+        )
         if len(items) != 1:
             return False
         if kind == "text":
-            return key in self.attribute_exact_text_filters
+            if key not in self.attribute_exact_text_filters:
+                return False
+            self._walk_witness = witness
+            return True
         typed = typed_walk_filter(witness, items[0])
         if typed is None:
             return False
         self._walked_typed_filter = typed
+        self._walk_witness = witness
         return True
 
     def _prune_attribute_candidate_batch(
@@ -1353,9 +1518,7 @@ class UsersListManager:
         result = analytics.execute_ch_query(
             query,
             params,
-            timeout_ms=deadline.remaining_ms(USER_LIST_QUERY_TIMEOUT_MS)
-            if deadline
-            else None,
+            **_candidate_statement_timeout(deadline),
             settings=_page_read_settings(max_result_rows=limit),
         )
         raw_rows = list(result.data or [])
@@ -1368,9 +1531,7 @@ class UsersListManager:
         remap_result = analytics.execute_ch_query(
             remap_query,
             remap_params,
-            timeout_ms=deadline.remaining_ms(USER_LIST_QUERY_TIMEOUT_MS)
-            if deadline
-            else None,
+            **_candidate_statement_timeout(deadline),
             settings=_page_read_settings(max_result_rows=_USER_LIST_ATTR_RESULT_ROWS),
         )
         aliases_by_survivor: dict[str, set[str]] = {}
@@ -1440,6 +1601,7 @@ class UsersListManager:
         enrich_rows: bool = True,
         candidate_rows: list[dict] | None = None,
         skip_attribute_read: bool = False,
+        skip_native_read: bool = False,
     ) -> list[dict]:
         if not candidate_ids:
             return []
@@ -1501,6 +1663,7 @@ class UsersListManager:
                 candidate_scan_ids=candidate_scan_ids,
                 candidate_end_user_id_map=candidate_end_user_id_map,
                 skip_attribute_read=skip_attribute_read,
+                skip_native_read=skip_native_read,
             )
         return rows
 
@@ -1877,6 +2040,9 @@ class UsersListManager:
         The matching-activity walk decides these before it spends a replay on
         a user; ``_row_matches_filters`` re-decides them, unchanged, on the
         replayed row together with every native and relation predicate.
+        A native span-dimension leaf has no attribute-map value: the page's
+        native statement decides it (``_native_dimension_matches``), which the
+        walk reads at certification, before any replay.
         """
         for item in self.filters:
             if UserListQueryBuilderV2._is_date_filter(item):
@@ -1885,6 +2051,8 @@ class UsersListManager:
                 continue
             column_id = item.get("column_id") or item.get("columnId")
             if not column_id or UserListQueryBuilderV2._is_output_filter(item):
+                continue
+            if UserListQueryBuilderV2.native_span_dimension(item):
                 continue
             if (
                 column_id == "eval_score"
@@ -1898,7 +2066,7 @@ class UsersListManager:
         return True
 
     def _row_matches_filters(self, row: dict[str, Any]) -> bool:
-        for item in self.filters:
+        for filter_index, item in enumerate(self.filters):
             if UserListQueryBuilderV2._is_date_filter(item):
                 continue
             if UserListQueryBuilderV2._is_relation_filter(item):
@@ -1911,6 +2079,12 @@ class UsersListManager:
             config = item.get("filter_config") or {}
             column_id = item.get("column_id") or item.get("columnId")
             if not column_id:
+                continue
+            if UserListQueryBuilderV2.native_span_dimension(item):
+                if not self._native_dimension_matches(
+                    row=row, filter_index=filter_index
+                ):
+                    return False
                 continue
             if not UserListQueryBuilderV2._is_output_filter(item) and (
                 column_id != "eval_score"
@@ -1981,8 +2155,11 @@ class UsersListManager:
         self._unqualified_attribute_fallback_used = False
         self._attribute_values_by_user.clear()
         self._attribute_value_types_by_user.clear()
+        self._native_dimension_matches_by_user.clear()
         self._matching_activity_by_user.clear()
+        self._native_matching_activity_by_user.clear()
         self._walked_typed_filter = None
+        self._walk_witness = None
         self._native_filter_values_by_user.clear()
         self._relation_matching_user_ids.clear()
         base_builder = UserListQueryBuilderV2(
@@ -2001,9 +2178,10 @@ class UsersListManager:
             seen_before = 0
             before_first_seen = None
             before_end_user_id = None
-            # A plain-text span-attribute filter orders the page by newest
-            # matching activity and walks witnessed spans newest-first: the
-            # whole-window candidate statement is never issued for it.
+            # A walkable span-attribute or native span-dimension filter orders
+            # the page by newest matching activity and walks witnessed spans
+            # newest-first: the whole-window candidate statement is never
+            # issued for it.
             if self.matching_activity_walk_applies(base_builder):
                 return walk_matching_activity_page(
                     self,
@@ -2045,8 +2223,10 @@ class UsersListManager:
 
         # Only a seeded page reaches this point: the matching-activity walk
         # above owns the filtered page it serves and starts its own wall. Here
-        # the refill walk after the first batch runs at the page wall; the
-        # first batch runs unbounded as before.
+        # the refill walk after the first batch runs at the page wall, and its
+        # candidate statements ask the server to stop there
+        # (``_candidate_statement_timeout``); the first batch runs unbounded
+        # as before.
         page_wall_deadline = (
             ReadDeadline.start(USER_LIST_PAGE_WALL_MS) if page_wall else None
         )
@@ -2192,6 +2372,7 @@ class UsersListManager:
             # or relation memberships for every rejected batch in a sparse walk.
             self._attribute_values_by_user.clear()
             self._attribute_value_types_by_user.clear()
+            self._native_dimension_matches_by_user.clear()
             self._native_filter_values_by_user.clear()
             self._relation_matching_user_ids.clear()
             consumed_row = batch[consumed - 1]

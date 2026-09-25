@@ -57,12 +57,14 @@ def _finite_number(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def typed_walk_filter(
-    witness: tuple[str, str, str, dict[str, Any]], item: dict[str, Any]
-) -> WalkedTypedFilter | None:
-    """The walked typed filter for ``item``, or ``None`` when it must stay seeded."""
+def typed_walk_filter(witness: Any, item: dict[str, Any]) -> WalkedTypedFilter | None:
+    """The walked typed filter for ``item``, or ``None`` when it must stay seeded.
 
-    key, kind, witness_sql, witness_params = witness
+    ``witness`` is the raw ``MatchingActivityWitness`` the builder returned.
+    """
+
+    key, kind = witness.key, witness.kind
+    witness_sql, witness_params = witness.sql, witness.params
     if kind not in {"number", "boolean"}:
         return None
     config = item.get("filter_config") or item.get("filterConfig") or {}

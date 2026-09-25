@@ -1,23 +1,48 @@
-"""Span-attribute-filtered Users pages, ordered by newest matching activity.
+"""Span-attribute- and native-filtered Users pages, by newest matching activity.
 
 The seeded candidate statement decides an attribute-filtered page by
 aggregating the whole window; on the largest tenants it materialises two
-planning-time sets over the sorting key and dies before it starts. This walk
-replaces it for one scalar span-attribute filter - plain-text
-``equals``/``in``, boolean ``equals``/``in``, or a number comparison - when
-that filter is the only item on its key:
+planning-time sets over the sorting key and dies before it starts, and a page
+filtered only on a native span dimension (status, model, provider, name,
+trace name, observation type) ran it with no witness at all. This walk
+replaces it when the page has a witness (``MatchingActivityWitness``, chosen
+once by ``UsersListManager.matching_activity_walk_applies``):
 
-* discover: one bounded statement per time slice, newest-first, through the
-  deployed key and value blooms, grouped by the RAW user id the span carries
+* raw: one scalar span-attribute filter - plain-text ``equals``/``in``,
+  boolean ``equals``/``in``, or a number comparison - that is the only item
+  on its key, discovered through the deployed key and value blooms;
+* native: otherwise, a native span-dimension leaf whose users-graph
+  condition has an existence term ``countIf(flag) > 0``, discovered on that
+  flag, or is one absence term ``countIf(present) = 0`` (``is_null`` without
+  a family), discovered on ``NOT present``
+  (``native_span_dimension_witness_flag``). Every member has a latest live
+  span satisfying it, and that span's
+  latest version is a physical row satisfying it at the same ``start_time``,
+  so the raw-row argument below holds word for word. No skip index serves the
+  flag (``idx_status`` alone does, and not by design), so an empty native
+  slice costs in proportion to its width (``index_pruned``).
+
+The order key follows the witness: the newest live span whose latest state
+satisfies the witness leaf, over the whole window. Then:
+
+* discover: one bounded statement per time slice, newest-first, on the
+  witness predicate, grouped by the RAW user id the span carries
   (``build_matching_activity_slice_query``; a raw superset, never a result),
   then, only for a populated slice, one bounded survivor statement over
   exactly the ids returned (``build_dimension_survivor_query``) that resolves
   each raw id to its user and attaches every alias of that user;
-* certify: the page's existing attribute enrichment, which also returns the
-  user's newest LIVE span whose LATEST value matches - the order key;
+* certify: the page's native span-dimension statement, when the filters
+  carry native leaves (``build_native_span_dimension_query``, the users
+  graph's own membership SQL over the whole window), and its existing
+  attribute enrichment. The order key is the user's newest LIVE span whose
+  LATEST state matches the witness leaf: the enrichment returns it for a raw
+  witness, the native statement (``native_leaf_<i>_newest``) for a native
+  one. A user that fails any attribute or native leaf is decided here and
+  never replayed;
 * materialise: the existing finite per-user replay, only for users that are
-  attribute members AND publishable by position, which decides curated
-  presence, search and every native/relation predicate over the whole window
+  attribute and native members AND publishable by position, which decides
+  curated presence, search and every relation predicate over the whole window
+  and re-decides every leaf from the certified decisions
   (``_row_matches_filters``, unchanged), and carries the set-valued totals.
 
 Coverage floor. A truncated slice proves nothing at or below the newest
@@ -56,9 +81,12 @@ each populated slice, never twice in a row.
 
 Budget. The walk owns a wall (``USER_LIST_PAGE_WALL_MS``) and a statement
 budget (``USER_LIST_WALK_MAX_STATEMENTS``, never less than one batch's
-decision: ``_statement_budget``). On exhaustion it returns the users certified
-so far, in order, with a cursor; it never falls back to the whole-window
-statement. A slice that fails on a read budget is retried narrower, never
+decision: ``_statement_budget``). Until it publishes a user, the count grows
+one budget at a time while the wall lasts, up to
+``USER_LIST_WALK_EMPTY_PAGE_BUDGETS`` budgets (``_WalkBudget.affords``): an
+empty page is returned when the wall is spent, not when fast statements
+spent a count. On exhaustion it returns the users certified so far, in
+order, with a cursor; it never falls back to the whole-window statement. A slice that fails on a read budget is retried narrower, never
 wider. Until a request decides something, its search is admitted against the
 analytics wall rather than the page wall (``_admission_deadline``), a slice
 the server stops at its cap is retried narrower, and when it cannot be, the
@@ -81,9 +109,23 @@ split in time (``UsersListManager._read_span_attributes``): one user a
 request, up to
 ``2 ** (ceil(log2(window / _USER_LIST_ATTRIBUTE_MIN_BUCKET)) + 1) - 1``
 statements (4,095 over 24 h) per enrichment statement, outside the statement
-budget. The split has no deadline after the uncapped slice, or once
-the analytics wall is already spent, and otherwise runs against what is left
-of it (``_admission_deadline``). One stall is known and left open: a split
+budget. The native span-dimension statement is never split. It carries a
+server cap: ``USER_LIST_ENRICHMENT_TIMEOUT_MS`` or what admits it, whichever
+is less, and the cap alone on the head-of-line escape
+(``_native_certification_deadline``). A stop at that cap is a read-budget
+failure like any other, with one exception, the finish's rule for its replay
+(``_materialise``): when the server stops the head-of-line user's own capped
+native statement in a request that has decided nothing, that one user's
+statement is sent once more with no cap, once per request
+(``_read_native_certification``). The statement cannot narrow, so a user whose
+native statement always outlasts the cap would otherwise stop every request
+at the same place, and an exact list can neither skip that user nor publish
+anyone ranked behind it first. Any other read budget (memory, rows) that ends
+the head-of-line user's own statement raises a retryable error, as an
+attribute read that fails at its least bucket does. The split
+has no deadline after the uncapped slice, or once the analytics wall is
+already spent, and otherwise runs against what is left of it
+(``_admission_deadline``). One stall is known and left open: a split
 that starts with some of the wall left and outlasts it stops every request at
 that user, having decided no one. Any other user whose read runs out of a read
 budget stops the request (``read_budget``), and so does a batch the page wall
@@ -105,12 +147,15 @@ batch settles a closed id range ``[last returned, before)`` and its members
 publish at once in ``(key, id)`` order. A cohort larger than one request
 resumes inside the instant instead of starting it again.
 
-Cursor. ``(marker, last_key, last_id, coverage[, open_instant])``: every user
-with a matching row at or after ``coverage`` is decided; the keyset ``(key,
-id) < (last_key, last_id)`` under ``(key DESC, id DESC)`` rejects a
+Cursor. ``(marker, last_key, last_id, coverage, witness[, open_instant])``:
+every user with a matching row at or after ``coverage`` is decided; the keyset
+``(key, id) < (last_key, last_id)`` under ``(key DESC, id DESC)`` rejects a
 re-discovered published user at the enrichment step, before any replay, and
 inside an instant it names the lowest decided position, published or not.
-``open_instant`` (present only when true; a four-element cursor is read as
+Keys and coverage speak for one witness leaf, so ``witness`` names it
+(``witness_fingerprint``) and a request whose own witness differs refuses the
+cursor (``invalid_cursor``) instead of reading one leaf's keys as another's.
+``open_instant`` (present only when true; a five-element cursor is read as
 false) tells the next request to decide the instant just below ``coverage``
 first, from ``last_id`` when ``last_key`` is that instant; a request sets it
 when it ends inside an instant, or stops where a raw restart would find the
@@ -128,8 +173,9 @@ published again, the usual limit of a keyset over changing data.
 
 from __future__ import annotations
 
+import hashlib
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -140,6 +186,7 @@ from tracer.services.clickhouse.list_cursor import ListCursorError
 from tracer.services.clickhouse.query_builders.user_list import (
     REQUESTED_PAGE_SESSION_METRIC_FIELDS,
     REQUESTED_PAGE_SPAN_METRIC_FIELDS,
+    MatchingActivityWitness,
 )
 from tracer.services.clickhouse.read_budget import (
     ReadDeadline,
@@ -156,7 +203,15 @@ if TYPE_CHECKING:  # pragma: no cover - typing only, the manager imports us.
 
 logger = structlog.get_logger(__name__)
 
-USER_LIST_MATCHING_CURSOR_ORDER = "matching_activity_users_v1"
+# The witness is a function of the filters as the signed cursor binds them
+# (without their order), and the cursor also carries its fingerprint
+# (``witness_fingerprint``): a request that would read the cursor's keys and
+# coverage as another leaf's refuses it. v1 cursors carried no fingerprint and
+# chose native witnesses by request position, so they restart.
+USER_LIST_MATCHING_CURSOR_ORDER = "matching_activity_users_v2"
+# Newest activity matching the WITNESS leaf: the raw attribute leaf when the
+# walk accepts one, otherwise an eligible native leaf
+# (``UsersListManager.matching_activity_walk_applies`` says which).
 USER_LIST_MATCHING_ORDERING = "latest_matching_activity"
 USER_LIST_MATCHING_PROVENANCE = "matching_activity_walk"
 USER_LIST_PAGE_WALL_MS = settings.USER_LIST_PAGE_WALL_MS
@@ -171,6 +226,13 @@ USER_LIST_PAGE_WALL_MS = settings.USER_LIST_PAGE_WALL_MS
 # the finish by the analytics wall.
 USER_LIST_WALK_FINISH_WALL_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 USER_LIST_WALK_MAX_STATEMENTS = settings.USER_LIST_WALK_MAX_STATEMENTS
+# A request that has published nothing is not ended by its statement count
+# while its page wall lasts: the count grows one budget at a time, up to this
+# many budgets (``_WalkBudget.affords``). An empty degraded page is what the
+# UI shows as "preparing exact results", so it should cost the wall, not a
+# count the fast statements of a dense, rejecting slice spend in a fraction
+# of it.
+USER_LIST_WALK_EMPTY_PAGE_BUDGETS = settings.USER_LIST_WALK_EMPTY_PAGE_BUDGETS
 USER_LIST_WALK_INITIAL_SLICE = timedelta(
     seconds=settings.USER_LIST_WALK_INITIAL_SLICE_SECONDS
 )
@@ -212,14 +274,47 @@ class _Certified:
 
 
 class _WalkBudget:
-    """One wall and one statement budget; exhaustion is a result, not an error."""
+    """One wall and one statement budget; exhaustion is a result, not an error.
 
-    def __init__(self, *, wall_ms: int, max_statements: int) -> None:
+    Until the page publishes its first user (``growable``), a count that runs
+    out grows by one budget at a time while the page wall has time left, up
+    to ``ceiling``: a request that has only rejected users goes on deciding
+    until its wall, instead of returning an empty page after a count its
+    statements spent in a fraction of it (``affords``).
+    """
+
+    def __init__(
+        self, *, wall_ms: int, max_statements: int, ceiling: int | None = None
+    ) -> None:
         self.deadline = ReadDeadline.start(wall_ms)
         self.max_statements = int(max_statements)
+        self.step = self.max_statements
+        self.ceiling = max(self.max_statements, int(ceiling or 0))
+        self.growable = True
         self.statements = 0
         # "statements" (sticky), "wall", or "read_budget" (``_certify``).
         self.exhausted_by: str | None = None
+
+    def affords(self, statements: int) -> bool:
+        """Whether ``statements`` more fit the count, growing it first if it may.
+
+        It may grow while the page has published nothing and the page wall
+        has time left, never past ``ceiling``.
+        """
+        if self.statements + statements <= self.max_statements:
+            return True
+        if not self.growable or self.max_statements >= self.ceiling:
+            return False
+        try:
+            self.deadline.remaining_ms()
+        except ReadDeadlineExceeded:
+            return False
+        while (
+            self.statements + statements > self.max_statements
+            and self.max_statements < self.ceiling
+        ):
+            self.max_statements = min(self.ceiling, self.max_statements + self.step)
+        return self.statements + statements <= self.max_statements
 
     def take(self, statements: int, *, finish: bool = False) -> bool:
         """Spend ``statements``; ``finish`` spends past the wall, never past the count.
@@ -231,7 +326,7 @@ class _WalkBudget:
         """
         if self.exhausted_by == "statements":
             return False
-        if self.statements + statements > self.max_statements:
+        if not self.affords(statements):
             self.exhausted_by = "statements"
             return False
         if not finish:
@@ -256,7 +351,7 @@ class _WalkBudget:
 class _WalkState:
     manager: Any
     builder: UserListQueryBuilderV2
-    walked_key: str
+    witness: MatchingActivityWitness
     page_size: int
     window_start: datetime
     window_end: datetime
@@ -290,6 +385,10 @@ class _WalkState:
     # A batch's enrichment ran out of a read budget: later certifications
     # read one user at a time (``_certify``).
     certify_singly: bool = False
+    # The head-of-line user's own capped native statement was stopped and
+    # sent again without the cap: once per request
+    # (``_read_native_certification``).
+    uncapped_native: bool = False
     # The tied instant being decided, the id below which it was entered, and
     # the resolved ids it returned (certified), in descending order.
     instant: datetime | None = None
@@ -347,6 +446,10 @@ def _utc(value: Any) -> datetime | None:
 
 
 def _enrichment_statement_count(manager: Any) -> int:
+    """The statements one certification sends: the attribute enrichment's key
+    statements and, when native leaves are set, the native span-dimension
+    statement (``_certify``)."""
+
     from tracer.services.users_list_manager import _USER_LIST_ATTRIBUTE_KEY_BATCH_SIZE
 
     walked = getattr(manager, "_walked_typed_filter", None)
@@ -357,7 +460,11 @@ def _enrichment_statement_count(manager: Any) -> int:
         if key in manager.attribute_exact_text_filters or key == walked_key
     )
     ordinary = len(manager.attribute_keys) - accelerated
-    return accelerated + -(-ordinary // _USER_LIST_ATTRIBUTE_KEY_BATCH_SIZE)
+    return (
+        accelerated
+        + -(-ordinary // _USER_LIST_ATTRIBUTE_KEY_BATCH_SIZE)
+        + bool(manager.native_dimension_leaves)
+    )
 
 
 def _materialisation_statement_count(manager: Any) -> int:
@@ -365,7 +472,9 @@ def _materialisation_statement_count(manager: Any) -> int:
 
     The replay; the relation statement, when relation filters are set; one
     metrics statement per group with a requested field, sessions and spans
-    (``build_requested_page_metric_queries``); and the evals statement.
+    (``build_requested_page_metric_queries``); and the evals statement. The
+    native span-dimension statement is not one of them: certification sends
+    it (``_enrichment_statement_count``), and the replay reuses its answers.
     """
     metrics = manager.metric_keys
     return (
@@ -384,7 +493,9 @@ def _statement_budget(manager: Any) -> int:
     instant, a slice and its retries a quarter as wide down to the least
     width, and the head-of-line decision (``_head_statements``), 63
     statements at the view's 100 keys. Both numbers are known before the
-    first statement; only time splits fall outside them (module docstring).
+    first statement; only time splits and the head-of-line user's native
+    statement sent again without the cap fall outside them (module
+    docstring).
     """
     return max(
         USER_LIST_WALK_MAX_STATEMENTS,
@@ -407,7 +518,10 @@ def _head_statements(manager: Any) -> int:
     The slice itself and its survivor statement; when it comes back tied at
     one instant, the instant read and its survivor statement; one batch's
     enrichment and, when that runs out of a read budget, the head-of-line
-    user's own (``_certify``); and a finish with its uncapped retry.
+    user's own (``_certify``); and a finish with its uncapped retry. The
+    head-of-line user's native statement sent again without the cap is not
+    part of it: like a time split, it is outside the count
+    (``_read_native_certification``).
     """
     return (
         4
@@ -515,13 +629,18 @@ def _read_slice(
     request has decided something, a stopped slice it cannot narrow, or
     whose retry the page wall refuses, ends it.
 
-    What stays unbounded. Survivor, instant, enrichment and tail-probe
-    statements never carry a server cap (the application's no-abort policy):
-    a wall only decides whether they start. The escape lifts even that, once
-    per request, for the head-of-line decision: the uncapped slice, its
+    What stays unbounded. Survivor, instant, attribute enrichment and
+    tail-probe statements never carry a server cap (the application's
+    no-abort policy): a wall only decides whether they start. The native
+    span-dimension statement is the exception: the server stops it at its
+    cap (``_native_certification_deadline``). The escape lifts the walls,
+    once per request, for the head-of-line decision: the uncapped slice, its
     survivor statement, the instant read and its survivor statement when the
-    slice comes back tied at one instant, and one batch's enrichment (and its
-    head-of-line user's alone when that fails) start with no wall at all.
+    slice comes back tied at one instant, and one batch's certification (and
+    its head-of-line user's alone when that fails) start with no wall at all;
+    the native statement among them still runs under its own cap, and is sent
+    without it only when that cap stops the head-of-line user's own
+    (``_read_native_certification``).
     The finish's uncapped replay is not part of it: ``_materialise`` sends it
     when a page that has published nothing had its head-of-line user's
     capped replay stopped or refused, whether or not a slice was uncapped.
@@ -836,7 +955,16 @@ def _tail_is_empty(state: _WalkState, *, below: datetime) -> bool | None:
 
 
 def _certify(state: _WalkState, batch: list[_Candidate]) -> int:
-    """Attribute enrichment for a batch: membership superset and order key.
+    """Native decisions and attribute enrichment for a batch: membership and order key.
+
+    The native span-dimension statement (when the filters carry native
+    leaves) decides every native leaf over the whole window with the users
+    graph's own SQL, for the batch's users and every alias the batch carries,
+    through the replay's own builder (literal alias map, frozen window); the
+    attribute enrichment then returns the raw leaves' values and the order
+    key. A user that fails any leaf is certified with no order key, so it is
+    never pending and never replayed; the replay reuses these decisions
+    instead of reading them again.
 
     Returns how many of ``batch``, from its head, are certified; ``0`` when
     the budget or the wall refused, or one user's read ran out of a read
@@ -848,7 +976,7 @@ def _certify(state: _WalkState, batch: list[_Candidate]) -> int:
     if state.certify_singly:
         batch = batch[:1]
     statements = _enrichment_statement_count(manager)
-    if not state.progress_owed and state.budget.remaining_statements() < (
+    if not state.progress_owed and not state.budget.affords(
         statements + _materialisation_statement_count(manager)
     ):
         # Off the head of line, only when one materialisation is paid too. On
@@ -869,7 +997,21 @@ def _certify(state: _WalkState, batch: list[_Candidate]) -> int:
         for alias in candidate.alias_ids
     }
     head = len(batch) == 1 and state.progress_owed
+    native_witness = state.witness.family == "native"
     try:
+        if manager.native_dimension_leaves:
+            _read_native_certification(
+                state,
+                rows,
+                manager._exact_candidate_builder(
+                    candidate_ids=[candidate.end_user_id for candidate in batch],
+                    candidate_scan_ids=scan_ids,
+                    candidate_end_user_id_map=alias_map,
+                    frozen_filters=state.frozen_filters,
+                ),
+                newest=state.witness.leaf_index if native_witness else None,
+                head=head,
+            )
         manager._read_span_attributes(
             rows,
             _admission_deadline(state),
@@ -883,7 +1025,14 @@ def _certify(state: _WalkState, batch: list[_Candidate]) -> int:
         state.budget.exhausted_by = "wall"
         return 0
     except Exception as exc:
-        if head or not is_read_budget_error(exc):
+        stopped = isinstance(exc, _NativeCertificationStopped)
+        if head and stopped:
+            # Only once this request's uncapped attempt is spent
+            # (``_read_native_certification``): a retryable read-budget
+            # error, as a head-of-line attribute read that fails at its least
+            # bucket is.
+            raise ReadDeadlineExceeded(str(exc)) from exc
+        if head or not (stopped or is_read_budget_error(exc)):
             raise
         if len(batch) == 1:
             # Not the head of line: the request stops above this batch.
@@ -899,11 +1048,17 @@ def _certify(state: _WalkState, batch: list[_Candidate]) -> int:
     state.progress_owed = False
     for candidate in batch:
         uid = candidate.end_user_id
-        order_key = manager._matching_activity_by_user.get(uid, {}).get(
-            state.walked_key
+        order_key = (
+            manager._native_matching_activity_by_user.get(uid, {}).get(
+                state.witness.leaf_index
+            )
+            if native_witness
+            else manager._matching_activity_by_user.get(uid, {}).get(state.witness.key)
         )
-        member = order_key is not None and manager._attribute_filters_match(
-            {"end_user_id": uid}
+        member = (
+            order_key is not None
+            and manager._attribute_filters_match({"end_user_id": uid})
+            and _native_filters_match(manager, uid)
         )
         state.certified[uid] = _Certified(
             end_user_id=uid,
@@ -911,6 +1066,113 @@ def _certify(state: _WalkState, batch: list[_Candidate]) -> int:
             order_key=order_key if member else None,
         )
     return len(batch)
+
+
+class _NativeCertificationStopped(Exception):
+    """The server stopped a native certification statement at its own cap.
+
+    A read-budget failure (``is_read_budget_error``), not the request's wall:
+    ``_certify`` certifies the batch's head-of-line user alone and stops the
+    request above a user that fails alone. The head-of-line user's own stop
+    is not raised: that user's statement is sent once more without the cap
+    (``_read_native_certification``).
+    """
+
+
+def _native_certification_deadline(state: _WalkState) -> ReadDeadline:
+    """The deadline the native certification statement runs, and is stopped, under.
+
+    The statement is a whole-window latest-state replay, like the finish's
+    replay and metrics statements, so it carries their cap: the server stops
+    it at ``USER_LIST_ENRICHMENT_TIMEOUT_MS`` or what admits it, whichever is
+    less (``_statement_timeout`` on an ``enforce_on_server`` deadline). On the
+    head-of-line escape nothing admits it (``_admission_deadline`` is
+    ``None``), and the cap alone bounds it. Only the head-of-line user's
+    retry after that cap stopped its own statement runs without one
+    (``_read_native_certification``).
+    """
+    from tracer.services.users_list_manager import USER_LIST_ENRICHMENT_TIMEOUT_MS
+
+    admission = _admission_deadline(state)
+    if admission is None:
+        return ReadDeadline.start(
+            USER_LIST_ENRICHMENT_TIMEOUT_MS, enforce_on_server=True
+        )
+    return replace(admission, enforce_on_server=True)
+
+
+def _read_native_certification(
+    state: _WalkState,
+    rows: list[dict],
+    builder: Any,
+    *,
+    newest: int | None,
+    head: bool,
+) -> None:
+    """The batch's native span-dimension statement, under a server cap.
+
+    A stop the admission deadline explains (nothing of it left) is the wall
+    and propagates as ``ReadDeadlineExceeded``; a stop with admission time
+    left is the statement's own cap, a read-budget failure
+    (``_NativeCertificationStopped``).
+
+    Except for the ``head`` of line: the one user a request that has decided
+    nothing certifies alone (``_certify``). When the cap stops that user's
+    own statement, it is sent once more with no cap and no admission check,
+    once per request, as the finish decides its head-of-line user's replay
+    (``_materialise``). The statement has no time split, so a user whose
+    native statement always outlasts the cap would otherwise make every
+    request raise at the same place, and an exact list can neither skip that
+    user nor publish anyone ranked behind it first: no bounded retry keeps
+    the list both exact and moving. While the request has decided nothing,
+    every stop is the statement's own (``_admission_deadline`` never runs
+    out before it returns ``None``), so this covers the capped attempt the
+    server stopped whatever stopped it: the user's own cap, or what was left
+    of the analytics wall. The stopped attempt is the user's own statement,
+    right before; when a batch the user led was stopped first
+    (``certify_singly``), the batch came before that. The retry is one
+    statement, for one user, once per request, and like a time split it is
+    outside the statement count: nothing may refuse it, or the same user
+    would stop the next request at the same place.
+    """
+    deadline = _native_certification_deadline(state)
+    try:
+        state.manager._read_native_span_dimensions(
+            rows, builder, deadline, newest=newest
+        )
+        return
+    except ReadDeadlineExceeded as exc:
+        admission = _admission_deadline(state)
+        if admission is not None:
+            try:
+                admission.remaining_ms()
+            except ReadDeadlineExceeded:
+                raise exc from None
+        logger.info(
+            "users_matching_walk_native_certification_stopped",
+            users=len(rows),
+            cap_ms=deadline.total_ms,
+        )
+        if not head or state.uncapped_native:
+            raise _NativeCertificationStopped(str(exc)) from exc
+    state.uncapped_native = True
+    logger.info(
+        "users_matching_walk_uncapped_native",
+        reason="own_stopped",
+        after_batch=state.certify_singly,
+        statements=state.budget.statements,
+    )
+    state.manager._read_native_span_dimensions(rows, builder, None, newest=newest)
+
+
+def _native_filters_match(manager: Any, end_user_id: str) -> bool:
+    """Every native leaf's certified decision for ``end_user_id``."""
+
+    row = {"end_user_id": end_user_id}
+    return all(
+        manager._native_dimension_matches(row=row, filter_index=index)
+        for index, _item in manager.native_dimension_leaves
+    )
 
 
 def _certified_prefix(
@@ -1041,6 +1303,7 @@ def _replay(
         enrich_rows=True,
         candidate_rows=None,
         skip_attribute_read=True,
+        skip_native_read=True,
     )
 
 
@@ -1141,6 +1404,8 @@ def _publish(state: _WalkState, boundary: datetime | None) -> bool:
                 break
             entry.published = True
             state.published.append(entry.row)
+            # A page with a user to show ends at its count, as before.
+            state.budget.growable = False
             state.last_key, state.last_id = entry.order_key, entry.end_user_id
         if len(state.published) == state.page_size:
             return True
@@ -1221,6 +1486,18 @@ def _instant_position(state: _WalkState) -> str | None:
     return position
 
 
+def witness_fingerprint(witness: MatchingActivityWitness) -> str:
+    """The witness a cursor's keys and coverage speak for.
+
+    Its family and its leaf as the cursor binds it (``identity``), never its
+    position in the request, so every request the cursor admits that chooses
+    the same leaf computes the same value.
+    """
+
+    text = f"{witness.family}\n{witness.identity}"
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:32]
+
+
 def _slices_needed(width: timedelta) -> int:
     """Slices at the cap that ``width`` of window still needs."""
 
@@ -1252,18 +1529,24 @@ def walk_matching_activity_page(
         filters=manager.filters,
         empty_scope=manager.empty_scope,
     )
-    witness = builder.matching_activity_witness()
+    # The witness ``matching_activity_walk_applies`` chose, carried to every
+    # statement: slices, instants and probes never recompute it.
+    witness = manager._walk_witness
     if witness is None:
         raise ListCursorError(
             "invalid_cursor", "User ordering changed; restart pagination."
         )
+    builder.walk_witness = witness
+    fingerprint = witness_fingerprint(witness)
     open_instant = False
     if cursor_order is None:
         last_key, last_id, coverage = None, None, window_end
     else:
         if (
-            len(cursor_order) not in (4, 5)
+            len(cursor_order) not in (5, 6)
             or cursor_order[0] != USER_LIST_MATCHING_CURSOR_ORDER
+            # Keys and coverage of another leaf: never read as this one's.
+            or cursor_order[4] != fingerprint
         ):
             raise ListCursorError(
                 "invalid_cursor", "User ordering changed; restart pagination."
@@ -1271,11 +1554,11 @@ def walk_matching_activity_page(
         last_key = _utc(cursor_order[1])
         last_id = str(cursor_order[2]) if cursor_order[2] is not None else None
         coverage = _utc(cursor_order[3])
-        open_instant = len(cursor_order) == 5 and cursor_order[4] is True
+        open_instant = len(cursor_order) == 6 and cursor_order[5] is True
         if (
             coverage is None
             or (last_key is None) != (last_id is None)
-            or (len(cursor_order) == 5 and not open_instant)
+            or (len(cursor_order) == 6 and not open_instant)
         ):
             raise ListCursorError(
                 "invalid_cursor", "User ordering changed; restart pagination."
@@ -1283,13 +1566,15 @@ def walk_matching_activity_page(
     state = _WalkState(
         manager=manager,
         builder=builder,
-        walked_key=witness[0],
+        witness=witness,
         page_size=page_size,
         window_start=window_start,
         window_end=window_end,
         frozen_filters=frozen_filters,
         budget=_WalkBudget(
-            wall_ms=USER_LIST_PAGE_WALL_MS, max_statements=_statement_budget(manager)
+            wall_ms=USER_LIST_PAGE_WALL_MS,
+            max_statements=_statement_budget(manager),
+            ceiling=_statement_budget(manager) * USER_LIST_WALK_EMPTY_PAGE_BUDGETS,
         ),
         last_key=last_key,
         last_id=last_id,
@@ -1409,15 +1694,18 @@ def walk_matching_activity_page(
                 if not _publish(state, boundary):
                     state.stopped = True
                 break
-        # An empty slice cost only its fixed overhead (the bloom pruned every
-        # granule), so its time says nothing about a wider one: widen hard as
-        # long as another statement like it fits the wall. A populated slice
-        # that came back untruncated widens by four only if four of it would
-        # fit, since its cost grows with its width.
+        # An empty slice on an index-pruned witness cost only its fixed
+        # overhead (the bloom pruned every granule), so its time says nothing
+        # about a wider one: widen hard as long as another statement like it
+        # fits the wall. A slice whose cost grows with its width - one that
+        # came back populated and untruncated, or an empty one on a witness no
+        # index serves (a native flag reads every row of its range) - widens
+        # by four only if four of it would fit.
         remaining_ms = state.budget.remaining_ms()
-        if not candidates and read.query_ms * 2 <= remaining_ms:
-            width = min(USER_LIST_WALK_MAX_SLICE, width * 16)
-        elif candidates and read.query_ms * 4 <= remaining_ms:
+        if not candidates and state.witness.index_pruned:
+            if read.query_ms * 2 <= remaining_ms:
+                width = min(USER_LIST_WALK_MAX_SLICE, width * 16)
+        elif read.query_ms * 4 <= remaining_ms:
             width = min(USER_LIST_WALK_MAX_SLICE, width * 4)
 
     leftover = state.pending(boundary)
@@ -1440,7 +1728,13 @@ def walk_matching_activity_page(
         position = _instant_position(state) if state.instant is not None else None
         if position is not None:
             last_key, last_id = state.instant, position
-        checkpoint = (USER_LIST_MATCHING_CURSOR_ORDER, last_key, last_id, next_coverage)
+        checkpoint = (
+            USER_LIST_MATCHING_CURSOR_ORDER,
+            last_key,
+            last_id,
+            next_coverage,
+            fingerprint,
+        )
         # An instant left undecided resumes by deciding the instant below
         # ``coverage`` in resolved order, and so does a walk its budget
         # stopped where a raw restart would find the same users again: at

@@ -3840,17 +3840,48 @@ def _user_filter_clauses(
 
 
 def _user_membership_having(
-    filters: list[dict[str, Any]], *, project_id: str
+    filters: list[dict[str, Any]],
+    *,
+    project_id: str,
+    namespace: str = "user_member",
 ) -> tuple[tuple[str, ...], str, dict[str, Any]]:
+    """Match independent leaves across a user's complete latest-live spans.
+
+    The per-span flags, the per-user condition and the parameters of
+    ``_user_membership_parts``.
+    """
+    flags, condition, params, _terms = _user_membership_parts(
+        filters, project_id=project_id, namespace=namespace
+    )
+    return flags, condition, params
+
+
+def _user_membership_parts(
+    filters: list[dict[str, Any]],
+    *,
+    project_id: str,
+    namespace: str = "user_member",
+) -> tuple[tuple[str, ...], str, dict[str, Any], tuple[tuple[str, str, str], ...]]:
     """Match independent leaves across a user's complete latest-live spans.
 
     Attribute negatives follow UsersListManager's collection semantics: a
     selected typed domain must exist and no value may satisfy the positive
     complement. Missing attributes cannot satisfy a negative. Null means no
     value in that typed domain on any of the user's spans.
+
+    ``namespace`` prefixes every row-flag alias and parameter, so several
+    independently compiled leaves can share one statement.
+
+    Returns the per-span flags (``(predicate) AS alias``), the per-user
+    condition (the terms joined by AND), the parameters, and the terms
+    themselves as ``(alias, predicate, comparison)``: each term is
+    ``countIf(alias) <comparison>`` over ``predicate``, so a caller can tell an
+    existence term (``> 0``) from an absence term (``= 0``) without parsing
+    the SQL.
     """
     clauses: list[str] = []
     row_predicates: list[str] = []
+    terms: list[tuple[str, str, str]] = []
     params: dict[str, Any] = {}
     negative_ops = {
         "not_equals": "equals",
@@ -3873,8 +3904,9 @@ def _user_membership_having(
         return predicate
 
     def group_match(predicate: str, comparison: str) -> str:
-        alias = f"user_member_match_{len(row_predicates)}"
+        alias = f"{namespace}_match_{len(row_predicates)}"
         row_predicates.append(f"({predicate}) AS {alias}")
+        terms.append((alias, predicate, comparison))
         return f"countIf({alias}) {comparison}"
 
     for index, item in enumerate(filters):
@@ -3886,7 +3918,7 @@ def _user_membership_having(
             continue
         config = item.get("filter_config") or item.get("filterConfig") or {}
         operation = config.get("filter_op") or config.get("filterOp")
-        prefix = f"user_member_{index}"
+        prefix = f"{namespace}_{index}"
         # Legacy raw keys without a family still follow the Users list's
         # attribute vocabulary; declared relation/system leaves keep theirs.
         family = UserListQueryBuilder._filter_col_type(item)
@@ -3915,7 +3947,42 @@ def _user_membership_having(
             )
         else:
             clauses.append(group_match(compile_leaf(item, prefix), "> 0"))
-    return tuple(row_predicates), " AND ".join(clauses) or "1 = 1", params
+    return (
+        tuple(row_predicates),
+        " AND ".join(clauses) or "1 = 1",
+        params,
+        tuple(terms),
+    )
+
+
+def compile_user_membership_leaf(
+    item: dict[str, Any], *, project_id: str, namespace: str
+) -> tuple[tuple[str, ...], str, dict[str, Any]]:
+    """The users graph's own membership SQL for one filter leaf.
+
+    Returns the per-span flags (``(predicate) AS alias``), the per-user
+    condition over them (``countIf(alias) ...``) and their parameters, all
+    under ``namespace``. The Users list decides native span-dimension leaves
+    with exactly this SQL so both surfaces answer the same leaf identically.
+    """
+
+    return _user_membership_having([item], project_id=project_id, namespace=namespace)
+
+
+def compile_user_membership_leaf_terms(
+    item: dict[str, Any], *, project_id: str, namespace: str
+) -> tuple[tuple[str, str, str], ...]:
+    """The terms of ``compile_user_membership_leaf``'s condition, in order.
+
+    Each is ``(alias, predicate, comparison)``: the condition is
+    ``countIf(alias) <comparison>`` for each, joined by AND, and ``predicate``
+    is the per-span flag the alias names, with the same parameters.
+    """
+
+    _flags, _condition, _params, terms = _user_membership_parts(
+        [item], project_id=project_id, namespace=namespace
+    )
+    return terms
 
 
 def _owned_user_eval_config_ids(

@@ -49,6 +49,8 @@ from tracer.tests.test_users_matching_walk import (
     _from_us,
     _manager,
     _names,
+    _native_leaf,
+    _native_status_leaf,
     _NativeDriver,
     _never_seed,
     _page,
@@ -76,6 +78,7 @@ def _add(
     raw: list[tuple[datetime, int]],
     *,
     curated: bool = True,
+    native: bool | None = None,
 ) -> str:
     """A user with explicit ids, so survivors and aliases interleave in id order.
 
@@ -91,6 +94,9 @@ def _add(
         "curated": curated,
         "name": uid,
         "typed_values": [("string", '"Gold"')],
+        # The native leaf's whole-window decision, in a world whose page
+        # carries one (``_family_filters``); None: no native leaf.
+        "native": native,
     }
     for identity in ids:
         world.canonical[identity] = uid
@@ -99,13 +105,24 @@ def _add(
     return uid
 
 
+def _is_member(user: dict) -> bool:
+    """A key (the witness leaf's newest live match), curated, and every native
+    leaf decided true when the page carries one (``second``: the native leaf
+    of a ``reordered`` page that answers from its own rows)."""
+
+    return (
+        user["key"] is not None
+        and user["curated"]
+        and user["native"] is not False
+        and user.get("second") is not False
+    )
+
+
 def _expected(world: World) -> list[str]:
     """Members in page order: newest matching activity, then id, descending."""
 
     members = [
-        (user["key"], uid)
-        for uid, user in world.users.items()
-        if user["key"] is not None and user["curated"]
+        (user["key"], uid) for uid, user in world.users.items() if _is_member(user)
     ]
     return [uid for _key, uid in sorted(members, reverse=True)]
 
@@ -160,6 +177,26 @@ def _check_singly(finishing: list[tuple[str, tuple[str, ...], bool, bool]]) -> N
         )
 
 
+def _check_uncapped_natives(
+    natives: list[tuple[tuple[str, ...], bool, bool]], reasons: list[str]
+) -> None:
+    """At most one native statement without a cap a request, for one user, and why.
+
+    ``natives`` is one request's ``(ids, capped, stopped)``, in order, and
+    ``reasons`` what the walk logged for its uncapped native statement:
+    ``own_stopped``, right after the same user's own capped statement was
+    stopped, and before any other user was certified.
+    """
+    uncapped = [i for i, (_ids, capped, _stopped) in enumerate(natives) if not capped]
+    assert len(uncapped) == len(reasons) <= 1, (natives, reasons)
+    for index, reason in zip(uncapped, reasons, strict=True):
+        assert reason == "own_stopped", reason
+        (user,) = natives[index][0]
+        assert index > 0 and natives[index - 1] == ((user,), True, True), natives
+        # Nothing before it was decided: every earlier statement was stopped.
+        assert all(stopped for _ids, _capped, stopped in natives[:index]), natives
+
+
 class _Clock:
     """The monotonic clock of the walls, advanced by each scripted statement."""
 
@@ -202,6 +239,10 @@ def _statement_kind(query: str, params: dict | None) -> str:
     """``kind_of``, told apart for every finishing statement."""
 
     params = params or {}
+    if "native_span_flags" in query:
+        # Certification, not a finishing statement; it names its users in
+        # ``candidate_end_user_ids`` like one.
+        return "native"
     if "latest_relation_candidate_spans AS" in query:
         return "relation"
     if "eval_eu_ids" in params:
@@ -230,6 +271,9 @@ class _CappedEngine(Engine):
     ``slice_ms(width, returned_rows)`` says. A slice that costs more than the
     cap it was sent with is stopped there; one sent without a cap runs to
     the end whatever it costs. Records every slice as ``(width, cap,
+    stopped)``. A native span-dimension statement that carries a
+    ``heavy_native`` user and asks for a cap is stopped there, and runs
+    without one; every native statement is recorded as ``(ids, capped,
     stopped)``.
     """
 
@@ -242,9 +286,12 @@ class _CappedEngine(Engine):
         slice_ms: Callable[[timedelta, bool], float] | None = None,
         instant_ms: float = 1.0,
         enrich_ms: float = 1.0,
+        heavy_native: frozenset[str] = frozenset(),
     ) -> None:
         super().__init__(world)
         self.heavy = heavy
+        self.heavy_native = heavy_native
+        self.natives: list[tuple[tuple[str, ...], bool, bool]] = []
         self.batch_limit = batch_limit
         self.clock = clock
         self.slice_ms = slice_ms
@@ -314,6 +361,16 @@ class _CappedEngine(Engine):
                 return SimpleNamespace(data=data, query_time_ms=1.0)
         if kind == "slice":
             self.slice_at.append(self._elapsed_ms())
+        if kind == "native":
+            ids = tuple((params or {})["candidate_end_user_ids"])
+            capped = server_execution_cap_ms is not None
+            stopped = capped and bool(self.heavy_native.intersection(ids))
+            self.natives.append((ids, capped, stopped))
+            if stopped:
+                self.calls.append(query)
+                if self.clock is not None:
+                    self.clock.spend(server_execution_cap_ms)
+                raise ReadDeadlineExceeded("ClickHouse statement exceeded its cap")
         result = super().execute_ch_query(
             query,
             params,
@@ -376,12 +433,17 @@ def _follow(
     fault: Callable[[int, int], bool] | None = None,
     fail_ms: float = 50.0,
     width: timedelta | None = None,
+    family: str = "raw",
+    heavy_native: frozenset[str] = frozenset(),
 ) -> tuple[list[str], int]:
     """Follow the cursor to the end; returns the published names and the hops.
 
     Every hop must keep the coverage where it was or lower it, send no more
     statements than one decision or the page's budget (``_one_decision``,
-    every finishing statement included), and send at most one replay without
+    every finishing statement included) times the budgets an empty page's
+    count may grow to (``USER_LIST_WALK_EMPTY_PAGE_BUDGETS``); a hop that
+    returns an empty page because its count ran out must have spent that
+    whole ceiling or its page wall, and send at most one replay without
     a server cap, for one user, while the page has published nothing: right
     after its own capped replay was stopped, after a stopped batch it led
     when the budget could not afford its own attempt, or when the search had
@@ -401,7 +463,9 @@ def _follow(
     say which enrichment statements run out of memory, each costing
     ``fail_ms`` (``_MemoryEngine``): at most one user's read a hop may be
     split in time, uncounted, inside the documented bound.
-    ``mutate(world, published, cursor)`` runs between hops.
+    ``mutate(world, published, cursor)`` runs between hops. ``family`` says
+    which filters the page carries (``_family_filters``): the walk's witness
+    is the raw attribute leaf, or a native leaf.
     """
     with _scripted_clock(_Clock()) as clock:
         return _follow_on(
@@ -419,6 +483,8 @@ def _follow(
             fault=fault,
             fail_ms=fail_ms,
             width=width,
+            family=family,
+            heavy_native=heavy_native,
         )
 
 
@@ -438,12 +504,15 @@ def _follow_on(
     fault: Callable[[int, int], bool] | None,
     fail_ms: float,
     width: timedelta | None,
+    family: str = "raw",
+    heavy_native: frozenset[str] = frozenset(),
 ) -> tuple[list[str], int]:
     budget = max(
         max_statements or walk.USER_LIST_WALK_MAX_STATEMENTS,
-        _one_decision(keys, finish),
+        _one_decision(keys, finish, family),
     )
-    assert walk._statement_budget(_keyed_manager(keys, finish)) == budget
+    assert walk._statement_budget(_keyed_manager(keys, finish, family)) == budget
+    ceiling = budget * walk.USER_LIST_WALK_EMPTY_PAGE_BUDGETS
     names: list[str] = []
     seen_states: set = set()
     coverage = WINDOW_END
@@ -453,7 +522,7 @@ def _follow_on(
     refused_at: datetime | None = None
     cursor = None
     finish_wall = walk.USER_LIST_WALK_FINISH_WALL_MS
-    enrichment = _enrichments(keys)
+    enrichment = _enrichments(keys, family)
     least = _split_statements(ulm._USER_LIST_ATTRIBUTE_MIN_BUCKET)
     for hop in range(1, max_hops + 1):
         engine = _MemoryEngine(
@@ -464,6 +533,7 @@ def _follow_on(
             fail_ms=fail_ms,
             width=width,
             slice_ms=slice_ms,
+            heavy_native=heavy_native,
         )
         engine.outage = outage_every is not None and hop % outage_every == 0
         with capture_logs() as logs:
@@ -473,13 +543,39 @@ def _follow_on(
                 engine=engine,
                 keys=keys,
                 finish=finish,
+                family=family,
+                hop=hop,
             )
         names.extend(_names(read))
         # One user's read split in time, at most, outside the budget.
         narrowed = sum(engine.split.values())
         assert len(engine.split) <= 1, (hop, engine.split)
         assert narrowed <= enrichment * (least - 1), (hop, narrowed)
-        assert len(engine.calls) - narrowed <= budget, (hop, len(engine.calls))
+        spent = len(engine.calls) - narrowed
+        assert spent <= ceiling, (hop, spent, ceiling)
+        if (
+            not engine.outage
+            and read.has_more
+            and not _names(read)
+            and _exhausted(logs) == ["statements"]
+        ):
+            # An empty page the count ended: the count had grown to its
+            # ceiling (the next certification, finish included, or slice
+            # did not fit), or the page wall was spent. The walk's own
+            # count, which charges a certification its statements whether
+            # or not each is sent.
+            (counted,) = [
+                entry["statements"]
+                for entry in logs
+                if entry["event"] == "users_matching_walk_budget_exhausted"
+            ]
+            wall_spent = engine._elapsed_ms() >= walk.USER_LIST_PAGE_WALL_MS - 25
+            assert wall_spent or counted + enrichment + finish > ceiling, (
+                hop,
+                counted,
+                ceiling,
+                engine._elapsed_ms(),
+            )
         if not engine.outage:
             _check_uncapped(
                 engine.replays,
@@ -493,6 +589,9 @@ def _follow_on(
                 _logged(logs, "users_matching_walk_uncapped_slice"),
                 slice_at=engine.slice_at,
                 finish_wall_ms=finish_wall,
+            )
+            _check_uncapped_natives(
+                engine.natives, _logged(logs, "users_matching_walk_uncapped_native")
             )
         if not read.has_more:
             return names, hop
@@ -555,13 +654,56 @@ FINISH_SHAPES = {
 }
 
 
-def _keyed_manager(keys: int, finish: int = 1):
-    """The page's manager: ``keys`` attribute columns besides ``tag``, and the
-    columns and filters that make ``finish`` finishing statements."""
+# The page's witness: the raw ``tag`` leaf alone; a native ``status`` leaf
+# alone (the walk discovers on its flag, and no attribute is filtered); or
+# both, where the raw leaf is the witness and the native leaf is decided at
+# certification. ``reordered``: two native leaves that rank alike
+# (``witness_selectivity_rank``), ``observation_type = llm`` (the witness: the
+# least identity) and ``provider = openai`` with rows, keys and decisions of
+# its own (``_with_native``), sent in one order on odd requests and the other
+# on even ones. The cursor binds the filters without their order, so every
+# request must walk the same leaf. ``dense``: ``model = gpt-4o``, a leaf of its
+# own every user matches with a row every hour, and ``trace_name = checkout``
+# (the witness: a trace name ranks above a model), in alternating order. On
+# the dense leaf every slice finds every user again, and requests published
+# nothing for as long as the window has slices; the walk must discover on
+# the rarer leaf and key the page by it.
+FAMILIES = ["raw", "native", "mixed", "reordered", "dense"]
+NATIVE_WITNESS_FAMILIES = ("native", "reordered", "dense")
+REORDERED_SECOND = "openai"
+DENSE_MODEL = "gpt-4o"
+
+
+def _family_filters(family: str, hop: int = 0) -> list[dict]:
+    date_and_tag = _filters()
+    if family == "raw":
+        return date_and_tag
+    if family == "native":
+        return [date_and_tag[0], _native_status_leaf()]
+    if family == "reordered":
+        leaves = [
+            _native_leaf("observation_type", "equals", "llm", "SYSTEM_METRIC"),
+            _native_leaf("provider", "equals", REORDERED_SECOND, "SYSTEM_METRIC"),
+        ]
+        return [date_and_tag[0], *(leaves if hop % 2 else leaves[::-1])]
+    if family == "dense":
+        leaves = [
+            _native_leaf("model", "equals", DENSE_MODEL, "SYSTEM_METRIC"),
+            _native_leaf("trace_name", "equals", "checkout", "SYSTEM_METRIC"),
+        ]
+        return [date_and_tag[0], *(leaves if hop % 2 else leaves[::-1])]
+    assert family == "mixed", family
+    return [*date_and_tag, _native_status_leaf()]
+
+
+def _keyed_manager(keys: int, finish: int = 1, family: str = "raw", hop: int = 0):
+    """The page's manager: ``keys`` attribute columns besides the filters of
+    ``family`` (in request ``hop``'s order), and the columns and filters that
+    make ``finish`` finishing statements."""
 
     from tracer.services.users_list_manager import UsersListManager
 
-    base = _manager()
+    base = _manager(_family_filters(family, hop))
     columns, relation = FINISH_SHAPES[finish]
     manager = UsersListManager(
         organization_id=base.organization_id,
@@ -575,7 +717,7 @@ def _keyed_manager(keys: int, finish: int = 1):
     return manager
 
 
-def _one_decision(keys: int, finish: int = 1) -> int:
+def _one_decision(keys: int, finish: int = 1, family: str = "raw") -> int:
     """The statements one decision takes, restated from its parts.
 
     Not read from ``walk._statement_budget``, so a budget that grows past
@@ -589,14 +731,16 @@ def _one_decision(keys: int, finish: int = 1) -> int:
     width, retries = walk.USER_LIST_WALK_INITIAL_SLICE, 0
     while width > walk.USER_LIST_WALK_MIN_SLICE:
         width, retries = width / 4, retries + 1
-    return 1 + 1 + retries + 2 + 2 + 2 * _enrichments(keys) + 2 * finish
+    return 1 + 1 + retries + 2 + 2 + 2 * _enrichments(keys, family) + 2 * finish
 
 
-def _enrichments(keys: int) -> int:
-    """One enrichment's statements for a page of ``keys`` attribute columns:
-    one for the filtered key and one per four of the others."""
+def _enrichments(keys: int, family: str = "raw") -> int:
+    """One certification's statements for a page of ``keys`` attribute
+    columns: one for the filtered key (a raw witness), one per four of the
+    others, and the native statement when the page carries a native leaf
+    (one, however many native leaves)."""
 
-    return 1 + -(-keys // 4)
+    return (family in ("raw", "mixed")) + -(-keys // 4) + (family != "raw")
 
 
 @contextmanager
@@ -616,8 +760,17 @@ def _eval_configs():
         yield
 
 
-def _keyed_page(*, page_size: int, cursor, engine: Engine, keys: int, finish: int = 1):
-    manager = _keyed_manager(keys, finish)
+def _keyed_page(
+    *,
+    page_size: int,
+    cursor,
+    engine: Engine,
+    keys: int,
+    finish: int = 1,
+    family: str = "raw",
+    hop: int = 0,
+):
+    manager = _keyed_manager(keys, finish, family, hop)
     with (
         patch(SERVICE, return_value=engine),
         patch.object(manager, "_read_dimension_candidates", side_effect=_never_seed),
@@ -1196,7 +1349,7 @@ def test_a_search_that_spent_the_analytics_wall_reads_its_head_slice_uncapped():
         down = _CappedEngine(world, clock=clock)
         down.outage = True
         first, _engine = _page(world, page_size=25, engine=down)
-        assert first.payload["table"] == [] and first.checkpoint_order[4] is True
+        assert first.payload["table"] == [] and first.checkpoint_order[5] is True
         slow = _CappedEngine(world, clock=clock, instant_ms=30_000)
         with capture_logs() as logs:
             read, _engine = _page(
@@ -1292,6 +1445,15 @@ class _MemoryEngine(_CappedEngine):
     enrichment as ``(users, bucket width, failed)``, and counts, per user,
     the statements of that user alone over less than the window (its read
     split in time).
+
+    The native span-dimension statement is a certification statement too: it
+    counts as an enrichment over the whole window, and ``fault`` applies to it
+    when it carries more than one user. It has no time split, so a
+    head-of-line user whose native statement runs out of memory raises; that
+    documented limit has a test of its own
+    (``test_a_head_of_line_native_statement_that_fails_raises``), and the
+    generated worlds leave it out. One the server stops at its cap is sent
+    once more without it (``heavy_native``, ``_check_uncapped_natives``).
     """
 
     def __init__(
@@ -1305,8 +1467,11 @@ class _MemoryEngine(_CappedEngine):
         fault: Callable[[int, int], bool] | None = None,
         fail_ms: float = 50.0,
         slice_ms: Callable[[timedelta, bool], float] | None = None,
+        heavy_native: frozenset[str] = frozenset(),
     ) -> None:
-        super().__init__(world, heavy, clock=clock, slice_ms=slice_ms)
+        super().__init__(
+            world, heavy, clock=clock, slice_ms=slice_ms, heavy_native=heavy_native
+        )
         self.width = width
         self.user_hours = user_hours
         self.fault = fault
@@ -1325,23 +1490,38 @@ class _MemoryEngine(_CappedEngine):
         *,
         server_execution_cap_ms=None,
     ):
-        if _statement_kind(query, params) == "enrich":
-            bucket = _from_us(params["attr_end_us"]) - _from_us(params["attr_start_us"])
-            users = len(params["eu_ids"])
-            failed = (
-                (self.width is not None and bucket > self.width)
-                or (
-                    self.user_hours is not None
-                    and users * (bucket / timedelta(hours=1)) > self.user_hours
+        kind = _statement_kind(query, params)
+        if kind in ("enrich", "native"):
+            if kind == "enrich":
+                bucket = _from_us(params["attr_end_us"]) - _from_us(
+                    params["attr_start_us"]
                 )
-                or (self.fault is not None and self.fault(users, len(self.enrichments)))
+                users = len(params["eu_ids"])
+            else:
+                bucket = WINDOW
+                users = len(params["candidate_end_user_ids"])
+            failed = (
+                kind == "enrich"
+                and (
+                    (self.width is not None and bucket > self.width)
+                    or (
+                        self.user_hours is not None
+                        and users * (bucket / timedelta(hours=1)) > self.user_hours
+                    )
+                )
+            ) or (
+                self.fault is not None
+                and (kind == "enrich" or users > 1)
+                and self.fault(users, len(self.enrichments))
             )
             self.enrichments.append((users, bucket, failed))
             if users == 1 and bucket < WINDOW:
                 (uid,) = params["eu_ids"]
                 self.split[uid] = self.split.get(uid, 0) + 1
             if users == 1 and bucket >= WINDOW and failed:
-                (self.refused,) = params["eu_ids"]
+                (self.refused,) = params[
+                    "eu_ids" if kind == "enrich" else ("candidate_end_user_ids")
+                ]
             if failed:
                 from clickhouse_driver.errors import ErrorCodes, ServerException
 
@@ -1477,7 +1657,7 @@ def test_a_batch_that_runs_out_of_memory_at_many_keys_still_publishes(keys, tied
             if not read.has_more:
                 break
             order = tuple(read.checkpoint_order)
-            resumed_in_instant += len(order) == 5 and order[4]
+            resumed_in_instant += len(order) == 6 and order[5]
             cursor = _signed_cursor(read)
 
     # Users are published on every pair of consecutive requests.
@@ -1584,6 +1764,256 @@ def test_a_head_of_line_user_that_fails_at_every_width_raises(users):
             assert raised.value.code == ErrorCodes.MEMORY_LIMIT_EXCEEDED
             # It was split first, down to a bucket no wider than the least.
             assert min(b for _n, b, _f in memory.enrichments) <= timedelta(minutes=1)
+
+
+class _FailingNativeEngine(_MemoryEngine):
+    """Every native statement runs out of memory, whatever it carries."""
+
+    def execute_ch_query(
+        self,
+        query,
+        params=None,
+        timeout_ms=None,
+        settings=None,
+        *,
+        server_execution_cap_ms=None,
+    ):
+        if _statement_kind(query, params) == "native":
+            from clickhouse_driver.errors import ErrorCodes, ServerException
+
+            self.enrichments.append(
+                (len(params["candidate_end_user_ids"]), WINDOW, True)
+            )
+            self.calls.append(query)
+            raise ServerException(
+                "Memory limit exceeded", code=ErrorCodes.MEMORY_LIMIT_EXCEEDED
+            )
+        return super().execute_ch_query(
+            query,
+            params,
+            timeout_ms,
+            settings,
+            server_execution_cap_ms=server_execution_cap_ms,
+        )
+
+
+@pytest.mark.parametrize("users", [5, 1])
+def test_a_head_of_line_native_statement_that_fails_raises(users):
+    """The native certification has no time split (design O3): the request raises.
+
+    A batch whose native statement runs out of memory falls back to its
+    head-of-line user alone, as an enrichment does; when that user's own
+    statement fails too there is nothing narrower to try, so the request
+    raises the server's error (retryable) rather than publish a page, and the
+    next request does the same. It does not livelock: nothing is published
+    and no cursor is handed out.
+    """
+    from clickhouse_driver.errors import ErrorCodes, ServerException
+
+    world, _expected = _spread_world(users, 3)
+    for user in world.users.values():
+        user["native"] = True
+    filters = _family_filters("native")
+    clock = _Clock()
+    with _shipped_walls(), _scripted_clock(clock):
+        for _hop in range(2):
+            memory = _FailingNativeEngine(world, clock=clock)
+            with pytest.raises(ServerException) as raised:
+                _page(world, page_size=25, engine=memory, filters=filters)
+            assert raised.value.code == ErrorCodes.MEMORY_LIMIT_EXCEEDED
+            # The batch first, then its head-of-line user alone; never split.
+            assert [n for n, _b, _f in memory.enrichments] == (
+                [users, 1] if users > 1 else [1]
+            )
+            assert "replay" not in memory.kinds
+
+
+def test_the_escape_certifies_under_the_native_statements_own_cap():
+    """The head-of-line escape certifies under the native statement's own cap.
+
+    Every slice that returns rows outlasts the whole request, so each request
+    reads its head-of-line slice without a cap and decides its first batch
+    with no wall (``_admission_deadline`` is ``None``). The native statement
+    among them still carries the enrichment cap, as its server
+    ``max_execution_time``; it used to carry none. (Only a head-of-line
+    user's statement that cap stopped is sent again without it:
+    ``test_a_native_user_whose_statement_outlasts_every_cap_is_decided_once``.)
+    """
+    world, expected = _spread_world(4, 5)
+    for user in world.users.values():
+        user["native"] = True
+    clock = _Clock()
+    names, escaped_caps = [], []
+    cursor = None
+    with _shipped_walls(), _scripted_clock(clock):
+        for _hop in range(8):
+            engine = _CappedEngine(world, clock=clock, slice_ms=_every_slice(40_000))
+            with capture_logs() as logs:
+                read, _engine = _page(
+                    world,
+                    page_size=25,
+                    cursor=cursor,
+                    engine=engine,
+                    filters=_family_filters("native"),
+                )
+            names.extend(_names(read))
+            caps = [
+                (engine.caps[i], engine.timeouts[i])
+                for i, kind in enumerate(engine.kinds)
+                if kind == "native"
+            ]
+            for cap, timeout in caps:
+                assert cap is not None and cap == timeout, caps
+                assert cap <= ulm.USER_LIST_ENRICHMENT_TIMEOUT_MS
+            if _logged(logs, "users_matching_walk_uncapped_slice"):
+                escaped_caps.extend(cap for cap, _timeout in caps)
+            if not read.has_more:
+                break
+            cursor = _signed_cursor(read)
+    assert names == expected
+    # On the escape nothing admits it: the cap alone, in full.
+    assert escaped_caps
+    assert set(escaped_caps) == {ulm.USER_LIST_ENRICHMENT_TIMEOUT_MS}
+
+
+class _CappedNativeBatchEngine(_MemoryEngine):
+    """A native statement of more than one user outlasts its cap; one user's does not."""
+
+    def execute_ch_query(
+        self,
+        query,
+        params=None,
+        timeout_ms=None,
+        settings=None,
+        *,
+        server_execution_cap_ms=None,
+    ):
+        if (
+            _statement_kind(query, params) == "native"
+            and server_execution_cap_ms is not None
+            and len(params["candidate_end_user_ids"]) > 1
+        ):
+            self.calls.append(query)
+            self.kinds.append("native")
+            self.clock.spend(server_execution_cap_ms)
+            raise ReadDeadlineExceeded("ClickHouse statement exceeded its cap")
+        return super().execute_ch_query(
+            query,
+            params,
+            timeout_ms,
+            settings,
+            server_execution_cap_ms=server_execution_cap_ms,
+        )
+
+
+def test_a_native_batch_the_server_stops_at_its_cap_certifies_one_user_at_a_time():
+    """A stop at the native statement's own cap is a read budget, not the wall.
+
+    The batch is certified again for its head-of-line user alone, and the
+    rest of the request one user at a time; a stop off the head of line ends
+    the request above that user (``read_budget``) and the next one decides
+    it first. Every user is published once, in order.
+    """
+    world, expected = _spread_world(6, 5)
+    for user in world.users.values():
+        user["native"] = True
+    clock = _Clock()
+    names, stopped = [], 0
+    cursor = None
+    with _shipped_walls(), _scripted_clock(clock):
+        for _hop in range(12):
+            engine = _CappedNativeBatchEngine(world, clock=clock)
+            with capture_logs() as logs:
+                read, _engine = _page(
+                    world,
+                    page_size=25,
+                    cursor=cursor,
+                    engine=engine,
+                    filters=_family_filters("native"),
+                )
+            names.extend(_names(read))
+            stopped += len(
+                [
+                    entry
+                    for entry in logs
+                    if entry["event"]
+                    == "users_matching_walk_native_certification_stopped"
+                ]
+            )
+            if not read.has_more:
+                break
+            cursor = _signed_cursor(read)
+    assert names == expected
+    assert stopped >= 1
+
+
+@pytest.mark.parametrize("family", ["native", "mixed"])
+@pytest.mark.parametrize("page_size", [25, 2])
+@pytest.mark.parametrize(
+    ("heavy_ranks", "rejected_ranks"),
+    [((1,), ()), ((3,), ()), ((6,), ()), ((2, 5), (5,)), ((1, 2, 3, 4, 5, 6), (4,))],
+)
+def test_a_native_user_whose_statement_outlasts_every_cap_is_decided_once(
+    family, page_size, heavy_ranks, rejected_ranks
+):
+    """Review r2765: a heavy native user no longer wedges the list.
+
+    A user's native statement that outlasts any cap is stopped whenever it is
+    sent with one, and runs without one. Each request that reaches such a
+    user at its head of line, having decided nothing, sends that user's
+    statement once more without the cap and decides it (``_follow`` checks
+    ``_check_uncapped_natives``); a heavy user off the head of line stops the
+    request above it (``read_budget``), and the next request leads with it.
+    Every member is published once, in order, including users behind a
+    heavy one, and a heavy user the native leaf rejects is never published.
+    """
+    world = World()
+    heavy, expected = set(), []
+    for n in range(1, 7):
+        moment = minutes_before_end(5 * n)
+        uid = world.user(n, key=moment, raw=(moment,))
+        world.users[uid]["native"] = n not in rejected_ranks
+        if n in heavy_ranks:
+            heavy.add(uid)
+        if n not in rejected_ranks:
+            expected.append(f"user-{n}")
+
+    with _shipped_walls():
+        names, hops = _follow(
+            world,
+            page_size=page_size,
+            max_hops=30,
+            family=family,
+            heavy_native=frozenset(heavy),
+        )
+
+    assert names == expected
+    assert hops <= 6 + len(heavy) + 1, hops
+
+
+@pytest.mark.parametrize("size", [401, 601])
+def test_a_native_tied_cohort_larger_than_one_request_publishes_everyone_once(size):
+    """The tied-instant proof, walked on a native leaf.
+
+    Hundreds of users share their newest matching instant: no user at a
+    truncated floor is publishable until the whole instant is seen, and the
+    continuation resumes inside the instant, in resolved-id order.
+    """
+    world, expected = _tied_world(size)
+    for user in world.users.values():
+        user["native"] = True
+    filters = _family_filters("native")
+    names: list[str] = []
+    cursor = None
+    for _hop in range(-(-size // 25) + 1):
+        read, engine = _page(world, page_size=25, cursor=cursor, filters=filters)
+        names.extend(_names(read))
+        assert "enrich" not in [kind_of(call) for call in engine.calls]
+        if not read.has_more:
+            break
+        cursor = _signed_cursor(read)
+    assert names == expected
+    assert len(set(names)) == size
 
 
 @pytest.mark.parametrize("gap_hours", [4, 10, 20])
@@ -1709,7 +2139,7 @@ def test_a_count_refusal_in_a_tie_world_keeps_its_boundary(
             if not read.has_more:
                 break
             order = tuple(read.checkpoint_order)
-            opened += len(order) == 5 and bool(order[4])
+            opened += len(order) == 6 and bool(order[5])
             cursor = _signed_cursor(read)
 
     assert names == _expected(world)
@@ -1925,7 +2355,7 @@ def test_a_request_certifies_only_what_it_can_also_publish(
             if not read.has_more:
                 break
             order = tuple(read.checkpoint_order)
-            assert len(order) == 4 or not order[4], (requests, engine.kinds)
+            assert len(order) == 5 or not order[5], (requests, engine.kinds)
             cursor = _signed_cursor(read)
 
     assert names == _expected(world)
@@ -2086,8 +2516,18 @@ SLICE_MODELS = [
 ]
 
 
-def _slice_model(seed: int) -> Callable[[timedelta, bool], float] | None:
-    return SLICE_MODELS[(seed // len(LIMITS)) % len(SLICE_MODELS)]
+# A native witness has no skip index: its slice reads every row of its range,
+# so an EMPTY one costs in proportion to its width too.
+UNPRUNED_SLICE = _any_per_hour(2_000)
+
+
+def _slice_model(
+    seed: int, family: str = "raw"
+) -> Callable[[timedelta, bool], float] | None:
+    model = SLICE_MODELS[(seed // len(LIMITS)) % len(SLICE_MODELS)]
+    if family in NATIVE_WITNESS_FAMILIES and model is None and seed % 2:
+        return UNPRUNED_SLICE
+    return model
 
 
 # Attribute columns the page shows besides the filtered key, up to the Users
@@ -2142,6 +2582,80 @@ def _fault(seed: int, keys: int, kinds=tuple(FAULTS)) -> tuple[_Faults, int]:
     )
 
 
+def _with_native(world: World, seed: int, family: str) -> World:
+    """Give every user a native decision when the page carries a native leaf.
+
+    From a generator of its own, so the raw world is the same one the raw
+    family draws. A native witness keys on the leaf's newest latest live
+    match (the world's ``key``); a user that has one can still fail the leaf
+    (a family-less negation's forbidden value elsewhere in the window), and a
+    user with none never passes it. A raw witness keys on the attribute, and
+    the native leaf is then any user's independent decision.
+    """
+    if family == "raw":
+        return world
+    rng = random.Random(4_441 * seed + 17)
+    forbid = rng.choice([0.0, 0.15, 0.4])
+    for user in world.users.values():
+        if family in NATIVE_WITNESS_FAMILIES:
+            user["native"] = user["key"] is not None and rng.random() >= forbid
+        else:
+            user["native"] = rng.random() >= forbid
+    if family == "reordered":
+        _with_second_leaf(world, rng)
+    if family == "dense":
+        _with_dense_leaf(world, rng)
+    return world
+
+
+def _with_dense_leaf(world: World, rng: random.Random) -> None:
+    """The ``dense`` page's model leaf: every user matches it, every hour.
+
+    A row per user per hour of the window, each carried by one of the
+    user's ids, at a minute of its own; the newest is the user's key on it.
+    """
+
+    members: dict[str, tuple[datetime | None, bool]] = {}
+    rows: list[tuple[datetime, str]] = []
+    for uid, user in world.users.items():
+        offset = timedelta(minutes=rng.randrange(60), microseconds=rng.randrange(10**6))
+        hours = [WINDOW_START + timedelta(hours=h) + offset for h in range(24)]
+        rows.extend((moment, rng.choice(user["aliases"])) for moment in hours)
+        members[uid] = (hours[-1], True)
+    world.native_leaf(DENSE_MODEL, members, rows)
+
+
+def _with_second_leaf(world: World, rng: random.Random) -> None:
+    """The ``reordered`` page's provider leaf: rows, keys and decisions of its own.
+
+    Its newest match per user is drawn independently of the witness leaf's
+    (``key``), so reading one leaf's keys and coverage as the other's
+    publishes users twice or never. It is a positive equality: a user is a
+    member exactly when it has a newest match. Its rows also hold stale
+    versions, above or below that match.
+    """
+
+    instants = _instants()
+    span = int((WINDOW_END - WINDOW_START) / TICK)
+
+    def moment() -> datetime:
+        if rng.random() < 0.3:
+            return rng.choice(instants)
+        return WINDOW_START + TICK * rng.randrange(span)
+
+    members: dict[str, tuple[datetime | None, bool]] = {}
+    rows: list[tuple[datetime, str]] = []
+    for uid, user in world.users.items():
+        key = None if rng.random() < 0.25 else moment()
+        members[uid] = (key, key is not None)
+        user["second"] = key is not None
+        ids = user["aliases"]
+        if key is not None:
+            rows.append((key, rng.choice(ids)))
+        rows += [(moment(), rng.choice(ids)) for _ in range(rng.choice([0, 0, 1]))]
+    world.native_leaf(REORDERED_SECOND, members, rows)
+
+
 def _gap_world(rng: random.Random, n_users: int) -> World:
     """Users 20 minutes to 6 hours apart, one row each, as many as fit."""
 
@@ -2155,14 +2669,20 @@ def _gap_world(rng: random.Random, n_users: int) -> World:
     return world
 
 
-def _slice_hops(world: World, seed: int) -> int:
-    """Extra hops a world may take when no capped slice can return rows.
+def _slice_hops(world: World, seed: int, family: str = "raw") -> int:
+    """Extra hops a world may take when slices are slow.
 
-    Then only the head-of-line slice read without a cap, one least width
-    wide, returns rows, and a request reads one: every least-width window
-    that holds a witnessed row may cost a request of its own.
+    When no capped slice can return rows, only the head-of-line slice read
+    without a cap, one least width wide, returns rows, and a request reads
+    one: every least-width window that holds a witnessed row may cost a
+    request of its own. When every slice costs by its width, empty or not
+    (``UNPRUNED_SLICE``, two seconds an hour), the page wall admits a few
+    hours of window a request: at most one request an hour of the window.
     """
-    if _slice_model(seed) is not SLICE_MODELS[3]:
+    model = _slice_model(seed, family)
+    if model is UNPRUNED_SLICE:
+        return int(WINDOW / timedelta(hours=1))
+    if model is not SLICE_MODELS[3]:
         return 0
     return len({moment.replace(second=0, microsecond=0) for moment, _id in world.raw})
 
@@ -2173,10 +2693,14 @@ def _limits(seed: int):
     finishing statements its page makes."""
 
     slice_limit, max_statements, batch, finish = LIMITS[seed % len(LIMITS)]
+    # Half the worlds end an empty page at its count, as before its count
+    # could grow; the other half at the shipped four budgets or its wall.
+    empty_page_budgets = random.Random(8_191 * seed + 3).choice([1, 4])
     with (
         patch.object(walk, "USER_LIST_WALK_SLICE_USER_LIMIT", slice_limit),
         patch.object(walk, "USER_LIST_WALK_MAX_STATEMENTS", max_statements),
         patch.object(walk, "USER_LIST_WALK_CERTIFY_BATCH_SIZE", batch),
+        patch.object(walk, "USER_LIST_WALK_EMPTY_PAGE_BUDGETS", empty_page_budgets),
     ):
         yield max_statements, finish
 
@@ -2194,22 +2718,28 @@ def _hop_bound(n_users: int, page_size: int, heavy: int) -> int:
     return 30 + 2 * n_users + heavy * (min(page_size, n_users) + 2)
 
 
+@pytest.mark.parametrize("family", FAMILIES)
 @pytest.mark.parametrize("seed", range(STATIC_WORLDS))
-def test_every_hop_sequence_ends_exact_and_never_raises_the_coverage(seed):
+def test_every_hop_sequence_ends_exact_and_never_raises_the_coverage(seed, family):
     rng = random.Random(seed)
     n_users = rng.choice([1, 3, 8, 20, 45, 80])
-    faults, keys = _fault(seed, _key_count(seed))
+    # A native statement has no time split: the width fault stays raw.
+    kinds = FAULTS if family == "raw" else [k for k in FAULTS if k != "width"]
+    faults, keys = _fault(seed, _key_count(seed), kinds)
     world = _world(rng, n_users)
     if faults.gaps:
         world = _gap_world(random.Random(3 * seed + 1), n_users)
         n_users = len(world.users)
+    world = _with_native(world, seed, family)
     page_size = rng.choice(PAGE_SIZES)
     heavy = frozenset(
         rng.sample(sorted(world.users), min(n_users, rng.choice([0, 0, 0, 1, 2, 3])))
     )
     # A quarter of the worlds lose the server on every fifth request.
     outage = random.Random(31 * seed + 7).random() < 0.25
-    bound = _hop_bound(n_users, page_size, len(heavy)) + _slice_hops(world, seed)
+    bound = _hop_bound(n_users, page_size, len(heavy)) + _slice_hops(
+        world, seed, family
+    )
     with _limits(seed) as (max_statements, finish), _shipped_walls():
         names, _hops = _follow(
             world,
@@ -2217,13 +2747,14 @@ def test_every_hop_sequence_ends_exact_and_never_raises_the_coverage(seed):
             max_hops=bound + (bound // 4 if outage else 0),
             max_statements=max_statements,
             heavy=heavy,
-            slice_ms=_slice_model(seed),
+            slice_ms=_slice_model(seed, family),
             keys=keys,
             finish=finish,
             outage_every=5 if outage else None,
             fault=faults.fault,
             fail_ms=faults.fail_ms,
             width=faults.width,
+            family=family,
         )
 
     assert len(names) == len(set(names)), "a user was published twice"
@@ -2231,13 +2762,17 @@ def test_every_hop_sequence_ends_exact_and_never_raises_the_coverage(seed):
 
 
 def _stop_matching(rng: random.Random, changed: set[str]):
-    """Between hops, an unpublished member may stop matching or be rejected."""
+    """Between hops, an unpublished member may stop matching or be rejected.
+
+    On a page with a native leaf, stopping to match may also be the native
+    leaf turning false (a forbidden value appears elsewhere in the window).
+    """
 
     def mutate(world: World, published: set[str], _cursor: tuple) -> None:
         members = [
             uid
             for uid, user in world.users.items()
-            if uid not in published and user["key"] is not None and user["curated"]
+            if uid not in published and _is_member(user)
         ]
         if not members or rng.random() < 0.5:
             return
@@ -2245,17 +2780,20 @@ def _stop_matching(rng: random.Random, changed: set[str]):
         changed.add(uid)
         if rng.random() < 0.5:
             world.users[uid]["key"] = None
+        elif world.users[uid]["native"] is not None and rng.random() < 0.5:
+            world.users[uid]["native"] = False
         else:
             world.users[uid]["curated"] = False
 
     return mutate
 
 
+@pytest.mark.parametrize("family", FAMILIES)
 @pytest.mark.parametrize("seed", range(CHANGING_WORLDS))
-def test_users_that_stop_matching_between_hops_never_stall_or_repeat(seed):
+def test_users_that_stop_matching_between_hops_never_stall_or_repeat(seed, family):
     rng = random.Random(10_000 + seed)
     n_users = rng.choice([8, 20, 45, 80])
-    world = _world(rng, n_users)
+    world = _with_native(_world(rng, n_users), 10_000 + seed, family)
     before = _expected(world)
     page_size = rng.choice([1, 3, 7, 25])
     heavy = frozenset(rng.sample(sorted(world.users), rng.choice([0, 0, 1, 2])))
@@ -2269,16 +2807,17 @@ def test_users_that_stop_matching_between_hops_never_stall_or_repeat(seed):
             world,
             page_size=page_size,
             max_hops=_hop_bound(n_users, page_size, len(heavy))
-            + _slice_hops(world, seed),
+            + _slice_hops(world, seed, family),
             max_statements=max_statements,
             heavy=heavy,
             mutate=_stop_matching(rng, changed),
-            slice_ms=_slice_model(seed),
+            slice_ms=_slice_model(seed, family),
             keys=keys,
             finish=finish,
             fault=faults.fault,
             fail_ms=faults.fail_ms,
             width=faults.width,
+            family=family,
         )
 
     assert len(names) == len(set(names)), "a user was published twice"
@@ -2315,11 +2854,13 @@ def _change(rng: random.Random, kind: str, changed: dict[str, bool]):
         user = world.users[uid]
         if uid in published or uid in changed:
             return
-        member = user["key"] is not None and user["curated"]
+        member = _is_member(user)
         if kind == "start":
             if member:
                 return
             user["curated"] = True
+            if user["native"] is False:
+                user["native"] = True
             if user["key"] is None:
                 user["key"] = WINDOW_START + TICK * rng.randrange(WINDOW // TICK)
         elif not member:
@@ -2334,9 +2875,10 @@ def _change(rng: random.Random, kind: str, changed: dict[str, bool]):
     return mutate
 
 
+@pytest.mark.parametrize("family", FAMILIES)
 @pytest.mark.parametrize("kind", ["start", "up", "down"])
 @pytest.mark.parametrize("seed", range(16))
-def test_users_that_change_between_hops_follow_the_coverage_fence(kind, seed):
+def test_users_that_change_between_hops_follow_the_coverage_fence(kind, seed, family):
     """A change a cursor has walked past is not published by it; any other is.
 
     A user whose new key lies at or above the cursor's coverage, or behind
@@ -2347,18 +2889,20 @@ def test_users_that_change_between_hops_follow_the_coverage_fence(kind, seed):
     """
     rng = random.Random(20_000 + 97 * seed + len(kind))
     n_users = rng.choice([8, 20, 45])
-    world = _world(rng, n_users)
+    world = _with_native(_world(rng, n_users), 20_000 + 97 * seed, family)
     page_size = rng.choice([1, 3, 7, 25])
     changed: dict[str, bool] = {}
     with _limits(seed) as (max_statements, finish), _shipped_walls():
         names, _hops = _follow(
             world,
             page_size=page_size,
-            max_hops=_hop_bound(n_users, page_size, 0),
+            max_hops=_hop_bound(n_users, page_size, 0)
+            + _slice_hops(world, seed, family),
             max_statements=max_statements,
             mutate=_change(rng, kind, changed),
-            slice_ms=_slice_model(seed),
+            slice_ms=_slice_model(seed, family),
             finish=finish,
+            family=family,
         )
 
     assert len(names) == len(set(names)), "a user was published twice"
