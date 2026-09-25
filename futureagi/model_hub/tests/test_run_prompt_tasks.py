@@ -33,7 +33,9 @@ class TestProcessNotStartedPrompt:
 
         mock_tracker.mark_running.assert_called_once()
         mock_runner.run_prompt.assert_called_once()
-        mock_tracker.mark_completed.assert_called_once_with("prompt-123")
+        # Release is scoped to the token we published, so a lost-ownership run can't delete a successor's lease.
+        token = mock_tracker.mark_running.call_args.kwargs["runner_info"]["run_token"]
+        mock_tracker.mark_completed.assert_called_once_with("prompt-123", run_token=token)
 
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
     @patch("model_hub.tasks.run_prompt.distributed_lock_manager")
@@ -162,6 +164,82 @@ class TestProcessNotStartedPrompt:
         mock_prompter.objects.filter.return_value.update.assert_called_once_with(
             status=StatusType.FAILED.value
         )
+        # We never owned a lease, so nothing may be deleted from the tracker.
+        mock_tracker.mark_completed.assert_not_called()
+
+    @patch("model_hub.tasks.run_prompt.fail_pending_run_prompt_cells")
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    @patch("model_hub.tasks.run_prompt.distributed_lock_manager")
+    @patch("model_hub.tasks.run_prompt.RunPrompts")
+    @patch("model_hub.tasks.run_prompt.RunPrompter")
+    @patch("model_hub.tasks.run_prompt.close_old_connections")
+    def test_lost_ownership_retries_without_marking_failed(
+        self, mock_close, mock_prompter, mock_runner_class, mock_lock_mgr, mock_tracker, fail_cells
+    ):
+        """A fenced run fails its attempt so Temporal retries and reclaims;
+        it must not write FAILED (a successor may own the prompt) and must
+        release only its own lease."""
+        from model_hub.tasks.run_prompt import process_not_started_prompt
+        from model_hub.views.run_prompt import OwnershipLostError
+
+        mock_tracker.get_running_info.return_value = None
+        mock_tracker.instance_id = "test-instance"
+        mock_runner_class.return_value.run_prompt.side_effect = OwnershipLostError("p")
+
+        with (
+            patch("model_hub.tasks.run_prompt._is_final_attempt", return_value=False),
+            pytest.raises(OwnershipLostError),
+        ):
+            process_not_started_prompt("prompt-123")
+
+        mock_prompter.objects.filter.return_value.update.assert_not_called()
+        fail_cells.assert_not_called()
+        token = mock_tracker.mark_running.call_args.kwargs["runner_info"]["run_token"]
+        mock_tracker.mark_completed.assert_called_once_with("prompt-123", run_token=token)
+
+    @patch("model_hub.tasks.run_prompt.fail_pending_run_prompt_cells")
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    @patch("model_hub.tasks.run_prompt.distributed_lock_manager")
+    @patch("model_hub.tasks.run_prompt.RunPrompts")
+    @patch("model_hub.tasks.run_prompt.RunPrompter")
+    @patch("model_hub.tasks.run_prompt.close_old_connections")
+    def test_lost_ownership_on_final_attempt_fails_only_if_nobody_reclaimed(
+        self, mock_close, mock_prompter, mock_runner_class, mock_lock_mgr, mock_tracker, fail_cells
+    ):
+        """Last retry, fence tripped: with a live successor the status is
+        theirs; with nobody, the prompt and its cells must not spin for an hour."""
+        from model_hub.models.choices import StatusType
+        from model_hub.tasks.run_prompt import process_not_started_prompt
+        from model_hub.views.run_prompt import OwnershipLostError
+
+        mock_tracker.get_running_info.return_value = None
+        mock_tracker.instance_id = "test-instance"
+        mock_runner_class.return_value.run_prompt.side_effect = OwnershipLostError("p")
+
+        successor = MagicMock()
+        successor.instance_id = "other"
+        successor.metadata = {}
+        with (
+            patch("model_hub.tasks.run_prompt._is_final_attempt", return_value=True),
+            # Entry checks see nobody (we got in); the successor appears only after we lost the lock.
+            patch("model_hub.tasks.run_prompt._held_by_other_live_instance", return_value=False),
+            patch("model_hub.tasks.run_prompt._get_fresh_lease", return_value=successor),
+            pytest.raises(OwnershipLostError),
+        ):
+            process_not_started_prompt("prompt-123")
+        mock_prompter.objects.filter.return_value.update.assert_not_called()
+        fail_cells.assert_not_called()
+
+        with (
+            patch("model_hub.tasks.run_prompt._is_final_attempt", return_value=True),
+            patch("model_hub.tasks.run_prompt._get_fresh_lease", return_value=None),
+            pytest.raises(OwnershipLostError),
+        ):
+            process_not_started_prompt("prompt-123")
+        mock_prompter.objects.filter.return_value.update.assert_called_once_with(
+            status=StatusType.FAILED.value
+        )
+        fail_cells.assert_called_once_with(["prompt-123"])
 
 
 class TestClaimPrompt:
@@ -279,7 +357,8 @@ class TestProcessEditingPrompt:
 
         mock_tracker.mark_running.assert_called_once()
         mock_runner.run_prompt.assert_called_once_with(edit_mode=True)
-        mock_tracker.mark_completed.assert_called_once_with("prompt-123")
+        token = mock_tracker.mark_running.call_args.kwargs["runner_info"]["run_token"]
+        mock_tracker.mark_completed.assert_called_once_with("prompt-123", run_token=token)
 
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
     @patch("model_hub.tasks.run_prompt.distributed_lock_manager")
@@ -806,11 +885,14 @@ class TestOwnershipLease:
 
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
     def test_failures_spanning_the_lock_ttl_fence_the_run(self, mock_tracker):
-        """A Redis outage longer than LOCK_TTL means the lock has expired on
-        the server; after that many failed extends ownership is gone even
-        though no call ever said so. Sticky: a later success can't un-fence."""
+        """A Redis outage approaching LOCK_TTL means the lock is about to
+        expire on the server; after that many failed extends we treat
+        ownership as gone even though no call ever said so. Sticky: a later
+        success can't un-fence."""
         from model_hub.tasks.run_prompt import (
+            LEASE_RENEW_INTERVAL_SECONDS,
             LOCK_LOST_AFTER_FAILURES,
+            LOCK_TTL_SECONDS,
             OwnershipLease,
         )
 
@@ -823,6 +905,8 @@ class TestOwnershipLease:
         assert not lease.lost.is_set()
         lease.renew_once()
         assert lease.lost.is_set()
+        # The fence must trip strictly before the lock can expire, or an edit can own it while we still write.
+        assert LOCK_LOST_AFTER_FAILURES * LEASE_RENEW_INTERVAL_SECONDS < LOCK_TTL_SECONDS
 
         mock_lock.extend.side_effect = None
         lease.renew_once()
@@ -1036,19 +1120,47 @@ class TestRunPromptsHonoursCancel:
     @patch("model_hub.views.run_prompt.fail_pending_run_prompt_cells")
     @patch("model_hub.views.run_prompt.RunPrompter")
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
-    def test_final_status_is_left_alone_when_ownership_was_lost(
+    def test_lost_ownership_raises_instead_of_writing_a_status(
         self, mock_tracker, mock_prompter, fail_cells
     ):
-        """A fenced run may have been reclaimed by another worker; writing
-        FAILED (or COMPLETED) here would clobber that live run."""
+        """A fenced run may have been reclaimed by another worker, so it
+        must not write FAILED or COMPLETED; and it must not return success
+        either, or Temporal never retries when nobody reclaimed it."""
         import threading
+
+        from model_hub.views.run_prompt import OwnershipLostError
 
         fence = threading.Event()
         fence.set()
-        update = self._run_to_final_status(self._runner(fence=fence), mock_prompter)
+        with pytest.raises(OwnershipLostError):
+            self._run_to_final_status(self._runner(fence=fence), mock_prompter)
 
-        update.assert_not_called()
+        mock_prompter.objects.filter.return_value.update.assert_not_called()
         fail_cells.assert_not_called()
+
+    @patch("model_hub.views.run_prompt.fail_pending_run_prompt_cells")
+    @patch("model_hub.views.run_prompt.RunPrompter")
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    def test_row_failure_while_fenced_does_not_write_failed(
+        self, mock_tracker, mock_prompter, fail_cells
+    ):
+        """The generic failure path writes FAILED when updated_at is
+        unchanged; if the fence tripped, that write would land on the
+        successor's run too."""
+        import threading
+
+        from model_hub.views.run_prompt import OwnershipLostError
+
+        fence = threading.Event()
+        fence.set()
+        runner = self._runner(fence=fence)
+        with (
+            patch.object(type(runner), "load_run_prompt_id", side_effect=RuntimeError("boom")),
+            pytest.raises(OwnershipLostError),
+        ):
+            runner.run_prompt()
+
+        mock_prompter.objects.filter.return_value.update.assert_not_called()
 
     @patch("model_hub.views.run_prompt.fail_pending_run_prompt_cells")
     @patch("model_hub.views.run_prompt.RunPrompter")
@@ -1268,6 +1380,29 @@ class TestRecoverStuckRunPromptsCellCleanup:
         for cell in stuck_setup["cells"]:
             cell.refresh_from_db()
             assert cell.status != CellStatus.ERROR.value
+
+    @patch("model_hub.tasks.run_prompt.close_old_connections")
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    def test_recovery_waits_when_redis_is_unreachable(
+        self, mock_tracker, mock_close, stuck_setup
+    ):
+        """With Redis down every lease reads as absent, so the same live long
+        run above would be failed. Liveness is unknowable; skip this tick."""
+        from model_hub.models.choices import CellStatus, StatusType
+        from model_hub.tasks.run_prompt import recover_stuck_run_prompts
+
+        mock_tracker.is_reachable.return_value = False
+        mock_tracker.get_running_info.return_value = None  # what get() returns on RedisError
+
+        recover_stuck_run_prompts._original_func()
+
+        prompter = stuck_setup["prompter"]
+        prompter.refresh_from_db()
+        assert prompter.status == StatusType.RUNNING.value
+        for cell in stuck_setup["cells"]:
+            cell.refresh_from_db()
+            assert cell.status != CellStatus.ERROR.value
+        mock_tracker.mark_completed.assert_not_called()
 
     @patch("model_hub.tasks.run_prompt.close_old_connections")
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")

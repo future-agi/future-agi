@@ -12,7 +12,11 @@ from redis.exceptions import LockNotOwnedError
 from model_hub.models.choices import SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell
 from model_hub.models.run_prompt import RunPrompter
-from model_hub.views.run_prompt import RunPrompts, fail_pending_run_prompt_cells
+from model_hub.views.run_prompt import (
+    OwnershipLostError,
+    RunPrompts,
+    fail_pending_run_prompt_cells,
+)
 from tfc.logging.temporal.context import try_activity_info
 from tfc.temporal import temporal_activity
 from tfc.utils.distributed_locks import LockContendedError, distributed_lock_manager
@@ -31,8 +35,8 @@ LEASE_TTL_SECONDS = 300  # ~ Temporal heartbeat_timeout (5 min)
 LOCK_TTL_SECONDS = 4 * LEASE_RENEW_INTERVAL_SECONDS  # 240s
 # A lease is "live" exactly as long as its lock can still be held, so both views of a dead worker agree.
 LEASE_FRESH_SECONDS = LOCK_TTL_SECONDS
-# After this many consecutive failed extends the lock has certainly expired: ownership is gone.
-LOCK_LOST_AFTER_FAILURES = LOCK_TTL_SECONDS // LEASE_RENEW_INTERVAL_SECONDS
+# Fence one renewal *before* the lock can expire (180s < 240s), so we stop before anyone else can own it.
+LOCK_LOST_AFTER_FAILURES = LOCK_TTL_SECONDS // LEASE_RENEW_INTERVAL_SECONDS - 1
 
 # Recovery scans up to this many oldest candidates so live long runs can't shadow a dead one behind them.
 RECOVERY_BATCH_SIZE = 20
@@ -197,6 +201,18 @@ def _mark_prompt_failed(run_prompt_id, log_prefix):
         )
 
 
+def _fail_if_final_and_unowned(run_prompt_id, log_prefix):
+    """Ownership lapsed: retries reclaim it; on the last one, with no live successor, make the failure visible."""
+    logger.warning(
+        f"{log_prefix}_ownership_lost",
+        run_prompt_id=str(run_prompt_id),
+        final_attempt=_is_final_attempt(),
+    )
+    if _is_final_attempt() and _get_fresh_lease(run_prompt_id) is None:
+        _mark_prompt_failed(run_prompt_id, log_prefix)
+        fail_pending_run_prompt_cells([run_prompt_id])
+
+
 def process_not_started_prompt(run_prompt_id):
     """Process a newly created run prompt with distributed tracking."""
     close_old_connections()
@@ -207,6 +223,7 @@ def process_not_started_prompt(run_prompt_id):
         instance_id=run_prompt_tracker.instance_id,
     )
 
+    run_token = None
     try:
         # Fail fast (retryably) if a live instance owns it; stale leases don't count.
         if _held_by_other_live_instance(run_prompt_id):
@@ -257,11 +274,14 @@ def process_not_started_prompt(run_prompt_id):
                     run_prompt_id=str(run_prompt_id),
                 )
             finally:
-                # Always clean up distributed tracking
-                run_prompt_tracker.mark_completed(run_prompt_id)
+                # Release only our own lease: a fenced run must not delete its successor's.
+                run_prompt_tracker.mark_completed(run_prompt_id, run_token=run_token)
 
     except (PromptAlreadyRunningElsewhere, LockContendedError):
         # A live owner has it: fail the attempt for Temporal to retry, don't mark FAILED.
+        raise
+    except OwnershipLostError:
+        _fail_if_final_and_unowned(run_prompt_id, "process_not_started_prompt")
         raise
     except Exception as e:
         logger.exception(
@@ -270,8 +290,6 @@ def process_not_started_prompt(run_prompt_id):
             error=str(e),
             error_type=type(e).__name__,
         )
-        # Clean up distributed tracking on failure
-        run_prompt_tracker.mark_completed(run_prompt_id)
         _mark_prompt_failed(run_prompt_id, "process_not_started_prompt")
         raise
     finally:
@@ -288,6 +306,7 @@ def process_editing_prompt(run_prompt_id):
         instance_id=run_prompt_tracker.instance_id,
     )
 
+    run_token = None
     try:
         # An edit preempts a live run (any instance, ours included): request cancel, take over once the lock frees.
         live_lease = _get_fresh_lease(run_prompt_id)
@@ -340,9 +359,12 @@ def process_editing_prompt(run_prompt_id):
                     run_prompt_id=str(run_prompt_id),
                 )
             finally:
-                # Always clean up distributed tracking
-                run_prompt_tracker.mark_completed(run_prompt_id)
+                # Release only our own lease: a fenced run must not delete its successor's.
+                run_prompt_tracker.mark_completed(run_prompt_id, run_token=run_token)
 
+    except OwnershipLostError:
+        _fail_if_final_and_unowned(run_prompt_id, "process_editing_prompt")
+        raise
     except (LockContendedError, PromptAlreadyRunningElsewhere):
         # The owner is draining (it honours the cancel flag per row); retry, and only FAILED once retries are spent.
         logger.warning(
@@ -362,8 +384,6 @@ def process_editing_prompt(run_prompt_id):
             error=str(e),
             error_type=type(e).__name__,
         )
-        # Clean up distributed tracking on failure
-        run_prompt_tracker.mark_completed(run_prompt_id)
         _mark_prompt_failed(run_prompt_id, "process_editing_prompt")
         raise
     finally:
@@ -442,7 +462,7 @@ def process_prompts_single(prompt):
             prompt_id=prompt_id,
             prompt_type=prompt_type,
         )
-    except (PromptAlreadyRunningElsewhere, LockContendedError):
+    except (PromptAlreadyRunningElsewhere, LockContendedError, OwnershipLostError):
         raise
     except Exception as e:
         logger.exception(
@@ -473,6 +493,11 @@ def recover_stuck_run_prompts():
     close_old_connections()
 
     try:
+        # Without Redis every lease looks dead; sweeping now would fail live long runs. Wait for the next tick.
+        if not run_prompt_tracker.is_reachable():
+            logger.warning("recover_stuck_run_prompts_skipped_redis_unreachable")
+            return
+
         threshold = timezone.now() - timedelta(hours=STUCK_RUNNING_THRESHOLD_HOURS)
 
         # Cell-write liveness filtered in SQL before the slice, oldest first, so live runs can't starve dead ones.

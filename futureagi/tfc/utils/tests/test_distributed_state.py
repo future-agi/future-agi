@@ -85,6 +85,43 @@ class TestRefreshRunning:
             assert tracker.refresh_running(5) is False
 
 
+class TestTokenScopedRelease:
+    """mark_completed(run_token=...) deletes the entry only while it still
+    carries that token: a run that lost the lock and is unwinding must not
+    remove the lease its successor just published."""
+
+    def test_owner_token_releases(self):
+        tracker = _make_tracker()
+        assert tracker.mark_running(20, runner_info={"run_token": "A"}, ttl=60)
+
+        assert tracker.mark_completed(20, run_token="A") is True
+        assert tracker.get_running_info(20) is None
+
+    def test_stale_token_leaves_successor_untouched(self):
+        tracker = _make_tracker()
+        assert tracker.mark_running(21, runner_info={"run_token": "A"}, ttl=60)
+        tracker.mark_completed(21)  # successor reclaims (unconditional, as _claim_prompt does)
+        assert tracker.mark_running(21, runner_info={"run_token": "B"}, ttl=60)
+
+        assert tracker.mark_completed(21, run_token="A") is False
+        info = tracker.get_running_info(21)
+        assert info is not None and info.metadata["run_token"] == "B"
+        tracker.mark_completed(21)
+
+    def test_without_token_is_unconditional(self):
+        tracker = _make_tracker()
+        assert tracker.mark_running(22, runner_info={"run_token": "A"}, ttl=60)
+
+        assert tracker.mark_completed(22) is True
+        assert tracker.get_running_info(22) is None
+
+    def test_is_reachable_reflects_live_connection(self):
+        tracker = _make_tracker()
+        assert tracker.is_reachable() is True
+        with patch.object(tracker._redis_client, "ping", side_effect=Exception("down")):
+            assert tracker.is_reachable() is False
+
+
 class TestScopedCancel:
     """A cancel can name the run it is for. Only that run honours it; an
     untargeted cancel (manual) applies to whoever is running; callers that

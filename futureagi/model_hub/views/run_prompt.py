@@ -1149,6 +1149,10 @@ class LitellmAPIView(CreateAPIView):
 PENDING_CELL_MESSAGE = "Run prompt was interrupted before this cell completed. Please rerun this cell."
 
 
+class OwnershipLostError(Exception):
+    """The run's lock/lease lapsed mid-flight; raised so the Temporal attempt fails and a retry reclaims the prompt."""
+
+
 def fail_pending_run_prompt_cells(run_prompt_ids, message=PENDING_CELL_MESSAGE) -> int:
     """Flip still-running cells of these prompts to ERROR; legacy "Running" matched because older reruns wrote the wrong enum."""
     return Cell.objects.filter(
@@ -1261,6 +1265,10 @@ class RunPrompts:
                 for future in as_completed(futures):
                     future.result()  # This will raise exceptions if any occurred in a thread
 
+            if self._fenced():
+                # Ownership lapsed: whoever reclaimed owns the status; fail this attempt so Temporal retries if nobody did.
+                raise OwnershipLostError(str(self.run_prompt_id))
+
             # Check if prompt was edited during processing by comparing updated_at
             # This prevents this workflow from overwriting status when a new workflow was started
             current_prompt = (
@@ -1285,13 +1293,7 @@ class RunPrompts:
                 current_status == StatusType.RUNNING.value
                 and current_updated_at == start_updated_at
             ):
-                if self._fence is not None and self._fence.is_set():
-                    # Ownership lost: a reclaiming run may own this prompt now, so the status is theirs (or recovery's) to write.
-                    logger.warning(
-                        "RunPrompts_final_status_fenced",
-                        run_prompt_id=str(self.run_prompt_id),
-                    )
-                elif self._should_stop():
+                if self._should_stop():
                     # Cancelled with no successor run (updated_at unchanged): FAILED, and pending cells must not spin forever.
                     RunPrompter.objects.filter(id=self.run_prompt_id).update(
                         status=StatusType.FAILED.value
@@ -1310,7 +1312,12 @@ class RunPrompts:
                     "Not setting to COMPLETED."
                 )
 
+        except OwnershipLostError:
+            raise
         except Exception as e:
+            if self._fenced():
+                # A row failed while ownership lapsed; the status is the reclaiming run's to write, not ours.
+                raise OwnershipLostError(str(self.run_prompt_id)) from e
             # Set status to FAILED so it doesn't get stuck in RUNNING
             logger.exception(f"run_prompt failed for {self.run_prompt_id}: {e}")
             try:
@@ -1349,9 +1356,13 @@ class RunPrompts:
                 pass
             raise
 
+    def _fenced(self) -> bool:
+        """True once OwnershipLease reports the lock is gone."""
+        return self._fence is not None and self._fence.is_set()
+
     def _should_stop(self) -> bool:
         """True if ownership was lost (local fence) or a cancel aimed at this run exists; Redis errors count as no."""
-        if self._fence is not None and self._fence.is_set():
+        if self._fenced():
             return True
         # Local import: tasks.run_prompt imports this module.
         from model_hub.tasks.run_prompt import run_prompt_tracker

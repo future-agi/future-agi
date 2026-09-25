@@ -334,12 +334,14 @@ class DistributedEvaluationTracker(DistributedStateManager):
             )
             return False
 
-    def mark_completed(self, eval_id: int) -> bool:
+    def mark_completed(self, eval_id: int, run_token: str | None = None) -> bool:
         """
         Mark an evaluation as completed and remove from tracking.
 
         Args:
             eval_id: The evaluation ID.
+            run_token: When set, delete only if the entry still carries this
+                token, so a run that lost ownership cannot remove its successor.
 
         Returns:
             True if successfully removed.
@@ -348,6 +350,8 @@ class DistributedEvaluationTracker(DistributedStateManager):
         self._local_running.discard(key)
 
         try:
+            if run_token is not None:
+                return self._delete_if_token(key, run_token)
             result = self.delete(key)
             if result:
                 logger.info(
@@ -365,6 +369,40 @@ class DistributedEvaluationTracker(DistributedStateManager):
                 f"Error marking evaluation {eval_id} as completed: {e}",
                 extra={"eval_id": str(eval_id), "error": str(e)},
             )
+            return False
+
+    def _delete_if_token(self, key: str, run_token: str) -> bool:
+        """Owner-only delete: WATCH/MULTI so a successor's freshly published entry is never removed."""
+        if not self._redis_available:
+            return False
+        full_key = self._get_key(key)
+
+        def _release(pipe: redis.client.Pipeline) -> bool:
+            raw = pipe.get(full_key)
+            if raw is None:
+                return False
+            info = RunningTaskInfo.from_dict(json.loads(raw))
+            if (info.metadata or {}).get("run_token") != run_token:
+                logger.info(
+                    f"Not releasing {key}: entry now belongs to another run",
+                    extra={"key": key},
+                )
+                return False
+            pipe.multi()
+            pipe.delete(full_key)
+            return True
+
+        return bool(
+            self._redis_client.transaction(_release, full_key, value_from_callable=True)
+        )
+
+    def is_reachable(self) -> bool:
+        """True if Redis answers right now (is_available() is only the boot-time flag)."""
+        if not self._redis_available:
+            return False
+        try:
+            return bool(self._redis_client.ping())
+        except Exception:
             return False
 
     def refresh_running(self, eval_id: int, ttl: int | None = None) -> bool:

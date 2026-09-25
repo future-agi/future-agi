@@ -67,7 +67,8 @@ class TestRunPromptE2EFlow:
         mock_prompter.objects.get.assert_called_once_with(id="prompt-123")
         mock_tracker.mark_running.assert_called_once()
         mock_runner.run_prompt.assert_called_once()
-        mock_tracker.mark_completed.assert_called_once_with("prompt-123")
+        token = mock_tracker.mark_running.call_args.kwargs["runner_info"]["run_token"]
+        mock_tracker.mark_completed.assert_called_once_with("prompt-123", run_token=token)
 
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
     @patch("model_hub.tasks.run_prompt.distributed_lock_manager")
@@ -97,7 +98,8 @@ class TestRunPromptE2EFlow:
 
         # Verify edit mode was used
         mock_runner.run_prompt.assert_called_once_with(edit_mode=True)
-        mock_tracker.mark_completed.assert_called_once_with("prompt-123")
+        token = mock_tracker.mark_running.call_args.kwargs["runner_info"]["run_token"]
+        mock_tracker.mark_completed.assert_called_once_with("prompt-123", run_token=token)
 
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
     @patch("model_hub.tasks.run_prompt.distributed_lock_manager")
