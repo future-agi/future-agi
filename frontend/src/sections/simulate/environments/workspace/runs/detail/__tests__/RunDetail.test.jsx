@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import PropTypes from "prop-types";
-import { render, screen } from "@testing-library/react";
+import { useEffect } from "react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -67,11 +68,84 @@ AddEvalsDrawerStub.propTypes = {
 vi.mock("../../../evals/AddEvalsDrawer", () => ({ default: AddEvalsDrawerStub }));
 
 
-// The per-call table owns its own network hook, so stub it to a marker.
-function RunTraceTableStub() {
-  return <div>run-trace-table</div>;
+// The prev/next maths has its own tests; here only the page's wiring matters.
+const callListNavigation = vi.fn();
+vi.mock("../useCallListNavigation", () => ({
+  default: (...args) => callListNavigation(...args),
+}));
+
+const TABLE_QUERY = {
+  page: 1,
+  limit: 50,
+  search: "",
+  filters: {},
+  groupBy: "goal",
+};
+
+// The per-call table owns its own network hook, so stub it to a marker that
+// reports its query, can open a call, and shows which call/page it follows.
+function RunTraceTableStub({ onOpenCall, onQueryChange, activeCallId, activePage }) {
+  useEffect(() => {
+    onQueryChange?.(TABLE_QUERY);
+    return () => onQueryChange?.(null);
+  }, [onQueryChange]);
+  return (
+    <div>
+      run-trace-table
+      <span>{`active:${activeCallId ?? "-"}:${activePage ?? "-"}`}</span>
+      <button
+        type="button"
+        onClick={() => onOpenCall({ id: "c1", simulationCallType: "voice" })}
+      >
+        open c1
+      </button>
+    </div>
+  );
 }
+RunTraceTableStub.propTypes = {
+  onOpenCall: PropTypes.func,
+  onQueryChange: PropTypes.func,
+  activeCallId: PropTypes.string,
+  activePage: PropTypes.number,
+};
 vi.mock("../trace/RunTraceTable", () => ({ default: RunTraceTableStub }));
+
+// Analytics opens a call on its own, with no list behind it.
+function RunAnalyticsStub({ onOpenCall }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onOpenCall({ id: "c9", simulationCallType: "voice" })}
+    >
+      open from chart
+    </button>
+  );
+}
+RunAnalyticsStub.propTypes = { onOpenCall: PropTypes.func };
+vi.mock("../RunAnalytics", () => ({ default: RunAnalyticsStub }));
+
+function CallDrawerStub({ task, hasPrev, hasNext, onPrev, onNext }) {
+  if (!task) return null;
+  return (
+    <div>
+      {`drawer:${task.id}`}
+      <button type="button" onClick={onPrev} disabled={!hasPrev}>
+        prev call
+      </button>
+      <button type="button" onClick={onNext} disabled={!hasNext}>
+        next call
+      </button>
+    </div>
+  );
+}
+CallDrawerStub.propTypes = {
+  task: PropTypes.object,
+  hasPrev: PropTypes.bool,
+  hasNext: PropTypes.bool,
+  onPrev: PropTypes.func,
+  onNext: PropTypes.func,
+};
+vi.mock("../CallDrawer", () => ({ default: CallDrawerStub }));
 
 const { default: RunDetail } = await import("../RunDetail");
 
@@ -165,7 +239,16 @@ const renderDetail = ({
   );
 };
 
+const navArgs = () => callListNavigation.mock.calls.at(-1)[0];
+
 beforeEach(() => {
+  callListNavigation.mockReset();
+  callListNavigation.mockReturnValue({
+    hasPrev: false,
+    hasNext: true,
+    onPrev: vi.fn(),
+    onNext: vi.fn(),
+  });
   useRunDetail.mockReturnValue({
     identity: IDENTITY,
     stats: STATS,
@@ -411,5 +494,70 @@ describe("RunDetail", () => {
     await user.click(trialsTab);
     expect(screen.getByText("Refund fix v1")).toBeInTheDocument();
     expect(screen.getByText(/ProTeGi · 8 trials/)).toBeInTheDocument();
+  });
+
+  it("hands the drawer prev/next for a call opened from the table", async () => {
+    const user = userEvent.setup();
+    const onNext = vi.fn();
+    callListNavigation.mockReturnValue({
+      hasPrev: false,
+      hasNext: true,
+      onPrev: vi.fn(),
+      onNext,
+    });
+    renderDetail();
+
+    await user.click(screen.getByRole("button", { name: "open c1" }));
+    expect(screen.getByText("drawer:c1")).toBeInTheDocument();
+    expect(navArgs()).toMatchObject({
+      executionId: "ex1",
+      openCall: { task: { id: "c1" }, source: "table", page: null },
+      tableQuery: TABLE_QUERY,
+      live: false,
+    });
+    expect(screen.getByRole("button", { name: "prev call" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "next call" }));
+    expect(onNext).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the stepped-to call and has the table follow to its page", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+    await user.click(screen.getByRole("button", { name: "open c1" }));
+
+    act(() =>
+      navArgs().onStep({
+        task: { id: "c51", simulationCallType: "voice" },
+        source: "table",
+        page: 2,
+      }),
+    );
+    expect(screen.getByText("drawer:c51")).toBeInTheDocument();
+    expect(screen.getByText("active:c51:2")).toBeInTheDocument();
+  });
+
+  it("tells the navigation a live run is live", async () => {
+    const user = userEvent.setup();
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, status: "running", stoppable: true },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+    await user.click(screen.getByRole("button", { name: "open c1" }));
+    expect(navArgs().live).toBe(true);
+  });
+
+  it("marks a call opened from Analytics as not from the table", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    await user.click(screen.getByRole("tab", { name: "Analytics" }));
+    await user.click(screen.getByRole("button", { name: "open from chart" }));
+
+    expect(screen.getByText("drawer:c9")).toBeInTheDocument();
+    expect(navArgs().openCall).toMatchObject({ source: "analytics" });
+    // The table unmounted with the tab switch, so it no longer reports a query.
+    expect(navArgs().tableQuery).toBeNull();
   });
 });

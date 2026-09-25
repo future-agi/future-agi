@@ -163,15 +163,13 @@ export function buildTraceColumns(columnOrder = []) {
 }
 
 /**
- * The per-call table hook. Reads the product's real executions list and adapts
- * it to `{ tasks, columns, count }`. `opts` mirror the product grid's params.
+ * The calls-list request for one page, as react-query options. The table hook
+ * and the call drawer's page-crossing fetch both build it here, so they always
+ * share one cache entry per page.
  * @param {string} executionId
- * @param {{ page?: number, limit?: number, search?: string, filters?: Object }} [opts]
- * @returns {{ tasks: import("./runDetail").RunTask[],
- *   columns: import("./runDetail").TraceColumn[], count: number,
- *   isLoading: boolean }}
+ * @param {{ page?: number, limit?: number, search?: string, filters?: Object, groupBy?: string }} [opts]
  */
-export function useRunCalls(executionId, opts = {}) {
+export function runCallsQueryOptions(executionId, opts = {}) {
   const {
     page = 1,
     limit = 100,
@@ -179,7 +177,7 @@ export function useRunCalls(executionId, opts = {}) {
     filters = {},
     groupBy = "goal",
   } = opts;
-  const query = useQuery({
+  return {
     queryKey: [
       "simulation-run-results-v3",
       executionId,
@@ -201,12 +199,28 @@ export function useRunCalls(executionId, opts = {}) {
           },
         })
         .then((response) => response.data),
-    enabled: !!executionId,
+    staleTime: 1000 * 60,
+  };
+}
+
+/**
+ * The per-call table hook. Reads the product's real executions list and adapts
+ * it to `{ tasks, columns, count }`. `opts` mirror the product grid's params.
+ * @param {string} executionId
+ * @param {{ page?: number, limit?: number, search?: string, filters?: Object, groupBy?: string, enabled?: boolean }} [opts]
+ * @returns {{ tasks: import("./runDetail").RunTask[],
+ *   columns: import("./runDetail").TraceColumn[], count: number,
+ *   isLoading: boolean }}
+ */
+export function useRunCalls(executionId, opts = {}) {
+  const { enabled = true, ...listOpts } = opts;
+  const query = useQuery({
+    ...runCallsQueryOptions(executionId, listOpts),
+    enabled: !!executionId && enabled,
     refetchInterval: (query) =>
       ACTIVE_EXECUTION_STATUSES.has(query.state.data?.execution?.status)
         ? 3000
         : false,
-    staleTime: 1000 * 60,
   });
 
   const data = query.data;
