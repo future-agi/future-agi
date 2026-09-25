@@ -84,10 +84,16 @@ def _lane_database() -> str:
     database = (os.environ.get("CH25_DATABASE") or "").strip()
     if not database:
         pytest.skip("no lane database named: set CH25_DATABASE")
+    # CI gives every job its own throwaway ClickHouse, whose test_tfc carries
+    # the deployed schema and runs one test at a time. Locally test_tfc is shared
+    # with other runs, and this module stops merges on spans, so a local run needs
+    # its own database provisioned with provision-lane-ch-db.sh.
+    if database == "test_tfc" and os.environ.get("GITHUB_ACTIONS") == "true":
+        return database
     if database == "test_tfc" or not database.startswith("test_"):
-        pytest.fail(
-            f"refusing {database!r}: this module writes to a lane database "
-            "provisioned with provision-lane-ch-db.sh, never the shared test_tfc"
+        pytest.skip(
+            f"not writing to {database!r}: point CH25_DATABASE at a database "
+            "provisioned with provision-lane-ch-db.sh"
         )
     return database
 
