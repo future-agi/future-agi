@@ -165,6 +165,7 @@ CI covers frontend, sharded backend pytest, Go collector tests/builds, deploymen
 
 | Workflow                           | Trigger                                                                          | Purpose                                                                                            |
 | ---------------------------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `backend-ci.yml`                   | PR/push to `dev`, `main`; merge groups                                           | 10-way sharded pytest run (Docker Compose stack) gated by the required `backend-tests` check       |
 | `frontend-feature.yml`             | push to `feat/*`, `fix/*`, `chore/*`, `docs/*`, `refactor/*`, `test/*`, `perf/*` | Branch-name validation, type check, unit tests, build verification                                 |
 | `frontend-develop.yml`             | push to `develop`/`dev` + PRs into `main`/`develop`/`dev`                        | Quality gates, integration tests, build check, Lighthouse (PRs only)                               |
 | `frontend-main.yml`                | push to `main`                                                                   | Full suite with coverage + production build                                                        |
@@ -173,6 +174,13 @@ CI covers frontend, sharded backend pytest, Go collector tests/builds, deploymen
 | `backend-ci.yml`                  | Backend/deployment PR changes, pushes to `dev`/`main`, merge queue               | Sharded pytest using the standard test dependency stack                                          |
 | `fi-collector-ci.yml`             | Collector/deployment PR changes, pushes to `dev`/`main`, merge queue, manual      | Go race tests/builds, real observation integration, Compose/bootstrap contracts and installer syntax       |
 | `e2e-ci.yml`                       | PRs into and pushes on `dev`/`main`, merge queue                                 | Builds the changed images from PR code, boots the `futureagi-e2e` stack, runs the Playwright flows |
+
+The backend CI splits the pytest suite across 10 shards using historical
+`.test_durations` timings (`--splitting-algorithm least_duration`) and only
+marks the run green when every shard succeeds or is legitimately skipped — the
+single required status check is `backend-tests`. Integration tests run inside
+those shards (not as a separate gate), so a backend change is fully exercised
+before it lands on `dev`/`main`.
 
 A push to a feature branch runs only `frontend-feature.yml`, not the main or develop pipelines. This keeps GitHub Actions minutes targeted — no overlapping workflows.
 
