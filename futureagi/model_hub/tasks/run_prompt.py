@@ -1,5 +1,5 @@
-import json
 import threading
+import uuid
 from datetime import datetime, timedelta
 
 import structlog
@@ -7,11 +7,12 @@ from django.db import close_old_connections
 from django.db.models import CharField, Exists, OuterRef
 from django.db.models.functions import Cast
 from django.utils import timezone
+from redis.exceptions import LockNotOwnedError
 
-from model_hub.models.choices import CellStatus, SourceChoices, StatusType
+from model_hub.models.choices import SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell
 from model_hub.models.run_prompt import RunPrompter
-from model_hub.views.run_prompt import RunPrompts
+from model_hub.views.run_prompt import RunPrompts, fail_pending_run_prompt_cells
 from tfc.logging.temporal.context import try_activity_info
 from tfc.temporal import temporal_activity
 from tfc.utils.distributed_locks import LockContendedError, distributed_lock_manager
@@ -30,6 +31,12 @@ LEASE_TTL_SECONDS = 300  # ~ Temporal heartbeat_timeout (5 min)
 LOCK_TTL_SECONDS = 4 * LEASE_RENEW_INTERVAL_SECONDS  # 240s
 # A lease is "live" exactly as long as its lock can still be held, so both views of a dead worker agree.
 LEASE_FRESH_SECONDS = LOCK_TTL_SECONDS
+# After this many consecutive failed extends the lock has certainly expired: ownership is gone.
+LOCK_LOST_AFTER_FAILURES = LOCK_TTL_SECONDS // LEASE_RENEW_INTERVAL_SECONDS
+
+# Recovery scans up to this many oldest candidates so live long runs can't shadow a dead one behind them.
+RECOVERY_BATCH_SIZE = 20
+RECOVERY_MAX_SCAN = 200
 
 # Spread crash-reclaim retries over ~12 min instead of the default 15s budget.
 PROCESS_PROMPT_MAX_RETRIES = 5
@@ -53,6 +60,8 @@ class OwnershipLease:
         self._stop = threading.Event()
         self._thread = None
         self._extend_failures = 0
+        # Set once the lock is known to be gone; RunPrompts fences on it.
+        self.lost = threading.Event()
 
     def __enter__(self):
         self._thread = threading.Thread(
@@ -101,6 +110,17 @@ class OwnershipLease:
                     consecutive_failures=self._extend_failures,
                     error=str(e),
                 )
+                # Not owned any more, or failed long enough that the TTL has run out: fence the run.
+                if (
+                    isinstance(e, LockNotOwnedError)
+                    or self._extend_failures >= LOCK_LOST_AFTER_FAILURES
+                ) and not self.lost.is_set():
+                    self.lost.set()
+                    logger.error(
+                        "run_prompt_ownership_lost",
+                        prompt_id=str(self._prompt_id),
+                        consecutive_failures=self._extend_failures,
+                    )
 
 
 def _get_fresh_lease(prompt_id):
@@ -124,8 +144,12 @@ def _held_by_other_live_instance(prompt_id) -> bool:
     return bool(lease and lease.instance_id != run_prompt_tracker.instance_id)
 
 
-def _claim_prompt(run_prompt_id, runner_info):
-    """Take ownership in the tracker (caller holds the lock), reclaiming a dead worker's stale lease first."""
+def _claim_prompt(run_prompt_id, runner_info) -> str:
+    """Take ownership in the tracker (caller holds the lock), reclaiming a dead worker's stale lease first; returns this run's token."""
+    # Clear a stale flag *before* publishing so a cancel aimed at us that lands after publish survives.
+    run_prompt_tracker.clear_cancel_flag(run_prompt_id)
+    run_token = uuid.uuid4().hex
+    runner_info = {**(runner_info or {}), "run_token": run_token}
     stale = run_prompt_tracker.get_running_info(run_prompt_id)
     if (
         stale
@@ -149,8 +173,7 @@ def _claim_prompt(run_prompt_id, runner_info):
             "run_prompt_claim_unconfirmed",
             run_prompt_id=str(run_prompt_id),
         )
-    # We own it now; drop any cancel flag left by the edit that preempted the previous run.
-    run_prompt_tracker.clear_cancel_flag(run_prompt_id)
+    return run_token
 
 
 def _is_final_attempt() -> bool:
@@ -209,7 +232,7 @@ def process_not_started_prompt(run_prompt_id):
                 )
                 raise PromptAlreadyRunningElsewhere(str(run_prompt_id))
 
-            _claim_prompt(
+            run_token = _claim_prompt(
                 run_prompt_id,
                 runner_info={
                     "type": "not_started",
@@ -222,8 +245,12 @@ def process_not_started_prompt(run_prompt_id):
                     "process_not_started_prompt_executing",
                     run_prompt_id=str(run_prompt_id),
                 )
-                with OwnershipLease(run_prompt_id, lock=lock):
-                    runner = RunPrompts(run_prompt_id=run_prompt_id)
+                with OwnershipLease(run_prompt_id, lock=lock) as lease:
+                    runner = RunPrompts(
+                        run_prompt_id=run_prompt_id,
+                        run_token=run_token,
+                        fence=lease.lost,
+                    )
                     runner.run_prompt()
                 logger.info(
                     "process_not_started_prompt_completed",
@@ -263,14 +290,18 @@ def process_editing_prompt(run_prompt_id):
 
     try:
         # An edit preempts a live run (any instance, ours included): request cancel, take over once the lock frees.
-        if _get_fresh_lease(run_prompt_id) is not None:
+        live_lease = _get_fresh_lease(run_prompt_id)
+        if live_lease is not None:
             logger.warning(
                 "process_editing_prompt_already_running",
                 run_prompt_id=str(run_prompt_id),
                 current_instance=run_prompt_tracker.instance_id,
             )
+            # Aim the cancel at that run's token so it can't leak onto the run that replaces it.
             run_prompt_tracker.request_cancel(
-                run_prompt_id, reason="Edit requested"
+                run_prompt_id,
+                reason="Edit requested",
+                target=(live_lease.metadata or {}).get("run_token"),
             )
             logger.info(
                 "process_editing_prompt_cancel_requested",
@@ -284,7 +315,7 @@ def process_editing_prompt(run_prompt_id):
             blocking_timeout=30,  # Wait longer for edit as we may be waiting for cancel
             thread_local=False,  # OwnershipLease extends this lock from another thread
         ) as lock:
-            _claim_prompt(
+            run_token = _claim_prompt(
                 run_prompt_id,
                 runner_info={
                     "type": "editing",
@@ -297,8 +328,12 @@ def process_editing_prompt(run_prompt_id):
                     "process_editing_prompt_executing",
                     run_prompt_id=str(run_prompt_id),
                 )
-                with OwnershipLease(run_prompt_id, lock=lock):
-                    runner = RunPrompts(run_prompt_id=run_prompt_id)
+                with OwnershipLease(run_prompt_id, lock=lock) as lease:
+                    runner = RunPrompts(
+                        run_prompt_id=run_prompt_id,
+                        run_token=run_token,
+                        fence=lease.lost,
+                    )
                     runner.run_prompt(edit_mode=True)
                 logger.info(
                     "process_editing_prompt_completed",
@@ -317,6 +352,8 @@ def process_editing_prompt(run_prompt_id):
         )
         if _is_final_attempt():
             _mark_prompt_failed(run_prompt_id, "process_editing_prompt")
+            # The edit already reset cells to running and nobody will rerun them; recovery only sees RUNNING prompts.
+            fail_pending_run_prompt_cells([run_prompt_id])
         raise
     except Exception as e:
         logger.exception(
@@ -451,13 +488,17 @@ def recover_stuck_run_prompts():
             )
             .filter(~Exists(recent_cell_writes))
             .order_by("updated_at")
-            .values_list("id", flat=True)[:20]  # Process max 20 at a time
+            .values_list("id", flat=True)[:RECOVERY_MAX_SCAN]
         )
 
         # Lease is the primary liveness signal; cell writes above are the Redis-outage fallback.
-        stuck_prompts = [
-            p for p in candidate_prompts if _get_fresh_lease(p) is None
-        ]
+        # Scan past live leases (they keep their place in the ordering) until a batch of dead ones is found.
+        stuck_prompts = []
+        for prompt_id in candidate_prompts:
+            if _get_fresh_lease(prompt_id) is None:
+                stuck_prompts.append(prompt_id)
+                if len(stuck_prompts) >= RECOVERY_BATCH_SIZE:
+                    break
 
         stuck_count = len(stuck_prompts)
         if stuck_count == 0:
@@ -475,19 +516,9 @@ def recover_stuck_run_prompts():
                 status=StatusType.FAILED.value
             )
 
-            # Flip stuck cells to ERROR; legacy "Running" matched because older reruns wrote the wrong enum.
-            timeout_message = (
-                "Run prompt timed out or was interrupted. Please rerun this cell."
-            )
-            stuck_cells_updated = Cell.objects.filter(
-                column__source=SourceChoices.RUN_PROMPT.value,
-                column__source_id__in=[str(p) for p in stuck_prompts],
-                status__in=[CellStatus.RUNNING.value, StatusType.RUNNING.value],
-                deleted=False,
-            ).update(
-                status=CellStatus.ERROR.value,
-                value=timeout_message,
-                value_infos=json.dumps({"reason": timeout_message}),
+            stuck_cells_updated = fail_pending_run_prompt_cells(
+                stuck_prompts,
+                "Run prompt timed out or was interrupted. Please rerun this cell.",
             )
 
             # Clean up distributed tracker entries for stuck prompts

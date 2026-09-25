@@ -437,7 +437,9 @@ class DistributedEvaluationTracker(DistributedStateManager):
             return RunningTaskInfo.from_dict(data)
         return None
 
-    def request_cancel(self, eval_id: int, reason: str = "") -> bool:
+    def request_cancel(
+        self, eval_id: int, reason: str = "", target: str | None = None
+    ) -> bool:
         """
         Request cancellation of an evaluation.
 
@@ -446,6 +448,7 @@ class DistributedEvaluationTracker(DistributedStateManager):
         Args:
             eval_id: The evaluation ID to cancel.
             reason: Optional reason for cancellation.
+            target: Optional run token; when set only that run honours the flag.
 
         Returns:
             True if cancel request was sent.
@@ -461,6 +464,8 @@ class DistributedEvaluationTracker(DistributedStateManager):
                 "requested_by": self._instance_id,
                 "reason": reason,
             }
+            if target:
+                cancel_info["target"] = target
             self.set(cancel_key, cancel_info, ttl=3600)
 
             # Update the running info to mark cancel requested
@@ -494,7 +499,7 @@ class DistributedEvaluationTracker(DistributedStateManager):
             )
             return False
 
-    def should_cancel(self, eval_id: int) -> bool:
+    def should_cancel(self, eval_id: int, run_token: str | None = None) -> bool:
         """
         Check if an evaluation should be cancelled.
 
@@ -502,12 +507,19 @@ class DistributedEvaluationTracker(DistributedStateManager):
 
         Args:
             eval_id: The evaluation ID.
+            run_token: This run's token; a flag targeted at another run is ignored.
 
         Returns:
             True if cancellation was requested.
         """
         cancel_key = f"cancel:{str(eval_id)}"
-        return self.exists(cancel_key)
+        if run_token is None:
+            return self.exists(cancel_key)
+        info = self.get(cancel_key)
+        if not info:
+            return False
+        target = info.get("target") if isinstance(info, dict) else None
+        return not target or target == run_token
 
     def clear_cancel_flag(self, eval_id: int) -> bool:
         """Clear the cancel flag after handling cancellation."""

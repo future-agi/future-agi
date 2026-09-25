@@ -83,3 +83,31 @@ class TestRefreshRunning:
             tracker._redis_client, "transaction", side_effect=Exception("redis down")
         ):
             assert tracker.refresh_running(5) is False
+
+
+class TestScopedCancel:
+    """A cancel can name the run it is for. Only that run honours it; an
+    untargeted cancel (manual) applies to whoever is running; callers that
+    pass no token keep the legacy exists() semantics."""
+
+    def test_targeted_cancel_is_honoured_only_by_that_run(self):
+        tracker = _make_tracker()
+        assert tracker.request_cancel(10, reason="edit", target="run-A")
+
+        assert tracker.should_cancel(10, run_token="run-A") is True
+        assert tracker.should_cancel(10, run_token="run-B") is False
+        assert tracker.should_cancel(10) is True  # legacy: flag exists
+        tracker.clear_cancel_flag(10)
+
+    def test_untargeted_cancel_applies_to_any_run(self):
+        tracker = _make_tracker()
+        assert tracker.request_cancel(11, reason="manual")
+
+        assert tracker.should_cancel(11, run_token="run-A") is True
+        assert tracker.should_cancel(11, run_token="run-B") is True
+        tracker.clear_cancel_flag(11)
+
+    def test_no_flag_means_no_cancel(self):
+        tracker = _make_tracker()
+        assert tracker.should_cancel(12, run_token="run-A") is False
+        assert tracker.should_cancel(12) is False

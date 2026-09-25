@@ -125,9 +125,8 @@ class TestProcessNotStartedPrompt:
         """Another worker holding the lock means the prompt is being
         processed: fail the attempt so Temporal retries, but leave the
         status and the owner's tracker entry alone."""
-        from tfc.utils.distributed_locks import LockContendedError
-
         from model_hub.tasks.run_prompt import process_not_started_prompt
+        from tfc.utils.distributed_locks import LockContendedError
 
         mock_tracker.get_running_info.return_value = None
         mock_tracker.instance_id = "test-instance"
@@ -149,10 +148,9 @@ class TestProcessNotStartedPrompt:
         """A Redis failure while taking the lock is not "someone else has
         it": nobody is processing the prompt, so it must not be left in
         RUNNING until the hourly sweep."""
-        from tfc.utils.distributed_locks import LockAcquisitionError
-
         from model_hub.models.choices import StatusType
         from model_hub.tasks.run_prompt import process_not_started_prompt
+        from tfc.utils.distributed_locks import LockAcquisitionError
 
         mock_tracker.get_running_info.return_value = None
         mock_tracker.instance_id = "test-instance"
@@ -203,18 +201,33 @@ class TestClaimPrompt:
         _claim_prompt("prompt-123", runner_info={})  # no raise
 
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
-    def test_claim_clears_cancel_flag_left_by_preempting_edit(self, mock_tracker):
-        """The edit sets cancel:<id> to drain the old run; once the edit owns
-        the prompt that flag must go, or the edit's own rows get skipped."""
+    def test_claim_clears_stale_cancel_before_publishing_ownership(self, mock_tracker):
+        """A stale flag must go, but clearing *after* mark_running would also
+        delete a cancel that arrived for us in between; so clear first, and
+        publish a per-run token the edit can aim its cancel at."""
         from model_hub.tasks.run_prompt import _claim_prompt
 
         mock_tracker.instance_id = "current-instance"
         mock_tracker.get_running_info.return_value = None
         mock_tracker.mark_running.return_value = True
+        order = []
 
-        _claim_prompt("prompt-123", runner_info={})
+        def _clear(*a, **k):
+            order.append("clear")
 
-        mock_tracker.clear_cancel_flag.assert_called_once_with("prompt-123")
+        def _publish(*a, **k):
+            order.append("publish")
+            return True
+
+        mock_tracker.clear_cancel_flag.side_effect = _clear
+        mock_tracker.mark_running.side_effect = _publish
+
+        run_token = _claim_prompt("prompt-123", runner_info={"type": "editing"})
+
+        assert order == ["clear", "publish"]
+        published = mock_tracker.mark_running.call_args.kwargs["runner_info"]
+        assert published["run_token"] == run_token and len(run_token) == 32
+        assert published["type"] == "editing"
 
 
 class TestIsFinalAttempt:
@@ -281,15 +294,19 @@ class TestProcessEditingPrompt:
         mock_tracker.instance_id = "current-instance"
         mock_running_info = MagicMock()
         mock_running_info.instance_id = "other-instance"
-        # metadata is a MagicMock -> renewal age unknown -> treated as live
+        # unparseable started_at -> renewal age unknown -> treated as live
+        mock_running_info.metadata = {"run_token": "owner-token"}
         mock_tracker.get_running_info.return_value = mock_running_info
         mock_runner = MagicMock()
         mock_runner_class.return_value = mock_runner
 
         process_editing_prompt("550e8400-e29b-41d4-a716-446655440001")
 
+        # Aimed at the live owner's token so it can't leak onto the edit's own run.
         mock_tracker.request_cancel.assert_called_once_with(
-            "550e8400-e29b-41d4-a716-446655440001", reason="Edit requested"
+            "550e8400-e29b-41d4-a716-446655440001",
+            reason="Edit requested",
+            target="owner-token",
         )
 
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
@@ -306,13 +323,14 @@ class TestProcessEditingPrompt:
         mock_tracker.instance_id = "current-instance"
         mine = MagicMock()
         mine.instance_id = "current-instance"
+        mine.metadata = {}  # pre-token lease: cancel is untargeted
         mock_tracker.get_running_info.return_value = mine
         mock_runner_class.return_value = MagicMock()
 
         process_editing_prompt("prompt-123")
 
         mock_tracker.request_cancel.assert_called_once_with(
-            "prompt-123", reason="Edit requested"
+            "prompt-123", reason="Edit requested", target=None
         )
 
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
@@ -347,10 +365,9 @@ class TestProcessEditingPrompt:
         one to finish it: the original run refuses to write a terminal status
         once updated_at changed. It must be FAILED now, not RUNNING until the
         sweep — and the owner's tracker entry must not be deleted (the old bug)."""
-        from tfc.utils.distributed_locks import LockContendedError
-
         from model_hub.models.choices import StatusType
         from model_hub.tasks.run_prompt import process_editing_prompt
+        from tfc.utils.distributed_locks import LockContendedError
 
         mock_tracker.instance_id = "current-instance"
         live = MagicMock()
@@ -360,6 +377,9 @@ class TestProcessEditingPrompt:
 
         with (
             patch("model_hub.tasks.run_prompt._is_final_attempt", return_value=True),
+            patch(
+                "model_hub.tasks.run_prompt.fail_pending_run_prompt_cells"
+            ) as fail_cells,
             pytest.raises(LockContendedError),
         ):
             process_editing_prompt("prompt-123")
@@ -367,6 +387,8 @@ class TestProcessEditingPrompt:
         mock_prompter.objects.filter.return_value.update.assert_called_once_with(
             status=StatusType.FAILED.value
         )
+        # The edit reset cells to running; recovery only sees RUNNING prompts, so resolve them here.
+        fail_cells.assert_called_once_with(["prompt-123"])
         mock_tracker.mark_completed.assert_not_called()
 
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
@@ -378,9 +400,8 @@ class TestProcessEditingPrompt:
     ):
         """The owner honours the cancel flag per row, so it will drain; an
         early attempt must leave status alone and let Temporal retry."""
-        from tfc.utils.distributed_locks import LockContendedError
-
         from model_hub.tasks.run_prompt import process_editing_prompt
+        from tfc.utils.distributed_locks import LockContendedError
 
         mock_tracker.instance_id = "current-instance"
         live = MagicMock()
@@ -508,7 +529,8 @@ class TestProcessPromptsSingle:
     ):
         """A lease whose last renewal is old belongs to a dead worker; the
         retry must reclaim the prompt instead of dead-ending on the entry."""
-        from datetime import datetime, timedelta as td
+        from datetime import datetime
+        from datetime import timedelta as td
 
         from model_hub.models.choices import StatusType
         from model_hub.tasks.run_prompt import (
@@ -764,6 +786,47 @@ class TestOwnershipLease:
         mock_lock.extend.side_effect = None
         lease.renew_once()
         assert lease._extend_failures == 0
+        assert not lease.lost.is_set()
+
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    def test_lock_not_owned_fences_immediately(self, mock_tracker):
+        """redis-py raises LockNotOwnedError when the token no longer matches:
+        someone else holds the lock, so this run must stop touching cells."""
+        from redis.exceptions import LockNotOwnedError
+
+        from model_hub.tasks.run_prompt import OwnershipLease
+
+        mock_lock = MagicMock()
+        mock_lock.extend.side_effect = LockNotOwnedError("not owned")
+        lease = OwnershipLease("prompt-123", lock=mock_lock)
+
+        lease.renew_once()
+
+        assert lease.lost.is_set()
+
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    def test_failures_spanning_the_lock_ttl_fence_the_run(self, mock_tracker):
+        """A Redis outage longer than LOCK_TTL means the lock has expired on
+        the server; after that many failed extends ownership is gone even
+        though no call ever said so. Sticky: a later success can't un-fence."""
+        from model_hub.tasks.run_prompt import (
+            LOCK_LOST_AFTER_FAILURES,
+            OwnershipLease,
+        )
+
+        mock_lock = MagicMock()
+        mock_lock.extend.side_effect = Exception("redis down")
+        lease = OwnershipLease("prompt-123", lock=mock_lock)
+
+        for _ in range(LOCK_LOST_AFTER_FAILURES - 1):
+            lease.renew_once()
+        assert not lease.lost.is_set()
+        lease.renew_once()
+        assert lease.lost.is_set()
+
+        mock_lock.extend.side_effect = None
+        lease.renew_once()
+        assert lease.lost.is_set()
 
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
     def test_renew_is_a_noop_once_stopped(self, mock_tracker):
@@ -809,9 +872,8 @@ class TestOwnershipLease:
         thread."""
         import threading
 
-        from tfc.utils.distributed_locks import distributed_lock_manager
-
         from model_hub.tasks.run_prompt import LOCK_TTL_SECONDS, OwnershipLease
+        from tfc.utils.distributed_locks import distributed_lock_manager
 
         if not distributed_lock_manager._redis_available:
             pytest.skip("redis not available")
@@ -843,9 +905,8 @@ class TestLeaseTimingInvariants:
     def test_lock_expires_before_temporal_retry_arrives(self):
         """Pinned against the workflow's own constant, so a change to the
         heartbeat timeout fails here rather than in production."""
-        from tfc.temporal.drop_in.workflow import ACTIVITY_HEARTBEAT_TIMEOUT
-
         from model_hub.tasks.run_prompt import LOCK_TTL_SECONDS
+        from tfc.temporal.drop_in.workflow import ACTIVITY_HEARTBEAT_TIMEOUT
 
         assert LOCK_TTL_SECONDS < ACTIVITY_HEARTBEAT_TIMEOUT.total_seconds()
 
@@ -853,10 +914,9 @@ class TestLeaseTimingInvariants:
         """The reclaim rides on the retry after the heartbeat timeout. With
         the default policy (3 attempts, 5s/10s apart) one transient failure
         there burns the budget; the activity must declare a wider one."""
-        from tfc.temporal.drop_in.decorator import _ACTIVITY_REGISTRY
-        from tfc.temporal.drop_in.workflow import _resolve_retry_policy, TaskRunnerInput
-
         import model_hub.tasks.run_prompt  # noqa: F401  (registers the activity)
+        from tfc.temporal.drop_in.decorator import _ACTIVITY_REGISTRY
+        from tfc.temporal.drop_in.workflow import TaskRunnerInput, _resolve_retry_policy
 
         meta = _ACTIVITY_REGISTRY["process_prompts_single"]
         policy = _resolve_retry_policy(
@@ -894,21 +954,22 @@ class TestRunPromptsHonoursCancel:
     asked to stop must skip it instead of burning calls whose cells the
     preempting edit will overwrite anyway."""
 
-    def _runner(self):
+    def _runner(self, **kwargs):
         from model_hub.views.run_prompt import RunPrompts
 
-        return RunPrompts(run_prompt_id="prompt-123")
+        return RunPrompts(run_prompt_id="prompt-123", **kwargs)
 
     @patch("model_hub.views.run_prompt.Cell")
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
     def test_process_row_skips_when_cancel_requested(self, mock_tracker, mock_cell):
         mock_tracker.should_cancel.return_value = True
-        runner = self._runner()
+        runner = self._runner(run_token="tok-1")
         runner.run_prompt_model = MagicMock()
 
         assert runner.process_row(MagicMock(), MagicMock()) is None
 
-        mock_tracker.should_cancel.assert_called_once_with("prompt-123")
+        # Scoped to this run's token so a cancel aimed at the previous owner is ignored.
+        mock_tracker.should_cancel.assert_called_once_with("prompt-123", run_token="tok-1")
         mock_cell.objects.create.assert_not_called()
         mock_cell.objects.get.assert_not_called()
 
@@ -917,7 +978,120 @@ class TestRunPromptsHonoursCancel:
         """A flaky Redis must never silently skip rows."""
         mock_tracker.should_cancel.side_effect = Exception("redis down")
 
-        assert self._runner()._cancel_requested() is False
+        assert self._runner()._should_stop() is False
+
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    def test_lost_ownership_fence_works_without_redis(self, mock_tracker):
+        """Ownership is lost precisely when Redis is unreachable, so the fence
+        must be a local event, not another Redis read."""
+        import threading
+
+        mock_tracker.should_cancel.return_value = False
+        fence = threading.Event()
+        runner = self._runner(fence=fence)
+        assert runner._should_stop() is False
+
+        fence.set()
+        assert runner._should_stop() is True
+        mock_tracker.should_cancel.assert_called_once()  # only the first call reached Redis
+
+    @patch("model_hub.views.run_prompt.close_old_connections")
+    @patch("model_hub.views.run_prompt.log_and_deduct_cost_for_api_request", None)
+    @patch("model_hub.views.run_prompt.Cell")
+    def test_cell_write_is_fenced_when_ownership_is_lost_mid_call(self, mock_cell, _close):
+        """Ownership can lapse *during* an LLM call; the result must not be
+        written over a cell a successor run now owns."""
+        runner = self._runner()
+        runner.run_prompt_model = MagicMock()
+        # Not stopped when the row starts, stopped by the time the call returns.
+        with patch.object(type(runner), "_should_stop", side_effect=[False, True]):
+            runner.process_row(MagicMock(), MagicMock())
+
+        mock_cell.objects.create.assert_not_called()
+        mock_cell.objects.get.assert_not_called()
+
+    def _run_to_final_status(self, runner, mock_prompter):
+        """Drive run_prompt() with no rows so only the final-status write is exercised."""
+        from model_hub.models.choices import StatusType
+
+        stamp = object()
+        runner.run_prompt_model = MagicMock(updated_at=stamp, concurrency=1)
+        mock_prompter.objects.filter.return_value.values.return_value.first.return_value = {
+            "status": StatusType.RUNNING.value,
+            "updated_at": stamp,
+        }
+        with (
+            patch.object(type(runner), "load_run_prompt_id"),
+            patch("model_hub.views.run_prompt.Dataset"),
+            patch(
+                "model_hub.views.run_prompt.create_run_prompt_column",
+                return_value=(MagicMock(), False),
+            ),
+            patch("model_hub.views.run_prompt.Row") as mock_row,
+        ):
+            mock_row.objects.filter.return_value.order_by.return_value = []
+            runner.run_prompt()
+        return mock_prompter.objects.filter.return_value.update
+
+    @patch("model_hub.views.run_prompt.fail_pending_run_prompt_cells")
+    @patch("model_hub.views.run_prompt.RunPrompter")
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    def test_final_status_is_left_alone_when_ownership_was_lost(
+        self, mock_tracker, mock_prompter, fail_cells
+    ):
+        """A fenced run may have been reclaimed by another worker; writing
+        FAILED (or COMPLETED) here would clobber that live run."""
+        import threading
+
+        fence = threading.Event()
+        fence.set()
+        update = self._run_to_final_status(self._runner(fence=fence), mock_prompter)
+
+        update.assert_not_called()
+        fail_cells.assert_not_called()
+
+    @patch("model_hub.views.run_prompt.fail_pending_run_prompt_cells")
+    @patch("model_hub.views.run_prompt.RunPrompter")
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    def test_cancel_with_no_successor_fails_prompt_and_pending_cells(
+        self, mock_tracker, mock_prompter, fail_cells
+    ):
+        from model_hub.models.choices import StatusType
+
+        mock_tracker.should_cancel.return_value = True
+        update = self._run_to_final_status(self._runner(), mock_prompter)
+
+        update.assert_called_once_with(status=StatusType.FAILED.value)
+        fail_cells.assert_called_once_with(["prompt-123"])
+
+    @patch("model_hub.views.run_prompt.fail_pending_run_prompt_cells")
+    @patch("model_hub.views.run_prompt.RunPrompter")
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    def test_uninterrupted_run_completes(self, mock_tracker, mock_prompter, fail_cells):
+        from model_hub.models.choices import StatusType
+
+        mock_tracker.should_cancel.return_value = False
+        update = self._run_to_final_status(self._runner(), mock_prompter)
+
+        update.assert_called_once_with(status=StatusType.COMPLETED.value)
+        fail_cells.assert_not_called()
+
+    @patch("model_hub.views.run_prompt.Cell")
+    def test_fail_pending_cells_targets_running_cells_of_given_prompts(self, mock_cell):
+        from model_hub.models.choices import CellStatus, SourceChoices, StatusType
+        from model_hub.views.run_prompt import fail_pending_run_prompt_cells
+
+        mock_cell.objects.filter.return_value.update.return_value = 3
+
+        assert fail_pending_run_prompt_cells(["p1", "p2"], "gone") == 3
+
+        flt = mock_cell.objects.filter.call_args.kwargs
+        assert flt["column__source"] == SourceChoices.RUN_PROMPT.value
+        assert flt["column__source_id__in"] == ["p1", "p2"]
+        assert set(flt["status__in"]) == {CellStatus.RUNNING.value, StatusType.RUNNING.value}
+        assert flt["deleted"] is False
+        upd = mock_cell.objects.filter.return_value.update.call_args.kwargs
+        assert upd["status"] == CellStatus.ERROR.value and upd["value"] == "gone"
 
 
 @pytest.mark.django_db
@@ -1171,6 +1345,69 @@ class TestRecoverStuckRunPromptsCellCleanup:
         prompter = stuck_setup["prompter"]
         prompter.refresh_from_db()
         assert prompter.status == StatusType.FAILED.value
+
+    @patch("model_hub.tasks.run_prompt.close_old_connections")
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    def test_recovery_scans_past_live_leases_to_reach_a_dead_prompt(
+        self, mock_tracker, mock_close, stuck_setup, organization, workspace
+    ):
+        """Healthy long runs (fresh lease, no cell writes for an hour) sit
+        ahead of a newer crashed prompt in updated_at order. The lease check
+        must not be confined to the first RECOVERY_BATCH_SIZE rows, or those
+        live runs shadow the dead one on every sweep."""
+        from datetime import datetime
+
+        from model_hub.models.choices import DatasetSourceChoices, StatusType
+        from model_hub.models.develop_dataset import Dataset
+        from model_hub.models.run_prompt import RunPrompter
+        from model_hub.tasks.run_prompt import (
+            RECOVERY_BATCH_SIZE,
+            recover_stuck_run_prompts,
+        )
+
+        dataset = Dataset.objects.create(
+            name="Shadow Dataset",
+            organization=organization,
+            workspace=workspace,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        live_ids = []
+        for i in range(RECOVERY_BATCH_SIZE + 5):
+            p = RunPrompter.objects.create(
+                name=f"Live Long Run {i}",
+                dataset=dataset,
+                organization=organization,
+                workspace=workspace,
+                status=StatusType.RUNNING.value,
+                model="gpt-4",
+                messages=[{"role": "user", "content": "hi"}],
+                run_prompt_config={},
+            )
+            live_ids.append(p.id)
+        # Older than the dead prompt from stuck_setup (2h), so they come first.
+        RunPrompter.objects.filter(id__in=live_ids).update(
+            updated_at=timezone.now() - timedelta(hours=3)
+        )
+        live_set = {str(i) for i in live_ids}
+
+        def lease_for(prompt_id):
+            if str(prompt_id) not in live_set:
+                return None
+            lease = MagicMock()
+            lease.instance_id = "busy-worker"
+            lease.metadata = {"renewed_at": datetime.utcnow().isoformat()}
+            return lease
+
+        mock_tracker.get_running_info.side_effect = lease_for
+
+        recover_stuck_run_prompts._original_func()
+
+        prompter = stuck_setup["prompter"]
+        prompter.refresh_from_db()
+        assert prompter.status == StatusType.FAILED.value
+        assert not RunPrompter.objects.filter(
+            id__in=live_ids, status=StatusType.FAILED.value
+        ).exists()
 
 
 @pytest.mark.django_db

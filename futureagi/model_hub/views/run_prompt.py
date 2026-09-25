@@ -1146,9 +1146,28 @@ class LitellmAPIView(CreateAPIView):
         return self._gm.success_response("success")
 
 
+PENDING_CELL_MESSAGE = "Run prompt was interrupted before this cell completed. Please rerun this cell."
+
+
+def fail_pending_run_prompt_cells(run_prompt_ids, message=PENDING_CELL_MESSAGE) -> int:
+    """Flip still-running cells of these prompts to ERROR; legacy "Running" matched because older reruns wrote the wrong enum."""
+    return Cell.objects.filter(
+        column__source=SourceChoices.RUN_PROMPT.value,
+        column__source_id__in=[str(p) for p in run_prompt_ids],
+        status__in=[CellStatus.RUNNING.value, StatusType.RUNNING.value],
+        deleted=False,
+    ).update(
+        status=CellStatus.ERROR.value,
+        value=message,
+        value_infos=json.dumps({"reason": message}),
+    )
+
+
 class RunPrompts:
-    def __init__(self, run_prompt_id):
+    def __init__(self, run_prompt_id, run_token=None, fence=None):
         self.run_prompt_id = run_prompt_id
+        self.run_token = run_token  # identifies this run to owner-scoped cancel flags
+        self._fence = fence  # threading.Event set by OwnershipLease when the lock is lost
         self.run_prompt_model = None
         self.tools_config = []
         logger.info(
@@ -1266,15 +1285,22 @@ class RunPrompts:
                 current_status == StatusType.RUNNING.value
                 and current_updated_at == start_updated_at
             ):
-                # A cancel with no edit behind it has no successor run, so close it out as FAILED.
-                final_status = (
-                    StatusType.FAILED.value
-                    if self._cancel_requested()
-                    else StatusType.COMPLETED.value
-                )
-                RunPrompter.objects.filter(id=self.run_prompt_id).update(
-                    status=final_status
-                )
+                if self._fence is not None and self._fence.is_set():
+                    # Ownership lost: a reclaiming run may own this prompt now, so the status is theirs (or recovery's) to write.
+                    logger.warning(
+                        "RunPrompts_final_status_fenced",
+                        run_prompt_id=str(self.run_prompt_id),
+                    )
+                elif self._should_stop():
+                    # Cancelled with no successor run (updated_at unchanged): FAILED, and pending cells must not spin forever.
+                    RunPrompter.objects.filter(id=self.run_prompt_id).update(
+                        status=StatusType.FAILED.value
+                    )
+                    fail_pending_run_prompt_cells([self.run_prompt_id])
+                else:
+                    RunPrompter.objects.filter(id=self.run_prompt_id).update(
+                        status=StatusType.COMPLETED.value
+                    )
             else:
                 # Either status changed or prompt was edited during processing
                 # Don't overwrite - let the new workflow handle final status
@@ -1323,18 +1349,23 @@ class RunPrompts:
                 pass
             raise
 
-    def _cancel_requested(self) -> bool:
-        """True if an edit (or manual cancel) asked this run to stop; Redis errors count as not cancelled."""
-        from model_hub.tasks.run_prompt import run_prompt_tracker  # local: tasks imports this module
+    def _should_stop(self) -> bool:
+        """True if ownership was lost (local fence) or a cancel aimed at this run exists; Redis errors count as no."""
+        if self._fence is not None and self._fence.is_set():
+            return True
+        # Local import: tasks.run_prompt imports this module.
+        from model_hub.tasks.run_prompt import run_prompt_tracker
 
         try:
-            return run_prompt_tracker.should_cancel(self.run_prompt_id)
+            return run_prompt_tracker.should_cancel(
+                self.run_prompt_id, run_token=self.run_token
+            )
         except Exception:
             return False
 
     def process_row(self, row, column, edit_mode=False):
         row_id = str(row.id)
-        if self._cancel_requested():
+        if self._should_stop():
             # Skip the LLM call; the run that requested the cancel will redo this cell.
             logger.info(
                 "RunPrompts_process_row_skipped_cancelled",
@@ -1548,6 +1579,15 @@ class RunPrompts:
             #             )
             #     except Exception as e:
             #         print(f"Error updating api call status to processed: {str(e)}")
+
+            if self._should_stop():
+                # Ownership lost or cancelled during the LLM call: another run owns this cell now, don't write it.
+                logger.warning(
+                    "RunPrompts_process_row_cell_write_fenced",
+                    run_prompt_id=str(self.run_prompt_id),
+                    row_id=row_id,
+                )
+                return
 
             if self.is_editing:
                 logger.info(

@@ -532,12 +532,12 @@ class TestDistributedStateE2E:
 class TestRecoveryMechanismsE2E:
     """End-to-end tests for stuck task recovery mechanisms."""
 
-    @patch("model_hub.tasks.run_prompt.Cell")
+    @patch("model_hub.tasks.run_prompt.fail_pending_run_prompt_cells", return_value=0)
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
     @patch("model_hub.tasks.run_prompt.RunPrompter")
     @patch("model_hub.tasks.run_prompt.close_old_connections")
     def test_recover_stuck_prompts_finds_old_running(
-        self, mock_close, mock_prompter, mock_tracker, mock_cell
+        self, mock_close, mock_prompter, mock_tracker, mock_fail_cells
     ):
         """Test that recovery finds prompts stuck in RUNNING for > 1 hour."""
         from model_hub.models.choices import StatusType
@@ -555,9 +555,12 @@ class TestRecoveryMechanismsE2E:
 
         # No lease and no recent cell writes -> all candidates are truly stuck
         mock_tracker.get_running_info.return_value = None
-        mock_cell.objects.filter.return_value.update.return_value = 0
 
         recover_stuck_run_prompts()
+
+        # Cells of the dead prompts are flipped to ERROR via the shared helper
+        mock_fail_cells.assert_called_once()
+        assert mock_fail_cells.call_args[0][0] == stuck_ids
 
         # Should mark stuck prompts as FAILED
         mock_queryset.update.assert_called_once()
