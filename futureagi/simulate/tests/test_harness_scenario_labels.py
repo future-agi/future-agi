@@ -56,6 +56,7 @@ def test_a_call_offers_no_turn_budget_and_a_chat_no_voice_fields():
 
 
 def test_the_contract_serves_each_editable_persona_fields_choices():
+    from simulate.models.agent_definition import AgentDefinition
     from simulate.models.persona import Persona
     from simulate.services.harness_provider import HostedHarnessProvider
 
@@ -66,6 +67,9 @@ def test_the_contract_serves_each_editable_persona_fields_choices():
     accents = [value for value, _ in Persona.AccentChoices.choices]
     assert spoken["persona_choices"]["accent"] == accents
     assert "accent" not in typed["persona_choices"]
+    assert spoken["persona_choices"]["languages"] == list(
+        AgentDefinition.LanguageChoices.labels
+    )
 
 
 def test_a_call_reports_no_turn_budget_among_its_end_conditions():
@@ -124,3 +128,89 @@ def test_a_scenario_sits_under_every_sub_goal_it_carries():
     sections = group_counts(rows, suite, "sub_goal")
     totals = {one["name"]: one["total"] for one in sections}
     assert totals == {"Ungrouped": 1, "books": 2, "greets": 2}
+
+
+def test_the_scenarios_list_and_coverage_contracts_carry_the_served_shape():
+    from simulate.serializers.harness_job import (
+        HarnessScenarioAmendResponseSerializer,
+        HarnessScenarioCoverageResponseSerializer,
+        HarnessScenarioListResponseSerializer,
+    )
+    from simulate.services.harness_provider import HostedHarnessProvider
+
+    row = {
+        "id": "00000000-0000-0000-0000-000000000001",
+        "scenario_id": None,
+        "scenario_key": "a",
+        "number": 1,
+        "name": "a",
+        "use_case": "Book a ride",
+        "instruction": "Call and book.",
+        "branch": "",
+        "tests": "books the ride",
+        "persona": {"name": "Ana", "languages": ["Spanish"], "multilingual": False},
+        "coverage": {"overlay": "none"},
+        "sub_goals": ["books_ride"],
+        "keywords": [],
+        "background_noise": "quiet line",
+        "max_turns": None,
+        "status": "authored",
+        "call_execution_id": None,
+        "group": "Book a ride",
+    }
+    listed = {
+        "count": 1,
+        "next": None,
+        "previous": None,
+        "total_pages": 1,
+        "current_page": 1,
+        "results": [row],
+        "groups": [{"name": "Book a ride", "count": 1, "total": 1}],
+        "group_by": "goal",
+        "fields": [
+            {
+                "value": "name",
+                "label": "Scenario",
+                "type": "string",
+                "category": "scenario",
+            }
+        ],
+        "scenario_editing": HostedHarnessProvider._editing_contract(
+            HostedHarnessProvider, spoken=True
+        ),
+        "groupings": [{"value": "", "label": "None"}],
+        "level_labels": {"none": "No attack", "quiet line": "Off"},
+    }
+    grid = {
+        "per_axis": [
+            {
+                "axis": "overlay",
+                "label": "Attack",
+                "levels": 1,
+                "scenarios": 1,
+                "counts": {"none": 1},
+            }
+        ],
+        "row_axis": "task",
+        "row_axis_label": "Task",
+        "col_axis": "overlay",
+        "col_axis_label": "Attack",
+        "rows": ["book"],
+        "columns": ["none"],
+        "cells": [{"row": "book", "column": "none", "count": 1}],
+        "axes": ["task", "overlay"],
+        "axis_labels": {"task": "Task", "overlay": "Attack"},
+        "level_labels": {"none": "No attack"},
+    }
+    receipts = {
+        "receipts": [{"scenario": "a", "outcome": "refused", "why": "no such scenario"}]
+    }
+
+    for serializer, payload in (
+        (HarnessScenarioListResponseSerializer, listed),
+        (HarnessScenarioCoverageResponseSerializer, grid),
+        (HarnessScenarioAmendResponseSerializer, receipts),
+    ):
+        checked = serializer(data=payload)
+        assert checked.is_valid(), checked.errors
+        assert serializer(payload).data == payload

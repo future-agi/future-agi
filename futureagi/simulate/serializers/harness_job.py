@@ -857,6 +857,146 @@ class HarnessScenarioAmendSerializer(serializers.Serializer):
     rework = serializers.BooleanField(required=False, default=True)
 
 
+class HarnessScenarioReceiptSerializer(serializers.Serializer):
+    scenario = serializers.CharField(allow_blank=True)
+    outcome = serializers.ChoiceField(choices=["applied", "queued", "refused"])
+    why = serializers.CharField(allow_blank=True)
+
+
+class HarnessScenarioAmendResponseSerializer(serializers.Serializer):
+    receipts = HarnessScenarioReceiptSerializer(many=True)
+
+
+class HarnessScenarioListQuerySerializer(serializers.Serializer):
+    page = serializers.IntegerField(required=False, min_value=1)
+    limit = serializers.IntegerField(required=False)
+    search = serializers.CharField(required=False, allow_blank=True)
+    group_by = serializers.CharField(required=False, allow_blank=True)
+    ordering = serializers.CharField(required=False, allow_blank=True)
+
+
+class HarnessScenarioCoverageQuerySerializer(serializers.Serializer):
+    search = serializers.CharField(required=False, allow_blank=True)
+    row_axis = serializers.CharField(required=False, allow_blank=True)
+    col_axis = serializers.CharField(required=False, allow_blank=True)
+
+
+class HarnessScenarioPersonaSerializer(serializers.Serializer):
+    name = serializers.CharField(required=False, allow_blank=True)
+    gender = serializers.CharField(required=False, allow_blank=True)
+    age_group = serializers.CharField(required=False, allow_blank=True)
+    occupation = serializers.CharField(required=False, allow_blank=True)
+    location = serializers.CharField(required=False, allow_blank=True)
+    personality = serializers.CharField(required=False, allow_blank=True)
+    communication_style = serializers.CharField(required=False, allow_blank=True)
+    accent = serializers.CharField(required=False, allow_blank=True)
+    initial_message = serializers.CharField(required=False, allow_blank=True)
+    languages = serializers.ListField(child=serializers.CharField(), required=False)
+    multilingual = serializers.BooleanField(required=False)
+    metadata = serializers.DictField(
+        child=JsonValueField(allow_null=True), required=False
+    )
+    scripted_caller = JsonValueField(required=False, allow_null=True)
+    keywords = serializers.ListField(child=serializers.CharField(), required=False)
+
+    def to_representation(self, instance):
+        served = super().to_representation(instance)
+        return {key: value for key, value in served.items() if key in instance}
+
+
+class HarnessScenarioRowSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    scenario_id = serializers.UUIDField(allow_null=True)
+    scenario_key = serializers.CharField()
+    number = serializers.IntegerField(allow_null=True)
+    name = serializers.CharField(allow_blank=True)
+    use_case = serializers.CharField(allow_blank=True, allow_null=True)
+    instruction = serializers.CharField(allow_blank=True, allow_null=True)
+    branch = serializers.CharField(allow_blank=True, allow_null=True)
+    tests = serializers.CharField(allow_blank=True, allow_null=True)
+    persona = HarnessScenarioPersonaSerializer()
+    coverage = serializers.DictField(child=serializers.CharField(allow_blank=True))
+    sub_goals = serializers.ListField(child=serializers.CharField())
+    keywords = serializers.ListField(child=serializers.CharField())
+    background_noise = serializers.CharField(allow_blank=True, allow_null=True)
+    max_turns = serializers.IntegerField(allow_null=True)
+    status = serializers.CharField()
+    call_execution_id = serializers.UUIDField(allow_null=True)
+    group = serializers.CharField(required=False)
+
+
+class HarnessScenarioGroupSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    count = serializers.IntegerField()
+    total = serializers.IntegerField(required=False)
+
+
+class HarnessScenarioFieldSerializer(serializers.Serializer):
+    value = serializers.CharField()
+    label = serializers.CharField()
+    type = serializers.CharField()
+    category = serializers.CharField()
+    choices = serializers.ListField(child=serializers.CharField(), required=False)
+    counts = serializers.DictField(child=serializers.IntegerField(), required=False)
+
+
+class HarnessScenarioGroupingSerializer(serializers.Serializer):
+    value = serializers.CharField(allow_blank=True)
+    label = serializers.CharField()
+
+
+class HarnessScenarioEditingSerializer(serializers.Serializer):
+    editable_fields = serializers.ListField(child=serializers.CharField())
+    persona_fields = serializers.ListField(child=serializers.CharField())
+    persona_choices = serializers.DictField(
+        child=serializers.ListField(child=serializers.CharField())
+    )
+    rework_fields = serializers.ListField(child=serializers.CharField())
+
+
+class HarnessScenarioListResponseSerializer(serializers.Serializer):
+    count = serializers.IntegerField()
+    next = serializers.CharField(allow_null=True)
+    previous = serializers.CharField(allow_null=True)
+    total_pages = serializers.IntegerField()
+    current_page = serializers.IntegerField()
+    results = HarnessScenarioRowSerializer(many=True)
+    groups = HarnessScenarioGroupSerializer(many=True)
+    group_by = serializers.CharField(allow_blank=True)
+    fields = HarnessScenarioFieldSerializer(many=True)
+    scenario_editing = HarnessScenarioEditingSerializer()
+    groupings = HarnessScenarioGroupingSerializer(many=True)
+    level_labels = serializers.DictField(child=serializers.CharField())
+
+
+class HarnessCoverageAxisSerializer(serializers.Serializer):
+    axis = serializers.CharField()
+    label = serializers.CharField()
+    levels = serializers.IntegerField()
+    scenarios = serializers.IntegerField()
+    counts = serializers.DictField(child=serializers.IntegerField())
+
+
+class HarnessCoverageCellSerializer(serializers.Serializer):
+    row = serializers.CharField()
+    column = serializers.CharField()
+    count = serializers.IntegerField()
+
+
+class HarnessScenarioCoverageResponseSerializer(serializers.Serializer):
+    per_axis = HarnessCoverageAxisSerializer(many=True)
+    row_axis = serializers.CharField()
+    row_axis_label = serializers.CharField()
+    col_axis = serializers.CharField()
+    col_axis_label = serializers.CharField()
+    rows = serializers.ListField(child=serializers.CharField())
+    columns = serializers.ListField(child=serializers.CharField())
+    cells = HarnessCoverageCellSerializer(many=True)
+    axes = serializers.ListField(child=serializers.CharField())
+    axis_labels = serializers.DictField(child=serializers.CharField())
+    level_labels = serializers.DictField(child=serializers.CharField())
+
+
 class HarnessStageOutputSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     title = serializers.CharField()

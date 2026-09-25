@@ -409,6 +409,41 @@ describe("scenarios.js — live routes are in the generated contract", () => {
     );
   });
 
+  it("publishes every response field the scenarios tab reads", () => {
+    const { definitions } = OPENAPI_CONTRACT;
+    const keys = (name) => Object.keys(definitions[name].properties);
+    expect(keys("HarnessScenarioListResponse")).toEqual(
+      expect.arrayContaining([
+        "results",
+        "count",
+        "groups",
+        "group_by",
+        "groupings",
+        "fields",
+        "scenario_editing",
+        "level_labels",
+      ]),
+    );
+    expect(keys("HarnessScenarioEditing")).toEqual(
+      expect.arrayContaining([
+        "editable_fields",
+        "persona_fields",
+        "persona_choices",
+      ]),
+    );
+    expect(keys("HarnessScenarioCoverageResponse")).toEqual(
+      expect.arrayContaining([
+        "per_axis",
+        "rows",
+        "columns",
+        "cells",
+        "axis_labels",
+        "level_labels",
+      ]),
+    );
+    expect(keys("HarnessScenarioAmendResponse")).toEqual(["receipts"]);
+  });
+
   it("caps the request contract's scenario_count at the UI's MAX_SCENARIOS", () => {
     expect(
       OPENAPI_CONTRACT.definitions.HarnessJobCreate.properties.scenario_count.maximum,

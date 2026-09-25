@@ -1672,6 +1672,7 @@ class HostedHarnessProvider:
 
     def _editing_contract(self, spoken: bool = True) -> dict[str, Any]:
         """Which fields an amend will take, and which of them cannot be taken without a re-proof."""
+        from simulate.models.agent_definition import AgentDefinition
         from simulate.models.persona import Persona
 
         # A call has no turn budget; a chat has no accent or room behind the caller.
@@ -1683,7 +1684,7 @@ class HostedHarnessProvider:
             "personality": Persona.PersonalityChoices,
             "communication_style": Persona.CommunicationStyleChoices,
             "accent": Persona.AccentChoices,
-            "languages": Persona.LanguageChoices,
+            "languages": AgentDefinition.LanguageChoices,
             "occupation": Persona.ProfessionChoices,
             "location": Persona.LocationChoices,
         }
@@ -1691,7 +1692,11 @@ class HostedHarnessProvider:
             "editable_fields": sorted(self._DESCRIPTIVE_FIELDS | behavioural),
             "persona_fields": sorted(persona),
             "persona_choices": {
-                field: [value for value, _ in vocabulary[field].choices]
+                field: (
+                    list(vocabulary[field].labels)
+                    if field == "languages"
+                    else list(vocabulary[field].values)
+                )
                 for field in sorted(persona)
             },
             "rework_fields": sorted(behavioural | persona),
@@ -1699,6 +1704,9 @@ class HostedHarnessProvider:
 
     def list_scenarios(self, request, pk) -> Response:
         """One page of a run's authored scenarios, in the order they were written."""
+        from simulate.serializers.harness_job import (
+            HarnessScenarioListResponseSerializer,
+        )
         from tfc.utils.pagination import ExtendedPageNumberPagination
 
         job = _scoped_job(request, pk)
@@ -1769,7 +1777,9 @@ class HostedHarnessProvider:
             dict(one) for one in GROUPINGS if spoken or one["value"] != "accent"
         ]
         from simulate.services.harness_scenarios import level_labels_for
+
         response.data["level_labels"] = level_labels_for(rows, response.data["fields"])
+        response.data = HarnessScenarioListResponseSerializer(response.data).data
         return response
 
     def scenario_coverage(self, request, pk) -> Response:
@@ -1778,6 +1788,9 @@ class HostedHarnessProvider:
         if job is None:
             return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
 
+        from simulate.serializers.harness_job import (
+            HarnessScenarioCoverageResponseSerializer,
+        )
         from simulate.services.harness_scenarios import (
             DEFAULT_COL_AXIS,
             DEFAULT_ROW_AXIS,
@@ -1791,17 +1804,19 @@ class HostedHarnessProvider:
         queryset = apply_filters(queryset, request.query_params)
         from simulate.services.harness_environment import AGENT_TYPE_VOICE, agent_type
 
-        return Response(
-            coverage_grid(
-                queryset,
-                request.query_params.get("row_axis") or DEFAULT_ROW_AXIS,
-                request.query_params.get("col_axis") or DEFAULT_COL_AXIS,
-                spoken=agent_type(job) == AGENT_TYPE_VOICE,
-            )
+        grid = coverage_grid(
+            queryset,
+            request.query_params.get("row_axis") or DEFAULT_ROW_AXIS,
+            request.query_params.get("col_axis") or DEFAULT_COL_AXIS,
+            spoken=agent_type(job) == AGENT_TYPE_VOICE,
         )
+        return Response(HarnessScenarioCoverageResponseSerializer(grid).data)
 
     def amend_scenarios(self, request, pk) -> Response:
         """Edit a finished run's authored suite, one receipt per requested change."""
+        from simulate.serializers.harness_job import (
+            HarnessScenarioAmendResponseSerializer,
+        )
         from simulate.services.hosted_harness_gateway import (
             push_scenarios_into_live_sandbox,
             rewrite_authoring_scenarios,
@@ -1986,23 +2001,23 @@ class HostedHarnessProvider:
                         rejected.append((str(one.get("name") or ""), problems))
                 if rejected:
                     named = {name for name, _ in rejected}
-                    return Response(
+                    refused = [
                         {
-                            "receipts": [
-                                {
-                                    "scenario": name,
-                                    "outcome": "refused",
-                                    "why": "; ".join(problems),
-                                }
-                                for name, problems in rejected
-                            ]
-                            + [
-                                one
-                                for one in receipts
-                                if one.get("scenario") not in named
-                                and one.get("outcome") == "refused"
-                            ]
+                            "scenario": name,
+                            "outcome": "refused",
+                            "why": "; ".join(problems),
                         }
+                        for name, problems in rejected
+                    ] + [
+                        one
+                        for one in receipts
+                        if one.get("scenario") not in named
+                        and one.get("outcome") == "refused"
+                    ]
+                    return Response(
+                        HarnessScenarioAmendResponseSerializer(
+                            {"receipts": refused}
+                        ).data
                     )
             if touched:
                 if output is not None:
@@ -2035,7 +2050,9 @@ class HostedHarnessProvider:
                         else one
                         for one in receipts
                     ]
-        return Response({"receipts": receipts})
+        return Response(
+            HarnessScenarioAmendResponseSerializer({"receipts": receipts}).data
+        )
 
     def extend(self, request, pk) -> Response:
         """Chat 'Add scenarios' on a finished RL environment: add ``count`` new scenarios,
