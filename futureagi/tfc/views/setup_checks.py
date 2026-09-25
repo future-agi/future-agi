@@ -170,8 +170,10 @@ def _object_storage_up() -> bool:
     try:
         client.head_bucket(Bucket=settings.UPLOAD_BUCKET_NAME)
     except ClientError as exc:
+        # An answer of any kind means the service is reachable, including the 404
+        # a fresh install gets: the bucket is created on the first upload.
         code = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-        return code is not None and code != 404
+        return code is not None
     return True
 
 

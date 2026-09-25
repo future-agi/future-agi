@@ -20,6 +20,8 @@ import pytest
 from django.core.cache import cache
 from rest_framework import status
 
+from botocore.exceptions import ClientError, EndpointConnectionError
+
 from tfc.views.setup_checks import (
     CHECKS,
     EXPERIMENT,
@@ -28,6 +30,8 @@ from tfc.views.setup_checks import (
     PASSED,
     SKIPPED,
     WARNING,
+    _object_storage_up,
+    _safe,
 )
 
 INSTALLATION = Path(__file__).resolve().parents[3] / "INSTALLATION.md"
@@ -402,6 +406,30 @@ class TestFailsClosed:
         result = get_checks(api_client, mode=LIVE, probe_results={})
 
         assert all(c["status"] != PASSED for c in result["checks"])
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestObjectStorageProbe:
+    def test_a_bucket_that_does_not_exist_yet_is_not_an_outage(self):
+        """The upload bucket is created on the first upload, so a fresh install
+        has none and every operator saw a red row with nothing behind it."""
+        missing = ClientError(
+            {"ResponseMetadata": {"HTTPStatusCode": 404}}, "HeadBucket"
+        )
+
+        with patch("tfc.views.setup_checks.boto3.client") as factory:
+            factory.return_value.head_bucket.side_effect = missing
+
+            assert _object_storage_up() is True
+
+    def test_an_endpoint_that_does_not_answer_is_down(self):
+        with patch("tfc.views.setup_checks.boto3.client") as factory:
+            factory.return_value.head_bucket.side_effect = EndpointConnectionError(
+                endpoint_url="http://minio:9000"
+            )
+
+            assert _safe(_object_storage_up) is False
 
 
 @pytest.mark.integration
