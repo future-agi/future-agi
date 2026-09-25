@@ -112,3 +112,89 @@ def test_choice_prefilter_is_a_superset_of_the_decoded_match():
             if decoder_keeps(cell, search) and not kept[cell]
         ]
     assert violations == []
+
+
+@pytest.mark.django_db
+def test_every_literal_choice_cell_ships_its_metadata():
+    """Run the shipped literal-candidate predicate against the real decoder.
+
+    Only cells it keeps have their metadata read, so every (storage text,
+    metadata) pair ``literal_choice`` accepts must survive it, however the
+    producer escaped or encoded the JSON.
+    """
+
+    import json
+
+    from tracer.services.dataset_choice_values import (
+        CHOICE_DOCUMENT_SQL,
+        LITERAL_CANDIDATE_SQL,
+        literal_choice,
+    )
+
+    def encoded(value, **options):
+        return json.dumps(
+            {"reason": "chose it", "output": "choices", "data": {"result": value}},
+            **options,
+        )
+
+    values = [
+        "[west]",
+        "['west']",
+        '["west"]',
+        "{west}",
+        " [west] ",
+        "[a/b]",
+        "[a\\b]",
+        "[a\tb]",
+        "[\u96ea]",
+        "[caf\u00e9]",
+        "[emoji \U0001f600]",
+    ]
+    stored = []
+    for value in values:
+        for options in ({}, {"ensure_ascii": False}):
+            text = encoded(value, **options)
+            stored += [(value, text), (value, json.dumps(text))]
+        # Escaping printable ASCII is legal JSON, and \/ is too.
+        escaped = "".join(f"\\u{ord(char):04x}" for char in value)
+        stored.append(
+            (
+                value,
+                json.dumps(
+                    json.dumps({"output": "choices"})[:-1] + f', "data": "{escaped}"}}'
+                ),
+            )
+        )
+        stored.append(
+            (
+                value,
+                json.dumps(
+                    '{"output":"choices","data":"'
+                    + value.replace("\\", "\\\\")
+                    .replace('"', '\\"')
+                    .replace("/", "\\/")
+                    .replace("\t", "\\t")
+                    + '"}'
+                ),
+            )
+        )
+    literal = [(value, text) for value, text in stored if literal_choice(value, text)]
+    assert len(literal) >= len(values) * 5
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT val, value_infos, "
+            f"({LITERAL_CANDIDATE_SQL}) AS keep FROM ("
+            "SELECT val, value_infos::text AS value_infos, "
+            f"{CHOICE_DOCUMENT_SQL} AS document "
+            "FROM (SELECT cell.val, cell.infos::jsonb AS value_infos "
+            "FROM unnest(%(values)s::text[], %(infos)s::text[]) "
+            "AS cell(val, infos)) AS cells) AS cells",
+            {
+                "values": [value for value, _text in literal],
+                "infos": [text for _value, text in literal],
+            },
+        )
+        rows = cursor.fetchall()
+    assert len(rows) == len(literal)
+    dropped = [(value, text) for value, text, keep in rows if keep is not True]
+    assert dropped == []

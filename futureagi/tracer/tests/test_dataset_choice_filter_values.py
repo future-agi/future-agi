@@ -241,9 +241,16 @@ def reader(dashboard_source):
 
         def fetch(sql, params):
             if "value_infos" not in sql:
-                distinct = dict.fromkeys(value for value, _infos in cells)
-                rows = [{"val": value, "result_bytes": 0} for value in distinct]
+                counts = {}
+                for value, _infos in cells:
+                    counts[value] = counts.get(value, 0) + 1
+                rows = [
+                    {"val": value, "cells": count, "result_bytes": 0}
+                    for value, count in counts.items()
+                ]
             else:
+                # SQL ships only cells that may be literals; shipping every
+                # cell is a superset the decoder must answer identically.
                 rows = [
                     {"id": index, "val": value, "value_infos": infos}
                     for index, (value, infos) in enumerate(cells)
@@ -479,7 +486,11 @@ def test_scope_search_deadline_and_cursor_are_forwarded_unchanged(reader, origin
     # the same snapshot, only after the value inventory proved finite.
     assert len(statements) == (2 if origin == "evaluation" else 1)
     inventory, params = statements[0]
-    assert "SELECT DISTINCT value AS val FROM model_hub_cell " in inventory
+    assert (
+        "SELECT value AS val, count(*) AS cells FROM model_hub_cell "
+        if origin == "evaluation"
+        else "SELECT DISTINCT value AS val FROM model_hub_cell "
+    ) in inventory
     assert "ORDER BY val LIMIT %(result_limit)s" in inventory
     for sql, _params in statements:
         assert CELL_SCOPE in sql
@@ -799,7 +810,7 @@ def test_many_explanations_do_not_change_distinct_value_cardinality(reader):
     assert response["values"] == [{"value": v, "label": v} for v in ("east", "west")]
     # The value inventory, and so the cap, counts distinct storage texts only.
     inventory = reader.postgres.call_args_list[0]
-    assert "SELECT DISTINCT value AS val FROM" in inventory.args[0]
+    assert "GROUP BY value ORDER BY val LIMIT" in inventory.args[0]
     assert len(reader.postgres.side_effect(*inventory.args)) == 2
 
 
@@ -819,10 +830,42 @@ def test_metadata_for_one_value_cannot_classify_another(reader):
     assert response["status"] == 503
 
 
-def test_a_value_without_an_interpretation_is_not_a_complete_vocabulary(reader):
+def test_a_cell_whose_metadata_did_not_ship_reads_as_a_container(reader):
+    """SQL ships metadata only for cells that may be literals."""
+
     reader.state["interpretations"] = False
-    assert reader.invoke(["west"])["status"] == 503
-    reader.view._finite_native_filter_values_response.assert_not_called()
+    response = reader.invoke(
+        [{"val": '["west"]', "literal": True}, "{'choice': 'east', 'score': 0.1}"]
+    )
+    assert response["values"] == [
+        {"value": "east", "label": "east"},
+        {"value": "west", "label": "west"},
+    ]
+
+
+def test_metadata_ships_only_for_cells_that_may_be_literals(reader):
+    """test_choice_prefilter_soundness proves the predicate in PostgreSQL."""
+
+    from tracer.services.dataset_choice_values import (
+        CHOICE_DOCUMENT_SQL,
+        LITERAL_CANDIDATE_SQL,
+    )
+
+    reader.invoke(["west"])
+    metadata = reader.postgres.call_args_list[1].args[0]
+    assert metadata.startswith("SELECT * FROM (SELECT *, sum(")
+    assert "SELECT id, val, value_infos FROM (" in metadata
+    assert f"{CHOICE_DOCUMENT_SQL} AS document FROM model_hub_cell " in metadata
+    assert f") AS cells WHERE {LITERAL_CANDIDATE_SQL}" in metadata
+    for arm in (
+        "strpos(val, '[') > 0 OR strpos(val, '{') > 0",
+        "length(value_infos) <= 16384",
+        "val ~ '[^ -~]'",
+        "strpos(val, chr(92)) > 0",
+        "strpos(document, chr(92) || 'u00') > 0",
+        "strpos(document, '\"' || val || '\"') > 0",
+    ):
+        assert arm in LITERAL_CANDIDATE_SQL
 
 
 @pytest.fixture

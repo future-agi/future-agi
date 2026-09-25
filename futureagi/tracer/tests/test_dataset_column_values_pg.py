@@ -186,3 +186,46 @@ def test_ai_filter_grounding_reads_the_current_column(dataset, lagging_mirror):
     assert ai_filter._fetch_dataset_column_values(
         dataset.id, column.id, search_query="QA_VALUE"
     ) == ["qa_value_alpha"]
+
+
+@pytest.mark.django_db
+def test_eval_cells_whose_metadata_cannot_name_them_ship_no_metadata(
+    auth_client, dataset, lagging_mirror
+):
+    """Only bracketed storage that its own metadata quotes can be a literal.
+
+    Reading every cell's ``value_infos`` to decide that bit made a large eval
+    column cross the result-byte cap and answer 503 (about 55k cells at dev's
+    ~1.2 KB of metadata per cell).
+    """
+    from tracer.services import dataset_choice_values
+
+    column = _column(dataset, data_type="array", source="evaluation")
+    reason = "an explanation " * 64
+    for _ in range(40):
+        _cell(
+            column,
+            "positive",
+            value_infos={"output": "choices", "data": "positive", "reason": reason},
+        )
+        # Historical double-encoded metadata whose choice is a list, not a
+        # string naming the stored text.
+        _cell(
+            column,
+            "['neutral']",
+            value_infos=json.dumps(
+                {"output": "choices", "data": ["neutral"], "reason": reason}
+            ),
+        )
+    _cell(column, "[west]", value_infos={"output": "choices", "data": "[west]"})
+
+    decoder = dataset_choice_values.literal_choice
+    with (
+        patch(
+            "tracer.views.dashboard._FINITE_NATIVE_FILTER_VALUE_MAX_RESULT_BYTES",
+            16 * 1024,
+        ),
+        patch.object(dataset_choice_values, "literal_choice", wraps=decoder) as decoded,
+    ):
+        assert _suggestions(auth_client, column) == ["[west]", "neutral", "positive"]
+    assert [call.args[0] for call in decoded.call_args_list] == ["[west]"]

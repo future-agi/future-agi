@@ -5573,7 +5573,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
         from model_hub.models.develop_dataset import Column
         from tracer.services.dataset_choice_values import (
-            MAX_CHOICE_TEXT,
+            CHOICE_DOCUMENT_SQL,
+            LITERAL_CANDIDATE_SQL,
             InvalidChoiceCell,
             evaluation_choice_labels,
             literal_choice,
@@ -5698,31 +5699,40 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         def read_inventory(fetch):
             rows = fetch_bounded(
                 fetch,
-                f"SELECT DISTINCT value AS val {scope}"
-                "ORDER BY val LIMIT %(result_limit)s",
+                (
+                    f"SELECT value AS val, count(*) AS cells {scope}GROUP BY value "
+                    if evaluation_choices
+                    else f"SELECT DISTINCT value AS val {scope}"
+                )
+                + "ORDER BY val LIMIT %(result_limit)s",
                 size="octet_length(val)",
                 order="val",
             )
             if not evaluation_choices or len(rows) >= result_limit:
                 return rows
-            # Each cell contributes only an interpretation bit, never its
-            # reason or usage blob. Both bits can be present when the same
-            # storage text means a literal in one cell and a container in
-            # another.
-            modes = {}
+            # Same-cell metadata can only change the labels of a cell that may
+            # be a literal choice; every other cell reads as a container and
+            # ships nothing, never its reason or usage blob.
+            literal_cells = {}
             for cell in fetch_bounded(
                 fetch,
-                "SELECT id, value AS val, "
-                f"CASE WHEN length(value_infos::text) <= {MAX_CHOICE_TEXT} "
-                "THEN value_infos::text ELSE '' END AS value_infos "
-                f"{scope}",
+                "SELECT id, val, value_infos FROM ("
+                "SELECT id, value AS val, value_infos::text AS value_infos, "
+                f"{CHOICE_DOCUMENT_SQL} AS document {scope}"
+                f") AS cells WHERE {LITERAL_CANDIDATE_SQL}",
                 size="octet_length(val) + octet_length(value_infos)",
                 order="id",
             ):
-                mode = 2 if literal_choice(cell["val"], cell["value_infos"]) else 1
-                modes[cell["val"]] = modes.get(cell["val"], 0) | mode
+                if literal_choice(cell["val"], cell["value_infos"]):
+                    literal_cells[cell["val"]] = literal_cells.get(cell["val"], 0) + 1
+            # Both bits are present when the same storage text means a
+            # literal in one cell and a container in another.
             return [
-                {"val": row["val"], "choice_modes": modes.get(row["val"])}
+                {
+                    "val": row["val"],
+                    "choice_modes": (2 if literal_cells.get(row["val"]) else 0)
+                    | (1 if literal_cells.get(row["val"], 0) < row["cells"] else 0),
+                }
                 for row in rows
             ]
 

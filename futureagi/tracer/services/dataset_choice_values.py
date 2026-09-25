@@ -56,6 +56,30 @@ def _literal(node, depth=0, budget=None):
     _reject()
 
 
+# The metadata document of ``model_hub_cell.value_infos``: historical cells
+# store the JSON once more as a JSON string, which this unwraps once.
+CHOICE_DOCUMENT_SQL = (
+    "CASE WHEN jsonb_typeof(value_infos) = 'string' "
+    "THEN value_infos #>> '{}' ELSE value_infos::text END"
+)
+
+# Over ``val`` (the stored text), ``value_infos`` (its JSONField text) and
+# ``document``: a superset of the cells ``literal_choice`` can accept. Only
+# bracketed storage reads differently as a literal (a scalar is its own label
+# either way), and the metadata must quote that exact text as a JSON string.
+# Printable ASCII in such a string is verbatim or a \u00XX escape; a value
+# holding a quote, slash, backslash or any other character may be escaped
+# otherwise, so those cells always qualify.
+LITERAL_CANDIDATE_SQL = (
+    "(strpos(val, '[') > 0 OR strpos(val, '{') > 0) "
+    f"AND length(value_infos) <= {MAX_CHOICE_TEXT} "
+    "AND (val ~ '[^ -~]' OR strpos(val, '\"') > 0 OR strpos(val, '/') > 0 "
+    "OR strpos(val, chr(92)) > 0 "
+    "OR strpos(document, chr(92) || 'u00') > 0 "
+    "OR strpos(document, '\"' || val || '\"') > 0)"
+)
+
+
 class _RepeatedKeys(dict):
     """A metadata object whose storage repeated a key."""
 
