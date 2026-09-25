@@ -846,7 +846,7 @@ export const dashboardRoutes = (
   const dashboardChildren = [
     {
       index: true,
-      element: <Navigate to="/dashboard/prototype" replace />,
+      element: <Navigate to="/dashboard/develop" replace />,
     },
     {
       path: "/dashboard/get-started",
@@ -1017,29 +1017,29 @@ export const dashboardRoutes = (
     //     },
     //   ],
     // },
-    {
-      path: "prototype",
-      element: <ProjectWrapper />,
-      children: [
-        {
-          index: true,
-          element: <ProjectList />,
-        },
-      ],
-    },
-    {
-      path: "prototype/:projectId",
-      children: [
-        {
-          index: true,
-          element: <ProjectDetail />,
-        },
-        {
-          path: ":runId",
-          element: <RunInsidePage />,
-        },
-      ],
-    },
+    // {
+    //   path: "prototype",
+    //   element: <ProjectWrapper />,
+    //   children: [
+    //     {
+    //       index: true,
+    //       element: <ProjectList />,
+    //     },
+    //   ],
+    // },
+    // {
+    //   path: "prototype/:projectId",
+    //   children: [
+    //     {
+    //       index: true,
+    //       element: <ProjectDetail />,
+    //     },
+    //     {
+    //       path: ":runId",
+    //       element: <RunInsidePage />,
+    //     },
+    //   ],
+    // },
     // {
     //   path: "projects",
     //   element: <ProjectWrapper />,

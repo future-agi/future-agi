@@ -18,7 +18,7 @@ const BottomAction = ({ currentLabel, setCurrentLabel }) => {
         break;
       case "RunFirstExperiment":
         option.buttonText = "Go to experiments";
-        option.buttonAction = () => navigate("/dashboard/prototype");
+        // option.buttonAction = () => navigate("/dashboard/prototype");
         break;
       case "inviteTeamMembers":
         option.buttonText = "Complete the setup";
