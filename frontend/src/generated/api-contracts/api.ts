@@ -592,6 +592,9 @@ import type {
   HarnessRunCreateApi,
   HarnessRunCreateResponseApi,
   HarnessScenarioAmendApi,
+  HarnessScenarioAmendResponseApi,
+  HarnessScenarioCoverageResponseApi,
+  HarnessScenarioListResponseApi,
   HarnessScenarioOperationApi,
   HarnessScenarioOperationResponseApi,
   HarnessSecretFileUploadResponseApi,
@@ -1094,6 +1097,8 @@ import type {
   SimulateApiHarnessConversationsCommandsParams,
   SimulateApiHarnessConversationsSessionStoreParams,
   SimulateApiHarnessEnvironmentsListParams,
+  SimulateApiHarnessJobsScenariosParams,
+  SimulateApiHarnessJobsScenariosScenarioCoverageParams,
   SimulateApiHarnessJobsSecretFileUploadBody,
   SimulateApiHarnessJobsSourceUploadBody,
   SimulateApiLivekitWebhookCreateBody,
@@ -59355,30 +59360,62 @@ export const simulateApiHarnessJobsRuns = async (
 };
 
 export type simulateApiHarnessJobsScenariosResponse200 = {
-  data: void;
+  data: HarnessScenarioListResponseApi;
   status: 200;
+};
+
+export type simulateApiHarnessJobsScenariosResponse404 = {
+  data: ApiTextErrorResponseApi;
+  status: 404;
+};
+
+export type simulateApiHarnessJobsScenariosResponse501 = {
+  data: ApiTextErrorResponseApi;
+  status: 501;
 };
 
 export type simulateApiHarnessJobsScenariosResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 501>;
 };
 
 export type simulateApiHarnessJobsScenariosResponseSuccess =
   simulateApiHarnessJobsScenariosResponse200 & {
     headers: Headers;
   };
-export type simulateApiHarnessJobsScenariosResponseError =
-  simulateApiHarnessJobsScenariosResponseDefault & {
-    headers: Headers;
-  };
+export type simulateApiHarnessJobsScenariosResponseError = (
+  | simulateApiHarnessJobsScenariosResponse404
+  | simulateApiHarnessJobsScenariosResponse501
+  | simulateApiHarnessJobsScenariosResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type simulateApiHarnessJobsScenariosResponse =
   | simulateApiHarnessJobsScenariosResponseSuccess
   | simulateApiHarnessJobsScenariosResponseError;
 
-export const getSimulateApiHarnessJobsScenariosUrl = (id: string) => {
-  return `/simulate/api/harness-jobs/${id}/scenarios/`;
+export const getSimulateApiHarnessJobsScenariosUrl = (
+  id: string,
+  params?: SimulateApiHarnessJobsScenariosParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-jobs/${id}/scenarios/?${stringifiedParams}`
+    : `/simulate/api/harness-jobs/${id}/scenarios/`;
 };
 
 /**
@@ -59389,10 +59426,11 @@ selects its managed sandbox runtime.
  */
 export const simulateApiHarnessJobsScenarios = async (
   id: string,
+  params?: SimulateApiHarnessJobsScenariosParams,
   options?: RequestInit,
 ): Promise<simulateApiHarnessJobsScenariosResponse> => {
   return apiMutator<simulateApiHarnessJobsScenariosResponse>(
-    getSimulateApiHarnessJobsScenariosUrl(id),
+    getSimulateApiHarnessJobsScenariosUrl(id, params),
     {
       ...options,
       method: "GET",
@@ -59400,24 +59438,43 @@ export const simulateApiHarnessJobsScenarios = async (
   );
 };
 
-export type simulateApiHarnessJobsScenariosAmendScenariosResponse201 = {
-  data: HarnessScenarioAmendApi;
-  status: 201;
+export type simulateApiHarnessJobsScenariosAmendScenariosResponse200 = {
+  data: HarnessScenarioAmendResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessJobsScenariosAmendScenariosResponse404 = {
+  data: ApiTextErrorResponseApi;
+  status: 404;
+};
+
+export type simulateApiHarnessJobsScenariosAmendScenariosResponse409 = {
+  data: ApiTextErrorResponseApi;
+  status: 409;
+};
+
+export type simulateApiHarnessJobsScenariosAmendScenariosResponse501 = {
+  data: ApiTextErrorResponseApi;
+  status: 501;
 };
 
 export type simulateApiHarnessJobsScenariosAmendScenariosResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 409 | 501>;
 };
 
 export type simulateApiHarnessJobsScenariosAmendScenariosResponseSuccess =
-  simulateApiHarnessJobsScenariosAmendScenariosResponse201 & {
+  simulateApiHarnessJobsScenariosAmendScenariosResponse200 & {
     headers: Headers;
   };
-export type simulateApiHarnessJobsScenariosAmendScenariosResponseError =
-  simulateApiHarnessJobsScenariosAmendScenariosResponseDefault & {
-    headers: Headers;
-  };
+export type simulateApiHarnessJobsScenariosAmendScenariosResponseError = (
+  | simulateApiHarnessJobsScenariosAmendScenariosResponse404
+  | simulateApiHarnessJobsScenariosAmendScenariosResponse409
+  | simulateApiHarnessJobsScenariosAmendScenariosResponse501
+  | simulateApiHarnessJobsScenariosAmendScenariosResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type simulateApiHarnessJobsScenariosAmendScenariosResponse =
   | simulateApiHarnessJobsScenariosAmendScenariosResponseSuccess
@@ -59452,23 +59509,36 @@ export const simulateApiHarnessJobsScenariosAmendScenarios = async (
 };
 
 export type simulateApiHarnessJobsScenariosScenarioCoverageResponse200 = {
-  data: void;
+  data: HarnessScenarioCoverageResponseApi;
   status: 200;
+};
+
+export type simulateApiHarnessJobsScenariosScenarioCoverageResponse404 = {
+  data: ApiTextErrorResponseApi;
+  status: 404;
+};
+
+export type simulateApiHarnessJobsScenariosScenarioCoverageResponse501 = {
+  data: ApiTextErrorResponseApi;
+  status: 501;
 };
 
 export type simulateApiHarnessJobsScenariosScenarioCoverageResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 501>;
 };
 
 export type simulateApiHarnessJobsScenariosScenarioCoverageResponseSuccess =
   simulateApiHarnessJobsScenariosScenarioCoverageResponse200 & {
     headers: Headers;
   };
-export type simulateApiHarnessJobsScenariosScenarioCoverageResponseError =
-  simulateApiHarnessJobsScenariosScenarioCoverageResponseDefault & {
-    headers: Headers;
-  };
+export type simulateApiHarnessJobsScenariosScenarioCoverageResponseError = (
+  | simulateApiHarnessJobsScenariosScenarioCoverageResponse404
+  | simulateApiHarnessJobsScenariosScenarioCoverageResponse501
+  | simulateApiHarnessJobsScenariosScenarioCoverageResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type simulateApiHarnessJobsScenariosScenarioCoverageResponse =
   | simulateApiHarnessJobsScenariosScenarioCoverageResponseSuccess
@@ -59476,8 +59546,25 @@ export type simulateApiHarnessJobsScenariosScenarioCoverageResponse =
 
 export const getSimulateApiHarnessJobsScenariosScenarioCoverageUrl = (
   id: string,
+  params?: SimulateApiHarnessJobsScenariosScenarioCoverageParams,
 ) => {
-  return `/simulate/api/harness-jobs/${id}/scenarios/coverage/`;
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-jobs/${id}/scenarios/coverage/?${stringifiedParams}`
+    : `/simulate/api/harness-jobs/${id}/scenarios/coverage/`;
 };
 
 /**
@@ -59488,10 +59575,11 @@ selects its managed sandbox runtime.
  */
 export const simulateApiHarnessJobsScenariosScenarioCoverage = async (
   id: string,
+  params?: SimulateApiHarnessJobsScenariosScenarioCoverageParams,
   options?: RequestInit,
 ): Promise<simulateApiHarnessJobsScenariosScenarioCoverageResponse> => {
   return apiMutator<simulateApiHarnessJobsScenariosScenarioCoverageResponse>(
-    getSimulateApiHarnessJobsScenariosScenarioCoverageUrl(id),
+    getSimulateApiHarnessJobsScenariosScenarioCoverageUrl(id, params),
     {
       ...options,
       method: "GET",
