@@ -116,7 +116,7 @@ describe("useMyEnvironments", () => {
       id: "env-voice",
       name: "Customer Support Line",
       description: "Handles inbound billing calls",
-      status: "completed",
+      status: "ready",
       agentType: "voice",
       tools: 4,
       scenarios: 12,

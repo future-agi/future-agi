@@ -26,16 +26,16 @@ const withRouter = (ui) => (
 );
 
 describe("LivePill", () => {
-  it("shows Live for a ready environment", () => {
+  it("shows Ready for a ready environment", () => {
     render(<LivePill env={{ buildStatus: "ready" }} />);
-    expect(screen.getByText("Live")).toBeInTheDocument();
+    expect(screen.getByText("Ready")).toBeInTheDocument();
     expect(screen.queryByText("Building")).toBeNull();
   });
 
   it("shows Building while the environment is still deriving", () => {
     render(<LivePill env={{ buildStatus: "building" }} />);
     expect(screen.getByText("Building")).toBeInTheDocument();
-    expect(screen.queryByText("Live")).toBeNull();
+    expect(screen.queryByText("Ready")).toBeNull();
   });
 
   it("honours an explicit building override", () => {
@@ -43,10 +43,10 @@ describe("LivePill", () => {
     expect(screen.getByText("Building")).toBeInTheDocument();
   });
 
-  it("shows a static Failed for a terminal-failed build (not Building/Live)", () => {
+  it("shows a static Failed for a terminal-failed build (not Building/Ready)", () => {
     render(<LivePill env={{ buildStatus: "failed" }} />);
     expect(screen.getByText("Failed")).toBeInTheDocument();
-    expect(screen.queryByText("Live")).toBeNull();
+    expect(screen.queryByText("Ready")).toBeNull();
     expect(screen.queryByText("Building")).toBeNull();
   });
 

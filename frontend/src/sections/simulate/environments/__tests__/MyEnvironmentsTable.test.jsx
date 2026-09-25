@@ -147,7 +147,7 @@ describe("MyEnvironmentsTable", () => {
     renderTab();
     await screen.findByText("Customer Support Line");
 
-    ["Completed", "Running…", "Building", "Failed"].forEach((label) =>
+    ["Ready", "Running…", "Building", "Failed"].forEach((label) =>
       expect(screen.getByText(label)).toBeInTheDocument(),
     );
   });

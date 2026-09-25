@@ -213,7 +213,7 @@ describe("EnvironmentWorkspace route shell", () => {
     // so scope the header match to its <p>.
     expect(await screen.findByText("Refund Copilot", { selector: "p" }))
       .toBeInTheDocument();
-    expect(screen.getByText("Live")).toBeInTheDocument();
+    expect(screen.getByText("Ready")).toBeInTheDocument();
     ["Overview", "Contract", "Scenarios", "Evaluations", "Runs", "Settings"].forEach((label) =>
       expect(screen.getByRole("tab", { name: new RegExp(label) })).toBeInTheDocument(),
     );

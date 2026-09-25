@@ -29,11 +29,11 @@ export const GAP_AREA_TO_TAB = {
 // Header, overflow-menu and empty-state copy for the workspace shell.
 export const WORKSPACE_COPY = {
   back: "All environments",
-  live: "Live",
+  live: "Ready",
   buildingLabel: "Building",
   finalizingLabel: "Finalizing",
   failedLabel: "Failed",
-  liveTooltip: "Environment is live. You can edit via the builder or inline.",
+  liveTooltip: "Environment is ready to run. You can edit via the builder or inline.",
   buildingTooltip: "Environment is still being built…",
   finalizingTooltip: "Wrapping up the build…",
   cancellingLabel: "Cancelling",
