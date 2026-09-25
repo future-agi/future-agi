@@ -34,7 +34,9 @@ function headerStatus(identity, stats) {
   // No verdict until the run resolves: while loading, identity is null and the
   // zeroed stats would otherwise read as "Failed".
   if (!identity) return null;
-  if (identity.status === "running") return "running";
+  if (identity.status === "running" || identity.status === "cancelling") {
+    return identity.status;
+  }
   if (identity.status === "failed" || identity.status === "cancelled") {
     return identity.status;
   }

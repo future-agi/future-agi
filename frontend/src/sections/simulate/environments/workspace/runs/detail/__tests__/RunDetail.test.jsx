@@ -224,6 +224,19 @@ describe("RunDetail", () => {
     expect(screen.queryByRole("button", { name: "Stop simulation" })).toBeNull();
   });
 
+  it("shows Cancelling in the header while a stopped run winds down", () => {
+    useRunDetail.mockReturnValue({
+      identity: { ...IDENTITY, status: "cancelling", stoppable: false },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+
+    expect(screen.getByText("Cancelling")).toBeInTheDocument();
+    expect(screen.queryByText("Running")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Stop simulation" })).toBeNull();
+  });
+
   it("shows terminal execution failure despite partial call success", () => {
     useRunDetail.mockReturnValue({
       identity: { ...IDENTITY, status: "failed" },

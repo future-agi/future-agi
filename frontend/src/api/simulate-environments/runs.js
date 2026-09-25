@@ -35,7 +35,7 @@ const RUN_STATE = {
   Pending: "queued",
   Running: "running",
   Evaluating: "running",
-  Cancelling: "running",
+  Cancelling: "cancelling",
   Completed: "finished",
   Failed: "failed",
   Cancelled: "cancelled",

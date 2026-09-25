@@ -30,7 +30,7 @@ import useKpis from "src/hooks/useKpis";
  * @property {?string} startedAt    ISO start time.
  * @property {?string} finishedAt   ISO finish time — GAP: the executions row
  *                                   carries no end time, so this is null.
- * @property {"passed"|"failed"|"running"|"cancelled"} status  Run-level outcome.
+ * @property {"passed"|"failed"|"running"|"cancelling"|"cancelled"} status  Run-level outcome.
  */
 
 /**
@@ -197,15 +197,18 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
       name: envName ?? null,
       agentVersion: execution.agent_version ?? null,
       startedAt: execution.started_at ?? null,
-      status: ACTIVE_EXECUTION_STATUSES.has(execution.status)
-        ? "running"
-        : execution.status === "failed"
-          ? "failed"
-          : execution.status === "cancelled"
-            ? "cancelled"
-            : summary?.outcomes?.passed > 0
-              ? "passed"
-              : "failed",
+      status:
+        execution.status === "cancelling"
+          ? "cancelling"
+          : ACTIVE_EXECUTION_STATUSES.has(execution.status)
+            ? "running"
+            : execution.status === "failed"
+              ? "failed"
+              : execution.status === "cancelled"
+                ? "cancelled"
+                : summary?.outcomes?.passed > 0
+                  ? "passed"
+                  : "failed",
       stoppable: STOPPABLE_EXECUTION_STATUSES.has(execution.status),
       scenarioIds: execution.selected_scenario_keys?.length
         ? execution.selected_scenario_keys

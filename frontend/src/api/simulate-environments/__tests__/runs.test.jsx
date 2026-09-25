@@ -127,7 +127,8 @@ describe("executionToRun", () => {
     expect(state("Pending")).toBe("queued");
     expect(state("Running")).toBe("running");
     expect(state("Evaluating")).toBe("running");
-    expect(state("Cancelling")).toBe("running");
+    // Its own state so a stopped run reads as cancelling, not still running.
+    expect(state("Cancelling")).toBe("cancelling");
     // Its own key so the table can show a finished run green without recolouring
     // the detail header's "Completed" (finished with findings).
     expect(state("Completed")).toBe("finished");
