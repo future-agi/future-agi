@@ -1,6 +1,6 @@
-export function generateNMarks(min, max, n = 10) {
-  const step = (max - min) / n;
-  return Array.from({ length: 11 }, (_, i) => ({
+export function generateNMarks(min, max, step = (max - min) / 10) {
+  const count = Math.round((max - min) / step) + 1;
+  return Array.from({ length: count }, (_, i) => ({
     value: parseFloat((min + i * step).toFixed(6)), // prevent float errors
     label: "", // optional: add `${value}` if you want visible labels
   }));
