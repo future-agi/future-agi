@@ -10,6 +10,11 @@ from tracer.services.clickhouse.query_builders.base import (
     BaseQueryBuilder,
     _unix_microseconds,
 )
+from tracer.services.clickhouse.query_builders.latency_statistic import (
+    latency_state_from_arrays_sql,
+    latency_values_sql,
+    median_latency_from_state_sql,
+)
 from tracer.services.clickhouse.query_builders.user_time_series import (
     UserTimeSeriesQueryBuilder,
 )
@@ -292,8 +297,13 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
         user_membership_plan: UserGraphMembershipPlan | None = None,
         exact_snapshot_start: datetime | None = None,
         exact_snapshot_end: datetime | None = None,
+        include_latency: bool = True,
         **kwargs: Any,
     ) -> None:
+        # Latency is the pooled t-digest median, which has to carry values
+        # through the (user, trace) and (bucket, user) levels. A graph of any
+        # other metric passes ``include_latency=False`` and pays nothing.
+        self.include_latency = bool(include_latency)
         self.user_membership_sql = user_membership_sql
         self.user_membership_params = dict(user_membership_params or {})
         self.user_membership_plan = user_membership_plan
@@ -441,11 +451,29 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
                 for index in range(len(self.user_membership_plan.predicates))
             )
 
+        # Latency: each trace carries its non-NULL span latencies, each
+        # (bucket, user) folds them into one t-digest state, and the bucket
+        # merges those states. The value is the p50 of every span latency of
+        # the bucket's user traces; no level averages another level's values.
+        if self.include_latency:
+            trace_latency = (
+                f"\n                    {latency_values_sql('rs.latency_ms')}"
+                " AS trace_latencies,"
+            )
+            user_latency = (
+                "\n                "
+                f"{latency_state_from_arrays_sql('trace_latencies')}"
+                " AS user_latency_state,"
+            )
+            bucket_latency = median_latency_from_state_sql("user_latency_state")
+        else:
+            trace_latency = ""
+            user_latency = ""
+            bucket_latency = "toFloat64(0)"
         user_bucket_rows = f"""
             SELECT
                 {bucket_fn}(min_start) AS time_bucket,
-                end_user_id,
-                avg(span_avg_latency) AS user_avg_latency,
+                end_user_id,{user_latency}
                 sum(span_total_tokens) AS user_total_tokens,
                 sum(span_total_cost) AS user_total_cost,
                 sum(span_prompt_tokens) AS user_prompt_tokens,
@@ -456,8 +484,7 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
                 SELECT
                     {resolved_eu} AS end_user_id,
                     rs.trace_id AS trace_id,
-                    min(rs.start_time) AS min_start,
-                    avg(rs.latency_ms) AS span_avg_latency,
+                    min(rs.start_time) AS min_start,{trace_latency}
                     sum(rs.total_tokens) AS span_total_tokens,
                     sum(rs.cost) AS span_total_cost,
                     sum(rs.prompt_tokens) AS span_prompt_tokens,
@@ -503,7 +530,7 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
         eu_survivor_map AS ({eu_map})
         SELECT
             time_bucket,
-            avg(user_avg_latency) AS avg_latency,
+            {bucket_latency} AS avg_latency,
             sum(user_total_tokens) AS total_tokens,
             avg(user_total_cost) AS avg_cost,
             count() AS traffic_count,

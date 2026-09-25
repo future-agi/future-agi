@@ -4654,6 +4654,8 @@ def read_exact_user_system_graph(
         user_membership_plan=user_membership_plan,
         exact_snapshot_start=start_date,
         exact_snapshot_end=end_date,
+        # Only the latency graph carries per-trace latency values.
+        include_latency=metric_id == "latency",
     )
     query, params = builder.build()
     result = _execute_direct_exact_graph_query(

@@ -5,9 +5,12 @@ already-latest rows and precompiled boolean flags. They do not prove CH typed
 predicate execution or physical replacement; those have separate SQL contracts.
 """
 
+import json
+import math
 import re
 import socket
 import sqlite3
+import statistics
 from copy import deepcopy
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -356,9 +359,11 @@ def test_fusion_preserves_latest_population_and_metric_reductions_verbatim():
     assert "user_snapshot_start_us" in having and "user_snapshot_end_us" in having
     for expression in (
         "min(rs.start_time) AS min_start",
-        "avg(rs.latency_ms) AS span_avg_latency",
-        "avg(span_avg_latency) AS user_avg_latency",
-        "avg(user_avg_latency) AS avg_latency",
+        "groupArrayIf(toInt32(rs.latency_ms), isNotNull(rs.latency_ms))"
+        " AS trace_latencies",
+        "quantileTDigestStateArray(0.5)(trace_latencies) AS user_latency_state",
+        "coalesce(ifNotFinite(quantileTDigestMerge(0.5)(user_latency_state), NULL), 0)"
+        " AS avg_latency",
         "sum(rs.cost) AS span_total_cost",
         "sum(span_total_cost) AS user_total_cost",
         "avg(user_total_cost) AS avg_cost",
@@ -394,6 +399,42 @@ class _UniqExact:
         return len(self.values)
 
 
+class _GroupArrayIf:
+    """CH ``groupArrayIf``: the group's values where the condition holds."""
+
+    def __init__(self):
+        self.values = []
+
+    def step(self, value, condition):
+        if condition:
+            self.values.append(value)
+
+    def finalize(self):
+        return json.dumps(self.values)
+
+
+class _TDigestState:
+    """A t-digest state stand-in: the exact multiset of the group's values.
+
+    ClickHouse's t-digest equals the lower median at the sizes used here
+    (checked on CH 25.3), so an exact multiset is a faithful oracle.
+    """
+
+    def __init__(self):
+        self.values = []
+
+    def step(self, encoded):
+        self.values.extend(json.loads(encoded))
+
+    def finalize(self):
+        return json.dumps(self.values)
+
+
+class _TDigestMerge(_TDigestState):
+    def finalize(self):
+        return statistics.median_low(self.values) if self.values else None
+
+
 def _sqlite_metric_sql(sql):
     # Replace only CH-only syntax/functions; execute both real generated
     # reductions against the same pre-replayed latest_spans/remap fixtures.
@@ -403,6 +444,9 @@ def _sqlite_metric_sql(sql):
         .replace("%(project_id)s", ":project_id")
         # SQLite gives input column names precedence over SELECT aliases.
         .replace("GROUP BY end_user_id, trace_id", "GROUP BY 1, 2")
+        # Parametric CH aggregates have no SQLite spelling.
+        .replace("quantileTDigestStateArray(0.5)(", "tdigest_state_array(")
+        .replace("quantileTDigestMerge(0.5)(", "tdigest_merge(")
     )
 
 
@@ -475,6 +519,17 @@ def test_generated_sql_fused_window_matches_declared_users_and_nested_metrics(
         db.create_function("greatest", 2, max)
         db.create_aggregate("countIf", 1, _CountIf)
         db.create_aggregate("uniqExact", 1, _UniqExact)
+        db.create_function("toInt32", 1, lambda value: int(value))
+        db.create_function(
+            "ifNotFinite",
+            2,
+            lambda value, alternative: (
+                value if value is not None and math.isfinite(value) else alternative
+            ),
+        )
+        db.create_aggregate("groupArrayIf", 2, _GroupArrayIf)
+        db.create_aggregate("tdigest_state_array", 1, _TDigestState)
+        db.create_aggregate("tdigest_merge", 1, _TDigestMerge)
         db.executescript("""
             CREATE TABLE latest_spans(end_user_id TEXT, trace_id TEXT, start_time TEXT,
                 latency_ms REAL, cost REAL, total_tokens REAL, prompt_tokens REAL,
@@ -523,7 +578,10 @@ def test_generated_sql_fused_window_matches_declared_users_and_nested_metrics(
         for key in left.keys() - {"time_bucket"}:
             assert left[key] == pytest.approx(right[key])
     if not mapped_nil:
-        assert actual[0]["avg_latency"] == (185 if mode == "null" else 127.5)
+        # Pooled median of every span latency of the bucket's user traces:
+        # [0, 20, 100, 200] (+300 for the absent user under null). The old
+        # mean of per-user means of per-trace means was 127.5 / 185.
+        assert actual[0]["avg_latency"] == (100 if mode == "null" else 20)
         assert actual[0]["avg_cost"] == (11 if mode == "null" else 10)
         assert (
             actual[0]["total_cost_sum"]

@@ -274,3 +274,54 @@ class TestSessionGraphMedian:
             candidate_trace_ids_param="candidate_traces",
         )
         assert "session_latencies" not in sql
+
+
+# ---------------------------------------------------------------------------
+# Users aggregate graph: the pooled median of every span latency of the
+# bucket's user traces, carried as values then merged as t-digest states.
+# ---------------------------------------------------------------------------
+
+
+class TestUsersGraphMedian:
+    def _statement(self, metric_id: str) -> str:
+        from tracer.services.clickhouse import exact_graph_reads
+
+        analytics = _CapturingAnalytics()
+        exact_graph_reads.read_exact_user_system_graph(
+            analytics=analytics,
+            project_id=PROJECT_ID,
+            filters=[_WINDOW_FILTER],
+            interval="day",
+            metric_id=metric_id,
+        )
+        (statement,) = analytics.statements
+        return statement
+
+    def test_users_latency_is_pooled_median_of_merged_states(self):
+        query = self._statement("latency")
+        flat = _normalized(query)
+
+        assert (
+            "groupArrayIf(toInt32(rs.latency_ms), isNotNull(rs.latency_ms))"
+            " AS trace_latencies" in flat
+        )
+        assert (
+            "quantileTDigestStateArray(0.5)(trace_latencies) AS user_latency_state"
+            in flat
+        )
+        assert (
+            "coalesce(ifNotFinite(quantileTDigestMerge(0.5)(user_latency_state),"
+            " NULL), 0) AS avg_latency" in flat
+        )
+        _assert_no_mean_of_latency(query)
+
+    @pytest.mark.parametrize(
+        "metric_id", ["tokens", "active_users", "total_cost", "error_rate"]
+    )
+    def test_only_the_latency_graph_carries_latency_values(self, metric_id):
+        query = self._statement(metric_id)
+
+        assert "trace_latencies" not in query
+        assert "user_latency_state" not in query
+        assert "toFloat64(0) AS avg_latency" in _normalized(query)
+        _assert_no_mean_of_latency(query)

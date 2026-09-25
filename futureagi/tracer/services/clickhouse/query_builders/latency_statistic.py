@@ -52,6 +52,19 @@ def median_latency_from_arrays_sql(array_expr: str) -> str:
     return _finite_or_zero(f"quantileTDigestArray(0.5)({array_expr})")
 
 
+def latency_state_from_arrays_sql(array_expr: str) -> str:
+    """Fold a group's latency arrays into one mergeable ``quantileTDigest(0.5)``
+    state, for a later ``median_latency_from_state_sql``."""
+
+    return f"quantileTDigestStateArray(0.5)({array_expr})"
+
+
+def median_latency_from_state_sql(state_expr: str) -> str:
+    """p50 of merged ``quantileTDigest(0.5)`` states."""
+
+    return _finite_or_zero(f"quantileTDigestMerge(0.5)({state_expr})")
+
+
 def median_latency_from_states_sql(
     state_expr: str,
     levels: str = STORED_LATENCY_QUANTILE_LEVELS,
@@ -64,7 +77,9 @@ def median_latency_from_states_sql(
 __all__ = [
     "LATENCY_STATISTIC",
     "STORED_LATENCY_QUANTILE_LEVELS",
+    "latency_state_from_arrays_sql",
     "latency_values_sql",
+    "median_latency_from_state_sql",
     "median_latency_from_arrays_sql",
     "median_latency_from_states_sql",
     "median_latency_sql",
