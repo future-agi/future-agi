@@ -106,7 +106,9 @@ JS_BLOCKED_MODULES = [
 # ---------------------------------------------------------------------------
 # Python sandbox wrapper script
 # ---------------------------------------------------------------------------
-def _build_python_sandbox_script(user_code: str, input_data: dict) -> str:
+def _build_python_sandbox_script(
+    user_code: str, input_data: dict, raw_result: bool = False
+) -> str:
     """Build a self-contained Python script that runs user code in RestrictedPython."""
     safe_modules_json = json.dumps(SAFE_MODULES)
     input_json = json.dumps(input_data, default=str)
@@ -289,6 +291,9 @@ def main():
             if k not in call_args:
                 call_args[k] = v
         output = fn(**call_args)
+        if {raw_result!r}:
+            print(json.dumps({{"status": "success", "data": output}}, default=str))
+            return
         # Normalize output
         if isinstance(output, dict):
             if "score" in output:
@@ -451,7 +456,9 @@ def _set_resource_limits():
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-def _call_executor_service(code: str, input_data: dict, language: str, timeout: int) -> dict | None:
+def _call_executor_service(
+    code: str, input_data: dict, language: str, timeout: int, raw_result: bool = False
+) -> dict | None:
     """Call the nsjail code-executor service via HTTP. Returns None if unavailable."""
     try:
         # default=str so non-JSON-native types coming through trace/span column
@@ -463,6 +470,7 @@ def _call_executor_service(code: str, input_data: dict, language: str, timeout: 
             "input_data": input_data,
             "language": language,
             "timeout": timeout,
+            "raw_result": raw_result,
         }, default=str).encode("utf-8")
 
         req = urllib.request.Request(
@@ -480,18 +488,28 @@ def _call_executor_service(code: str, input_data: dict, language: str, timeout: 
         return None  # Fall back to local sandbox
 
 
-def execute_sandboxed_python(code: str, input_data: dict, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> dict:
+def execute_sandboxed_python(
+    code: str,
+    input_data: dict,
+    timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    raw_result: bool = False,
+) -> dict:
     """
     Execute Python code in a production-grade sandbox.
 
     Tries the nsjail code-executor service first (Tier 1: full namespace isolation).
     Falls back to RestrictedPython subprocess sandbox (Tier 2).
+    Set raw_result for column code that needs main(**kwargs)'s value rather than
+    the evaluation score format. The executor must confirm support for this mode.
     """
     # Try nsjail executor service first
-    result = _call_executor_service(code, input_data, "python", timeout)
+    result = _call_executor_service(code, input_data, "python", timeout, raw_result)
     if result is not None:
+        if raw_result and result.get("status") == "success":
+            if result.get("raw_result") is not True:
+                return {"status": "error", "data": "Code executor does not support raw results"}
         return result
-    script = _build_python_sandbox_script(code, input_data)
+    script = _build_python_sandbox_script(code, input_data, raw_result)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, prefix="sandbox_") as f:
         f.write(script)
