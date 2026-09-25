@@ -31913,7 +31913,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              enum: ["goal", "status"],
+              enum: [
+                "goal",
+                "sub_goal",
+                "accent",
+                "age",
+                "attack",
+                "task",
+                "status",
+              ],
               default: "",
             },
           },
@@ -46755,7 +46763,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         livekit_max_concurrency: {
           title: "Livekit max concurrency",
           type: "integer",
-          maximum: 25,
+          maximum: 5,
           minimum: 1,
           "x-nullable": true,
         },
@@ -46909,7 +46917,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         livekit_max_concurrency: {
           title: "Livekit max concurrency",
           type: "integer",
-          maximum: 25,
+          maximum: 5,
           minimum: 1,
           "x-nullable": true,
         },
@@ -47900,7 +47908,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         livekit_max_concurrency: {
           title: "Livekit max concurrency",
           type: "integer",
-          maximum: 25,
+          maximum: 5,
           minimum: 1,
         },
         commit_message: {

@@ -4,8 +4,10 @@ import csv
 import io
 import json
 import uuid
+from datetime import timedelta
 
 import pytest
+from django.utils import timezone
 from rest_framework import status
 
 from accounts.models.workspace import Workspace
@@ -15,6 +17,7 @@ from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import AgentDefinition, Scenarios, SimulateEvalConfig
 from simulate.models.agent_optimiser import AgentOptimiser
 from simulate.models.agent_optimiser_run import AgentOptimiserRun
+from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 from simulate.models.run_test import RunTest
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import CallExecution, TestExecution
@@ -606,7 +609,6 @@ class TestRunResultsV3Views:
         assert body["execution"]["selected_scenario_keys"] == ["routine-return"]
         assert body["execution"]["trials"] == 2
 
-
     def test_harness_error_is_not_green_when_transport_completed(
         self, auth_client, test_execution, analytics_call_executions
     ):
@@ -705,6 +707,69 @@ class TestRunResultsV3Views:
         assert {item["value"] for item in body["facets"]["goal"]} >= {
             "Dataset-only goal"
         }
+
+    def test_hosted_calls_group_by_their_authored_scenario_axes(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        test_execution,
+        analytics_call_executions,
+    ):
+        def job(**fields):
+            return HostedHarnessJob.no_workspace_objects.create(
+                organization=organization,
+                workspace=workspace,
+                run_id=uuid.uuid4(),
+                idempotency_key=uuid.uuid4().hex,
+                request_digest=uuid.uuid4().hex,
+                schema_version="1.6",
+                seed=1,
+                artifact_level="standard",
+                max_artifact_bytes=1024,
+                deadline_at=timezone.now() + timedelta(hours=1),
+                scenario_count=1,
+                payload={"metadata": {}, "runtime": {"max_duration_seconds": 600}},
+                **fields,
+            )
+
+        environment = job()
+        job(environment=environment, run_test=test_execution.run_test)
+        HostedHarnessScenario.no_workspace_objects.create(
+            job=environment,
+            scenario_key="pin-reset",
+            use_case="Verify the caller's guest PIN",
+            sub_goals=["pin_verified", "exact_greeting"],
+            persona={"accent": "Indian", "age_group": "40-50"},
+            coverage={"overlay": "prompt_injection", "task": "authenticate_pin"},
+        )
+        call = analytics_call_executions[0]
+        call.call_metadata = {"harness_scenario_key": "pin-reset"}
+        call.save(update_fields=["call_metadata"])
+        url = f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+
+        expected = {
+            "goal": ("Verify the caller's guest PIN", "Verify the caller's guest PIN"),
+            "sub_goal": ("pin_verified", "pin_verified"),
+            "accent": ("Indian", "Indian"),
+            "age": ("40-50", "40-50"),
+            "attack": ("prompt_injection", "Injected instruction"),
+            "task": ("authenticate_pin", "Authenticate pin"),
+        }
+        for axis, (key, label) in expected.items():
+            body = auth_client.get(url, {"group_by": axis}).json()
+            group = next(g for g in body["groups"] if str(call.id) in g["result_ids"])
+            assert (group["key"], group["label"]) == (key, label), axis
+            # A call with no authored scenario keeps the existing goal fallbacks.
+            others = [g for g in body["groups"] if str(call.id) not in g["result_ids"]]
+            assert axis == "goal" or all(g["key"] == "Ungrouped" for g in others), axis
+
+            scoped = auth_client.get(url, {"group_by": axis, "group_key": key}).json()
+            assert [row["id"] for row in scoped["results"]] == [str(call.id)], axis
+        row = next(
+            r for r in auth_client.get(url).json()["results"] if r["id"] == str(call.id)
+        )
+        assert row["goal"] == "Verify the caller's guest PIN"
 
     def test_non_numeric_json_metrics_do_not_break_list_or_analytics(
         self,

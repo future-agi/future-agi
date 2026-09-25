@@ -24,13 +24,16 @@ from django.db.models import (
     Value,
     When,
 )
-from django.db.models.fields.json import KeyTransform
+from django.db.models.fields.json import KeyTextTransform, KeyTransform
 from django.db.models.functions import Cast, Coalesce, Lower, NullIf, Trim
 from django.db.models.lookups import Exact, GreaterThan, In
 
 from model_hub.models.develop_dataset import Cell
 from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
+from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 from simulate.semantics import SupportedProviders
+from simulate.services.harness_scenarios import GROUP_BY as SCENARIO_GROUP_BY
+from simulate.services.harness_scenarios import level_label
 from simulate.services.run_results_v3 import build_evaluation_catalog
 from simulate.services.run_results_v3_expressions import (
     PercentileCont,
@@ -39,7 +42,20 @@ from simulate.services.run_results_v3_expressions import (
 )
 
 OUTCOMES = ("passed", "failed", "error", "inconclusive")
-GROUP_FIELDS = {"goal": "result_goal", "status": "result_outcome"}
+# The Scenarios tab's axes, plus the run's own outcome.
+GROUP_FIELDS = {
+    **{axis: f"result_{axis}" for axis in SCENARIO_GROUP_BY},
+    "status": "result_outcome",
+}
+UNGROUPED = "Ungrouped"
+
+
+def _authored_level(field: str):
+    """One authored-scenario value for grouping; a list axis groups by its first entry."""
+    head, _, tail = field.partition(".")
+    if tail:
+        return KeyTextTransform(tail, head)
+    return KeyTextTransform("0", head)
 
 
 def _json_value(field: str, *keys: str):
@@ -146,7 +162,33 @@ def run_calls_queryset(
         ),
         "created_at",
     )
+    # A hosted call carries only its scenario key; its use case, sub-goals,
+    # persona and coverage live on the environment's authored suite.
+    authored = HostedHarnessScenario.no_workspace_objects.filter(
+        job_id__in=HostedHarnessJob.no_workspace_objects.filter(
+            run_test_id=execution.run_test_id, environment_id__isnull=False
+        ).values("environment_id"),
+        scenario_key=OuterRef("result_scenario_key"),
+    ).order_by("-created_at")
     queryset = CallExecution.objects.filter(execution_filter).annotate(
+        result_scenario_key=_json_text("call_metadata", "harness_scenario_key")
+    )
+    queryset = queryset.annotate(
+        **{
+            GROUP_FIELDS[axis]: Coalesce(
+                NullIf(
+                    Subquery(
+                        authored.values(level=_authored_level(field))[:1],
+                        output_field=TextField(),
+                    ),
+                    Value(""),
+                ),
+                Value(UNGROUPED),
+                output_field=CharField(),
+            )
+            for axis, field in SCENARIO_GROUP_BY.items()
+            if axis != "goal"
+        },
         result_eval_outcome=Case(
             When(failed_eval, then=Value("failed")),
             When(passed_eval, then=Value("passed")),
@@ -154,6 +196,10 @@ def run_calls_queryset(
             output_field=CharField(),
         ),
         result_goal=Coalesce(
+            NullIf(
+                Subquery(authored.values("use_case")[:1], output_field=TextField()),
+                Value(""),
+            ),
             _json_text("call_metadata", "use_case"),
             _json_text("call_metadata", "goal"),
             _json_text("call_metadata", "row_data", "use_case"),
@@ -415,16 +461,23 @@ def group_run_calls(
         expressions[f"eval_{index}_average"] = Avg(score)
         expressions[f"eval_{index}_scored"] = Count(score)
     summaries = queryset.order_by().values(field).annotate(**expressions)
+    page_ids = [str(row["id"]) for row in page_rows]
+    key_by_id = {
+        str(call_id): str(key)
+        for call_id, key in queryset.filter(id__in=page_ids).values_list("id", field)
+    }
     ids_by_key: dict[str, list[str]] = {}
-    page_field = "goal" if group_by == "goal" else "outcome"
-    for row in page_rows:
-        ids_by_key.setdefault(str(row[page_field]), []).append(str(row["id"]))
+    for call_id in page_ids:
+        if call_id in key_by_id:
+            ids_by_key.setdefault(key_by_id[call_id], []).append(call_id)
     labels = {
         "passed": "Passed",
         "failed": "Failed",
         "error": "Errored",
         "inconclusive": "Not measured",
     }
+    # Coverage levels read as the Scenarios tab names them ("none" is "No attack").
+    coverage_axis = group_by in {"attack", "task"}
     groups = []
     for values in summaries:
         key = str(values[field])
@@ -442,7 +495,11 @@ def group_run_calls(
         groups.append(
             {
                 "key": key,
-                "label": labels.get(key, key),
+                "label": (
+                    level_label(key)
+                    if coverage_axis and key != UNGROUPED
+                    else labels.get(key, key)
+                ),
                 "result_ids": ids_by_key[key],
                 "aggregates": {
                     "csat": values.get("csat_average"),

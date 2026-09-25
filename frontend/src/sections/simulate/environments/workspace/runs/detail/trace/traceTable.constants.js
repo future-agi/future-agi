@@ -100,11 +100,16 @@ export const isBad = (metric, value) => {
 };
 
 /*
-  Group-by axes backed by native run fields. Persona remains available as a
-  column, but is intentionally not a grouping or filtering axis.
+  Group-by axes, keyed by the server's `group_by` value: the Scenarios tab's
+  axes (read from each call's authored scenario) plus the run's own status.
 */
 export const GROUPINGS = [
-  { id: "useCase", label: "Goal", icon: "solar:target-linear" },
+  { id: "goal", label: "Use case", icon: "solar:target-linear" },
+  { id: "sub_goal", label: "Sub-goal", icon: "solar:map-linear" },
+  { id: "accent", label: "Accent", icon: "solar:soundwave-linear" },
+  { id: "age", label: "Age", icon: "solar:user-rounded-linear" },
+  { id: "attack", label: "Attack", icon: "solar:shield-warning-linear" },
+  { id: "task", label: "Task", icon: "solar:checklist-minimalistic-linear" },
   { id: "status", label: "Status", icon: "solar:check-circle-linear" },
 ];
 
