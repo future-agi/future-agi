@@ -452,6 +452,21 @@ function callEvalResult(evalId, data) {
   };
 }
 
+// A transcript row's text. Voice rows carry a string; a hosted chat row's
+// `content` is a list of OpenAI-style `{role, content}` parts (strings or
+// `{text}` also occur). Always returns a string.
+function messageText(content) {
+  if (content == null) return "";
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content.map(messageText).filter(Boolean).join("\n");
+  }
+  if (typeof content === "object") {
+    return messageText(content.content ?? content.text ?? "");
+  }
+  return String(content);
+}
+
 /**
  * Maps one raw `call-executions/{id}/` payload → a `CallDetail`. Pure and
  * exported for unit tests.
@@ -464,7 +479,7 @@ export function mapCallDetail(raw) {
   const isChat = raw.simulation_call_type === "text";
   const turns = callTranscript(raw).map((t) => ({
     role: normalizeRole(t.speaker_role ?? t.role),
-    text: t.content ?? "",
+    text: messageText(t.content),
     at: t.start_time_seconds ?? null,
     toolCalls: t.tool_calls ?? null,
   }));
