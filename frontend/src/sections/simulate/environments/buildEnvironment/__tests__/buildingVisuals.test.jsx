@@ -49,17 +49,17 @@ describe("PipelineChecks", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it("shows the running step with a live elapsed clock and the next as a ghost row", () => {
+  it("shows the running step without a client-side clock and the next as a ghost row", () => {
     render(<PipelineChecks pipeline={pipelineStatus([], true)} />);
 
     expect(screen.getByText(PIPELINE_CHECKS_COPY.heading)).toBeInTheDocument();
     expect(screen.getByText("0 of 7")).toBeInTheDocument();
 
     expect(screen.getByText("Understanding agent")).toBeInTheDocument();
-    expect(screen.getByText("0.0s")).toBeInTheDocument();
-
+    // The backend has no per-step start time, so no elapsed clock is shown —
+    // a mount-relative one reset to 0.0s on every revisit.
     act(() => vi.advanceTimersByTime(300));
-    expect(screen.getByText("0.3s")).toBeInTheDocument();
+    expect(screen.queryByText(/^\d+\.\ds$/)).not.toBeInTheDocument();
 
     // The next queued step peeks in as a ghost row.
     expect(screen.getByText("Generating environment")).toBeInTheDocument();
@@ -69,11 +69,11 @@ describe("PipelineChecks", () => {
     expect(screen.queryByText("Building environment")).not.toBeInTheDocument();
   });
 
-  it("renders all seven done rows with their durations", () => {
+  it("renders all seven done rows without made-up durations", () => {
     render(<PipelineChecks pipeline={pipelineStatus(["understand", "build", "scenarios"], false)} />);
 
     expect(screen.getByText("7 of 7")).toBeInTheDocument();
-    expect(screen.getByText("2.4s")).toBeInTheDocument();
+    expect(screen.queryByText(/^\d+\.\ds$/)).not.toBeInTheDocument();
     expect(screen.getByText("Validating scenarios")).toBeInTheDocument();
     expect(screen.queryByText(PIPELINE_CHECKS_COPY.queued)).not.toBeInTheDocument();
   });

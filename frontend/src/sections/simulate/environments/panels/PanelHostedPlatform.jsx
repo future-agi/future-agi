@@ -81,7 +81,9 @@ export default function PanelHostedPlatform() {
   // Others has no WebRTC path, so it requires a number regardless of simMode;
   // other voice envs only require it in Phone mode.
   const phoneRequired = agentType === AGENT_TYPES.VOICE && (isOther || simMode === "phone");
-  const phoneOk = !phoneRequired || !!contactNumber.trim();
+  // Digits only — a number rehydrated from an older draft may still carry
+  // letters or formatting the input now strips.
+  const phoneOk = !phoneRequired || /^\d+$/.test(contactNumber);
   const credsOk = isOther ? !!otherPrompt.trim() : (!!id.trim() && !!key.trim());
   const canGo = !!chosen && credsOk && phoneOk;
 
