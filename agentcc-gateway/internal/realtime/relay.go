@@ -29,11 +29,12 @@ type Relay struct {
 	providerToClient chan relayMessage
 	config           RelayConfig
 	logger           *slog.Logger
+	checker          *GuardrailChecker
 	wg               sync.WaitGroup
 }
 
 // NewRelay creates a new message relay.
-func NewRelay(session *Session, config RelayConfig, logger *slog.Logger) *Relay {
+func NewRelay(session *Session, config RelayConfig, logger *slog.Logger, checker *GuardrailChecker) *Relay {
 	if config.ChannelBufferSize == 0 {
 		config.ChannelBufferSize = 64
 	}
@@ -42,6 +43,7 @@ func NewRelay(session *Session, config RelayConfig, logger *slog.Logger) *Relay 
 		clientToProvider: make(chan relayMessage, config.ChannelBufferSize),
 		providerToClient: make(chan relayMessage, config.ChannelBufferSize),
 		config:           config,
+		checker:          checker,
 		logger:           logger,
 	}
 }
