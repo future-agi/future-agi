@@ -1216,6 +1216,7 @@ class UsersListManager:
         candidate_scan_ids: list[str] | None = None,
         candidate_end_user_id_map: dict[str, str] | None = None,
         skip_attribute_read: bool = False,
+        skip_native_read: bool = False,
     ) -> None:
         """Run only explicitly requested finite enrichments.
 
@@ -1223,6 +1224,9 @@ class UsersListManager:
         span attributes in ``_attribute_values_by_user`` (the matching-activity
         walk reads them before it decides which users to replay); the values
         are applied from that cache instead of being read a second time.
+        ``skip_native_read`` is the same for the native span-dimension
+        decisions in ``_native_dimension_matches_by_user``, which the walk
+        certifies before it replays anyone.
         """
 
         # ClickHouse read caps apply per statement, while concurrent statements
@@ -1231,7 +1235,7 @@ class UsersListManager:
         if self.metric_keys:
             metrics = self._read_page_metrics(rows, builder, deadline)
             self._apply_page_metrics(rows, metrics)
-        if self.native_dimension_filters:
+        if self.native_dimension_filters and not skip_native_read:
             self._read_native_span_dimensions(rows, builder, deadline)
         if self.attribute_keys and skip_attribute_read:
             self._apply_span_attributes(
@@ -1514,6 +1518,7 @@ class UsersListManager:
         enrich_rows: bool = True,
         candidate_rows: list[dict] | None = None,
         skip_attribute_read: bool = False,
+        skip_native_read: bool = False,
     ) -> list[dict]:
         if not candidate_ids:
             return []
@@ -1575,6 +1580,7 @@ class UsersListManager:
                 candidate_scan_ids=candidate_scan_ids,
                 candidate_end_user_id_map=candidate_end_user_id_map,
                 skip_attribute_read=skip_attribute_read,
+                skip_native_read=skip_native_read,
             )
         return rows
 
@@ -1952,7 +1958,8 @@ class UsersListManager:
         a user; ``_row_matches_filters`` re-decides them, unchanged, on the
         replayed row together with every native and relation predicate.
         A native span-dimension leaf has no attribute-map value: the page's
-        native statement decides it after the replay.
+        native statement decides it (``_native_dimension_matches``), which the
+        walk reads at certification, before any replay.
         """
         for item in self.filters:
             if UserListQueryBuilderV2._is_date_filter(item):

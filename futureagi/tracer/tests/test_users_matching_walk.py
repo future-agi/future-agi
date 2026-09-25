@@ -17,6 +17,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tracer.services import users_list_manager as ulm
 from tracer.services import users_matching_walk as walk
 from tracer.services.clickhouse.list_cursor import (
     ListCursor,
@@ -459,9 +460,10 @@ def _native_status_leaf(value="ERROR"):
 
 
 def test_a_raw_leaf_plus_a_native_leaf_publishes_only_native_members():
-    # The walk certifies on the raw text leaf; the native leaf (status) is
-    # decided after the replay by the native page statement. A native leaf
-    # certified as a raw attribute rejected every user: an empty exact page.
+    # The walk discovers on the raw text leaf; the native leaf (status) is
+    # decided at certification by the native statement, the users graph's own
+    # SQL. A native leaf certified as a raw attribute rejected every user: an
+    # empty exact page.
     world = World()
     world.user(
         1, key=minutes_before_end(30), raw=(minutes_before_end(30),), native=True
@@ -482,11 +484,65 @@ def test_a_raw_leaf_plus_a_native_leaf_publishes_only_native_members():
     assert "native" in _kinds(engine)
 
 
-def test_the_native_statement_is_a_finish_statement_the_server_stops():
-    # The native read runs inside the walk's finish, under the analytics wall
-    # enforced on the server: like the replay, metrics, evals and relation
-    # statements it must send that remainder as its server execution cap and
-    # run with the page-replay read settings.
+def _native_member_ids(world: World) -> set[str]:
+    return {uid for uid, user in world.users.items() if user["native"]}
+
+
+def test_certification_rejects_a_native_non_member_before_any_replay():
+    # Problem 3: the native leaf was decided only after the replay, so every
+    # native non-member ranked ahead of a member cost a replay of its own. It
+    # is decided at certification now: only native members are replayed.
+    world = World()
+    world.user(
+        1, key=minutes_before_end(30), raw=(minutes_before_end(30),), native=True
+    )
+    world.user(2, key=minutes_before_end(5), raw=(minutes_before_end(5),), native=False)
+    world.user(3, key=minutes_before_end(90), raw=(minutes_before_end(90),))
+
+    read, engine = _page(
+        world, page_size=25, filters=[*_filters(), _native_status_leaf()]
+    )
+
+    assert _names(read) == ["user-1"]
+    replayed = {uid for ids in engine.replayed for uid in ids}
+    assert replayed == _native_member_ids(world)
+    kinds = _kinds(engine)
+    assert kinds.index("native") < kinds.index("replay")
+    # One native statement per certified batch, beside its enrichment.
+    assert kinds.count("native") == kinds.count("enrich")
+
+
+def test_native_non_members_ahead_of_a_member_do_not_degrade_the_page():
+    # Thirty native non-members rank ahead of the one member. Replaying each
+    # of them to learn it fails the native leaf spent the statement budget
+    # before the member was reached, and the page came back degraded.
+    world = World()
+    for ordinal in range(1, 31):
+        world.user(
+            ordinal,
+            key=minutes_before_end(ordinal),
+            raw=(minutes_before_end(ordinal),),
+            native=False,
+        )
+    member = world.user(
+        31, key=minutes_before_end(45), raw=(minutes_before_end(45),), native=True
+    )
+
+    read, engine = _page(
+        world, page_size=1, filters=[*_filters(), _native_status_leaf()]
+    )
+
+    assert _names(read) == ["user-31"]
+    assert read.payload["query_status"] == "complete"
+    assert engine.replayed == [(member,)]
+
+
+def test_the_native_statement_is_a_certification_statement():
+    # The native read decides membership at certification, before any
+    # replay: like the attribute enrichment it is admitted by the search's
+    # deadline under the enrichment cap, carries no server cap (the
+    # application's no-abort policy for enrichment reads), and runs with the
+    # page-replay read settings. The finish never sends it.
     world = World()
     for ordinal, minutes in enumerate((3, 7), start=1):
         world.user(
@@ -501,17 +557,23 @@ def test_the_native_statement_is_a_finish_statement_the_server_stops():
     )
 
     assert _names(read) == ["user-1", "user-2"]
-    native = [i for i, kind in enumerate(_kinds(engine)) if kind == "native"]
-    assert native
+    kinds = _kinds(engine)
+    native = [i for i, kind in enumerate(kinds) if kind == "native"]
+    assert native and max(native) < kinds.index("replay")
     for index in native:
         assert engine.timeouts[index] is not None
-        assert engine.caps[index] == engine.timeouts[index]
+        assert engine.timeouts[index] <= ulm.USER_LIST_ENRICHMENT_TIMEOUT_MS
+        assert engine.caps[index] is None
         assert engine.settings[index]["max_threads"] == 8
+    replay = kinds.index("replay")
+    assert "native" not in kinds[replay:]
 
 
-def test_the_statement_budget_counts_the_native_statement_materialisation_sends():
-    # One materialisation of a raw + native page sends the replay and the
-    # native statement; the budget must reserve exactly what it sends.
+def test_the_statement_budget_counts_the_native_statement_certification_sends():
+    # A raw + native page's certification sends the attribute enrichment and
+    # the native statement; one materialisation sends the replay alone. The
+    # budget reserves exactly what each sends, and the head-of-line decision
+    # costs what it did when the native statement finished the page.
     world = World()
     for ordinal, minutes in enumerate((3, 7), start=1):
         world.user(
@@ -527,9 +589,13 @@ def test_the_statement_budget_counts_the_native_statement_materialisation_sends(
     assert _names(read) == ["user-1", "user-2"]
     kinds = _kinds(engine)
     assert kinds.count("replay") == 1
-    sent = sum(kinds.count(kind) for kind in ("replay", "native", "metrics"))
-    assert walk._materialisation_statement_count(_manager(filters)) == sent == 2
+    assert kinds.count("enrich") == kinds.count("native") == 1
+    native_page = _manager(filters)
+    assert walk._materialisation_statement_count(native_page) == 1
+    assert walk._enrichment_statement_count(native_page) == 2
     assert walk._materialisation_statement_count(_manager(_filters())) == 1
+    assert walk._enrichment_statement_count(_manager(_filters())) == 1
+    assert walk._head_statements(native_page) == 4 + 2 * 2 + 2 * 1
 
 
 def test_populated_slice_resolves_aliases_through_the_bounded_survivor_statement():

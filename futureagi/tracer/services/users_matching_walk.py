@@ -13,11 +13,16 @@ that filter is the only item on its key:
   then, only for a populated slice, one bounded survivor statement over
   exactly the ids returned (``build_dimension_survivor_query``) that resolves
   each raw id to its user and attaches every alias of that user;
-* certify: the page's existing attribute enrichment, which also returns the
-  user's newest LIVE span whose LATEST value matches - the order key;
+* certify: the page's native span-dimension statement, when the filters
+  carry native leaves (``build_native_span_dimension_query``, the users
+  graph's own membership SQL over the whole window), and its existing
+  attribute enrichment, which also returns the user's newest LIVE span whose
+  LATEST value matches - the order key; a user that fails any attribute or
+  native leaf is decided here and never replayed;
 * materialise: the existing finite per-user replay, only for users that are
-  attribute members AND publishable by position, which decides curated
-  presence, search and every native/relation predicate over the whole window
+  attribute and native members AND publishable by position, which decides
+  curated presence, search and every relation predicate over the whole window
+  and re-decides every leaf from the certified decisions
   (``_row_matches_filters``, unchanged), and carries the set-valued totals.
 
 Coverage floor. A truncated slice proves nothing at or below the newest
@@ -81,7 +86,9 @@ split in time (``UsersListManager._read_span_attributes``): one user a
 request, up to
 ``2 ** (ceil(log2(window / _USER_LIST_ATTRIBUTE_MIN_BUCKET)) + 1) - 1``
 statements (4,095 over 24 h) per enrichment statement, outside the statement
-budget. The split has no deadline after the uncapped slice, or once
+budget. The native span-dimension statement is never split: when it runs out
+of a read budget for the head-of-line user, the request raises a retryable
+error, as an attribute read that fails at its least bucket does. The split has no deadline after the uncapped slice, or once
 the analytics wall is already spent, and otherwise runs against what is left
 of it (``_admission_deadline``). One stall is known and left open: a split
 that starts with some of the wall left and outlasts it stops every request at
@@ -347,6 +354,10 @@ def _utc(value: Any) -> datetime | None:
 
 
 def _enrichment_statement_count(manager: Any) -> int:
+    """The statements one certification sends: the attribute enrichment's key
+    statements and, when native leaves are set, the native span-dimension
+    statement (``_certify``)."""
+
     from tracer.services.users_list_manager import _USER_LIST_ATTRIBUTE_KEY_BATCH_SIZE
 
     walked = getattr(manager, "_walked_typed_filter", None)
@@ -357,7 +368,11 @@ def _enrichment_statement_count(manager: Any) -> int:
         if key in manager.attribute_exact_text_filters or key == walked_key
     )
     ordinary = len(manager.attribute_keys) - accelerated
-    return accelerated + -(-ordinary // _USER_LIST_ATTRIBUTE_KEY_BATCH_SIZE)
+    return (
+        accelerated
+        + -(-ordinary // _USER_LIST_ATTRIBUTE_KEY_BATCH_SIZE)
+        + bool(manager.native_dimension_leaves)
+    )
 
 
 def _materialisation_statement_count(manager: Any) -> int:
@@ -365,9 +380,9 @@ def _materialisation_statement_count(manager: Any) -> int:
 
     The replay; the relation statement, when relation filters are set; one
     metrics statement per group with a requested field, sessions and spans
-    (``build_requested_page_metric_queries``); the native span-dimension
-    statement, when native leaves are set (``_read_native_span_dimensions``);
-    and the evals statement.
+    (``build_requested_page_metric_queries``); and the evals statement. The
+    native span-dimension statement is not one of them: certification sends
+    it (``_enrichment_statement_count``), and the replay reuses its answers.
     """
     metrics = manager.metric_keys
     return (
@@ -375,7 +390,6 @@ def _materialisation_statement_count(manager: Any) -> int:
         + bool(manager.relation_filters)
         + bool(metrics & set(REQUESTED_PAGE_SESSION_METRIC_FIELDS))
         + bool(metrics & set(REQUESTED_PAGE_SPAN_METRIC_FIELDS))
-        + bool(manager.native_dimension_leaves)
         + bool(manager.needs_evals)
     )
 
@@ -518,13 +532,14 @@ def _read_slice(
     request has decided something, a stopped slice it cannot narrow, or
     whose retry the page wall refuses, ends it.
 
-    What stays unbounded. Survivor, instant, enrichment and tail-probe
-    statements never carry a server cap (the application's no-abort policy):
-    a wall only decides whether they start. The escape lifts even that, once
-    per request, for the head-of-line decision: the uncapped slice, its
-    survivor statement, the instant read and its survivor statement when the
-    slice comes back tied at one instant, and one batch's enrichment (and its
-    head-of-line user's alone when that fails) start with no wall at all.
+    What stays unbounded. Survivor, instant, enrichment (the native
+    span-dimension statement included) and tail-probe statements never carry
+    a server cap (the application's no-abort policy): a wall only decides
+    whether they start. The escape lifts even that, once per request, for the
+    head-of-line decision: the uncapped slice, its survivor statement, the
+    instant read and its survivor statement when the slice comes back tied at
+    one instant, and one batch's certification (and its head-of-line user's
+    alone when that fails) start with no wall at all.
     The finish's uncapped replay is not part of it: ``_materialise`` sends it
     when a page that has published nothing had its head-of-line user's
     capped replay stopped or refused, whether or not a slice was uncapped.
@@ -839,7 +854,16 @@ def _tail_is_empty(state: _WalkState, *, below: datetime) -> bool | None:
 
 
 def _certify(state: _WalkState, batch: list[_Candidate]) -> int:
-    """Attribute enrichment for a batch: membership superset and order key.
+    """Native decisions and attribute enrichment for a batch: membership and order key.
+
+    The native span-dimension statement (when the filters carry native
+    leaves) decides every native leaf over the whole window with the users
+    graph's own SQL, for the batch's users and every alias the batch carries,
+    through the replay's own builder (literal alias map, frozen window); the
+    attribute enrichment then returns the raw leaves' values and the order
+    key. A user that fails any leaf is certified with no order key, so it is
+    never pending and never replayed; the replay reuses these decisions
+    instead of reading them again.
 
     Returns how many of ``batch``, from its head, are certified; ``0`` when
     the budget or the wall refused, or one user's read ran out of a read
@@ -873,6 +897,17 @@ def _certify(state: _WalkState, batch: list[_Candidate]) -> int:
     }
     head = len(batch) == 1 and state.progress_owed
     try:
+        if manager.native_dimension_leaves:
+            manager._read_native_span_dimensions(
+                rows,
+                manager._exact_candidate_builder(
+                    candidate_ids=[candidate.end_user_id for candidate in batch],
+                    candidate_scan_ids=scan_ids,
+                    candidate_end_user_id_map=alias_map,
+                    frozen_filters=state.frozen_filters,
+                ),
+                _admission_deadline(state),
+            )
         manager._read_span_attributes(
             rows,
             _admission_deadline(state),
@@ -905,8 +940,10 @@ def _certify(state: _WalkState, batch: list[_Candidate]) -> int:
         order_key = manager._matching_activity_by_user.get(uid, {}).get(
             state.walked_key
         )
-        member = order_key is not None and manager._attribute_filters_match(
-            {"end_user_id": uid}
+        member = (
+            order_key is not None
+            and manager._attribute_filters_match({"end_user_id": uid})
+            and _native_filters_match(manager, uid)
         )
         state.certified[uid] = _Certified(
             end_user_id=uid,
@@ -914,6 +951,16 @@ def _certify(state: _WalkState, batch: list[_Candidate]) -> int:
             order_key=order_key if member else None,
         )
     return len(batch)
+
+
+def _native_filters_match(manager: Any, end_user_id: str) -> bool:
+    """Every native leaf's certified decision for ``end_user_id``."""
+
+    row = {"end_user_id": end_user_id}
+    return all(
+        manager._native_dimension_matches(row=row, filter_index=index)
+        for index, _item in manager.native_dimension_leaves
+    )
 
 
 def _certified_prefix(
@@ -1044,6 +1091,7 @@ def _replay(
         enrich_rows=True,
         candidate_rows=None,
         skip_attribute_read=True,
+        skip_native_read=True,
     )
 
 
