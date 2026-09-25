@@ -779,6 +779,7 @@ err_dict = {
     "PROJECT_ID_REQUIRED": ["Project ID is required."],
     "UNABLE_TO_GET_NEXT_VERSION": ["Unable to get next version."],
     "UNABLE_TO_ADD_API_KEY": ["Unable to add api key."],
+    "INVALID_API_KEY": ["Invalid API key, please type in the right one."],
     "MODEL_VALIDATION_FAILED": [
         "Failed to validate model. Please enter correct details."
     ],
