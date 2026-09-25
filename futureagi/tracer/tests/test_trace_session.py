@@ -646,6 +646,45 @@ class TestTraceSessionGraphAPI:
         assert filters[-1]["filter_config"]["filter_value"] == [session_id]
         pg_trace_manager.assert_not_called()
 
+    def test_session_latency_response_names_the_median(
+        self, auth_client, observe_project
+    ):
+        rollup = {
+            "metric_name": "latency",
+            "data": [{"timestamp": "2026-06-18T00:00:00", "value": 120.0}],
+            "query_complete": True,
+            "query_status": "complete",
+            "query_sampled": False,
+        }
+        with (
+            mock.patch(
+                "tracer.views.trace_session.V2AnalyticsQueryService",
+                return_value=mock.Mock(supports_per_query_read_settings=True),
+            ),
+            # Below the stamped public entry point, so the real stamp runs.
+            mock.patch(
+                "tracer.services.clickhouse.session_graph."
+                "_fetch_rollup_system_metric_graph",
+                return_value=rollup,
+            ),
+        ):
+            response = auth_client.post(
+                "/tracer/trace-session/get_session_graph_data/",
+                {
+                    "project_id": str(observe_project.id),
+                    "interval": "day",
+                    "property": "average",
+                    "req_data_config": {"id": "latency", "type": "SYSTEM_METRIC"},
+                    "filters": [],
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        payload = get_result(response)
+        assert payload["metric_statistic"] == "median"
+        assert payload["data"][0]["value"] == 120.0
+
     def test_session_system_graph_dispatches_exact_snapshot(self):
         project_id = str(uuid.uuid4())
         analytics = mock.Mock()
@@ -1117,6 +1156,8 @@ class TestTraceSessionGraphAPI:
         assert payload["query_complete"] is False
         assert payload["query_status"] == "degraded"
         assert payload["query_error_code"] == error_code
+        # The view builds this envelope itself; it still names its statistic.
+        assert payload["metric_statistic"] == "count"
         rendered = str(response.data)
         assert "secret" not in rendered
         assert "secret SQL" not in rendered

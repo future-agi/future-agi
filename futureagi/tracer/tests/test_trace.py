@@ -582,6 +582,41 @@ class TestTraceGraphMethodsAPI:
         assert dispatched_filters[0]["column_id"] == "created_at"
         assert sum(item["column_id"] == "latency" for item in dispatched_filters) == 1
 
+    def test_get_graph_methods_latency_response_names_the_median(
+        self, auth_client, observe_project, monkeypatch
+    ):
+        from tracer.services.clickhouse import graph_dispatch
+
+        # Below the stamped public entry point, so the real stamp runs.
+        monkeypatch.setattr(
+            graph_dispatch,
+            "_fetch_rollup_system_metric_graph",
+            lambda **kwargs: {
+                "metric_name": kwargs["metric_id"],
+                "data": [{"timestamp": "2026-06-18T00:00:00", "value": 120.0}],
+                "query_complete": True,
+                "query_status": "complete",
+                "query_sampled": False,
+            },
+        )
+
+        response = auth_client.post(
+            "/tracer/trace/get_graph_methods/",
+            {
+                "project_id": str(observe_project.id),
+                "interval": "day",
+                "property": "average",
+                "req_data_config": {"id": "latency", "type": "SYSTEM_METRIC"},
+                "filters": [],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["metric_statistic"] == "median"
+        assert result["data"][0]["value"] == 120.0
+
     def test_get_graph_methods_rejects_foreign_eval_config_before_ch_read(
         self,
         auth_client,
