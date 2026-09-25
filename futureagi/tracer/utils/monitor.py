@@ -48,6 +48,11 @@ class MonitorConfigError(Exception):
 
 def build_monitor_ch_builder(monitor: UserAlertMonitor) -> "MonitorMetricsQueryBuilder":
     """Construct the routed MONITOR_METRICS builder from a monitor instance."""
+    if monitor.project_id is None:
+        # str(None) == "None" would reach ClickHouse as a literal project_id
+        # and fail UUID parsing — permanent misconfig, not a transient failure.
+        raise MonitorConfigError("Monitor has no project set")
+
     eval_config_id = None
     eval_output_type = None
     if (
