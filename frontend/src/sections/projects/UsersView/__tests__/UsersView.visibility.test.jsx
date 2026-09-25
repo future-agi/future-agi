@@ -288,4 +288,66 @@ describe("Users view content visibility", () => {
     act(() => continueButton.click());
     expect(params.api.retryServerSideLoads).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    [
+      "a wider date range",
+      {
+        filters: [
+          {
+            column_id: "created_at",
+            filter_config: {
+              filter_type: "datetime",
+              filter_op: "between",
+              filter_value: ["2026-01-01", "2026-09-01"],
+            },
+          },
+        ],
+      },
+    ],
+    ["a search", { searchQuery: "acme" }],
+  ])(
+    "shows Continue search, not the empty screen, when %s from the confirmed-empty page pauses page 0",
+    async (_trigger, storeChange) => {
+      getMock.mockResolvedValue(emptyUsersResponse());
+      await renderUsersView();
+      const params = makeGridParams();
+      gridState.api = params.api;
+      await act(async () => {
+        await gridState.props.serverSideDatasource.getRows(params);
+      });
+      expect(screen.getByText("Confirmed empty users")).toBeVisible();
+      const emptyDatasource = gridState.props.serverSideDatasource;
+
+      // The new query's first page stops at the continuation limit: it has
+      // not established whether any user exists for that query.
+      act(() => useUsersStore.setState(storeChange));
+      expect(gridState.props.serverSideDatasource).not.toBe(emptyDatasource);
+      const limit = new Error("Exact list continuation safety limit reached");
+      limit.code =
+        listCursorPagination.LIST_CURSOR_CONTINUATION_LIMIT_ERROR_CODE;
+      vi.spyOn(listCursorPagination, "loadExactListPage").mockRejectedValueOnce(
+        limit,
+      );
+      const pausedParams = makeGridParams();
+      gridState.api = pausedParams.api;
+      await act(async () => {
+        await gridState.props.serverSideDatasource.getRows(pausedParams);
+      });
+
+      expect(pausedParams.fail).toHaveBeenCalledOnce();
+      expect(pausedParams.success).not.toHaveBeenCalled();
+      expect(
+        screen.queryByText("Confirmed empty users"),
+      ).not.toBeInTheDocument();
+      expect(usersGrid()).toBeVisible();
+      const continueButton = screen.getByRole("button", {
+        name: "Continue search",
+      });
+      expect(continueButton).toBeVisible();
+
+      act(() => continueButton.click());
+      expect(pausedParams.api.retryServerSideLoads).toHaveBeenCalledOnce();
+    },
+  );
 });
