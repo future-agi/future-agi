@@ -21,6 +21,7 @@ import {
 } from "src/api/simulate-environments/harnessEnvironments";
 import { harnessEnvironmentKey } from "src/api/simulate-environments/environment";
 import { harnessEnvToRow } from "src/sections/simulate/environments/helpers/harnessJobToRow";
+import { LIVE_ENV_STATUSES } from "src/sections/simulate/environments/myEnvironments.constants";
 
 export const SIMULATE_ENVIRONMENTS_KEY = ["simulate-environments"];
 // The prefix every page of the list shares — invalidating it refetches whatever
@@ -38,6 +39,8 @@ const toPage = (data) => ({
   total: data?.count ?? 0,
 });
 
+const LIST_REFETCH_MS = 3000;
+
 // Server-paginated: `page` is the table's 0-indexed page, the endpoint is
 // 1-indexed. keepPreviousData holds the current page on screen while the next
 // one loads, so paging doesn't flash an empty table.
@@ -47,6 +50,16 @@ export function useMyEnvironments({ page = 0, pageSize = 25 } = {}) {
     queryFn: () => listHarnessEnvironments({ page: page + 1, limit: pageSize }),
     select: toPage,
     placeholderData: keepPreviousData,
+    // Poll while a row on this page is still building or running, so it flips
+    // to its final state without a reload. `select` never touches the cache, so
+    // `query.state.data` is the raw payload with the backend's `status`; an
+    // unknown status stops the poll rather than polling forever.
+    refetchInterval: (query) =>
+      (query.state.data?.results ?? []).some((row) =>
+        LIVE_ENV_STATUSES.has(row?.status),
+      )
+        ? LIST_REFETCH_MS
+        : false,
   });
 }
 
