@@ -54,7 +54,14 @@ export default function CallDrawer({
             hasNext={hasNext}
           />
         ) : (
-          <ChatCallDrawer task={task} onClose={onClose} />
+          <ChatCallDrawer
+            task={task}
+            onClose={onClose}
+            onPrev={onPrev}
+            onNext={onNext}
+            hasPrev={hasPrev}
+            hasNext={hasNext}
+          />
         ))}
     </Drawer>
   );

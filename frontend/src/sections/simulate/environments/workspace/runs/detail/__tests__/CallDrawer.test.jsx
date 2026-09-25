@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // The chat drawer's data hook is mocked so the render asserts the drawer wiring
@@ -212,6 +212,82 @@ describe("CallDrawer — chat branch", () => {
 // change this fixture is shaped after. Everything below the fixture is the
 // production path: the same column filter `useRunCalls` applies, the real
 // `mapCallRow`, the real drawer.
+describe("CallDrawer — chat prev/next", () => {
+  const renderChat = (props = {}) => {
+    useCallDetail.mockReturnValue({ callDetail: CHAT_DETAIL, isLoading: false });
+    return render(
+      <CallDrawer task={chatTask} agentType="text" onClose={() => {}} {...props} />,
+    );
+  };
+
+  it("steps with the header arrows, like the voice drawer", async () => {
+    const user = userEvent.setup();
+    const onPrev = vi.fn();
+    const onNext = vi.fn();
+    renderChat({ hasPrev: true, hasNext: false, onPrev, onNext });
+
+    expect(screen.getByRole("button", { name: "Next conversation (↓)" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Previous conversation (↑)" }));
+    expect(onPrev).toHaveBeenCalledTimes(1);
+    expect(onNext).not.toHaveBeenCalled();
+  });
+
+  it("steps with the arrow keys, but not while typing", async () => {
+    const user = userEvent.setup();
+    const onNext = vi.fn();
+    const onPrev = vi.fn();
+    renderChat({ hasPrev: true, hasNext: true, onPrev, onNext });
+
+    await user.keyboard("{ArrowDown}");
+    expect(onNext).toHaveBeenCalledTimes(1);
+    await user.keyboard("{ArrowUp}");
+    expect(onPrev).toHaveBeenCalledTimes(1);
+
+    // A key typed into a field (the drawer traps focus, so dispatch on it).
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    expect(onNext).toHaveBeenCalledTimes(1);
+    input.remove();
+  });
+
+  it.each([
+    ["the transcript", () => screen.getByText("Refund issued.")],
+    ["the analytics pane", () => screen.getByText("Words")],
+  ])(
+    "leaves ↑/↓ to scroll %s instead of stepping",
+    (_pane, target) => {
+      const onNext = vi.fn();
+      const onPrev = vi.fn();
+      renderChat({ hasPrev: true, hasNext: true, onPrev, onNext });
+
+      // fireEvent returns false when the default (the browser's scroll) was
+      // prevented.
+      expect(fireEvent.keyDown(target(), { key: "ArrowDown" })).toBe(true);
+      expect(fireEvent.keyDown(target(), { key: "ArrowUp" })).toBe(true);
+      expect(onNext).not.toHaveBeenCalled();
+      expect(onPrev).not.toHaveBeenCalled();
+    },
+  );
+
+  it("says conversation, not call — this is a chat", () => {
+    useCallDetail.mockReturnValue({
+      callDetail: { ...CHAT_DETAIL, turns: [] },
+      isLoading: false,
+    });
+    render(<CallDrawer task={chatTask} agentType="text" onClose={() => {}} />);
+    expect(
+      screen.getByText("No messages captured for this conversation."),
+    ).toBeInTheDocument();
+  });
+
+  it("disables both arrows when nothing is passed", () => {
+    renderChat();
+    expect(screen.getByRole("button", { name: "Previous conversation (↑)" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Next conversation (↓)" })).toBeDisabled();
+  });
+});
+
 describe("CallDrawer — the run-detail endpoint's removed verdicts, through to the drawer", () => {
   // One page of `GET /simulate/test-executions/{id}/`, exactly as the widened
   // endpoint sends it: the removed evaluation keeps its column in
