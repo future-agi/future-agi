@@ -498,11 +498,12 @@ will fail. Tracing, prompts and evals keep working.
 docker compose up -d minio
 ```
 
-Then re-run pre-flight. A default install needs no S3 credentials: compose sets
-`S3_ENDPOINT_URL` to `http://minio:9000` and derives `S3_ACCESS_KEY` /
-`S3_SECRET_KEY` from `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`, both defaulting
-to `futureagi`. Set those five in `.env` only when moving to real S3 or changing
-the bundled credentials.
+Then re-run pre-flight. A default install needs no S3 credentials at all:
+compose fixes `S3_ENDPOINT_URL` at `http://minio:9000` and derives
+`S3_ACCESS_KEY` / `S3_SECRET_KEY` from `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`,
+both defaulting to `futureagi`. To change the bundled credentials set those two
+in `.env`. The three `S3_*` variables live in the compose `environment` block,
+which takes precedence over `.env`, so setting them there has no effect.
 
 ### Pre-flight says **SSL/TLS certificate** failed
 

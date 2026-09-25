@@ -299,8 +299,8 @@ CHECKS = (
         "label": "Object storage service",
         "down_detail": "Dataset uploads, exports and media will fail",
         "probe": _object_storage_up,
-        "fix": "Start it: `docker compose up -d minio`. Using real S3? Set the `S3_` keys in `.env`.",
-        "docs_url": "https://docs.futureagi.com/docs/self-hosting#object-storage",
+        "fix": "Start it: `docker compose up -d minio`.",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-object-storage-service-failed",
         LIVE: {
             "required": True,
             "on_down": FAILED,
@@ -417,7 +417,7 @@ CHECKS = (
         ),
         "probe": _tls_up,
         "fix": "Normal on a laptop. For production, point `FRONTEND_URL` and `VITE_HOST_API` at https.",
-        "docs_url": "https://docs.futureagi.com/docs/self-hosting#tls",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-ssltls-certificate-failed",
         LIVE: {
             "required": True,
             "on_down": FAILED,

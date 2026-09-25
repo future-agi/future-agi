@@ -58,8 +58,7 @@ function renderFix(text) {
     .map((part, i) =>
       i % 2 === 1 ? (
         <Box
-          // eslint-disable-next-line react/no-array-index-key
-          key={i}
+          key={`${i}:${part}`}
           component="code"
           sx={{
             fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
@@ -267,10 +266,12 @@ export default function ValidationStep({
     return parts.join(" · ") || "Running pre-flight…";
   }, [counts, reachable]);
 
-  // One line per failed check. A passing row has no remedy to show, and the
-  // row itself already says what breaks, so this stays a single sentence.
-  const failedWithFix = useMemo(
-    () => checks.filter((c) => c.status === FAILED && c.fix),
+  // One line per check that is actually down, warnings included: on a test
+  // flight a stopped minio comes back WARNING and its uploads still fail, so
+  // the operator needs the same remedy. The row itself already says what
+  // breaks, so this stays a single sentence.
+  const needsFix = useMemo(
+    () => checks.filter((c) => (c.status === FAILED || c.status === WARNING) && c.fix),
     [checks],
   );
 
@@ -281,10 +282,11 @@ export default function ValidationStep({
       .join(", ");
     const subject = `Self-hosted pre-flight: ${ids || "need a hand"}`;
     const body = `Launch mode: ${mode}\nFailed checks: ${ids || "none"}\n\nWhat I have already tried:\n`;
+    // mailto, not Gmail's web compose: that sends anyone on Outlook, Fastmail
+    // or a corporate client to a Google sign-in page instead of a draft.
     return (
-      "https://mail.google.com/mail/?view=cm&fs=1" +
-      `&to=${encodeURIComponent(SUPPORT_EMAIL)}` +
-      `&su=${encodeURIComponent(subject)}` +
+      `mailto:${SUPPORT_EMAIL}` +
+      `?subject=${encodeURIComponent(subject)}` +
       `&body=${encodeURIComponent(body)}`
     );
   }, [checks, mode]);
@@ -523,7 +525,7 @@ export default function ValidationStep({
     </Box>
   );
 
-  const renderDetails = failedWithFix.length > 0 && !stillRevealing && (
+  const renderDetails = needsFix.length > 0 && !stillRevealing && (
     <Box
       sx={{
         maxWidth: PANEL_MAX_WIDTH,
@@ -547,7 +549,7 @@ export default function ValidationStep({
       >
         Details
       </Typography>
-      {failedWithFix.map((check, i) => (
+      {needsFix.map((check, i) => (
         <Stack
           key={check.id}
           direction="row"
