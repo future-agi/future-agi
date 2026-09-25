@@ -361,7 +361,6 @@ class _EvalRunResult:
 
 
 class _FullTemplate:
-
     def __init__(
         self,
         output="score",
@@ -416,9 +415,15 @@ class TestScoreEvalOutputFormatted:
         assert score_eval_output(1.5, template) == 1.0
         assert score_eval_output(-0.5, template) == 0.0
 
-    def test_none_returns_zero(self):
+    def test_none_returns_none_by_default(self):
+        """With the new default (default_score=None), None input returns None."""
         template = _Template(output_type_normalized="percentage")
-        assert score_eval_output(None, template) == 0.0
+        assert score_eval_output(None, template) is None
+
+    def test_none_returns_zero_when_explicitly_requested(self):
+        """Explicit default_score=0.0 preserves the legacy behaviour."""
+        template = _Template(output_type_normalized="percentage")
+        assert score_eval_output(None, template, default_score=0.0) == 0.0
 
 
 @pytest.mark.unit
@@ -484,9 +489,7 @@ class TestScoreEvalOutputRawRunResult:
         assert score_eval_output(run_result, template) == 0.42
 
     def test_raw_pass_fail_output(self):
-        template = _FullTemplate(
-            output="Pass/Fail", output_type_normalized="pass_fail"
-        )
+        template = _FullTemplate(output="Pass/Fail", output_type_normalized="pass_fail")
         run_result = _EvalRunResult(
             eval_results=[
                 {
@@ -502,9 +505,9 @@ class TestScoreEvalOutputRawRunResult:
         )
         assert score_eval_output(run_result, template) == 0.0
 
-    def test_empty_eval_results_returns_default_score(self):
+    def test_empty_eval_results_returns_none_by_default(self):
         template = _FullTemplate(output="score")
-        assert score_eval_output(_EvalRunResult(eval_results=[]), template) == 0.0
+        assert score_eval_output(_EvalRunResult(eval_results=[]), template) is None
         assert (
             score_eval_output(
                 _EvalRunResult(eval_results=[]), template, default_score=0.5
@@ -534,9 +537,9 @@ class TestScoreEvalOutputRawRunResult:
 
 @pytest.mark.unit
 class TestScoreEvalOutputDefaultScore:
-    def test_unparseable_string_returns_default(self):
+    def test_unparseable_string_returns_none_by_default(self):
         template = _Template(output_type_normalized="percentage")
-        assert score_eval_output("maybe", template) == 0.0
+        assert score_eval_output("maybe", template) is None
         assert score_eval_output("maybe", template, default_score=0.5) == 0.5
 
     def test_pass_fail_unknown_string_returns_default(self):
