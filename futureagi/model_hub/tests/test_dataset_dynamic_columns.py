@@ -719,6 +719,27 @@ class TestExecutePythonCodeViewSecurity(DynamicColumnsBaseTestCase):
         assert "main" in result.lower()
         assert error_info is not None
 
+    def test_python_column_keeps_raw_string_number_and_dict(self):
+        from model_hub.views.develop_dataset import (
+            ExecutePythonCodeView as LegacyExecutePythonCodeView,
+        )
+
+        _, _, rows = self.create_test_dataset()
+        for view_class in (ExecutePythonCodeView, LegacyExecutePythonCodeView):
+            for raw_value in ("HI THERE", 42, {"score": 42, "label": "answer"}):
+                with self.subTest(view=view_class.__module__, raw_value=raw_value):
+                    with patch(
+                        "agentic_eval.core_evals.fi_utils.sandbox.execute_sandboxed_python",
+                        return_value={"status": "success", "data": raw_value},
+                    ) as sandbox_call:
+                        value, error_info = view_class()._execute_python_code(
+                            rows[0], "def main(**kwargs): return 42"
+                        )
+
+                    assert value == str(raw_value)
+                    assert error_info is None
+                    assert sandbox_call.call_args.kwargs["raw_result"] is True
+
 
 # =============================================================================
 # ConditionalColumnView Tests

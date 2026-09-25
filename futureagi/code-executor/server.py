@@ -9,7 +9,8 @@ POST /execute
     "code": "def evaluate(...):\n    ...",
     "input_data": {"key": "value"},
     "language": "python",   # or "javascript"
-    "timeout": 30
+    "timeout": 30,
+    "raw_result": false  # optional; keeps the return value for column code
 }
 
 Returns:
@@ -41,9 +42,11 @@ DEFAULT_TIMEOUT = 30
 MAX_OUTPUT_BYTES = 1 * 1024 * 1024  # 1 MB
 
 
-def _execute_python_nsjail(code: str, input_data: dict, timeout: int) -> dict:
+def _execute_python_nsjail(
+    code: str, input_data: dict, timeout: int, raw_result: bool = False
+) -> dict:
     """Execute Python code inside nsjail sandbox."""
-    script = _build_python_script(code, input_data)
+    script = _build_python_script(code, input_data, raw_result)
 
     # Write script to /sandbox/scripts (NOT /tmp, which gets overlaid by tmpfs inside nsjail)
     os.makedirs("/sandbox/scripts", exist_ok=True)
@@ -114,9 +117,11 @@ def _execute_python_nsjail(code: str, input_data: dict, timeout: int) -> dict:
             pass
 
 
-def _execute_python_fallback(code: str, input_data: dict, timeout: int) -> dict:
+def _execute_python_fallback(
+    code: str, input_data: dict, timeout: int, raw_result: bool = False
+) -> dict:
     """Fallback: execute Python code in a subprocess without nsjail."""
-    script = _build_python_script(code, input_data)
+    script = _build_python_script(code, input_data, raw_result)
 
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".py", delete=False, dir="/tmp", prefix="eval_"
@@ -229,7 +234,7 @@ def _execute_javascript(code: str, input_data: dict, timeout: int) -> dict:
             pass
 
 
-def _build_python_script(code: str, input_data: dict) -> str:
+def _build_python_script(code: str, input_data: dict, raw_result: bool = False) -> str:
     """Build self-contained Python eval script."""
     input_json = json.dumps(input_data, default=str)
     return f"""
@@ -279,6 +284,10 @@ def main():
                 call_args[k] = v
 
         result = fn(**call_args)
+
+        if {raw_result!r}:
+            print(json.dumps({{"status": "success", "data": result, "raw_result": True}}, default=str))
+            return
 
         if isinstance(result, dict):
             if "score" in result:
@@ -349,6 +358,7 @@ class ExecuteResource:
         input_data = data.get("input_data", {})
         language = data.get("language", "python")
         timeout = min(data.get("timeout", DEFAULT_TIMEOUT), 60)
+        raw_result = data.get("raw_result") is True
 
         if not code.strip():
             resp.media = {"status": "error", "data": "No code provided"}
@@ -359,9 +369,9 @@ class ExecuteResource:
         if language == "javascript":
             result = _execute_javascript(code, input_data, timeout)
         elif NSJAIL_AVAILABLE:
-            result = _execute_python_nsjail(code, input_data, timeout)
+            result = _execute_python_nsjail(code, input_data, timeout, raw_result)
         else:
-            result = _execute_python_fallback(code, input_data, timeout)
+            result = _execute_python_fallback(code, input_data, timeout, raw_result)
 
         elapsed = time.time() - start
         result["execution_time"] = round(elapsed, 3)

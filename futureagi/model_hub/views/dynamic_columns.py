@@ -1305,13 +1305,7 @@ class ExecutePythonCodeView(APIView):
             # Create kwargs from cell data
             kwargs = {cell.column.name: cell.value for cell in cells}
 
-            # Execute the provided code inside the hardened sandbox
-            # (nsjail executor with a RestrictedPython subprocess fallback)
-            # instead of the removed in-process exec(). The sandbox restricts
-            # builtins/imports itself, so the previous local safe_builtins /
-            # exec scaffolding is no longer needed. User code must define a
-            # top-level `main(input_data)` (or `evaluate(input_data)`) entry
-            # point that receives the row's column values as a dict.
+            # Run user code in the sandbox; main(**kwargs) receives row values.
             from agentic_eval.core_evals.fi_utils.sandbox import (
                 execute_sandboxed_python,
             )
@@ -1320,6 +1314,7 @@ class ExecutePythonCodeView(APIView):
                 code=code,
                 input_data=kwargs,
                 timeout=30,
+                raw_result=True,
             )
 
             if (
