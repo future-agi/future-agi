@@ -61247,6 +61247,7 @@ export const TracerTraceGetGraphMethodsQueryParams = zod.object({
 export const tracerTraceGetGraphMethodsBodyFiltersDefault = [];
 export const tracerTraceGetGraphMethodsBodyIntervalDefault = `day`;
 export const tracerTraceGetGraphMethodsBodyPropertyDefault = `average`;
+export const tracerTraceGetGraphMethodsBodyObserveTypeDefault = `trace`;
 
 export const TracerTraceGetGraphMethodsBody = zod.object({
   project_id: zod.string().uuid(),
@@ -61331,6 +61332,12 @@ export const TracerTraceGetGraphMethodsBody = zod.object({
       .describe("Stable Property Registry identity."),
     source: zod.enum(["traces", "sessions"]).optional(),
   }),
+  observe_type: zod
+    .enum(["trace", "voice"])
+    .default(tracerTraceGetGraphMethodsBodyObserveTypeDefault)
+    .describe(
+      "Population the graph counts: every trace, or only voice calls (traces whose root span is a conversation), exactly as list_voice_calls selects them.",
+    ),
 });
 
 export const tracerTraceGetGraphMethodsResponseStatusDefault = true;

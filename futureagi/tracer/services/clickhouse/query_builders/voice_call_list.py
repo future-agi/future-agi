@@ -42,7 +42,7 @@ def _unix_microseconds(value: datetime) -> int:
     return delta.days * 86_400_000_000 + delta.seconds * 1_000_000 + delta.microseconds
 
 
-_VOICE_ROOT_FILTER = {
+VOICE_CALL_ROOT_FILTER = {
     "column_id": "observation_type",
     "filter_config": {
         "col_type": "INTERNAL_ROOT_METRIC",
@@ -192,7 +192,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             project_ids=self.project_ids,
             page_number=self.page_number,
             page_size=self.page_size,
-            filters=[*delegate_filters, _VOICE_ROOT_FILTER],
+            filters=[*delegate_filters, VOICE_CALL_ROOT_FILTER],
             eval_config_ids=(
                 self.eval_config_ids if self._eval_config_ids_known else None
             ),

@@ -15,6 +15,7 @@ from tracer.serializers.cursor_pagination import (
 from tracer.serializers.filters import (
     BOUNDED_PAGE_NUMBER_HELP_TEXT,
     JsonObjectField,
+    ObserveGraphDataRequestSerializer,
     SortParamListQueryParamField,
     StrictInputSerializer,
     bounded_filter_list_query_param_field,
@@ -715,6 +716,19 @@ class TraceObserveIndexQuerySerializer(StrictInputSerializer):
     trace_id = serializers.UUIDField()
     project_id = serializers.UUIDField()
     filters = filter_list_query_param_field(required=False, default=list)
+
+
+class TraceGraphDataRequestSerializer(ObserveGraphDataRequestSerializer):
+    observe_type = serializers.ChoiceField(
+        choices=["trace", "voice"],
+        required=False,
+        default="trace",
+        help_text=(
+            "Population the graph counts: every trace, or only voice calls "
+            "(traces whose root span is a conversation), exactly as "
+            "list_voice_calls selects them."
+        ),
+    )
 
 
 class TraceAgentGraphQuerySerializer(StrictInputSerializer):

@@ -365,6 +365,21 @@ def _parts(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     return raw_key, config
 
 
+def is_internal_trace_root_filter(item: dict[str, Any]) -> bool:
+    """Whether ``item`` is the private canonical-root ``observation_type`` leaf.
+
+    Voice-call lists and eval-task trace selection inject it with an
+    unforgeable marker. ``FilterItemField`` rejects that key on requests, so the
+    column type alone never turns a public leaf into a root predicate.
+    """
+
+    if not isinstance(item, dict) or item.get("_eval_task_trace_root") is not True:
+        return False
+    key, config = _parts(item)
+    col_type = str(config.get("col_type") or config.get("colType") or "").upper()
+    return col_type == _INTERNAL_ROOT_METRIC_TYPE and key == "observation_type"
+
+
 def _normalize_value(
     config: dict[str, Any], coerce: Callable[[object], object]
 ) -> tuple[str, object | None]:
@@ -1503,6 +1518,7 @@ def compile_exact_graph_filter_predicates(
 
     ordinary_filters: list[dict[str, Any]] = []
     structured_filters: list[tuple[int, dict[str, Any]]] = []
+    trace_root_filters: list[tuple[int, dict[str, Any]]] = []
     for index, item in enumerate(filters or []):
         if not isinstance(item, dict):
             raise UnsupportedFilterShapeError("filter must be an object")
@@ -1510,6 +1526,9 @@ def compile_exact_graph_filter_predicates(
         config = item.get(config_key) or {}
         if not isinstance(config, dict):
             raise UnsupportedFilterShapeError("filter config must be an object")
+        if is_internal_trace_root_filter(item):
+            trace_root_filters.append((index, item))
+            continue
         col_type = config.get("col_type") or config.get("colType")
         raw_value = config.get("filter_value", config.get("filterValue"))
         filter_type = str(config.get("filter_type") or config.get("filterType") or "")
@@ -1568,6 +1587,33 @@ def compile_exact_graph_filter_predicates(
             """
         clauses.append(row_clause)
         params.update(row_params)
+
+    for index, item in trace_root_filters:
+        # The private root invariant (a voice call's conversation root) belongs
+        # to the trace, so trace and span graphs alike select every row of a
+        # trace whose live root matches - the list's own root-scoped plan.
+        root_plan = _column_plan(
+            item,
+            index=index,
+            column="observation_type",
+            value_type="text",
+            nullable=False,
+            scope="root",
+        )
+        root_clause = (
+            "(parent_span_id IS NULL OR parent_span_id = '') "
+            f"AND ({root_plan.seed_predicate})"
+        )
+        clauses.append(
+            f"""
+            trace_id IN (
+                SELECT DISTINCT trace_id
+                FROM ({latest_span_membership_source_sql(predicate=root_clause)})
+                WHERE matched
+            )
+            """
+        )
+        params.update(root_plan.params)
 
     return " AND ".join(f"({clause})" for clause in clauses), params
 
@@ -1911,11 +1957,7 @@ def compile_trace_filter_plans(
             plans.append(
                 _attribute_plan(item, index=index, scope="any", group_nulls=True)
             )
-        elif (
-            col_type == _INTERNAL_ROOT_METRIC_TYPE
-            and key == "observation_type"
-            and item.get("_eval_task_trace_root") is True
-        ):
+        elif is_internal_trace_root_filter(item):
             plans.append(
                 _column_plan(
                     item,
@@ -2200,6 +2242,7 @@ __all__ = [
     "compile_span_attribute_row_predicate",
     "compile_span_filter_plans",
     "compile_trace_filter_plans",
+    "is_internal_trace_root_filter",
     "partition_span_filter_plans",
     "partition_trace_filter_plans",
     "supports_span_filters",

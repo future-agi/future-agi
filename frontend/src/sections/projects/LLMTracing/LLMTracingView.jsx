@@ -1192,6 +1192,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     projectSource,
     allowOrgScope: isUserMode,
   });
+  // The Voice screen lists voice calls (list_voice_calls), so its trace graph
+  // must count the same population rather than every trace in the project.
+  const traceGraphObserveType =
+    projectSource === PROJECT_SOURCE.SIMULATOR && selectedTab !== "spans"
+      ? "voice"
+      : undefined;
 
   const effectiveViewMode = canonicalObserveViewMode({
     viewMode,
@@ -3779,6 +3785,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     ? endpoints.project.getSpanGraphData()
                     : endpoints.project.getTraceGraphData()
                 }
+                observeType={traceGraphObserveType}
                 onFilterToggle={
                   showCompare
                     ? (e) => handleCompareFilterToggle(e, "primary")
@@ -3816,6 +3823,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       ? endpoints.project.getSpanGraphData()
                       : endpoints.project.getTraceGraphData()
                   }
+                  observeType={traceGraphObserveType}
                   onFilterToggle={(e) =>
                     handleCompareFilterToggle(e, "compare")
                   }

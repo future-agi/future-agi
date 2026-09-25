@@ -33,6 +33,7 @@ from tracer.services.clickhouse.query_builders.filters import (
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
     compile_span_attribute_row_predicate,
+    is_internal_trace_root_filter,
 )
 from tracer.utils.filter_operators import normalize_span_attribute_filter_type
 
@@ -815,11 +816,18 @@ def compile_exact_graph_row_predicates(
                 f"graph filter {column_id!r} produced an unsupported relation"
             )
 
+        # The private conversation-root invariant (voice calls) is a root leaf
+        # exactly like the root-only system metrics.
         if (
             normalized_observe_type == "trace"
             and builder is not None
-            and normalized_col_type in {"SYSTEM_METRIC", "TRACE_END_USER"}
-            and _is_root_only_system_metric(builder, column_id)
+            and (
+                (
+                    normalized_col_type in {"SYSTEM_METRIC", "TRACE_END_USER"}
+                    and _is_root_only_system_metric(builder, column_id)
+                )
+                or is_internal_trace_root_filter(original_item)
+            )
         ):
             predicate = (
                 f"(parent_span_id IS NULL OR parent_span_id = '') AND ({predicate})"

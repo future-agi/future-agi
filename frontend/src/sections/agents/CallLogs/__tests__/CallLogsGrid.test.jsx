@@ -274,6 +274,36 @@ describe("CallLogsGrid bounded-read state", () => {
     );
   });
 
+  it("keeps the page-size control usable once a cursor page settles", async () => {
+    // Dev QA read aria-disabled from the first "Results per page" in DOM
+    // order, which on the Voice screen is the hidden, disabled TraceGrid pager.
+    // The Voice grid's own control is never disabled.
+    useCallLogsMock.mockReturnValue({
+      data: completeData,
+      isLoading: false,
+      error: null,
+      queryKey: ["callLogs", "project", "project-1", 25, {}, 1],
+    });
+
+    render(<CallLogsGrid id="project-1" module="project" hideDrawer />);
+
+    const pageSize = screen.getByRole("combobox");
+    expect(pageSize).toHaveTextContent("25");
+    expect(pageSize).not.toHaveAttribute("aria-disabled", "true");
+    await userEvent.click(pageSize);
+    await userEvent.click(await screen.findByRole("option", { name: "50" }));
+
+    await waitFor(() =>
+      expect(useCallLogsMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          page: 1,
+          pageLimit: 50,
+          paginationParams: { cursor_mode: true, page: 1, page_size: 50 },
+        }),
+      ),
+    );
+  });
+
   it("retains next-page prefetch for numbered agent-definition reads", async () => {
     useCallLogsMock.mockReturnValue({
       data: completeData,

@@ -365,6 +365,9 @@ const PrimaryGraph = ({
   // Label used for the traffic (bar) series in the tooltip, e.g. "traces",
   // "spans", "sessions", or "users". Defaults to "traces".
   trafficLabel = "traces",
+  // Optional: trace-graph population, e.g. "voice" to count only voice calls
+  // (the Voice screen's list_voice_calls population). Omitted = every trace.
+  observeType,
 }) => {
   const { observeId } = useParams();
   const effectiveObserveId = observeIdOverride || observeId;
@@ -660,6 +663,7 @@ const PrimaryGraph = ({
       apiEndpoint,
       graphPropertyId,
       graphTransportSource,
+      observeType,
     ],
     queryFn: async ({ queryKey, signal }) => {
       const refresh = forceRefreshRef.current;
@@ -688,6 +692,7 @@ const PrimaryGraph = ({
                   }),
                 },
                 project_id: effectiveObserveId,
+                ...(observeType && { observe_type: observeType }),
               },
               {
                 params: refresh ? { refresh: true } : undefined,
@@ -1505,6 +1510,7 @@ PrimaryGraph.propTypes = {
   observeIdOverride: PropTypes.string,
   hasActiveFilter: PropTypes.bool,
   onFilterToggle: PropTypes.func,
+  observeType: PropTypes.oneOf(["trace", "voice"]),
 };
 
 export default React.memo(PrimaryGraph);

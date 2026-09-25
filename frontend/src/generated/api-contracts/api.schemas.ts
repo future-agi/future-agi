@@ -27027,6 +27027,106 @@ export interface TraceAgentGraphQueryApi {
   refresh?: boolean;
 }
 
+export type TraceGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem =
+  (typeof TraceGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof TraceGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem];
+
+export const TraceGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem =
+  {
+    string: "string",
+    number: "number",
+    boolean: "boolean",
+  } as const;
+
+export type TraceGraphDataRequestApiFiltersItemFilterConfig = {
+  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
+  filter_type: string;
+  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
+  filter_op: string;
+  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
+  filter_value?: unknown;
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  col_type?: string;
+  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
+  attribute_value_types?: TraceGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
+};
+
+export type TraceGraphDataRequestApiFiltersItem = {
+  /** Column or attribute id to filter on. */
+  column_id: string;
+  /** Optional stable namespaced Property Registry identity. */
+  property_id?: string;
+  /** Optional UI label for chips and saved views. */
+  display_name?: string;
+  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
+  source?: string;
+  /** Optional metric output type metadata used by eval and annotation filters. */
+  output_type?: string;
+  filter_config: TraceGraphDataRequestApiFiltersItemFilterConfig;
+};
+
+export type TraceGraphDataRequestApiInterval =
+  (typeof TraceGraphDataRequestApiInterval)[keyof typeof TraceGraphDataRequestApiInterval];
+
+export const TraceGraphDataRequestApiInterval = {
+  hour: "hour",
+  day: "day",
+  week: "week",
+  month: "month",
+} as const;
+
+export type TraceGraphDataRequestApiReqDataConfigType =
+  (typeof TraceGraphDataRequestApiReqDataConfigType)[keyof typeof TraceGraphDataRequestApiReqDataConfigType];
+
+export const TraceGraphDataRequestApiReqDataConfigType = {
+  SYSTEM_METRIC: "SYSTEM_METRIC",
+  EVAL: "EVAL",
+  ANNOTATION: "ANNOTATION",
+} as const;
+
+export type TraceGraphDataRequestApiReqDataConfigSource =
+  (typeof TraceGraphDataRequestApiReqDataConfigSource)[keyof typeof TraceGraphDataRequestApiReqDataConfigSource];
+
+export const TraceGraphDataRequestApiReqDataConfigSource = {
+  traces: "traces",
+  sessions: "sessions",
+} as const;
+
+export type TraceGraphDataRequestApiReqDataConfig = {
+  id: string;
+  type: TraceGraphDataRequestApiReqDataConfigType;
+  output_type?: string;
+  eval_output_type?: string;
+  choices?: string[];
+  value?: unknown;
+  filter_op?: string;
+  filter_value?: unknown;
+  /** Stable Property Registry identity. */
+  property_id?: string;
+  source?: TraceGraphDataRequestApiReqDataConfigSource;
+};
+
+/**
+ * Population the graph counts: every trace, or only voice calls (traces whose root span is a conversation), exactly as list_voice_calls selects them.
+ */
+export type TraceGraphDataRequestApiObserveType =
+  (typeof TraceGraphDataRequestApiObserveType)[keyof typeof TraceGraphDataRequestApiObserveType];
+
+export const TraceGraphDataRequestApiObserveType = {
+  trace: "trace",
+  voice: "voice",
+} as const;
+
+export interface TraceGraphDataRequestApi {
+  project_id: string;
+  /** On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result. */
+  filters?: TraceGraphDataRequestApiFiltersItem[];
+  interval?: TraceGraphDataRequestApiInterval;
+  property?: string;
+  req_data_config: TraceGraphDataRequestApiReqDataConfig;
+  /** Population the graph counts: every trace, or only voice calls (traces whose root span is a conversation), exactly as list_voice_calls selects them. */
+  observe_type?: TraceGraphDataRequestApiObserveType;
+}
+
 export interface TracePropertiesResponseApi {
   status?: boolean;
   result: string[];

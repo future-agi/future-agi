@@ -64,7 +64,6 @@ from tracer.selectors.trace_filter_reads import (
 )
 from tracer.serializers.filters import (
     ObserveGraphDataQuerySerializer,
-    ObserveGraphDataRequestSerializer,
     ObserveGraphDataResponseSerializer,
     PageDepthExceededErrorSerializer,
 )
@@ -74,6 +73,7 @@ from tracer.serializers.trace import (
     TraceDetailQuerySerializer,
     TraceDetailResponseSerializer,
     TraceExportQuerySerializer,
+    TraceGraphDataRequestSerializer,
     TraceIndexQuerySerializer,
     TraceListQuerySerializer,
     TraceNavigationResponseSerializer,
@@ -131,6 +131,9 @@ from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
 )
 from tracer.services.clickhouse.query_builders.user_list import (
     UnsupportedBoundedUserListQuery,
+)
+from tracer.services.clickhouse.query_builders.voice_call_list import (
+    VOICE_CALL_ROOT_FILTER,
 )
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
 from tracer.services.clickhouse.read_budget import (
@@ -2755,7 +2758,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
     @bounded_graph_action_request(resource="trace_graph")
     @validated_request(
         query_serializer=ObserveGraphDataQuerySerializer,
-        request_serializer=ObserveGraphDataRequestSerializer,
+        request_serializer=TraceGraphDataRequestSerializer,
         responses={
             200: ObserveGraphDataResponseSerializer,
             400: ApiErrorResponseSerializer,
@@ -2798,6 +2801,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 body["filters"],
             )
             filters = graph_execution_filters(filters)
+            observe_type = body.get("observe_type", "trace")
+            evidence_filters = filters
+            if observe_type == "voice":
+                # A voice call is a trace whose canonical root is a
+                # conversation span. Apply the voice list's own private root
+                # leaf so the chart counts the list's population.
+                filters = [*filters, VOICE_CALL_ROOT_FILTER]
             interval = body["interval"]
             req_data_config = body["req_data_config"]
             try:
@@ -2902,8 +2912,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 graph.update(
                     graph_query_evidence(
                         project_id=project_id,
-                        observe_type="trace",
-                        filters=filters,
+                        observe_type=observe_type,
+                        filters=evidence_filters,
                     )
                 )
                 graph = enforce_exact_graph_data_contract(graph)

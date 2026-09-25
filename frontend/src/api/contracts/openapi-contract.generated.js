@@ -38502,7 +38502,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeRequestValidation: true,
         runtimeResponseValidation: true,
         requestBody: {
-          $ref: "#/definitions/ObserveGraphDataRequest",
+          $ref: "#/definitions/TraceGraphDataRequest",
         },
         queryParameters: {
           allow_sampled: {
@@ -76159,6 +76159,160 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/TraceErrorTaskUpdateResult",
+        },
+      },
+    },
+    TraceGraphDataRequest: {
+      required: ["project_id", "req_data_config"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        filters: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              column_id: {
+                type: "string",
+                description: "Column or attribute id to filter on.",
+              },
+              property_id: {
+                type: "string",
+                description:
+                  "Optional stable namespaced Property Registry identity.",
+              },
+              display_name: {
+                type: "string",
+                description: "Optional UI label for chips and saved views.",
+              },
+              source: {
+                type: "string",
+                description:
+                  "Optional source surface for mixed-source filters, for example traces, datasets, or simulation.",
+              },
+              output_type: {
+                type: "string",
+                description:
+                  "Optional metric output type metadata used by eval and annotation filters.",
+              },
+              filter_config: {
+                type: "object",
+                properties: {
+                  filter_type: {
+                    type: "string",
+                    description:
+                      "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map.",
+                  },
+                  filter_op: {
+                    type: "string",
+                    description:
+                      "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.",
+                  },
+                  filter_value: {
+                    description:
+                      "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.",
+                  },
+                  col_type: {
+                    type: "string",
+                    description:
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                  },
+                  attribute_value_types: {
+                    type: "array",
+                    items: {
+                      type: "string",
+                      enum: ["string", "number", "boolean"],
+                      "x-nullable": true,
+                    },
+                    description:
+                      "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values.",
+                  },
+                },
+                required: ["filter_type", "filter_op"],
+                additionalProperties: false,
+              },
+            },
+            required: ["column_id", "filter_config"],
+            additionalProperties: false,
+          },
+          default: [],
+          description:
+            "On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.",
+          "x-boundedDatetimeOperators": [
+            "between",
+            "equals",
+            "greater_than",
+            "greater_than_or_equal",
+            "is_not_null",
+            "is_null",
+            "less_than",
+            "less_than_or_equal",
+            "not_between",
+            "not_equals",
+          ],
+        },
+        interval: {
+          title: "Interval",
+          type: "string",
+          enum: ["hour", "day", "week", "month"],
+          default: "day",
+        },
+        property: {
+          title: "Property",
+          type: "string",
+          default: "average",
+        },
+        req_data_config: {
+          title: "Req data config",
+          type: "object",
+          properties: {
+            id: {
+              type: "string",
+            },
+            type: {
+              type: "string",
+              enum: ["SYSTEM_METRIC", "EVAL", "ANNOTATION"],
+            },
+            output_type: {
+              type: "string",
+            },
+            eval_output_type: {
+              type: "string",
+            },
+            choices: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+            },
+            value: {},
+            filter_op: {
+              type: "string",
+            },
+            filter_value: {},
+            property_id: {
+              type: "string",
+              description: "Stable Property Registry identity.",
+            },
+            source: {
+              type: "string",
+              enum: ["traces", "sessions"],
+            },
+          },
+          required: ["id", "type"],
+          additionalProperties: false,
+        },
+        observe_type: {
+          title: "Observe type",
+          description:
+            "Population the graph counts: every trace, or only voice calls (traces whose root span is a conversation), exactly as list_voice_calls selects them.",
+          type: "string",
+          enum: ["trace", "voice"],
+          default: "trace",
         },
       },
     },

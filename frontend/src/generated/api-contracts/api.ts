@@ -1211,6 +1211,7 @@ import type {
   TraceErrorTaskResponseApi,
   TraceErrorTaskUpdateRequestApi,
   TraceErrorTaskUpdateResponseApi,
+  TraceGraphDataRequestApi,
   TraceIndexQueryApi,
   TraceListQueryApi,
   TraceNavigationResponseApi,
@@ -78254,7 +78255,7 @@ export const getTracerTraceGetGraphMethodsUrl = (
  * Fetch data for the observe graph with optimized queries
  */
 export const tracerTraceGetGraphMethods = async (
-  observeGraphDataRequestApi: ObserveGraphDataRequestApi,
+  traceGraphDataRequestApi: TraceGraphDataRequestApi,
   params?: TracerTraceGetGraphMethodsParams,
   options?: RequestInit,
 ): Promise<tracerTraceGetGraphMethodsResponse> => {
@@ -78264,7 +78265,7 @@ export const tracerTraceGetGraphMethods = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(observeGraphDataRequestApi),
+      body: JSON.stringify(traceGraphDataRequestApi),
     },
   );
 };
