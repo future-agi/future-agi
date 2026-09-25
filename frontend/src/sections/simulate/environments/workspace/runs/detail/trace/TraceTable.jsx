@@ -17,6 +17,7 @@ import {
 
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
+import RunningSkeletonRenderer from "src/sections/common/DevelopCellRenderer/CellRenderers/RunningSkeletonRenderer";
 import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
 import {
   defaultTraceColumns,
@@ -25,7 +26,7 @@ import {
   bodyCellSx,
   runOutcome,
 } from "./traceTable.constants";
-import { MetricValue, Score, Field } from "./traceCells";
+import { MetricValue, Score, Field, ErrorValue } from "./traceCells";
 import TraceGroupHeaderRow from "./TraceGroupHeaderRow";
 
 // The theme hides every border on a table's last row, which here is the head
@@ -41,6 +42,16 @@ const lastRowDividersSx = {
     borderBottomColor: "divider",
   },
 };
+
+// Metric columns are only as wide as their header; a fixed width keeps the
+// loading bar a bar rather than a dot.
+function MetricLoading() {
+  return (
+    <Box sx={{ width: 48 }}>
+      <RunningSkeletonRenderer />
+    </Box>
+  );
+}
 
 /**
  * The per-call traces, as a grouped table. Real data only: rows read the mapped
@@ -262,17 +273,31 @@ export default function TraceTable({
 
         {show("csat") && (
           <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
-            <MetricValue metric="csat" value={t.csat} />
+            {t.csat == null && t.csatFailed ? (
+              <ErrorValue reason={t.csatError} />
+            ) : t.csat == null && t.pending?.csat ? (
+              <MetricLoading />
+            ) : (
+              <MetricValue metric="csat" value={t.csat} />
+            )}
           </TableCell>
         )}
         {show("turns") && (
           <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
-            <MetricValue metric="turns" value={t.turns} />
+            {t.turns == null && t.pending?.metrics ? (
+              <MetricLoading />
+            ) : (
+              <MetricValue metric="turns" value={t.turns} />
+            )}
           </TableCell>
         )}
         {show("latency") && (
           <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
-            <MetricValue metric="latency" value={t.latencyMs} suffix="ms" />
+            {t.latencyMs == null && t.pending?.metrics ? (
+              <MetricLoading />
+            ) : (
+              <MetricValue metric="latency" value={t.latencyMs} suffix="ms" />
+            )}
           </TableCell>
         )}
         {show("tokens") && (
@@ -283,6 +308,7 @@ export default function TraceTable({
 
         {showEvals &&
           evals.map((e) => {
+            // A call's empty evals load together while it is scored.
             const r = t.evalResults?.find((x) => x.id === e.id);
             return (
               <TableCell
@@ -290,8 +316,16 @@ export default function TraceTable({
                 sx={{ ...bodyCellSx, p: 0, position: "relative" }}
                 onClick={() => onOpen(t)}
               >
-                {r ? (
+                {r?.errored ? (
+                  <Box sx={{ p: 2 }}>
+                    <ErrorValue reason={r.reason} />
+                  </Box>
+                ) : r ? (
                   <Score result={r} />
+                ) : t.pending?.evals ? (
+                  <Box sx={{ p: 2 }}>
+                    <RunningSkeletonRenderer />
+                  </Box>
                 ) : (
                   <Box sx={{ p: 2, typography: "s2", color: "text.disabled" }}>
                     -

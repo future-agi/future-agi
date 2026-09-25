@@ -275,7 +275,14 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
  *                                 drawer to the voice vs chat branch.
  * @property {?string} provider    Call provider (vapi/retell/livekit/…).
  * @property {Array<{ id: string, name: string, score: number, passed: boolean,
- *   threshold?: number }>} evalResults  Per-eval cells for this call.
+ *   threshold?: number, errored?: boolean }>} evalResults  Per-eval cells for
+ *   this call; `errored` marks one whose scoring failed.
+ * @property {boolean} csatFailed  CSAT scoring failed and left no score.
+ * @property {?string} csatError   Why CSAT scoring failed.
+ * @property {{evals: boolean, csat: boolean, metrics: boolean}} pending
+ *                                 Which empty values are still coming: evals
+ *                                 and CSAT while scoring, turns and latency
+ *                                 while the call runs.
  */
 
 /**

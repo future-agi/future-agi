@@ -13,8 +13,16 @@ vi.mock("src/utils/axios", async (importOriginal) => {
 const axiosMod = await import("src/utils/axios");
 const axios = axiosMod.default;
 const { endpoints } = axiosMod;
-const { mapCallRow, buildTraceColumns, useRunCalls, runCallsQueryOptions } =
-  await import("../runCalls");
+const {
+  mapCallRow,
+  buildTraceColumns,
+  useRunCalls,
+  runCallsQueryOptions,
+  isEvalScoring,
+  isCsatScoring,
+  isCallInProgress,
+  PENDING_VALUE_STALE_MS,
+} = await import("../runCalls");
 
 // A real-shaped executions payload: two evaluation columns (one Pass/Fail, one
 // score), two completed calls and one failed call.
@@ -245,6 +253,197 @@ describe("mapCallRow", () => {
   });
 });
 
+// Cells whose value is still coming. Timestamps are relative to an injected
+// `now` for the pure predicates, and to the real clock for polling.
+const NOW = Date.parse("2026-09-25T12:00:00Z");
+const ago = (ms, now = NOW) => new Date(now - ms).toISOString();
+const FRESH = 30 * 1000;
+const STALE = 11 * 60 * 1000;
+
+describe("pending values", () => {
+  it("caps a pending value at ten minutes", () => {
+    expect(PENDING_VALUE_STALE_MS).toBe(10 * 60 * 1000);
+  });
+
+  describe("isEvalScoring", () => {
+    it("is true while a fresh call's evals are started and not completed", () => {
+      expect(
+        isEvalScoring({ eval_started: true, completed_at: ago(FRESH) }, NOW),
+      ).toBe(true);
+    });
+
+    it("is false once scoring completes", () => {
+      const row = {
+        eval_started: true,
+        eval_completed: true,
+        completed_at: ago(FRESH),
+      };
+      expect(isEvalScoring(row, NOW)).toBe(false);
+    });
+
+    it("is false when the flags are absent", () => {
+      expect(isEvalScoring({ completed_at: ago(FRESH) }, NOW)).toBe(false);
+    });
+
+    it("is false once the call is past the cap", () => {
+      expect(
+        isEvalScoring({ eval_started: true, completed_at: ago(STALE) }, NOW),
+      ).toBe(false);
+    });
+
+    it("is false with no timestamp", () => {
+      expect(isEvalScoring({ eval_started: true }, NOW)).toBe(false);
+    });
+
+    it("falls back to started_at", () => {
+      expect(
+        isEvalScoring({ eval_started: true, started_at: ago(FRESH) }, NOW),
+      ).toBe(true);
+    });
+  });
+
+  describe("isCsatScoring", () => {
+    it.each(["pending", "running"])("is true while CSAT is %s", (status) => {
+      expect(
+        isCsatScoring({ csat_status: status, completed_at: ago(FRESH) }, NOW),
+      ).toBe(true);
+    });
+
+    it.each(["completed", "failed", undefined, null])(
+      "is false when CSAT is %s",
+      (status) => {
+        expect(
+          isCsatScoring({ csat_status: status, completed_at: ago(FRESH) }, NOW),
+        ).toBe(false);
+      },
+    );
+
+    it("is false once the call is past the cap", () => {
+      expect(
+        isCsatScoring(
+          { csat_status: "running", completed_at: ago(STALE) },
+          NOW,
+        ),
+      ).toBe(false);
+    });
+  });
+
+  describe("isCallInProgress", () => {
+    it.each(["pending", "queued", "ongoing", "analyzing"])(
+      "is true for a %s call while the run is active",
+      (status) => {
+        expect(isCallInProgress({ execution_status: status }, true)).toBe(true);
+      },
+    );
+
+    it.each(["completed", "failed", "cancelled"])(
+      "is false for a %s call",
+      (status) => {
+        expect(isCallInProgress({ execution_status: status }, true)).toBe(
+          false,
+        );
+      },
+    );
+
+    it("is false once the run is no longer active", () => {
+      expect(isCallInProgress({ execution_status: "ongoing" }, false)).toBe(
+        false,
+      );
+    });
+  });
+
+  describe("mapCallRow", () => {
+    it("marks which values are still coming", () => {
+      const row = {
+        id: "c1",
+        execution_status: "ongoing",
+        eval_started: true,
+        csat_status: "running",
+        completed_at: ago(FRESH),
+      };
+      expect(
+        mapCallRow(row, [], { now: NOW, runActive: true }).pending,
+      ).toEqual({ evals: true, csat: true, metrics: true });
+    });
+
+    it("loads a running call's evals, and CSAT only for a voice call", () => {
+      const running = { id: "c1", execution_status: "pending" };
+      const voice = mapCallRow({ ...running, modality: "voice" }, [], {
+        now: NOW,
+        runActive: true,
+      }).pending;
+      const chat = mapCallRow({ ...running, modality: "text" }, [], {
+        now: NOW,
+        runActive: true,
+      }).pending;
+      expect(voice).toEqual({ evals: true, csat: true, metrics: true });
+      expect(chat).toEqual({ evals: true, csat: false, metrics: true });
+    });
+
+    it("does not load a stalled call once its run has ended", () => {
+      const row = { id: "c1", execution_status: "pending", modality: "voice" };
+      expect(
+        mapCallRow(row, [], { now: NOW, runActive: false }).pending,
+      ).toEqual({ evals: false, csat: false, metrics: false });
+    });
+
+    it("marks a failed or errored eval as errored, keeping its reason", () => {
+      const cols = [{ id: "e1" }, { id: "e2" }, { id: "e3" }];
+      const row = {
+        id: "c1",
+        evaluations: [
+          { id: "e1", status: "Failed", score: null, reason: "Judge timed out" },
+          { id: "e2", status: "error", score: null, reason: "" },
+          { id: "e3", status: "completed", score: 0.9, passed: true },
+        ],
+      };
+      const [failed, errored, scored] = mapCallRow(row, cols).evalResults;
+      expect(failed).toMatchObject({ errored: true, reason: "Judge timed out" });
+      expect(errored.errored).toBe(true);
+      expect(scored.errored).toBe(false);
+    });
+
+    it("marks a failed CSAT with its error, only when there is no score", () => {
+      const failed = mapCallRow({
+        id: "c1",
+        csat_status: "failed",
+        csat_error: "CSAT scorer returned no result",
+      });
+      expect(failed).toMatchObject({
+        csatFailed: true,
+        csatError: "CSAT scorer returned no result",
+      });
+      expect(
+        mapCallRow({ id: "c2", csat_status: "failed", csat: 7 }).csatFailed,
+      ).toBe(false);
+      expect(mapCallRow({ id: "c3", csat_status: "completed" }).csatFailed).toBe(
+        false,
+      );
+    });
+
+    it("marks nothing pending once the run was stopped", () => {
+      const row = {
+        id: "c1",
+        execution_status: "completed",
+        eval_started: true,
+        csat_status: "pending",
+        completed_at: ago(FRESH),
+      };
+      expect(
+        mapCallRow(row, [], { now: NOW, runStopped: true }).pending,
+      ).toEqual({ evals: false, csat: false, metrics: false });
+    });
+
+    it("marks nothing pending by default", () => {
+      expect(mapCallRow(payload().results[0], columnOrder()).pending).toEqual({
+        evals: false,
+        csat: false,
+        metrics: false,
+      });
+    });
+  });
+});
+
 describe("buildTraceColumns", () => {
   it("emits the system columns plus one column per real eval", () => {
     const cols = buildTraceColumns(columnOrder());
@@ -374,6 +573,121 @@ describe("useRunCalls", () => {
     });
     expect(query.options.refetchInterval(query)).toBe(false);
     unmount();
+  });
+});
+
+describe("useRunCalls polling for values still coming", () => {
+  const pollFor = async (data) => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    axios.get.mockReset();
+    axios.get.mockResolvedValue({ data });
+    const { unmount } = renderHook(() => useRunCalls("ex1"), {
+      wrapper: Wrapper,
+    });
+    await waitFor(() =>
+      expect(
+        queryClient
+          .getQueryCache()
+          .findAll({ queryKey: ["simulation-run-results-v3", "ex1"] })[0]?.state
+          .data,
+      ).toBeTruthy(),
+    );
+    const query = queryClient
+      .getQueryCache()
+      .findAll({ queryKey: ["simulation-run-results-v3", "ex1"] })[0];
+    const interval = query.options.refetchInterval(query);
+    unmount();
+    return interval;
+  };
+  const completedRun = (rowOverrides) => {
+    const data = { ...payload(), execution: { status: "completed" } };
+    data.results[0] = { ...data.results[0], ...rowOverrides };
+    return data;
+  };
+
+  it.each(["cancelled", "failed"])(
+    "stops polling a %s run even if a call's scoring never finished",
+    async (status) => {
+      const data = completedRun({
+        eval_started: true,
+        csat_status: "pending",
+        completed_at: ago(FRESH, Date.now()),
+      });
+      data.execution.status = status;
+      expect(await pollFor(data)).toBe(false);
+    },
+  );
+
+  it("keeps polling a completed run while a call's evals are scoring", async () => {
+    expect(
+      await pollFor(
+        completedRun({
+          eval_started: true,
+          completed_at: ago(FRESH, Date.now()),
+        }),
+      ),
+    ).toBe(3000);
+  });
+
+  it("keeps polling a completed run while a call's CSAT is scoring", async () => {
+    expect(
+      await pollFor(
+        completedRun({
+          csat_status: "pending",
+          completed_at: ago(FRESH, Date.now()),
+        }),
+      ),
+    ).toBe(3000);
+  });
+
+  it("stops polling once the scoring call is past the cap", async () => {
+    expect(
+      await pollFor(
+        completedRun({
+          eval_started: true,
+          csat_status: "running",
+          completed_at: ago(STALE, Date.now()),
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("stops polling when nothing is still coming", async () => {
+    expect(
+      await pollFor(
+        completedRun({
+          eval_started: true,
+          eval_completed: true,
+          csat_status: "completed",
+          completed_at: ago(FRESH, Date.now()),
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("polls an active run regardless", async () => {
+    expect(
+      await pollFor({ ...payload(), execution: { status: "running" } }),
+    ).toBe(3000);
+  });
+
+  it("marks an active run's in-progress calls pending", async () => {
+    axios.get.mockReset();
+    const data = { ...payload(), execution: { status: "running" } };
+    data.results[2] = { ...data.results[2], execution_status: "ongoing" };
+    axios.get.mockResolvedValue({ data });
+    const { result } = renderHook(() => useRunCalls("ex1"), {
+      wrapper: makeWrapper(),
+    });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.tasks[2].pending.metrics).toBe(true);
+    expect(result.current.tasks[0].pending.metrics).toBe(false);
   });
 });
 
