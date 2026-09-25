@@ -96,6 +96,19 @@ class MatchingActivityWitness:
 # 6  ``status`` with OK or UNSET among its values: what almost every span is;
 # 7  a native negation or null test: every span without the named value,
 #    or with any value at all.
+#
+# Known limitation: the rank is static, a guess from what the leaf asks for,
+# never from the data. When the guess is wrong the walk still publishes every
+# member exactly once, in order; it only takes more requests, most of them
+# empty degraded pages. A raw text leaf always ranks first, so a common raw
+# value (``env = production``, ``plan = pro``) is walked ahead of a rare
+# native leaf such as ``status = ERROR``; ``trace_name`` ranks above
+# ``model`` even when it is the denser of the two; and ``observation_type``
+# ties with ``provider``, the tie going to the leaf's identity, so
+# ``observation_type`` wins. Measuring density per request (an ``EXPLAIN
+# ESTIMATE`` of each candidate witness, or catalog value counts) is not done:
+# a cost probe reads the bloom index cold on the largest projects, and the
+# rank must stay a function of the filters the cursor binds.
 _WITNESS_RANK_NATIVE_EQUALITY = {
     "name": 2,
     "trace_name": 2,
