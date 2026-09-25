@@ -337,7 +337,7 @@ describe("harnessJobToEnvironment", () => {
     const { env } = harnessJobToEnvironment(COMPLETED_JOB);
     expect(env.platform.runTestId).toBe("rt1");
     expect(env.platform.testExecutionId).toBe("ex1");
-    expect(env.status).toBe(ENV_STATUS.COMPLETED);
+    expect(env.status).toBe(ENV_STATUS.READY);
   });
 
   it("exposes buildProgress as { done, total } so the building banner can count", () => {
@@ -379,10 +379,10 @@ describe("harnessJobToEnvironment", () => {
 
 describe("canRunHeader", () => {
   it("requires both a persisted RunTest and real runnable scenarios", () => {
-    const completed = { status: "completed", platform: { runTestId: "rt1" } };
+    const completed = { status: "ready", platform: { runTestId: "rt1" } };
     expect(canRunHeader("harness", completed, true)).toBe(true);
     expect(canRunHeader("harness", completed, false)).toBe(false);
-    expect(canRunHeader("harness", { status: "completed", platform: {} }, true)).toBe(false);
+    expect(canRunHeader("harness", { status: "ready", platform: {} }, true)).toBe(false);
     expect(canRunHeader("harness", { ...completed, status: "finalizing" }, true)).toBe(false);
   });
 

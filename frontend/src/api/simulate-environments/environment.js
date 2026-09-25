@@ -236,7 +236,7 @@ export function harnessJobToEnvironment(item) {
 // bridge as soon as it has a run-test id, even before the client canRun is met.
 export const canRunHeader = (source, env, canRun) =>
   source === "harness"
-    ? env?.status === ENV_STATUS.COMPLETED &&
+    ? env?.status === ENV_STATUS.READY &&
       Boolean(env?.platform?.runTestId) &&
       canRun
     : canRun;

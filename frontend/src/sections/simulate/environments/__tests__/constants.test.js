@@ -9,6 +9,7 @@ import { CODE_UPLOAD_COPY } from "../codeUpload.constants";
 import { ENTRY_AGENT_TYPES } from "../agentTypes";
 import { HOSTED_PLATFORMS_BY_TYPE } from "../hostedPlatforms";
 import { REPO_PROVIDERS } from "../repoProviders";
+import { ENV_STATUS, STATUS_META } from "../myEnvironments.constants";
 
 const liveIds = (arr) => arr.filter((o) => !o.comingSoon).map((o) => o.id);
 const comingSoonIds = (arr) => arr.filter((o) => o.comingSoon).map((o) => o.id);
@@ -91,5 +92,13 @@ describe("hostedPlatforms", () => {
       "crewai",
       "claude_agents",
     ]);
+  });
+});
+
+describe("STATUS_META", () => {
+  it("has a pill for every environment status", () => {
+    Object.values(ENV_STATUS).forEach((status) =>
+      expect(STATUS_META[status]).toBeDefined(),
+    );
   });
 });

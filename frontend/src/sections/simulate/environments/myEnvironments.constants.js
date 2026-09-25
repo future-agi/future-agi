@@ -7,7 +7,7 @@ export const ENV_STATUS = {
   CANCELLED: "cancelled",
   PASSED: "passed",
   FAILED: "failed",
-  COMPLETED: "completed",
+  READY: "ready",
 };
 
 // The unfinished values of the list endpoint's own status (building | running |
@@ -41,7 +41,8 @@ export const STATUS_META = {
   cancelled: { label: "Cancelled", color: "#9CA3AF" },
   passed: { label: "Passed", color: "#16A34A" },
   failed: { label: "Failed", color: "#DC2626" },
-  completed: { label: "Completed", color: "#CA8A04" },
+  // Built and runnable. Green like the workspace's Live pill.
+  ready: { label: "Ready", color: "#16A34A" },
   // Preflight checks that don't apply to the current source (e.g. a repo source
   // has no hosted provider to reach). Same muted grey as an un-run row.
   skipped: { label: "Skipped", color: "#9CA3AF" },

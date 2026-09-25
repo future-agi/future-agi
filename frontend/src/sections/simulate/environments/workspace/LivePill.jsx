@@ -6,7 +6,7 @@ import { BUILD_STATUS, ENV_STATUS, STATUS_META } from "../myEnvironments.constan
 import { WORKSPACE_COPY } from "./workspace.constants";
 
 // The status pill beside an environment's name. Three states keyed on the env's
-// build status: green "Live" once the environment is adopted and answering, a
+// build status: green "Ready" once the environment is built and runnable, a
 // pulsing "Building" while it is still being derived (you cannot correct a world
 // that isn't done being built), and a static "Failed" once a build stage is
 // terminal-failed — a failed build must not read as still building.
@@ -33,7 +33,7 @@ export default function LivePill({ env, building }) {
             ? STATUS_META.building.color
             : isRunning
               ? STATUS_META.running.color
-              : STATUS_META.passed.color;
+              : STATUS_META.ready.color;
   const label = isCancelled
     ? WORKSPACE_COPY.cancelledLabel
     : isCancelling

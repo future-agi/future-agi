@@ -58,8 +58,8 @@ describe("StatusChip", () => {
 });
 
 describe("LivePill", () => {
-  it("renders the Live label", () => {
+  it("renders the Ready label", () => {
     render(<LivePill />);
-    expect(screen.getByText("Live")).toBeInTheDocument();
+    expect(screen.getByText("Ready")).toBeInTheDocument();
   });
 });
