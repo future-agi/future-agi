@@ -79,6 +79,25 @@ describe("trace drawer header keyboard shortcuts", () => {
     expect(handlers.onClose).not.toHaveBeenCalled();
   });
 
+  it("leaves Esc alone when closing on Esc is off, keeping J/K and Close", () => {
+    const handlers = callbacks();
+    render(<DrawerHeader open closeOnEscape={false} {...handlers} />);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(handlers.onClose).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(document, { key: "j" });
+    fireEvent.keyDown(document, { key: "k" });
+    expect(handlers.onNext).toHaveBeenCalledOnce();
+    expect(handlers.onPrev).toHaveBeenCalledOnce();
+
+    // The button no longer advertises a shortcut it does not have.
+    expect(
+      screen.queryByRole("button", { name: "Close (Esc)" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(handlers.onClose).toHaveBeenCalledOnce();
+  });
+
   it("does not act on a key a nested handler already consumed", () => {
     const handlers = callbacks();
     render(<DrawerHeader open {...handlers} />);

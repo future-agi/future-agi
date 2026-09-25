@@ -881,6 +881,7 @@ const TraceDetailDrawerV2 = ({
       {/* Header */}
       <DrawerHeader
         open={open}
+        closeOnEscape={!initialFullscreen}
         traceId={traceId}
         projectId={projectId}
         onClose={onClose}

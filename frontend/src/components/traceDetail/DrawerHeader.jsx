@@ -96,6 +96,7 @@ NavButton.propTypes = {
 
 const DrawerHeader = ({
   open = true,
+  closeOnEscape = true,
   traceId,
   projectId,
   onClose,
@@ -133,6 +134,7 @@ const DrawerHeader = ({
         return;
 
       if (e.key === "Escape") {
+        if (!closeOnEscape) return;
         e.preventDefault();
         onClose?.();
       } else if ((e.key === "j" || e.key === "J") && hasNext) {
@@ -143,7 +145,7 @@ const DrawerHeader = ({
         onPrev?.();
       }
     },
-    [onClose, onPrev, onNext, hasPrev, hasNext],
+    [closeOnEscape, onClose, onPrev, onNext, hasPrev, hasNext],
   );
 
   useEffect(() => {
@@ -282,7 +284,11 @@ const DrawerHeader = ({
         </Stack>
 
         {/* Close button */}
-        <Tooltip title="Close (Esc)" arrow placement="bottom">
+        <Tooltip
+          title={closeOnEscape ? "Close (Esc)" : "Close"}
+          arrow
+          placement="bottom"
+        >
           <Box
             component="button"
             type="button"
@@ -313,6 +319,9 @@ const DrawerHeader = ({
 
 DrawerHeader.propTypes = {
   open: PropTypes.bool,
+  // Off on the full-page trace view: there Close leaves the page, and Esc
+  // did not navigate away before; Esc closes only the drawer.
+  closeOnEscape: PropTypes.bool,
   traceId: PropTypes.string,
   projectId: PropTypes.string,
   onClose: PropTypes.func.isRequired,
