@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from structlog.testing import capture_logs
 
 from tracer.services import users_list_manager as ulm
 from tracer.services import users_matching_walk as walk
@@ -2072,13 +2073,17 @@ def test_the_native_certification_reaches_the_driver_with_a_cap():
 
 
 @pytest.mark.parametrize("users", [3, 1])
-def test_a_native_certification_the_server_stops_for_its_head_raises(users):
-    """Stopped at its cap for the head-of-line user alone: a retryable error.
+def test_a_native_certification_the_server_stops_for_its_head_is_retried_without_the_cap(
+    users,
+):
+    """Stopped at its cap for the head-of-line user alone: sent once more, uncapped.
 
     A batch the server stops is certified again for its head-of-line user
     alone; when that statement is stopped too, nothing narrower exists (the
-    native statement has no time split), so the request raises the read
-    budget error instead of publishing, and hands out no cursor.
+    native statement has no time split), so the request sends that one
+    user's statement once more with no cap, as the finish decides its
+    head-of-line user's replay, and publishes the user. It used to raise, and
+    the next request raised at the same user: every request, forever.
     """
 
     world = World()
@@ -2089,15 +2094,116 @@ def test_a_native_certification_the_server_stops_for_its_head_raises(users):
     driver = _NativeDriver(Engine(world))
     driver.fail_kind = "native"
 
-    with pytest.raises(ReadDeadlineExceeded):
-        _real_service_page(
+    with capture_logs() as logs:
+        read = _real_service_page(
             world, driver, filters=[*_date_only(), _native_status_leaf()]
         )
 
-    natives = [settings for kind, settings in driver.sent if kind == "native"]
-    assert len(natives) == (2 if users > 1 else 1)
-    assert all(float(s["max_execution_time"]) > 0 for s in natives)
-    assert "replay" not in [kind for kind, _settings in driver.sent]
+    assert _names(read)[:1] == ["user-1"]
+    caps = [
+        float(settings["max_execution_time"])
+        for kind, settings in driver.sent
+        if kind == "native"
+    ]
+    # The batch (when there is one), the user's own capped statement, then
+    # the same user's without a cap: once.
+    head = 3 if users > 1 else 2
+    assert all(cap > 0 for cap in caps[: head - 1]), caps
+    assert caps[head - 1] == 0, caps
+    assert caps.count(0) == 1, caps
+    uncapped = [
+        entry
+        for entry in logs
+        if entry["event"] == "users_matching_walk_uncapped_native"
+    ]
+    assert [(e["reason"], e["after_batch"]) for e in uncapped] == [
+        ("own_stopped", users > 1)
+    ]
+
+
+class _HeavyNativeDriver(_NativeDriver):
+    """A heavy user's native statement outlasts any cap; uncapped, it runs.
+
+    Every native statement that carries a heavy user and arrives with a
+    ``max_execution_time`` is stopped there (code 159, as the server stops it
+    at its cap); records each native statement as ``(ids, cap seconds)``.
+    """
+
+    def __init__(self, engine: Engine, heavy: set[str]) -> None:
+        super().__init__(engine)
+        self.heavy = frozenset(heavy)
+        self.natives: list[tuple[tuple[str, ...], float]] = []
+
+    def execute(self, query, params=None, *, with_column_types=False, settings=None):
+        if kind_of(query) == "native":
+            ids = tuple((params or {}).get("candidate_end_user_ids", ()))
+            cap = float((settings or {}).get("max_execution_time") or 0)
+            self.natives.append((ids, cap))
+            if cap > 0 and self.heavy.intersection(ids):
+                from clickhouse_driver.errors import ErrorCodes, ServerException
+
+                self.sent.append(("native", settings))
+                raise ServerException(
+                    "Timeout exceeded: elapsed 8.0 seconds, maximum: 8",
+                    code=ErrorCodes.TIMEOUT_EXCEEDED,
+                )
+        return super().execute(
+            query, params, with_column_types=with_column_types, settings=settings
+        )
+
+
+def _follow_heavy_native(users: int, heavy_rank: int, max_hops: int):
+    """Follow the cursor over ``users`` native users, one of them heavy.
+
+    Returns every request's outcome (``"raise"``, or the names it published;
+    a raised request is retried on the same cursor, as the client does),
+    whether the list ended, and the driver.
+    """
+    world = World()
+    ids = [
+        world.user(
+            n,
+            key=minutes_before_end(5 * n),
+            raw=(minutes_before_end(5 * n),),
+            native=True,
+        )
+        for n in range(1, users + 1)
+    ]
+    driver = _HeavyNativeDriver(Engine(world), {ids[heavy_rank - 1]})
+    filters = [*_date_only(), _native_status_leaf()]
+    outcomes, cursor = [], None
+    for _ in range(max_hops):
+        try:
+            read = _real_service_page(world, driver, cursor=cursor, filters=filters)
+        except ReadDeadlineExceeded:
+            outcomes.append("raise")
+            continue
+        outcomes.append(_names(read))
+        if not read.has_more:
+            return outcomes, True, driver
+        cursor = _signed_cursor(read)
+    return outcomes, False, driver
+
+
+@pytest.mark.parametrize(("users", "heavy_rank"), [(1, 1), (5, 1), (5, 3), (5, 5)])
+def test_a_heavy_native_user_never_blocks_the_users_ranked_behind_it(users, heavy_rank):
+    """A user whose native statement always outlasts the cap is still decided.
+
+    Review r2765: the server cap on the native certification made every
+    request raise at such a user once it reached the head of line; nobody
+    ranked behind it was ever shown. The walk decides that user once without
+    the cap, and every user is published once, in order.
+    """
+    outcomes, ended, driver = _follow_heavy_native(users, heavy_rank, users + 3)
+
+    assert "raise" not in outcomes, outcomes
+    published = [name for names in outcomes for name in names]
+    assert ended and published == [f"user-{n}" for n in range(1, users + 1)], outcomes
+    uncapped = [ids for ids, cap in driver.natives if cap == 0]
+    # Only the heavy user, alone, and only once it led a request.
+    heavy = driver.heavy
+    assert uncapped and all(len(ids) == 1 and heavy >= set(ids) for ids in uncapped)
+    assert len(uncapped) <= len([o for o in outcomes if o]), (uncapped, outcomes)
 
 
 def test_a_finish_the_server_stops_on_an_empty_page_is_retried_without_the_cap():

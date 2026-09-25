@@ -177,6 +177,26 @@ def _check_singly(finishing: list[tuple[str, tuple[str, ...], bool, bool]]) -> N
         )
 
 
+def _check_uncapped_natives(
+    natives: list[tuple[tuple[str, ...], bool, bool]], reasons: list[str]
+) -> None:
+    """At most one native statement without a cap a request, for one user, and why.
+
+    ``natives`` is one request's ``(ids, capped, stopped)``, in order, and
+    ``reasons`` what the walk logged for its uncapped native statement:
+    ``own_stopped``, right after the same user's own capped statement was
+    stopped, and before any other user was certified.
+    """
+    uncapped = [i for i, (_ids, capped, _stopped) in enumerate(natives) if not capped]
+    assert len(uncapped) == len(reasons) <= 1, (natives, reasons)
+    for index, reason in zip(uncapped, reasons, strict=True):
+        assert reason == "own_stopped", reason
+        (user,) = natives[index][0]
+        assert index > 0 and natives[index - 1] == ((user,), True, True), natives
+        # Nothing before it was decided: every earlier statement was stopped.
+        assert all(stopped for _ids, _capped, stopped in natives[:index]), natives
+
+
 class _Clock:
     """The monotonic clock of the walls, advanced by each scripted statement."""
 
@@ -251,6 +271,9 @@ class _CappedEngine(Engine):
     ``slice_ms(width, returned_rows)`` says. A slice that costs more than the
     cap it was sent with is stopped there; one sent without a cap runs to
     the end whatever it costs. Records every slice as ``(width, cap,
+    stopped)``. A native span-dimension statement that carries a
+    ``heavy_native`` user and asks for a cap is stopped there, and runs
+    without one; every native statement is recorded as ``(ids, capped,
     stopped)``.
     """
 
@@ -263,9 +286,12 @@ class _CappedEngine(Engine):
         slice_ms: Callable[[timedelta, bool], float] | None = None,
         instant_ms: float = 1.0,
         enrich_ms: float = 1.0,
+        heavy_native: frozenset[str] = frozenset(),
     ) -> None:
         super().__init__(world)
         self.heavy = heavy
+        self.heavy_native = heavy_native
+        self.natives: list[tuple[tuple[str, ...], bool, bool]] = []
         self.batch_limit = batch_limit
         self.clock = clock
         self.slice_ms = slice_ms
@@ -335,6 +361,16 @@ class _CappedEngine(Engine):
                 return SimpleNamespace(data=data, query_time_ms=1.0)
         if kind == "slice":
             self.slice_at.append(self._elapsed_ms())
+        if kind == "native":
+            ids = tuple((params or {})["candidate_end_user_ids"])
+            capped = server_execution_cap_ms is not None
+            stopped = capped and bool(self.heavy_native.intersection(ids))
+            self.natives.append((ids, capped, stopped))
+            if stopped:
+                self.calls.append(query)
+                if self.clock is not None:
+                    self.clock.spend(server_execution_cap_ms)
+                raise ReadDeadlineExceeded("ClickHouse statement exceeded its cap")
         result = super().execute_ch_query(
             query,
             params,
@@ -398,6 +434,7 @@ def _follow(
     fail_ms: float = 50.0,
     width: timedelta | None = None,
     family: str = "raw",
+    heavy_native: frozenset[str] = frozenset(),
 ) -> tuple[list[str], int]:
     """Follow the cursor to the end; returns the published names and the hops.
 
@@ -447,6 +484,7 @@ def _follow(
             fail_ms=fail_ms,
             width=width,
             family=family,
+            heavy_native=heavy_native,
         )
 
 
@@ -467,6 +505,7 @@ def _follow_on(
     fail_ms: float,
     width: timedelta | None,
     family: str = "raw",
+    heavy_native: frozenset[str] = frozenset(),
 ) -> tuple[list[str], int]:
     budget = max(
         max_statements or walk.USER_LIST_WALK_MAX_STATEMENTS,
@@ -494,6 +533,7 @@ def _follow_on(
             fail_ms=fail_ms,
             width=width,
             slice_ms=slice_ms,
+            heavy_native=heavy_native,
         )
         engine.outage = outage_every is not None and hop % outage_every == 0
         with capture_logs() as logs:
@@ -549,6 +589,9 @@ def _follow_on(
                 _logged(logs, "users_matching_walk_uncapped_slice"),
                 slice_at=engine.slice_at,
                 finish_wall_ms=finish_wall,
+            )
+            _check_uncapped_natives(
+                engine.natives, _logged(logs, "users_matching_walk_uncapped_native")
             )
         if not read.has_more:
             return names, hop
@@ -1406,10 +1449,11 @@ class _MemoryEngine(_CappedEngine):
     The native span-dimension statement is a certification statement too: it
     counts as an enrichment over the whole window, and ``fault`` applies to it
     when it carries more than one user. It has no time split, so a
-    head-of-line user whose native statement fails raises; that documented
-    limit has a test of its own
+    head-of-line user whose native statement runs out of memory raises; that
+    documented limit has a test of its own
     (``test_a_head_of_line_native_statement_that_fails_raises``), and the
-    generated worlds leave it out.
+    generated worlds leave it out. One the server stops at its cap is sent
+    once more without it (``heavy_native``, ``_check_uncapped_natives``).
     """
 
     def __init__(
@@ -1423,8 +1467,11 @@ class _MemoryEngine(_CappedEngine):
         fault: Callable[[int, int], bool] | None = None,
         fail_ms: float = 50.0,
         slice_ms: Callable[[timedelta, bool], float] | None = None,
+        heavy_native: frozenset[str] = frozenset(),
     ) -> None:
-        super().__init__(world, heavy, clock=clock, slice_ms=slice_ms)
+        super().__init__(
+            world, heavy, clock=clock, slice_ms=slice_ms, heavy_native=heavy_native
+        )
         self.width = width
         self.user_hours = user_hours
         self.fault = fault
@@ -1782,13 +1829,15 @@ def test_a_head_of_line_native_statement_that_fails_raises(users):
 
 
 def test_the_escape_certifies_under_the_native_statements_own_cap():
-    """No certification runs without a cap, not even on the head-of-line escape.
+    """The head-of-line escape certifies under the native statement's own cap.
 
     Every slice that returns rows outlasts the whole request, so each request
     reads its head-of-line slice without a cap and decides its first batch
     with no wall (``_admission_deadline`` is ``None``). The native statement
     among them still carries the enrichment cap, as its server
-    ``max_execution_time``; it used to carry none.
+    ``max_execution_time``; it used to carry none. (Only a head-of-line
+    user's statement that cap stopped is sent again without it:
+    ``test_a_native_user_whose_statement_outlasts_every_cap_is_decided_once``.)
     """
     world, expected = _spread_world(4, 5)
     for user in world.users.values():
@@ -1896,6 +1945,50 @@ def test_a_native_batch_the_server_stops_at_its_cap_certifies_one_user_at_a_time
             cursor = _signed_cursor(read)
     assert names == expected
     assert stopped >= 1
+
+
+@pytest.mark.parametrize("family", ["native", "mixed"])
+@pytest.mark.parametrize("page_size", [25, 2])
+@pytest.mark.parametrize(
+    ("heavy_ranks", "rejected_ranks"),
+    [((1,), ()), ((3,), ()), ((6,), ()), ((2, 5), (5,)), ((1, 2, 3, 4, 5, 6), (4,))],
+)
+def test_a_native_user_whose_statement_outlasts_every_cap_is_decided_once(
+    family, page_size, heavy_ranks, rejected_ranks
+):
+    """Review r2765: a heavy native user no longer wedges the list.
+
+    A user's native statement that outlasts any cap is stopped whenever it is
+    sent with one, and runs without one. Each request that reaches such a
+    user at its head of line, having decided nothing, sends that user's
+    statement once more without the cap and decides it (``_follow`` checks
+    ``_check_uncapped_natives``); a heavy user off the head of line stops the
+    request above it (``read_budget``), and the next request leads with it.
+    Every member is published once, in order, including users behind a
+    heavy one, and a heavy user the native leaf rejects is never published.
+    """
+    world = World()
+    heavy, expected = set(), []
+    for n in range(1, 7):
+        moment = minutes_before_end(5 * n)
+        uid = world.user(n, key=moment, raw=(moment,))
+        world.users[uid]["native"] = n not in rejected_ranks
+        if n in heavy_ranks:
+            heavy.add(uid)
+        if n not in rejected_ranks:
+            expected.append(f"user-{n}")
+
+    with _shipped_walls():
+        names, hops = _follow(
+            world,
+            page_size=page_size,
+            max_hops=30,
+            family=family,
+            heavy_native=frozenset(heavy),
+        )
+
+    assert names == expected
+    assert hops <= 6 + len(heavy) + 1, hops
 
 
 @pytest.mark.parametrize("size", [401, 601])
