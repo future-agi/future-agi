@@ -1670,16 +1670,39 @@ class HostedHarnessProvider:
         }
     )
 
-    def _editing_contract(self, spoken: bool = True) -> dict[str, list[str]]:
+    def _editing_contract(self, spoken: bool = True) -> dict[str, Any]:
         """Which fields an amend will take, and which of them cannot be taken without a re-proof."""
+        from simulate.models.agent_definition import AgentDefinition
+        from simulate.models.persona import Persona
+        from simulate.services.harness_scenarios import NOISE_LABELS
+
         # A call has no turn budget; a chat has no accent or room behind the caller.
         behavioural = self._BEHAVIOURAL_FIELDS - (
             {"max_turns"} if spoken else {"background_noise"}
         )
         persona = self._PERSONA_FIELDS - (set() if spoken else {"accent"})
+        vocabulary = {
+            "personality": Persona.PersonalityChoices,
+            "communication_style": Persona.CommunicationStyleChoices,
+            "accent": Persona.AccentChoices,
+            "languages": AgentDefinition.LanguageChoices,
+            "occupation": Persona.ProfessionChoices,
+            "location": Persona.LocationChoices,
+        }
         return {
             "editable_fields": sorted(self._DESCRIPTIVE_FIELDS | behavioural),
             "persona_fields": sorted(persona),
+            "persona_choices": {
+                field: (
+                    list(vocabulary[field].labels)
+                    if field == "languages"
+                    else [value for value, _ in vocabulary[field].choices]
+                )
+                for field in sorted(persona)
+            },
+            "noise_choices": (
+                [bed for bed in NOISE_LABELS if bed != "present"] if spoken else []
+            ),
             "rework_fields": sorted(behavioural | persona),
         }
 
@@ -1755,7 +1778,7 @@ class HostedHarnessProvider:
             dict(one) for one in GROUPINGS if spoken or one["value"] != "accent"
         ]
         from simulate.services.harness_scenarios import level_labels_for
-        response.data["level_labels"] = level_labels_for(rows)
+        response.data["level_labels"] = level_labels_for(rows, response.data["fields"])
         return response
 
     def scenario_coverage(self, request, pk) -> Response:

@@ -17,14 +17,7 @@ import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
 
 import Iconify from "src/components/iconify";
-import {
-  AccentOptions,
-  CommunicationStyleOptions,
-  LanguageOptions,
-  LocationOptions,
-  PersonalityOptions,
-  ProfessionOptions,
-} from "src/sections/persona/PersonaCreateEdit/common";
+import { noiseKey } from "src/sections/simulate/environments/workspace/scenarios/scenarioEditor.constants";
 
 // Edit one scenario.
 //
@@ -35,20 +28,10 @@ import {
 // out, because seeing what a scenario holds is most of why anyone opens it.
 const readable = (name) => String(name || "").replace(/[_-]+/g, " ").trim();
 
-// These lists carry a lowercase value and a display label. A scenario's persona is written with the
-// label casing, so matching on the label is what makes an existing accent or language select itself
-// instead of coming up blank.
-const pick = (options) =>
-  (options || []).map((one) => (typeof one === "string" ? one : one.label ?? one.value));
-
-// Where the call is made from. The voice runtime maps each of these to a real ambience clip, so
-// these are the settings that actually reach a run.
-const NOISE = ["off", "home", "office", "retail", "street", "vehicle", "transit", "outdoors"];
-
-const noiseOf = (value) => {
-  if (!value || value === "quiet line") return "off";
-  if (value === "present") return "home";
-  return typeof value === "string" ? value : "home";
+// The server's choices, plus whatever the scenario already holds.
+const withHeld = (choices, held) => {
+  const kept = (Array.isArray(held) ? held : [held]).filter(Boolean);
+  return [...(choices || []), ...kept.filter((one) => !(choices || []).includes(one))];
 };
 
 const draftOf = (scenario) => {
@@ -63,12 +46,22 @@ const draftOf = (scenario) => {
     languages: persona.languages || [],
     occupation: persona.occupation || "",
     location: persona.location || "",
-    max_turns: scenario.max_turns || 10,
-    background_noise: noiseOf(scenario.background_noise),
+    max_turns: scenario.max_turns ?? null,
+    background_noise: noiseKey(scenario.background_noise),
   };
 };
 
-export default function ScenarioEditForm({ scenario, busy, onCancel, onSave, editableFields }) {
+export default function ScenarioEditForm({
+  scenario,
+  busy,
+  onCancel,
+  onSave,
+  editableFields,
+  personaFields,
+  personaChoices = {},
+  noiseChoices = [],
+  levelLabels = {},
+}) {
   const persona = scenario.persona || {};
   const initial = useMemo(() => draftOf(scenario), [scenario]);
   const [form, setForm] = useState(initial);
@@ -80,6 +73,7 @@ export default function ScenarioEditForm({ scenario, busy, onCancel, onSave, edi
 
   // Absent list means nothing is editable.
   const editable = (field) => (editableFields || []).includes(field);
+  const shown = (on) => (on ? undefined : { display: "none" });
 
   return (
     <Stack sx={{ height: "100%" }}>
@@ -202,13 +196,13 @@ export default function ScenarioEditForm({ scenario, busy, onCancel, onSave, edi
                 label="Personality"
                 value={form.personality}
                 onChange={set("personality")}
-                options={PersonalityOptions}
+                options={withHeld(personaChoices.personality, form.personality)}
               />
               <Choice
                 label="Communication style"
                 value={form.communication_style}
                 onChange={set("communication_style")}
-                options={CommunicationStyleOptions}
+                options={withHeld(personaChoices.communication_style, form.communication_style)}
               />
             </Stack>
 
@@ -216,7 +210,8 @@ export default function ScenarioEditForm({ scenario, busy, onCancel, onSave, edi
               <Autocomplete
                 fullWidth
                 size="small"
-                options={pick(AccentOptions)}
+                sx={shown(!personaFields || personaFields.includes("accent"))}
+                options={withHeld(personaChoices.accent, form.accent)}
                 value={form.accent}
                 onChange={(event, value) => set("accent")(value || "")}
                 renderInput={(params) => <TextField {...params} label="Accent" />}
@@ -225,7 +220,7 @@ export default function ScenarioEditForm({ scenario, busy, onCancel, onSave, edi
                 multiple
                 fullWidth
                 size="small"
-                options={pick(LanguageOptions)}
+                options={withHeld(personaChoices.languages, form.languages)}
                 value={form.languages}
                 onChange={(event, value) => set("languages")(value)}
                 renderInput={(params) => <TextField {...params} label="Language" />}
@@ -234,19 +229,17 @@ export default function ScenarioEditForm({ scenario, busy, onCancel, onSave, edi
 
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
               <Autocomplete
-                freeSolo
                 fullWidth
                 size="small"
-                options={pick(ProfessionOptions)}
+                options={withHeld(personaChoices.occupation, form.occupation)}
                 value={form.occupation}
                 onChange={(event, value) => set("occupation")(value || "")}
                 renderInput={(params) => <TextField {...params} label="Profession" />}
               />
               <Autocomplete
-                freeSolo
                 fullWidth
                 size="small"
-                options={pick(LocationOptions)}
+                options={withHeld(personaChoices.location, form.location)}
                 value={form.location}
                 onChange={(event, value) => set("location")(value || "")}
                 renderInput={(params) => <TextField {...params} label="Location" />}
@@ -254,24 +247,25 @@ export default function ScenarioEditForm({ scenario, busy, onCancel, onSave, edi
             </Stack>
 
             <SectionHeader
+              sx={shown(editable("max_turns") || editable("background_noise"))}
               title="Call constraints"
               hint="Every scenario carries defaults. Overriding them here is safe."
             />
 
-            <Box>
+            <Box sx={shown(editable("max_turns"))}>
               <Stack direction="row" alignItems="center" spacing={1}>
                 <Typography sx={{ typography: "s2", fontWeight: 600, flex: 1 }}>
                   Max turns
                 </Typography>
                 <Typography sx={{ typography: "s2", fontVariantNumeric: "tabular-nums" }}>
-                  {form.max_turns}
+                  {form.max_turns ?? "Default"}
                 </Typography>
               </Stack>
               <Slider
                 size="small"
                 min={2}
                 max={40}
-                value={form.max_turns}
+                value={form.max_turns ?? 10}
                 onChange={(event, value) => set("max_turns")(value)}
               />
               <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
@@ -279,7 +273,7 @@ export default function ScenarioEditForm({ scenario, busy, onCancel, onSave, edi
               </Typography>
             </Box>
 
-            <Box>
+            <Box sx={shown(editable("background_noise"))}>
               <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.75 }}>
                 Background noise
               </Typography>
@@ -309,9 +303,9 @@ export default function ScenarioEditForm({ scenario, busy, onCancel, onSave, edi
                   },
                 }}
               >
-                {NOISE.map((one) => (
+                {withHeld(noiseChoices, form.background_noise).map((one) => (
                   <ToggleButton key={one} value={one}>
-                    {one}
+                    {levelLabels[one] ?? readable(one)}
                   </ToggleButton>
                 ))}
               </ToggleButtonGroup>
@@ -364,7 +358,7 @@ export default function ScenarioEditForm({ scenario, busy, onCancel, onSave, edi
           variant="contained"
           size="small"
           disabled={busy || !dirty}
-          onClick={() => onSave(form)}
+          onClick={() => onSave(form, initial)}
           sx={{ typography: "s2", fontWeight: 700 }}
         >
           Save scenario
@@ -380,11 +374,15 @@ ScenarioEditForm.propTypes = {
   onCancel: PropTypes.func.isRequired,
   onSave: PropTypes.func.isRequired,
   editableFields: PropTypes.arrayOf(PropTypes.string),
+  personaFields: PropTypes.arrayOf(PropTypes.string),
+  personaChoices: PropTypes.objectOf(PropTypes.arrayOf(PropTypes.string)),
+  noiseChoices: PropTypes.arrayOf(PropTypes.string),
+  levelLabels: PropTypes.object,
 };
 
-function SectionHeader({ title, hint }) {
+function SectionHeader({ title, hint, sx }) {
   return (
-    <Box>
+    <Box sx={sx}>
       <Typography
         sx={{
           typography: "s3",
@@ -402,7 +400,7 @@ function SectionHeader({ title, hint }) {
   );
 }
 
-SectionHeader.propTypes = { title: PropTypes.string, hint: PropTypes.string };
+SectionHeader.propTypes = { title: PropTypes.string, hint: PropTypes.string, sx: PropTypes.object };
 
 // One text field, whether or not it accepts a change. A read-only field is the same control as the
 // one above it rather than a different kind of thing, which is what keeps the panel one form.

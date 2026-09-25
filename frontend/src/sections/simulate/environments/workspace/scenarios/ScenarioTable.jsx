@@ -7,11 +7,10 @@ import {
 } from "@mui/material";
 
 import Iconify from "src/components/iconify";
-import { subTasksFor } from "src/api/simulate-environments/_fixtures/contract";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import { ClampCell, SubTasksCell, TruncTooltip } from "./ScenarioTableCells";
 import { SCENARIOS_COPY } from "./scenarios.constants";
-import { ENV_SHAPE, GROUP_SHAPE, SCENARIO_SHAPE } from "./scenarios.shapes";
+import { GROUP_SHAPE, SCENARIO_SHAPE } from "./scenarios.shapes";
 
 // A seeded-from-template env is read-only until forked; every mutating control
 // on the table carries this on a tooltip so the disabled state reads as
@@ -34,7 +33,7 @@ const selectableCheckboxSx = {
 // The per-row edit pencil opens the scenario editor through onEdit. Stripped
 // from the source: the twin-seed override icon (twinSeedPrompt) — twin-only, not
 // on either entry path.
-export default function ScenarioTable({ rows, groups, env, onEdit, onRemove, onHideGroup, selectedIds, onSelectionChange, selection, pageIds, onTogglePage, locked = false }) {
+export default function ScenarioTable({ rows, groups, onEdit, onRemove, onHideGroup, selectedIds, onSelectionChange, selection, pageIds, onTogglePage, locked = false }) {
   // Two shapes come in: pre-grouped (list-view mirror) or a flat rows array.
   // Memoised so the flat fallback doesn't allocate a fresh array each render
   // (which would re-run the selection-sync effect below every render).
@@ -218,7 +217,7 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove, onH
                 // side — not a per-page counter (it survives filters and paging).
                 const idx = row.number;
                 const p = row.persona;
-                const subTasks = row.subTasks?.length ? row.subTasks : subTasksFor(row, env);
+                const subTasks = row.subTasks || [];
                 const personaSubline = [
                   p?.gender && p.gender.charAt(0).toUpperCase() + p.gender.slice(1),
                   p?.ageGroup,
@@ -324,7 +323,6 @@ export default function ScenarioTable({ rows, groups, env, onEdit, onRemove, onH
 ScenarioTable.propTypes = {
   rows: PropTypes.arrayOf(SCENARIO_SHAPE).isRequired,
   groups: PropTypes.arrayOf(GROUP_SHAPE),
-  env: ENV_SHAPE,
   onEdit: PropTypes.func,
   onRemove: PropTypes.func,
   onHideGroup: PropTypes.func,

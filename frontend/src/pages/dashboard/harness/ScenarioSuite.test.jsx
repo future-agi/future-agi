@@ -161,7 +161,8 @@ describe("ScenarioSuite", () => {
     ["name", "gender", "age_group", "initial_message"].forEach((field) =>
       expect(persona).not.toHaveProperty(field),
     );
-    expect(persona).toHaveProperty("personality");
+    // Only what was changed is sent, so a text edit never rewrites the persona.
+    expect(changes.map((one) => one.field || one.op)).toEqual(["tests"]);
     // The use case belongs to the contract and is shared, so it is never part of an edit.
     expect(changes.some((one) => one.field === "use_case")).toBe(false);
   });

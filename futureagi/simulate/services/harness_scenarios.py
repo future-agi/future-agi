@@ -154,13 +154,13 @@ LEVEL_LABELS: dict[str, str] = {
     "destructive": "Destructive request",
     "spoken_caller": "Spoken by the caller",
     "absent": "No attack",
-    "quiet_line": "Quiet line",
+    "quiet_line": "No background noise",
     "non_native": "Non-native speaker",
     "code_switching": "Switches language",
 }
 # What each background a caller can be heard over sounds like, for the noise column only.
 NOISE_LABELS: dict[str, str] = {
-    "quiet line": "Quiet line",
+    "quiet line": "Off",
     "present": "Background noise",
     "street": "Street",
     "vehicle": "In a car",
@@ -392,11 +392,19 @@ def coverage_grid(
     }
 
 
-def level_labels_for(rows: list[dict[str, Any]]) -> dict[str, str]:
-    """The reader-facing name for every coverage level and noise bed on one page of rows."""
+def level_labels_for(
+    rows: list[dict[str, Any]], fields: list[dict[str, Any]] | None = None
+) -> dict[str, str]:
+    """The reader-facing name for every coverage level, sub-goal and noise bed a page can show."""
     levels: set[str] = set()
     beds: set[str] = set()
+    for field in fields or []:
+        if field.get("value") == "background_noise":
+            beds.update(str(one) for one in field.get("choices") or [])
+        elif str(field.get("value") or "").startswith("coverage.") or field.get("value") == "sub_goals":
+            levels.update(str(one) for one in field.get("choices") or [])
     for row in rows or []:
+        levels.update(str(one) for one in row.get("sub_goals") or [] if str(one).strip())
         for value in (row.get("coverage") or {}).values():
             said = str(value or "").strip()
             if said:
@@ -455,13 +463,14 @@ def grouped(rows: list[dict[str, Any]], group_by: str) -> list[dict[str, Any]]:
     if not field:
         return rows
     head, _, tail = field.partition(".")
+    tagged: list[dict[str, Any]] = []
     for row in rows:
         held = (row.get(head) or {}).get(tail) if tail else row.get(head)
-        if isinstance(held, list):
-            held = (held or [None])[0]
-        row["group"] = held or "Ungrouped"
-    rows.sort(key=lambda row: (str(row.get("group") or ""), row.get("number") or 0))
-    return rows
+        # A list field places the scenario in the section of each of its values.
+        for value in (held or [None]) if isinstance(held, list) else [held]:
+            tagged.append({**row, "group": value or "Ungrouped"})
+    tagged.sort(key=lambda row: (str(row.get("group") or ""), row.get("number") or 0))
+    return tagged
 
 
 def group_counts(
@@ -485,11 +494,9 @@ def group_counts(
         return sections
     totals: dict[str, int] = {}
     for held in queryset.values_list(_orm_path(field), flat=True):
-        if isinstance(held, list):
-            key = (held or ["Ungrouped"])[0]
-        else:
-            key = held or "Ungrouped"
-        totals[key] = totals.get(key, 0) + 1
+        for value in (held if isinstance(held, list) else [held]) or [None]:
+            name = value or "Ungrouped"
+            totals[name] = totals.get(name, 0) + 1
     for section in sections:
         section["total"] = totals.get(section["name"], section["count"])
     return sections

@@ -12,12 +12,14 @@ const to01 = (n) => (n == null ? null : n <= 1 ? n : n / 100);
 // One cell from a live `evaluations[]` entry — the array shape the isolated
 // v3 run-results contract sends, where the server has already scored the eval.
 function liveEvalCell(col, data) {
+  const stored =
+    data.value && typeof data.value === "object" ? storedEvalCell(col, data) : null;
   return {
     id: col.id,
     name: data.name || col.name || col.column_name || col.id,
-    score: data.score ?? null,
-    passed: data.passed ?? null,
-    label: typeof data.value === "string" ? data.value : null,
+    score: data.score ?? stored?.score ?? to01(data.value?.score) ?? null,
+    passed: data.passed ?? stored?.passed ?? null,
+    label: typeof data.value === "string" ? data.value : (stored?.label ?? null),
     reason: data.reason || "",
     threshold: 0.5,
     removed: data.removed === true,

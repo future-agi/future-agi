@@ -20,6 +20,7 @@ import {
   clearScenarioSelection,
 } from "../../buildEnvironment/console/scenarioSelectionBus";
 import { SCENARIOS_COPY } from "./scenarios.constants";
+import { withServedLabels } from "./scenarioEditor.constants";
 import { ENV_SHAPE, ENV_STATE_SHAPE } from "./scenarios.shapes";
 import useScenarioPage, { PAGE_SIZE } from "./useScenarioPage";
 import { isScenarioSampleMode, SAMPLE_PAGE_SIZE } from "src/api/simulate-environments/scenariosSampleMode";
@@ -174,13 +175,14 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   // The filter catalogue comes straight from the server (`fields`), counted
   // over the searched suite so an OR stays buildable; it drops into the shared
   // FilterPanel unchanged.
-  const filterFields = pageData.fields;
-  // The editor's background-noise choices come from the server field catalogue
-  // (the values the agent actually uses), not a hardcoded list — so the picker
-  // matches the suite and follows any backend vocabulary change automatically.
+  const filterFields = useMemo(
+    () => withServedLabels(pageData.fields || [], pageData.levelLabels),
+    [pageData.fields, pageData.levelLabels],
+  );
+  // The editor offers every noise bed the backend serves, not only the ones the suite already uses.
   const noiseOptions = useMemo(
-    () => (pageData.fields || []).find((f) => f.value === "background_noise")?.choices ?? [],
-    [pageData.fields],
+    () => pageData.scenarioEditing?.noise_choices ?? [],
+    [pageData.scenarioEditing],
   );
 
   const filterCount = Object.values(filters).reduce(
@@ -486,6 +488,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
         onSave={saveScenario}
         scenarioEditing={pageData.scenarioEditing}
         noiseOptions={noiseOptions}
+        levelLabels={pageData.levelLabels}
       />
       <ConfirmDialog
         open={!!pendingDelete}

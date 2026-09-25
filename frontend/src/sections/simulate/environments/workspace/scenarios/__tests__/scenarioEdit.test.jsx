@@ -129,3 +129,32 @@ describe("ScenariosStep — edit", () => {
     });
   });
 });
+
+describe("ScenarioEditor persona choices", () => {
+  it("offers the server's choices for a persona field and keeps the current value", async () => {
+    const { default: ScenarioEditor } = await import("../ScenarioEditor");
+    const onSave = vi.fn();
+    render(
+      <ScenarioEditor
+        open
+        onClose={() => {}}
+        onSave={onSave}
+        row={{ id: "r1", name: "s1", _raw: { persona: { accent: "Scottish", languages: ["English"] } } }}
+        scenarioEditing={{
+          editable_fields: ["tests"],
+          persona_fields: ["accent", "languages"],
+          persona_choices: { accent: ["American", "Indian"], languages: ["English", "Hindi"] },
+          rework_fields: ["accent", "languages"],
+        }}
+      />,
+    );
+    fireEvent.mouseDown(screen.getByLabelText("Accent"));
+    expect(await screen.findByRole("option", { name: "Indian" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Scottish" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("option", { name: "Indian" }));
+    fireEvent.click(screen.getByRole("button", { name: /save/i }));
+    expect(onSave.mock.calls[0][0].changes).toEqual([
+      { op: "set_persona", scenario: "s1", persona: { accent: "Indian" } },
+    ]);
+  });
+});

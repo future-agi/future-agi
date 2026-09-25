@@ -19,9 +19,10 @@ import { useHarnessScenarios } from "src/api/simulate-environments/scenariosHook
  *   groupCounts — { [groupName]: whole-suite total } for the group headers
  *   pageGroups  — this page split into its consecutive group runs
  *   pageIds     — the visible row ids
- *   fields / groupings / groupBy / scenarioEditing — from the server response
+ *   fields / groupings / groupBy / scenarioEditing / levelLabels: from the server response
  */
 export const PAGE_SIZE = 25;
+const EMPTY_LABELS = {};
 
 export default function useScenarioPage({
   jobId,
@@ -43,6 +44,7 @@ export default function useScenarioPage({
   const groupings = data?.groupings ?? [];
   const fields = data?.fields ?? [];
   const scenarioEditing = data?.scenarioEditing ?? null;
+  const levelLabels = data?.levelLabels ?? EMPTY_LABELS;
 
   // Whole-suite total per section name, so a header reads "240 scenarios" even
   // when the page holds only a slice of that group.
@@ -61,10 +63,10 @@ export default function useScenarioPage({
       const name = row.group ?? "";
       const last = out[out.length - 1];
       if (last && last.name === name) last.rows.push(row);
-      else out.push({ id: `${appliedGroupBy}:${name}`, name, label: name, rows: [row] });
+      else out.push({ id: `${appliedGroupBy}:${name}`, name, label: levelLabels[name] ?? name, rows: [row] });
     }
     return out.map((g) => ({ ...g, totalInGroup: groupCounts[g.name] ?? g.rows.length }));
-  }, [rows, appliedGroupBy, groupCounts]);
+  }, [rows, appliedGroupBy, groupCounts, levelLabels]);
 
   const pageIds = useMemo(() => rows.map((r) => r.id).filter(Boolean), [rows]);
 
@@ -84,5 +86,6 @@ export default function useScenarioPage({
     groupings,
     groupBy: appliedGroupBy,
     scenarioEditing,
+    levelLabels,
   };
 }
