@@ -2173,12 +2173,14 @@ def check_if_dataset_creation_is_allowed(organization, config=None):
     from model_hub.models.develop_dataset import Dataset
 
     try:
-        from usage.services.entitlements import Entitlements
+        from ee.usage.services.entitlements import Entitlements
 
         dataset_count = Dataset.objects.filter(
             organization=organization, source__in=["build", "observe"], deleted=False
         ).count()
-        result = Entitlements.can_create(str(organization.id), "datasets", dataset_count)
+        result = Entitlements.can_create(
+            str(organization.id), "datasets", dataset_count
+        )
         if not result.allowed:
             detail = {
                 "resource_name": ResourceTypeChoices.DATASET.value,
