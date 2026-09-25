@@ -22615,6 +22615,12 @@ export interface RunCallApi {
   sub_goals: string[];
   /** @minLength 1 */
   harness_outcome_status: string;
+  eval_started: boolean;
+  eval_completed: boolean;
+  /** @minLength 1 */
+  csat_status: string;
+  /** @minLength 1 */
+  csat_error: string;
   /** @minLength 1 */
   source_scenario_key: string;
   trial_index: number;
