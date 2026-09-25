@@ -49,6 +49,7 @@ from tracer.tests.test_users_matching_walk import (
     _from_us,
     _manager,
     _names,
+    _native_leaf,
     _native_status_leaf,
     _NativeDriver,
     _never_seed,
@@ -106,9 +107,15 @@ def _add(
 
 def _is_member(user: dict) -> bool:
     """A key (the witness leaf's newest live match), curated, and every native
-    leaf decided true when the page carries one."""
+    leaf decided true when the page carries one (``status``: the second native
+    leaf of a ``reordered`` page, which answers from its own rows)."""
 
-    return user["key"] is not None and user["curated"] and user["native"] is not False
+    return (
+        user["key"] is not None
+        and user["curated"]
+        and user["native"] is not False
+        and user.get("status") is not False
+    )
 
 
 def _expected(world: World) -> list[str]:
@@ -493,6 +500,7 @@ def _follow_on(
                 keys=keys,
                 finish=finish,
                 family=family,
+                hop=hop,
             )
         names.extend(_names(read))
         # One user's read split in time, at most, outside the budget.
@@ -578,28 +586,38 @@ FINISH_SHAPES = {
 # The page's witness: the raw ``tag`` leaf alone; a native ``status`` leaf
 # alone (the walk discovers on its flag, and no attribute is filtered); or
 # both, where the raw leaf is the witness and the native leaf is decided at
-# certification.
-FAMILIES = ["raw", "native", "mixed"]
+# certification. ``reordered``: two native leaves, ``model`` and a ``status``
+# leaf with rows, keys and decisions of its own (``_with_native``), sent in
+# one order on even requests and the other on odd ones. The cursor binds the
+# filters without their order, so every request must walk the same leaf.
+FAMILIES = ["raw", "native", "mixed", "reordered"]
+REORDERED_STATUS = "error"
 
 
-def _family_filters(family: str) -> list[dict]:
+def _family_filters(family: str, hop: int = 0) -> list[dict]:
     date_and_tag = _filters()
     if family == "raw":
         return date_and_tag
     if family == "native":
         return [date_and_tag[0], _native_status_leaf()]
+    if family == "reordered":
+        leaves = [
+            _native_leaf(col_type="SYSTEM_METRIC"),
+            _native_status_leaf(REORDERED_STATUS),
+        ]
+        return [date_and_tag[0], *(leaves if hop % 2 else leaves[::-1])]
     assert family == "mixed", family
     return [*date_and_tag, _native_status_leaf()]
 
 
-def _keyed_manager(keys: int, finish: int = 1, family: str = "raw"):
+def _keyed_manager(keys: int, finish: int = 1, family: str = "raw", hop: int = 0):
     """The page's manager: ``keys`` attribute columns besides the filters of
-    ``family``, and the columns and filters that make ``finish`` finishing
-    statements."""
+    ``family`` (in request ``hop``'s order), and the columns and filters that
+    make ``finish`` finishing statements."""
 
     from tracer.services.users_list_manager import UsersListManager
 
-    base = _manager(_family_filters(family))
+    base = _manager(_family_filters(family, hop))
     columns, relation = FINISH_SHAPES[finish]
     manager = UsersListManager(
         organization_id=base.organization_id,
@@ -633,9 +651,10 @@ def _one_decision(keys: int, finish: int = 1, family: str = "raw") -> int:
 def _enrichments(keys: int, family: str = "raw") -> int:
     """One certification's statements for a page of ``keys`` attribute
     columns: one for the filtered key (a raw witness), one per four of the
-    others, and the native statement when the page carries a native leaf."""
+    others, and the native statement when the page carries a native leaf
+    (one, however many native leaves)."""
 
-    return (family != "native") + -(-keys // 4) + (family != "raw")
+    return (family in ("raw", "mixed")) + -(-keys // 4) + (family != "raw")
 
 
 @contextmanager
@@ -663,8 +682,9 @@ def _keyed_page(
     keys: int,
     finish: int = 1,
     family: str = "raw",
+    hop: int = 0,
 ):
-    manager = _keyed_manager(keys, finish, family)
+    manager = _keyed_manager(keys, finish, family, hop)
     with (
         patch(SERVICE, return_value=engine),
         patch.object(manager, "_read_dimension_candidates", side_effect=_never_seed),
@@ -1243,7 +1263,7 @@ def test_a_search_that_spent_the_analytics_wall_reads_its_head_slice_uncapped():
         down = _CappedEngine(world, clock=clock)
         down.outage = True
         first, _engine = _page(world, page_size=25, engine=down)
-        assert first.payload["table"] == [] and first.checkpoint_order[4] is True
+        assert first.payload["table"] == [] and first.checkpoint_order[5] is True
         slow = _CappedEngine(world, clock=clock, instant_ms=30_000)
         with capture_logs() as logs:
             read, _engine = _page(
@@ -1547,7 +1567,7 @@ def test_a_batch_that_runs_out_of_memory_at_many_keys_still_publishes(keys, tied
             if not read.has_more:
                 break
             order = tuple(read.checkpoint_order)
-            resumed_in_instant += len(order) == 5 and order[4]
+            resumed_in_instant += len(order) == 6 and order[5]
             cursor = _signed_cursor(read)
 
     # Users are published on every pair of consecutive requests.
@@ -1866,7 +1886,7 @@ def test_a_count_refusal_in_a_tie_world_keeps_its_boundary(
             if not read.has_more:
                 break
             order = tuple(read.checkpoint_order)
-            opened += len(order) == 5 and bool(order[4])
+            opened += len(order) == 6 and bool(order[5])
             cursor = _signed_cursor(read)
 
     assert names == _expected(world)
@@ -2082,7 +2102,7 @@ def test_a_request_certifies_only_what_it_can_also_publish(
             if not read.has_more:
                 break
             order = tuple(read.checkpoint_order)
-            assert len(order) == 4 or not order[4], (requests, engine.kinds)
+            assert len(order) == 5 or not order[5], (requests, engine.kinds)
             cursor = _signed_cursor(read)
 
     assert names == _expected(world)
@@ -2324,11 +2344,44 @@ def _with_native(world: World, seed: int, family: str) -> World:
     rng = random.Random(4_441 * seed + 17)
     forbid = rng.choice([0.0, 0.15, 0.4])
     for user in world.users.values():
-        if family == "native":
+        if family in ("native", "reordered"):
             user["native"] = user["key"] is not None and rng.random() >= forbid
         else:
             user["native"] = rng.random() >= forbid
+    if family == "reordered":
+        _with_status_leaf(world, rng)
     return world
+
+
+def _with_status_leaf(world: World, rng: random.Random) -> None:
+    """The ``reordered`` page's status leaf: rows, keys and decisions of its own.
+
+    Its newest match per user is drawn independently of the model leaf's
+    (``key``), so reading one leaf's keys and coverage as the other's
+    publishes users twice or never. It is a positive equality: a user is a
+    member exactly when it has a newest match. Its rows also hold stale
+    versions, above or below that match.
+    """
+
+    instants = _instants()
+    span = int((WINDOW_END - WINDOW_START) / TICK)
+
+    def moment() -> datetime:
+        if rng.random() < 0.3:
+            return rng.choice(instants)
+        return WINDOW_START + TICK * rng.randrange(span)
+
+    members: dict[str, tuple[datetime | None, bool]] = {}
+    rows: list[tuple[datetime, str]] = []
+    for uid, user in world.users.items():
+        key = None if rng.random() < 0.25 else moment()
+        members[uid] = (key, key is not None)
+        user["status"] = key is not None
+        ids = user["aliases"]
+        if key is not None:
+            rows.append((key, rng.choice(ids)))
+        rows += [(moment(), rng.choice(ids)) for _ in range(rng.choice([0, 0, 1]))]
+    world.native_leaf(REORDERED_STATUS, members, rows)
 
 
 def _gap_world(rng: random.Random, n_users: int) -> World:

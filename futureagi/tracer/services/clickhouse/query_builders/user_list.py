@@ -6,6 +6,7 @@ from datetime import timedelta
 from typing import Any
 
 from tracer.services.clickhouse.eval_logger_table import eval_logger_source
+from tracer.services.clickhouse.list_cursor import canonical_filter_leaf
 from tracer.services.clickhouse.query_builders.base import (
     BaseQueryBuilder,
     _unix_microseconds,
@@ -56,6 +57,14 @@ class MatchingActivityWitness:
     is known to serve the predicate, so an empty slice costs only its fixed
     overhead; it is False for a native witness (only ``idx_status`` serves one
     of them, and not by design).
+
+    ``identity`` is the leaf as the signed cursor binds it
+    (``canonical_filter_leaf``): the same for every request a cursor admits,
+    whatever position the leaf holds in it. ``leaf_index`` is only the
+    namespace of the leaf's parameters in this request. The choice among
+    witnesses ranks on ``identity``, never on position, and the walk binds
+    the chosen one into its cursor (``users_matching_walk``). It is left out
+    of equality: the predicate is what a witness is.
     """
 
     family: str
@@ -66,6 +75,7 @@ class MatchingActivityWitness:
     leaf_index: int | None = None
     flag_alias: str | None = None
     index_pruned: bool = True
+    identity: str = field(default="", compare=False)
 
 
 # The page metrics ``build_requested_page_metric_queries`` reads, one
@@ -532,43 +542,55 @@ class UserListQueryBuilder(BaseQueryBuilder):
     def matching_activity_witness(self) -> MatchingActivityWitness | None:
         """The raw span-attribute witness the walk may discover on.
 
-        The walk prefers exactly the witness the seeded candidate page would
-        have used, so both paths admit the same raw superset; when the page
-        has none it takes the first witness that qualifies the walk alone (a
-        boolean typed-map witness, or a positive equality whose missing-key
-        default the graph witness declines). It needs the key to read that
+        The walk prefers a witness the seeded candidate page could seed on
+        (one whose compiler graph witness compares a value); when the page has
+        none it takes one that qualifies the walk alone (a boolean typed-map
+        witness, or a positive equality whose missing-key default the graph
+        witness declines). Among several, the least ``identity`` wins, never
+        the first in request order: the cursor binds the filters without
+        their order. It needs the key to read that
         filter's certified order key back from the page enrichment. ``kind``
         is ``text``, ``number`` or ``boolean``. Whether the walk accepts it is
         the manager's decision (``matching_activity_walk_applies``); when it
         does not, a native leaf may be the witness
         (``native_matching_activity_witness``).
         """
-        chosen = None
-        for item, kind, witness, params, seedable in self._scalar_user_witnesses():
-            found = MatchingActivityWitness(
-                family="raw",
-                key=str(item.get("column_id") or item.get("columnId")),
-                kind=kind,
-                sql=witness,
-                params=params,
+        found = [
+            (
+                seedable,
+                MatchingActivityWitness(
+                    family="raw",
+                    key=str(item.get("column_id") or item.get("columnId")),
+                    kind=kind,
+                    sql=witness,
+                    params=params,
+                    identity=canonical_filter_leaf(item),
+                ),
             )
-            if seedable:
-                return found
-            chosen = chosen or found
-        return chosen
+            for item, kind, witness, params, seedable in self._scalar_user_witnesses()
+        ]
+        # Ranked on the leaf as the cursor binds it, never on its position:
+        # the same filters in another order choose the same witness.
+        found.sort(key=lambda pair: (not pair[0], pair[1].identity))
+        return found[0][1] if found else None
 
     def native_matching_activity_witness(self) -> MatchingActivityWitness | None:
-        """The first native leaf, in filter order, that can be the walk's witness.
+        """The native leaf the walk discovers on when no raw witness is accepted.
 
         Only the walk consults it, and only when no raw witness is accepted:
         the seeded page never seeds on a native leaf
-        (``_scalar_user_witnesses``). The lowest index wins, so the choice is
-        a function of the filters alone and stable across a cursor's requests.
+        (``_scalar_user_witnesses``). The least ``identity`` wins, so the
+        choice is a function of the filters as the cursor binds them, in any
+        order, and stable across a cursor's requests.
         """
-        return next(self._native_user_witnesses(), None)
+        return min(
+            self._native_user_witnesses(),
+            key=lambda witness: witness.identity,
+            default=None,
+        )
 
     def _native_user_witnesses(self) -> Iterator[MatchingActivityWitness]:
-        """Native leaves whose graph condition has an existence term, in order.
+        """Native leaves whose graph condition has an existence term, in filter order.
 
         A native leaf decides membership with the users graph's own condition
         (``compile_user_membership_leaf``). When that condition holds a term
@@ -605,6 +627,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 leaf_index=index,
                 flag_alias=alias,
                 index_pruned=False,
+                identity=canonical_filter_leaf(item),
             )
 
     def _scalar_user_witnesses(self):

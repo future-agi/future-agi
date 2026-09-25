@@ -462,7 +462,7 @@ def test_a_native_witness_is_the_leafs_existence_flag(
     assert builder.matching_activity_witness() is None
 
 
-def test_the_lowest_eligible_native_leaf_is_the_witness():
+def test_the_native_witness_is_one_leaf_whatever_the_filter_order():
     date = {
         "column_id": "created_at",
         "filter_config": {
@@ -474,10 +474,14 @@ def test_the_lowest_eligible_native_leaf_is_the_witness():
     is_null = leaf("model", "is_null", col_type=None)
     status = leaf("status", "equals", "ERROR")
     model = leaf("model", "equals", "gpt-4o")
+    # The leaf as the cursor binds it decides, not its position; its
+    # position only names its parameters.
     witness = _builder(date, is_null, status, model).native_matching_activity_witness()
-    assert (witness.leaf_index, witness.key) == (2, "status")
+    assert (witness.leaf_index, witness.key) == (3, "model")
     witness = _builder(model, status).native_matching_activity_witness()
     assert (witness.leaf_index, witness.key) == (0, "model")
+    witness = _builder(status, model).native_matching_activity_witness()
+    assert (witness.leaf_index, witness.key) == (1, "model")
     assert _builder(date, is_null).native_matching_activity_witness() is None
     # A raw attribute of a native name is a raw leaf, never a native witness.
     raw = leaf("status", "equals", "OK", col_type="SPAN_ATTRIBUTE")

@@ -11,7 +11,7 @@ once by ``UsersListManager.matching_activity_walk_applies``):
 * raw: one scalar span-attribute filter - plain-text ``equals``/``in``,
   boolean ``equals``/``in``, or a number comparison - that is the only item
   on its key, discovered through the deployed key and value blooms;
-* native: otherwise, the first native span-dimension leaf whose users-graph
+* native: otherwise, a native span-dimension leaf whose users-graph
   condition has an existence term ``countIf(flag) > 0``, discovered on that
   flag. Every member has a latest live span satisfying it, and that span's
   latest version is a physical row satisfying it at the same ``start_time``,
@@ -130,12 +130,15 @@ batch settles a closed id range ``[last returned, before)`` and its members
 publish at once in ``(key, id)`` order. A cohort larger than one request
 resumes inside the instant instead of starting it again.
 
-Cursor. ``(marker, last_key, last_id, coverage[, open_instant])``: every user
-with a matching row at or after ``coverage`` is decided; the keyset ``(key,
-id) < (last_key, last_id)`` under ``(key DESC, id DESC)`` rejects a
+Cursor. ``(marker, last_key, last_id, coverage, witness[, open_instant])``:
+every user with a matching row at or after ``coverage`` is decided; the keyset
+``(key, id) < (last_key, last_id)`` under ``(key DESC, id DESC)`` rejects a
 re-discovered published user at the enrichment step, before any replay, and
 inside an instant it names the lowest decided position, published or not.
-``open_instant`` (present only when true; a four-element cursor is read as
+Keys and coverage speak for one witness leaf, so ``witness`` names it
+(``witness_fingerprint``) and a request whose own witness differs refuses the
+cursor (``invalid_cursor``) instead of reading one leaf's keys as another's.
+``open_instant`` (present only when true; a five-element cursor is read as
 false) tells the next request to decide the instant just below ``coverage``
 first, from ``last_id`` when ``last_key`` is that instant; a request sets it
 when it ends inside an instant, or stops where a raw restart would find the
@@ -153,6 +156,7 @@ published again, the usual limit of a keyset over changing data.
 
 from __future__ import annotations
 
+import hashlib
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -182,13 +186,15 @@ if TYPE_CHECKING:  # pragma: no cover - typing only, the manager imports us.
 
 logger = structlog.get_logger(__name__)
 
-# The witness is not encoded in the cursor: it is a function of the filters,
-# which the signed cursor is bound to. A change of the witness precedence
-# (``UsersListManager.matching_activity_walk_applies``) changes which leaf an
-# existing cursor's keys and coverage speak for, so it must bump this marker.
-USER_LIST_MATCHING_CURSOR_ORDER = "matching_activity_users_v1"
+# The witness is a function of the filters as the signed cursor binds them
+# (without their order), and the cursor also carries its fingerprint
+# (``witness_fingerprint``): a request that would read the cursor's keys and
+# coverage as another leaf's refuses it. v1 cursors carried no fingerprint and
+# chose native witnesses by request position, so they restart.
+USER_LIST_MATCHING_CURSOR_ORDER = "matching_activity_users_v2"
 # Newest activity matching the WITNESS leaf: the raw attribute leaf when the
-# walk accepts one, otherwise the first eligible native leaf in filter order.
+# walk accepts one, otherwise an eligible native leaf
+# (``UsersListManager.matching_activity_walk_applies`` says which).
 USER_LIST_MATCHING_ORDERING = "latest_matching_activity"
 USER_LIST_MATCHING_PROVENANCE = "matching_activity_walk"
 USER_LIST_PAGE_WALL_MS = settings.USER_LIST_PAGE_WALL_MS
@@ -1303,6 +1309,18 @@ def _instant_position(state: _WalkState) -> str | None:
     return position
 
 
+def witness_fingerprint(witness: MatchingActivityWitness) -> str:
+    """The witness a cursor's keys and coverage speak for.
+
+    Its family and its leaf as the cursor binds it (``identity``), never its
+    position in the request, so every request the cursor admits that chooses
+    the same leaf computes the same value.
+    """
+
+    text = f"{witness.family}\n{witness.identity}"
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:32]
+
+
 def _slices_needed(width: timedelta) -> int:
     """Slices at the cap that ``width`` of window still needs."""
 
@@ -1342,13 +1360,16 @@ def walk_matching_activity_page(
             "invalid_cursor", "User ordering changed; restart pagination."
         )
     builder.walk_witness = witness
+    fingerprint = witness_fingerprint(witness)
     open_instant = False
     if cursor_order is None:
         last_key, last_id, coverage = None, None, window_end
     else:
         if (
-            len(cursor_order) not in (4, 5)
+            len(cursor_order) not in (5, 6)
             or cursor_order[0] != USER_LIST_MATCHING_CURSOR_ORDER
+            # Keys and coverage of another leaf: never read as this one's.
+            or cursor_order[4] != fingerprint
         ):
             raise ListCursorError(
                 "invalid_cursor", "User ordering changed; restart pagination."
@@ -1356,11 +1377,11 @@ def walk_matching_activity_page(
         last_key = _utc(cursor_order[1])
         last_id = str(cursor_order[2]) if cursor_order[2] is not None else None
         coverage = _utc(cursor_order[3])
-        open_instant = len(cursor_order) == 5 and cursor_order[4] is True
+        open_instant = len(cursor_order) == 6 and cursor_order[5] is True
         if (
             coverage is None
             or (last_key is None) != (last_id is None)
-            or (len(cursor_order) == 5 and not open_instant)
+            or (len(cursor_order) == 6 and not open_instant)
         ):
             raise ListCursorError(
                 "invalid_cursor", "User ordering changed; restart pagination."
@@ -1528,7 +1549,13 @@ def walk_matching_activity_page(
         position = _instant_position(state) if state.instant is not None else None
         if position is not None:
             last_key, last_id = state.instant, position
-        checkpoint = (USER_LIST_MATCHING_CURSOR_ORDER, last_key, last_id, next_coverage)
+        checkpoint = (
+            USER_LIST_MATCHING_CURSOR_ORDER,
+            last_key,
+            last_id,
+            next_coverage,
+            fingerprint,
+        )
         # An instant left undecided resumes by deciding the instant below
         # ``coverage`` in resolved order, and so does a walk its budget
         # stopped where a raw restart would find the same users again: at

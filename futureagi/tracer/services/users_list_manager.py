@@ -1312,7 +1312,11 @@ class UsersListManager:
         """Whether this page walks newest matching activity instead of seeding.
 
         The witness is chosen here, once, and stored for the walk
-        (``_walk_witness``); precedence is a function of the filters alone:
+        (``_walk_witness``); precedence is a function of the filters as the
+        signed cursor binds them (``canonical_filter_leaf``), never of their
+        order in the request, and the walk binds the chosen witness into its
+        cursor, so a continuation can never read one leaf's keys as
+        another's:
 
         1. The raw attribute witness, when the walk accepts it: it is the
            ONLY filter item on its key and either (text) the manager
@@ -1325,10 +1329,10 @@ class UsersListManager:
            predicate, and the exact-text values of a key are the union of
            all its items. A raw witness is served by the deployed blooms, so
            it wins whenever it is accepted.
-        2. Otherwise the first native leaf, by filter index, whose graph
-           condition has an existence term
-           (``native_matching_activity_witness``); its order key is its own
-           newest match, so two leaves on its column need no special rule.
+        2. Otherwise the native leaf whose graph condition has an existence
+           term with the least identity (``native_matching_activity_witness``);
+           its order key is its own newest match, so two leaves on its column
+           need no special rule.
         3. Otherwise no walk: every other filter shape keeps its path.
 
         Sets the typed predicate the certification reads when a typed raw

@@ -9,6 +9,7 @@ so each guard can see which statement decided what.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -22,6 +23,7 @@ from tracer.services import users_matching_walk as walk
 from tracer.services.clickhouse.list_cursor import (
     ListCursor,
     ListCursorError,
+    canonical_filter_leaf,
     decode_list_cursor,
     encode_list_cursor,
 )
@@ -61,6 +63,35 @@ class World:
         self.users: dict[str, dict] = {}
         self.raw: list[tuple[datetime, str]] = []
         self.canonical: dict[str, str] = {}
+        # Native leaves with answers of their own, keyed by the value their
+        # compiled predicate binds (lower-cased): the physical rows their flag
+        # holds, each user's newest latest live match and whole-window
+        # decision (``native_leaf``). A native leaf with no entry answers from
+        # ``raw``, ``key`` and ``native`` above, as every leaf did before.
+        self.leaves: dict[str, dict] = {}
+
+    def native_leaf(
+        self,
+        value: str,
+        members: dict[str, tuple[datetime | None, bool]],
+        rows: list[tuple[datetime, str]] | None = None,
+    ) -> None:
+        """A native leaf of its own: ``members`` maps a user to ``(key, decision)``.
+
+        ``rows`` are the physical rows its flag holds (stale versions
+        included), by the raw id that carries each; by default one row at each
+        user's key.
+        """
+
+        self.leaves[value.lower()] = {
+            "keys": {uid: key for uid, (key, _decided) in members.items()},
+            "decisions": {uid: decided for uid, (_key, decided) in members.items()},
+            "raw": list(
+                rows
+                if rows is not None
+                else [(key, uid) for uid, (key, _d) in members.items() if key]
+            ),
+        }
 
     def user(
         self,
@@ -197,11 +228,24 @@ class Engine:
             return self._native(query, params)
         return self._replay(params)
 
+    def _leaf(self, params, prefix: str = "native_leaf_") -> dict | None:
+        """The world's own leaf whose value a statement binds under ``prefix``."""
+
+        for name, value in params.items():
+            if (
+                name.startswith(prefix)
+                and isinstance(value, str)
+                and value.lower() in self.world.leaves
+            ):
+                return self.world.leaves[value.lower()]
+        return None
+
     def _witnessed(self, params, ranges):
         low, high = _from_us(params["slice_start_us"]), _from_us(params["slice_end_us"])
         ranges.append((low, high))
         groups: dict[str, datetime] = {}
-        for moment, raw_id in self.world.raw:
+        leaf = self._leaf(params)
+        for moment, raw_id in leaf["raw"] if leaf is not None else self.world.raw:
             if low <= moment < high:
                 groups[raw_id] = max(groups.get(raw_id, moment), moment)
         return groups
@@ -318,15 +362,27 @@ class Engine:
         leaves = re.findall(r"AS (native_leaf_\d+)(?![_\d])", query)
         newest = re.findall(r"AS (native_leaf_\d+_newest)(?![_\d])", query)
         self.native_ids.append(tuple(params["candidate_end_user_ids"]))
-        data = [
-            {
-                "end_user_id": uid,
-                **dict.fromkeys(leaves, int(self.world.users[uid]["native"])),
-                **dict.fromkeys(newest, self.world.users[uid]["key"] or EPOCH),
-            }
-            for uid in params["candidate_end_user_ids"]
-            if self.world.users[uid]["native"] is not None
-        ]
+        # A leaf of its own answers from its own decisions and keys.
+        own = {
+            alias: self._leaf(params, prefix=alias.removesuffix("_newest") + "_")
+            for alias in (*leaves, *newest)
+        }
+        data = []
+        for uid in params["candidate_end_user_ids"]:
+            user = self.world.users[uid]
+            if user["native"] is None:
+                continue
+            row = {"end_user_id": uid}
+            for alias in leaves:
+                leaf = own[alias]
+                row[alias] = int(
+                    leaf["decisions"].get(uid, False) if leaf else user["native"]
+                )
+            for alias in newest:
+                leaf = own[alias]
+                key = leaf["keys"].get(uid) if leaf else user["key"]
+                row[alias] = key or EPOCH
+            data.append(row)
         return SimpleNamespace(data=data, query_time_ms=1.0)
 
     def _replay(self, params):
@@ -729,18 +785,24 @@ def test_a_native_witness_certifies_its_negation_over_the_whole_window():
             ],
             ("native", "model", 2),
         ),
-        # Native leaves only: the lowest eligible index.
+        # Native leaves only: the least identity, not the lowest index.
         (
             [
                 _native_leaf("model", "is_null", None),
                 _native_status_leaf(),
                 _native_leaf(),
             ],
-            ("native", "status", 2),
+            ("native", "model", 3),
         ),
         ([_native_leaf("model", "is_null", None)], None),
     ],
-    ids=["raw-wins", "raw-declined", "raw-unwalkable", "lowest-native", "absence-only"],
+    ids=[
+        "raw-wins",
+        "raw-declined",
+        "raw-unwalkable",
+        "least-identity-native",
+        "absence-only",
+    ],
 )
 def test_the_walk_witness_precedence(filters, expected):
     manager = _manager([*_date_only(), *filters])
@@ -760,6 +822,143 @@ def test_the_walk_witness_precedence(filters, expected):
         leaf_index,
     )
     assert witness.index_pruned is (family == "raw")
+
+
+def _raw_leaf(key, operation, value=None):
+    config = {"filter_type": "text", "filter_op": operation}
+    if value is not None:
+        config["filter_value"] = value
+    return _attribute_filter(column_id=key, **config)
+
+
+def _chosen_witness(filters):
+    manager = _manager([*_date_only(), *filters])
+    builder = UserListQueryBuilderV2(
+        organization_id=ORG, project_ids=[PROJECT], filters=manager.filters
+    )
+    assert manager.matching_activity_walk_applies(builder) is True
+    return manager, manager._walk_witness
+
+
+@pytest.mark.parametrize(
+    "leaves",
+    [
+        [_native_leaf(), _native_status_leaf(), _native_leaf("model", "is_null", None)],
+        # The review's case: the first raw leaf in one order is declined (two
+        # items on its key), the other order leads with an accepted one.
+        [
+            _raw_leaf("tag", "equals", "gold"),
+            _raw_leaf("tag", "is_not_null"),
+            _raw_leaf("plan", "equals", "pro"),
+            _native_status_leaf(),
+        ],
+        [_raw_leaf("tag", "equals", "gold"), _raw_leaf("plan", "equals", "pro")],
+    ],
+    ids=["native+native", "raw-declined+raw+native", "raw+raw"],
+)
+def test_the_witness_is_one_leaf_whatever_the_request_order(leaves):
+    # The signed cursor binds the filters without their order, so every
+    # order it admits must discover on, and key by, the same leaf.
+    chosen = set()
+    for order in itertools.permutations(leaves):
+        manager, witness = _chosen_witness(list(order))
+        chosen.add(
+            (
+                witness.family,
+                witness.key,
+                witness.identity,
+                walk.witness_fingerprint(witness),
+            )
+        )
+        assert witness.identity
+        if witness.family == "native":
+            # ``leaf_index`` is only where the leaf sits in this request.
+            leaf = manager.filters[witness.leaf_index]
+            assert canonical_filter_leaf(leaf) == witness.identity
+    assert len(chosen) == 1, chosen
+
+
+def _two_leaf_world() -> tuple[World, list[str]]:
+    """Four users matching ``model = gpt-4o`` AND ``status = error``.
+
+    Each leaf has its own newest match per user, in different orders: by
+    model U1 > U2 > U3 > U4, by status U4 > U2 > U3 > U1 (the review's
+    counterexample, in minutes before the window's end).
+    """
+
+    world = World()
+    model = {1: 60, 2: 50, 3: 40, 4: 20}
+    status = {1: 10, 2: 55, 3: 40, 4: 58}
+    uids = {}
+    for ordinal in (1, 2, 3, 4):
+        key = WINDOW_END - timedelta(hours=24) + timedelta(minutes=model[ordinal])
+        uids[ordinal] = world.user(ordinal, key=key, raw=(key,), native=True)
+    world.native_leaf(
+        "error",
+        {
+            uids[n]: (
+                WINDOW_END - timedelta(hours=24) + timedelta(minutes=status[n]),
+                True,
+            )
+            for n in uids
+        },
+    )
+    return world, ["user-1", "user-2", "user-3", "user-4"]
+
+
+def test_a_cursor_followed_with_the_filters_reordered_publishes_each_user_once():
+    # The review's reproduction: page 1 asked with model first, the rest with
+    # status first. Before the witness was ranked on the leaf as the cursor
+    # binds it, the second order walked status with model's keys and
+    # coverage: ['user-1', 'user-3', 'user-1'], user-2 and user-4 never.
+    world, expected = _two_leaf_world()
+    model_first = [*_date_only(), _native_leaf(), _native_status_leaf("error")]
+    status_first = [*_date_only(), _native_status_leaf("error"), _native_leaf()]
+    read, _engine = _page(world, page_size=1, filters=model_first)
+    names = _names(read)
+    for _hop in range(8):
+        if not read.has_more:
+            break
+        read, _engine = _page(
+            world, page_size=1, filters=status_first, cursor=_signed_cursor(read)
+        )
+        names.extend(_names(read))
+    assert names == expected
+
+
+def test_a_cursor_minted_on_another_witness_is_refused_not_misread():
+    # A pod whose precedence chose the status leaf minted this cursor. This
+    # pod chooses the model leaf for the same filters: the cursor's keys and
+    # coverage are status's, so it restarts instead of misreading them.
+    world, _expected = _two_leaf_world()
+    filters = [*_date_only(), _native_leaf(), _native_status_leaf("error")]
+    witnesses = UserListQueryBuilderV2(
+        organization_id=ORG, project_ids=[PROJECT], filters=filters
+    )._native_user_witnesses()
+    status = next(w for w in witnesses if w.key == "status")
+    with patch.object(
+        UserListQueryBuilderV2, "native_matching_activity_witness", return_value=status
+    ):
+        read, _engine = _page(world, page_size=1, filters=filters)
+    assert _names(read) == ["user-4"]
+    with pytest.raises(ListCursorError) as raised:
+        _page(world, page_size=1, filters=filters, cursor=_signed_cursor(read))
+    assert raised.value.code == "invalid_cursor"
+
+
+def test_a_v1_matching_cursor_restarts():
+    # v1 cursors named no witness and chose native ones by request position.
+    world, _expected = _two_leaf_world()
+    filters = [*_date_only(), _native_leaf(), _native_status_leaf("error")]
+    cursor = ListCursor(
+        window_start=WINDOW_START,
+        window_end=WINDOW_END,
+        order=("matching_activity_users_v1", None, None, WINDOW_END),
+        seen_rows=0,
+    )
+    with pytest.raises(ListCursorError) as raised:
+        _page(world, page_size=1, filters=filters, cursor=cursor)
+    assert raised.value.code == "invalid_cursor"
 
 
 def test_sort_params_never_walk_a_native_leaf():
@@ -1115,7 +1314,7 @@ def test_a_tie_that_outlasts_the_budget_below_one_slice_resumes_in_the_instant()
     with patch.object(walk, "_enrichment_statement_count", return_value=4):
         first, _engine = _page(world, page_size=25)
         assert first.payload["table"] == [] and first.has_more is True
-        assert first.checkpoint_order[4] is True
+        assert first.checkpoint_order[5] is True
         names, _counts, _engines = _walk_every_page(
             world, max_hops=8, cursor=_signed_cursor(first)
         )
@@ -1145,7 +1344,7 @@ def test_a_tied_cohort_inside_one_request_keeps_the_raw_slice_path():
     read, engine = _page(world, page_size=25)
     assert _names(read) == expected[:25]
     assert "instant" not in _kinds(engine)
-    assert len(read.checkpoint_order) == 4
+    assert len(read.checkpoint_order) == 5
 
     names, _counts, _engines = _walk_every_page(world, max_hops=9)
     assert names == expected
@@ -1229,17 +1428,18 @@ def test_stale_witnesses_at_a_tied_instant_publish_at_their_own_key_or_never():
     assert not {f"user-{n}" for n in never} & set(names)
 
 
-def test_a_legacy_four_element_cursor_inside_a_tie_still_resumes_exactly():
-    """A cursor issued before the open-instant flag decodes and behaves as before.
+def test_a_cursor_that_leaves_the_instant_closed_inside_a_tie_still_resumes_exactly():
+    """A cursor without the open-instant flag decodes and behaves as before.
 
-    It names only coverage and the last published user, so the request starts
-    with a raw slice from coverage as before; that slice's tie then opens the
-    instant below the last published user, and the walk finishes the cohort.
+    It names only coverage, the last published user and the witness, so the
+    request starts with a raw slice from coverage as before; that slice's tie
+    then opens the instant below the last published user, and the walk
+    finishes the cohort.
     """
     world, expected = _tied_world(601)
     first, _engine = _page(world, page_size=25)
     assert _names(first) == expected[:25]
-    legacy = first.checkpoint_order[:4]
+    legacy = first.checkpoint_order[:5]
     assert legacy[1:3] == (
         world.users[str(uuid.UUID(int=1000 + 577))]["key"],
         str(uuid.UUID(int=1000 + 577)),
@@ -1256,10 +1456,28 @@ def test_a_legacy_four_element_cursor_inside_a_tie_still_resumes_exactly():
     assert _names(first) + names == expected
 
 
+def _fingerprint(filters=None) -> str:
+    """The fingerprint of the witness the page of ``filters`` walks on."""
+
+    manager = _manager(filters)
+    builder = UserListQueryBuilderV2(
+        organization_id=ORG, project_ids=[PROJECT], filters=manager.filters
+    )
+    assert manager.matching_activity_walk_applies(builder) is True
+    return walk.witness_fingerprint(manager._walk_witness)
+
+
 @pytest.mark.parametrize("flag", [False, None, "true", 1])
-def test_a_five_element_cursor_must_say_the_instant_is_open(flag):
+def test_a_six_element_cursor_must_say_the_instant_is_open(flag):
     world, _expected = _tied_world(3)
-    order = (walk.USER_LIST_MATCHING_CURSOR_ORDER, None, None, WINDOW_END, flag)
+    order = (
+        walk.USER_LIST_MATCHING_CURSOR_ORDER,
+        None,
+        None,
+        WINDOW_END,
+        _fingerprint(),
+        flag,
+    )
     cursor = ListCursor(
         window_start=WINDOW_START, window_end=WINDOW_END, order=order, seen_rows=0
     )
