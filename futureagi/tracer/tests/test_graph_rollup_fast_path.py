@@ -1,16 +1,47 @@
 from __future__ import annotations
 
 from datetime import datetime
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
-from clickhouse_driver.errors import NetworkError
+from clickhouse_connect.driver.exceptions import (
+    DatabaseError as ClickHouseConnectDatabaseError,
+)
+from clickhouse_driver.errors import ErrorCodes, NetworkError, ServerException
 from django.conf import settings as django_settings
 
 from tracer.services.clickhouse import exact_graph_reads, graph_dispatch
+from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
 from tracer.services.clickhouse.session_graph import fetch_session_graph_ch
 
 PROJECT_ID = "22222222-2222-4222-8222-222222222222"
+
+
+@pytest.fixture(autouse=True)
+def _cost_probe_gets_an_answer(monkeypatch):
+    """Let this module test the STATEMENTS, not the routing decision.
+
+    Every fake here answers `execute_ch_query` with a generic graph-shaped
+    ``Mock``, which is not an ``EXPLAIN ESTIMATE`` result, so the cost probe
+    reads "unknown" - and an unknown cost is deliberately no longer a licence
+    to issue the read inline, so without this every filtered case below would
+    route to the background lane and stop exercising any SQL at all.
+
+    The probe is still ISSUED through the same analytics object: statement
+    counts, timeouts and deadline calls stay exactly what the product does.
+    Only the answer is supplied, and only as an affordable one. The gate's own
+    behaviour - including what an unanswerable probe must do - is pinned in
+    ``test_graph_read_cost_gate.py``.
+    """
+
+    real_estimate = graph_dispatch.estimate_raw_graph_scan_rows
+
+    def _affordable(**kwargs):
+        real_estimate(**kwargs)
+        return 1_000_000
+
+    monkeypatch.setattr(graph_dispatch, "estimate_raw_graph_scan_rows", _affordable)
 
 
 def _date_filter(start: str, end: str) -> dict:
@@ -156,10 +187,13 @@ def test_trace_primary_date_only_uses_one_interactive_rollup_query(
     analytics.execute_ch_query.assert_called_once()
     call = analytics.execute_ch_query.call_args
     query = call.args[0]
-    assert "FROM spans_hourly_rollup" in query
-    assert "FROM spans\n" not in query
+    assert "spans_hourly_rollup" not in query
+    assert "FROM spans\n" in query
+    assert "countState() AS n" in query
+    assert "countMerge(n) AS traffic_count" in query
     assert "trace_session_id_remap" not in query
-    assert "countIfMerge(error_count)" in query
+    assert "countMergeIf(n, status = 'ERROR')" in query
+    assert "countIfMerge(error_count)" not in query
     assert "countMerge(error_count)" not in query
     assert (
         0
@@ -387,6 +421,527 @@ def test_selective_scalar_witness_adds_cost_gated_trace_seed(monkeypatch):
 
 
 @pytest.mark.unit
+def test_single_node_install_seeds_the_filtered_trace_graph(monkeypatch):
+    monkeypatch.setattr(
+        graph_dispatch.settings,
+        "DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER",
+        "",
+    )
+    analytics = mock.Mock()
+    analytics.execute_ch_query.side_effect = [
+        mock.Mock(data=[{"rows": 1_600_000, "marks": 259}], columns=[]),
+        _empty_graph_query_result(),
+    ]
+    filters = [
+        _date_filter("2026-07-01T00:00:00Z", "2026-08-01T00:00:00Z"),
+        _span_attribute_filter("account_id", filter_type="text", value="acct-1"),
+    ]
+
+    response = graph_dispatch._fetch_direct_raw_system_metric_graph(
+        analytics=analytics,
+        project_id=PROJECT_ID,
+        filters=filters,
+        interval="day",
+        metric_id="latency",
+        observe_type="trace",
+        timeout_ms=30_000,
+    )
+
+    assert analytics.execute_ch_query.call_count == 2
+    estimate_call, graph_call = analytics.execute_ch_query.call_args_list
+    assert "EXPLAIN ESTIMATE" in estimate_call.args[0]
+    graph_query = graph_call.args[0]
+    assert "trace_id IN (" in graph_query
+    assert "GLOBAL IN" not in graph_query
+    assert "cluster(" not in graph_query
+    # The seed prunes candidates; the outer read still classifies each one.
+    assert "graph_match_0 = 1" in graph_query
+    assert "FINAL" not in graph_query.upper()
+    assert response["query_count"] == 2
+
+
+@pytest.mark.unit
+def test_single_node_dense_witness_keeps_one_pass_trace_query(monkeypatch):
+    monkeypatch.setattr(
+        graph_dispatch.settings,
+        "DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER",
+        "",
+    )
+    analytics = mock.Mock()
+    analytics.execute_ch_query.side_effect = [
+        mock.Mock(data=[{"rows": 106_000_000, "marks": 14_612}], columns=[]),
+        _empty_graph_query_result(),
+    ]
+    filters = [
+        _date_filter("2026-07-01T00:00:00Z", "2026-08-01T00:00:00Z"),
+        _span_attribute_filter("prompt_slug", filter_type="text", value="summary"),
+    ]
+
+    response = graph_dispatch._fetch_direct_raw_system_metric_graph(
+        analytics=analytics,
+        project_id=PROJECT_ID,
+        filters=filters,
+        interval="day",
+        metric_id="latency",
+        observe_type="trace",
+        timeout_ms=30_000,
+    )
+
+    assert analytics.execute_ch_query.call_count == 2
+    assert "trace_id IN (" not in analytics.execute_ch_query.call_args_list[1].args[0]
+    assert response["query_count"] == 2
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "code",
+    [
+        ErrorCodes.NOT_FOUND_COLUMN_IN_BLOCK,
+        ErrorCodes.ILLEGAL_TYPE_OF_ARGUMENT,
+        ErrorCodes.UNKNOWN_IDENTIFIER,
+        ErrorCodes.TYPE_MISMATCH,
+        ErrorCodes.NO_COMMON_TYPE,
+    ],
+)
+def test_seed_probe_failure_degrades_to_the_unseeded_graph(monkeypatch, code):
+    """A failed probe means "no candidate", never a failed graph request.
+
+    None of these codes is classified as a read-budget or transport failure,
+    so anything narrower than a blanket swallow would propagate them out of a
+    request that returns a correct result with no probe at all.
+    """
+    monkeypatch.setattr(
+        graph_dispatch.settings,
+        "DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER",
+        "",
+    )
+    analytics = mock.Mock()
+    analytics.execute_ch_query.side_effect = [
+        ServerException("probe diagnostic", code=code),
+        _empty_graph_query_result(),
+    ]
+    filters = [
+        _date_filter("2026-07-01T00:00:00Z", "2026-08-01T00:00:00Z"),
+        _span_attribute_filter("account_id", filter_type="text", value="acct-1"),
+    ]
+
+    response = graph_dispatch._fetch_direct_raw_system_metric_graph(
+        analytics=analytics,
+        project_id=PROJECT_ID,
+        filters=filters,
+        interval="day",
+        metric_id="latency",
+        observe_type="trace",
+        timeout_ms=30_000,
+    )
+
+    assert analytics.execute_ch_query.call_count == 2
+    probe_call, graph_call = analytics.execute_ch_query.call_args_list
+    assert "EXPLAIN ESTIMATE" in probe_call.args[0]
+    graph_query = graph_call.args[0]
+    assert "EXPLAIN ESTIMATE" not in graph_query
+    assert "trace_id IN (" not in graph_query
+    assert "GLOBAL IN" not in graph_query
+    assert "graph_match_0 = 1" in graph_query
+    assert response["query_complete"] is True
+    assert response["query_status"] == "complete"
+    assert response["query_count"] == 2
+
+
+def _seed_probe_graph_filters() -> list[dict]:
+    return [
+        _date_filter("2026-07-01T00:00:00Z", "2026-08-01T00:00:00Z"),
+        _span_attribute_filter("account_id", filter_type="text", value="acct-1"),
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "probe_error",
+    [
+        ServerException("probe diagnostic", code=ErrorCodes.TYPE_MISMATCH),
+        NetworkError("probe transport"),
+        ReadDeadlineExceeded("read deadline exceeded"),
+        ClickHouseConnectDatabaseError("Code: 53. probe diagnostic"),
+        # What the native reader raises when the server closes the socket
+        # mid-response: not an OSError, and not wrapped by the driver.
+        EOFError("Unexpected EOF while reading bytes"),
+    ],
+    ids=lambda exc: type(exc).__name__,
+)
+def test_seed_probe_failure_is_logged_with_its_traceback(monkeypatch, probe_error):
+    """An absorbed probe failure still degrades, but never silently."""
+    monkeypatch.setattr(
+        graph_dispatch.settings,
+        "DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER",
+        "",
+    )
+    warning_calls = []
+    monkeypatch.setattr(
+        graph_dispatch,
+        "logger",
+        SimpleNamespace(
+            warning=lambda *args, **kwargs: warning_calls.append((args, kwargs))
+        ),
+    )
+    analytics = mock.Mock()
+    analytics.execute_ch_query.side_effect = [
+        probe_error,
+        _empty_graph_query_result(),
+    ]
+
+    response = graph_dispatch._fetch_direct_raw_system_metric_graph(
+        analytics=analytics,
+        project_id=PROJECT_ID,
+        filters=_seed_probe_graph_filters(),
+        interval="day",
+        metric_id="latency",
+        observe_type="trace",
+        timeout_ms=30_000,
+    )
+
+    assert analytics.execute_ch_query.call_count == 2
+    assert "trace_id IN (" not in analytics.execute_ch_query.call_args_list[1].args[0]
+    assert response["query_status"] == "complete"
+    assert len(warning_calls) == 1
+    assert warning_calls[0][0] == ("graph_seed_probe_degraded",)
+    assert warning_calls[0][1]["exc_info"] is True
+    assert warning_calls[0][1]["error_type"] == type(probe_error).__name__
+    assert warning_calls[0][1]["probe_index"] == 1
+
+
+@pytest.mark.unit
+def test_seed_probe_defect_is_not_absorbed_as_an_unanswered_probe(monkeypatch):
+    """A failure no ClickHouse probe can raise is a defect and propagates."""
+    monkeypatch.setattr(
+        graph_dispatch.settings,
+        "DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER",
+        "",
+    )
+    analytics = mock.Mock()
+    analytics.execute_ch_query.side_effect = [
+        RuntimeError("probe defect"),
+        _empty_graph_query_result(),
+    ]
+
+    with pytest.raises(RuntimeError, match="probe defect"):
+        graph_dispatch._fetch_direct_raw_system_metric_graph(
+            analytics=analytics,
+            project_id=PROJECT_ID,
+            filters=_seed_probe_graph_filters(),
+            interval="day",
+            metric_id="latency",
+            observe_type="trace",
+            timeout_ms=30_000,
+        )
+    assert analytics.execute_ch_query.call_count == 1
+
+
+@pytest.mark.unit
+def test_seed_probe_leaves_the_main_read_a_wall_floor(monkeypatch):
+    """An overrunning probe cannot cut the graph statement to a 1 ms wall."""
+    monkeypatch.setattr(
+        graph_dispatch.settings,
+        "DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER",
+        "",
+    )
+    clock = [1_000.0]
+    monkeypatch.setattr(graph_dispatch, "monotonic", lambda: clock[0])
+    analytics = mock.Mock()
+
+    def _overrunning_probe(query, params, **kwargs):
+        if "EXPLAIN ESTIMATE" in query:
+            clock[0] += 31.0
+            return mock.Mock(data=[], columns=[])
+        return _empty_graph_query_result()
+
+    analytics.execute_ch_query.side_effect = _overrunning_probe
+    filters = [
+        _date_filter("2026-07-01T00:00:00Z", "2026-08-01T00:00:00Z"),
+        _span_attribute_filter("account_id", filter_type="text", value="acct-1"),
+    ]
+
+    response = graph_dispatch._fetch_direct_raw_system_metric_graph(
+        analytics=analytics,
+        project_id=PROJECT_ID,
+        filters=filters,
+        interval="day",
+        metric_id="latency",
+        observe_type="trace",
+        timeout_ms=30_000,
+    )
+
+    assert analytics.execute_ch_query.call_count == 2
+    graph_call = analytics.execute_ch_query.call_args_list[1]
+    # 30 s wall minus the 2.5 s probe budget: the floor is stated, not the
+    # leftover of whatever the probe actually spent.
+    assert graph_call.kwargs["timeout_ms"] == 27_500
+    assert "trace_id IN (" not in graph_call.args[0]
+    assert response["query_count"] == 2
+
+
+def _prior_release_probe_grants(
+    timeout_ms: int,
+    probe_cost_ms: int,
+    candidates: int,
+) -> list[int]:
+    """The probe schedule this surface ran wherever the seed was already live.
+
+    Transcribed from the pre-ungate release: a total budget of
+    ``min(2500, wall - 25)`` ms, a probe launched while at least 100 ms of that
+    budget is left, and a per-probe grant of ``min(1500, remaining)``. The
+    oracle is written out here on purpose - deriving it from the production
+    constants would make the test agree with whatever the code does.
+    """
+
+    budget_ms = max(0, min(2_500, timeout_ms - 25))
+    if budget_ms < 100:
+        return []
+    grants: list[int] = []
+    elapsed_ms = 0
+    for _ in range(candidates):
+        remaining_ms = budget_ms - elapsed_ms
+        if remaining_ms < 100:
+            break
+        grants.append(min(1_500, remaining_ms))
+        elapsed_ms += probe_cost_ms
+    return grants
+
+
+_SELECTIVE_ESTIMATE = {"rows": 1_600_000, "marks": 259}
+_DENSE_ESTIMATE = {"rows": 106_000_000, "marks": 14_612}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "timeout_ms,probe_cost_ms,estimates,expected_grants",
+    [
+        # A: three candidates, 600 ms probes, only the third selective.
+        (
+            30_000,
+            600,
+            [_DENSE_ESTIMATE, _DENSE_ESTIMATE, _SELECTIVE_ESTIMATE],
+            [1_500, 1_500, 1_300],
+        ),
+        # B: a wall short enough that a tenth of it would disable the probe.
+        (900, 0, [_SELECTIVE_ESTIMATE], [875]),
+        (30_000, 0, [_SELECTIVE_ESTIMATE], [1_500]),
+        (5_000, 0, [_SELECTIVE_ESTIMATE], [1_500]),
+        # A probe that ignores its grant and spends the whole wall: this path
+        # still hands the graph statement the bare remainder, the way the
+        # prior release did. It is the single-node floor, not this one, that
+        # turns that 1 ms into 27,500 ms.
+        (30_000, 31_000, [_SELECTIVE_ESTIMATE], [1_500]),
+    ],
+)
+def test_cluster_env_keeps_the_prior_release_probe_schedule(
+    monkeypatch,
+    timeout_ms,
+    probe_cost_ms,
+    estimates,
+    expected_grants,
+):
+    """Un-gating the seed may not move the read where the seed was already live.
+
+    With the shard cluster set this surface probed before this change, so the
+    schedule, the per-probe grant and the graph statement's requested timeout
+    must stay exactly what that install runs today: no whole-cap launch rule
+    (which would drop a third-candidate seed) and no wall floor (which would
+    change a kwarg the install already receives).
+    """
+    monkeypatch.setattr(
+        graph_dispatch.settings,
+        "DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER",
+        "all-sharded",
+    )
+    clock = [1_000.0]
+    monkeypatch.setattr(graph_dispatch, "monotonic", lambda: clock[0])
+    analytics = mock.Mock()
+    remaining_estimates = list(estimates)
+
+    def _probe(query, params, **kwargs):
+        if "EXPLAIN ESTIMATE" in query:
+            clock[0] += probe_cost_ms / 1000
+            row = remaining_estimates.pop(0) if remaining_estimates else _DENSE_ESTIMATE
+            return mock.Mock(data=[row], columns=["rows", "marks"])
+        return _empty_graph_query_result()
+
+    analytics.execute_ch_query.side_effect = _probe
+    filters = [
+        _date_filter("2026-07-01T00:00:00Z", "2026-08-01T00:00:00Z"),
+        *[
+            _span_attribute_filter(f"attr_{index}", filter_type="text", value="value")
+            for index in range(len(estimates))
+        ],
+    ]
+
+    response = graph_dispatch._fetch_direct_raw_system_metric_graph(
+        analytics=analytics,
+        project_id=PROJECT_ID,
+        filters=filters,
+        interval="day",
+        metric_id="latency",
+        observe_type="trace",
+        timeout_ms=timeout_ms,
+    )
+
+    calls = analytics.execute_ch_query.call_args_list
+    probe_calls = [call for call in calls if "EXPLAIN ESTIMATE" in call.args[0]]
+    assert [call.kwargs["timeout_ms"] for call in probe_calls] == expected_grants
+    assert expected_grants == _prior_release_probe_grants(
+        timeout_ms,
+        probe_cost_ms,
+        len(estimates),
+    )
+    graph_call = calls[-1]
+    # The selective candidate is the last probed one in every case above, so
+    # the seed is admitted and the cluster rendering is the one that ships.
+    assert "trace_id GLOBAL IN (" in graph_call.args[0]
+    assert "cluster('all-sharded'" in graph_call.args[0]
+    # The plain remainder, not a floor: the same kwarg the install gets today.
+    assert graph_call.kwargs["timeout_ms"] == max(
+        1, timeout_ms - len(expected_grants) * probe_cost_ms
+    )
+    assert response["query_count"] == len(expected_grants) + 1
+
+
+@pytest.mark.unit
+def test_single_node_probe_spend_stays_inside_the_seed_budget(monkeypatch):
+    """Honoured probe grants keep spend inside the budget, and the read keeps
+    its floor.
+
+    Six rejected candidates against probes that stop at the timeout they are
+    handed: the grants are ``min(1500, remaining)``, so the third probe is cut
+    to 500 ms and total spend lands exactly on the 2,500 ms budget. The graph
+    statement is then asked for the 27,500 ms floor rather than the leftover.
+    """
+    monkeypatch.setattr(
+        graph_dispatch.settings,
+        "DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER",
+        "",
+    )
+    clock = [1_000.0]
+    monkeypatch.setattr(graph_dispatch, "monotonic", lambda: clock[0])
+    analytics = mock.Mock()
+
+    def _honouring_dense_probe(query, params, **kwargs):
+        if "EXPLAIN ESTIMATE" in query:
+            clock[0] += min(1.0, kwargs["timeout_ms"] / 1000)
+            return mock.Mock(data=[_DENSE_ESTIMATE], columns=["rows", "marks"])
+        return _empty_graph_query_result()
+
+    analytics.execute_ch_query.side_effect = _honouring_dense_probe
+    filters = [
+        _date_filter("2026-07-01T00:00:00Z", "2026-08-01T00:00:00Z"),
+        *[
+            _span_attribute_filter(f"attr_{index}", filter_type="text", value="value")
+            for index in range(6)
+        ],
+    ]
+    started = clock[0]
+
+    response = graph_dispatch._fetch_direct_raw_system_metric_graph(
+        analytics=analytics,
+        project_id=PROJECT_ID,
+        filters=filters,
+        interval="day",
+        metric_id="latency",
+        observe_type="trace",
+        timeout_ms=30_000,
+    )
+
+    probe_calls = [
+        call
+        for call in analytics.execute_ch_query.call_args_list
+        if "EXPLAIN ESTIMATE" in call.args[0]
+    ]
+    assert [call.kwargs["timeout_ms"] for call in probe_calls] == [1_500, 1_500, 500]
+    assert (clock[0] - started) * 1000 == 2_500
+    graph_call = analytics.execute_ch_query.call_args_list[-1]
+    assert "trace_id IN (" not in graph_call.args[0]
+    # 30 s wall minus the 2.5 s budget, floored rather than 27,500 by accident:
+    # the plain remainder here is the same number, and the previous test pins
+    # the floor against a probe that ignores its grant entirely.
+    assert graph_call.kwargs["timeout_ms"] == 27_500
+    # A rejected multi-candidate shape publishes 1 + probes, not 2.
+    assert response["query_count"] == 4
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "timeout_ms,expected_probes,expected_main_timeout_ms",
+    [
+        # Below the 5,000 ms threshold the wall floor would be
+        # wall - min(2500, wall - 25), i.e. 25 ms for any wall at or under
+        # 2,525 ms. Rather than hand the real read that, the single-node path
+        # does not probe: one statement, the full wall, exactly as it read
+        # before the seed was un-gated.
+        (900, 0, 900),
+        (2_000, 0, 2_000),
+        (2_525, 0, 2_525),
+        (4_999, 0, 4_999),
+        # At and above the threshold the floor is worth having: 5,000 - 2,500.
+        (5_000, 1, 2_500),
+        (30_000, 1, 27_500),
+    ],
+)
+def test_single_node_short_walls_are_not_probed_at_all(
+    monkeypatch,
+    timeout_ms,
+    expected_probes,
+    expected_main_timeout_ms,
+):
+    """A short single-node wall keeps the whole wall instead of a 25 ms floor.
+
+    The floor is ``wall - min(2500, wall - 25)``, which collapses to 25 ms for
+    every wall at or below 2,525 ms, so on those walls an optional probe could
+    cost the real read almost everything it had. The launch threshold is the
+    safe direction: below it the read behaves exactly as it did before the
+    seed was un-gated - no probe, unseeded, the full wall - and at or above it
+    the floor is at least the probe budget itself.
+    """
+    monkeypatch.setattr(
+        graph_dispatch.settings,
+        "DASHBOARD_TRACE_REPLICA_SHARD_CLUSTER",
+        "",
+    )
+    clock = [1_000.0]
+    monkeypatch.setattr(graph_dispatch, "monotonic", lambda: clock[0])
+    analytics = mock.Mock()
+
+    def _overrunning_probe(query, params, **kwargs):
+        if "EXPLAIN ESTIMATE" in query:
+            clock[0] += 31.0
+            return mock.Mock(data=[_DENSE_ESTIMATE], columns=["rows", "marks"])
+        return _empty_graph_query_result()
+
+    analytics.execute_ch_query.side_effect = _overrunning_probe
+    filters = [
+        _date_filter("2026-07-01T00:00:00Z", "2026-08-01T00:00:00Z"),
+        _span_attribute_filter("account_id", filter_type="text", value="acct-1"),
+    ]
+
+    response = graph_dispatch._fetch_direct_raw_system_metric_graph(
+        analytics=analytics,
+        project_id=PROJECT_ID,
+        filters=filters,
+        interval="day",
+        metric_id="latency",
+        observe_type="trace",
+        timeout_ms=timeout_ms,
+    )
+
+    calls = analytics.execute_ch_query.call_args_list
+    probe_calls = [call for call in calls if "EXPLAIN ESTIMATE" in call.args[0]]
+    assert len(probe_calls) == expected_probes
+    graph_call = calls[-1]
+    assert "EXPLAIN ESTIMATE" not in graph_call.args[0]
+    assert "trace_id IN (" not in graph_call.args[0]
+    assert graph_call.kwargs["timeout_ms"] == expected_main_timeout_ms
+    assert response["query_count"] == expected_probes + 1
+
+
+@pytest.mark.unit
 def test_dense_scalar_witness_keeps_one_pass_trace_query(monkeypatch):
     monkeypatch.setattr(
         graph_dispatch.settings,
@@ -610,10 +1165,15 @@ def test_filtered_raw_graph_statement_uses_one_interactive_deadline(
         django_settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
     )
     assert len(observed_analytics) == 1
-    assert deadline.remaining_ms.call_count == 1
+    # One deadline object, and every consumer asks it rather than the clock:
+    # the routing cost probe asks twice (for its own grant, and again for what
+    # the wall has left AFTER it spent), then once more when its statement is
+    # clamped, and the read's statement once. What must not happen is a second
+    # ReadDeadline, which ``deadline_start`` above pins.
+    assert deadline.remaining_ms.call_count == 4
     assert [
         call.kwargs["timeout_ms"] for call in analytics.execute_ch_query.call_args_list
-    ] == [9_300]
+    ] == [9_300, 9_300]
     for call in analytics.execute_ch_query.call_args_list:
         read_settings = call.kwargs["settings"]
         assert "max_rows_to_read" not in read_settings
@@ -751,6 +1311,56 @@ def test_filtered_graph_budget_failure_schedules_one_heavy_read(monkeypatch):
 
 
 @pytest.mark.unit
+def test_filtered_graph_mid_response_eof_schedules_one_heavy_read(monkeypatch):
+    # #3022: the native driver raises a bare EOFError when ClickHouse closes
+    # the connection mid-response. The filtered graph degrades and schedules
+    # its exact refresh instead of re-raising it as a 500.
+    pending = {
+        "metric_name": "latency",
+        "data": [],
+        "query_complete": False,
+        "query_status": "pending",
+        "query_sampled": False,
+        "query_refreshing": True,
+    }
+    cache_calls = []
+
+    def cache_read(*args, **kwargs):
+        cache_calls.append((args, kwargs))
+        if kwargs.get("schedule_on_miss") is False:
+            return {**pending, "query_refreshing": False}
+        return pending
+
+    monkeypatch.setattr(
+        graph_dispatch,
+        "read_or_schedule_exact_snapshot",
+        cache_read,
+    )
+    monkeypatch.setattr(
+        graph_dispatch,
+        "_fetch_direct_raw_system_metric_graph",
+        mock.Mock(side_effect=EOFError("Unexpected EOF while reading bytes")),
+    )
+
+    response = graph_dispatch.fetch_system_metric_graph_ch(
+        analytics=mock.Mock(),
+        project_id=PROJECT_ID,
+        filters=[_attribute_filter()],
+        interval="day",
+        metric_id="latency",
+        observe_type="trace",
+        organization_id="33333333-3333-4333-8333-333333333333",
+        workspace_id="44444444-4444-4444-8444-444444444444",
+    )
+
+    assert response == pending
+    assert len(cache_calls) == 2
+    assert cache_calls[0][1]["schedule_on_miss"] is False
+    assert cache_calls[1][1]["schedule_on_miss"] is True
+    assert cache_calls[1][1]["refresh"] is True
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("start", "end", "requested", "effective"),
     [
@@ -825,7 +1435,8 @@ def test_trace_rollup_failure_propagates_without_exact_or_raw_fallback(monkeypat
 
     assert raised.value is failure
     exact_read.assert_not_called()
-    assert "FROM spans_hourly_rollup" in analytics.execute_ch_query.call_args.args[0]
+    assert "spans_hourly_rollup" not in analytics.execute_ch_query.call_args.args[0]
+    assert "countState() AS n" in analytics.execute_ch_query.call_args.args[0]
 
 
 @pytest.mark.unit

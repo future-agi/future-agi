@@ -21,6 +21,8 @@ Two distinct emitters were at fault:
 
 from __future__ import annotations
 
+from clickhouse_connect.driver.binding import finalize_query
+
 from tracer.services.clickhouse.query_builders.time_series import (
     TimeSeriesQueryBuilder,
 )
@@ -171,7 +173,10 @@ class TestUnicodeSafeStringEquality:
 
     def test_equals_adds_exhaustive_legacy_value_bloom(self):
         sql, params = _v2_sql(STR_EQ_FILTER)
-        assert "lowerUTF8(toString(attrs_string['session_name']))" in sql
+        assert "session_name" in params.values()
+        assert "lowerUTF8(toString(attrs_string['session_name']))" in finalize_query(
+            sql, params
+        )
         assert "arrayMap(x -> lower(x), mapValues(attrs_string))" in sql
         assert {
             value
@@ -182,7 +187,10 @@ class TestUnicodeSafeStringEquality:
 
     def test_in_adds_exhaustive_legacy_value_bloom(self):
         sql, params = _v2_sql(_with_op("in", ["Checkout Flow", "ONBOARDING"]))
-        assert "lowerUTF8(toString(attrs_string['session_name']))" in sql
+        assert "session_name" in params.values()
+        assert "lowerUTF8(toString(attrs_string['session_name']))" in finalize_query(
+            sql, params
+        )
         assert "arrayMap(x -> lower(x), mapValues(attrs_string))" in sql
         assert {
             value
@@ -201,7 +209,10 @@ class TestUnicodeSafeStringEquality:
 
         sql, params = _v2_sql(_with_op("equals", "K"))
 
-        assert "lowerUTF8(toString(attrs_string['session_name']))" in sql
+        assert "session_name" in params.values()
+        assert "lowerUTF8(toString(attrs_string['session_name']))" in finalize_query(
+            sql, params
+        )
         assert "arrayMap(x -> lower(x), mapValues(attrs_string))" in sql
         assert {
             value

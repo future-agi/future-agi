@@ -8877,8 +8877,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: true,
             schema: {
               type: "string",
-              minLength: 1,
-              maxLength: 512,
             },
           },
           refresh: {
@@ -8944,8 +8942,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              minLength: 1,
-              maxLength: 512,
             },
           },
           page_size: {
@@ -9005,8 +9001,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: true,
             schema: {
               type: "string",
-              minLength: 1,
-              maxLength: 512,
             },
           },
           q: {
@@ -31989,7 +31983,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             schema: {
               type: "string",
               minLength: 1,
-              maxLength: 1024,
+              maxLength: 4113,
             },
           },
           metric_name: {
@@ -32067,7 +32061,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             schema: {
               type: "string",
               minLength: 1,
-              maxLength: 16384,
+              maxLength: 262144,
             },
           },
           attribute_type: {
@@ -32078,6 +32072,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
             },
           },
         },
+        responses: {
+          200: {
+            $ref: "#/definitions/DashboardFilterValuesResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          422: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "tracer_dashboard_filter_values_create",
+        readQueryPost: true,
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/DashboardFilterValuesQuery",
+        },
+        queryParameters: {},
         responses: {
           200: {
             $ref: "#/definitions/DashboardFilterValuesResponse",
@@ -32218,10 +32242,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
             schema: {
               type: "string",
               minLength: 1,
-              maxLength: 16384,
+              maxLength: 262144,
             },
           },
         },
+        responses: {
+          200: {
+            $ref: "#/definitions/DashboardMetricsCatalogResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          500: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "tracer_dashboard_metrics_create",
+        readQueryPost: true,
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/DashboardMetricsCatalogQuery",
+        },
+        queryParameters: {},
         responses: {
           200: {
             $ref: "#/definitions/DashboardMetricsCatalogResponse",
@@ -35007,8 +35058,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              minLength: 1,
-              maxLength: 512,
             },
           },
         },
@@ -35228,8 +35277,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             required: false,
             schema: {
               type: "string",
-              minLength: 1,
-              maxLength: 512,
             },
           },
         },
@@ -53983,6 +54030,86 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    DashboardFilterValuesQuery: {
+      type: "object",
+      properties: {
+        property_id: {
+          title: "Property id",
+          description:
+            "Stable namespaced property identity returned by the metrics catalog. Legacy metric_name/metric_type remain accepted during migration.",
+          type: "string",
+          maxLength: 4113,
+          minLength: 1,
+        },
+        metric_name: {
+          title: "Metric name",
+          type: "string",
+          minLength: 1,
+        },
+        metric_type: {
+          title: "Metric type",
+          type: "string",
+          enum: [
+            "system_metric",
+            "eval_metric",
+            "annotation_metric",
+            "custom_attribute",
+            "custom_column",
+          ],
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          enum: [
+            "traces",
+            "spans",
+            "sessions",
+            "users",
+            "voice_calls",
+            "prompts",
+            "datasets",
+            "dataset_column",
+            "simulation",
+            "both",
+            "all",
+          ],
+          default: "traces",
+        },
+        project_ids: {
+          title: "Project ids",
+          type: "string",
+          default: "",
+        },
+        dataset_id: {
+          title: "Dataset id",
+          type: "string",
+          format: "uuid",
+        },
+        search: {
+          title: "Search",
+          type: "string",
+          default: "",
+          maxLength: 512,
+        },
+        page_size: {
+          title: "Page size",
+          type: "integer",
+          maximum: 50,
+          minimum: 1,
+        },
+        cursor: {
+          title: "Cursor",
+          type: "string",
+          maxLength: 262144,
+          minLength: 1,
+        },
+        attribute_type: {
+          title: "Attribute type",
+          type: "string",
+          enum: ["string", "number", "boolean", "array", "map", "json"],
+        },
+      },
+    },
     DashboardFilterValuesResponse: {
       required: ["result"],
       type: "object",
@@ -53996,6 +54123,100 @@ export const OPENAPI_CONTRACT = Object.freeze({
           $ref: "#/definitions/DashboardFilterValuesResult",
         },
       },
+    },
+    DashboardMetricsCatalogQuery: {
+      type: "object",
+      properties: {
+        workflow: {
+          title: "Workflow",
+          type: "string",
+          enum: ["observability", "dataset", "simulation"],
+        },
+        project_ids: {
+          title: "Project ids",
+          type: "string",
+          default: "",
+        },
+        agent_definition_id: {
+          title: "Agent definition id",
+          type: "string",
+          format: "uuid",
+        },
+        per_eval_config: {
+          title: "Per eval config",
+          type: "boolean",
+          default: false,
+        },
+        exclude_custom_attributes: {
+          title: "Exclude custom attributes",
+          type: "boolean",
+          default: false,
+        },
+        search: {
+          title: "Search",
+          type: "string",
+          default: "",
+          maxLength: 256,
+        },
+        category: {
+          title: "Category",
+          type: "string",
+          enum: [
+            "system_metric",
+            "eval_metric",
+            "annotation_metric",
+            "custom_attribute",
+            "custom_column",
+          ],
+          default: "",
+        },
+        role: {
+          title: "Role",
+          type: "string",
+          enum: ["metric", "dimension"],
+          default: "",
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          enum: [
+            "traces",
+            "spans",
+            "sessions",
+            "users",
+            "voice_calls",
+            "prompts",
+            "datasets",
+            "simulation",
+            "both",
+            "all",
+          ],
+          default: "",
+        },
+        page: {
+          title: "Page",
+          type: "integer",
+          minimum: 1,
+        },
+        page_size: {
+          title: "Page size",
+          type: "integer",
+          maximum: 200,
+          minimum: 1,
+        },
+        cursor_mode: {
+          title: "Cursor mode",
+          type: "boolean",
+          default: false,
+        },
+        cursor: {
+          title: "Cursor",
+          type: "string",
+          maxLength: 262144,
+          minLength: 1,
+        },
+      },
+      additionalProperties: false,
     },
     DashboardMetricsCatalogResponse: {
       required: ["result"],
@@ -76704,10 +76925,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           enum: ["complete", "degraded"],
         },
+        query_exact: {
+          title: "Query exact",
+          type: "boolean",
+        },
+        ordering_exact: {
+          title: "Ordering exact",
+          type: "boolean",
+        },
         query_error_code: {
           title: "Query error code",
           type: "string",
           minLength: 1,
+        },
+        query_count: {
+          title: "Query count",
+          type: "integer",
+          minimum: 0,
         },
         query_applied_filter_version: {
           title: "Query applied filter version",
@@ -84110,6 +84344,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["values"],
       type: "object",
       properties: {
+        query_exact: {
+          title: "Query exact",
+          type: "boolean",
+        },
         values: {
           type: "array",
           items: {
@@ -84118,12 +84356,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         query_complete: {
           title: "Query complete",
+          description:
+            "Whether this page read completed, not whether all source history is indexed.",
           type: "boolean",
         },
         query_status: {
           title: "Query status",
           type: "string",
-          enum: ["complete", "sampled", "degraded"],
+          enum: ["complete", "sampled", "degraded", "partial"],
         },
         query_error_code: {
           title: "Query error code",
@@ -84201,7 +84441,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         query_provenance: {
           title: "Query provenance",
           type: "string",
-          enum: ["activated_property_catalog"],
+          enum: ["activated_property_catalog", "current_property_catalog"],
         },
       },
     },
@@ -84255,7 +84495,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         next_cursor: {
           title: "Next cursor",
           type: "string",
-          maxLength: 16384,
+          maxLength: 262144,
           minLength: 1,
           "x-nullable": true,
         },
@@ -84278,6 +84518,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         query_complete: {
           title: "Query complete",
+          description:
+            "Whether this page read completed, not whether all source history is indexed.",
           type: "boolean",
         },
         query_exact: {
@@ -84287,12 +84529,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         query_status: {
           title: "Query status",
           type: "string",
-          enum: ["complete"],
+          enum: ["complete", "partial"],
         },
         query_provenance: {
           title: "Query provenance",
           type: "string",
-          enum: ["activated_property_catalog"],
+          enum: ["activated_property_catalog", "current_property_catalog"],
         },
       },
     },
@@ -98936,11 +99178,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           enum: [
             "span_user_rollup_end_users_candidate",
             "physical_latest_users",
+            "matching_activity_walk",
           ],
         },
         ordering_exact: {
           title: "Ordering exact",
           type: "boolean",
+        },
+        ordering: {
+          title: "Ordering",
+          type: "string",
+          enum: ["latest_matching_activity"],
         },
         approximate_fields: {
           type: "array",
@@ -100531,6 +100779,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/DashboardQuerySeries",
           },
+        },
+        series_total: {
+          title: "Series total",
+          type: "integer",
+          minimum: 0,
+        },
+        series_truncated: {
+          title: "Series truncated",
+          type: "boolean",
         },
         query_complete: {
           title: "Query complete",
@@ -103429,6 +103686,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Api format",
           description:
             "Gateway protocol adapter name. This intentionally remains a string because self-hosted/custom providers may register adapters outside the built-in openai/anthropic/gemini/google set.",
+          type: "string",
+          "x-nullable": true,
+        },
+        api_path_prefix: {
+          title: "Api path prefix",
           type: "string",
           "x-nullable": true,
         },
@@ -107020,6 +107282,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "integer",
           minimum: 0,
         },
+        query_exact: {
+          title: "Query exact",
+          type: "boolean",
+        },
+        ordering_exact: {
+          title: "Ordering exact",
+          type: "boolean",
+        },
       },
     },
     SpendSummaryOrg: {
@@ -107473,6 +107743,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "integer",
           minimum: 0,
         },
+        query_exact: {
+          title: "Query exact",
+          type: "boolean",
+        },
+        ordering_exact: {
+          title: "Ordering exact",
+          type: "boolean",
+        },
       },
     },
     TraceSessionListMetadata: {
@@ -107563,14 +107841,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Query exact",
           type: "boolean",
         },
+        ordering_exact: {
+          title: "Ordering exact",
+          type: "boolean",
+        },
         query_provenance: {
           title: "Query provenance",
           type: "string",
           enum: ["spans_per_session_candidate"],
-        },
-        ordering_exact: {
-          title: "Ordering exact",
-          type: "boolean",
         },
       },
     },

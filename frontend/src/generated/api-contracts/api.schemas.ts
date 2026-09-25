@@ -2620,6 +2620,7 @@ export interface GatewayConfigProviderApi {
   base_url: string;
   /** Gateway protocol adapter name. This intentionally remains a string because self-hosted/custom providers may register adapters outside the built-in openai/anthropic/gemini/google set. */
   api_format: string;
+  api_path_prefix?: string;
   models: GatewayConfigProviderApiModelsItem[];
   is_active: boolean;
   default_timeout: number;
@@ -21570,6 +21571,7 @@ export const DashboardFilterValuesResultApiQueryStatus = {
   complete: "complete",
   sampled: "sampled",
   degraded: "degraded",
+  partial: "partial",
 } as const;
 
 export type DashboardFilterValuesResultApiQueryErrorCode =
@@ -21626,10 +21628,13 @@ export type DashboardFilterValuesResultApiQueryProvenance =
 
 export const DashboardFilterValuesResultApiQueryProvenance = {
   activated_property_catalog: "activated_property_catalog",
+  current_property_catalog: "current_property_catalog",
 } as const;
 
 export interface DashboardFilterValuesResultApi {
+  query_exact?: boolean;
   values: DashboardFilterValueOptionApi[];
+  /** Whether this page read completed, not whether all source history is indexed. */
   query_complete?: boolean;
   query_status?: DashboardFilterValuesResultApiQueryStatus;
   query_error_code?: DashboardFilterValuesResultApiQueryErrorCode;
@@ -21663,6 +21668,74 @@ export interface DashboardFilterValuesResultApi {
 export interface DashboardFilterValuesResponseApi {
   status?: boolean;
   result: DashboardFilterValuesResultApi;
+}
+
+export type DashboardFilterValuesQueryApiMetricType =
+  (typeof DashboardFilterValuesQueryApiMetricType)[keyof typeof DashboardFilterValuesQueryApiMetricType];
+
+export const DashboardFilterValuesQueryApiMetricType = {
+  system_metric: "system_metric",
+  eval_metric: "eval_metric",
+  annotation_metric: "annotation_metric",
+  custom_attribute: "custom_attribute",
+  custom_column: "custom_column",
+} as const;
+
+export type DashboardFilterValuesQueryApiSource =
+  (typeof DashboardFilterValuesQueryApiSource)[keyof typeof DashboardFilterValuesQueryApiSource];
+
+export const DashboardFilterValuesQueryApiSource = {
+  traces: "traces",
+  spans: "spans",
+  sessions: "sessions",
+  users: "users",
+  voice_calls: "voice_calls",
+  prompts: "prompts",
+  datasets: "datasets",
+  dataset_column: "dataset_column",
+  simulation: "simulation",
+  both: "both",
+  all: "all",
+} as const;
+
+export type DashboardFilterValuesQueryApiAttributeType =
+  (typeof DashboardFilterValuesQueryApiAttributeType)[keyof typeof DashboardFilterValuesQueryApiAttributeType];
+
+export const DashboardFilterValuesQueryApiAttributeType = {
+  string: "string",
+  number: "number",
+  boolean: "boolean",
+  array: "array",
+  map: "map",
+  json: "json",
+} as const;
+
+export interface DashboardFilterValuesQueryApi {
+  /**
+   * Stable namespaced property identity returned by the metrics catalog. Legacy metric_name/metric_type remain accepted during migration.
+   * @minLength 1
+   * @maxLength 4113
+   */
+  property_id?: string;
+  /** @minLength 1 */
+  metric_name?: string;
+  metric_type?: DashboardFilterValuesQueryApiMetricType;
+  source?: DashboardFilterValuesQueryApiSource;
+  project_ids?: string;
+  dataset_id?: string;
+  /** @maxLength 512 */
+  search?: string;
+  /**
+   * @minimum 1
+   * @maximum 50
+   */
+  page_size?: number;
+  /**
+   * @minLength 1
+   * @maxLength 262144
+   */
+  cursor?: string;
+  attribute_type?: DashboardFilterValuesQueryApiAttributeType;
 }
 
 export type DashboardMetricCatalogItemApiPropertyKind =
@@ -21739,6 +21812,7 @@ export type DashboardMetricsCatalogResultApiQueryStatus =
 
 export const DashboardMetricsCatalogResultApiQueryStatus = {
   complete: "complete",
+  partial: "partial",
 } as const;
 
 export type DashboardMetricsCatalogResultApiQueryProvenance =
@@ -21746,6 +21820,7 @@ export type DashboardMetricsCatalogResultApiQueryProvenance =
 
 export const DashboardMetricsCatalogResultApiQueryProvenance = {
   activated_property_catalog: "activated_property_catalog",
+  current_property_catalog: "current_property_catalog",
 } as const;
 
 export type DashboardMetricsCatalogResultApiCategoryCounts = {
@@ -21769,7 +21844,7 @@ export interface DashboardMetricsCatalogResultApi {
   has_more?: boolean;
   /**
    * @minLength 1
-   * @maxLength 16384
+   * @maxLength 262144
    */
   next_cursor?: string | null;
   /**
@@ -21784,6 +21859,7 @@ export interface DashboardMetricsCatalogResultApi {
    * @pattern ^[0-9a-f]{64}$
    */
   activation_fingerprint?: string;
+  /** Whether this page read completed, not whether all source history is indexed. */
   query_complete?: boolean;
   query_exact?: boolean;
   query_status?: DashboardMetricsCatalogResultApiQueryStatus;
@@ -21793,6 +21869,76 @@ export interface DashboardMetricsCatalogResultApi {
 export interface DashboardMetricsCatalogResponseApi {
   status?: boolean;
   result: DashboardMetricsCatalogResultApi;
+}
+
+export type DashboardMetricsCatalogQueryApiWorkflow =
+  (typeof DashboardMetricsCatalogQueryApiWorkflow)[keyof typeof DashboardMetricsCatalogQueryApiWorkflow];
+
+export const DashboardMetricsCatalogQueryApiWorkflow = {
+  observability: "observability",
+  dataset: "dataset",
+  simulation: "simulation",
+} as const;
+
+export type DashboardMetricsCatalogQueryApiCategory =
+  (typeof DashboardMetricsCatalogQueryApiCategory)[keyof typeof DashboardMetricsCatalogQueryApiCategory];
+
+export const DashboardMetricsCatalogQueryApiCategory = {
+  system_metric: "system_metric",
+  eval_metric: "eval_metric",
+  annotation_metric: "annotation_metric",
+  custom_attribute: "custom_attribute",
+  custom_column: "custom_column",
+} as const;
+
+export type DashboardMetricsCatalogQueryApiRole =
+  (typeof DashboardMetricsCatalogQueryApiRole)[keyof typeof DashboardMetricsCatalogQueryApiRole];
+
+export const DashboardMetricsCatalogQueryApiRole = {
+  metric: "metric",
+  dimension: "dimension",
+} as const;
+
+export type DashboardMetricsCatalogQueryApiSource =
+  (typeof DashboardMetricsCatalogQueryApiSource)[keyof typeof DashboardMetricsCatalogQueryApiSource];
+
+export const DashboardMetricsCatalogQueryApiSource = {
+  traces: "traces",
+  spans: "spans",
+  sessions: "sessions",
+  users: "users",
+  voice_calls: "voice_calls",
+  prompts: "prompts",
+  datasets: "datasets",
+  simulation: "simulation",
+  both: "both",
+  all: "all",
+} as const;
+
+export interface DashboardMetricsCatalogQueryApi {
+  workflow?: DashboardMetricsCatalogQueryApiWorkflow;
+  project_ids?: string;
+  agent_definition_id?: string;
+  per_eval_config?: boolean;
+  exclude_custom_attributes?: boolean;
+  /** @maxLength 256 */
+  search?: string;
+  category?: DashboardMetricsCatalogQueryApiCategory;
+  role?: DashboardMetricsCatalogQueryApiRole;
+  source?: DashboardMetricsCatalogQueryApiSource;
+  /** @minimum 1 */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  page_size?: number;
+  cursor_mode?: boolean;
+  /**
+   * @minLength 1
+   * @maxLength 262144
+   */
+  cursor?: string;
 }
 
 export type DashboardQueryApiWorkflow =
@@ -22156,6 +22302,9 @@ export interface DashboardQueryMetricResultApi {
   aggregation: DashboardQueryMetricResultApiAggregation;
   unit: string;
   series: DashboardQuerySeriesApi[];
+  /** @minimum 0 */
+  series_total?: number;
+  series_truncated?: boolean;
   query_complete?: boolean;
   query_sampled?: boolean;
   query_status?: DashboardQueryMetricResultApiQueryStatus;
@@ -24936,6 +25085,8 @@ export interface SpanListMetadataApi {
   query_applied_filter_sha256?: string;
   /** @minimum 0 */
   query_applied_filter_count?: number;
+  query_exact?: boolean;
+  ordering_exact?: boolean;
 }
 
 export type SpanPrototypeListResultApiTableItem = {
@@ -26578,8 +26729,8 @@ export interface TraceSessionListMetadataApi {
   /** @minimum 0 */
   query_applied_filter_count?: number;
   query_exact?: boolean;
-  query_provenance?: TraceSessionListMetadataApiQueryProvenance;
   ordering_exact?: boolean;
+  query_provenance?: TraceSessionListMetadataApiQueryProvenance;
 }
 
 /**
@@ -26943,6 +27094,8 @@ export interface TraceObserveListMetadataApi {
   query_applied_filter_sha256?: string;
   /** @minimum 0 */
   query_applied_filter_count?: number;
+  query_exact?: boolean;
+  ordering_exact?: boolean;
 }
 
 export type TracePrototypeListResultApiTableItem = {
@@ -27078,8 +27231,12 @@ export interface TraceVoiceCallListResponseApi {
   next_cursor_fingerprint?: string | null;
   query_complete: boolean;
   query_status: TraceVoiceCallListResponseApiQueryStatus;
+  query_exact?: boolean;
+  ordering_exact?: boolean;
   /** @minLength 1 */
   query_error_code?: string;
+  /** @minimum 0 */
+  query_count?: number;
   query_applied_filter_version?: TraceVoiceCallListResponseApiQueryAppliedFilterVersion;
   /**
    * @minLength 1
@@ -27653,6 +27810,14 @@ export type UsersResultApiQueryProvenance =
 export const UsersResultApiQueryProvenance = {
   span_user_rollup_end_users_candidate: "span_user_rollup_end_users_candidate",
   physical_latest_users: "physical_latest_users",
+  matching_activity_walk: "matching_activity_walk",
+} as const;
+
+export type UsersResultApiOrdering =
+  (typeof UsersResultApiOrdering)[keyof typeof UsersResultApiOrdering];
+
+export const UsersResultApiOrdering = {
+  latest_matching_activity: "latest_matching_activity",
 } as const;
 
 export type UsersResultApiApproximateFieldsItem =
@@ -27680,6 +27845,7 @@ export interface UsersResultApi {
   query_exact?: boolean;
   query_provenance?: UsersResultApiQueryProvenance;
   ordering_exact?: boolean;
+  ordering?: UsersResultApiOrdering;
   approximate_fields?: UsersResultApiApproximateFieldsItem[];
 }
 
@@ -30198,8 +30364,7 @@ export type AgentccWebhooksList200 = {
 export type ApiTracesSpanAttributeDetailListParams = {
   project_id: string;
   /**
-   * @minLength 1
-   * @maxLength 512
+   * Nonempty exact attribute key, at most 4096 UTF-8 bytes. Whitespace, controls and case are preserved.
    */
   key: string;
   refresh?: boolean;
@@ -30213,8 +30378,7 @@ export type ApiTracesSpanAttributeKeysListParams = {
    */
   discovery_mode?: ApiTracesSpanAttributeKeysListDiscoveryMode;
   /**
-   * @minLength 1
-   * @maxLength 512
+   * Nonempty exact attribute key, at most 4096 UTF-8 bytes. Whitespace, controls and case are preserved.
    */
   q?: string;
   /**
@@ -30240,8 +30404,7 @@ export const ApiTracesSpanAttributeKeysListDiscoveryMode = {
 export type ApiTracesSpanAttributeValuesListParams = {
   project_id: string;
   /**
-   * @minLength 1
-   * @maxLength 512
+   * Nonempty exact attribute key, at most 4096 UTF-8 bytes. Whitespace, controls and case are preserved.
    */
   key: string;
   /**
@@ -32226,7 +32389,7 @@ export type TracerDashboardFilterValuesParams = {
   /**
    * Stable namespaced property identity returned by the metrics catalog. Legacy metric_name/metric_type remain accepted during migration.
    * @minLength 1
-   * @maxLength 1024
+   * @maxLength 4113
    */
   property_id?: string;
   /**
@@ -32248,7 +32411,7 @@ export type TracerDashboardFilterValuesParams = {
   page_size?: number;
   /**
    * @minLength 1
-   * @maxLength 16384
+   * @maxLength 262144
    */
   cursor?: string;
   attribute_type?: TracerDashboardFilterValuesAttributeType;
@@ -32319,7 +32482,7 @@ export type TracerDashboardMetricsParams = {
   cursor_mode?: boolean;
   /**
    * @minLength 1
-   * @maxLength 16384
+   * @maxLength 262144
    */
   cursor?: string;
 };
@@ -32763,8 +32926,7 @@ export type TracerObservationSpanGetEvalAttributesListParams = {
   filters: string;
   row_type?: TracerObservationSpanGetEvalAttributesListRowType;
   /**
-   * @minLength 1
-   * @maxLength 512
+   * Nonempty exact attribute key, at most 4096 UTF-8 bytes. Whitespace, controls and case are preserved.
    */
   q?: string;
 };
@@ -32841,8 +33003,7 @@ export type TracerObservationSpanGetSpanAttributesListParams = {
   filters: string;
   row_type?: TracerObservationSpanGetSpanAttributesListRowType;
   /**
-   * @minLength 1
-   * @maxLength 512
+   * Nonempty exact attribute key, at most 4096 UTF-8 bytes. Whitespace, controls and case are preserved.
    */
   q?: string;
 };

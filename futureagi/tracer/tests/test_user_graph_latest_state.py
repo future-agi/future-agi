@@ -67,9 +67,12 @@ def test_user_aggregate_graph_replays_latest_physical_span_versions():
     # Both the aggregate and trace-membership filter read the replayed CTE.
     assert sql.count("FROM latest_spans") >= 2
     assert "FROM latest_spans WHERE" in " ".join(sql.split())
-    assert "candidate_end_user_ids AS" in sql
     assert "eu_survivor_map AS" in sql
-    assert "OVER (PARTITION BY new_id)" not in sql
+    # The survivor map is derived from the whole (two-part) remap table. The
+    # candidate set it used to be bounded by was itself this full-window
+    # population, so bounding it cost two extra replays of the same window.
+    assert "candidate_end_user_ids AS" not in sql
+    assert "OVER (PARTITION BY new_id)" in sql
     assert params["project_id"] == PROJECT_ID
     assert params["start_date"] < params["end_date"]
 

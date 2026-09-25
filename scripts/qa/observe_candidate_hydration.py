@@ -24,9 +24,9 @@ CONTENT_KEYS = (
 
 
 def hydrate_session_queries(reader, builder, payload, *, remaining_ms):
-    """Time all three real Session hydration builders on either selector route.
+    """Time the real Session page hydration on either selector route.
 
-    This preserves their raw phase results, not public formatting/PG/Score
+    This preserves its raw phase result, not public formatting/PG/Score
     enrichment. A selection-only fallback must not earn a full-page timing.
     """
     if payload.get("query_complete") is not True:
@@ -34,15 +34,10 @@ def hydrate_session_queries(reader, builder, payload, *, remaining_ms):
     ids = [str(row["session_id"]) for row in payload.get("table", [])]
     phases = {}
     if ids:
-        for name, method in (
-            ("metrics", builder.build_page_metrics_query),
-            ("content", builder.build_content_query),
-            ("attributes", builder.build_span_attributes_query),
-        ):
-            sql, params = method(ids)
-            phases[name] = reader.execute_ch_query(
-                sql, params, timeout_ms=remaining_ms()
-            ).data
+        sql, params = builder.build_page_hydration_query(ids)
+        phases["hydration"] = reader.execute_ch_query(
+            sql, params, timeout_ms=remaining_ms()
+        ).data
     return {
         **payload,
         "query_phases": phases,

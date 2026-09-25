@@ -118,38 +118,100 @@ def test_default_page_cursor_count_dispatch_share_complete_witness(
     "first,second,typed,rank,chosen",
     [
         (leaf("first", False, "boolean"), leaf("second", 7), False, None, 1),
-        (leaf("first", True, "boolean"), leaf("second", [7, 8], op="in"), False, None, 1),
+        (
+            leaf("first", True, "boolean"),
+            leaf("second", [7, 8], op="in"),
+            False,
+            None,
+            1,
+        ),
         (leaf("first", "common", "string"), leaf("second", 7), False, None, 1),
-        (leaf("first", "common", "text"), leaf("second", [7, 8], op="in"), False, None, 1),
-        (leaf("first", "common", "text"), leaf("second", ["7", "8"], "text", "in"), True, None, 1),
+        (
+            leaf("first", "common", "text"),
+            leaf("second", [7, 8], op="in"),
+            False,
+            None,
+            1,
+        ),
+        (
+            leaf("first", "common", "text"),
+            leaf("second", ["7", "8"], "text", "in"),
+            True,
+            None,
+            1,
+        ),
         (leaf("first", "common", "text"), leaf("second", 0), False, None, 0),
-        (leaf("first", False, "boolean"), leaf("second", [0, 7], op="in"), False, None, 0),
-        (leaf("first", "common", "text"), leaf("second", ["0", "7"], "text", "in"), True, None, 0),
+        (
+            leaf("first", False, "boolean"),
+            leaf("second", [0, 7], op="in"),
+            False,
+            None,
+            0,
+        ),
+        (
+            leaf("first", "common", "text"),
+            leaf("second", ["0", "7"], "text", "in"),
+            True,
+            None,
+            0,
+        ),
         (leaf("first", "common", "text"), leaf("second", 7), False, 10, 0),
         (leaf("first", 5), leaf("second", 7), False, None, 0),
         (leaf("first", 5), leaf("second", [7, 8], op="in"), False, None, 0),
         (leaf("first", "x", "text"), leaf("second", "y", "text"), False, None, 0),
-        (leaf("first", True, "boolean"), leaf("second", False, "boolean"), False, None, 0),
+        (
+            leaf("first", True, "boolean"),
+            leaf("second", False, "boolean"),
+            False,
+            None,
+            0,
+        ),
     ],
-    ids=["false-number", "true-numbers", "string-number", "text-numbers", "typed-numbers",
-         "zero-default", "zero-in-default", "typed-zero-default", "rank-before-hint",
-         "stable-number", "stable-numbers", "stable-text", "stable-boolean"],
+    ids=[
+        "false-number",
+        "true-numbers",
+        "string-number",
+        "text-numbers",
+        "typed-numbers",
+        "zero-default",
+        "zero-in-default",
+        "typed-zero-default",
+        "rank-before-hint",
+        "stable-number",
+        "stable-numbers",
+        "stable-text",
+        "stable-boolean",
+    ],
 )
-def test_numeric_witness_preference_keeps_complete_membership(cls, org, first, second, typed, rank, chosen):
+def test_numeric_witness_preference_keeps_complete_membership(
+    cls, org, first, second, typed, rank, chosen
+):
     if typed:
-        second = {**second, "filter_config": {**second["filter_config"], "attribute_value_types": ["number", "number"]}}
-    subject = builder(first, second, leaf("absent", None, op="is_null"), cls=cls, org=org)
+        second = {
+            **second,
+            "filter_config": {
+                **second["filter_config"],
+                "attribute_value_types": ["number", "number"],
+            },
+        }
+    subject = builder(
+        first, second, leaf("absent", None, op="is_null"), cls=cls, org=org
+    )
     plans = subject._candidate_scalar_page_plans()
     if rank is not None:
         # Operator rank remains authoritative even if a numeric hint exists.
         plans = (plans[0], replace(plans[1], raw_witness_rank=rank), *plans[2:])
     with mock.patch.object(subject, "_candidate_scalar_page_plans", return_value=plans):
         sql, params = subject.build_candidate_cursor_page_query()
-    witness = sql.split("(SELECT groupUniqArray(assumeNotNull(trace_session_id))", 1)[1].split(
-        ") AS candidate_witness_session_ids,", 1
-    )[0]
-    assert set(re.findall(r"%\((latest_filter_key_\d+)\)s", witness)) == {f"latest_filter_key_{chosen}"}
-    assert params[f"latest_filter_key_{chosen}"] == ("first" if chosen == 0 else "second")
+    witness = sql.split("(SELECT groupUniqArray(assumeNotNull(trace_session_id))", 1)[
+        1
+    ].split(") AS candidate_witness_session_ids,", 1)[0]
+    assert set(re.findall(r"%\((latest_filter_key_\d+)\)s", witness)) == {
+        f"latest_filter_key_{chosen}"
+    }
+    assert params[f"latest_filter_key_{chosen}"] == (
+        "first" if chosen == 0 else "second"
+    )
     # The preferred seed is not same-span AND truth; retain both positive
     # memberships AND the inverse absence predicate after latest replay.
     having = " AND ".join(plan.grouped_match_predicate() for plan in plans)
@@ -199,10 +261,14 @@ def test_org_project_output_alias_cannot_shadow_input_membership(cls, relational
     subject = builder(item, cls=cls, org=True)
     queries = [subject.build_filter_match_query([str(UUID(int=100))])]
     if not relational:
-        queries += [method() for method in (
-            subject.build_candidate_page_query, subject.build_candidate_cursor_page_query,
-            subject.build_candidate_count_query,
-        )]
+        queries += [
+            method()
+            for method in (
+                subject.build_candidate_page_query,
+                subject.build_candidate_cursor_page_query,
+                subject.build_candidate_count_query,
+            )
+        ]
     for sql, _ in queries:
         sessions = cte(sql, "sessions")
         assert "any(resolved_root_sessions.project_id) AS project_id" in sessions
@@ -236,15 +302,22 @@ def engine(tmp_path, record_property):
 
 
 @pytest.mark.parametrize("collision", [False, True])
-def test_native_org_scalar_user_page_preserves_project_and_collision_evidence(engine, collision):
+def test_native_org_scalar_user_page_preserves_project_and_collision_evidence(
+    engine, collision
+):
     engine.insert(100, end_user_id=USER, attrs_number={"key": 1})
     engine.insert(200, project_id=OTHER, end_user_id=USER, attrs_number={"key": 1})
     if collision:
         # A nonmatching root in another project still makes UUID-only hydration unsafe.
         engine.insert(100, project_id=OTHER, end_user_id=USER, attrs_number={})
-    subject = builder(leaf(), leaf("end_user_id", [USER], "text", "in", "SYSTEM_METRIC"), org=True)
+    subject = builder(
+        leaf(), leaf("end_user_id", [USER], "text", "in", "SYSTEM_METRIC"), org=True
+    )
     rows = engine.execute(*subject.build_candidate_page_query())
-    assert [row["session_id"] for row in rows] == [str(UUID(int=200)), str(UUID(int=100))]
+    assert [row["session_id"] for row in rows] == [
+        str(UUID(int=200)),
+        str(UUID(int=100)),
+    ]
     assert {int(row["max_project_count"]) for row in rows} == {2 if collision else 1}
     assert rows[0]["project_id"] == OTHER and int(rows[0]["project_count"]) == 1
     assert int(rows[1]["project_count"]) == (2 if collision else 1)
@@ -355,7 +428,7 @@ def test_native_independent_leaves_all_aliases_and_root_metrics(engine, width):
         )
     pages, reference = exact_pages(engine, filters)
     assert pages == [[str(UUID(int=100))], []]
-    sql, params = builder(*filters).build_page_metrics_query([str(UUID(int=100))])
+    sql, params = builder(*filters).build_page_hydration_query([str(UUID(int=100))])
     metrics = engine.execute(sql, params)[0]
     assert metrics["total_tokens"] == reference["metrics"][0]["total_tokens"] == 24
     assert datetime.fromisoformat(metrics["session_start"]).replace(
@@ -432,33 +505,29 @@ def test_native_unicode_text_requires_full_function_engine(engine):
 
 @pytest.mark.parametrize("cursor", [False, True])
 @pytest.mark.parametrize("kind,value", [("number", 1), ("boolean", False)])
-def test_real_list_entrypoint_uses_primary_witness_without_bounded_root_walk(
+def test_real_list_entrypoint_walks_typed_leaves_without_the_primary_witness(
     cursor, kind, value
 ):
-    from tracer.tests.test_session_list_bounded_view import _view_and_request
+    """A number or boolean leaf is read by the bounded walk, never by the
+    candidate lane's any-span witness statement.
+
+    That statement is seeded by one scalar subquery over the whole request
+    window; on production's high-volume tenant at twelve months it read 238 M
+    rows in 9.4 s on its own and named about 1.44 M sessions, and the sets
+    built from it are materialised while planning, so the page died at the
+    30 s wall before start. This pinned the opposite until then."""
+    from tracer.tests.test_session_list_bounded_view import (
+        _bounded_page,
+        _view_and_request,
+    )
     from tracer.views.trace_session import TraceSessionView
 
     view, request = _view_and_request()
     calls = []
-    newest, older = START + timedelta(minutes=2), START + timedelta(minutes=1)
+    newest = START + timedelta(minutes=2)
 
     def execute(sql, params, **kwargs):
         calls.append((sql, params))
-        if "AS candidate_witness_session_ids," in sql:
-            assert "filter_anchor_limit" not in params
-            first = "cursor_before_start_us" not in params
-            data = [(100, newest), (200, older)] if first else [(200, older)]
-            return SimpleNamespace(
-                data=[
-                    {
-                        "session_id": str(UUID(int=sid)),
-                        "session_start": time,
-                        "remaining_count": len(data),
-                        "total_count": 2,
-                    }
-                    for sid, time in data
-                ]
-            )
         if "sum(cost) AS total_cost" in sql:
             return SimpleNamespace(
                 data=[
@@ -491,8 +560,13 @@ def test_real_list_entrypoint_uses_primary_witness_without_bounded_root_walk(
         "page_size": 1,
         "cursor_mode": cursor,
     }
+    page = _bounded_page(
+        rows=[{"session_id": str(UUID(int=100)), "session_start": newest}]
+    )
     with (
-        mock.patch("tracer.views.trace_session.read_bounded_filter_page") as bounded,
+        mock.patch(
+            "tracer.views.trace_session.read_bounded_filter_page", return_value=page
+        ) as bounded,
         mock.patch(
             "tracer.views.trace_session.AnnotationsLabels.objects.filter",
             return_value=[],
@@ -507,114 +581,210 @@ def test_real_list_entrypoint_uses_primary_witness_without_bounded_root_walk(
             view, request, validated_data=data, **kwargs
         )
         assert status == "ok" and first["table"][0]["session_id"] == str(UUID(int=100))
-        if cursor:
-            token = first["metadata"]["next_cursor"]
-            assert token
-            status, second = TraceSessionView._list_sessions_clickhouse(
-                view, request, validated_data={**data, "cursor": token}, **kwargs
-            )
-            assert status == "ok" and second["table"][0]["session_id"] == str(
-                UUID(int=200)
-            )
-            assert second["metadata"]["next_cursor"] is None
-        bounded.assert_not_called()
-    assert any("AS candidate_witness_session_ids," in sql for sql, _ in calls)
+        bounded.assert_called_once()
+        assert bounded.call_args.kwargs["bounded_continuation"] is cursor
+    assert not any("AS candidate_witness_session_ids," in sql for sql, _ in calls)
 
 
 @pytest.mark.parametrize("cls", [SessionListQueryBuilder, SessionListQueryBuilderV2])
 @pytest.mark.parametrize("org", [False, True])
-@pytest.mark.parametrize("filters,preferred", [
-    ([leaf("company", ["alpha"], "text", "in")], True),
-    ([leaf("flag", False, "boolean"), leaf("company", "alpha", "text")], True),
-    ([leaf("flag", True, "boolean")], False),
-    ([leaf("company", "alpha", "text"), leaf("number", 7)], False),
-    ([leaf("company", "alpha", "text"), leaf("zero", 0)], False),
-    ([leaf("typed", ["7"], "text", "in")], False),
-    ([leaf("typed", ["0"], "text", "in")], False),
-    ([leaf("company", "alpha", "text"), leaf("missing", None, op="is_null")], False),
-    ([leaf("company", "alpha", "text", "not_equals")], False),
-    ([leaf("company", "alpha", "text"), leaf("session_id", [USER], "text", "in", "SYSTEM_METRIC")], False),
-    ([leaf("company", "alpha", "text"), leaf("end_user_id", [USER], "text", "in", "SYSTEM_METRIC")], False),
-])
+@pytest.mark.parametrize(
+    "filters,preferred",
+    [
+        ([leaf("company", ["alpha"], "text", "in")], True),
+        ([leaf("flag", False, "boolean"), leaf("company", "alpha", "text")], True),
+        # Every typed picker map takes the walk, number and boolean included: the
+        # candidate lane's any-span witness dies before start at long windows on a
+        # high-volume tenant (see ``prefers_bounded_filter_page``).
+        ([leaf("flag", True, "boolean")], True),
+        ([leaf("company", "alpha", "text"), leaf("number", 7)], True),
+        ([leaf("company", "alpha", "text"), leaf("zero", 0)], True),
+        ([leaf("typed", ["7"], "text", "in")], True),
+        ([leaf("typed", ["0"], "text", "in")], True),
+        (
+            [leaf("company", "alpha", "text"), leaf("missing", None, op="is_null")],
+            False,
+        ),
+        ([leaf("company", "alpha", "text", "not_equals")], False),
+        (
+            [
+                leaf("company", "alpha", "text"),
+                leaf("session_id", [USER], "text", "in", "SYSTEM_METRIC"),
+            ],
+            False,
+        ),
+        (
+            [
+                leaf("company", "alpha", "text"),
+                leaf("end_user_id", [USER], "text", "in", "SYSTEM_METRIC"),
+            ],
+            False,
+        ),
+    ],
+)
 def test_string_page_policy_and_finite_single_replay(cls, org, filters, preferred):
     for item in filters:
         if item["column_id"] == "typed":
             item["filter_config"]["attribute_value_types"] = ["number"]
     subject = builder(*filters, cls=cls, org=org)
     assert subject.prefers_bounded_filter_page() is preferred
-    assert not preferred or subject.supports_candidate_cursor_page()  # Policy is not capability.
-    assert subject.recommended_filter_cursor_seed_batch_size() is None
+    assert (
+        not preferred or subject.supports_candidate_cursor_page()
+    )  # Policy is not capability.
+    # Cursor reads acquire the numbered page's batch; only exact latest-state
+    # replay is split, and it keeps its own smaller batch.
+    assert subject.recommended_filter_cursor_seed_batch_size() == 200
     assert subject.recommended_filter_classify_batch_size() == 50
-    assert subject.recommended_filter_max_slice_width() is None
-    sql, params = subject.build_filter_match_query_from_seed_rows([{"session_id": USER}])
+    # An exhausted slice may double until it covers the whole request window.
+    assert subject.recommended_filter_max_slice_width() == timedelta(days=7)
+    sql, params = subject.build_filter_match_query_from_seed_rows(
+        [{"session_id": USER}]
+    )
     combined = preferred and not org
     assert ("candidate_root_identities AS" not in sql) is combined
     assert "candidate_scalar_coordinates" not in sql
     if combined:
-        assert sql.count("FROM spans") == 2 and sql.count("FROM resolved_candidate_scalar_spans") == 1
-        replay, sessions = cte(sql, "latest_candidate_scalar_spans"), cte(sql, "sessions")
+        assert (
+            sql.count("FROM spans") == 2
+            and sql.count("FROM resolved_candidate_scalar_spans") == 1
+        )
+        replay, sessions = (
+            cte(sql, "latest_candidate_scalar_spans"),
+            cte(sql, "sessions"),
+        )
         version = "_version" if cls is SessionListQueryBuilderV2 else "_peerdb_version"
-        assert f"argMax(tuple(parent_span_id), {version}).1 AS latest_parent_span_id" in replay
+        assert (
+            f"argMax(tuple(parent_span_id), {version}).1 AS latest_parent_span_id"
+            in replay
+        )
         assert "GROUP BY " + subject._physical_group_by_sql() in replay
-        assert "minIf(latest_start_time, is_root) AS session_start" in sessions and "countIf(is_root) > 0" in sessions
-        assert "session_id IN (SELECT session_id FROM candidate_filter_sessions)" in sessions
+        assert (
+            "minIf(latest_start_time, is_root) AS session_start" in sessions
+            and "countIf(is_root) > 0" in sessions
+        )
+        assert (
+            "session_id IN (SELECT session_id FROM candidate_filter_sessions)"
+            in sessions
+        )
         for plan in subject._bounded_span_filter_parts()[0]:
             assert " ".join(plan.grouped_match_predicate().split()) in sessions
-        with mock.patch.object(subject, "prefers_bounded_filter_page", return_value=False):
-            original, original_params = subject.build_filter_match_query_from_seed_rows([{"session_id": USER}])
+        with mock.patch.object(
+            subject, "prefers_bounded_filter_page", return_value=False
+        ):
+            original, original_params = subject.build_filter_match_query_from_seed_rows(
+                [{"session_id": USER}]
+            )
         assert original.count("FROM spans") == 4 and params == original_params
         full, _ = subject.build_filter_match_query([USER], candidate_full_state=True)
         assert "candidate_root_identities AS" in full
 
 
-@pytest.mark.parametrize("minutes,expected", [(4, None), (5, 5), (60, 60), (2880, 1440)])
+@pytest.mark.parametrize(
+    "minutes,expected", [(4, None), (5, 5), (60, 60), (2880, 1440)]
+)
 def test_string_page_initial_width_preserves_minimum_and_maximum(minutes, expected):
     subject = builder(leaf("company", "alpha", "text"), days=minutes / 1440)
-    assert subject.recommended_filter_initial_slice_width() == (timedelta(minutes=expected) if expected else None)
-    assert subject.recommended_filter_max_slice_width() is None
+    assert subject.recommended_filter_initial_slice_width() == (
+        timedelta(minutes=expected) if expected else None
+    )
+    assert subject.recommended_filter_max_slice_width() == (
+        timedelta(minutes=minutes) if minutes >= 5 else None
+    )
 
-@pytest.mark.parametrize('old_parent,new_parent', [(None, 'root'), ('root', None), ('root', '')],
-                         ids=['root-to-child', 'child-to-null-root', 'child-to-empty-root'])
-def test_native_parent_winner_controls_root_only_order(engine, old_parent, new_parent, record_property):
+
+@pytest.mark.parametrize(
+    "old_parent,new_parent",
+    [(None, "root"), ("root", None), ("root", "")],
+    ids=["root-to-child", "child-to-null-root", "child-to-empty-root"],
+)
+def test_native_parent_winner_controls_root_only_order(
+    engine, old_parent, new_parent, record_property
+):
     from datetime import UTC
 
     from observe_session_reference import _us
+
     start = START
-    filters = [leaf('company', ['alpha'], 'text', 'in'),
-               leaf('flag', False, 'boolean')]
-    filters[0]['filter_config']['attribute_value_types'] = ['string']
+    filters = [leaf("company", ["alpha"], "text", "in"), leaf("flag", False, "boolean")]
+    filters[0]["filter_config"]["attribute_value_types"] = ["string"]
     for sid, minute in ((100, 10), (200, 5)):
-        engine.insert(sid, start_time=start + timedelta(minutes=minute))  # Nonmatching roots set order.
+        engine.insert(
+            sid, start_time=start + timedelta(minutes=minute)
+        )  # Nonmatching roots set order.
     for sid in (100, 200, 300):  # 300 has witnesses but no live root.
-        engine.insert(sid, id=f'string-{sid}', parent_span_id='root',
-                      attrs_string={'company': 'alpha'}, start_time=start + timedelta(minutes=20))
-        engine.insert(sid, id=f'bool-{sid}', parent_span_id='root',
-                      attrs_bool={'flag': 0}, start_time=start + timedelta(minutes=21))
-    old = engine.insert(100, id='changing-parent', parent_span_id=old_parent,
-                        start_time=start + timedelta(minutes=1))
-    engine.insert(100, **{**old, 'parent_span_id': new_parent, '_version': 2})
-    retained = engine.execute("SELECT count() AS n, uniqExact(_version) AS versions FROM spans "
-                              "WHERE id = 'changing-parent'")[0]
-    assert (int(retained['n']), int(retained['versions'])) == (2, 2)
-    reference = engine.oracle(engine, project_ids=[PROJECT],
-        authorized_project_ids=[PROJECT], start=start, end=start + timedelta(days=7),
-        filters=filters, page_size=3, order_mode='uuid_string')
-    expected = [(row['session_id'], row['session_start_us']) for page in reference['pages'] for row in page]
-    truth = [(100, 10), (200, 5)] if new_parent == 'root' else [(200, 5), (100, 1)]
-    assert reference['population_exhausted_after_two_pages'] and reference['total_sessions'] == 2
-    assert expected == [(str(UUID(int=sid)), _us(start + timedelta(minutes=minute))) for sid, minute in truth]
+        engine.insert(
+            sid,
+            id=f"string-{sid}",
+            parent_span_id="root",
+            attrs_string={"company": "alpha"},
+            start_time=start + timedelta(minutes=20),
+        )
+        engine.insert(
+            sid,
+            id=f"bool-{sid}",
+            parent_span_id="root",
+            attrs_bool={"flag": 0},
+            start_time=start + timedelta(minutes=21),
+        )
+    old = engine.insert(
+        100,
+        id="changing-parent",
+        parent_span_id=old_parent,
+        start_time=start + timedelta(minutes=1),
+    )
+    engine.insert(100, **{**old, "parent_span_id": new_parent, "_version": 2})
+    retained = engine.execute(
+        "SELECT count() AS n, uniqExact(_version) AS versions FROM spans "
+        "WHERE id = 'changing-parent'"
+    )[0]
+    assert (int(retained["n"]), int(retained["versions"])) == (2, 2)
+    reference = engine.oracle(
+        engine,
+        project_ids=[PROJECT],
+        authorized_project_ids=[PROJECT],
+        start=start,
+        end=start + timedelta(days=7),
+        filters=filters,
+        page_size=3,
+        order_mode="uuid_string",
+    )
+    expected = [
+        (row["session_id"], row["session_start_us"])
+        for page in reference["pages"]
+        for row in page
+    ]
+    truth = [(100, 10), (200, 5)] if new_parent == "root" else [(200, 5), (100, 1)]
+    assert (
+        reference["population_exhausted_after_two_pages"]
+        and reference["total_sessions"] == 2
+    )
+    assert expected == [
+        (str(UUID(int=sid)), _us(start + timedelta(minutes=minute)))
+        for sid, minute in truth
+    ]
+
     def emitted():
         return builder(*filters).build_filter_match_query_from_seed_rows(
-            [{'session_id': str(UUID(int=sid))} for sid in (100, 200, 300)])
+            [{"session_id": str(UUID(int=sid))} for sid in (100, 200, 300)]
+        )
+
     def signature(rows):
-        return [(row['session_id'], _us(datetime.fromisoformat(str(row['start_time'])).replace(tzinfo=UTC)))
-                for row in rows]
+        return [
+            (
+                row["session_id"],
+                _us(datetime.fromisoformat(str(row["start_time"])).replace(tzinfo=UTC)),
+            )
+            for row in rows
+        ]
+
     sql, params = emitted()
-    assert sql.count('FROM spans') == 2
+    assert sql.count("FROM spans") == 2
     assert signature(engine.execute(sql, params)) == expected
-    target = 'argMax(tuple(parent_span_id), _version)'
+    target = "argMax(tuple(parent_span_id), _version)"
     assert sql.count(target) == 1
-    mutant = sql.replace(target, 'argMin(tuple(parent_span_id), _version)')
-    assert signature(engine.execute(mutant, params)) != expected  # RED: stale parent changes order.
-    record_property('parent_versions_retained', 2)
-    record_property('candidate_span_reads', 2)
+    mutant = sql.replace(target, "argMin(tuple(parent_span_id), _version)")
+    assert (
+        signature(engine.execute(mutant, params)) != expected
+    )  # RED: stale parent changes order.
+    record_property("parent_versions_retained", 2)
+    record_property("candidate_span_reads", 2)

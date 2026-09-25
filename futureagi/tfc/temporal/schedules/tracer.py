@@ -26,6 +26,18 @@ TRACER_SCHEDULES: list[ScheduleConfig] = [
     #     queue="default",
     #     description="Process evaluation tasks",
     # ),
+    # Recovery, not processing: the per-task workflow is still the only thing
+    # that drains a task, and nothing restarted one that stopped. This reclaims
+    # entries stuck ``running`` (the workflow-start reaper cannot reach a task
+    # whose workflow is alive) and restarts the workflow of a task nothing is
+    # draining. A task draining normally costs one describe and is left alone.
+    ScheduleConfig(
+        schedule_id="sweep-stranded-eval-tasks",
+        activity_name="sweep_stranded_eval_tasks",
+        interval_seconds=300,
+        queue="tasks_s",
+        description="Recover eval tasks whose drain stopped",
+    ),
     ScheduleConfig(
         schedule_id="check-alerts",
         activity_name="check_alerts",

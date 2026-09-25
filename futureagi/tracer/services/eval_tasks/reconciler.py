@@ -274,6 +274,12 @@ def _requeue_and_drop(
                 status=EvalEntryStatus.PENDING,
                 config_hash=hash_case,
                 error=False,
+                # ``error_message`` goes with ``error``: a pending entry that
+                # still carries the previous run's message describes a run that
+                # no longer exists. Leaving it behind is also what made requeued
+                # rows indistinguishable from fresh inserts when reading the
+                # entry table.
+                error_message=None,
                 skipped_reason=None,
             )
     dropped = 0
