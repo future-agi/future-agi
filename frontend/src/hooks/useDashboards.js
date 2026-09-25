@@ -4,7 +4,7 @@ import {
   useMutation,
   useQueryClient,
 } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import axios, { endpoints, readQuery } from "src/utils/axios";
 import { getFilterValueReadState } from "src/utils/queryReadState";
 import { accumulateUniqueListContinuations } from "src/sections/projects/LLMTracing/listCursorPagination";
@@ -504,6 +504,103 @@ export function useLegacyDashboardMetricsPaginated({
 // enable this page-number reader only after the typed rollout not-ready 503.
 export const useDashboardMetricsPaginated = useLegacyDashboardMetricsPaginated;
 
+// Validates a catalog walk once per fetched page set. Callers key effects on
+// `metrics`, so it must keep its identity until the pages change.
+const readPropertyCatalogPages = (rawPages) => {
+  let chainFailureReason = null;
+  const checkedPages = rawPages.map((page, index) => {
+    const consumed = new Set(
+      rawPages
+        .slice(0, index)
+        .flatMap((earlier) =>
+          typeof earlier?.next_cursor === "string" ? [earlier.next_cursor] : [],
+        ),
+    );
+    const checked = validatePropertyCatalogPage(page, consumed);
+    if (isPropertyCatalogCursorStopped(checked)) {
+      chainFailureReason ||= checked[PROPERTY_CATALOG_CURSOR_STOPPED_KEY];
+    }
+    return checked;
+  });
+  const baselinePage = checkedPages[0];
+  if (
+    baselinePage &&
+    checkedPages.some(
+      (page) => !samePropertyCatalogActivation(page, baselinePage),
+    )
+  ) {
+    chainFailureReason ||= "activation_mismatch";
+  }
+  if (
+    baselinePage &&
+    baselinePage.query_provenance !== "current_property_catalog" &&
+    checkedPages.some(
+      (page) =>
+        JSON.stringify(page.category_counts) !==
+        JSON.stringify(baselinePage.category_counts),
+    )
+  ) {
+    chainFailureReason ||= "category_count_mismatch";
+  }
+  let duplicateProperty = false;
+  let definitionConflict = false;
+  const definitionsById = new Map();
+  let candidateMetrics = checkedPages.flatMap((page) =>
+    (page.metrics || []).filter((metric) => {
+      const propertyId = metric?.property_id;
+      if (typeof propertyId !== "string" || propertyId.length === 0) {
+        definitionConflict = true;
+        return false;
+      }
+      const serialized = serializedPropertyDefinition(metric);
+      if (definitionsById.has(propertyId)) {
+        duplicateProperty = true;
+        if (definitionsById.get(propertyId) !== serialized) {
+          definitionConflict = true;
+        }
+        return false;
+      }
+      definitionsById.set(propertyId, serialized);
+      return true;
+    }),
+  );
+  if (baselinePage?.query_provenance === "current_property_catalog") {
+    // Native definitions are current reads, not an immutable multi-page
+    // snapshot. Keep the latest metadata when concurrent edits revisit an ID.
+    candidateMetrics = [
+      ...new Map(
+        checkedPages
+          .flatMap((page) => page.metrics || [])
+          .filter(
+            (metric) =>
+              typeof metric?.property_id === "string" && metric.property_id,
+          )
+          .map((metric) => [metric.property_id, metric]),
+      ).values(),
+    ];
+    definitionConflict = checkedPages.some((page) =>
+      (page.metrics || []).some(
+        (metric) =>
+          typeof metric?.property_id !== "string" || !metric.property_id,
+      ),
+    );
+    duplicateProperty = false;
+  }
+  if (definitionConflict) {
+    chainFailureReason ||= "definition_conflict";
+  } else if (duplicateProperty) {
+    chainFailureReason ||= "duplicate_property";
+  }
+  const cursorChainStopped = chainFailureReason !== null;
+  return {
+    checkedPages,
+    baselinePage,
+    chainFailureReason,
+    cursorChainStopped,
+    metrics: cursorChainStopped ? [] : candidateMetrics,
+  };
+};
+
 export function usePropertyCatalog({
   category = "",
   source = "",
@@ -649,93 +746,16 @@ export function usePropertyCatalog({
     query.error,
   ]);
 
-  const rawPages = query.data?.pages || [];
-  let chainFailureReason = null;
-  const checkedPages = rawPages.map((page, index) => {
-    const consumed = new Set(
-      rawPages
-        .slice(0, index)
-        .flatMap((earlier) =>
-          typeof earlier?.next_cursor === "string" ? [earlier.next_cursor] : [],
-        ),
-    );
-    const checked = validatePropertyCatalogPage(page, consumed);
-    if (isPropertyCatalogCursorStopped(checked)) {
-      chainFailureReason ||= checked[PROPERTY_CATALOG_CURSOR_STOPPED_KEY];
-    }
-    return checked;
-  });
-  const baselinePage = checkedPages[0];
-  if (
-    baselinePage &&
-    checkedPages.some(
-      (page) => !samePropertyCatalogActivation(page, baselinePage),
-    )
-  ) {
-    chainFailureReason ||= "activation_mismatch";
-  }
-  if (
-    baselinePage &&
-    baselinePage.query_provenance !== "current_property_catalog" &&
-    checkedPages.some(
-      (page) =>
-        JSON.stringify(page.category_counts) !==
-        JSON.stringify(baselinePage.category_counts),
-    )
-  ) {
-    chainFailureReason ||= "category_count_mismatch";
-  }
-  let duplicateProperty = false;
-  let definitionConflict = false;
-  const definitionsById = new Map();
-  let candidateMetrics = checkedPages.flatMap((page) =>
-    (page.metrics || []).filter((metric) => {
-      const propertyId = metric?.property_id;
-      if (typeof propertyId !== "string" || propertyId.length === 0) {
-        definitionConflict = true;
-        return false;
-      }
-      const serialized = serializedPropertyDefinition(metric);
-      if (definitionsById.has(propertyId)) {
-        duplicateProperty = true;
-        if (definitionsById.get(propertyId) !== serialized) {
-          definitionConflict = true;
-        }
-        return false;
-      }
-      definitionsById.set(propertyId, serialized);
-      return true;
-    }),
+  const {
+    checkedPages,
+    baselinePage,
+    chainFailureReason,
+    cursorChainStopped,
+    metrics,
+  } = useMemo(
+    () => readPropertyCatalogPages(query.data?.pages || []),
+    [query.data],
   );
-  if (baselinePage?.query_provenance === "current_property_catalog") {
-    // Native definitions are current reads, not an immutable multi-page
-    // snapshot. Keep the latest metadata when concurrent edits revisit an ID.
-    candidateMetrics = [
-      ...new Map(
-        checkedPages
-          .flatMap((page) => page.metrics || [])
-          .filter(
-            (metric) =>
-              typeof metric?.property_id === "string" && metric.property_id,
-          )
-          .map((metric) => [metric.property_id, metric]),
-      ).values(),
-    ];
-    definitionConflict = checkedPages.some((page) =>
-      (page.metrics || []).some(
-        (metric) =>
-          typeof metric?.property_id !== "string" || !metric.property_id,
-      ),
-    );
-    duplicateProperty = false;
-  }
-  if (definitionConflict) {
-    chainFailureReason ||= "definition_conflict";
-  } else if (duplicateProperty) {
-    chainFailureReason ||= "duplicate_property";
-  }
-  const cursorChainStopped = chainFailureReason !== null;
-  const metrics = cursorChainStopped ? [] : candidateMetrics;
   const isRemoteCatalogSearchPending = Boolean(
     enabled &&
       !legacyFallbackRequired &&

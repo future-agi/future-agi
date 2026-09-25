@@ -693,6 +693,22 @@ describe("usePropertyCatalog", () => {
     expect(result.current.totalIsExact).toBe(false);
   });
 
+  it("keeps the same metrics array until the catalog pages change", async () => {
+    mocks.get.mockResolvedValueOnce({ data: { result: currentPage() } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { result, rerender } = renderHook(() => usePropertyCatalog(), {
+      wrapper: createQueryWrapper(client),
+    });
+    await waitFor(() => expect(result.current.metrics).toHaveLength(1));
+    const metrics = result.current.metrics;
+    rerender();
+    // Attribute inventories memoize on this array; a new one per render made
+    // their consumers' effects run on every render.
+    expect(result.current.metrics).toBe(metrics);
+  });
+
   it("paginates current definitions and accepts live metadata updates", async () => {
     mocks.get
       .mockResolvedValueOnce({
