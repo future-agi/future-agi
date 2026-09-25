@@ -49,6 +49,7 @@ from tracer.tests.test_users_matching_walk import (
     _from_us,
     _manager,
     _names,
+    _native_status_leaf,
     _NativeDriver,
     _never_seed,
     _page,
@@ -76,6 +77,7 @@ def _add(
     raw: list[tuple[datetime, int]],
     *,
     curated: bool = True,
+    native: bool | None = None,
 ) -> str:
     """A user with explicit ids, so survivors and aliases interleave in id order.
 
@@ -91,6 +93,9 @@ def _add(
         "curated": curated,
         "name": uid,
         "typed_values": [("string", '"Gold"')],
+        # The native leaf's whole-window decision, in a world whose page
+        # carries one (``_family_filters``); None: no native leaf.
+        "native": native,
     }
     for identity in ids:
         world.canonical[identity] = uid
@@ -99,13 +104,18 @@ def _add(
     return uid
 
 
+def _is_member(user: dict) -> bool:
+    """A key (the witness leaf's newest live match), curated, and every native
+    leaf decided true when the page carries one."""
+
+    return user["key"] is not None and user["curated"] and user["native"] is not False
+
+
 def _expected(world: World) -> list[str]:
     """Members in page order: newest matching activity, then id, descending."""
 
     members = [
-        (user["key"], uid)
-        for uid, user in world.users.items()
-        if user["key"] is not None and user["curated"]
+        (user["key"], uid) for uid, user in world.users.items() if _is_member(user)
     ]
     return [uid for _key, uid in sorted(members, reverse=True)]
 
@@ -202,6 +212,10 @@ def _statement_kind(query: str, params: dict | None) -> str:
     """``kind_of``, told apart for every finishing statement."""
 
     params = params or {}
+    if "native_span_flags" in query:
+        # Certification, not a finishing statement; it names its users in
+        # ``candidate_end_user_ids`` like one.
+        return "native"
     if "latest_relation_candidate_spans AS" in query:
         return "relation"
     if "eval_eu_ids" in params:
@@ -376,6 +390,7 @@ def _follow(
     fault: Callable[[int, int], bool] | None = None,
     fail_ms: float = 50.0,
     width: timedelta | None = None,
+    family: str = "raw",
 ) -> tuple[list[str], int]:
     """Follow the cursor to the end; returns the published names and the hops.
 
@@ -401,7 +416,9 @@ def _follow(
     say which enrichment statements run out of memory, each costing
     ``fail_ms`` (``_MemoryEngine``): at most one user's read a hop may be
     split in time, uncounted, inside the documented bound.
-    ``mutate(world, published, cursor)`` runs between hops.
+    ``mutate(world, published, cursor)`` runs between hops. ``family`` says
+    which filters the page carries (``_family_filters``): the walk's witness
+    is the raw attribute leaf, or a native leaf.
     """
     with _scripted_clock(_Clock()) as clock:
         return _follow_on(
@@ -419,6 +436,7 @@ def _follow(
             fault=fault,
             fail_ms=fail_ms,
             width=width,
+            family=family,
         )
 
 
@@ -438,12 +456,13 @@ def _follow_on(
     fault: Callable[[int, int], bool] | None,
     fail_ms: float,
     width: timedelta | None,
+    family: str = "raw",
 ) -> tuple[list[str], int]:
     budget = max(
         max_statements or walk.USER_LIST_WALK_MAX_STATEMENTS,
-        _one_decision(keys, finish),
+        _one_decision(keys, finish, family),
     )
-    assert walk._statement_budget(_keyed_manager(keys, finish)) == budget
+    assert walk._statement_budget(_keyed_manager(keys, finish, family)) == budget
     names: list[str] = []
     seen_states: set = set()
     coverage = WINDOW_END
@@ -453,7 +472,7 @@ def _follow_on(
     refused_at: datetime | None = None
     cursor = None
     finish_wall = walk.USER_LIST_WALK_FINISH_WALL_MS
-    enrichment = _enrichments(keys)
+    enrichment = _enrichments(keys, family)
     least = _split_statements(ulm._USER_LIST_ATTRIBUTE_MIN_BUCKET)
     for hop in range(1, max_hops + 1):
         engine = _MemoryEngine(
@@ -473,6 +492,7 @@ def _follow_on(
                 engine=engine,
                 keys=keys,
                 finish=finish,
+                family=family,
             )
         names.extend(_names(read))
         # One user's read split in time, at most, outside the budget.
@@ -555,13 +575,31 @@ FINISH_SHAPES = {
 }
 
 
-def _keyed_manager(keys: int, finish: int = 1):
-    """The page's manager: ``keys`` attribute columns besides ``tag``, and the
-    columns and filters that make ``finish`` finishing statements."""
+# The page's witness: the raw ``tag`` leaf alone; a native ``status`` leaf
+# alone (the walk discovers on its flag, and no attribute is filtered); or
+# both, where the raw leaf is the witness and the native leaf is decided at
+# certification.
+FAMILIES = ["raw", "native", "mixed"]
+
+
+def _family_filters(family: str) -> list[dict]:
+    date_and_tag = _filters()
+    if family == "raw":
+        return date_and_tag
+    if family == "native":
+        return [date_and_tag[0], _native_status_leaf()]
+    assert family == "mixed", family
+    return [*date_and_tag, _native_status_leaf()]
+
+
+def _keyed_manager(keys: int, finish: int = 1, family: str = "raw"):
+    """The page's manager: ``keys`` attribute columns besides the filters of
+    ``family``, and the columns and filters that make ``finish`` finishing
+    statements."""
 
     from tracer.services.users_list_manager import UsersListManager
 
-    base = _manager()
+    base = _manager(_family_filters(family))
     columns, relation = FINISH_SHAPES[finish]
     manager = UsersListManager(
         organization_id=base.organization_id,
@@ -575,7 +613,7 @@ def _keyed_manager(keys: int, finish: int = 1):
     return manager
 
 
-def _one_decision(keys: int, finish: int = 1) -> int:
+def _one_decision(keys: int, finish: int = 1, family: str = "raw") -> int:
     """The statements one decision takes, restated from its parts.
 
     Not read from ``walk._statement_budget``, so a budget that grows past
@@ -589,14 +627,15 @@ def _one_decision(keys: int, finish: int = 1) -> int:
     width, retries = walk.USER_LIST_WALK_INITIAL_SLICE, 0
     while width > walk.USER_LIST_WALK_MIN_SLICE:
         width, retries = width / 4, retries + 1
-    return 1 + 1 + retries + 2 + 2 + 2 * _enrichments(keys) + 2 * finish
+    return 1 + 1 + retries + 2 + 2 + 2 * _enrichments(keys, family) + 2 * finish
 
 
-def _enrichments(keys: int) -> int:
-    """One enrichment's statements for a page of ``keys`` attribute columns:
-    one for the filtered key and one per four of the others."""
+def _enrichments(keys: int, family: str = "raw") -> int:
+    """One certification's statements for a page of ``keys`` attribute
+    columns: one for the filtered key (a raw witness), one per four of the
+    others, and the native statement when the page carries a native leaf."""
 
-    return 1 + -(-keys // 4)
+    return (family != "native") + -(-keys // 4) + (family != "raw")
 
 
 @contextmanager
@@ -616,8 +655,16 @@ def _eval_configs():
         yield
 
 
-def _keyed_page(*, page_size: int, cursor, engine: Engine, keys: int, finish: int = 1):
-    manager = _keyed_manager(keys, finish)
+def _keyed_page(
+    *,
+    page_size: int,
+    cursor,
+    engine: Engine,
+    keys: int,
+    finish: int = 1,
+    family: str = "raw",
+):
+    manager = _keyed_manager(keys, finish, family)
     with (
         patch(SERVICE, return_value=engine),
         patch.object(manager, "_read_dimension_candidates", side_effect=_never_seed),
@@ -1292,6 +1339,14 @@ class _MemoryEngine(_CappedEngine):
     enrichment as ``(users, bucket width, failed)``, and counts, per user,
     the statements of that user alone over less than the window (its read
     split in time).
+
+    The native span-dimension statement is a certification statement too: it
+    counts as an enrichment over the whole window, and ``fault`` applies to it
+    when it carries more than one user. It has no time split, so a
+    head-of-line user whose native statement fails raises; that documented
+    limit has a test of its own
+    (``test_a_head_of_line_native_statement_that_fails_raises``), and the
+    generated worlds leave it out.
     """
 
     def __init__(
@@ -1325,23 +1380,38 @@ class _MemoryEngine(_CappedEngine):
         *,
         server_execution_cap_ms=None,
     ):
-        if _statement_kind(query, params) == "enrich":
-            bucket = _from_us(params["attr_end_us"]) - _from_us(params["attr_start_us"])
-            users = len(params["eu_ids"])
-            failed = (
-                (self.width is not None and bucket > self.width)
-                or (
-                    self.user_hours is not None
-                    and users * (bucket / timedelta(hours=1)) > self.user_hours
+        kind = _statement_kind(query, params)
+        if kind in ("enrich", "native"):
+            if kind == "enrich":
+                bucket = _from_us(params["attr_end_us"]) - _from_us(
+                    params["attr_start_us"]
                 )
-                or (self.fault is not None and self.fault(users, len(self.enrichments)))
+                users = len(params["eu_ids"])
+            else:
+                bucket = WINDOW
+                users = len(params["candidate_end_user_ids"])
+            failed = (
+                kind == "enrich"
+                and (
+                    (self.width is not None and bucket > self.width)
+                    or (
+                        self.user_hours is not None
+                        and users * (bucket / timedelta(hours=1)) > self.user_hours
+                    )
+                )
+            ) or (
+                self.fault is not None
+                and (kind == "enrich" or users > 1)
+                and self.fault(users, len(self.enrichments))
             )
             self.enrichments.append((users, bucket, failed))
             if users == 1 and bucket < WINDOW:
                 (uid,) = params["eu_ids"]
                 self.split[uid] = self.split.get(uid, 0) + 1
             if users == 1 and bucket >= WINDOW and failed:
-                (self.refused,) = params["eu_ids"]
+                (self.refused,) = params[
+                    "eu_ids" if kind == "enrich" else ("candidate_end_user_ids")
+                ]
             if failed:
                 from clickhouse_driver.errors import ErrorCodes, ServerException
 
@@ -1584,6 +1654,93 @@ def test_a_head_of_line_user_that_fails_at_every_width_raises(users):
             assert raised.value.code == ErrorCodes.MEMORY_LIMIT_EXCEEDED
             # It was split first, down to a bucket no wider than the least.
             assert min(b for _n, b, _f in memory.enrichments) <= timedelta(minutes=1)
+
+
+class _FailingNativeEngine(_MemoryEngine):
+    """Every native statement runs out of memory, whatever it carries."""
+
+    def execute_ch_query(
+        self,
+        query,
+        params=None,
+        timeout_ms=None,
+        settings=None,
+        *,
+        server_execution_cap_ms=None,
+    ):
+        if _statement_kind(query, params) == "native":
+            from clickhouse_driver.errors import ErrorCodes, ServerException
+
+            self.enrichments.append(
+                (len(params["candidate_end_user_ids"]), WINDOW, True)
+            )
+            self.calls.append(query)
+            raise ServerException(
+                "Memory limit exceeded", code=ErrorCodes.MEMORY_LIMIT_EXCEEDED
+            )
+        return super().execute_ch_query(
+            query,
+            params,
+            timeout_ms,
+            settings,
+            server_execution_cap_ms=server_execution_cap_ms,
+        )
+
+
+@pytest.mark.parametrize("users", [5, 1])
+def test_a_head_of_line_native_statement_that_fails_raises(users):
+    """The native certification has no time split (design O3): the request raises.
+
+    A batch whose native statement runs out of memory falls back to its
+    head-of-line user alone, as an enrichment does; when that user's own
+    statement fails too there is nothing narrower to try, so the request
+    raises the server's error (retryable) rather than publish a page, and the
+    next request does the same. It does not livelock: nothing is published
+    and no cursor is handed out.
+    """
+    from clickhouse_driver.errors import ErrorCodes, ServerException
+
+    world, _expected = _spread_world(users, 3)
+    for user in world.users.values():
+        user["native"] = True
+    filters = _family_filters("native")
+    clock = _Clock()
+    with _shipped_walls(), _scripted_clock(clock):
+        for _hop in range(2):
+            memory = _FailingNativeEngine(world, clock=clock)
+            with pytest.raises(ServerException) as raised:
+                _page(world, page_size=25, engine=memory, filters=filters)
+            assert raised.value.code == ErrorCodes.MEMORY_LIMIT_EXCEEDED
+            # The batch first, then its head-of-line user alone; never split.
+            assert [n for n, _b, _f in memory.enrichments] == (
+                [users, 1] if users > 1 else [1]
+            )
+            assert "replay" not in memory.kinds
+
+
+@pytest.mark.parametrize("size", [401, 601])
+def test_a_native_tied_cohort_larger_than_one_request_publishes_everyone_once(size):
+    """The tied-instant proof, walked on a native leaf.
+
+    Hundreds of users share their newest matching instant: no user at a
+    truncated floor is publishable until the whole instant is seen, and the
+    continuation resumes inside the instant, in resolved-id order.
+    """
+    world, expected = _tied_world(size)
+    for user in world.users.values():
+        user["native"] = True
+    filters = _family_filters("native")
+    names: list[str] = []
+    cursor = None
+    for _hop in range(-(-size // 25) + 1):
+        read, engine = _page(world, page_size=25, cursor=cursor, filters=filters)
+        names.extend(_names(read))
+        assert "enrich" not in [kind_of(call) for call in engine.calls]
+        if not read.has_more:
+            break
+        cursor = _signed_cursor(read)
+    assert names == expected
+    assert len(set(names)) == size
 
 
 @pytest.mark.parametrize("gap_hours", [4, 10, 20])
@@ -2086,8 +2243,18 @@ SLICE_MODELS = [
 ]
 
 
-def _slice_model(seed: int) -> Callable[[timedelta, bool], float] | None:
-    return SLICE_MODELS[(seed // len(LIMITS)) % len(SLICE_MODELS)]
+# A native witness has no skip index: its slice reads every row of its range,
+# so an EMPTY one costs in proportion to its width too.
+UNPRUNED_SLICE = _any_per_hour(2_000)
+
+
+def _slice_model(
+    seed: int, family: str = "raw"
+) -> Callable[[timedelta, bool], float] | None:
+    model = SLICE_MODELS[(seed // len(LIMITS)) % len(SLICE_MODELS)]
+    if family == "native" and model is None and seed % 2:
+        return UNPRUNED_SLICE
+    return model
 
 
 # Attribute columns the page shows besides the filtered key, up to the Users
@@ -2142,6 +2309,28 @@ def _fault(seed: int, keys: int, kinds=tuple(FAULTS)) -> tuple[_Faults, int]:
     )
 
 
+def _with_native(world: World, seed: int, family: str) -> World:
+    """Give every user a native decision when the page carries a native leaf.
+
+    From a generator of its own, so the raw world is the same one the raw
+    family draws. A native witness keys on the leaf's newest latest live
+    match (the world's ``key``); a user that has one can still fail the leaf
+    (a family-less negation's forbidden value elsewhere in the window), and a
+    user with none never passes it. A raw witness keys on the attribute, and
+    the native leaf is then any user's independent decision.
+    """
+    if family == "raw":
+        return world
+    rng = random.Random(4_441 * seed + 17)
+    forbid = rng.choice([0.0, 0.15, 0.4])
+    for user in world.users.values():
+        if family == "native":
+            user["native"] = user["key"] is not None and rng.random() >= forbid
+        else:
+            user["native"] = rng.random() >= forbid
+    return world
+
+
 def _gap_world(rng: random.Random, n_users: int) -> World:
     """Users 20 minutes to 6 hours apart, one row each, as many as fit."""
 
@@ -2155,14 +2344,20 @@ def _gap_world(rng: random.Random, n_users: int) -> World:
     return world
 
 
-def _slice_hops(world: World, seed: int) -> int:
-    """Extra hops a world may take when no capped slice can return rows.
+def _slice_hops(world: World, seed: int, family: str = "raw") -> int:
+    """Extra hops a world may take when slices are slow.
 
-    Then only the head-of-line slice read without a cap, one least width
-    wide, returns rows, and a request reads one: every least-width window
-    that holds a witnessed row may cost a request of its own.
+    When no capped slice can return rows, only the head-of-line slice read
+    without a cap, one least width wide, returns rows, and a request reads
+    one: every least-width window that holds a witnessed row may cost a
+    request of its own. When every slice costs by its width, empty or not
+    (``UNPRUNED_SLICE``, two seconds an hour), the page wall admits a few
+    hours of window a request: at most one request an hour of the window.
     """
-    if _slice_model(seed) is not SLICE_MODELS[3]:
+    model = _slice_model(seed, family)
+    if model is UNPRUNED_SLICE:
+        return int(WINDOW / timedelta(hours=1))
+    if model is not SLICE_MODELS[3]:
         return 0
     return len({moment.replace(second=0, microsecond=0) for moment, _id in world.raw})
 
@@ -2194,22 +2389,28 @@ def _hop_bound(n_users: int, page_size: int, heavy: int) -> int:
     return 30 + 2 * n_users + heavy * (min(page_size, n_users) + 2)
 
 
+@pytest.mark.parametrize("family", FAMILIES)
 @pytest.mark.parametrize("seed", range(STATIC_WORLDS))
-def test_every_hop_sequence_ends_exact_and_never_raises_the_coverage(seed):
+def test_every_hop_sequence_ends_exact_and_never_raises_the_coverage(seed, family):
     rng = random.Random(seed)
     n_users = rng.choice([1, 3, 8, 20, 45, 80])
-    faults, keys = _fault(seed, _key_count(seed))
+    # A native statement has no time split: the width fault stays raw.
+    kinds = FAULTS if family == "raw" else [k for k in FAULTS if k != "width"]
+    faults, keys = _fault(seed, _key_count(seed), kinds)
     world = _world(rng, n_users)
     if faults.gaps:
         world = _gap_world(random.Random(3 * seed + 1), n_users)
         n_users = len(world.users)
+    world = _with_native(world, seed, family)
     page_size = rng.choice(PAGE_SIZES)
     heavy = frozenset(
         rng.sample(sorted(world.users), min(n_users, rng.choice([0, 0, 0, 1, 2, 3])))
     )
     # A quarter of the worlds lose the server on every fifth request.
     outage = random.Random(31 * seed + 7).random() < 0.25
-    bound = _hop_bound(n_users, page_size, len(heavy)) + _slice_hops(world, seed)
+    bound = _hop_bound(n_users, page_size, len(heavy)) + _slice_hops(
+        world, seed, family
+    )
     with _limits(seed) as (max_statements, finish), _shipped_walls():
         names, _hops = _follow(
             world,
@@ -2217,13 +2418,14 @@ def test_every_hop_sequence_ends_exact_and_never_raises_the_coverage(seed):
             max_hops=bound + (bound // 4 if outage else 0),
             max_statements=max_statements,
             heavy=heavy,
-            slice_ms=_slice_model(seed),
+            slice_ms=_slice_model(seed, family),
             keys=keys,
             finish=finish,
             outage_every=5 if outage else None,
             fault=faults.fault,
             fail_ms=faults.fail_ms,
             width=faults.width,
+            family=family,
         )
 
     assert len(names) == len(set(names)), "a user was published twice"
@@ -2231,13 +2433,17 @@ def test_every_hop_sequence_ends_exact_and_never_raises_the_coverage(seed):
 
 
 def _stop_matching(rng: random.Random, changed: set[str]):
-    """Between hops, an unpublished member may stop matching or be rejected."""
+    """Between hops, an unpublished member may stop matching or be rejected.
+
+    On a page with a native leaf, stopping to match may also be the native
+    leaf turning false (a forbidden value appears elsewhere in the window).
+    """
 
     def mutate(world: World, published: set[str], _cursor: tuple) -> None:
         members = [
             uid
             for uid, user in world.users.items()
-            if uid not in published and user["key"] is not None and user["curated"]
+            if uid not in published and _is_member(user)
         ]
         if not members or rng.random() < 0.5:
             return
@@ -2245,17 +2451,20 @@ def _stop_matching(rng: random.Random, changed: set[str]):
         changed.add(uid)
         if rng.random() < 0.5:
             world.users[uid]["key"] = None
+        elif world.users[uid]["native"] is not None and rng.random() < 0.5:
+            world.users[uid]["native"] = False
         else:
             world.users[uid]["curated"] = False
 
     return mutate
 
 
+@pytest.mark.parametrize("family", FAMILIES)
 @pytest.mark.parametrize("seed", range(CHANGING_WORLDS))
-def test_users_that_stop_matching_between_hops_never_stall_or_repeat(seed):
+def test_users_that_stop_matching_between_hops_never_stall_or_repeat(seed, family):
     rng = random.Random(10_000 + seed)
     n_users = rng.choice([8, 20, 45, 80])
-    world = _world(rng, n_users)
+    world = _with_native(_world(rng, n_users), 10_000 + seed, family)
     before = _expected(world)
     page_size = rng.choice([1, 3, 7, 25])
     heavy = frozenset(rng.sample(sorted(world.users), rng.choice([0, 0, 1, 2])))
@@ -2269,16 +2478,17 @@ def test_users_that_stop_matching_between_hops_never_stall_or_repeat(seed):
             world,
             page_size=page_size,
             max_hops=_hop_bound(n_users, page_size, len(heavy))
-            + _slice_hops(world, seed),
+            + _slice_hops(world, seed, family),
             max_statements=max_statements,
             heavy=heavy,
             mutate=_stop_matching(rng, changed),
-            slice_ms=_slice_model(seed),
+            slice_ms=_slice_model(seed, family),
             keys=keys,
             finish=finish,
             fault=faults.fault,
             fail_ms=faults.fail_ms,
             width=faults.width,
+            family=family,
         )
 
     assert len(names) == len(set(names)), "a user was published twice"
@@ -2315,11 +2525,13 @@ def _change(rng: random.Random, kind: str, changed: dict[str, bool]):
         user = world.users[uid]
         if uid in published or uid in changed:
             return
-        member = user["key"] is not None and user["curated"]
+        member = _is_member(user)
         if kind == "start":
             if member:
                 return
             user["curated"] = True
+            if user["native"] is False:
+                user["native"] = True
             if user["key"] is None:
                 user["key"] = WINDOW_START + TICK * rng.randrange(WINDOW // TICK)
         elif not member:
@@ -2334,9 +2546,10 @@ def _change(rng: random.Random, kind: str, changed: dict[str, bool]):
     return mutate
 
 
+@pytest.mark.parametrize("family", FAMILIES)
 @pytest.mark.parametrize("kind", ["start", "up", "down"])
 @pytest.mark.parametrize("seed", range(16))
-def test_users_that_change_between_hops_follow_the_coverage_fence(kind, seed):
+def test_users_that_change_between_hops_follow_the_coverage_fence(kind, seed, family):
     """A change a cursor has walked past is not published by it; any other is.
 
     A user whose new key lies at or above the cursor's coverage, or behind
@@ -2347,18 +2560,20 @@ def test_users_that_change_between_hops_follow_the_coverage_fence(kind, seed):
     """
     rng = random.Random(20_000 + 97 * seed + len(kind))
     n_users = rng.choice([8, 20, 45])
-    world = _world(rng, n_users)
+    world = _with_native(_world(rng, n_users), 20_000 + 97 * seed, family)
     page_size = rng.choice([1, 3, 7, 25])
     changed: dict[str, bool] = {}
     with _limits(seed) as (max_statements, finish), _shipped_walls():
         names, _hops = _follow(
             world,
             page_size=page_size,
-            max_hops=_hop_bound(n_users, page_size, 0),
+            max_hops=_hop_bound(n_users, page_size, 0)
+            + _slice_hops(world, seed, family),
             max_statements=max_statements,
             mutate=_change(rng, kind, changed),
-            slice_ms=_slice_model(seed),
+            slice_ms=_slice_model(seed, family),
             finish=finish,
+            family=family,
         )
 
     assert len(names) == len(set(names)), "a user was published twice"

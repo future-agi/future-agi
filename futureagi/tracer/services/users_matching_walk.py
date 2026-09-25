@@ -1,14 +1,29 @@
-"""Span-attribute-filtered Users pages, ordered by newest matching activity.
+"""Span-attribute- and native-filtered Users pages, by newest matching activity.
 
 The seeded candidate statement decides an attribute-filtered page by
 aggregating the whole window; on the largest tenants it materialises two
-planning-time sets over the sorting key and dies before it starts. This walk
-replaces it for one scalar span-attribute filter - plain-text
-``equals``/``in``, boolean ``equals``/``in``, or a number comparison - when
-that filter is the only item on its key:
+planning-time sets over the sorting key and dies before it starts, and a page
+filtered only on a native span dimension (status, model, provider, name,
+trace name, observation type) ran it with no witness at all. This walk
+replaces it when the page has a witness (``MatchingActivityWitness``, chosen
+once by ``UsersListManager.matching_activity_walk_applies``):
 
-* discover: one bounded statement per time slice, newest-first, through the
-  deployed key and value blooms, grouped by the RAW user id the span carries
+* raw: one scalar span-attribute filter - plain-text ``equals``/``in``,
+  boolean ``equals``/``in``, or a number comparison - that is the only item
+  on its key, discovered through the deployed key and value blooms;
+* native: otherwise, the first native span-dimension leaf whose users-graph
+  condition has an existence term ``countIf(flag) > 0``, discovered on that
+  flag. Every member has a latest live span satisfying it, and that span's
+  latest version is a physical row satisfying it at the same ``start_time``,
+  so the raw-row argument below holds word for word. No skip index serves the
+  flag (``idx_status`` alone does, and not by design), so an empty native
+  slice costs in proportion to its width (``index_pruned``).
+
+The order key follows the witness: the newest live span whose latest state
+satisfies the witness leaf, over the whole window. Then:
+
+* discover: one bounded statement per time slice, newest-first, on the
+  witness predicate, grouped by the RAW user id the span carries
   (``build_matching_activity_slice_query``; a raw superset, never a result),
   then, only for a populated slice, one bounded survivor statement over
   exactly the ids returned (``build_dimension_survivor_query``) that resolves
@@ -16,9 +31,11 @@ that filter is the only item on its key:
 * certify: the page's native span-dimension statement, when the filters
   carry native leaves (``build_native_span_dimension_query``, the users
   graph's own membership SQL over the whole window), and its existing
-  attribute enrichment, which also returns the user's newest LIVE span whose
-  LATEST value matches - the order key; a user that fails any attribute or
-  native leaf is decided here and never replayed;
+  attribute enrichment. The order key is the user's newest LIVE span whose
+  LATEST state matches the witness leaf: the enrichment returns it for a raw
+  witness, the native statement (``native_leaf_<i>_newest``) for a native
+  one. A user that fails any attribute or native leaf is decided here and
+  never replayed;
 * materialise: the existing finite per-user replay, only for users that are
   attribute and native members AND publishable by position, which decides
   curated presence, search and every relation predicate over the whole window
@@ -147,6 +164,7 @@ from tracer.services.clickhouse.list_cursor import ListCursorError
 from tracer.services.clickhouse.query_builders.user_list import (
     REQUESTED_PAGE_SESSION_METRIC_FIELDS,
     REQUESTED_PAGE_SPAN_METRIC_FIELDS,
+    MatchingActivityWitness,
 )
 from tracer.services.clickhouse.read_budget import (
     ReadDeadline,
@@ -163,7 +181,13 @@ if TYPE_CHECKING:  # pragma: no cover - typing only, the manager imports us.
 
 logger = structlog.get_logger(__name__)
 
+# The witness is not encoded in the cursor: it is a function of the filters,
+# which the signed cursor is bound to. A change of the witness precedence
+# (``UsersListManager.matching_activity_walk_applies``) changes which leaf an
+# existing cursor's keys and coverage speak for, so it must bump this marker.
 USER_LIST_MATCHING_CURSOR_ORDER = "matching_activity_users_v1"
+# Newest activity matching the WITNESS leaf: the raw attribute leaf when the
+# walk accepts one, otherwise the first eligible native leaf in filter order.
 USER_LIST_MATCHING_ORDERING = "latest_matching_activity"
 USER_LIST_MATCHING_PROVENANCE = "matching_activity_walk"
 USER_LIST_PAGE_WALL_MS = settings.USER_LIST_PAGE_WALL_MS
@@ -263,7 +287,7 @@ class _WalkBudget:
 class _WalkState:
     manager: Any
     builder: UserListQueryBuilderV2
-    walked_key: str
+    witness: MatchingActivityWitness
     page_size: int
     window_start: datetime
     window_end: datetime
@@ -896,6 +920,7 @@ def _certify(state: _WalkState, batch: list[_Candidate]) -> int:
         for alias in candidate.alias_ids
     }
     head = len(batch) == 1 and state.progress_owed
+    native_witness = state.witness.family == "native"
     try:
         if manager.native_dimension_leaves:
             manager._read_native_span_dimensions(
@@ -907,6 +932,7 @@ def _certify(state: _WalkState, batch: list[_Candidate]) -> int:
                     frozen_filters=state.frozen_filters,
                 ),
                 _admission_deadline(state),
+                newest=state.witness.leaf_index if native_witness else None,
             )
         manager._read_span_attributes(
             rows,
@@ -937,8 +963,14 @@ def _certify(state: _WalkState, batch: list[_Candidate]) -> int:
     state.progress_owed = False
     for candidate in batch:
         uid = candidate.end_user_id
-        order_key = manager._matching_activity_by_user.get(uid, {}).get(
-            state.walked_key
+        order_key = (
+            manager._native_matching_activity_by_user.get(uid, {}).get(
+                state.witness.leaf_index
+            )
+            if native_witness
+            else manager._matching_activity_by_user.get(uid, {}).get(
+                state.witness.key
+            )
         )
         member = (
             order_key is not None
@@ -1337,7 +1369,7 @@ def walk_matching_activity_page(
     state = _WalkState(
         manager=manager,
         builder=builder,
-        walked_key=witness.key,
+        witness=witness,
         page_size=page_size,
         window_start=window_start,
         window_end=window_end,
@@ -1463,15 +1495,18 @@ def walk_matching_activity_page(
                 if not _publish(state, boundary):
                     state.stopped = True
                 break
-        # An empty slice cost only its fixed overhead (the bloom pruned every
-        # granule), so its time says nothing about a wider one: widen hard as
-        # long as another statement like it fits the wall. A populated slice
-        # that came back untruncated widens by four only if four of it would
-        # fit, since its cost grows with its width.
+        # An empty slice on an index-pruned witness cost only its fixed
+        # overhead (the bloom pruned every granule), so its time says nothing
+        # about a wider one: widen hard as long as another statement like it
+        # fits the wall. A slice whose cost grows with its width - one that
+        # came back populated and untruncated, or an empty one on a witness no
+        # index serves (a native flag reads every row of its range) - widens
+        # by four only if four of it would fit.
         remaining_ms = state.budget.remaining_ms()
-        if not candidates and read.query_ms * 2 <= remaining_ms:
-            width = min(USER_LIST_WALK_MAX_SLICE, width * 16)
-        elif candidates and read.query_ms * 4 <= remaining_ms:
+        if not candidates and state.witness.index_pruned:
+            if read.query_ms * 2 <= remaining_ms:
+                width = min(USER_LIST_WALK_MAX_SLICE, width * 16)
+        elif read.query_ms * 4 <= remaining_ms:
             width = min(USER_LIST_WALK_MAX_SLICE, width * 4)
 
     leftover = state.pending(boundary)

@@ -272,13 +272,18 @@ def test_native_leaf_never_narrows_acquisition_on_the_attribute_maps(
 ):
     # The native value lives in a spans column, not in the attribute maps: an
     # attribute-map witness would acquire only users carrying a same-named raw
-    # attribute (nobody), so the page must be acquired without one.
+    # attribute (nobody), so the seeded page is acquired without one. The
+    # walk discovers on the leaf's own span flag instead.
     item = leaf(column_id, operation, value)
     builder = UserListQueryBuilderV2(
         organization_id=ORG, project_ids=[PROJECT], filters=[item]
     )
     assert builder.matching_activity_witness() is None
-    assert manager_for(item).matching_activity_walk_applies(builder) is False
+    manager = manager_for(item)
+    assert manager.matching_activity_walk_applies(builder) is True
+    assert manager._walk_witness == builder.native_matching_activity_witness()
+    assert manager._walk_witness.family == "native"
+    assert "attrs_" not in manager._walk_witness.sql
     query, _params = builder.build_dimension_candidate_query(limit=26, **WINDOW)
     assert "span_attr_" not in query
     assert "attrs_" not in query

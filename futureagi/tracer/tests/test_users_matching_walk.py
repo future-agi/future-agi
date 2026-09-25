@@ -37,6 +37,7 @@ PROJECT = str(uuid.UUID(int=201))
 ORG = str(uuid.UUID(int=202))
 WINDOW_START = datetime(2026, 9, 1, tzinfo=UTC)
 WINDOW_END = datetime(2026, 9, 2, tzinfo=UTC)
+EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 SERVICE = "tracer.services.users_list_manager.V2AnalyticsQueryService"
 # ``_USERS_ORIGIN_SHAPES["no_text_witness"]`` in
 # scripts/qa/replay_observe_queries_readonly.py: the unfiltered cursor page.
@@ -143,6 +144,7 @@ class Engine:
         self.enriched: list[tuple[str, ...]] = []
         self.enrichment_scan_ids: list[tuple[str, ...]] = []
         self.replayed: list[tuple[str, ...]] = []
+        self.native_ids: list[tuple[str, ...]] = []
         self.remapped: list[tuple[str, ...]] = []
         self.slice_ranges: list[tuple[datetime, datetime]] = []
         self.instant_ranges: list[tuple[datetime, datetime]] = []
@@ -303,13 +305,24 @@ class Engine:
         return SimpleNamespace(data=data, query_time_ms=1.0)
 
     def _native(self, query, params):
-        """Each native leaf's decision: the user's ``native`` answer."""
+        """Each native leaf's decision: the user's ``native`` answer.
 
-        leaves = re.findall(r"AS (native_leaf_\d+)(?!_)", query)
+        A native walk's order key (``native_leaf_<i>_newest``) is the user's
+        ``key``: in a world walked on a native leaf, ``raw`` holds the
+        physical rows satisfying its flag and ``key`` the newest latest live
+        one; no key reads as the epoch, as ``maxIf`` over nothing does.
+        """
+
+        # ``(?![_\d])``: never a prefix of ``native_leaf_13`` or of a
+        # ``_newest`` column.
+        leaves = re.findall(r"AS (native_leaf_\d+)(?![_\d])", query)
+        newest = re.findall(r"AS (native_leaf_\d+_newest)(?![_\d])", query)
+        self.native_ids.append(tuple(params["candidate_end_user_ids"]))
         data = [
             {
                 "end_user_id": uid,
                 **dict.fromkeys(leaves, int(self.world.users[uid]["native"])),
+                **dict.fromkeys(newest, self.world.users[uid]["key"] or EPOCH),
             }
             for uid in params["candidate_end_user_ids"]
             if self.world.users[uid]["native"] is not None
@@ -596,6 +609,282 @@ def test_the_statement_budget_counts_the_native_statement_certification_sends():
     assert walk._materialisation_statement_count(_manager(_filters())) == 1
     assert walk._enrichment_statement_count(_manager(_filters())) == 1
     assert walk._head_statements(native_page) == 4 + 2 * 2 + 2 * 1
+
+
+def _date_only():
+    return _filters()[:1]
+
+
+def _native_leaf(column_id="model", operation="equals", value="gpt-4o", col_type=None):
+    config = {"filter_type": "text", "filter_op": operation}
+    if col_type is not None:
+        config["col_type"] = col_type
+    if value is not None:
+        config["filter_value"] = value
+    return {
+        "column_id": column_id,
+        "property_id": f"system_attribute:traces:{column_id}",
+        "filter_config": config,
+    }
+
+
+def test_a_native_only_page_walks_on_the_native_leaf_and_never_seeds():
+    # ``raw`` rows are the physical rows satisfying the native flag (stale
+    # versions included); ``key`` is the newest latest live match; ``native``
+    # the leaf's whole-window decision.
+    world = World()
+    world.user(
+        1, key=minutes_before_end(30), raw=(minutes_before_end(30),), native=True
+    )
+    world.user(2, key=minutes_before_end(5), raw=(minutes_before_end(5),), native=True)
+    # Witnessed only on a stale version: its live spans do not match.
+    world.user(3, key=None, raw=(minutes_before_end(1),), native=False)
+    world.user(
+        4,
+        key=minutes_before_end(90),
+        raw=(minutes_before_end(2), minutes_before_end(90)),
+        native=True,
+        aliases=1,
+    )
+    filters = [*_date_only(), _native_status_leaf()]
+
+    read, engine = _page(world, page_size=25, filters=filters)
+
+    assert _names(read) == ["user-2", "user-1", "user-4"]
+    assert read.has_more is False
+    assert read.payload["query_provenance"] == "matching_activity_walk"
+    assert read.payload["ordering"] == "latest_matching_activity"
+    assert read.payload["query_status"] == "complete"
+    kinds = _kinds(engine)
+    assert "enrich" not in kinds
+    assert set(kinds) <= {"slice", "remap", "native", "replay", "probe", "estimate"}
+    slices = [call for call in engine.calls if kind_of(call) == "slice"]
+    assert all(
+        "lowerUTF8(toString(status)) = %(native_leaf_1_0_col_1)s" in call
+        for call in slices
+    )
+    natives = [call for call in engine.calls if kind_of(call) == "native"]
+    assert all("AS native_leaf_1_newest" in call for call in natives)
+    # The stale witness is certified out before any replay.
+    assert all(str(uuid.UUID(int=1003)) not in ids for ids in engine.replayed)
+
+
+def test_a_native_witness_certifies_its_negation_over_the_whole_window():
+    # ``model not_equals gpt-4o`` without a family: discovered on the presence
+    # flag, the forbidden value anywhere in the window rejects the user at
+    # certification, before any replay.
+    world = World()
+    world.user(
+        1, key=minutes_before_end(10), raw=(minutes_before_end(10),), native=True
+    )
+    forbidden = world.user(
+        2, key=minutes_before_end(3), raw=(minutes_before_end(3),), native=False
+    )
+    filters = [*_date_only(), _native_leaf(operation="not_equals")]
+
+    read, engine = _page(world, page_size=25, filters=filters)
+
+    assert _names(read) == ["user-1"]
+    assert all(forbidden not in ids for ids in engine.replayed)
+    slices = [call for call in engine.calls if kind_of(call) == "slice"]
+    assert slices and all("forbidden" not in call for call in slices)
+    assert any(
+        "forbidden" in call for call in engine.calls if kind_of(call) == "native"
+    )
+
+
+@pytest.mark.parametrize(
+    ("filters", "expected"),
+    [
+        # A raw witness the walk accepts wins over any native leaf.
+        (
+            [
+                _native_status_leaf(),
+                _attribute_filter(
+                    filter_type="text", filter_op="equals", filter_value="gold"
+                ),
+            ],
+            ("raw", "tag", None),
+        ),
+        # Two items on the raw key: the walk declines the raw witness.
+        (
+            [
+                _attribute_filter(
+                    filter_type="text", filter_op="equals", filter_value="gold"
+                ),
+                _attribute_filter(
+                    filter_type="text", filter_op="equals", filter_value="GOLD"
+                ),
+                _native_status_leaf(),
+            ],
+            ("native", "status", 3),
+        ),
+        # A raw leaf with no walkable witness at all.
+        (
+            [
+                _attribute_filter(
+                    filter_type="text", filter_op="contains", filter_value="go"
+                ),
+                _native_leaf(),
+            ],
+            ("native", "model", 2),
+        ),
+        # Native leaves only: the lowest eligible index.
+        (
+            [
+                _native_leaf("model", "is_null", None),
+                _native_status_leaf(),
+                _native_leaf(),
+            ],
+            ("native", "status", 2),
+        ),
+        ([_native_leaf("model", "is_null", None)], None),
+    ],
+    ids=["raw-wins", "raw-declined", "raw-unwalkable", "lowest-native", "absence-only"],
+)
+def test_the_walk_witness_precedence(filters, expected):
+    manager = _manager([*_date_only(), *filters])
+    builder = UserListQueryBuilderV2(
+        organization_id=ORG, project_ids=[PROJECT], filters=manager.filters
+    )
+    applies = manager.matching_activity_walk_applies(builder)
+    if expected is None:
+        assert applies is False and manager._walk_witness is None
+        return
+    family, key, leaf_index = expected
+    witness = manager._walk_witness
+    assert applies is True
+    assert (witness.family, witness.key, witness.leaf_index) == (
+        family,
+        key,
+        leaf_index,
+    )
+    assert witness.index_pruned is (family == "raw")
+
+
+def test_sort_params_never_walk_a_native_leaf():
+    manager = UsersListManager(
+        organization_id=ORG,
+        allowed_project_ids=[PROJECT],
+        project_id=PROJECT,
+        filters=[*_date_only(), _native_status_leaf()],
+        sort_params=[{"column_id": "total_cost", "direction": "desc"}],
+        requested_columns=[],
+        attribute_keys=[],
+    )
+    builder = UserListQueryBuilderV2(
+        organization_id=ORG, project_ids=[PROJECT], filters=manager.filters
+    )
+    assert manager.matching_activity_walk_applies(builder) is False
+
+
+@pytest.mark.parametrize(
+    ("filters", "second_width"),
+    [
+        # An empty native slice read every row of its hour: the next is four
+        # hours wide, not sixteen.
+        ([*_filters()[:1], _native_status_leaf()], timedelta(hours=4)),
+        # An empty raw slice cost only its fixed overhead: sixteen hours.
+        (None, timedelta(hours=16)),
+    ],
+    ids=["native", "raw"],
+)
+def test_an_empty_slice_widens_by_what_its_witness_costs(filters, second_width):
+    world = World()
+    world.user(
+        1,
+        key=minutes_before_end(22 * 60),
+        raw=(minutes_before_end(22 * 60),),
+        native=True,
+    )
+
+    read, engine = _page(world, page_size=25, filters=filters)
+
+    assert _names(read) == ["user-1"]
+    first, second = engine.slice_ranges[:2]
+    assert (
+        first[1] - first[0] == walk.USER_LIST_WALK_INITIAL_SLICE == timedelta(hours=1)
+    )
+    assert second[1] - second[0] == second_width
+
+
+def test_a_seeded_cursor_on_a_native_only_page_continues_seeded():
+    # A cursor minted by the seeded page before native leaves walked never
+    # reaches the walk: its pagination ends where it began.
+    manager = _manager([*_date_only(), _native_status_leaf()])
+    before = str(uuid.UUID(int=1234))
+    cursor = ListCursor(
+        window_start=WINDOW_START,
+        window_end=WINDOW_END,
+        order=("physical_latest_users_v1", WINDOW_START.isoformat(), before),
+        seen_rows=25,
+    )
+    with (
+        patch.object(manager, "_read_dimension_candidates", return_value=[]) as seeded,
+        patch(
+            "tracer.services.users_list_manager.walk_matching_activity_page",
+            side_effect=AssertionError("a seeded cursor never walks"),
+        ),
+    ):
+        read = manager.list_cursor_payload(page_size=25, cursor=cursor)
+    assert read.payload["table"] == [] and read.has_more is False
+    assert seeded.call_args.kwargs["before_end_user_id"] == before
+
+
+def test_a_native_matching_cursor_an_older_pod_cannot_walk_restarts():
+    world = World()
+    for ordinal in range(1, 4):
+        world.user(
+            ordinal,
+            key=minutes_before_end(ordinal),
+            raw=(minutes_before_end(ordinal),),
+            native=True,
+        )
+    filters = [*_date_only(), _native_status_leaf()]
+    read, _engine = _page(world, page_size=1, filters=filters)
+    assert _names(read) == ["user-1"]
+    cursor = _signed_cursor(read)
+    assert cursor.order[0] == walk.USER_LIST_MATCHING_CURSOR_ORDER
+    # An older pod: the walk does not apply to a native-only page there.
+    with (
+        patch.object(
+            UsersListManager, "matching_activity_walk_applies", return_value=False
+        ),
+        pytest.raises(ListCursorError) as raised,
+    ):
+        _page(world, page_size=1, filters=filters, cursor=cursor)
+    assert raised.value.code == "invalid_cursor"
+    # The same pod resumes it: every member exactly once, in order.
+    names = _names(read)
+    while read.has_more:
+        read, _engine = _page(
+            world, page_size=1, filters=filters, cursor=_signed_cursor(read)
+        )
+        names.extend(_names(read))
+    assert names == ["user-1", "user-2", "user-3"]
+
+
+def test_a_raw_plus_native_cursor_still_walks_the_raw_witness():
+    world = World()
+    for ordinal in range(1, 4):
+        world.user(
+            ordinal,
+            key=minutes_before_end(ordinal),
+            raw=(minutes_before_end(ordinal),),
+            native=ordinal != 2,
+        )
+    filters = [*_filters(), _native_status_leaf()]
+    read, engine = _page(world, page_size=1, filters=filters)
+    names = _names(read)
+    assert "enrich" in _kinds(engine)
+    while read.has_more:
+        read, engine = _page(
+            world, page_size=1, filters=filters, cursor=_signed_cursor(read)
+        )
+        names.extend(_names(read))
+        slices = [call for call in engine.calls if kind_of(call) == "slice"]
+        assert all("attrs_string" in call for call in slices)
+    assert names == ["user-1", "user-3"]
 
 
 def test_populated_slice_resolves_aliases_through_the_bounded_survivor_statement():

@@ -1311,25 +1311,45 @@ class UsersListManager:
     def matching_activity_walk_applies(self, builder: UserListQueryBuilderV2) -> bool:
         """Whether this page walks newest matching activity instead of seeding.
 
-        True exactly when the first scalar witness is the ONLY filter item on
-        its key and either (text) the manager accelerates that key as an
-        exact-text filter, or (number/boolean) the item is a shape whose
-        Python and SQL comparisons are provably the same
-        (``users_walk_witness``): the walk reuses that one witness to discover
-        users, to narrow their certification and to project the order key.
-        A key carrying more than one filter item keeps the seeded page: the
-        walk's order key and its witness must be one predicate, and the
-        exact-text values of a key are the union of all its items.
-        Every other filter shape keeps its path. Sets the typed predicate the
-        certification reads when the walk applies.
+        The witness is chosen here, once, and stored for the walk
+        (``_walk_witness``); precedence is a function of the filters alone:
+
+        1. The raw attribute witness, when the walk accepts it: it is the
+           ONLY filter item on its key and either (text) the manager
+           accelerates that key as an exact-text filter, or (number/boolean)
+           the item is a shape whose Python and SQL comparisons are provably
+           the same (``users_walk_witness``): the walk reuses that one
+           witness to discover users, to narrow their certification and to
+           project the order key. A key carrying more than one filter item
+           is not accepted: the walk's order key and its witness must be one
+           predicate, and the exact-text values of a key are the union of
+           all its items. A raw witness is served by the deployed blooms, so
+           it wins whenever it is accepted.
+        2. Otherwise the first native leaf, by filter index, whose graph
+           condition has an existence term
+           (``native_matching_activity_witness``); its order key is its own
+           newest match, so two leaves on its column need no special rule.
+        3. Otherwise no walk: every other filter shape keeps its path.
+
+        Sets the typed predicate the certification reads when a typed raw
+        witness is chosen.
         """
         self._walked_typed_filter = None
         self._walk_witness = None
         if self.sort_params:
             return False
         witness = builder.matching_activity_witness()
-        if witness is None:
+        if witness is not None and self._raw_walk_witness_applies(witness):
+            return True
+        native = builder.native_matching_activity_witness()
+        if native is None:
             return False
+        self._walk_witness = native
+        return True
+
+    def _raw_walk_witness_applies(self, witness: MatchingActivityWitness) -> bool:
+        """Whether the walk accepts the raw witness; stores it when it does."""
+
         key, kind = witness.key, witness.kind
         items = [
             item
@@ -2124,9 +2144,10 @@ class UsersListManager:
             seen_before = 0
             before_first_seen = None
             before_end_user_id = None
-            # A plain-text span-attribute filter orders the page by newest
-            # matching activity and walks witnessed spans newest-first: the
-            # whole-window candidate statement is never issued for it.
+            # A walkable span-attribute or native span-dimension filter orders
+            # the page by newest matching activity and walks witnessed spans
+            # newest-first: the whole-window candidate statement is never
+            # issued for it.
             if self.matching_activity_walk_applies(base_builder):
                 return walk_matching_activity_page(
                     self,
