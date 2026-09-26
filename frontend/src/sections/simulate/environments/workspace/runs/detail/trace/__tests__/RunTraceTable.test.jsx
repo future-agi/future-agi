@@ -297,6 +297,34 @@ describe("RunTraceTable", () => {
     expect(screen.getAllByText("Errored")).not.toHaveLength(0);
   });
 
+  it("offers the Scenarios tab's axes plus Status and requests the chosen one", async () => {
+    const user = userEvent.setup();
+    renderTable();
+
+    expect(useRunCalls).toHaveBeenLastCalledWith(
+      "ex1",
+      expect.objectContaining({ groupBy: "goal" }),
+    );
+    await user.click(screen.getByRole("button", { name: /Group by/ }));
+    expect(
+      screen.getAllByRole("menuitem").map((item) => item.textContent),
+    ).toEqual([
+      "Use case",
+      "Sub-goal",
+      "Accent",
+      "Age",
+      "Attack",
+      "Task",
+      "Status",
+    ]);
+    await user.click(screen.getByRole("menuitem", { name: "Task" }));
+
+    expect(useRunCalls).toHaveBeenLastCalledWith(
+      "ex1",
+      expect.objectContaining({ groupBy: "task" }),
+    );
+  });
+
   it("offers only Goal, Sub goal, and Status filters", async () => {
     const user = userEvent.setup();
     renderTable();

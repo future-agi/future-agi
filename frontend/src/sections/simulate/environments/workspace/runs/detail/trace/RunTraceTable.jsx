@@ -13,7 +13,6 @@ import { TraceGroupByPicker, TraceColumnsPicker } from "./TracePickers";
 import StatusFilterChips from "./StatusFilterChips";
 import { defaultTraceColumns } from "./traceTable.constants";
 
-const GROUP_BY_API = { useCase: "goal", status: "status" };
 const STATUS_CHIP_API = {
   failing: "failed",
   errored: "error",
@@ -44,7 +43,7 @@ export default function RunTraceTable({
   onOpenCall,
   initialFilters = {},
 }) {
-  const [groupBy, setGroupBy] = useState("useCase");
+  const [groupBy, setGroupBy] = useState("goal");
   const [statusChip, setStatusChip] = useState("all");
   const [page, setPage] = useState(1);
   const [visibleColumns, setVisibleColumns] = useState(() =>
@@ -75,7 +74,7 @@ export default function RunTraceTable({
     page,
     limit: 50,
     filters: serverFilters,
-    groupBy: GROUP_BY_API[groupBy],
+    groupBy,
   });
 
   // The eval columns to render come from the data-driven column descriptors.

@@ -14,11 +14,6 @@ from model_hub.models.develop_dataset import Cell
 from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
 from simulate.utils.eval_summary import iter_live_eval_outputs
 
-GROUP_FIELDS = {
-    "goal": "goal",
-    "status": "outcome",
-}
-
 
 def _number(value: Any) -> float | None:
     if isinstance(value, bool):
