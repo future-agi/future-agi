@@ -357,7 +357,8 @@ class RunPrompt:
                 "Failed to calculate cost for audio TTS",
                 model=self.model,
                 error=str(e),
-                usage_payload=usage_payload,
+                prompt_tokens=usage_payload["prompt_tokens"],
+                completion_tokens=usage_payload["completion_tokens"],
             )
             cost_payload = {
                 "total_cost": 0.0,
