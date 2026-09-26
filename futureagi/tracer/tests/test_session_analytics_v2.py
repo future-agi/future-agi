@@ -134,10 +134,16 @@ def _navigation_context(**changes):
         "project_id": None,
         "workspace_id": WORKSPACE_ID,
         "cursor_mode": True,
-        "filters": [{"column_id": "created_at", "filter_config": {
-            "filter_type": "datetime", "filter_op": "between",
-            "filter_value": ["2026-07-01T00:00:00Z", "2026-08-01T00:00:00Z"],
-        }}],
+        "filters": [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": ["2026-07-01T00:00:00Z", "2026-08-01T00:00:00Z"],
+                },
+            }
+        ],
         "sort_params": [],
         **changes,
     }
@@ -148,32 +154,65 @@ def navigation_context_call():
     from tracer.utils.session import get_session_navigation
 
     org = SimpleNamespace(id=PROJECT_ID, pk=PROJECT_ID)
-    request = SimpleNamespace(query_params={}, organization=org,
-        workspace=SimpleNamespace(pk=WORKSPACE_ID), user=SimpleNamespace(organization=org))
+    request = SimpleNamespace(
+        query_params={},
+        organization=org,
+        workspace=SimpleNamespace(pk=WORKSPACE_ID),
+        user=SimpleNamespace(organization=org),
+    )
     service = mock.MagicMock()
-    service.execute_ch_query.return_value = SimpleNamespace(data=[
-        {"session_id": session_id, "project_id": PROJECT_ID,
-         "start_time": datetime(2026, 7, 3 - index), "session_start": datetime(2026, 7, 3 - index),
-         "max_project_count": 1, "project_count": 1,
-         "total_count": 2, "remaining_count": 2}
-        for index, session_id in enumerate((SESSION_ID, OTHER_PROJECT_ID))
-    ])
+    service.execute_ch_query.return_value = SimpleNamespace(
+        data=[
+            {
+                "session_id": session_id,
+                "project_id": PROJECT_ID,
+                "start_time": datetime(2026, 7, 3 - index),
+                "session_start": datetime(2026, 7, 3 - index),
+                "max_project_count": 1,
+                "project_count": 1,
+                "total_count": 2,
+                "remaining_count": 2,
+            }
+            for index, session_id in enumerate((SESSION_ID, OTHER_PROJECT_ID))
+        ]
+    )
     projects = mock.MagicMock()
     projects.filter.return_value = projects
     projects.exclude.return_value = projects
     projects.values_list.return_value = [PROJECT_ID, OTHER_PROJECT_ID]
-    with mock.patch("tracer.services.clickhouse.v2.query_service.V2AnalyticsQueryService", return_value=service), \
-         mock.patch("tracer.views.trace_session._project_queryset_for_request", return_value=projects), \
-         mock.patch("tracer.views.trace_session._bounded_session_list_postgres_reads"),          mock.patch("tracer.views.trace_session.EndUser.objects.filter") as display_users, \
-         mock.patch("tracer.services.clickhouse.v2.end_user_dict_reader.resolve_end_user_ids_by_user_id", return_value=[USER_ID]) as users, \
-         mock.patch.object(SessionAnalyticsQueryBuilderV2, "build_session_navigation_query", side_effect=AssertionError("context cannot use legacy navigation")) as legacy:
+    with (
+        mock.patch(
+            "tracer.services.clickhouse.v2.query_service.V2AnalyticsQueryService",
+            return_value=service,
+        ),
+        mock.patch(
+            "tracer.views.trace_session._project_queryset_for_request",
+            return_value=projects,
+        ),
+        mock.patch("tracer.views.trace_session._bounded_session_list_postgres_reads"),
+        mock.patch(
+            "tracer.views.trace_session.EndUser.objects.filter"
+        ) as display_users,
+        mock.patch(
+            "tracer.services.clickhouse.v2.end_user_dict_reader.resolve_end_user_ids_by_user_id",
+            return_value=[USER_ID],
+        ) as users,
+        mock.patch.object(
+            SessionAnalyticsQueryBuilderV2,
+            "build_session_navigation_query",
+            side_effect=AssertionError("context cannot use legacy navigation"),
+        ) as legacy,
+    ):
         display_users.return_value.filter.return_value = display_users.return_value
         display_users.return_value.values.return_value.first.return_value = None
+
         def call(context, current=SESSION_ID):
-            result = get_session_navigation(request, PROJECT_ID, current,
-                query_data={"navigation_context": context})
+            result = get_session_navigation(
+                request, PROJECT_ID, current, query_data={"navigation_context": context}
+            )
             legacy.assert_not_called()
             return result
+
         yield call, service, projects, users
 
 
@@ -194,11 +233,18 @@ def test_context_navigation_preserves_cross_project_user_scope(navigation_contex
     assert not any("id" in item.kwargs for item in projects.filter.call_args_list)
 
 
-@pytest.mark.parametrize("changes", [
-    {"workspace_id": OTHER_PROJECT_ID}, {"workspace_id": None},
-    {"filters": []}, {"filters": "bad"}, {"extra": True},
-    {"project_id": USER_ID}, {"sort_params": [{"column_id": "unknown", "direction": "asc"}]},
-])
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"workspace_id": OTHER_PROJECT_ID},
+        {"workspace_id": None},
+        {"filters": []},
+        {"filters": "bad"},
+        {"extra": True},
+        {"project_id": USER_ID},
+        {"sort_params": [{"column_id": "unknown", "direction": "asc"}]},
+    ],
+)
 def test_invalid_context_never_falls_back_or_queries(navigation_context_call, changes):
     call, service, _, _ = navigation_context_call
     assert call(_navigation_context(**changes)) == (None, None)
@@ -215,8 +261,13 @@ def test_present_invalid_context_is_not_legacy(navigation_context_call, context)
 def test_context_project_and_custom_sort(navigation_context_call):
     call, service, projects, _ = navigation_context_call
     projects.values_list.return_value = [PROJECT_ID]
-    assert call(_navigation_context(project_id=PROJECT_ID, cursor_mode=False,
-        sort_params=[{"column_id": "total_tokens", "direction": "asc"}])) == (OTHER_PROJECT_ID, None)
+    assert call(
+        _navigation_context(
+            project_id=PROJECT_ID,
+            cursor_mode=False,
+            sort_params=[{"column_id": "total_tokens", "direction": "asc"}],
+        )
+    ) == (OTHER_PROJECT_ID, None)
     query, params = service.execute_ch_query.call_args.args
     assert params["project_id"] == PROJECT_ID
     assert "ORDER BY total_tokens ASC, session_id ASC" in query
@@ -230,25 +281,50 @@ def test_context_cannot_pin_a_different_authorized_project(navigation_context_ca
     service.execute_ch_query.assert_not_called()
 
 
-def test_context_scalar_uses_all_span_classifier_and_bounded_uuid_string_order(navigation_context_call):
+def test_context_scalar_uses_all_span_classifier_and_bounded_uuid_string_order(
+    navigation_context_call,
+):
     call, service, _, _ = navigation_context_call
     context = _navigation_context()
-    context["filters"].append({"column_id": "company_id", "filter_config": {
-        "col_type": "SPAN_ATTRIBUTE", "filter_type": "text",
-        "filter_op": "not_in", "filter_value": ["blocked"],
-    }})
+    context["filters"].append(
+        {
+            "column_id": "company_id",
+            "filter_config": {
+                "col_type": "SPAN_ATTRIBUTE",
+                "filter_type": "text",
+                "filter_op": "not_in",
+                "filter_value": ["blocked"],
+            },
+        }
+    )
     assert call(context) == (OTHER_PROJECT_ID, None)
-    query, _ = next(call.args for call in service.execute_ch_query.call_args_list
-                    if "resolved_candidate_scalar_spans" in call.args[0])
+    query, _ = next(
+        call.args
+        for call in service.execute_ch_query.call_args_list
+        if "resolved_candidate_scalar_spans" in call.args[0]
+    )
     assert "resolved_candidate_scalar_spans" in query
     assert "GROUP BY project_id, session_id" in query
     assert "session_start AS start_time" in query
     assert "ORDER BY start_time DESC, toString(session_id) DESC" in query
 
 
-@pytest.mark.parametrize("rows", [[], [{"max_project_count": 2,
-    "next_session_id": OTHER_PROJECT_ID, "previous_session_id": None}]])
-def test_context_missing_current_or_project_collision_has_no_neighbors(navigation_context_call, rows):
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [],
+        [
+            {
+                "max_project_count": 2,
+                "next_session_id": OTHER_PROJECT_ID,
+                "previous_session_id": None,
+            }
+        ],
+    ],
+)
+def test_context_missing_current_or_project_collision_has_no_neighbors(
+    navigation_context_call, rows
+):
     call, service, _, _ = navigation_context_call
     service.execute_ch_query.return_value = SimpleNamespace(data=rows)
     assert call(_navigation_context()) == (None, None)
@@ -260,6 +336,7 @@ def test_retrieve_serializer_accepts_json_context_without_stripping_filter_prove
     from django.http import QueryDict
 
     from tracer.serializers.trace_session import TraceSessionRetrieveQuerySerializer
+
     context = _navigation_context()
     data = QueryDict(mutable=True)
     data["navigation_context"] = json.dumps(context)
@@ -268,19 +345,37 @@ def test_retrieve_serializer_accepts_json_context_without_stripping_filter_prove
     assert serializer.validated_data["navigation_context"] == context
 
 
-def test_context_user_leaves_remain_and_and_custom_user_id_is_not_resolved(navigation_context_call):
+def test_context_user_leaves_remain_and_and_custom_user_id_is_not_resolved(
+    navigation_context_call,
+):
     call, service, _, users = navigation_context_call
     context = _navigation_context(user_id="public-user")
     for value, op in [("second-user", "in"), ("excluded-user", "not_in")]:
-        context["filters"].append({"column_id": "user_id", "filter_config": {
-            "filter_type": "text", "filter_op": op, "filter_value": [value],
-        }})
-    context["filters"].append({"column_id": "user_id", "filter_config": {
-        "col_type": "SPAN_ATTRIBUTE", "filter_type": "number",
-        "filter_op": "greater_than", "filter_value": 2,
-    }})
+        context["filters"].append(
+            {
+                "column_id": "user_id",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": op,
+                    "filter_value": [value],
+                },
+            }
+        )
+    context["filters"].append(
+        {
+            "column_id": "user_id",
+            "filter_config": {
+                "col_type": "SPAN_ATTRIBUTE",
+                "filter_type": "number",
+                "filter_op": "greater_than",
+                "filter_value": 2,
+            },
+        }
+    )
     users.side_effect = lambda value, **_: {
-        "public-user": [USER_ID], "second-user": [OTHER_PROJECT_ID], "excluded-user": [],
+        "public-user": [USER_ID],
+        "second-user": [OTHER_PROJECT_ID],
+        "excluded-user": [],
     }[value]
     assert call(context) == (OTHER_PROJECT_ID, None)
     query, params = service.execute_ch_query.call_args.args
@@ -296,14 +391,22 @@ def test_context_read_errors_do_not_become_neighbors(navigation_context_call):
     assert call(_navigation_context()) == (None, None)
 
 
-@pytest.mark.parametrize("case,expected", [
-    ("default", (107, 100)), ("numeric", (102, 100)),
-    ("cross_span", (102, None)), ("negative", (107, None)),
-    ("false", (None, None)), ("latest_outside", (None, None)),
-    ("sort", (109, 102)),
-])
+@pytest.mark.parametrize(
+    "case,expected",
+    [
+        ("default", (107, 100)),
+        ("numeric", (102, 100)),
+        ("cross_span", (102, None)),
+        ("negative", (107, None)),
+        ("false", (None, None)),
+        ("latest_outside", (None, None)),
+        ("sort", (109, 102)),
+    ],
+)
 def test_inline_navigation_literal_neighbors_reuse_existing_adversarial_fixture(
-    navigation_context_call, case, expected,
+    navigation_context_call,
+    case,
+    expected,
 ):
     # Local inline VALUES only: no database/DDL, not a production-planner proof.
     from datetime import timedelta
@@ -313,6 +416,7 @@ def test_inline_navigation_literal_neighbors_reuse_existing_adversarial_fixture(
         _adversarial_rows,
         _inline_execute,
     )
+
     chdb = pytest.importorskip("chdb")
     call, service, projects, _ = navigation_context_call
     projects.values_list.return_value = [PROJECT_ID]
@@ -321,22 +425,39 @@ def test_inline_navigation_literal_neighbors_reuse_existing_adversarial_fixture(
     rows, remaps = _adversarial_rows(start, end)
     rows = [(PROJECT_ID, *row[1:]) for row in rows]
     context = _navigation_context(project_id=PROJECT_ID)
-    context["filters"][0]["filter_config"]["filter_value"] = [start.isoformat(), end.isoformat()]
+    context["filters"][0]["filter_config"]["filter_value"] = [
+        start.isoformat(),
+        end.isoformat(),
+    ]
     conditions = {
         "numeric": [("amount", "number", "greater_than", 1)],
-        "cross_span": [("amount", "number", "equals", 2), ("amount", "number", "equals", 4)],
+        "cross_span": [
+            ("amount", "number", "equals", 2),
+            ("amount", "number", "equals", 4),
+        ],
         "negative": [("amount", "number", "not_equals", 5)],
         "false": [("ok", "boolean", "equals", False)],
     }
     for key, kind, op, value in conditions.get(case, []):
-        context["filters"].append({"column_id": key, "filter_config": {
-            "col_type": "SPAN_ATTRIBUTE", "filter_type": kind,
-            "filter_op": op, "filter_value": value,
-        }})
+        context["filters"].append(
+            {
+                "column_id": key,
+                "filter_config": {
+                    "col_type": "SPAN_ATTRIBUTE",
+                    "filter_type": kind,
+                    "filter_op": op,
+                    "filter_value": value,
+                },
+            }
+        )
     if case == "sort":
-        context.update(cursor_mode=False, sort_params=[{"column_id": "total_cost", "direction": "asc"}])
+        context.update(
+            cursor_mode=False,
+            sort_params=[{"column_id": "total_cost", "direction": "asc"}],
+        )
     service.execute_ch_query.side_effect = lambda sql, params, **_: SimpleNamespace(
-        data=_inline_execute(chdb, sql, params, rows, remaps))
+        data=_inline_execute(chdb, sql, params, rows, remaps)
+    )
     # The requested new alias 300 must select canonical survivor 200.
     current = 103 if case == "latest_outside" else 300
     assert call(context, str(UUID(int=current))) == tuple(
@@ -344,23 +465,44 @@ def test_inline_navigation_literal_neighbors_reuse_existing_adversarial_fixture(
     )
 
 
-def test_decorated_typed_picker_survives_public_validation_and_navigation(navigation_context_call):
+def test_decorated_typed_picker_survives_public_validation_and_navigation(
+    navigation_context_call,
+):
     from tracer.serializers.trace_session import SessionNavigationContextSerializer
+
     call, service, _, _ = navigation_context_call
     context = _navigation_context()
-    picker = {"column_id": "company_id", "property_id": "custom_attribute:company_id",
-        "source": "traces", "filter_config": {
-            "col_type": "SPAN_ATTRIBUTE", "filter_type": "text", "filter_op": "in",
-            "filter_value": [2, False, "10"], "attribute_value_types": ["number", "boolean", "string"],
-        }}
+    picker = {
+        "column_id": "company_id",
+        "property_id": "custom_attribute:company_id",
+        "source": "traces",
+        "filter_config": {
+            "col_type": "SPAN_ATTRIBUTE",
+            "filter_type": "text",
+            "filter_op": "in",
+            "filter_value": [2, False, "10"],
+            "attribute_value_types": ["number", "boolean", "string"],
+        },
+    }
     context["filters"].append(picker)
     serializer = SessionNavigationContextSerializer(data=context)
     assert serializer.is_valid(), serializer.errors
     assert serializer.validated_data["filters"][-1] == picker
     assert call(context) == (OTHER_PROJECT_ID, None)
-    query, params = service.execute_ch_query.call_args.args
-    assert all(column in query for column in ("attrs_number", "attrs_bool", "attrs_string"))
-    assert "matching_scalar_sessions" in query
+    # A typed picker takes the bounded walk: no whole-window witness scalar is
+    # rendered, and the walk's classifier reads every decorated typed map.
+    calls = [
+        (c.args[0], c.args[1] if len(c.args) > 1 else c.kwargs.get("params", {}))
+        for c in service.execute_ch_query.call_args_list
+    ]
+    assert calls
+    assert not any("candidate_witness_session_ids" in query for query, _ in calls)
+    classifiers = [(q, p) for q, p in calls if "matching_scalar_sessions" in q]
+    assert classifiers
+    query, params = classifiers[-1]
+    assert all(
+        column in query for column in ("attrs_number", "attrs_bool", "attrs_string")
+    )
     assert "company_id" in params.values()
     picker["property_id"] = "custom_attribute:different-key"
     service.reset_mock()
@@ -369,7 +511,9 @@ def test_decorated_typed_picker_survives_public_validation_and_navigation(naviga
 
 
 @pytest.mark.parametrize("cross_project", [False, True])
-def test_inline_navigation_uses_only_authorized_workspace_projects(navigation_context_call, cross_project):
+def test_inline_navigation_uses_only_authorized_workspace_projects(
+    navigation_context_call, cross_project
+):
     from datetime import timedelta
     from uuid import UUID
 
@@ -377,20 +521,32 @@ def test_inline_navigation_uses_only_authorized_workspace_projects(navigation_co
         _adversarial_rows,
         _inline_execute,
     )
+
     chdb = pytest.importorskip("chdb")
     call, service, projects, _ = navigation_context_call
-    projects.values_list.return_value = [PROJECT_ID, OTHER_PROJECT_ID] if cross_project else [PROJECT_ID]
+    projects.values_list.return_value = (
+        [PROJECT_ID, OTHER_PROJECT_ID] if cross_project else [PROJECT_ID]
+    )
     start = datetime(2026, 7, 1, 10, 30)
     end = start + timedelta(days=7)
     rows, remaps = _adversarial_rows(start, end)
     rows = [(PROJECT_ID, *row[1:]) for row in rows]
     foreign = list(rows[-1])
-    foreign[0], foreign[3], foreign[7] = OTHER_PROJECT_ID, (start + timedelta(minutes=20)).isoformat(), str(UUID(int=600))
+    foreign[0], foreign[3], foreign[7] = (
+        OTHER_PROJECT_ID,
+        (start + timedelta(minutes=20)).isoformat(),
+        str(UUID(int=600)),
+    )
     rows.append(tuple(foreign))
     context = _navigation_context()
-    context["filters"][0]["filter_config"]["filter_value"] = [start.isoformat(), end.isoformat()]
+    context["filters"][0]["filter_config"]["filter_value"] = [
+        start.isoformat(),
+        end.isoformat(),
+    ]
     service.execute_ch_query.side_effect = lambda sql, params, **_: SimpleNamespace(
-        data=_inline_execute(chdb, sql, params, rows, remaps))
+        data=_inline_execute(chdb, sql, params, rows, remaps)
+    )
     assert call(context, str(UUID(int=300))) == (
-        str(UUID(int=107)), str(UUID(int=600 if cross_project else 100)),
+        str(UUID(int=107)),
+        str(UUID(int=600 if cross_project else 100)),
     )

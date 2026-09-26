@@ -12,7 +12,6 @@ from tracer.models.observation_span import (
 )
 from tracer.models.project import Project
 from tracer.models.trace import Trace
-from tracer.models.trace_scan import TraceScanIssue
 from tracer.models.trace_session import TraceSession
 
 
@@ -272,6 +271,10 @@ class TraceErrorGroup(BaseModel):
     priority = models.CharField(
         max_length=20, default=Priority.MEDIUM, choices=Priority.choices
     )
+    # Legacy rows are explicitly unassessed, not retrospectively LLM graded.
+    severity_assessment_status = models.CharField(max_length=32, default="unassessed")
+    severity_source = models.CharField(max_length=16, default="legacy")
+    severity_reason = models.TextField(blank=True)
     external_issue_url = models.URLField(
         max_length=500,
         null=True,
@@ -557,6 +560,14 @@ class ErrorClusterTraces(BaseModel):
         related_name="cluster_memberships",
         help_text="Scanner finding that caused membership",
     )
+    finding = models.ForeignKey(
+        "tracer.TraceInvestigationFinding",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="cluster_memberships",
+        help_text="Canonical scanner finding that caused membership",
+    )
     eval_logger = models.ForeignKey(
         EvalLogger,
         on_delete=models.SET_NULL,
@@ -582,6 +593,7 @@ class ErrorClusterTraces(BaseModel):
             models.Index(fields=["span"]),
             models.Index(fields=["trace_session"]),
             models.Index(fields=["scan_issue"]),
+            models.Index(fields=["finding"], name="tracer_erro_finding_72b66f_idx"),
             models.Index(fields=["eval_logger"]),
             models.Index(
                 fields=["cluster", "-created_at"],

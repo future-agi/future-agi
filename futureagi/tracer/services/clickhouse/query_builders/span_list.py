@@ -87,6 +87,23 @@ def _unix_microseconds(value: datetime) -> int:
     return delta.days * 86_400_000_000 + delta.seconds * 1_000_000 + delta.microseconds
 
 
+# The latest-state aggregates every classifier statement carries, whatever the
+# filter shape: the published timestamp, the tombstone and the root test.
+_SPAN_MATCH_INVARIANT_AGGREGATES_SQL = (
+    "argMax(start_time, _peerdb_version) AS latest_start_time,\n"
+    "                    argMax(is_deleted, _peerdb_version) AS latest_is_deleted,\n"
+    "                    argMax(tuple(parent_span_id), _peerdb_version).1"
+    " AS latest_parent_span_id"
+)
+
+
+_NORMAL_SPAN_PRESENTATION_COLUMNS_SQL = (
+    "project_id, id, trace_id, name, observation_type, status, start_time, "
+    "end_time, latency_ms, cost, total_tokens, prompt_tokens, "
+    "completion_tokens, model, provider, end_user_id, created_at, is_deleted"
+)
+
+
 class SpanListQueryBuilder(BaseQueryBuilder):
     """Build queries for the paginated span list (observe) view.
 
@@ -157,7 +174,13 @@ class SpanListQueryBuilder(BaseQueryBuilder):
               )
         """
 
-    def _filter_seed_source_sql(self, *, raw_key_predicate: str = "") -> str:
+    def _filter_seed_source_sql(
+        self, *, raw_key_predicate: str = "", consumer_sql: str = ""
+    ) -> str:
+        """The acquisition source. ``consumer_sql`` is every variable fragment
+        of the consuming statement that may reference a span column, so a
+        latest-state source can project exactly what its caller reads."""
+
         return self.TABLE
 
     def _filter_seed_plan_predicate(self, plan: Any, *, ordinary_seed: bool) -> str:
@@ -174,10 +197,10 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             return plan.raw_key_witness_predicate
         return None
 
-    def _filter_anchor_source_sql(self) -> str:
+    def _filter_anchor_source_sql(self, *, consumer_sql: str = "") -> str:
         return self.TABLE
 
-    def _normal_span_source_sql(self) -> str:
+    def _normal_span_source_sql(self, *, consumer_sql: str = "") -> str:
         return self.TABLE
 
     def _normal_span_identity_extra_sql(self) -> str:
@@ -199,7 +222,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             f"            toString(project_id) {order}"
         )
 
-    def _filter_match_source_sql(self, candidate_scope: str) -> str:
+    def _filter_match_source_sql(
+        self, candidate_scope: str, *, consumer_sql: str = ""
+    ) -> str:
         return self.TABLE
 
     def _filter_match_outer_scope_sql(self, candidate_scope: str) -> str:
@@ -1075,6 +1100,19 @@ class SpanListQueryBuilder(BaseQueryBuilder):
               ) < %(bounded_sampling_rate)s
             """
 
+        # Every variable fragment below that may name a span column. A
+        # latest-state source projects the union of these and its own
+        # invariant floor, so nothing it collapses is read needlessly.
+        anchor_consumer_sql = " ".join(
+            (
+                self._filter_seed_extra_columns_sql(),
+                project_version_fragment,
+                predicate,
+                datetime_fragment,
+                sampling_fragment,
+            )
+        )
+
         if self._supports_time_only_cursor_sparse_probe() and not _graph_key_witness:
             # Deliberately unordered and without LIMIT 1 BY. ClickHouse may stop
             # after reading the sentinel instead of sorting/deduplicating a
@@ -1085,7 +1123,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             # superset for the unchanged latest-state classifier.
             query = f"""
             SELECT project_id, id, trace_id, start_time{self._filter_seed_extra_columns_sql()}
-            FROM {self._filter_anchor_source_sql()}
+            FROM {self._filter_anchor_source_sql(consumer_sql=anchor_consumer_sql)}
             {self._FILTER_SOURCE_SCOPE} {self.project_filter_sql()}
               AND is_deleted = 0
               {project_version_fragment}
@@ -1099,7 +1137,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
 
         query = f"""
         SELECT project_id, id, trace_id, start_time{self._filter_seed_extra_columns_sql()}
-        FROM {self._filter_anchor_source_sql()}
+        FROM {self._filter_anchor_source_sql(consumer_sql=anchor_consumer_sql)}
         {self._FILTER_SOURCE_SCOPE} {self.project_filter_sql()}
           AND is_deleted = 0
           {project_version_fragment}
@@ -1328,9 +1366,20 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                     if f"%({key})s" in raw_key_predicate
                 }
             )
+        seed_consumer_sql = " ".join(
+            (
+                self._filter_seed_extra_columns_sql(),
+                project_version_fragment,
+                predicate,
+                datetime_fragment,
+                sampling_fragment,
+                keyset_fragment,
+                order_fragment,
+            )
+        )
         query = f"""
         SELECT project_id, id, trace_id, start_time{self._filter_seed_extra_columns_sql()}
-        FROM {self._filter_seed_source_sql(raw_key_predicate=raw_key_predicate)}
+        FROM {self._filter_seed_source_sql(raw_key_predicate=raw_key_predicate, consumer_sql=seed_consumer_sql)}
         {self._FILTER_SOURCE_SCOPE} {self.project_filter_sql()}
           AND is_deleted = 0
           {project_version_fragment}
@@ -1692,6 +1741,17 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 argMax(created_at, _peerdb_version) AS latest_created_at"""
 
         identity_select, identity_aggregates = self._filter_match_identity_fragments()
+        match_consumer_sql = " ".join(
+            (
+                _SPAN_MATCH_INVARIANT_AGGREGATES_SQL,
+                identity_aggregates,
+                hydrate_aggregate_fragment,
+                aggregate_fragment,
+                project_version_fragment,
+                candidate_scope_fragment,
+                self._filter_match_outer_scope_sql(candidate_scope_fragment),
+            )
+        )
         select_fragment += identity_select
         hydrate_aggregate_fragment += identity_aggregates
         latest_time_fragment = (
@@ -1714,12 +1774,10 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 SELECT
                     project_id AS grouped_project_id,
                     id AS grouped_id,
-                    argMax(start_time, _peerdb_version) AS latest_start_time,
-                    argMax(is_deleted, _peerdb_version) AS latest_is_deleted,
-                    argMax(tuple(parent_span_id), _peerdb_version).1 AS latest_parent_span_id
+                    {_SPAN_MATCH_INVARIANT_AGGREGATES_SQL}
                     {hydrate_aggregate_fragment}
                     {aggregate_fragment}
-                FROM {self._filter_match_source_sql(candidate_scope_fragment)}
+                FROM {self._filter_match_source_sql(candidate_scope_fragment, consumer_sql=match_consumer_sql)}
                 {self._FILTER_SOURCE_SCOPE} {self.project_filter_sql()}
                   {project_version_fragment}
                   AND id IN %(candidate_span_ids)s
@@ -1867,6 +1925,20 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         # bare-`spans` query verbatim (out of scope). Pre-flip even the user path
         # is byte-identical — NO span matches a `new_id`, so the resolved id ==
         # the span's own id (gate B).
+        list_consumer_sql = " ".join(
+            (
+                _NORMAL_SPAN_PRESENTATION_COLUMNS_SQL,
+                self._normal_span_identity_extra_sql(),
+                self._NORMAL_TIME_WHERE,
+                datetime_fragment,
+                slice_fragment,
+                end_user_fragment,
+                pv_fragment,
+                filter_fragment,
+                order_clause,
+            )
+        )
+
         if self.end_user_id:
             remap_join = remap_left_join("rs.end_user_id", "end_user_id_remap")
             resolved_eu = resolved_id_expr("rs.end_user_id")
@@ -1889,7 +1961,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 provider,
                 end_user_id,
                 created_at{self._normal_span_identity_extra_sql()}
-            FROM {self._normal_span_source_sql()}
+            FROM {self._normal_span_source_sql(consumer_sql=list_consumer_sql)}
             {self.project_where()}
               {self._NORMAL_TIME_WHERE}
               {slice_fragment}
@@ -1960,7 +2032,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             provider,
             end_user_id,
             created_at{self._normal_span_identity_extra_sql()}
-        FROM {self._normal_span_source_sql()}
+        FROM {self._normal_span_source_sql(consumer_sql=list_consumer_sql)}
         {self.project_where()}
           {self._NORMAL_TIME_WHERE}{datetime_fragment}
           {slice_fragment}

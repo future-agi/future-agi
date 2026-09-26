@@ -941,7 +941,10 @@ def test_structural_end_user_id_candidate_seed_uses_direct_uuid_predicate(
     assert builder.filter_seed_proves_result_order() is True
     assert builder.filter_candidate_seed_proves_result_order() is True
     assert "matching_user_trace_identities AS" in candidate_sql
-    assert "toString(end_user_id) = %(col_1)s" in candidate_sql
+    # The bare column keeps idx_end_user_id eligible; toString() would make the
+    # seed read every span of the project on every window.
+    assert "end_user_id IN (toUUID(%(col_1)s))" in candidate_sql
+    assert "toString(end_user_id)" not in candidate_sql
     assert "FROM end_users" not in candidate_sql
     assert params["col_1"] == end_user_id
 
@@ -1140,11 +1143,24 @@ def test_raw_annotator_span_attribute_never_uses_score_candidate_seed() -> None:
         ],
     )
 
-    assert builder.supports_filter_candidate_seed_page() is False
+    # An annotator-named raw attribute is an ordinary typed string leaf: it may
+    # seed through the exact-string candidate lane, but never through the
+    # eval/annotation relation, which is what this test exists to pin.
+    assert builder._bounded_delegate()._positive_relational_seed_filter() is None
+    candidate_sql, params = builder.build_filter_candidate_seed_page(
+        slice_start=START,
+        slice_end=END,
+        limit=26,
+    )
+    assert "matching_scalar_trace_identities" in candidate_sql
+    assert "mapValues(attrs_string)" in candidate_sql
+    assert "model_hub_score" not in candidate_sql
+    assert "annotator_id" not in candidate_sql
+    assert "uid_1" not in params
 
 
 @pytest.mark.parametrize("column_id", ["end_user_id", "user", "user_id"])
-def test_raw_user_named_span_attribute_does_not_use_candidate_seed(
+def test_raw_user_named_span_attribute_never_uses_the_end_user_candidate_seed(
     column_id: str,
 ) -> None:
     builder = TraceListQueryBuilderV2(
@@ -1163,7 +1179,6 @@ def test_raw_user_named_span_attribute_does_not_use_candidate_seed(
         ],
     )
 
-    assert builder.supports_filter_candidate_seed_page() is False
     raw_sql, _ = builder.build_filter_seed_page(
         slice_start=END - timedelta(days=30),
         slice_end=END,
@@ -1173,12 +1188,26 @@ def test_raw_user_named_span_attribute_does_not_use_candidate_seed(
     assert "attrs_string[" in raw_sql
     assert "end_users" not in raw_sql
     assert "end_user_id_remap" not in raw_sql
-    with pytest.raises(ValueError, match="trace user candidate seed is unavailable"):
-        builder.build_filter_candidate_seed_page(
+    # A user-named raw attribute is an ordinary typed string leaf: it may seed
+    # through the exact-string candidate lane, but never through the end-user
+    # relation.
+    assert builder._positive_exact_end_user_seed_filter() is None
+    with pytest.raises(ValueError, match="trace user candidate predicate"):
+        builder.build_filter_ordered_seed_page(
             slice_start=END - timedelta(days=30),
             slice_end=END,
             limit=26,
+            _positive_user_candidate_first=True,
         )
+    candidate_sql, _ = builder.build_filter_candidate_seed_page(
+        slice_start=END - timedelta(days=30),
+        slice_end=END,
+        limit=26,
+    )
+    assert "matching_scalar_trace_identities" in candidate_sql
+    assert "attrs_string[" in candidate_sql
+    assert "end_users" not in candidate_sql
+    assert "end_user_id_remap" not in candidate_sql
 
 
 @override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2")
@@ -2683,7 +2712,9 @@ def test_time_only_span_cursor_exposes_tightly_bounded_sparse_probe() -> None:
     sql, params = builder.build_filter_anchor_probe(limit=26)
     normalized_sql = " ".join(sql.split())
     # V2 resolves complete boundary hours before its outer time-only probe.
-    assert "FROM spans FINAL" in normalized_sql
+    assert "argMax(tuple(" in normalized_sql
+    assert ") AS latest_seed_spans" in normalized_sql
+    assert "FINAL" not in normalized_sql
     assert "AND 1 = 1" in normalized_sql
     assert "ORDER BY" not in normalized_sql
     assert "LIMIT 1 BY" not in normalized_sql
@@ -4550,17 +4581,49 @@ def test_attribute_key_is_bound_and_preserved_for_all_map_expressions() -> None:
     assert match_params["latest_filter_param_0"] == value.lower()
 
 
-@pytest.mark.parametrize(
-    "key",
-    ["bad\x00key", "bad\nkey", "x" * 4097, "bad\ud800key"],
-)
-def test_attribute_key_control_invalid_utf8_and_length_fail_closed(key: str) -> None:
+@pytest.mark.parametrize("key", ["x" * 4097, "bad\ud800key"])
+def test_attribute_key_invalid_utf8_and_length_fail_closed(key: str) -> None:
+    """Unencodable or over-long keys are still refused before any scan."""
     builder = SpanListQueryBuilder(
         project_id=PROJECT_ID,
         filters=[_time_filter(), _attribute_filter(key, "value")],
     )
 
     assert builder.supports_bounded_filter_scan() is False
+
+
+@pytest.mark.parametrize("key", ["bad\x00key", "bad\nkey"])
+def test_attribute_keys_with_control_characters_are_filterable(key: str) -> None:
+    """Control characters are ordinary data now that keys are bound, not inlined.
+
+    These two used to fail closed alongside the invalid-UTF-8 and over-length
+    cases, because the key was interpolated into SQL text and a NUL or newline
+    could change the statement. This branch binds every attribute key as a
+    parameter, so the reason for refusing them is gone -- and refusing them was
+    not free: a key that ingestion accepted became permanently unfilterable,
+    visible in the catalog but impossible to query.
+
+    ``validate_exact_attribute_key`` now states the rule as preserving the
+    ingested UTF-8 identity, rejecting only what cannot round-trip (invalid
+    UTF-8) or exceeds ATTRIBUTE_KEY_MAX_UTF8_BYTES.
+
+    Verified end to end against ClickHouse 25.3 rather than assumed: a
+    NUL-containing map key stores and retrieves faithfully
+    (``mapContains(attrs, 'bad\\0key')`` matches, ``mapKeys`` returns it), and
+    clickhouse_connect binds it as a parameter and returns the correct row. The
+    injection concern that motivated the old gate does not survive binding.
+    """
+    builder = SpanListQueryBuilder(
+        project_id=PROJECT_ID,
+        filters=[_time_filter(), _attribute_filter(key, "value")],
+    )
+
+    assert builder.supports_bounded_filter_scan() is True
+
+    sql, params = builder.build_filter_match_query(["span-a"])
+    # The key reaches the query as bound data and never as SQL text.
+    assert params["latest_filter_key_0"] == key
+    assert key not in sql
 
 
 def test_negative_text_operators_are_literal_utf8_predicates() -> None:
@@ -6394,7 +6457,7 @@ def test_span_list_nonempty_page_content_shares_wall_budget() -> None:
     from tracer.views.observation_span import (
         SPAN_LIST_CANDIDATE_DEADLINE_MS,
         SPAN_LIST_ENRICHMENT_TIMEOUT_MS,
-        SPAN_LIST_READ_SETTINGS,
+        SPAN_LIST_SINGLE_WORKER_READ_SETTINGS,
         SPAN_LIST_WALL_DEADLINE_MS,
         ObservationSpanView,
     )
@@ -6508,7 +6571,7 @@ def test_span_list_nonempty_page_content_shares_wall_budget() -> None:
     assert SPAN_LIST_ENRICHMENT_TIMEOUT_MS <= SPAN_LIST_WALL_DEADLINE_MS
     assert len(analytics.calls) == 1
     assert 0 < analytics.calls[0][1] <= SPAN_LIST_ENRICHMENT_TIMEOUT_MS
-    assert analytics.calls[0][2] == SPAN_LIST_READ_SETTINGS
+    assert analytics.calls[0][2] == SPAN_LIST_SINGLE_WORKER_READ_SETTINGS
 
 
 @override_settings(
@@ -7052,9 +7115,20 @@ def test_candidate_first_seed_keeps_exact_classifier_and_page_hydration() -> Non
         query_settings["max_bytes_to_read"] == settings.OBSERVABILITY_LIST_MAX_BYTES
         and query_settings["max_memory_usage"]
         == settings.OBSERVABILITY_LIST_MAX_MEMORY_BYTES
-        and query_settings["max_threads"] == 1
         and 0 < query_settings["max_result_rows"] <= 10_000
         for _, query_settings in executor.settings_by_query
+    )
+    # The candidate-first seed covers the whole year in one slice, so it is a
+    # wide seed and runs with the wide seed worker budget; the classifier and
+    # hydration statements keep the single worker.
+    assert all(
+        query_settings["max_threads"]
+        == (
+            settings.FILTER_SELECTOR_WIDE_SEED_MAX_THREADS
+            if query == "candidate_seed"
+            else 1
+        )
+        for query, query_settings in executor.settings_by_query
     )
 
 
@@ -8606,6 +8680,9 @@ def test_observe_span_cursor_publishes_safe_checkpoint_after_failed_attempt() ->
         ),
         continuation_slice_start=START,
         continuation_slice_end=END,
+        # The reader commits a publication floor with every checkpoint it
+        # commits; an exhausted slice's floor is its end, below every token.
+        continuation_published_order_floor=(END, None),
     )
     view = ObservationSpanView.__new__(ObservationSpanView)
     view._gm = SimpleNamespace(
@@ -8653,9 +8730,10 @@ def test_observe_span_cursor_publishes_safe_checkpoint_after_failed_attempt() ->
     assert response[0] == "ok"
     payload = response[1]
     assert payload["table"] == []
-    assert payload["metadata"]["query_complete"] is True
-    assert payload["metadata"]["query_status"] == "complete"
-    assert payload["metadata"]["query_error_code"] is None
+    # A checkpoint that proved no row is an unfinished scan, not an answer.
+    assert payload["metadata"]["query_complete"] is False
+    assert payload["metadata"]["query_status"] == "degraded"
+    assert payload["metadata"]["query_error_code"] == "query_timeout"
     assert payload["metadata"]["has_more"] is True
     assert isinstance(payload["metadata"]["next_cursor"], str)
     bounded_reader.assert_called_once()
@@ -8892,6 +8970,9 @@ def test_observe_trace_exact_cursor_chunk_is_enriched_ordered_and_continuable(
         attempts=(),
         continuation_slice_start=START,
         continuation_slice_end=END,
+        # The reader commits a publication floor with every checkpoint it
+        # commits; an exhausted slice's floor is its end, below every token.
+        continuation_published_order_floor=(END, None),
     )
 
     class RecordingAnalytics:
@@ -8990,6 +9071,9 @@ def test_observe_trace_cursor_publishes_safe_checkpoint_after_failed_attempt() -
         ),
         continuation_slice_start=START,
         continuation_slice_end=END,
+        # The reader commits a publication floor with every checkpoint it
+        # commits; an exhausted slice's floor is its end, below every token.
+        continuation_published_order_floor=(END, None),
     )
 
     response, bounded_reader, analytics, _request = (
@@ -9014,9 +9098,10 @@ def test_observe_trace_cursor_publishes_safe_checkpoint_after_failed_attempt() -
     assert response[0] == "ok"
     payload = response[1]
     assert payload["table"] == []
-    assert payload["metadata"]["query_complete"] is True
-    assert payload["metadata"]["query_status"] == "complete"
-    assert payload["metadata"]["query_error_code"] is None
+    # A checkpoint that proved no row is an unfinished scan, not an answer.
+    assert payload["metadata"]["query_complete"] is False
+    assert payload["metadata"]["query_status"] == "degraded"
+    assert payload["metadata"]["query_error_code"] == "query_timeout"
     assert payload["metadata"]["has_more"] is True
     assert isinstance(payload["metadata"]["next_cursor"], str)
     bounded_reader.assert_called_once()
@@ -9589,6 +9674,9 @@ def test_voice_page_size_500_cursor_publishes_safe_exact_partial_chunk() -> None
         attempts=(),
         continuation_slice_start=START,
         continuation_slice_end=END,
+        # The reader commits a publication floor with every checkpoint it
+        # commits; an exhausted slice's floor is its end, below every token.
+        continuation_published_order_floor=(END, None),
         continuation_before_start_time=started,
         continuation_before_id="trace-a",
     )
@@ -9692,6 +9780,9 @@ def test_voice_cursor_publishes_safe_checkpoint_after_failed_attempt() -> None:
         ),
         continuation_slice_start=START,
         continuation_slice_end=END,
+        # The reader commits a publication floor with every checkpoint it
+        # commits; an exhausted slice's floor is its end, below every token.
+        continuation_published_order_floor=(END, None),
     )
     view = TraceView.__new__(TraceView)
     view._gm = SimpleNamespace(
@@ -9733,9 +9824,10 @@ def test_voice_cursor_publishes_safe_checkpoint_after_failed_attempt() -> None:
 
     assert response.status_code == 200
     assert response.data["results"] == []
-    assert response.data["query_complete"] is True
-    assert response.data["query_status"] == "complete"
-    assert "query_error_code" not in response.data
+    # A checkpoint that proved no row is an unfinished scan, not an answer.
+    assert response.data["query_complete"] is False
+    assert response.data["query_status"] == "degraded"
+    assert response.data["query_error_code"] == "query_timeout"
     assert response.data["has_more"] is True
     assert isinstance(response.data["next_cursor"], str)
     bounded_reader.assert_called_once()
@@ -16101,3 +16193,1342 @@ def test_attempt_ledger_exposes_separate_timing_query_rows_and_bytes() -> None:
         sum(attempt.result_payload_bytes for attempt in page.attempts)
         == page.result_payload_bytes
     )
+
+
+def _slice_spread_cursor_rows() -> list[dict[str, Any]]:
+    """Two matches in each of the first three widening cursor slices.
+
+    The slice schedule a cursor page walks back from its newest boundary is
+    five minutes, then ten, then twenty, so a pair of rows inside each of those
+    three intervals puts a small - sufficient only in aggregate - candidate
+    batch in every one of them. That is the production shape this exercises: a
+    negation filter on a sparse project matches a handful of roots per slice
+    and needs several slices to fill one page.
+    """
+
+    return [
+        {
+            "id": f"trace-{minute:02d}",
+            "root_span_id": f"root-{minute:02d}",
+            "start_time": END - timedelta(minutes=minute),
+            "trace_name": f"presented-{minute:02d}",
+        }
+        for minute in (1, 2, 6, 7, 16, 17)
+    ]
+
+
+def test_page_filling_cursor_classifies_its_slices_in_one_statement() -> None:
+    """A page that fills across slices pays ONE classifier, not one per slice.
+
+    Each of the three slices holds fewer candidates than the page needs, so
+    none of them can close the page on its own and none is worth a statement.
+    The walk used to spend one anyway at every slice advance, to buy itself a
+    committable checkpoint; it now defers to the buffer and classifies the
+    accumulated batch once, as soon as that batch could complete the prefix.
+    """
+
+    request_start = END - timedelta(minutes=90)
+    rows = _slice_spread_cursor_rows()
+    builder = _CursorPageFillIdentityHydrationFakeBuilder(
+        rows,
+        start=request_start,
+        end=END,
+        match_rows=rows,
+        recommended_batch_size=200,
+        recommended_seed_batch_size=200,
+    )
+    executor = _IdentityHydrationFakeExecutor(builder)
+
+    page = read_bounded_filter_page(
+        builder=builder,
+        analytics=executor,
+        filters=[_time_filter(request_start, END)],
+        key_field="id",
+        page_number=0,
+        page_size=5,
+        deadline_ms=5_000,
+        max_seed_attempts=24,
+        max_candidates=200,
+        max_query_count=50,
+        classify_batch_size=200,
+        include_incomplete_rows=True,
+        bounded_continuation=True,
+    )
+
+    kinds = [attempt.kind for attempt in page.attempts]
+    assert kinds.count("classify") == 1
+    assert kinds.count("seed") == 3
+    # The same page the per-slice flush produced: every match, in order, once.
+    assert [row["id"] for row in page.rows] == [row["id"] for row in rows[:5]]
+    assert page.complete is True
+
+
+def test_per_slice_publisher_keeps_its_classifier_at_every_slice() -> None:
+    """The reader that DECIDES at each slice boundary is untouched.
+
+    ``fill_bounded_cursor_page_across_slices`` is what separates the two: a
+    reader without it publishes whatever one slice classified, so for it the
+    flush is the decision rather than a checkpoint it could have declined.
+    Same population, same schedule: it classifies its very first slice on the
+    spot and publishes that slice's two matches as a partial page, instead of
+    buffering them and walking on to fill the five it was asked for.
+    """
+
+    request_start = END - timedelta(minutes=90)
+    rows = _slice_spread_cursor_rows()
+    builder = _IdentityHydrationFakeBuilder(
+        rows,
+        start=request_start,
+        end=END,
+        match_rows=rows,
+        recommended_batch_size=200,
+        recommended_seed_batch_size=200,
+    )
+    executor = _IdentityHydrationFakeExecutor(builder)
+
+    page = read_bounded_filter_page(
+        builder=builder,
+        analytics=executor,
+        filters=[_time_filter(request_start, END)],
+        key_field="id",
+        page_number=0,
+        page_size=5,
+        deadline_ms=5_000,
+        max_seed_attempts=24,
+        max_candidates=200,
+        max_query_count=50,
+        classify_batch_size=200,
+        include_incomplete_rows=True,
+        bounded_continuation=True,
+    )
+
+    assert [attempt.kind for attempt in page.attempts] == [
+        "seed",
+        "classify",
+        "hydrate",
+    ]
+    assert [row["id"] for row in page.rows] == [row["id"] for row in rows[:2]]
+    assert page.complete is False
+
+
+def test_a_checkpoint_is_never_committed_past_an_unclassified_candidate() -> None:
+    """THE EXACTNESS RULE, stated about the resume boundary.
+
+    Stop the walk while candidates are still buffered and read the position the
+    page offers its next hop. Whatever that position is, every buffered
+    candidate must lie strictly below the bound the next hop resumes at - the
+    signed keyset when there is one, the open slice's own end when there is not
+    - because a candidate at or above that bound is one the next hop would
+    never re-read and no page ever published.
+
+    Asserted against the acquired candidates rather than against the rows this
+    population happens to publish, so a displaced row the test never
+    constructed could not slip through it either.
+    """
+
+    request_start = END - timedelta(minutes=90)
+    rows = _slice_spread_cursor_rows()
+    builder = _CursorPageFillIdentityHydrationFakeBuilder(
+        rows,
+        start=request_start,
+        end=END,
+        match_rows=rows,
+        recommended_batch_size=200,
+        recommended_seed_batch_size=200,
+    )
+    executor = _IdentityHydrationFakeExecutor(builder)
+
+    page = read_bounded_filter_page(
+        builder=builder,
+        analytics=executor,
+        filters=[_time_filter(request_start, END)],
+        key_field="id",
+        page_number=0,
+        page_size=5,
+        deadline_ms=5_000,
+        # Two slices acquire four candidates and classify none of them: fewer
+        # than the six this page needs, so the sufficiency rule declines.
+        max_seed_attempts=2,
+        max_candidates=200,
+        max_query_count=50,
+        classify_batch_size=200,
+        include_incomplete_rows=True,
+        bounded_continuation=True,
+    )
+
+    assert page.complete is False
+    # Deferred ACROSS the walk and spent once at the exit. No classifier
+    # between the two seeds - that is the amortization - and exactly one after
+    # them, because a hop that ends with a buffer must resolve it to have any
+    # position at all to offer.
+    assert [
+        attempt.kind
+        for attempt in page.attempts
+        if attempt.kind in {"seed", "classify"}
+    ] == ["seed", "seed", "classify"]
+    acquired = [row for row in rows if row["start_time"] >= END - timedelta(minutes=15)]
+    assert len(acquired) == 4
+    if page.continuation_before_start_time is not None:
+        bound = page.continuation_before_start_time
+    else:
+        bound = page.continuation_slice_end
+    # A position must be OFFERED. Declining every one of them is how this hop
+    # used to end the public list while four matches were still unread.
+    assert bound is not None
+    published = {row["id"] for row in page.rows}
+    # Every acquired candidate is accounted for exactly one of the two ways a
+    # candidate may be: published by this hop, or left strictly below the
+    # bound the next hop resumes at so that it is re-read. A candidate that is
+    # neither is one no page will ever show.
+    assert all(
+        (row["id"] in published) or (row["start_time"] < bound) for row in acquired
+    )
+
+
+def _walk_the_public_trace_list_cursor_chain(
+    *,
+    rows: list[dict[str, Any]],
+    request_start: datetime,
+    page_size: int,
+    max_seed_attempts: int,
+    max_query_count: int = 50,
+    deadline_ms: int = 5_000,
+    hops: int = 16,
+) -> list[str]:
+    """Follow the cursor chain the trace list transport actually follows.
+
+    Each hop re-issues the read with the row cursor AND the signed scan
+    checkpoint the previous hop committed, exactly as the list view does, and
+    the loop stops when the view would stop offering a next page. A hop that
+    publishes no row and commits no position is therefore not slow, it is the
+    END of the public list - so this asserts progress hop by hop rather than
+    only on the final union, and fails AT the stalled hop.
+    """
+
+    published: list[str] = []
+    carry: dict[str, Any] = {}
+    for _ in range(hops):
+        builder = _CursorPageFillIdentityHydrationFakeBuilder(
+            rows,
+            start=request_start,
+            end=END,
+            match_rows=rows,
+            recommended_batch_size=200,
+            recommended_seed_batch_size=200,
+        )
+        previous = dict(carry)
+        page = read_bounded_filter_page(
+            builder=builder,
+            analytics=_IdentityHydrationFakeExecutor(builder),
+            filters=[_time_filter(request_start, END)],
+            key_field="id",
+            page_number=0,
+            page_size=page_size,
+            deadline_ms=deadline_ms,
+            max_seed_attempts=max_seed_attempts,
+            max_candidates=200,
+            max_query_count=max_query_count,
+            classify_batch_size=200,
+            include_incomplete_rows=True,
+            bounded_continuation=True,
+            carry_continuation_slice_width=True,
+            **carry,
+        )
+        published.extend(row["id"] for row in page.rows)
+        if page.complete and not page.has_more:
+            return published
+        # The list view's own gate: without one of these there is no next
+        # cursor to hand the client, and the list has ended.
+        assert page.has_more or page.continuation_slice_end is not None, (
+            "hop offered no next page while matches remained"
+        )
+        if page.rows:
+            carry = {
+                "cursor_start_time": page.rows[-1]["start_time"],
+                "cursor_order_token": page.rows[-1]["id"],
+            }
+        else:
+            carry = {
+                key: value
+                for key, value in carry.items()
+                if key in {"cursor_start_time", "cursor_order_token"}
+            }
+        if not page.has_more:
+            carry.update(
+                continuation_slice_start=page.continuation_slice_start,
+                continuation_slice_end=page.continuation_slice_end,
+                continuation_before_start_time=page.continuation_before_start_time,
+                continuation_before_id=page.continuation_before_id,
+            )
+        assert page.rows or carry != previous, (
+            "hop published nothing and moved nothing: the identical retry "
+            "returns the identical empty page"
+        )
+    raise AssertionError("cursor chain did not terminate")
+
+
+def test_a_stopped_cursor_page_still_publishes_every_match_exactly_once() -> None:
+    """End to end over the same population: no row is skipped or duplicated.
+
+    The first hop stops mid-walk with its buffer unclassified; the chain then
+    runs to exhaustion under ONE fixed attempt budget - the budget is the
+    hop's, not a knob the caller relaxes when a hop comes back empty. Whatever
+    positions the hops commit, the union of the published rows must be the
+    whole match set, once each, newest first.
+    """
+
+    request_start = END - timedelta(minutes=90)
+    rows = _slice_spread_cursor_rows()
+
+    published = _walk_the_public_trace_list_cursor_chain(
+        rows=rows,
+        request_start=request_start,
+        page_size=2,
+        max_seed_attempts=2,
+    )
+
+    assert published == [row["id"] for row in rows]
+    assert len(published) == len(set(published))
+
+
+def test_a_hop_that_classifies_nothing_still_commits_where_it_scanned() -> None:
+    """THE FORWARD-PROGRESS RULE, on the shape that used to stop the list.
+
+    A sparse cursor hop whose buffer never reaches the public prefix declines
+    every checkpoint the walk offers, because each one lies past a candidate
+    nobody classified. Decline them all and the hop returns zero rows and four
+    null continuation fields - a page the transport cannot tell from the end
+    of the data, and one the identical retry reproduces exactly.
+
+    So the hop must spend, at the exit, the classifier its deferral promised,
+    and commit WHERE THE SCAN REACHED rather than where its last published row
+    was: this hop publishes nothing at all, and must still move.
+    """
+
+    request_start = END - timedelta(minutes=90)
+    rows = _slice_spread_cursor_rows()
+    # Every root the two slices acquire is rejected by latest state, so this
+    # hop can publish nothing whatever it classifies.
+    builder = _CursorPageFillIdentityHydrationFakeBuilder(
+        rows,
+        start=request_start,
+        end=END,
+        match_rows=[],
+        recommended_batch_size=200,
+        recommended_seed_batch_size=200,
+    )
+
+    page = read_bounded_filter_page(
+        builder=builder,
+        analytics=_IdentityHydrationFakeExecutor(builder),
+        filters=[_time_filter(request_start, END)],
+        key_field="id",
+        page_number=0,
+        # Four acquired candidates against a six-row prefix: the sufficiency
+        # rule declines every flush, so the walk reaches its exit still owing
+        # the classifier its deferral promised.
+        page_size=5,
+        deadline_ms=5_000,
+        max_seed_attempts=2,
+        max_candidates=200,
+        max_query_count=50,
+        classify_batch_size=200,
+        include_incomplete_rows=True,
+        bounded_continuation=True,
+        carry_continuation_slice_width=True,
+    )
+
+    assert page.rows == []
+    assert page.complete is False
+    # Zero rows published, one classifier spent at the exit, and a position
+    # committed strictly older than the boundary this hop started from.
+    assert [attempt.kind for attempt in page.attempts].count("classify") == 1
+    assert page.continuation_slice_end is not None
+    assert page.continuation_slice_end < END
+
+
+def test_a_walk_that_owes_a_classifier_keeps_the_wall_to_pay_for_it() -> None:
+    """The WALL half of the same rule, which is a different code path.
+
+    The attempt budget ends the seed loop and the progress flush runs on the
+    way out. The wall does not: it raises out of ``execute`` from wherever the
+    walk happens to be, and a walk that acquired until there was nothing left
+    would reach that flush with no wall to run it - which is the same stopped
+    list by a different route.
+
+    So while a hop still owes its buffer a classifier and has committed no
+    position, its ACQUIRING statements run one statement envelope short. The
+    room is not predicted, it is held back, and the flush on the way out is
+    what spends it. Here the walk is refused its fifth seed with 2,520 ms
+    still standing before the classification deadline, and it buys the
+    checkpoint with them.
+    """
+
+    request_start = END - timedelta(days=30)
+    rows = [
+        {
+            "id": f"trace-{minute:02d}",
+            "root_span_id": f"root-{minute:02d}",
+            "start_time": END - timedelta(minutes=minute),
+            "trace_name": f"presented-{minute:02d}",
+        }
+        # Two in the opening five-minute slice, two in the ten-minute slice
+        # after it, and a month of empty history below them.
+        for minute in (1, 2, 6, 7)
+    ]
+    builder = _CursorPageFillIdentityHydrationFakeBuilder(
+        rows,
+        start=request_start,
+        end=END,
+        match_rows=[],
+        recommended_batch_size=200,
+        recommended_seed_batch_size=200,
+    )
+    clock = _ManualMonotonic()
+    executor = _IdentityHydrationFakeExecutor(
+        builder,
+        clock=clock,
+        # 795 ms x 4 = 3,180 ms, which lands just inside the acquisition
+        # wall this test is about: the 6,000 ms deadline less the builder's
+        # 300 ms hydration reserve less one FILTER_SELECTOR_QUERY_TIMEOUT_MS
+        # (2,500) held back for the classifier. The fifth seed is refused
+        # with 20 ms of that wall left.
+        durations_ms={"seed": 795, "match_identity": 400},
+    )
+
+    with mock.patch("tracer.selectors.trace_filter_reads.monotonic", new=clock):
+        page = read_bounded_filter_page(
+            builder=builder,
+            analytics=executor,
+            filters=[_time_filter(request_start, END)],
+            key_field="id",
+            page_number=0,
+            page_size=5,
+            deadline_ms=6_000,
+            max_seed_attempts=24,
+            max_candidates=200,
+            max_query_count=50,
+            classify_batch_size=200,
+            include_incomplete_rows=True,
+            bounded_continuation=True,
+            carry_continuation_slice_width=True,
+        )
+
+    assert page.complete is False
+    assert page.error_code == "deadline_exceeded"
+    assert page.rows == []
+    # Four seeds accepted, the fifth refused against the held-back envelope,
+    # and the classifier that resolves the buffer paid for out of it.
+    assert [attempt.kind for attempt in page.attempts] == [
+        "seed",
+        "seed",
+        "seed",
+        "seed",
+        "classify",
+    ]
+    assert page.continuation_slice_end is not None
+    assert page.continuation_slice_end < END
+
+
+def test_an_interrupted_flush_leaves_no_position_past_the_chunk_it_lost() -> None:
+    """A buffer that merely LOOKS empty may not be committed past.
+
+    ``flush`` pops its chunk out of the buffer BEFORE it classifies it, and
+    marks it seen, so a classifier that fails server-side leaves those
+    candidates in neither place: not published, and no longer pending. The
+    buffer that remains is only the older leftovers, and resolving THOSE does
+    not license a position - the lost chunk sits above it.
+
+    So the progress flush declines a hop whose flush was interrupted and falls
+    through to the rollback, which restores the last position at which the
+    buffer really was empty. Asserted the same way as the exactness rule
+    above: against the acquired candidates rather than against the rows this
+    population happens to publish.
+    """
+
+    request_start = END - timedelta(minutes=90)
+    rows = [
+        {
+            "id": f"trace-{index:02d}",
+            "root_span_id": f"root-{index:02d}",
+            "start_time": END - timedelta(minutes=index + 1),
+            "trace_name": f"presented-{index:02d}",
+        }
+        # TWO in the opening five-minute slice and FOUR in the ten-minute
+        # slice below it: the buffer crosses a slice advance, and only then
+        # reaches the four-candidate classifier batch.
+        for index in (0, 1, 5, 6, 7, 8)
+    ]
+    builder = _CursorPageFillIdentityHydrationFakeBuilder(
+        rows,
+        start=request_start,
+        end=END,
+        match_rows=rows,
+        recommended_batch_size=4,
+        recommended_seed_batch_size=200,
+    )
+
+    class FirstClassifierFailsExecutor(_IdentityHydrationFakeExecutor):
+        def __init__(self, fake_builder):
+            super().__init__(fake_builder)
+            self.classifier_calls = 0
+
+        def execute_ch_query(self, query, params, *, timeout_ms, settings):
+            if query == "match_identity":
+                self.classifier_calls += 1
+                if self.classifier_calls == 1:
+                    self.calls.append((query, params))
+                    raise ReadDeadlineExceeded("Code: 241. Memory limit exceeded")
+            return super().execute_ch_query(
+                query, params, timeout_ms=timeout_ms, settings=settings
+            )
+
+    executor = FirstClassifierFailsExecutor(builder)
+
+    page = read_bounded_filter_page(
+        builder=builder,
+        analytics=executor,
+        filters=[_time_filter(request_start, END)],
+        key_field="id",
+        page_number=0,
+        # Seven needed, six acquired: no sufficiency flush fires, so the only
+        # flush is the buffer's own at its four-candidate batch size.
+        page_size=6,
+        deadline_ms=5_000,
+        max_seed_attempts=4,
+        max_candidates=200,
+        max_query_count=50,
+        classify_batch_size=4,
+        include_incomplete_rows=True,
+        bounded_continuation=True,
+        carry_continuation_slice_width=True,
+    )
+
+    assert page.complete is False
+    if page.continuation_before_start_time is not None:
+        bound = page.continuation_before_start_time
+    else:
+        bound = page.continuation_slice_end
+    published = {row["id"] for row in page.rows}
+    assert all(
+        (row["id"] in published) or bound is None or (row["start_time"] < bound)
+        for row in rows
+    )
+
+
+# A route whose classifier ranks a row OLDER than the seed that discovered it.
+# This is the production session shape: a seed row is a session's newest root
+# inside the slice, while the classifier publishes ``min`` over the session's
+# live roots, so a long-lived session is DISCOVERED in a recent slice and
+# RANKED months earlier. Every rank below is one of the id's own seed roots,
+# exactly as ``min(live root start_time)`` always is.
+_RANK_LAG_WINDOW_START = END - timedelta(hours=6)
+_RANK_LAG_SEED_ROOTS: tuple[tuple[str, timedelta], ...] = (
+    ("long-new", timedelta(minutes=10)),
+    ("short-a", timedelta(minutes=70)),
+    ("short-a", timedelta(minutes=75)),
+    ("short-b", timedelta(minutes=80)),
+    ("long-old", timedelta(minutes=85)),
+    ("short-b", timedelta(minutes=95)),
+    ("long-old", timedelta(hours=5)),
+    ("long-new", timedelta(hours=5, minutes=30)),
+)
+
+
+def _rank_lag_seed_rows() -> list[dict[str, Any]]:
+    return [
+        {"id": row_id, "start_time": END - offset}
+        for row_id, offset in _RANK_LAG_SEED_ROOTS
+    ]
+
+
+def _rank_lag_match_rows() -> list[dict[str, Any]]:
+    """One classified row per id, ranked at that id's OLDEST seed root."""
+
+    ranks: dict[str, datetime] = {}
+    for row_id, offset in _RANK_LAG_SEED_ROOTS:
+        rank = END - offset
+        if row_id not in ranks or rank < ranks[row_id]:
+            ranks[row_id] = rank
+    return [{"id": row_id, "start_time": rank} for row_id, rank in ranks.items()]
+
+
+class _WalledFakeExecutor(_FakeExecutor):
+    """Charge each statement to a manual clock, like a page wall does."""
+
+    def __init__(
+        self,
+        builder: _FakeBuilder,
+        *,
+        clock: _ManualMonotonic,
+        durations_ms: dict[str, int],
+    ):
+        super().__init__(builder)
+        self.clock = clock
+        self.durations_ms = durations_ms
+
+    def execute_ch_query(self, query, params, *, timeout_ms, settings):
+        self.clock.advance_ms(self.durations_ms.get(query, 50))
+        return super().execute_ch_query(
+            query,
+            params,
+            timeout_ms=timeout_ms,
+            settings=settings,
+        )
+
+
+_RANK_LAG_CURSOR_SCOPE = {"organization_id": "org-a", "project_id": PROJECT_ID}
+_RANK_LAG_CURSOR_QUERY = {"filters": "rank-lag"}
+
+
+def _session_view_cursor(
+    page: BoundedFilterPage,
+    rows: list[dict[str, Any]],
+    previous_cursor: Any,
+    *,
+    page_size: int,
+) -> Any:
+    """Mint the next hop's cursor the way the session VIEW mints it.
+
+    The view's own boundary rule and the real signed codec, not a local copy of
+    either: a divergence between what the reader proves and what the product
+    hands out is exactly the class of defect this walk is being tested for, and
+    a re-implementation here would hide it.
+    """
+
+    from tracer.services.clickhouse.list_cursor import (
+        decode_list_cursor,
+        encode_list_cursor,
+    )
+    from tracer.views.trace_session import (
+        _session_list_cursor_order_for_partial_page,
+    )
+
+    order = _session_list_cursor_order_for_partial_page(
+        rows=[
+            {"session_id": row["id"], "start_time": row["start_time"]} for row in rows
+        ],
+        bounded_page=page,
+        cursor_state=previous_cursor,
+    )
+    partial = not page.has_more
+    token = encode_list_cursor(
+        resource="observe_sessions",
+        scope=_RANK_LAG_CURSOR_SCOPE,
+        query=_RANK_LAG_CURSOR_QUERY,
+        page_size=page_size,
+        window_start=_RANK_LAG_WINDOW_START,
+        window_end=END,
+        order=order,
+        seen_rows=(previous_cursor.seen_rows if previous_cursor else 0) + len(rows),
+        scan_slice_start=page.continuation_slice_start if partial else None,
+        scan_slice_end=page.continuation_slice_end if partial else None,
+        scan_before_start_time=(
+            page.continuation_before_start_time if partial else None
+        ),
+        scan_before_id=page.continuation_before_id if partial else None,
+    )
+    return decode_list_cursor(
+        token,
+        resource="observe_sessions",
+        scope=_RANK_LAG_CURSOR_SCOPE,
+        query=_RANK_LAG_CURSOR_QUERY,
+        page_size=page_size,
+    )
+
+
+def _walk_rank_lagging_cursor_hops(
+    *, max_hops: int = 16, page_size: int = 2
+) -> list[dict[str, Any]]:
+    """Follow a wall-stopped cursor to exhaustion and record every hop."""
+
+    seed_rows = _rank_lag_seed_rows()
+    match_rows = _rank_lag_match_rows()
+    hops: list[dict[str, Any]] = []
+    cursor: Any = None
+    scan: dict[str, Any] = {}
+    for _ in range(max_hops):
+        builder = _WideInitialSliceFakeBuilder(
+            seed_rows,
+            start=_RANK_LAG_WINDOW_START,
+            end=END,
+            match_rows=match_rows,
+            recommended_seed_batch_size=200,
+        )
+        clock = _ManualMonotonic()
+        executor = _WalledFakeExecutor(
+            builder,
+            clock=clock,
+            durations_ms={"seed": 100, "match": 900},
+        )
+        with mock.patch("tracer.selectors.trace_filter_reads.monotonic", new=clock):
+            page = read_bounded_filter_page(
+                builder=builder,
+                analytics=executor,
+                filters=[_time_filter(_RANK_LAG_WINDOW_START, END)],
+                key_field="id",
+                page_number=0,
+                page_size=page_size,
+                # One seed plus one classifier fits; the next statement is
+                # refused for want of its own envelope. This is the page wall.
+                deadline_ms=2_400,
+                max_seed_attempts=24,
+                max_candidates=200,
+                max_query_count=50,
+                classify_batch_size=50,
+                include_incomplete_rows=True,
+                bounded_continuation=True,
+                cursor_start_time=cursor.order[0] if cursor is not None else None,
+                cursor_order_token=cursor.order[1] if cursor is not None else None,
+                **scan,
+            )
+        classified = [
+            candidate_id
+            for query, params in executor.calls
+            if query == "match"
+            for candidate_id in params["candidate_ids"]
+        ]
+        hops.append(
+            {
+                "rows": list(page.rows),
+                "classified": classified,
+                "complete": page.complete,
+                "has_more": page.has_more,
+                "cursor_in": tuple(cursor.order) if cursor is not None else None,
+                "slice_end": page.continuation_slice_end,
+                "before_start_time": page.continuation_before_start_time,
+                "floor": getattr(page, "continuation_published_order_floor", None),
+            }
+        )
+        if page.complete and not page.has_more:
+            break
+        cursor = _session_view_cursor(
+            page, list(page.rows), cursor, page_size=page_size
+        )
+        scan = {
+            "continuation_slice_start": cursor.scan_slice_start,
+            "continuation_slice_end": cursor.scan_slice_end,
+            "continuation_before_start_time": cursor.scan_before_start_time,
+            "continuation_before_id": cursor.scan_before_id,
+        }
+    return hops
+
+
+@pytest.mark.unit
+def test_wall_stopped_continuation_publishes_every_rank_lagging_match() -> None:
+    """A wall-stopped cursor may not drop a match its classifier accepted.
+
+    The classifier's boundary is the rank the previous page PUBLISHED, so it
+    is a dedup key only while "everything at or above it is published" holds.
+    A page that stops at its wall never proved that, and the walk's scan
+    checkpoint advances in seed order regardless: every later match that
+    outranks the boundary was silently discarded and its seed consumed, so
+    those rows left the list permanently.
+    """
+
+    hops = _walk_rank_lagging_cursor_hops()
+
+    published = [row["id"] for hop in hops for row in hop["rows"]]
+    classified = {row_id for hop in hops for row_id in hop["classified"]}
+    expected = {row["id"] for row in _rank_lag_match_rows()}
+
+    assert classified == expected
+    # Every accepted match reaches the list exactly once.
+    assert sorted(published) == sorted(expected)
+    assert len(published) == len(set(published))
+    # ... and in the list's own order, which is what makes the next hop's
+    # boundary a sound dedup key rather than a ceiling.
+    ranks = {row["id"]: row["start_time"] for row in _rank_lag_match_rows()}
+    assert [ranks[row_id] for row_id in published] == sorted(
+        ranks.values(), reverse=True
+    )
+
+
+@pytest.mark.unit
+def test_wall_stopped_continuation_never_publishes_an_unbounded_rank() -> None:
+    """No hop publishes a row its own checkpoint cannot bound.
+
+    A published row must rank at or above the boundary the page hands out, or
+    the page has claimed a prefix its scan never proved and the next hop's
+    exclusive bound would hide the rows that belong above it.
+    """
+
+    for hop in _walk_rank_lagging_cursor_hops():
+        floor = hop["floor"]
+        if floor is None or hop["has_more"]:
+            continue
+        floor_time, _ = floor
+        assert all(row["start_time"] >= floor_time for row in hop["rows"]), hop
+        if hop["cursor_in"] is not None:
+            # The signed cursor normalises its instants to UTC; the reader
+            # strips the zone again on the way in, so compare like for like.
+            bound = (hop["cursor_in"][0].replace(tzinfo=None), hop["cursor_in"][1])
+            assert all(
+                (row["start_time"], str(row["id"])) < bound for row in hop["rows"]
+            ), hop
+
+
+@pytest.mark.unit
+def test_wall_stopped_floor_never_sits_below_the_committed_checkpoint() -> None:
+    """A failed hydration rolls the position back; the floor must follow it.
+
+    The floor is read off the committed position, and a page that loses its
+    hydration commits an OLDER position than the one its matches were filtered
+    against. A floor remembered from before that rollback would sit below the
+    checkpoint the page publishes, and the next hop, resuming at the checkpoint
+    but bounded by the floor, would classify the rows in between and discard
+    every one of them as already published.
+    """
+
+    request_start = END - timedelta(minutes=30)
+    rows = [
+        {
+            "id": row_id,
+            "root_span_id": f"root-{row_id}",
+            "start_time": END - timedelta(minutes=minute),
+            "trace_name": f"presented-{row_id}",
+        }
+        for row_id, minute in (("newer-nonmatch", 1), ("match-a", 6), ("match-b", 16))
+    ]
+    builder = _IdentityHydrationFakeBuilder(
+        rows,
+        start=request_start,
+        end=END,
+        match_rows=rows[1:],
+        recommended_batch_size=10,
+        recommended_seed_batch_size=10,
+    )
+    drifted = {**rows[1], "root_span_id": "replacement-root"}
+    page = read_bounded_filter_page(
+        builder=builder,
+        analytics=_IdentityHydrationFakeExecutor(builder, hydration_rows=[drifted]),
+        filters=[_time_filter(request_start, END)],
+        key_field="id",
+        page_number=0,
+        page_size=5,
+        deadline_ms=5_000,
+        max_seed_attempts=24,
+        max_candidates=10,
+        max_query_count=50,
+        classify_batch_size=10,
+        include_incomplete_rows=True,
+        bounded_continuation=True,
+    )
+
+    assert page.rows == []
+    assert page.error_code == "classification_drift"
+    floor = page.continuation_published_order_floor
+    assert floor is not None
+    committed = page.continuation_before_start_time or page.continuation_slice_end
+    assert floor[0] >= committed
+
+    # Neither match was published by the rolled-back page, so the hops that
+    # resume from it must still publish both, each exactly once.
+    published: list[str] = []
+    order: tuple[Any, ...] = (floor[0], "" if floor[1] is None else str(floor[1]))
+    scan = {
+        "continuation_slice_start": page.continuation_slice_start,
+        "continuation_slice_end": page.continuation_slice_end,
+        "continuation_before_start_time": page.continuation_before_start_time,
+        "continuation_before_id": page.continuation_before_id,
+    }
+    for _ in range(8):
+        hop = read_bounded_filter_page(
+            builder=builder,
+            analytics=_IdentityHydrationFakeExecutor(builder),
+            filters=[_time_filter(request_start, END)],
+            key_field="id",
+            page_number=0,
+            page_size=5,
+            deadline_ms=5_000,
+            max_seed_attempts=24,
+            max_candidates=10,
+            max_query_count=50,
+            classify_batch_size=10,
+            include_incomplete_rows=True,
+            bounded_continuation=True,
+            cursor_start_time=order[0],
+            cursor_order_token=order[1],
+            **scan,
+        )
+        published.extend(row["id"] for row in hop.rows)
+        if hop.complete and not hop.has_more:
+            break
+        hop_floor = hop.continuation_published_order_floor
+        if hop_floor is None:
+            break
+        order = (hop_floor[0], "" if hop_floor[1] is None else str(hop_floor[1]))
+        scan = {
+            "continuation_slice_start": hop.continuation_slice_start,
+            "continuation_slice_end": hop.continuation_slice_end,
+            "continuation_before_start_time": hop.continuation_before_start_time,
+            "continuation_before_id": hop.continuation_before_id,
+        }
+
+    assert sorted(published) == ["match-a", "match-b"]
+    assert len(published) == len(set(published))
+
+
+@dataclass
+class _SeedTokenFakeBuilder(_WideInitialSliceFakeBuilder):
+    """A route that keysets on a token of its own, not on the published one."""
+
+    @staticmethod
+    def bounded_filter_seed_order_token(row: dict[str, Any]) -> str:
+        return f"s-{row['id']}"
+
+
+class _SeedTokenFakeExecutor(_FakeExecutor):
+    """Keyset the seed page on the SEED token, as such a route's SQL does."""
+
+    def __init__(
+        self,
+        builder: _FakeBuilder,
+        *,
+        clock: _ManualMonotonic,
+        durations_ms: dict[str, int],
+    ):
+        super().__init__(builder)
+        self.clock = clock
+        self.durations_ms = durations_ms
+
+    def execute_ch_query(self, query, params, *, timeout_ms, settings):
+        self.clock.advance_ms(self.durations_ms.get(query, 50))
+        self.calls.append((query, params))
+        if query == "match":
+            wanted = set(params["candidate_ids"])
+            source = self.builder.match_rows or self.builder.rows
+            rows = [row for row in source if row["id"] in wanted]
+            return QueryResult(rows, len(rows), "clickhouse", 1.0)
+        rows = [
+            row
+            for row in self.builder.rows
+            if params["slice_start"] <= row["start_time"] < params["slice_end"]
+        ]
+        rows.sort(key=lambda row: (row["start_time"], f"s-{row['id']}"), reverse=True)
+        before_time, before_id = params["before_start_time"], params["before_id"]
+        if before_time is not None:
+            rows = [
+                row
+                for row in rows
+                if (row["start_time"], f"s-{row['id']}") < (before_time, before_id)
+            ]
+        rows = rows[: params["limit"]]
+        return QueryResult(rows, len(rows), "clickhouse", 1.0)
+
+
+@pytest.mark.unit
+def test_a_keyset_the_bound_cannot_name_publishes_what_it_classified() -> None:
+    """A position the bound cannot name publishes no floor at all.
+
+    Inside one instant, result order cannot separate the rows a keyset has
+    passed from the rows it has not, and the public boundary is a single value
+    in result order. Naming the instant claims the unread remainder as
+    published; naming one microsecond above it holds the keyset row nothing
+    will re-read; giving the keyset up to re-read the instant stalls on an
+    instant wider than a hop. So this page publishes every match it classified
+    and hands out its last published row, exactly as the reader did before the
+    floor existed, and the floor is left to the positions a bound CAN name.
+    """
+
+    window_start = END - timedelta(hours=6)
+    rows = [
+        {"id": "a", "start_time": END - timedelta(minutes=10)},
+        {"id": "b", "start_time": END - timedelta(minutes=20)},
+        {"id": "d", "start_time": END - timedelta(minutes=30)},
+    ]
+    published: list[str] = []
+    classified: set[str] = set()
+    order: tuple[Any, ...] | None = None
+    scan: dict[str, Any] = {}
+    for _ in range(12):
+        builder = _SeedTokenFakeBuilder(
+            rows,
+            start=window_start,
+            end=END,
+            match_rows=rows,
+            recommended_batch_size=3,
+            recommended_seed_batch_size=3,
+        )
+        clock = _ManualMonotonic()
+        executor = _SeedTokenFakeExecutor(
+            builder, clock=clock, durations_ms={"seed": 100, "match": 900}
+        )
+        with mock.patch("tracer.selectors.trace_filter_reads.monotonic", new=clock):
+            page = read_bounded_filter_page(
+                builder=builder,
+                analytics=executor,
+                filters=[_time_filter(window_start, END)],
+                key_field="id",
+                page_number=0,
+                # Room for the whole boundary instant: a tie group wider than
+                # the page falls to the reader's pre-existing has_more
+                # contract, which ``test_boundary_instant_continuations.py``
+                # covers on its own.
+                page_size=3,
+                deadline_ms=2_400,
+                max_seed_attempts=24,
+                max_candidates=200,
+                max_query_count=50,
+                classify_batch_size=50,
+                include_incomplete_rows=True,
+                bounded_continuation=True,
+                cursor_start_time=order[0] if order is not None else None,
+                cursor_order_token=order[1] if order is not None else None,
+                **scan,
+            )
+        classified.update(
+            candidate
+            for query, params in executor.calls
+            if query == "match"
+            for candidate in params["candidate_ids"]
+        )
+        published.extend(row["id"] for row in page.rows)
+        if page.complete and not page.has_more:
+            break
+        floor = page.continuation_published_order_floor
+        if floor is not None:
+            # A floor is published only for a position the bound can name: a
+            # keyset whose token is the one this list publishes, or a slice
+            # boundary. Never for a keyset inside an instant it cannot resolve.
+            assert page.continuation_before_start_time is None or (
+                floor
+                == (
+                    page.continuation_before_start_time,
+                    page.continuation_before_id,
+                )
+            )
+            order = (floor[0], "" if floor[1] is None else str(floor[1]))
+        elif page.rows:
+            order = (page.rows[-1]["start_time"], str(page.rows[-1]["id"]))
+        scan = (
+            {}
+            if page.has_more or page.continuation_slice_end is None
+            else {
+                "continuation_slice_start": page.continuation_slice_start,
+                "continuation_slice_end": page.continuation_slice_end,
+                "continuation_before_start_time": (page.continuation_before_start_time),
+                "continuation_before_id": page.continuation_before_id,
+            }
+        )
+
+    assert classified == {"a", "b", "d"}
+    assert sorted(published) == ["a", "b", "d"]
+    assert len(published) == len(set(published))
+
+
+@pytest.mark.unit
+def test_every_cursor_view_mints_its_partial_boundary_from_the_reader_floor() -> None:
+    """Span, trace and session all publish the boundary the reader proves.
+
+    Each of them shares the reader, so each of them now gets pages whose rows
+    were held back against a floor. A view that kept minting from its scan
+    checkpoint would hand out a bound in SEED order while its rows are ordered
+    by rank, which is the defect this floor exists to remove.
+    """
+
+    from tracer.views.observation_span import _span_cursor_order_for_partial_page
+    from tracer.views.trace import _trace_list_cursor_order_for_partial_page
+    from tracer.views.trace_session import (
+        _session_list_cursor_order_for_partial_page,
+    )
+
+    floor_time = END - timedelta(hours=2)
+    keyset_page = SimpleNamespace(
+        has_more=False,
+        continuation_published_order_floor=(floor_time, "row-token"),
+    )
+    slice_page = SimpleNamespace(
+        has_more=False,
+        continuation_published_order_floor=(floor_time, None),
+    )
+    span_page = SimpleNamespace(
+        has_more=False,
+        continuation_published_order_floor=(
+            floor_time,
+            ("span-id", "trace-id", "project-id"),
+        ),
+    )
+
+    assert _session_list_cursor_order_for_partial_page(
+        rows=[{"session_id": "published", "start_time": END}],
+        bounded_page=keyset_page,
+        cursor_state=None,
+    ) == (floor_time, "row-token")
+    assert _session_list_cursor_order_for_partial_page(
+        rows=[], bounded_page=slice_page, cursor_state=None
+    ) == (floor_time, "")
+    assert _trace_list_cursor_order_for_partial_page(
+        rows=[{"trace_id": "published", "start_time": END}],
+        bounded_page=keyset_page,
+        cursor_state=None,
+        org_scope=False,
+    ) == (floor_time, "row-token")
+    assert _trace_list_cursor_order_for_partial_page(
+        rows=[], bounded_page=slice_page, cursor_state=None, org_scope=True
+    ) == (floor_time, "", "")
+    assert _span_cursor_order_for_partial_page(
+        rows=[{"id": "published", "start_time": END}],
+        bounded_page=span_page,
+        cursor_state=None,
+    ) == (floor_time, "span-id", "trace-id", "project-id")
+    assert _span_cursor_order_for_partial_page(
+        rows=[], bounded_page=slice_page, cursor_state=None
+    ) == (floor_time, "", "", "", "", "")
+
+    # A page that filled its prefix and left matches over keeps resuming at its
+    # last published row, where the reader re-descends from that rank.
+    filled = SimpleNamespace(
+        has_more=True,
+        continuation_published_order_floor=(floor_time, "row-token"),
+    )
+    assert _session_list_cursor_order_for_partial_page(
+        rows=[{"session_id": "last", "start_time": END}],
+        bounded_page=filled,
+        cursor_state=None,
+    ) == (END, "last")
+
+    # Every one of those boundaries survives the signed codec unchanged.
+    from tracer.services.clickhouse.list_cursor import (
+        decode_list_cursor,
+        encode_list_cursor,
+    )
+
+    scope = {"organization_id": "org-a", "project_id": PROJECT_ID}
+    query = {"filters": "floor-order"}
+    for order in (
+        (floor_time, "row-token"),
+        (floor_time, ""),
+        (floor_time, "", ""),
+        (floor_time, "span-id", "trace-id", "project-id"),
+        (floor_time, "", "", "", "", ""),
+    ):
+        token = encode_list_cursor(
+            resource="observe_spans",
+            scope=scope,
+            query=query,
+            page_size=25,
+            window_start=START,
+            window_end=END,
+            order=order,
+            seen_rows=0,
+        )
+        restored = decode_list_cursor(
+            token,
+            resource="observe_spans",
+            scope=scope,
+            query=query,
+            page_size=25,
+        )
+        assert restored.order == (order[0].replace(tzinfo=UTC), *order[1:])
+
+
+def _trace_view_cursor(
+    page: BoundedFilterPage,
+    rows: list[dict[str, Any]],
+    previous_cursor: Any,
+    *,
+    page_size: int,
+    window_start: datetime,
+) -> Any:
+    """Mint the next hop's cursor the way the TRACE view mints it.
+
+    The trace list is the route whose seed order token is a space of its own,
+    so it is the one that exercises the boundary instant. Drive its real
+    helper and the real signed codec: the token shape, the dropped scan fields
+    on a filled page and the floor on a checkpoint page all have to survive
+    the round trip for the next hop to resume where this one stopped.
+    """
+
+    from tracer.services.clickhouse.list_cursor import (
+        decode_list_cursor,
+        encode_list_cursor,
+    )
+    from tracer.views.trace import _trace_list_cursor_order_for_partial_page
+
+    order = _trace_list_cursor_order_for_partial_page(
+        rows=[{"trace_id": row["id"], "start_time": row["start_time"]} for row in rows],
+        bounded_page=page,
+        cursor_state=previous_cursor,
+        org_scope=False,
+    )
+    partial = not page.has_more
+    scope = {"organization_id": "org-a", "project_id": PROJECT_ID}
+    query = {"filters": "differing-token"}
+    token = encode_list_cursor(
+        resource="observe_traces",
+        scope=scope,
+        query=query,
+        page_size=page_size,
+        window_start=window_start,
+        window_end=END,
+        order=order,
+        seen_rows=(previous_cursor.seen_rows if previous_cursor else 0) + len(rows),
+        scan_slice_start=page.continuation_slice_start if partial else None,
+        scan_slice_end=page.continuation_slice_end if partial else None,
+        scan_before_start_time=(
+            page.continuation_before_start_time if partial else None
+        ),
+        scan_before_id=page.continuation_before_id if partial else None,
+    )
+    return decode_list_cursor(
+        token,
+        resource="observe_traces",
+        scope=scope,
+        query=query,
+        page_size=page_size,
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("match_count", [25, 26])
+def test_differing_token_hops_publish_every_match_through_a_real_cursor(
+    match_count: int,
+) -> None:
+    """The route with its own seed token, driven through its own cursor.
+
+    ``match_count`` straddles the page size deliberately. At the page size the
+    hop carries a checkpoint and publishes the floor beside it. One match more
+    and the page is FULL with matches left over: the view resumes at the last
+    published row and drops the scan checkpoint, so the walk re-descends from
+    that rank - more work, but the remainder is re-found rather than held.
+    Two rows share the boundary instant, which is the one the floor cannot
+    resolve in this token space, so the checkpoint has to re-read it.
+    """
+
+    page_size = 25
+    window_start = END - timedelta(hours=6)
+    rows = [
+        {"id": f"t{index:02d}", "start_time": END - timedelta(minutes=10 + index)}
+        for index in range(match_count)
+    ]
+    # Two rows at one instant: one of them will be the last classified seed.
+    rows[-1]["start_time"] = rows[-2]["start_time"]
+
+    published: list[str] = []
+    classified: set[str] = set()
+    cursor: Any = None
+    scan: dict[str, Any] = {}
+    filled_page_seen = False
+    for _ in range(24):
+        builder = _SeedTokenFakeBuilder(
+            rows,
+            start=window_start,
+            end=END,
+            match_rows=rows,
+            recommended_batch_size=50,
+            recommended_seed_batch_size=match_count,
+        )
+        clock = _ManualMonotonic()
+        executor = _SeedTokenFakeExecutor(
+            builder, clock=clock, durations_ms={"seed": 100, "match": 900}
+        )
+        with mock.patch("tracer.selectors.trace_filter_reads.monotonic", new=clock):
+            page = read_bounded_filter_page(
+                builder=builder,
+                analytics=executor,
+                filters=[_time_filter(window_start, END)],
+                key_field="id",
+                page_number=0,
+                page_size=page_size,
+                deadline_ms=2_400,
+                max_seed_attempts=24,
+                max_candidates=200,
+                max_query_count=50,
+                classify_batch_size=50,
+                include_incomplete_rows=True,
+                bounded_continuation=True,
+                cursor_start_time=cursor.order[0] if cursor is not None else None,
+                cursor_order_token=cursor.order[1] if cursor is not None else None,
+                **scan,
+            )
+        classified.update(
+            candidate
+            for query, params in executor.calls
+            if query == "match"
+            for candidate in params["candidate_ids"]
+        )
+        published.extend(row["id"] for row in page.rows)
+        filled_page_seen = filled_page_seen or page.has_more
+        if page.complete and not page.has_more:
+            break
+        cursor = _trace_view_cursor(
+            page,
+            list(page.rows),
+            cursor,
+            page_size=page_size,
+            window_start=window_start,
+        )
+        scan = {
+            "continuation_slice_start": cursor.scan_slice_start,
+            "continuation_slice_end": cursor.scan_slice_end,
+            "continuation_before_start_time": cursor.scan_before_start_time,
+            "continuation_before_id": cursor.scan_before_id,
+        }
+
+    assert classified == {row["id"] for row in rows}
+    assert sorted(published) == sorted(row["id"] for row in rows)
+    assert len(published) == len(set(published))
+    assert filled_page_seen is (match_count > page_size)
+
+
+def test_degraded_voice_page_publishes_inexactness_with_its_completeness() -> None:
+    """The unfinished page is the one that changes the published contract.
+
+    ``tracer/utils/bounded_csv.py`` keys its truncation marker on
+    ``query_exact is False``, so the degraded page — not the finished one — is
+    what a client and an export see differently after this change.  The voice
+    list is the list view that can publish one: the session list refuses an
+    unfinished read with 503 instead (see
+    ``test_unfinished_session_read_is_refused_rather_than_published_as_exact``).
+    """
+
+    from tracer.serializers.trace import TraceVoiceCallListResponseSerializer
+    from tracer.views.trace import TraceView
+
+    view = TraceView.__new__(TraceView)
+    view._gm = SimpleNamespace(
+        custom_error_response=lambda *args, **kwargs: ("error", args, kwargs),
+    )
+    analytics = mock.MagicMock()
+
+    with (
+        mock.patch(
+            "tracer.views.trace.get_project_eval_configs", return_value=([], [])
+        ),
+        mock.patch(
+            "tracer.views.trace.get_annotation_labels_for_project", return_value=[]
+        ),
+        mock.patch(
+            "tracer.views.trace._build_annotation_map_from_scores", return_value={}
+        ),
+        mock.patch(
+            "tracer.selectors.trace_filter_reads.read_bounded_filter_page",
+            return_value=_incomplete_empty_page(),
+        ),
+    ):
+        response = view._list_voice_calls_clickhouse(
+            SimpleNamespace(query_params={"allow_sampled": "true"}),
+            project_id=PROJECT_ID,
+            validated_data={
+                "filters": [
+                    _short_time_filter(),
+                    _attribute_filter("final_status", "Rejected"),
+                ],
+                "page": 1,
+                "page_size": 15,
+                "allow_sampled": True,
+            },
+            remove_simulation_calls=False,
+            analytics=analytics,
+        )
+
+    assert response.status_code == 200
+    assert response.data["query_complete"] is False
+    assert response.data["query_status"] == "degraded"
+    assert response.data["query_exact"] is False
+    assert response.data["ordering_exact"] is False
+    # No row was hydrated, so the page cost only the selector's statements.
+    assert response.data["query_count"] == 8
+    response_serializer = TraceVoiceCallListResponseSerializer(data=response.data)
+    assert response_serializer.is_valid(), response_serializer.errors

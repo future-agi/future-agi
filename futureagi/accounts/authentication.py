@@ -11,12 +11,16 @@ import structlog
 from cryptography.fernet import Fernet
 from django.conf import settings
 from django.core.cache import cache
-from django.db import IntegrityError
+from django.db import DatabaseError, IntegrityError, InterfaceError, OperationalError
 from django.http import JsonResponse
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.authentication import BaseAuthentication
-from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
+from rest_framework.exceptions import (
+    APIException,
+    AuthenticationFailed,
+    PermissionDenied,
+)
 from rest_framework.response import Response
 
 from accounts.models import OrgApiKey, User
@@ -165,8 +169,8 @@ class APIKeyAuthentication(BaseAuthentication):
                 # Set workspace context after JWT authentication
                 self._set_workspace_context(request, user)
                 return user, token
-            except PermissionDenied:
-                raise  # Let 403 propagate — don't wrap as 401
+            except (PermissionDenied, DatabaseError, InterfaceError):
+                raise  # Authorization denials and database failures are not bad tokens.
             except Exception as e:
                 traceback.print_exc()
                 raise AuthenticationFailed(f"Invalid Token parsed: {e}") from e
@@ -451,13 +455,20 @@ class APIKeyAuthentication(BaseAuthentication):
         if not organization:
             return None
 
+        # Token-cached users can retain old preferences after a workspace
+        # switch. Read persisted config just as organization fallback does,
+        # without mutating the cached user or overriding explicit scope.
+        fresh_config = (
+            User.objects.filter(pk=user.pk).values_list("config", flat=True).first()
+        ) or {}
+
         # Check org-specific workspace preference
-        org_workspace_map = user.config.get("orgWorkspaceMap", {})
+        org_workspace_map = fresh_config.get("orgWorkspaceMap", {})
         workspace_id = org_workspace_map.get(str(organization.id))
 
         # Fallback: legacy currentWorkspaceId (only if it belongs to this org)
         if not workspace_id:
-            workspace_id = user.config.get("currentWorkspaceId") or user.config.get(
+            workspace_id = fresh_config.get("currentWorkspaceId") or fresh_config.get(
                 "defaultWorkspaceId"
             )
 
@@ -930,6 +941,8 @@ def decode_token(token: str):
 
         return user, token
 
+    except (DatabaseError, InterfaceError):
+        raise
     except Exception as e:
         raise AuthenticationFailed(f"Invalid Token parsed: {e}") from e
 
@@ -951,6 +964,54 @@ def _pydantic_error_response(exc):
     )
 
 
+class DatabaseUnavailable(APIException):
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    default_detail = "Database temporarily unavailable."
+    default_code = "service_unavailable"
+
+
+def _database_unavailable_metadata(exc):
+    """Allowlisted attribution only: never render exceptions or inspect locals."""
+
+    def bounded_name(value):
+        if isinstance(value, str) and re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_.]*|<[A-Za-z_]+>", value
+        ):
+            return value[:128]
+        return None
+
+    cause = exc.__cause__ or (None if exc.__suppress_context__ else exc.__context__)
+    metadata = {
+        "error_class": bounded_name(type(exc).__name__),
+        "cause_class": bounded_name(type(cause).__name__)
+        if cause is not None
+        else None,
+        "sqlstate": None,
+        "source_module": None,
+        "source_function": None,
+        "source_line": None,
+    }
+    for error in (cause, exc):
+        for attribute in ("sqlstate", "pgcode"):
+            value = getattr(error, attribute, None)
+            if isinstance(value, str) and re.fullmatch(r"[A-Z0-9]{5}", value):
+                metadata["sqlstate"] = value
+                break
+        if metadata["sqlstate"] is not None:
+            break
+
+    tb = exc.__traceback__
+    if tb is not None:
+        while tb.tb_next is not None:
+            tb = tb.tb_next
+        metadata.update(
+            source_module=bounded_name(tb.tb_frame.f_globals.get("__name__")),
+            source_function=bounded_name(tb.tb_frame.f_code.co_name),
+            source_line=tb.tb_lineno,
+        )
+    return metadata
+
+
 def custom_exception_handler(exc, context):
     """
     Global DRF exception handler.
@@ -962,6 +1023,12 @@ def custom_exception_handler(exc, context):
 
     from tfc.ee_gating import FeatureUnavailable
 
+    if isinstance(exc, (OperationalError, InterfaceError)):
+        logger.warning(
+            "api_database_unavailable", **_database_unavailable_metadata(exc)
+        )
+        # Keep raw database details private and use DRF's normal rollback path.
+        exc = DatabaseUnavailable()
     response = exception_handler(exc, context)
 
     if isinstance(exc, FeatureUnavailable):

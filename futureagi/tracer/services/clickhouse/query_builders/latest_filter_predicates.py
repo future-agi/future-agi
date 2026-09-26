@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import unicodedata
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -14,6 +13,10 @@ from tracer.services.clickhouse.query_builders.filters import (
     ClickHouseFilterBuilder,
     build_literal_text_predicate,
     normalize_filter_op,
+)
+from tracer.utils.attribute_suggestion_contract import (
+    ATTRIBUTE_KEY_MAX_UTF8_BYTES,
+    validate_exact_attribute_key,
 )
 from tracer.utils.filter_operators import (
     JSON_ARRAY_FILTER_MAX_MEMBERS,
@@ -26,8 +29,82 @@ from tracer.utils.filter_operators import (
     validate_json_map_filter_value,
 )
 
-_MAX_ATTRIBUTE_KEY_UTF8_BYTES = 4096
+_MAX_ATTRIBUTE_KEY_UTF8_BYTES = ATTRIBUTE_KEY_MAX_UTF8_BYTES
 _MAX_LEGACY_ASCII_BLOOM_VARIANTS = 256
+
+# ClickHouse parses at most ``max_query_size`` bytes of a statement (262144 by
+# default) and rejects the whole statement with SYNTAX_ERROR before it runs, so
+# a statement that carries its filter text inline has a hard size ceiling.
+_CLICKHOUSE_MAX_QUERY_SIZE_BYTES = 262_144
+
+# Every index companion writes the whole value into the statement again, so a
+# long filter value multiplies the text past that ceiling and nothing runs at
+# all. Companions are pruning hints and never membership truth, so a large
+# value simply declines them and keeps the authoritative comparison alone.
+_MAX_INDEX_COMPANION_VALUE_UTF8_BYTES = 16 * 1024
+
+# clickhouse-driver renders a string literal by expanding each of these to two
+# characters, so every occurrence costs a byte more than the value carries.
+# Counting only the backslash and the quote understates a value full of tabs or
+# newlines by a third, which is exactly the escaped-text shape a size budget
+# near the parser limit has to hold. Pinned against the driver's own table by
+# the unit tests.
+_ESCAPED_LITERAL_CHARS = "\\'\b\f\r\n\t\0\a\v"
+
+# A seed statement carries a plan's exact comparison once and may carry the raw
+# value witness a SECOND time, to discover which primary-key prefixes hold a raw
+# match before the latest-state collapse reads them. Two copies parse only
+# while their rendered sum leaves the rest of the statement room under the
+# ceiling above: this budget admits two copies of the sum and keeps 32 KiB for
+# everything around them. Past it the second copy stands down to key presence
+# plus whatever index companion the value still carries (none, at this size),
+# which is still a necessary condition of the same matches: the exact
+# comparison is carried once regardless, and the classifier re-applies it.
+# Measured on production, one IN filter with two ~100 KiB values rendered
+# 428,335 bytes with both copies and was refused before it ran. The budget is
+# per plan, as the companion budget is: a statement conjoining several leaves
+# this large is not sized here.
+_MAX_TWICE_INLINED_VALUES_RENDERED_BYTES = 112 * 1024
+
+
+def _rendered_literal_bytes(value: str) -> int:
+    """What one string literal costs once clickhouse-driver has escaped it."""
+
+    expanded = sum(value.count(char) for char in _ESCAPED_LITERAL_CHARS)
+    return len(value.encode()) + expanded + 2
+
+
+def _values_fit_index_companion_budget(normalized_values: tuple[object, ...]) -> bool:
+    """Whether these values are small enough to inline a second and third time.
+
+    Raw bytes are the right measure here. Escaping can inflate a literal by a
+    third, but this budget sits an order of magnitude below the parser limit,
+    so it decides selectivity rather than whether a statement can be parsed.
+    """
+
+    return (
+        sum(
+            len(value.encode()) for value in normalized_values if isinstance(value, str)
+        )
+        <= _MAX_INDEX_COMPANION_VALUE_UTF8_BYTES
+    )
+
+
+def _values_fit_second_inline_budget(normalized_values: tuple[object, ...]) -> bool:
+    """Whether a raw value witness over these values may be inlined twice.
+
+    Rendered bytes are the measure here, because this budget sits next to the
+    parser limit: the literal a statement carries is the escaped one.
+    """
+
+    return (
+        sum(
+            _rendered_literal_bytes(value)
+            for value in normalized_values
+            if isinstance(value, str)
+        )
+        <= _MAX_TWICE_INLINED_VALUES_RENDERED_BYTES
+    )
 
 
 def _legacy_ascii_lower_bloom_predicate(
@@ -84,17 +161,12 @@ def _legacy_ascii_lower_bloom_predicate(
 
 
 def _validate_attribute_key(key: str) -> str:
-    """Accept real customer keys while rejecting ambiguous control payloads."""
+    """Preserve the ingested UTF-8 key; callers bind it as data, not an identifier."""
 
     try:
-        encoded = key.encode("utf-8", errors="strict")
-    except UnicodeEncodeError as exc:
-        raise UnsupportedFilterShapeError("attribute key must be valid UTF-8") from exc
-    if not encoded or len(encoded) > _MAX_ATTRIBUTE_KEY_UTF8_BYTES:
-        raise UnsupportedFilterShapeError("attribute key length is invalid")
-    if any(unicodedata.category(character) in {"Cc", "Cf"} for character in key):
-        raise UnsupportedFilterShapeError("attribute key contains control characters")
-    return key
+        return validate_exact_attribute_key(key)
+    except ValueError as exc:
+        raise UnsupportedFilterShapeError(str(exc)) from exc
 
 
 def _strict_bool(value: object) -> int:
@@ -234,6 +306,13 @@ class LatestFilterPredicate:
     # attribute value; the latest-state classifier still applies the complete
     # value predicate before a row can become a graph point.
     raw_key_witness_predicate: str | None = None
+    # Key presence AND the physical value/ngram index companions, with no
+    # row-level value comparison. Population discovery only needs a temporal
+    # superset, so it may prune granules through the deployed value indexes
+    # without decompressing the attribute value stream. Set only where an
+    # index companion exists; the latest-state classifier still applies the
+    # complete value predicate before a row can become a published match.
+    raw_index_witness_predicate: str | None = None
     # Stricter raw key/value witness for the optional exact-graph shortcut.
     # This is populated only when a missing Map key's physical default cannot
     # satisfy the value comparison. That keeps the witness exhaustive even if
@@ -251,6 +330,22 @@ class LatestFilterPredicate:
     # This is not a raw-population witness; native/grouped/structured plans
     # deliberately leave it unset. Raw acquisition metadata stays independent.
     post_final_scalar_seed_predicate: str | None = None
+    # What a statement that ALREADY carries this plan's exact comparison may
+    # add to discover the raw population it must replay - the primary-key
+    # prefixes holding a raw match. Set only where that would be a SECOND copy
+    # of a value too large to inline twice under the parser limit: it is then
+    # key presence plus any index companion, still a necessary condition of the
+    # same matches. ``None`` means ``raw_witness_predicate``; read it through
+    # ``population_witness_predicate``.
+    raw_population_witness_predicate: str | None = None
+
+    @property
+    def population_witness_predicate(self) -> str | None:
+        """The raw witness a statement carrying ``seed_predicate`` may add."""
+
+        if self.raw_population_witness_predicate is not None:
+            return self.raw_population_witness_predicate
+        return self.raw_witness_predicate
 
     def grouped_match_predicate(self, row_scope: str | None = None) -> str:
         """Compile this latest-span predicate at its enclosing target grain."""
@@ -572,6 +667,7 @@ def _attribute_plan(
     # deployed string-value bloom uses ASCII-only ``lower()``, so it may only
     # join an exhaustive witness through the Unicode-safe variant helper below.
     params[key_param] = key
+    index_hint_predicate = None
     if map_column in {"span_attr_str", "span_attr_num"} and operation in {
         "equals",
         "in",
@@ -588,7 +684,9 @@ def _attribute_plan(
             if map_column == "span_attr_str"
             else "mapValues(span_attr_num)"
         )
-        if operation == "equals":
+        if not _values_fit_index_companion_budget(normalized_values):
+            index_predicate = None
+        elif operation == "equals":
             index_predicate = f"has({indexed_values}, %(latest_filter_param_{index})s)"
         else:
             placeholders = []
@@ -597,7 +695,7 @@ def _attribute_plan(
                 params[index_param] = item_value
                 placeholders.append(f"%({index_param})s")
             index_predicate = f"hasAny({indexed_values}, [{', '.join(placeholders)}])"
-        if map_column == "span_attr_str":
+        if index_predicate is not None and map_column == "span_attr_str":
             legacy_predicate = _legacy_ascii_lower_bloom_predicate(
                 normalized_values=normalized_values,
                 params=params,
@@ -613,7 +711,9 @@ def _attribute_plan(
         # but do not re-evaluate/lower every Map value on each surviving row
         # (especially after FINAL, where mutable skip indexes are disabled).
         # indexHint is not membership truth; the exact comparison remains.
-        seed_predicate = f"({seed_predicate}) AND indexHint({index_predicate})"
+        index_hint_predicate = index_predicate
+        if index_predicate is not None:
+            seed_predicate = f"({seed_predicate}) AND indexHint({index_predicate})"
 
     key_witness_predicate = (
         f"(indexHint(has(mapKeys({map_column}), {bound_key})) AND "
@@ -635,7 +735,16 @@ def _attribute_plan(
         else None
     )
     raw_witness_predicate = key_witness_predicate if negative_presence_witness else None
+    # The companions above are already implied by the complete comparison, so
+    # pairing them with key presence alone stays an exhaustive superset while
+    # reading only the Map key stream.
+    raw_index_witness_predicate = (
+        f"({key_witness_predicate}) AND indexHint({index_hint_predicate})"
+        if index_hint_predicate is not None and raw_key_witness_predicate
+        else None
+    )
     raw_graph_value_witness_predicate = None
+    raw_population_witness_predicate = None
     if operation in _POSITIVE_RAW_WITNESS_OPS:
         raw_witness_predicate = key_witness_predicate
         if operation in {"equals", "in"}:
@@ -647,6 +756,17 @@ def _attribute_plan(
             raw_witness_predicate = (
                 f"({key_witness_predicate}) AND ({exhaustive_value_predicate})"
             )
+            # A seed already carrying that comparison may repeat this witness
+            # for prefix discovery only while the value fits twice under the
+            # parser limit; past that, discovery keeps key presence and any
+            # index companion, and the single exact copy decides the rows.
+            bound_value = params[f"latest_filter_param_{index}"]
+            if not _values_fit_second_inline_budget(
+                bound_value if isinstance(bound_value, tuple) else (bound_value,)
+            ):
+                raw_population_witness_predicate = (
+                    raw_index_witness_predicate or raw_key_witness_predicate
+                )
         if not _missing_typed_map_default_can_match(
             map_column=map_column,
             operation=operation,
@@ -668,12 +788,14 @@ def _attribute_plan(
         scope=scope,
         raw_witness_predicate=raw_witness_predicate,
         raw_key_witness_predicate=raw_key_witness_predicate,
+        raw_index_witness_predicate=raw_index_witness_predicate,
         raw_graph_value_witness_predicate=raw_graph_value_witness_predicate,
         raw_witness_rank=(
             {"equals": 0, "in": 0}.get(operation, 10)
             if operation in _POSITIVE_RAW_WITNESS_OPS or negative_presence_witness
             else None
         ),
+        raw_population_witness_predicate=raw_population_witness_predicate,
     )
 
 
@@ -739,6 +861,7 @@ def _mixed_typed_attribute_plan(
     seed_matches: list[str] = []
     key_witnesses: list[str] = []
     typed_raw_witnesses: list[str] = []
+    typed_index_witnesses: list[str] = []
     typed_graph_witnesses: list[str] = []
     storage_metadata: dict[str, tuple[str, Callable[[object], object], bool]] = {
         "string": ("span_attr_str", _strict_text, True),
@@ -787,13 +910,19 @@ def _mixed_typed_attribute_plan(
             f"AND has({map_column}.keys, {bound_key}))"
         )
         typed_witness = f"(({key_witnesses[-1]}) AND ({seed_matches[-1]}))"
-        if operation == "in" and storage_type in {"string", "number"}:
+        index_predicate = None
+        if (
+            operation == "in"
+            and storage_type in {"string", "number"}
+            and _values_fit_index_companion_budget(normalized_values)
+        ):
             # Picker provenance changes parameter names, not the scalar IN
             # implication. Keep exact membership authoritative; these implied
             # hints only expose existing value indexes to raw acquisition.
             indexed_values = (
                 "arrayMap(x -> lowerUTF8(x), mapValues(span_attr_str))"
-                if case_insensitive else "mapValues(span_attr_num)"
+                if case_insensitive
+                else "mapValues(span_attr_num)"
             )
             placeholders = []
             for value_index, value in enumerate(normalized_values):
@@ -803,12 +932,23 @@ def _mixed_typed_attribute_plan(
             index_predicate = f"hasAny({indexed_values}, [{', '.join(placeholders)}])"
             if case_insensitive:
                 legacy = _legacy_ascii_lower_bloom_predicate(
-                    normalized_values=normalized_values, params=params, index=index,
+                    normalized_values=normalized_values,
+                    params=params,
+                    index=index,
                 )
                 if legacy:
                     index_predicate = f"({index_predicate}) AND ({legacy})"
             typed_witness = f"({typed_witness}) AND indexHint({index_predicate})"
         typed_raw_witnesses.append(typed_witness)
+        # Population discovery only locates an interval, so each storage
+        # branch contributes key presence plus its index companion. A branch
+        # with no value index (Boolean, long strings) keeps key presence
+        # alone, which is still an exhaustive superset of that branch.
+        typed_index_witnesses.append(
+            f"({key_witnesses[-1]}) AND indexHint({index_predicate})"
+            if index_predicate is not None
+            else key_witnesses[-1]
+        )
         if operation == "in":
             typed_graph_witnesses.append(
                 key_witnesses[-1]
@@ -841,6 +981,7 @@ def _mixed_typed_attribute_plan(
         # semantics.
         raw_witness_predicate = f"({' OR '.join(typed_raw_witnesses)})"
         raw_key_witness_predicate = f"({' OR '.join(key_witnesses)})"
+        raw_index_witness_predicate = f"({' OR '.join(typed_index_witnesses)})"
         # The picker adds storage provenance and suffixed parameters, but its
         # positive membership semantics are otherwise identical to scalar IN.
         # Narrow each storage branch by value unless a missing Map key's
@@ -849,6 +990,23 @@ def _mixed_typed_attribute_plan(
         # without forcing every safe long-string branch back to key-only.
         raw_graph_value_witness_predicate = f"({' OR '.join(typed_graph_witnesses)})"
         raw_witness_rank = 0
+        # Same rule as the scalar plan: the raw value witness may be inlined a
+        # second time for prefix discovery only while every selected value
+        # fits twice under the parser limit. Past that, discovery keeps each
+        # branch's key presence and index companion (already what the
+        # population probe carries) and the single exact copy decides.
+        raw_population_witness_predicate = (
+            None
+            if _values_fit_second_inline_budget(
+                tuple(
+                    value
+                    for values in grouped_values.values()
+                    for value in values
+                    if isinstance(value, str)
+                )
+            )
+            else raw_index_witness_predicate
+        )
     else:
         predicate = f"(({' OR '.join(latest_exists)}) AND NOT ({latest_positive}))"
         seed_predicate = f"(({' OR '.join(seed_exists)}) AND NOT ({seed_positive}))"
@@ -861,8 +1019,12 @@ def _mixed_typed_attribute_plan(
             else None
         )
         raw_witness_predicate = raw_key_witness_predicate
+        # The negative witness is already key-only; no companion can be
+        # cheaper, and a positive value index cannot witness an exclusion.
+        raw_index_witness_predicate = None
         raw_graph_value_witness_predicate = None
         raw_witness_rank = 10 if allow_negative_presence_witness else None
+        raw_population_witness_predicate = None
 
     return LatestFilterPredicate(
         aggregates=tuple(aggregates),
@@ -872,8 +1034,10 @@ def _mixed_typed_attribute_plan(
         scope=scope,
         raw_witness_predicate=raw_witness_predicate,
         raw_key_witness_predicate=raw_key_witness_predicate,
+        raw_index_witness_predicate=raw_index_witness_predicate,
         raw_graph_value_witness_predicate=raw_graph_value_witness_predicate,
         raw_witness_rank=raw_witness_rank,
+        raw_population_witness_predicate=raw_population_witness_predicate,
     )
 
 

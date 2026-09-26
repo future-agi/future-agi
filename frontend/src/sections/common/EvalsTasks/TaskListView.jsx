@@ -23,6 +23,7 @@ import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import DeleteConfirmation from "./DeleteConfirmation";
 import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
 import { readEvalTaskListPage } from "./task_list_read";
+import { isResumableTaskStatus } from "./task_status";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -570,7 +571,7 @@ const TaskListView = ({
                   />
                 </IconButton>
               )}
-              {status === "paused" && (
+              {isResumableTaskStatus(status) && (
                 <IconButton
                   size="small"
                   onClick={(e) => {

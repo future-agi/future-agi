@@ -12,6 +12,7 @@ import contextvars
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from copy import deepcopy
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from django.db import transaction
@@ -28,8 +29,6 @@ from tracer.services.clickhouse.v2 import get_reader
 from tracer.services.eval_tasks.config_hash import resolved_config_hash
 
 if TYPE_CHECKING:
-    from datetime import datetime
-
     from tracer.models.eval_task import EvalTask
     from tracer.services.clickhouse.v2.span_reader import CHSpanReader
 
@@ -54,6 +53,15 @@ _engine_entry_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 )
 _engine_task_selection: contextvars.ContextVar[dict[str, Any] | None] = (
     contextvars.ContextVar("eval_engine_task_selection", default=None)
+)
+# The claim this run owns, as the ``updated_at`` stamp the row carried when the
+# run began. ``RUNNING`` on its own is not an identity: the reaper can requeue
+# an entry a worker is still holding and another worker can re-claim it, and the
+# row is ``RUNNING`` again under that new claim. Every write this run makes is
+# fenced on the epoch as well, so an abandoned run's result no-ops instead of
+# landing on the re-claimed row under the abandoned run's config hash.
+_engine_entry_epoch: contextvars.ContextVar[datetime | None] = contextvars.ContextVar(
+    "eval_engine_entry_epoch", default=None
 )
 
 # Identity / FK / lifecycle columns the materialized entry already owns — the
@@ -106,6 +114,17 @@ def writing_onto_entry(
         _engine_entry_id.reset(token)
 
 
+@contextmanager
+def running_entry_epoch(epoch: datetime) -> Iterator[None]:
+    """Within this block, every write onto the running entry is fenced on the
+    claim that opened it, not merely on the entry still being ``RUNNING``."""
+    token = _engine_entry_epoch.set(epoch)
+    try:
+        yield
+    finally:
+        _engine_entry_epoch.reset(token)
+
+
 def in_engine_write_mode() -> bool:
     """True while the eval-task engine is running one entry — result writes
     should update that entry rather than create a new EvalLogger row."""
@@ -133,11 +152,14 @@ def persist_eval_result(logger_kwargs: dict[str, Any]) -> EvalLogger | None:
             **result_metadata,
             "_task_selection": deepcopy(selection),
         }
-    # Fence on RUNNING so a stale worker's late result write no-ops after a
-    # reaper requeue + re-claim (see mark_terminal).
-    EvalLogger.objects.filter(id=entry_id, status=EvalEntryStatus.RUNNING).update(
-        **fields
-    )
+    # Fence on the claim this run owns so a stale worker's late result write
+    # no-ops after a reaper requeue + re-claim (see mark_terminal). RUNNING
+    # alone does not distinguish the abandoned claim from the live one.
+    fence: dict[str, Any] = {"id": entry_id, "status": EvalEntryStatus.RUNNING}
+    epoch = _engine_entry_epoch.get()
+    if epoch is not None:
+        fence["updated_at"] = epoch
+    EvalLogger.objects.filter(**fence).update(**fields)
     return EvalLogger.objects.filter(id=entry_id).first()
 
 
@@ -313,8 +335,10 @@ def claim_pending_batch(task: EvalTask, n: int) -> list[EvalLogger]:
     """Atomically claim up to ``n`` pending entries and mark them running.
 
     ``FOR UPDATE SKIP LOCKED`` lets many workers pull disjoint batches without
-    blocking each other. ``updated_at`` is stamped to "now" so the reaper can
-    measure how long an entry has been running.
+    blocking each other. ``updated_at`` is stamped to "now": it is both the
+    claim's epoch -- ``run_entry`` compare-and-sets it when a run starts, so a
+    run that is superseded while it works cannot land its result -- and, until
+    the run re-stamps it, how long the entry has been waiting for one.
     """
     now = timezone.now()
     with transaction.atomic():
@@ -343,6 +367,7 @@ def mark_terminal(
     error: bool | None = None,
     error_message: str | None = None,
     skipped_reason: str | None = None,
+    epoch: datetime | None = None,
 ) -> bool:
     """Record an entry's terminal state (status + the hash that produced it).
 
@@ -350,6 +375,10 @@ def mark_terminal(
     rerun landing while it ran. error / error_message / skipped_reason are set
     only when passed, so a result already written by the evaluator isn't
     clobbered.
+
+    ``epoch`` is the claim the caller owns; it defaults to the running-entry
+    epoch in scope (``running_entry_epoch``). A caller outside that scope that
+    read the row itself passes the stamp its own read saw.
     """
     fields: dict[str, Any] = {
         "status": status,
@@ -362,14 +391,14 @@ def mark_terminal(
         fields["error_message"] = error_message
     if skipped_reason is not None:
         fields["skipped_reason"] = skipped_reason
-    # Fence on RUNNING so a stale worker's late write no-ops after the reaper
-    # requeued the entry (and another worker re-claimed it).
-    return (
-        EvalLogger.objects.filter(id=entry.id, status=EvalEntryStatus.RUNNING).update(
-            **fields
-        )
-        > 0
-    )
+    # Fence on RUNNING *and* on the claim: after the reaper requeued the entry
+    # and another worker re-claimed it the row is RUNNING again, so RUNNING
+    # alone would let the abandoned run's write through.
+    fence: dict[str, Any] = {"id": entry.id, "status": EvalEntryStatus.RUNNING}
+    epoch = epoch if epoch is not None else _engine_entry_epoch.get()
+    if epoch is not None:
+        fence["updated_at"] = epoch
+    return EvalLogger.objects.filter(**fence).update(**fields) > 0
 
 
 def _resolve_entry_fks(

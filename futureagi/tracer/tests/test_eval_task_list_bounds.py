@@ -141,6 +141,11 @@ def test_eval_task_progress_is_batched_for_the_finite_page(monkeypatch):
                     "status": "pending",
                     "n": 3,
                 },
+                {
+                    "eval_task_id": "task-historical",
+                    "status": "skipped",
+                    "n": 2,
+                },
             ]
 
     class _Manager:
@@ -152,12 +157,16 @@ def test_eval_task_progress_is_batched_for_the_finite_page(monkeypatch):
 
     progress = _eval_task_progress_by_id(tasks)
 
+    # Skipped stays in the total and out of ``completed``: this route drops
+    # the serializer's ``progress`` field and refills it from here, so the two
+    # endpoints have to answer the same way about the same task.
     assert progress == {
         "task-historical": {
-            "dispatched": 10,
+            "dispatched": 12,
             "completed": 7,
+            "skipped": 2,
             "missing": 3,
-            "percent": 70.0,
+            "percent": 58.33,
         }
     }
     assert calls[0] == (

@@ -24,6 +24,27 @@ _GATEWAY_SYNC_WARNING = (
     "Config saved but gateway sync failed. Changes will apply on next gateway restart."
 )
 
+_DEFAULT_API_PATH_PREFIX = "/v1"
+
+
+def _join_api_endpoint(base_url, api_path_prefix, path):
+    """Mirror of the gateway's ``config.JoinEndpoint``.
+
+    ``None`` means the provider states no prefix and the default applies; ``""``
+    means it states an empty one. A base_url already ending in the prefix keeps
+    it rather than repeating it.
+    """
+    base = (base_url or "").rstrip("/")
+    if api_path_prefix is None:
+        prefix = _DEFAULT_API_PATH_PREFIX
+    else:
+        prefix = str(api_path_prefix).strip().rstrip("/")
+        if prefix and not prefix.startswith("/"):
+            prefix = "/" + prefix
+    if not prefix or base.endswith(prefix):
+        return base + path
+    return base + prefix + path
+
 
 class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     permission_classes = [IsAuthenticated]
@@ -208,6 +229,7 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
         api_key = None
         base_url = None
         api_format = None
+        api_path_prefix = None
 
         if provider_name:
             organization = getattr(request, "organization", None)
@@ -236,11 +258,16 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
                 api_key = decrypted.get("api_key", "")
                 base_url = cred.base_url.rstrip("/") if cred.base_url else ""
                 api_format = cred.api_format
+                api_path_prefix = (cred.extra_config or {}).get("api_path_prefix")
 
         # Raw values from request body override or fill gaps.
         base_url = (request.data.get("base_url") or base_url or "").rstrip("/")
         api_key = request.data.get("api_key") or api_key or ""
         api_format = request.data.get("api_format") or api_format or "openai"
+        # Presence, not truthiness: "" is an explicit "no version segment", and
+        # an `or` chain would silently swap it for the stored value.
+        if "api_path_prefix" in request.data:
+            api_path_prefix = request.data.get("api_path_prefix")
 
         if not api_key:
             msg = (
@@ -253,7 +280,7 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
 
         try:
             models = self._fetch_models_from_provider(
-                provider_name, base_url, api_key, api_format
+                provider_name, base_url, api_key, api_format, api_path_prefix
             )
             return self._gm.success_response({"models": models})
         except ValueError as e:
@@ -273,7 +300,9 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
                 {"models": [], "error": "Failed to fetch models from provider"}
             )
 
-    def _fetch_models_from_provider(self, provider_name, base_url, api_key, api_format):
+    def _fetch_models_from_provider(
+        self, provider_name, base_url, api_key, api_format, api_path_prefix=None
+    ):
         """Call the provider's list-models endpoint and return a sorted list of model IDs.
 
         Listing models is an identity lookup, not a translation call — so it uses
@@ -347,8 +376,11 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             return sorted(m["name"] for m in data.get("models", []) if m.get("name"))
 
         # Default: OpenAI-compatible (OpenAI, Groq, Together, Fireworks, Mistral,
-        # Azure OpenAI-compat, custom/self-hosted).
-        url = f"{base_url or 'https://api.openai.com/v1'}/models"
+        # Azure OpenAI-compat, custom/self-hosted). The version segment is the
+        # provider's own, so discovery probes the URL the proxy will really use.
+        url = _join_api_endpoint(
+            base_url or "https://api.openai.com/v1", api_path_prefix, "/models"
+        )
         resp = http.get(
             url,
             headers={"Authorization": f"Bearer {api_key}"},

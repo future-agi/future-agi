@@ -220,6 +220,8 @@ class SetupCheckSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=("passed", "warning", "failed", "skipped"))
     required = serializers.BooleanField()
     detail = serializers.CharField(allow_blank=True)
+    fix = serializers.CharField(allow_blank=True)
+    docs_url = serializers.CharField(allow_blank=True)
 
 
 class SetupChecksResultSerializer(serializers.Serializer):

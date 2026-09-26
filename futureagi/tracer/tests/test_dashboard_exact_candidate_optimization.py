@@ -17,6 +17,7 @@ from uuid import uuid4
 import pytest
 from clickhouse_driver.errors import ServerException
 from clickhouse_driver.util.escape import escape_params
+from django.conf import settings
 from django.core.cache.backends.locmem import LocMemCache
 
 from tracer.services import exact_aggregation_cache
@@ -540,7 +541,7 @@ def test_scalar_group_refuses_incompatible_metric_populations(difference):
 
 @pytest.mark.parametrize("count", [101, 257])
 @pytest.mark.parametrize("grouped", [False, True])
-def test_exact_worker_preserves_every_returned_series_above_former_cap(count, grouped):
+def test_exact_worker_caps_breakdown_series_and_declares_the_total(count, grouped):
     config = _config(
         days=7,
         filtered=False,
@@ -566,17 +567,21 @@ def test_exact_worker_preserves_every_returned_series_above_former_cap(count, gr
     fetch.assert_called_once()
     result = response.data["result"]
     assert result["query_complete"] is True
+    ceiling = settings.DASHBOARD_BREAKDOWN_MAX_SERIES
     for metric in result["metrics"]:
-        assert len(metric["series"]) == count
-        assert {series["name"] for series in metric["series"]} == {
-            row["breakdown_value"] for row in rows
-        }
-        assert metric["series"][-1]["name"] == "fixture-session-0"
+        # Ranked by summed value, largest first, then cut at the ceiling; the
+        # metric says how many distinct series the grouping actually had.
+        assert [series["name"] for series in metric["series"]] == [
+            f"fixture-session-{index}"
+            for index in range(count - 1, count - 1 - ceiling, -1)
+        ]
+        assert metric["series_total"] == count
+        assert metric["series_truncated"] is True
         assert [
             point["value"]
             for point in metric["series"][-1]["data"]
             if point["value"] is not None
-        ] == [0]
+        ] == [count - ceiling]
     read_settings = fetch.call_args.kwargs["settings"]
     assert read_settings["read_overflow_mode"] == "throw"
     assert read_settings["result_overflow_mode"] == "throw"
@@ -585,7 +590,7 @@ def test_exact_worker_preserves_every_returned_series_above_former_cap(count, gr
 
 
 @pytest.mark.parametrize("worker", [False, True])
-def test_exact_mixed_source_preserves_all_trace_series(worker):
+def test_exact_mixed_source_matches_the_trace_only_series(worker):
     from tracer.services.clickhouse.query_builders.dataset_dashboard import (
         DatasetQueryBuilder,
     )
@@ -601,7 +606,7 @@ def test_exact_mixed_source_preserves_all_trace_series(worker):
     ]
     trace_only, original_fetch, _ = _execute(config, worker=worker, rows=rows)
     expected = trace_only.data["result"]["metrics"][0]["series"]
-    assert len(expected) == 257
+    assert len(expected) == settings.DASHBOARD_BREAKDOWN_MAX_SERIES
     config["metrics"].append(
         {
             "id": "row_count",
@@ -619,7 +624,9 @@ def test_exact_mixed_source_preserves_all_trace_series(worker):
     assert response.status_code == 200
     assert result["query_exact"] is True and result["query_complete"] is True
     assert trace["series"] == expected
-    assert {series["name"] for series in trace["series"]} == {
+    assert trace["series_total"] == len(rows)
+    assert trace["series_truncated"] is True
+    assert {series["name"] for series in trace["series"]} <= {
         row["breakdown_value"] for row in rows
     }
     assert original_fetch.call_count == mixed_fetch.call_count == 1
@@ -629,7 +636,8 @@ def test_exact_mixed_source_preserves_all_trace_series(worker):
         == mixed_fetch.call_args.kwargs["params"]
     )
     # This internal exact-response opt-in does not change legacy direct callers.
-    assert len(DatasetQueryBuilder(config)._build_series_data(rows)) == 100
+    capped, total = DatasetQueryBuilder(config)._build_series_data(rows)
+    assert (len(capped), total) == (settings.DASHBOARD_BREAKDOWN_MAX_SERIES, len(rows))
 
 
 @pytest.mark.parametrize("code", [158, 241, 396])
@@ -1005,7 +1013,7 @@ def test_compiler_contract_stays_fail_closed(difference):
 
 
 @pytest.mark.parametrize("worker", [False, True])
-def test_actual_public_disjoint_fetches_order_labels_deadline_and_257_series(
+def test_actual_public_disjoint_fetches_order_labels_deadline_and_capped_series(
     monkeypatch, worker
 ):
     config = _partial_group_config()
@@ -1063,8 +1071,10 @@ def test_actual_public_disjoint_fetches_order_labels_deadline_and_257_series(
         if index == 2:
             assert all(point["value"] is None for point in metric["series"][0]["data"])
         else:
-            assert len(metric["series"]) == 257
-            assert {s["name"] for s in metric["series"]} == {
+            assert len(metric["series"]) == settings.DASHBOARD_BREAKDOWN_MAX_SERIES
+            assert metric["series_total"] == 257
+            assert metric["series_truncated"] is True
+            assert {s["name"] for s in metric["series"]} <= {
                 f"series_{i:03}" for i in range(257)
             }
             for series in metric["series"]:
@@ -1073,11 +1083,21 @@ def test_actual_public_disjoint_fetches_order_labels_deadline_and_257_series(
                     [] if series["name"] == "series_000" else [float(index - 3)]
                 )
     assert len({call["sql"] for call in fetched}) == 3
-    # Each read consumes a fresh shared budget, followed by the collection
-    # fence. Formatting a complete exact payload does not start another read
-    # and must not trigger a final deadline check that discards those results.
-    assert remaining == [9000, 8900, 8800, 8700]
-    assert {call["timeout_ms"] for call in fetched} == set(remaining[:3])
+    # A public request first asks the shared wall what it has left, so it can
+    # route this read inline or to the background before any statement runs;
+    # the exact worker is already that background lane and skips the question.
+    # The routing decision only reads the wall, and this fixture is unfiltered,
+    # so it embeds no candidate CTE and the cost probe issued no statement of
+    # its own. Each read then consumes a fresh shared budget, followed by the
+    # collection fence. Formatting a complete exact payload does not start
+    # another read and must not trigger a final deadline check that discards
+    # those results.
+    if worker:
+        assert remaining == [9000, 8900, 8800, 8700]
+        assert {call["timeout_ms"] for call in fetched} == set(remaining[:3])
+    else:
+        assert remaining == [9000, 8900, 8800, 8700, 8600]
+        assert {call["timeout_ms"] for call in fetched} == set(remaining[1:4])
     assert config == original
 
 

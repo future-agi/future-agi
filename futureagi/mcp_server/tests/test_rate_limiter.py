@@ -1,13 +1,19 @@
 """Tests for MCP Server rate limiter."""
 
+import os
 import sys
 import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from unittest.mock import MagicMock, patch
 
 import pytest
+from django.core.cache import cache
 
 from mcp_server.exceptions import RateLimitExceededError
 from mcp_server.constants import RATE_LIMITS
+from mcp_server import rate_limiter
 from mcp_server.rate_limiter import check_rate_limit, get_rate_limit_tier
 
 
@@ -246,3 +252,162 @@ class TestCheckRateLimit:
         # "unknown" tier falls back to free, so a full free window should raise
         with pytest.raises(RateLimitExceededError):
             check_rate_limit("org-123", "unknown")
+
+
+LIMIT = 10
+_CONCURRENT_LIMITS = {"free": {"per_minute": LIMIT, "per_day": 10_000}}
+
+
+class _SlowCache:
+    """Widens the read-modify-write window the way a network cache does.
+
+    Against an in-process locmem cache the GIL hides the race, so a bare
+    thread race would pass even with the serialization removed. Delaying the
+    read reproduces the interleaving a real Redis round trip allows.
+    """
+
+    def __init__(self, inner, delay=0.002):
+        self._inner = inner
+        self._delay = delay
+
+    def get(self, *args, **kwargs):
+        time.sleep(self._delay)
+        return self._inner.get(*args, **kwargs)
+
+    def set(self, *args, **kwargs):
+        return self._inner.set(*args, **kwargs)
+
+    def incr(self, *args, **kwargs):
+        return self._inner.incr(*args, **kwargs)
+
+
+def _race(organization_id, callers, slow=True):
+    """Fire `callers` threads at the limiter simultaneously; count the winners."""
+    barrier = Barrier(callers)
+
+    def attempt(_):
+        barrier.wait()
+        try:
+            check_rate_limit(organization_id, "free")
+            return True
+        except RateLimitExceededError:
+            return False
+
+    patched = _SlowCache(cache) if slow else cache
+    with patch.object(rate_limiter, "cache", patched):
+        with ThreadPoolExecutor(max_workers=callers) as pool:
+            return sum(pool.map(attempt, range(callers)))
+
+
+class TestConcurrentLimitBoundary:
+    """A stateless transport serves one organization's calls concurrently.
+
+    Each request now runs in its own ThreadSensitiveContext, so a read-modify-
+    write over the cache lets simultaneous callers overwrite each other's count
+    and sail past the limit. Counting must be atomic at the boundary.
+    """
+
+    def test_locked_fallback_admits_exactly_the_limit(self):
+        organization_id = f"race-locmem-{uuid.uuid4().hex}"
+        with patch.object(rate_limiter, "RATE_LIMITS", _CONCURRENT_LIMITS):
+            admitted = _race(organization_id, LIMIT * 4)
+
+        assert admitted == LIMIT
+
+    def test_the_race_reproduces_without_serialization(self):
+        """Guards the test above: with the lock removed the same workload must
+        over-admit, otherwise it proves nothing about the serialization."""
+
+        class _NoLock:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        organization_id = f"race-unguarded-{uuid.uuid4().hex}"
+        with (
+            patch.object(rate_limiter, "RATE_LIMITS", _CONCURRENT_LIMITS),
+            patch.object(rate_limiter, "_fallback_lock", _NoLock()),
+        ):
+            admitted = _race(organization_id, LIMIT * 4)
+
+        assert admitted > LIMIT
+
+    def test_locked_fallback_keeps_rejecting_after_the_race(self):
+        organization_id = f"race-after-{uuid.uuid4().hex}"
+        with patch.object(rate_limiter, "RATE_LIMITS", _CONCURRENT_LIMITS):
+            _race(organization_id, LIMIT * 4)
+            with pytest.raises(RateLimitExceededError, match="calls/minute"):
+                check_rate_limit(organization_id, "free")
+
+    def test_day_counter_is_incremented_rather_than_re_expired(self):
+        """The old counter re-set an 86400s TTL on every call, so an active
+        organization's daily window never actually reset. Only the first call
+        of the day sets an expiry; the rest increment in place."""
+        organization_id = f"ttl-{uuid.uuid4().hex}"
+        day_key = f"mcp_rl:day:{organization_id}"
+        with patch.object(rate_limiter, "RATE_LIMITS", _CONCURRENT_LIMITS):
+            check_rate_limit(organization_id, "free")
+            assert cache.get(day_key) == 1
+
+            with patch.object(
+                rate_limiter, "cache", wraps=cache
+            ) as spied:
+                check_rate_limit(organization_id, "free")
+
+        assert spied.incr.call_args_list == [((day_key,),)]
+        assert not [
+            call for call in spied.set.call_args_list if call[0][0] == day_key
+        ]
+        assert cache.get(day_key) == 2
+
+
+@pytest.mark.skipif(
+    not os.environ.get("REDIS_URL"), reason="needs a Redis for the atomic path"
+)
+class TestRedisAtomicWindow:
+    """Exercise the Lua path against a real Redis when one is available.
+
+    The cache backend is locmem under the test settings, so the script is run
+    through a directly-opened client rather than the Django cache.
+    """
+
+    @pytest.fixture
+    def redis_script(self):
+        import redis
+
+        try:
+            client = redis.Redis.from_url(os.environ["REDIS_URL"])
+            client.ping()
+        except Exception as exc:  # pragma: no cover - environment dependent
+            pytest.skip(f"Redis unavailable: {exc}")
+        return client.register_script(rate_limiter._SLIDING_WINDOW_LUA)
+
+    def test_script_admits_exactly_the_limit_under_concurrency(self, redis_script):
+        organization_id = f"race-redis-{uuid.uuid4().hex}"
+        keys = [f"mcp_rl:min:{organization_id}", f"mcp_rl:day:{organization_id}"]
+        callers = LIMIT * 4
+        barrier = Barrier(callers)
+
+        def attempt(_):
+            barrier.wait()
+            verdict, _detail = redis_script(
+                keys=keys,
+                args=[time.time(), LIMIT, 10_000, 3600, uuid.uuid4().hex],
+            )
+            return int(verdict) == rate_limiter._ALLOWED
+
+        with ThreadPoolExecutor(max_workers=callers) as pool:
+            admitted = sum(pool.map(attempt, range(callers)))
+
+        assert admitted == LIMIT
+
+    def test_script_reports_the_day_limit_separately(self, redis_script):
+        organization_id = f"day-redis-{uuid.uuid4().hex}"
+        keys = [f"mcp_rl:min:{organization_id}", f"mcp_rl:day:{organization_id}"]
+
+        verdict, _ = redis_script(
+            keys=keys, args=[time.time(), LIMIT, 0, 3600, uuid.uuid4().hex]
+        )
+        assert int(verdict) == rate_limiter._DAY_EXCEEDED

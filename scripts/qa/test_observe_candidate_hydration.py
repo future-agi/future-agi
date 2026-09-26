@@ -215,14 +215,14 @@ class HydrationTests(unittest.TestCase):
         builder = SessionListQueryBuilderV2(project_id=PROJECT, filters=[])
         rows = [{"session_id": "22222222-2222-4222-8222-222222222222"}]
         payload = {"query_complete": True, "table": rows, "has_more": True}
-        phases = [[{"total_tokens": 17}], [{"input": "full"}], [{"long": "K" * 1001}]]
+        phases = [[{"total_tokens": 17, "first_message": "full", "long": "K" * 1001}]]
         reader = Reader(phases)
         with patch.object(reader, "execute_ch_query", wraps=reader.execute_ch_query) as execute:
             result = hydration.hydrate_session_queries(reader, builder, payload, remaining_ms=lambda: 1234)
-            self.assertEqual([c.kwargs for c in execute.call_args_list], [{"timeout_ms": 1234}] * 3)
+            self.assertEqual([c.kwargs for c in execute.call_args_list], [{"timeout_ms": 1234}])
         self.assertIs(result["table"], rows)
         self.assertTrue(result["has_more"])
-        self.assertEqual(list(result["query_phases"]), ["metrics", "content", "attributes"])
+        self.assertEqual(list(result["query_phases"]), ["hydration"])
         self.assertEqual(list(result["query_phases"].values()), phases)
         self.assertTrue(result["serial_enrichment_not_http_or_pg_overlay"])
         for sql, params in reader.calls:
@@ -240,8 +240,7 @@ class HydrationTests(unittest.TestCase):
         def method(ids):
             return "SELECT hydration", {"ids": ids}
 
-        builder = SimpleNamespace(build_page_metrics_query=method, build_content_query=method,
-                                  build_span_attributes_query=method)
+        builder = SimpleNamespace(build_page_hydration_query=method)
         with self.assertRaises(StopIteration):
             hydration.hydrate_session_queries(Reader([]), builder,
                 {"query_complete": True, "table": [{"session_id": "a"}]}, remaining_ms=lambda: 1)
@@ -250,7 +249,13 @@ class HydrationTests(unittest.TestCase):
     def test_session_entity_dispatch_hydrates_once_under_public_route_policy(self):
         import replay_observe_queries_readonly as queries
         from tracer.tests.test_session_positive_witness_page import builder, leaf
-        for kind, preferred in (("text", True), ("mixed", True), ("number", False), ("boolean", False)):
+        # Every typed picker map takes the walk, so a number or boolean leaf
+        # routes exactly like a string one. Those two kinds used to keep the
+        # candidate lane, whose any-span witness dies before start at long
+        # windows on a high-volume tenant (see ``prefers_bounded_filter_page``).
+        # Same matrix as the public-route dispatch test in
+        # ``tracer.tests.test_session_list_bounded_view``.
+        for kind, preferred in (("text", True), ("mixed", True), ("number", True), ("boolean", True)):
             filters = [leaf("company", ["alpha"], "text", "in")]
             if kind in {"mixed", "number"}:
                 filters.append(leaf("other", False, "boolean") if kind == "mixed" else leaf("other", 7))
@@ -258,7 +263,7 @@ class HydrationTests(unittest.TestCase):
                 filters = [leaf("flag", True, "boolean")]
             rows = [{"session_id": "22222222-2222-4222-8222-222222222222"}]
             payload = {"query_complete": True, "table": rows, "has_more": False}
-            reader = Reader(([] if preferred else [rows]) + [[{}], [{}], [{}]])
+            reader = Reader(([] if preferred else [rows]) + [[{}]])
             reader.remaining_read_ms = lambda: 60000
             adapter = queries.CandidateQueries(SimpleNamespace(relational_metadata=None),
                 {"scope": {"project_id": PROJECT}}, [PROJECT])
@@ -268,9 +273,9 @@ class HydrationTests(unittest.TestCase):
                                              builder(*filters).filters)
             self.assertEqual(bounded.call_count, int(preferred))
             self.assertEqual(hydrate.call_count, 1)
-            self.assertEqual(len(reader.calls), 3 if preferred else 4)
+            self.assertEqual(len(reader.calls), 1 if preferred else 2)
             self.assertEqual(result["table"], rows)
-            self.assertEqual(list(result["query_phases"]), ["metrics", "content", "attributes"])
+            self.assertEqual(list(result["query_phases"]), ["hydration"])
             self.assertEqual(result["session_order_mode"], "uuid_string" if preferred else "uuid")
 
 

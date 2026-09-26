@@ -26,6 +26,18 @@ TRACER_SCHEDULES: list[ScheduleConfig] = [
     #     queue="default",
     #     description="Process evaluation tasks",
     # ),
+    # Recovery, not processing: the per-task workflow is still the only thing
+    # that drains a task, and nothing restarted one that stopped. This reclaims
+    # entries stuck ``running`` (the workflow-start reaper cannot reach a task
+    # whose workflow is alive) and restarts the workflow of a task nothing is
+    # draining. A task draining normally costs one describe and is left alone.
+    ScheduleConfig(
+        schedule_id="sweep-stranded-eval-tasks",
+        activity_name="sweep_stranded_eval_tasks",
+        interval_seconds=300,
+        queue="tasks_s",
+        description="Recover eval tasks whose drain stopped",
+    ),
     ScheduleConfig(
         schedule_id="check-alerts",
         activity_name="check_alerts",
@@ -54,24 +66,4 @@ TRACER_SCHEDULES: list[ScheduleConfig] = [
         queue="tasks_s",
         description="Fetch logs from observability providers (VAPI, Retell, etc.)",
     ),
-    # The inline scanner trigger is on the PG ingest path, which the OTLP->CH
-    # collector bypasses — so collector traces never auto-scan. This sweep is
-    # their trigger (idempotent, so it also reconciles inline misses).
-    ScheduleConfig(
-        schedule_id="sweep-scannable-traces",
-        activity_name="sweep_scannable_traces",
-        interval_seconds=60,
-        queue="agent_compass",
-        description="Scan completed, unscanned (collector-ingested) traces",
-    ),
-    # Deep analysis beat DISABLED — replaced by event-driven trace scanner (TH-3817)
-    # Scanner triggers from OTLP ingestion via scan_traces_task.
-    # Deep analysis kept for on-demand use (Layer 3) but no longer auto-runs.
-    # ScheduleConfig(
-    #     schedule_id="check-trace-errors",
-    #     activity_name="check_and_process_trace_errors",
-    #     interval_seconds=240,
-    #     queue="agent_compass",
-    #     description="Check and process trace error analysis",
-    # ),
 ]
