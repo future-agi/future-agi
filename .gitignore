@@ -45,6 +45,16 @@ license.key
 license.json
 *.license
 
+# direnv / PyPI credentials — commonly hold exported secrets; `.env.*` does
+# not match `.envrc`. (Carried over from the deleted futureagi/ee/.gitignore.)
+.envrc
+**/.envrc
+.pypirc
+**/.pypirc
+
+# Agent eval-orchestrator scratch output (may embed prompts / responses)
+**/eval_orchestrator/*_test_results.txt
+
 
 # ----------------------------------------------------------------------------
 # Python
@@ -188,6 +198,7 @@ media/
 # Claude Code — per-user permissions (team agents under .claude/agents/ are tracked)
 .claude/settings.local.json
 **/.claude/settings.local.json
+.claude/CLAUDE.md
 
 # MCP server configs — local dev tooling, not shipped with the repo.
 # If we ever expose a hosted product MCP, that config goes at repo root
@@ -220,7 +231,13 @@ core-*-[0-9]*
 plan/
 planning/
 scratch/
-ee/
+
+# EE lives in-tree at futureagi/ee. The cloud-private delta is a separate
+# repo (future-agi/ee) checked out at futureagi/ee/cloud/ — everything it
+# owns is under that one directory, so this single rule covers all of it.
+futureagi/ee/cloud/
+# stray local leftover at repo root (old gateway config) — not the ee tree
+/ee/
 
 # Puppeteer / e2e test screenshots — local debugging only.
 frontend/scripts/.artifacts/
@@ -229,3 +246,9 @@ frontend/scripts/.artifacts/
 install-*.log
 uninstall-*.log
 *.core
+# Local compose override (developer testing, not shipped)
+docker-compose.override.yml
+
+
+# (The private repo's own .gitignore now lives inside futureagi/ee/cloud/,
+# which is already ignored above — no separate rule needed.)

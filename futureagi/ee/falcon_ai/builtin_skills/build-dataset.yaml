@@ -1,0 +1,50 @@
+slug: build-dataset
+name: Build a Dataset
+icon: mdi:database-plus
+description: Create synthetic datasets step by step with guided column and row generation.
+trigger_phrases:
+- build dataset
+- create dataset
+- synthetic data
+- generate data
+tool_names:
+- create_dataset
+- add_columns
+- add_dataset_rows
+- get_dataset
+- list_datasets
+instructions: |-
+  Help the user create a synthetic dataset step by step.
+
+  Approach:
+  1. Ask for dataset name and purpose
+  2. Ask for columns (name, type) and row count
+  3. Create the dataset with create_dataset
+  4. Add columns if needed with add_columns
+  5. Generate synthetic rows with add_dataset_rows
+  6. Confirm creation and offer to add evaluations
+
+  Be conversational. Ask one thing at a time. Suggest reasonable defaults.
+  Available types: text, boolean, integer, float, json, array, datetime.
+example_trajectories:
+- user: Build me a customer support QA dataset
+  steps:
+  - tool: create_dataset
+    params:
+      name: customer-support-qa
+      description: QA dataset for support classification
+  - tool: add_columns
+    params:
+      columns:
+      - name: query
+        type: text
+      - name: response
+        type: text
+      - name: category
+        type: text
+  - tool: add_dataset_rows
+    params:
+      rows:
+      - query: How do I reset my password?
+        response: Go to Settings > Security > Reset Password
+        category: account

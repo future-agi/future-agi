@@ -572,9 +572,17 @@ const GuardrailPreview = ({
             px: 1,
             py: 0.25,
             borderRadius: "4px",
-            bgcolor: alpha(passed ? "#16A34A" : "#DC2626", 0.08),
+            bgcolor: (t) =>
+              alpha(
+                passed ? t.palette.accent.pass : t.palette.accent.fail,
+                0.08,
+              ),
             border: "1px solid",
-            borderColor: alpha(passed ? "#16A34A" : "#DC2626", 0.2),
+            borderColor: (t) =>
+              alpha(
+                passed ? t.palette.accent.pass : t.palette.accent.fail,
+                0.2,
+              ),
           }}
         >
           <Iconify
@@ -582,13 +590,13 @@ const GuardrailPreview = ({
               passed ? "mdi:shield-check-outline" : "mdi:shield-alert-outline"
             }
             width={14}
-            sx={{ color: passed ? "#16A34A" : "#DC2626" }}
+            sx={{ color: passed ? "accent.pass" : "accent.fail" }}
           />
           <Typography
             sx={{
               fontSize: 12,
               fontWeight: 600,
-              color: passed ? "#16A34A" : "#DC2626",
+              color: passed ? "accent.pass" : "accent.fail",
             }}
           >
             {passed ? "Passed" : "Failed"}
@@ -749,18 +757,20 @@ const AgentPreview = ({
             gap: 0.5,
             px: 1,
             py: 0.25,
-            bgcolor: alpha("#9333EA", 0.08),
+            bgcolor: (t) => alpha(t.palette.accent.agent, 0.08),
             borderRadius: "4px",
             border: "1px solid",
-            borderColor: alpha("#9333EA", 0.2),
+            borderColor: (t) => alpha(t.palette.accent.agent, 0.2),
           }}
         >
           <Iconify
             icon="mdi:robot-outline"
             width={14}
-            sx={{ color: "#9333EA" }}
+            sx={{ color: "accent.agent" }}
           />
-          <Typography sx={{ fontSize: 12, fontWeight: 600, color: "#9333EA" }}>
+          <Typography
+            sx={{ fontSize: 12, fontWeight: 600, color: "accent.agent" }}
+          >
             {agentName}
           </Typography>
         </Box>

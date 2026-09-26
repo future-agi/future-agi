@@ -422,14 +422,12 @@ class TestValidateAllFiles:
 class TestCreateKnowledgeBaseEntitlements:
     @patch("model_hub.views.develop_dataset.User.objects.get")
     @patch("model_hub.views.develop_dataset.KnowledgeBaseFile.objects.filter")
-    @patch("ee.usage.services.entitlements.Entitlements.check_feature")
     @patch("ee.usage.services.entitlements.Entitlements.can_create")
     @patch("model_hub.views.develop_dataset.log_and_deduct_cost_for_resource_request")
     def test_post_uses_entitlements_instead_of_legacy_resource_limit(
         self,
         mock_legacy_limit,
         mock_can_create,
-        mock_check_feature,
         mock_kb_filter,
         mock_user_get,
     ):
@@ -455,7 +453,6 @@ class TestCreateKnowledgeBaseEntitlements:
         mock_user_get.return_value.name = "tester"
         mock_kb_filter.return_value.count.return_value = 0
         mock_can_create.return_value = MagicMock(allowed=True)
-        mock_check_feature.return_value = MagicMock(allowed=True)
         mock_legacy_limit.return_value = MagicMock(
             status=APICallStatusChoices.RESOURCE_LIMIT.value
         )
@@ -467,7 +464,6 @@ class TestCreateKnowledgeBaseEntitlements:
         response = view.post(request)
 
         mock_can_create.assert_called_once_with("org-1", "knowledge_bases", 0)
-        mock_check_feature.assert_called_once_with("org-1", "has_knowledge_base")
         mock_legacy_limit.assert_not_called()
         assert response.status_code == 400
 

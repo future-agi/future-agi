@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	authpkg "github.com/futureagi/agentcc-gateway/internal/auth"
+	"github.com/futureagi/agentcc-gateway/internal/middleware"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
 	"github.com/futureagi/agentcc-gateway/internal/plugins/ipacl"
@@ -33,6 +34,18 @@ func (p *Plugin) Priority() int { return 20 } // After IP ACL (10), before RBAC/
 // ProcessRequest validates the API key from the Authorization header.
 func (p *Plugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) pipeline.PluginResult {
 	if !p.enabled {
+		return pipeline.ResultContinue()
+	}
+
+	if middleware.IsLicenseAuthorized(ctx) {
+		rc.Metadata["key_type"] = "internal"
+		rc.Metadata["key_access_groups"] = "internal"
+		if claims := middleware.GetLicenseClaims(ctx); claims != nil {
+			rc.Metadata["license_id"] = claims.LicenseID
+			rc.Metadata["customer_id"] = claims.CustomerID
+			rc.Metadata["instance_id"] = claims.InstanceID
+			rc.Metadata["auth_type"] = "license"
+		}
 		return pipeline.ResultContinue()
 	}
 

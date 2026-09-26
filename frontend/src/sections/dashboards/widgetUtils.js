@@ -1,4 +1,101 @@
+import { getExactAggregationReadState } from "src/utils/queryReadState";
+
 export const DEFAULT_DECIMALS = 2;
+
+export const getDashboardMetricSeriesState = (metrics = []) => {
+  const metricReadStates = (Array.isArray(metrics) ? metrics : []).map(
+    (metric) => ({
+      metric,
+      readState: getExactAggregationReadState(metric),
+    }),
+  );
+  const hasSampledMetrics = metricReadStates.some(
+    ({ readState }) => readState === "sampled",
+  );
+  const hasDegradedMetrics = metricReadStates.some(
+    ({ readState }) => readState === "degraded" || readState === "error",
+  );
+  const hasPendingMetrics = metricReadStates.some(
+    ({ readState }) => readState === "pending",
+  );
+  const hasUnavailableMetrics =
+    hasSampledMetrics || hasDegradedMetrics || hasPendingMetrics;
+  const renderableMetrics = hasUnavailableMetrics
+    ? []
+    : metricReadStates.filter(({ readState }) => readState === "complete");
+  const series = [];
+
+  for (const [metricIndex, { metric }] of renderableMetrics.entries()) {
+    for (const metricSeries of metric.series || []) {
+      const isSingleMetric = renderableMetrics.length === 1;
+      let name;
+      if (metricSeries.name === "total") {
+        name = `${metric.name} (${metric.aggregation})`;
+      } else if (isSingleMetric) {
+        name = metricSeries.name;
+      } else {
+        name = `${metric.name} / ${metricSeries.name} (${metric.aggregation})`;
+      }
+      series.push({
+        name,
+        key: makeSeriesKey(metric, metricSeries.name),
+        metricIndex,
+        metricName: metric.name,
+        aggregation: metric.aggregation,
+        unit: metric.unit ?? "",
+        breakdownName: metricSeries.name,
+        data: (metricSeries.data || []).map((point) => ({
+          x: new Date(point.timestamp).getTime(),
+          y: point.value != null ? Number(point.value) : null,
+        })),
+      });
+    }
+  }
+
+  return {
+    metricReadStates,
+    renderableMetrics,
+    series,
+    hasSampledMetrics,
+    hasDegradedMetrics,
+    hasPendingMetrics,
+  };
+};
+
+/**
+ * A missing aggregate bucket is not a zero. For line charts, omit null points
+ * so Apex connects the neighbouring observed points without mutating the exact
+ * response used by table and non-line renderers.
+ */
+export const getPlottedChartSeries = (series = [], isLineChart = false) =>
+  isLineChart
+    ? series.map((item) => ({
+        ...item,
+        data: (item?.data || []).filter((point) => point?.y != null),
+      }))
+    : series;
+
+export const shouldConnectAcrossMissingBuckets = (apexType) =>
+  apexType === "line" || apexType === "area";
+
+/**
+ * Dashboard responses are all-or-nothing aggregates. A single sampled,
+ * degraded, or failed metric makes the payload non-renderable.
+ */
+export const getExactDashboardResult = (payload) => {
+  if (!payload || getExactAggregationReadState(payload) !== "complete") {
+    return null;
+  }
+
+  const result = payload?.data?.result ?? payload?.result;
+  if (!result || !Array.isArray(result.metrics)) return null;
+  const metricState = getDashboardMetricSeriesState(result.metrics);
+  return metricState.hasSampledMetrics ||
+    metricState.hasDegradedMetrics ||
+    metricState.hasPendingMetrics
+    ? null
+    : result;
+};
 
 const toAxisPayload = ({ prefixSuffix, outOfBounds, ...axis } = {}) => ({
   ...axis,
@@ -54,17 +151,113 @@ export const escapeHtml = (str) => {
     .replace(/'/g, "&#039;");
 };
 
-export const getSeriesAverage = (points = []) => {
-  let total = 0;
-  let count = 0;
+// Aggregations whose bucket values recombine exactly by summing. Keep the
+// count family complete: the dataset metrics add pass_count/fail_count, and
+// averaging a count reports a per-bucket figure as if it were the total.
+//
+// count_distinct is deliberately absent. The backend evaluates it as
+// `uniq({col})` per time bucket, so an entity present in several buckets is
+// counted once per bucket and summing multiplies it by the bucket count.
+const ADDITIVE_AGGREGATIONS = new Set([
+  "sum",
+  "count",
+  "pass_count",
+  "fail_count",
+]);
+
+// Whether adding this aggregation's values together yields a real quantity.
+// Summing per-slice averages or maxima does not — a pie of avg latency by
+// project has no meaningful grand total to print in the middle.
+export const isAdditiveAggregation = (aggregation) =>
+  ADDITIVE_AGGREGATIONS.has(aggregation);
+
+// Collapse an already-bucketed series to a single scalar, honouring the
+// metric's own aggregation. The backend aggregates *within* each time bucket
+// and sends no period total, so any single-number view (pie slice, metric
+// card, table Agg column) has to recombine the buckets here.
+//
+// Exact for sum/count/min/max. For avg, median and percentiles this is an
+// approximation: recombining correctly needs per-bucket row counts the API
+// does not send, so an unweighted mean is the closest available answer.
+export const getSeriesScalar = (points = [], aggregation = "avg") => {
+  const values = [];
   for (const pt of points) {
     if (pt?.y == null) continue;
     const y = Number(pt.y);
     if (!Number.isFinite(y)) continue;
-    total += y;
-    count += 1;
+    values.push(y);
   }
-  return count > 0 ? total / count : null;
+  if (!values.length) return null;
+  if (ADDITIVE_AGGREGATIONS.has(aggregation)) {
+    return values.reduce((a, b) => a + b, 0);
+  }
+  if (aggregation === "min") return Math.min(...values);
+  if (aggregation === "max") return Math.max(...values);
+  return values.reduce((a, b) => a + b, 0) / values.length;
+};
+
+// Max slices shown in a single pie, applied per metric rather than across the
+// flat series list — a global cap could strip every slice from one metric and
+// leave an empty donut.
+const MAX_PIE_SLICES = 10;
+
+// Group a flat series list into one pie per metric. Each slice is a breakdown
+// value collapsed by that metric's own aggregation, so unrelated metrics are
+// never combined into a single donut (TH-6530).
+//
+// Only slices a ring can draw become slices: a zero or negative value has no
+// arc, so keeping it would inflate the legend and the slice count. The metric
+// itself is always kept — silently removing one the user added looks like the
+// add failed — and `hasValues` lets its panel say whether the data was all
+// zero or absent entirely.
+export const groupPieSeries = (series = []) => {
+  const byMetric = new Map();
+  for (const s of series) {
+    if (!byMetric.has(s.metricIndex)) {
+      byMetric.set(s.metricIndex, {
+        metricIndex: s.metricIndex,
+        metricName: s.metricName,
+        aggregation: s.aggregation,
+        unit: s.unit ?? "",
+        hasValues: false,
+        slices: [],
+      });
+    }
+    const group = byMetric.get(s.metricIndex);
+    const value = getSeriesScalar(s.data, s.aggregation);
+    if (value == null) continue;
+    group.hasValues = true;
+    if (value <= 0) continue;
+    group.slices.push({ name: s.breakdownName, value });
+  }
+  return [...byMetric.values()].map((group) => {
+    if (group.slices.length <= MAX_PIE_SLICES) return { ...group };
+
+    const ranked = [...group.slices].sort((a, b) => b.value - a.value);
+
+    // Values that do not add up cannot be folded into a remainder without
+    // inventing a quantity, so the tail is dropped instead. getCenterValue
+    // already refuses to print a total for these.
+    if (!isAdditiveAggregation(group.aggregation)) {
+      return { ...group, slices: ranked.slice(0, MAX_PIE_SLICES) };
+    }
+
+    // Otherwise carry the remainder as one slice. Dropping it would leave the
+    // ring normalised over a subset and the centre reporting that subset as
+    // the metric's total.
+    const kept = ranked.slice(0, MAX_PIE_SLICES - 1);
+    const rest = ranked.slice(MAX_PIE_SLICES - 1);
+    return {
+      ...group,
+      slices: [
+        ...kept,
+        {
+          name: `Other (${rest.length})`,
+          value: rest.reduce((sum, slice) => sum + slice.value, 0),
+        },
+      ],
+    };
+  });
 };
 
 export const getAutoDecimals = (series = []) => {
@@ -211,4 +404,33 @@ export const formatValueWithConfig = (
   return prefixSuffix === "suffix"
     ? `${str}${separator}${unit}`
     : `${unit}${separator}${str}`;
+};
+
+// Stable identity for a chart series: metric id + aggregation + raw bucket
+// name. Survives metric renames and series reordering, unlike the display label.
+export const makeSeriesKey = (metric, bucketName) =>
+  `${metric?.id ?? ""}|${metric?.aggregation ?? ""}|${bucketName ?? ""}`;
+
+// Resolve a saved key list to the current series' indices. null => all visible.
+export const resolveVisibleSeries = (savedKeys, series) => {
+  if (savedKeys === null) return null;
+  const keyToIndex = new Map(series.map((s, i) => [s.key, i]));
+  return new Set(
+    savedKeys.map((k) => keyToIndex.get(k)).filter((i) => i !== undefined),
+  );
+};
+
+// Decide the visibleSeries state from a saved `visible_series` value, or return
+// `undefined` to tell the caller to apply its own default (top-10 / show-all):
+//   null            → show all (explicit "Select all")
+//   [] (hide all)   → empty Set (explicit)
+//   [keys] w/ match → Set of the matched indices (incl. a partial match)
+//   [keys] no match → undefined (selection is stale → caller's default)
+//   undefined       → undefined (nothing saved → caller's default)
+export const resolveSavedSelection = (savedKeys, series) => {
+  if (savedKeys === undefined) return undefined;
+  const resolved = resolveVisibleSeries(savedKeys, series);
+  if (resolved === null || resolved.size > 0) return resolved;
+  if (savedKeys.length === 0) return resolved; // intentional hide-all
+  return undefined; // stale → caller applies its default
 };

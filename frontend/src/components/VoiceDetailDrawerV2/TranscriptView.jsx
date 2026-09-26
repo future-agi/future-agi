@@ -280,7 +280,17 @@ SpeakerTimelineStrip.propTypes = {
 
 const TurnRow = React.forwardRef(
   (
-    { turn, colors, query, isPlaying, isFocused, onSeek, onCopy, onAnnotate },
+    {
+      turn,
+      colors,
+      query,
+      isPlaying,
+      isFocused,
+      onSeek,
+      onCopy,
+      onAnnotate,
+      showTemporalMetadata,
+    },
     ref,
   ) => {
     const color = colors[turn.role] || colors.unknown;
@@ -329,7 +339,7 @@ const TurnRow = React.forwardRef(
           gap={1}
           sx={{ minHeight: 16 }}
         >
-          {turn.start != null && (
+          {showTemporalMetadata && turn.start != null && (
             <Typography
               sx={{
                 fontFamily: "monospace",
@@ -344,19 +354,21 @@ const TurnRow = React.forwardRef(
             </Typography>
           )}
 
-          {turn.duration != null && turn.duration > 0 && (
-            <Typography
-              sx={{
-                fontFamily: "monospace",
-                fontSize: 9.5,
-                color: "text.disabled",
-              }}
-            >
-              {turn.duration.toFixed(1)}s
-            </Typography>
-          )}
+          {showTemporalMetadata &&
+            turn.duration != null &&
+            turn.duration > 0 && (
+              <Typography
+                sx={{
+                  fontFamily: "monospace",
+                  fontSize: 9.5,
+                  color: "text.disabled",
+                }}
+              >
+                {turn.duration.toFixed(1)}s
+              </Typography>
+            )}
 
-          {turn.overlapsPrev && (
+          {showTemporalMetadata && turn.overlapsPrev && (
             <Tooltip
               title="Interruption — started before previous turn ended"
               arrow
@@ -468,6 +480,7 @@ TurnRow.propTypes = {
   onSeek: PropTypes.func,
   onCopy: PropTypes.func,
   onAnnotate: PropTypes.func,
+  showTemporalMetadata: PropTypes.bool,
 };
 
 // Memoized wrapper — with ~40 turns and a 60Hz currentTime poll, the list
@@ -553,6 +566,10 @@ const TranscriptView = ({
   // not silence — so the chat drawer passes true here to suppress the
   // inline silence dividers.
   hideSilenceMarkers = false,
+  // Chat messages have ordering and word-count weights, but no audio
+  // intervals. Disabling temporal features prevents those weights from being
+  // rendered as seconds or interpreted as voice interruptions.
+  enableTemporalFeatures = true,
 }) => {
   const colors = useSpeakerColors();
 
@@ -568,7 +585,10 @@ const TranscriptView = ({
   // user clicks a row, clicks "Follow playback", or jumps via the timeline.
   const [autoScroll, setAutoScroll] = useState(true);
 
-  const turns = useMemo(() => enrichTurns(transcript), [transcript]);
+  const turns = useMemo(
+    () => enrichTurns(transcript, { enableTemporalFeatures }),
+    [transcript, enableTemporalFeatures],
+  );
 
   const totals = useMemo(() => computeTotals(turns), [turns]);
 
@@ -744,15 +764,22 @@ const TranscriptView = ({
     }
   }, [playingIdx, scrollRowIntoView]);
 
-  const handleCopyTurn = useCallback((turn) => {
-    const text = `[${formatClock(turn.start)}] ${turn.rawRole || turn.role}: ${turn.content}`;
-    navigator.clipboard.writeText(text).then(() => {
-      enqueueSnackbar("Turn copied", {
-        variant: "info",
-        autoHideDuration: 1200,
+  const handleCopyTurn = useCallback(
+    (turn) => {
+      const timestamp =
+        enableTemporalFeatures && turn.start != null
+          ? `[${formatClock(turn.start)}] `
+          : "";
+      const text = `${timestamp}${turn.rawRole || turn.role}: ${turn.content}`;
+      navigator.clipboard.writeText(text).then(() => {
+        enqueueSnackbar("Turn copied", {
+          variant: "info",
+          autoHideDuration: 1200,
+        });
       });
-    });
-  }, []);
+    },
+    [enableTemporalFeatures],
+  );
 
   if (turns.length === 0) {
     return null;
@@ -936,6 +963,7 @@ const TranscriptView = ({
                 onSeek={handleSeek}
                 onCopy={handleCopyTurn}
                 onAnnotate={onAnnotate}
+                showTemporalMetadata={enableTemporalFeatures}
               />
             </React.Fragment>
           ))
@@ -994,6 +1022,7 @@ TranscriptView.propTypes = {
   hideTalkRatioPercentages: PropTypes.bool,
   talkRatioLegendAlign: PropTypes.oneOf(["left", "right"]),
   hideSilenceMarkers: PropTypes.bool,
+  enableTemporalFeatures: PropTypes.bool,
   embedded: PropTypes.bool,
 };
 

@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# E2E stack + suite runner. See e2e/README.md.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ENV_FILE="$ROOT/e2e/stack/e2e.env"
+COMPOSE=(docker compose --env-file "$ENV_FILE"
+  -f "$ROOT/docker-compose.yml" -f "$ROOT/e2e/stack/docker-compose.e2e.yml"
+  -p futureagi-e2e)
+# Trimmed profile: no serving/code-executor; general ALL_QUEUES worker plus a
+# dedicated exact-aggregation worker. PeerDB is included through the same
+# bootstrap graph as OSS. Completed one-shot dependencies gate the application;
+# the harness never recreates failed jobs.
+SERVICES=(frontend backend worker worker-exact-aggregation
+  postgres clickhouse redis rabbitmq minio
+  temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm
+  peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker peerdb-minio)
+
+backend_port() { grep '^BACKEND_PORT=' "$ENV_FILE" | cut -d= -f2; }
+ch_port() { grep '^CH_HTTP_PORT=' "$ENV_FILE" | cut -d= -f2; }
+frontend_port() { grep '^FRONTEND_PORT=' "$ENV_FILE" | cut -d= -f2; }
+
+wait_ready() {
+  # Measured cold boot 2026-08-25: first-run migrations take ~6.5 min before
+  # /health/ answers; 300s was not enough.
+  local deadline=$((SECONDS + 600))
+  echo "Waiting for backend /health/ ..."
+  until curl -fsS "http://localhost:$(backend_port)/health/" >/dev/null 2>&1; do
+    ((SECONDS < deadline)) || { echo "backend not healthy in 600s"; "${COMPOSE[@]}" ps; exit 1; }
+    sleep 3
+  done
+  # The bootstrap graph has already qualified schema. Keep an independent
+  # storage witness here; HTTP health by itself is not catalog readiness.
+  echo "Checking ClickHouse schema ..."
+  curl -fsS -G "http://localhost:$(ch_port)/" --data-urlencode "query=SELECT count() FROM spans LIMIT 0" >/dev/null \
+    || { echo "CH spans table missing — check clickhouse-native-bootstrap logs"; exit 1; }
+  echo "Checking observed attribute indexes ..."
+  curl -fsS -G "http://localhost:$(ch_port)/" --data-urlencode \
+    "query=SELECT throwIf(count() != 2, 'observed indexes missing') FROM system.tables WHERE database={database:String} AND name IN ('observed_attribute_keys', 'observed_attribute_values')" \
+    --data-urlencode "param_database=${PROPERTY_CATALOG_DATABASE:-property_catalog}" >/dev/null \
+    || { echo "Observed attribute indexes missing"; exit 1; }
+  echo "Waiting for frontend ..."
+  until curl -fsS "http://localhost:$(frontend_port)/" >/dev/null 2>&1; do
+    ((SECONDS < deadline)) || { echo "frontend not up in 600s"; exit 1; }
+    sleep 2
+  done
+  echo "E2E stack ready: app http://localhost:$(frontend_port)  api http://localhost:$(backend_port)"
+}
+
+build_target() {
+  case "$1" in
+    backend)   docker build -t futureagi/future-agi:e2e-local -f "$ROOT/futureagi/Dockerfile.oss" "$ROOT/futureagi"
+               echo "built. run with: FUTURE_AGI_VERSION=e2e-local bin/e2e up" ;;
+    frontend)  docker build -t futureagi/frontend:e2e-local "$ROOT/frontend"
+               echo "built. run with: FRONTEND_VERSION=e2e-local bin/e2e up" ;;
+    collector) docker build -t futureagi/fi-collector:e2e-local "$ROOT/fi-collector"
+               echo "built. run with: E2E_FI_COLLECTOR_VERSION=e2e-local bin/e2e up" ;;
+    all)       build_target backend; build_target frontend; build_target collector
+               echo "run with: FUTURE_AGI_VERSION=e2e-local FRONTEND_VERSION=e2e-local E2E_FI_COLLECTOR_VERSION=e2e-local bin/e2e up" ;;
+    *) echo "usage: bin/e2e build backend|frontend|collector|all"; exit 2 ;;
+  esac
+}
+
+cmd="${1:-}"; shift || true
+case "$cmd" in
+  # PG migrations and initial snapshots precede backend readiness. No hidden
+  # force-recreate/retry loop: failed or uncertain setup must be inspected.
+  up)      "${COMPOSE[@]}" up -d --wait --wait-timeout 1200 "${SERVICES[@]}"; wait_ready ;;
+  down)    "${COMPOSE[@]}" down "$@" ;;
+  build)   build_target "${1:?usage: bin/e2e build backend|frontend|collector|all}" ;;
+  test)    (cd "$ROOT/e2e" && yarn playwright test "$@") ;;
+  ui)      (cd "$ROOT/e2e" && yarn playwright test --ui "$@") ;;
+  report)  (cd "$ROOT/e2e" && yarn playwright show-report) ;;
+  logs)    "${COMPOSE[@]}" logs "$@" ;;
+  ps)      "${COMPOSE[@]}" ps "$@" ;;
+  compose) "${COMPOSE[@]}" "$@" ;;
+  *) echo "usage: bin/e2e up|down [-v]|build <target>|test [pw args]|ui|report|logs|ps|compose <args>"; exit 2 ;;
+esac

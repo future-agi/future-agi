@@ -410,6 +410,7 @@ class TestExecuteCompositeChildrenSync:
         # Aggregate should still compute using the one completed child.
         assert outcome.aggregate_score == pytest.approx(0.8, abs=1e-6)
 
+    @pytest.mark.requires_ee
     def test_composite_child_billing_uses_token_pricing_when_cost_is_zero(
         self, composite_parent, organization, workspace, monkeypatch
     ):
@@ -849,6 +850,174 @@ class TestCompositeChildThresholdPrecedence:
                 org=organization,
             )
         assert outcome.aggregate_score == pytest.approx(1.0)
+
+
+def _capture_child_kwargs(recorder, output=0.8):
+    """side_effect that records every run_eval_func call's kwargs by child name."""
+
+    def _inner(_cfg, _mapping, template, *_a, **kwargs):
+        recorder[template.name] = kwargs
+        return _fake_response(output)
+
+    return _inner
+
+
+@pytest.mark.django_db
+class TestCompositeChildModelResolution:
+    """link run_config -> link config -> pinned version -> child -> composite.
+
+    A composite carries no model of its own, so the composite-level `model`
+    is the last resort for model-less children (seeded system evals), not an
+    override of a child that already has one.
+    """
+
+    def _run(
+        self,
+        organization,
+        workspace,
+        *,
+        child_model="",
+        link_config=None,
+        pinned_version_model=None,
+        composite_model=None,
+        error_localizer=False,
+        child_name="model-child",
+    ):
+        child = _make_percentage_child(organization, workspace, child_name)
+        child.model = child_model
+        child.save(update_fields=["model"])
+        parent = _make_composite(organization, workspace, "model-comp", "avg")
+
+        pinned_version = None
+        if pinned_version_model is not None:
+            from model_hub.models.evals_metric import EvalTemplateVersion
+
+            pinned_version = EvalTemplateVersion.all_objects.create(
+                eval_template=child,
+                version_number=1,
+                config_snapshot=child.config,
+                model=pinned_version_model,
+                pass_threshold=0.5,
+                output_type_normalized="percentage",
+                is_default=False,
+            )
+        CompositeEvalChild.objects.create(
+            parent=parent,
+            child=child,
+            order=0,
+            weight=1.0,
+            config=link_config,
+            pinned_version=pinned_version,
+        )
+        links = list(
+            CompositeEvalChild.objects.filter(parent=parent)
+            .select_related("child")
+            .order_by("order")
+        )
+
+        captured = {}
+        with patch(
+            "model_hub.views.utils.evals.run_eval_func",
+            side_effect=_capture_child_kwargs(captured),
+        ):
+            execute_composite_children_sync(
+                parent=parent,
+                child_links=links,
+                mapping={"input": "x"},
+                config={},
+                org=organization,
+                model=composite_model,
+                error_localizer=error_localizer,
+            )
+        return captured[child_name]
+
+    def test_link_run_config_model_wins_over_the_composite_fallback(
+        self, db, organization, workspace
+    ):
+        kwargs = self._run(
+            organization,
+            workspace,
+            link_config={"run_config": {"model": "gpt-4o"}},
+            composite_model="turing_large",
+        )
+        assert kwargs["model"] == "gpt-4o"
+
+    def test_legacy_top_level_link_model_is_still_honoured(
+        self, db, organization, workspace
+    ):
+        kwargs = self._run(
+            organization,
+            workspace,
+            link_config={"model": "gpt-4o"},
+            composite_model="turing_large",
+        )
+        assert kwargs["model"] == "gpt-4o"
+
+    def test_pinned_version_model_beats_the_child_template_model(
+        self, db, organization, workspace
+    ):
+        kwargs = self._run(
+            organization,
+            workspace,
+            child_model="gemini/gemini-2.5-pro",
+            pinned_version_model="gpt-4o",
+            composite_model="turing_large",
+        )
+        assert kwargs["model"] == "gpt-4o"
+
+    def test_child_template_model_beats_the_composite_fallback(
+        self, db, organization, workspace
+    ):
+        kwargs = self._run(
+            organization,
+            workspace,
+            child_model="gemini/gemini-2.5-pro",
+            composite_model="turing_large",
+        )
+        assert kwargs["model"] == "gemini/gemini-2.5-pro"
+
+    def test_composite_model_is_used_only_when_the_child_has_none(
+        self, db, organization, workspace
+    ):
+        kwargs = self._run(
+            organization,
+            workspace,
+            composite_model="turing_large",
+        )
+        assert kwargs["model"] == "turing_large"
+
+    def test_model_stays_none_when_no_source_supplies_one(
+        self, db, organization, workspace
+    ):
+        kwargs = self._run(organization, workspace)
+        assert kwargs["model"] is None
+
+    def test_child_run_config_does_not_enable_the_error_localizer(
+        self, db, organization, workspace
+    ):
+        # Composites do not support error localization yet, and the child runs
+        # under its own single template so the worker-side guard never catches
+        # it — a child's own flag must not create (and bill) a task the user
+        # never enabled on the composite.
+        kwargs = self._run(
+            organization,
+            workspace,
+            link_config={"run_config": {"error_localizer_enabled": True}},
+            error_localizer=False,
+        )
+        assert kwargs["error_localizer"] is False
+
+    def test_composite_error_localizer_still_applies_to_every_child(
+        self, db, organization, workspace
+    ):
+        kwargs = self._run(organization, workspace, error_localizer=True)
+        assert kwargs["error_localizer"] is True
+
+    def test_error_localizer_is_off_when_neither_side_asks_for_it(
+        self, db, organization, workspace
+    ):
+        kwargs = self._run(organization, workspace)
+        assert kwargs["error_localizer"] is False
 
 
 @pytest.mark.django_db

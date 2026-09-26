@@ -91,7 +91,7 @@ function getRootLatency(spans) {
 function getLatencyColor(latency, rootLatency) {
   if (!rootLatency || !latency) return "text.disabled";
   const ratio = latency / rootLatency;
-  if (ratio >= 0.75) return "#DC2626";
+  if (ratio >= 0.75) return "accent.fail";
   if (ratio >= 0.5) return "#D97706";
   return "text.disabled";
 }
@@ -447,7 +447,7 @@ const TimelineRow = ({
                       component="span"
                       sx={{
                         fontSize: 10,
-                        color: "#DC2626",
+                        color: "accent.fail",
                         fontWeight: 600,
                         display: "inline-flex",
                         alignItems: "center",
@@ -463,15 +463,19 @@ const TimelineRow = ({
                       component="span"
                       sx={{
                         fontSize: 10,
-                        color: subtreeEvals.fail > 0 ? "#DC2626" : "#16A34A",
+                        color:
+                          subtreeEvals.fail > 0 ? "accent.fail" : "accent.pass",
                         fontWeight: 500,
                         display: "inline-flex",
                         alignItems: "center",
                         gap: "2px",
-                        bgcolor:
-                          subtreeEvals.fail > 0
-                            ? alpha("#DC2626", 0.08)
-                            : alpha("#16A34A", 0.08),
+                        bgcolor: (t) =>
+                          alpha(
+                            subtreeEvals.fail > 0
+                              ? t.palette.accent.fail
+                              : t.palette.accent.pass,
+                            0.08,
+                          ),
                         px: "3px",
                         borderRadius: "3px",
                       }}
@@ -575,7 +579,8 @@ const TimelineRow = ({
                             sx={{
                               fontSize: 10,
                               fontWeight: 600,
-                              color: ownFail > 0 ? "#dc2626" : "#16a34a",
+                              color:
+                                ownFail > 0 ? "accent.fail" : "accent.pass",
                               display: "inline-flex",
                               alignItems: "center",
                               gap: "2px",

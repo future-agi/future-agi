@@ -37,7 +37,10 @@ from tracer.serializers.feed import (
     TrendsTabResponseSerializer,
 )
 from tracer.utils import feed as feed_service
-from tracer.views.feed._permissions import resolve_requested_project_ids
+from tracer.views.feed._permissions import (
+    ErrorFeedLicenseRequired,
+    resolve_requested_project_ids,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -58,7 +61,7 @@ def _accessible_project_ids_or_response(request, gm):
     return project_ids, None
 
 
-class FeedOverviewView(APIView):
+class FeedOverviewView(ErrorFeedLicenseRequired, APIView):
     """GET /tracer/feed/issues/{cluster_id}/overview/"""
 
     permission_classes = [IsAuthenticated]
@@ -90,7 +93,7 @@ class FeedOverviewView(APIView):
         return self._gm.success_response(OverviewResponseSerializer(result).data)
 
 
-class FeedTracesView(APIView):
+class FeedTracesView(ErrorFeedLicenseRequired, APIView):
     """GET /tracer/feed/issues/{cluster_id}/traces/"""
 
     permission_classes = [IsAuthenticated]
@@ -123,7 +126,7 @@ class FeedTracesView(APIView):
         return self._gm.success_response(TracesTabResponseSerializer(result).data)
 
 
-class FeedTrendsView(APIView):
+class FeedTrendsView(ErrorFeedLicenseRequired, APIView):
     """GET /tracer/feed/issues/{cluster_id}/trends/"""
 
     permission_classes = [IsAuthenticated]
@@ -151,7 +154,7 @@ class FeedTrendsView(APIView):
         return self._gm.success_response(TrendsTabResponseSerializer(result).data)
 
 
-class FeedSidebarView(APIView):
+class FeedSidebarView(ErrorFeedLicenseRequired, APIView):
     """GET /tracer/feed/issues/{cluster_id}/sidebar/
 
     Accepts an optional ``?trace_id=`` query param. When present, the
@@ -187,7 +190,7 @@ class FeedSidebarView(APIView):
         return self._gm.success_response(FeedSidebarSerializer(result).data)
 
 
-class FeedRootCauseView(APIView):
+class FeedRootCauseView(ErrorFeedLicenseRequired, APIView):
     """GET /tracer/feed/issues/{cluster_id}/root-cause/?trace_id=X
 
     Read cached deep-analysis results for a single trace within the
@@ -229,7 +232,7 @@ class FeedRootCauseView(APIView):
         return self._gm.success_response(DeepAnalysisResponseSerializer(result).data)
 
 
-class FeedDeepAnalysisView(APIView):
+class FeedDeepAnalysisView(ErrorFeedLicenseRequired, APIView):
     """POST /tracer/feed/issues/{cluster_id}/deep-analysis/
 
     Body: ``{trace_id, force?}``. On first click (``force=False``),

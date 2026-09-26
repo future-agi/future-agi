@@ -1,10 +1,13 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Skeleton, Stack, Typography } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
 import { ShowComponent } from "src/components/show";
 import { pluralize } from "src/utils/utils";
-import { useResolvedFilterOptions } from "./useResolvedFilterOptions";
+import {
+  filterLabelsMatchValues,
+  useResolvedFilterOptions,
+} from "./useResolvedFilterOptions";
 
 export default function FilterValueLabel({
   filter,
@@ -12,29 +15,45 @@ export default function FilterValueLabel({
   variant = "body2",
   innerRef,
   onClick,
+  disableTooltip = false,
 }) {
+  const [tooltipOpen, setTooltipOpen] = useState(false);
+  const tooltipDisabled = useRef(disableTooltip);
   const values = useMemo(
     () => (Array.isArray(filter?.value) ? filter.value : []),
     [filter?.value],
   );
+  // When the backend's labels are just the values there is nothing to resolve,
+  // so skip the fetch — it would be a workspace-wide span scan to learn that
+  // "gpt-4o" is labelled "gpt-4o". It also keeps saved chips correct: the
+  // value list is time-windowed, so a filter on an older value would miss the
+  // lookup and fall back to the raw value anyway.
+  const labelsAreValues = filterLabelsMatchValues(filter);
   const { options, isLoading } = useResolvedFilterOptions(
     filter,
     source,
-    values.length > 0,
+    values.length > 0 && !labelsAreValues,
   );
 
   const labels = useMemo(() => {
+    if (labelsAreValues) return values;
     const byValue = new Map(options.map((o) => [o.value, o.label ?? o.value]));
     return values.map((v) => byValue.get(v) ?? v);
-  }, [options, values]);
+  }, [labelsAreValues, options, values]);
 
   const hasValue = values.length > 0;
-  const isResolving = hasValue && isLoading && options.length === 0;
+  const isResolving =
+    hasValue && !labelsAreValues && isLoading && options.length === 0;
   const extra = Math.max(labels.length - 1, 0);
   const entity = (filter?.name || "item").toLowerCase();
   const entityLabel = pluralize(entity, extra);
   const sizeVariant = variant === "caption" ? "s2" : "s2_1";
   const showBadge = extra > 0 && !isResolving;
+
+  useEffect(() => {
+    tooltipDisabled.current = disableTooltip;
+    if (disableTooltip || !showBadge) setTooltipOpen(false);
+  }, [disableTooltip, showBadge]);
 
   const content = (
     <Stack
@@ -68,7 +87,7 @@ export default function FilterValueLabel({
             textOverflow: "ellipsis",
           }}
         >
-          {hasValue ? labels[0] : "Select value..."}
+          {hasValue ? String(labels[0]) : "Select value..."}
         </Typography>
       )}
       <ShowComponent condition={showBadge}>
@@ -95,6 +114,16 @@ export default function FilterValueLabel({
   return (
     <CustomTooltip
       show={showBadge}
+      // Keep the wrapper mounted: the value picker anchors to this DOM node.
+      open={tooltipOpen && !disableTooltip}
+      onOpen={() => {
+        // MUI may call this from a hover timer queued before the picker opened.
+        if (!tooltipDisabled.current) setTooltipOpen(true);
+      }}
+      onClose={() => setTooltipOpen(false)}
+      disableHoverListener={disableTooltip}
+      disableFocusListener={disableTooltip}
+      disableTouchListener={disableTooltip}
       placement="top"
       size="small"
       arrow
@@ -109,7 +138,7 @@ export default function FilterValueLabel({
               key={`${l}-${idx}`}
               sx={{ typography: "s2", lineHeight: 1.6 }}
             >
-              {l}
+              {String(l)}
             </Box>
           ))}
         </Box>
@@ -129,15 +158,25 @@ FilterValueLabel.propTypes = {
     value: PropTypes.oneOfType([
       PropTypes.string,
       PropTypes.number,
+      PropTypes.bool,
       PropTypes.arrayOf(
-        PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+        PropTypes.oneOfType([
+          PropTypes.string,
+          PropTypes.number,
+          PropTypes.bool,
+        ]),
       ),
     ]),
     choices: PropTypes.arrayOf(
       PropTypes.oneOfType([
         PropTypes.string,
+        PropTypes.bool,
         PropTypes.shape({
-          value: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+          value: PropTypes.oneOfType([
+            PropTypes.string,
+            PropTypes.number,
+            PropTypes.bool,
+          ]),
           label: PropTypes.string,
         }),
       ]),
@@ -147,4 +186,5 @@ FilterValueLabel.propTypes = {
   variant: PropTypes.string,
   innerRef: PropTypes.func,
   onClick: PropTypes.func,
+  disableTooltip: PropTypes.bool,
 };

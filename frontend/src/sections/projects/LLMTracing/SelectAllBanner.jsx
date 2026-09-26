@@ -18,6 +18,7 @@ export default function SelectAllBanner({
   visible,
   visibleCount,
   totalMatching,
+  totalMatchingIsLowerBound = false,
   noun = "trace",
   onSelectAll,
 }) {
@@ -49,7 +50,9 @@ export default function SelectAllBanner({
           onClick={onSelectAll}
           sx={{ textTransform: "none", fontWeight: 600 }}
         >
-          {`Select all ${totalMatching.toLocaleString()} ${pluralize(totalMatching, noun)} matching your filter`}
+          {totalMatchingIsLowerBound
+            ? `Select all matching ${pluralize(2, noun)} (≥${totalMatching.toLocaleString()})`
+            : `Select all ${totalMatching.toLocaleString()} ${pluralize(totalMatching, noun)} matching your filter`}
         </Button>
       </Box>
     </Collapse>
@@ -60,6 +63,7 @@ SelectAllBanner.propTypes = {
   visible: PropTypes.bool.isRequired,
   visibleCount: PropTypes.number.isRequired,
   totalMatching: PropTypes.number.isRequired,
+  totalMatchingIsLowerBound: PropTypes.bool,
   noun: PropTypes.string,
   onSelectAll: PropTypes.func.isRequired,
 };

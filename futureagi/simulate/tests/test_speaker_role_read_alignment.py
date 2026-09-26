@@ -20,7 +20,6 @@ import pytest
 from simulate.utils.speaker_roles import SpeakerRoleResolver
 from tracer.models.observability_provider import ProviderChoices
 
-
 # -------------------------------------------------------------------
 # Fixtures
 # -------------------------------------------------------------------
@@ -30,12 +29,12 @@ def _vapi_inbound_call(*, transcripts=None, recordings=None):
     """Mock CallExecution shaped like a VAPI inbound row: FAGI's Vapi
     account transcript, `assistant` = simulator, `user` = tested agent."""
     obj = MagicMock()
-    obj.provider_call_data = {
-        "vapi": {"recording": recordings or {}, "id": "vapi-123"}
-    }
+    obj.provider_call_data = {"vapi": {"recording": recordings or {}, "id": "vapi-123"}}
     obj.call_metadata = {"call_direction": "inbound"}
     obj.call_type = "inboundPhoneCall"
     obj.simulation_call_type = "voice"
+    obj.recording_url = None
+    obj.stereo_recording_url = None
     if transcripts is None:
         obj.transcripts = MagicMock()
         obj.transcripts.exclude.return_value = []
@@ -50,12 +49,12 @@ def _vapi_outbound_call(*, transcripts=None, recordings=None):
     Vapi account, `assistant` = tested agent, `user` = simulator. No read
     swap should fire."""
     obj = MagicMock()
-    obj.provider_call_data = {
-        "vapi": {"recording": recordings or {}, "id": "vapi-456"}
-    }
+    obj.provider_call_data = {"vapi": {"recording": recordings or {}, "id": "vapi-456"}}
     obj.call_metadata = {"call_direction": "outbound"}
     obj.call_type = "outboundPhoneCall"
     obj.simulation_call_type = "voice"
+    obj.recording_url = None
+    obj.stereo_recording_url = None
     if transcripts is None:
         obj.transcripts = MagicMock()
         obj.transcripts.exclude.return_value = []
@@ -68,10 +67,15 @@ def _vapi_outbound_call(*, transcripts=None, recordings=None):
 def _livekit_inbound_call(*, recordings=None):
     """LiveKit is direction-agnostic: worker normalises at write time."""
     obj = MagicMock()
-    obj.provider_call_data = {"livekit": {"recording": recordings or {}}}
+    obj.provider_call_data = {
+        "livekit": {"room_name": "test-room"},
+        "vapi": {"recording": recordings or {}},
+    }
     obj.call_metadata = {"call_direction": "inbound"}
     obj.call_type = "inboundPhoneCall"
     obj.simulation_call_type = "voice"
+    obj.recording_url = None
+    obj.stereo_recording_url = None
     obj.transcripts = MagicMock()
     obj.transcripts.exclude.return_value = []
     return obj
@@ -280,7 +284,8 @@ class TestEvalTranscriptLabels:
         # Its own dict, not an alias — a future Bland payload change is edited on
         # the Bland map without silently affecting VAPI.
         assert (
-            SpeakerRoleResolver._BLAND_OUTBOUND is not SpeakerRoleResolver._VAPI_OUTBOUND
+            SpeakerRoleResolver._BLAND_OUTBOUND
+            is not SpeakerRoleResolver._VAPI_OUTBOUND
         )
         assert (
             SpeakerRoleResolver._BLAND_INBOUND is not SpeakerRoleResolver._VAPI_INBOUND
@@ -296,6 +301,7 @@ class TestEvalTranscriptLabels:
 # -------------------------------------------------------------------
 
 
+@pytest.mark.requires_ee
 class TestMetricsNormalizeRoles:
     """conversation_metrics._normalize_roles_for_test_agent is the ONE
     write-time site that legitimately uses the resolver. Its purpose is
@@ -423,3 +429,62 @@ class TestEndedReasonInlineSwap:
         # Both role words swapped, no placeholder leaked.
         assert result == "customer-was-assistant-friendly"
         assert "\x00" not in result
+
+
+# -------------------------------------------------------------------
+# ALK / LiveKit eval-transcript direction regression
+# -------------------------------------------------------------------
+
+
+def _alk_livekit_call(*, provider_call_data, call_direction=None):
+    """Mock CallExecution for an ALK LiveKit sim: rows are already stored in
+    the tested-agent perspective (assistant = tested agent, user = simulator)."""
+    obj = MagicMock()
+    obj.provider_call_data = provider_call_data
+    obj.call_metadata = {"call_direction": call_direction} if call_direction else {}
+    obj.call_type = None
+    obj.simulation_call_type = "voice"
+    return obj
+
+
+def test_eval_labels_livekit_marker_detects_provider_not_swapped():
+    # SDK stamps a truthy livekit marker -> provider detected LiveKit, whose map
+    # is direction-independent: tested agent (assistant) -> "agent".
+    ce = _alk_livekit_call(provider_call_data={"livekit": {"engine": "livekit"}})
+    provider = SpeakerRoleResolver.detect_provider(ce.provider_call_data)
+    is_outbound = SpeakerRoleResolver.detect_is_outbound(ce)
+    assert provider == ProviderChoices.LIVEKIT
+    assert (
+        SpeakerRoleResolver.get_eval_role_label(
+            "assistant", provider=provider, is_outbound=is_outbound
+        )
+        == "agent"
+    )
+    assert (
+        SpeakerRoleResolver.get_eval_role_label(
+            "user", provider=provider, is_outbound=is_outbound
+        )
+        == "customer"
+    )
+
+
+def test_eval_labels_missing_direction_defaults_outbound_not_swapped():
+    # Marker absent (provider falls back to VAPI) and no call_direction:
+    # detect_is_outbound defaults to outbound, so labels do NOT swap. Regression
+    # for the eval path defaulting to inbound and flipping agent/customer.
+    ce = _alk_livekit_call(provider_call_data={})
+    provider = SpeakerRoleResolver.detect_provider(ce.provider_call_data)
+    is_outbound = SpeakerRoleResolver.detect_is_outbound(ce)
+    assert is_outbound is True
+    assert (
+        SpeakerRoleResolver.get_eval_role_label(
+            "assistant", provider=provider, is_outbound=is_outbound
+        )
+        == "agent"
+    )
+    assert (
+        SpeakerRoleResolver.get_eval_role_label(
+            "user", provider=provider, is_outbound=is_outbound
+        )
+        == "customer"
+    )

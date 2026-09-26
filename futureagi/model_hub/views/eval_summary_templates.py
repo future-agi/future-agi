@@ -11,15 +11,13 @@ DELETE /model-hub/eval-summary-templates/<id>/       — delete
 """
 
 import traceback
-import uuid
 
 import structlog
-from django.db import models
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
-from accounts.models import Organization
+from model_hub.models.eval_summary_template import EvalSummaryTemplate
 from model_hub.serializers.contracts import (
     EvalSummaryTemplateDeleteResponseSerializer,
     EvalSummaryTemplateListResponseSerializer,
@@ -31,31 +29,6 @@ from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
-
-
-class EvalSummaryTemplate(models.Model):
-    """Reusable summary template for eval output formatting."""
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    name = models.CharField(max_length=100)
-    description = models.TextField(blank=True, default="")
-    criteria = models.TextField(
-        help_text="The summary instructions to inject into the eval prompt",
-    )
-    organization = models.ForeignKey(
-        Organization,
-        on_delete=models.CASCADE,
-        related_name="eval_summary_templates",
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        app_label = "model_hub"
-        ordering = ["-updated_at"]
-
-    def __str__(self):
-        return self.name
 
 
 class EvalSummaryTemplateListView(APIView):

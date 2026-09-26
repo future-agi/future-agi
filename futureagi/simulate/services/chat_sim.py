@@ -237,15 +237,14 @@ def initiate_chat(
                 from ee.agenthub.traceerroragent.token_utils import (
                     estimate_tokens_text,
                 )
+                initial_tokens = estimate_tokens_text(initial_msg_text)
             except ImportError:
+                # OSS fallback: token count is informational; carry on with 0.
                 if settings.DEBUG:
                     logger.warning(
                         "Could not import ee.agenthub.traceerroragent.token_utils",
                         exc_info=True,
                     )
-                return None
-
-            initial_tokens = estimate_tokens_text(initial_msg_text)
 
         ChatMessageModel.objects.create(
             id=uuid.uuid4(),

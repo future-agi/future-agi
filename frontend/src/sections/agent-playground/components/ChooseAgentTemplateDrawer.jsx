@@ -434,7 +434,7 @@ export const ChooseAgentTemplateDrawer = ({
                               bgcolor:
                                 cat?.name === category
                                   ? "purple.o10"
-                                  : "grey.100",
+                                  : "action.hover",
                             },
                           }}
                           key={cat?.name}

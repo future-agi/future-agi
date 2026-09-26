@@ -54,6 +54,7 @@ const MessageEditor = ({
   modelSelectorDisabled,
   model,
   onModelChange,
+  openModelMenuSignal = 0,
   // Falcon AI: the parent renders the AI bar node (shown at the top of
   // the box when open) and passes the trigger handler for the bottom-bar
   // icon. aiOpen hides the trigger while the bar is open, matching agent.
@@ -306,6 +307,7 @@ const MessageEditor = ({
                 showMode={false}
                 showPlus={false}
                 disabled={modelSelectorDisabled ?? disabled}
+                openModelMenuSignal={openModelMenuSignal}
               />
             </Box>
           ) : (
@@ -373,6 +375,7 @@ MessageEditor.propTypes = {
   datasetJsonSchemas: PropTypes.object,
   disabled: PropTypes.bool,
   modelSelectorDisabled: PropTypes.bool,
+  openModelMenuSignal: PropTypes.number,
   aiBar: PropTypes.node,
   onFalconClick: PropTypes.func,
   aiOpen: PropTypes.bool,

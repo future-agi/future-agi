@@ -7,7 +7,6 @@ import {
   Chip,
   Skeleton,
   Stack,
-  Tooltip,
   Typography,
   alpha,
   useTheme,
@@ -23,7 +22,7 @@ import { useGetTraceDetail } from "src/api/project/trace-detail";
 import { useErrorFeedOverview } from "src/api/errorFeed/error-feed";
 import EvalIOPanel from "./EvalIOPanel";
 import VoiceEvalPanel from "./VoiceEvalPanel";
-import { buildGraphDiff } from "./buildGraphDiff";
+import { buildGraphDiff, comparisonGraphForMode } from "./buildGraphDiff";
 import { useErrorFeedStore } from "../store";
 import { TOKEN_PRICE_USD, TRACE_STATUS } from "../constants";
 
@@ -806,8 +805,8 @@ PatternSummary.propTypes = {
 };
 
 // ── Agent flow from real span tree ────────────────────────────────────────────
-function TraceGraphView({ traceId, mode }) {
-  const { data, isLoading } = useGetTraceDetail(traceId);
+export function TraceGraphView({ traceId, mode }) {
+  const { data, isLoading, isError } = useGetTraceDetail(traceId);
   const spanTree = data?.observation_spans || data?.observationSpans;
 
   const graphData = useMemo(() => {
@@ -820,6 +819,18 @@ function TraceGraphView({ traceId, mode }) {
       <Box sx={{ height: 340 }}>
         <GraphSkeleton />
       </Box>
+    );
+  }
+
+  if (isError) {
+    return (
+      <Typography
+        fontSize="12px"
+        color="error.main"
+        sx={{ py: 2, textAlign: "center" }}
+      >
+        Could not load trace spans. Please retry.
+      </Typography>
     );
   }
 
@@ -859,7 +870,6 @@ TraceGraphView.propTypes = {
 };
 
 // ── Split-with-working graph compare ─────────────────────────────────────────
-// Diff cues only land on graph mode — AgentPath nodes are too compressed for colored rings.
 function CompareLegend({ summary }) {
   const items = [
     summary.failed > 0 && {
@@ -1062,6 +1072,16 @@ function TraceGraphCompare({ failingTraceId, workingTraceId, mode }) {
 
   const failLoading = !!failingTraceId && failQ.isLoading && !failQ.data;
   const passLoading = !!workingTraceId && passQ.isLoading && !passQ.data;
+  const failRenderGraph = comparisonGraphForMode(
+    mode,
+    failGraph,
+    failAnnotated,
+  );
+  const passRenderGraph = comparisonGraphForMode(
+    mode,
+    passGraph,
+    passAnnotated,
+  );
 
   const NoWorkingNotice = !workingTraceId && (
     <Box
@@ -1081,12 +1101,25 @@ function TraceGraphCompare({ failingTraceId, workingTraceId, mode }) {
     </Box>
   );
 
-  const renderSide = (graph, loading, label) => {
+  const renderSide = (graph, loading, failed, label) => {
     if (loading) {
       return (
         <Box sx={{ height: 360 }}>
           <GraphSkeleton />
         </Box>
+      );
+    }
+    if (failed) {
+      return (
+        <Stack
+          alignItems="center"
+          justifyContent="center"
+          sx={{ height: 360, p: 2 }}
+        >
+          <Typography fontSize="12px" color="error.main" textAlign="center">
+            Could not load {label} spans. Please retry.
+          </Typography>
+        </Stack>
       );
     }
     if (!graph) {
@@ -1144,14 +1177,24 @@ function TraceGraphCompare({ failingTraceId, workingTraceId, mode }) {
           accentColor="#DB2F2D"
           traceShortId={failingTraceId ? failingTraceId.slice(0, 8) : null}
         >
-          {renderSide(failAnnotated, failLoading, "failing trace")}
+          {renderSide(
+            failRenderGraph,
+            failLoading,
+            failQ.isError,
+            "failing trace",
+          )}
         </CompareColumn>
         <CompareColumn
           title="Working trace"
           accentColor="#5ACE6D"
           traceShortId={workingTraceId ? workingTraceId.slice(0, 8) : null}
         >
-          {renderSide(passAnnotated, passLoading, "working trace")}
+          {renderSide(
+            passRenderGraph,
+            passLoading,
+            passQ.isError,
+            "working trace",
+          )}
         </CompareColumn>
       </Box>
     </Stack>
@@ -1252,32 +1295,6 @@ RichText.propTypes = {
 const FAIL_COLOR = errorPalette.main;
 const PASS_COLOR = success.main;
 
-function SpanPointer({ pointer }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-  const blue = isDark ? "#7DB1FF" : "#2563EB";
-  return (
-    <Tooltip title="Open this span in the trace drawer" arrow>
-      <Box
-        component="span"
-        sx={{
-          ml: "auto",
-          flexShrink: 0,
-          fontSize: "10px",
-          fontFamily: "ui-monospace, SFMono-Regular, monospace",
-          color: blue,
-          cursor: "pointer",
-          whiteSpace: "nowrap",
-          "&:hover": { textDecoration: "underline" },
-        }}
-      >
-        ⌖ {pointer}
-      </Box>
-    </Tooltip>
-  );
-}
-SpanPointer.propTypes = { pointer: PropTypes.string.isRequired };
-
 function roleColor(isFailure, isDark) {
   if (isFailure) return isDark ? "#ff9a99" : "#c0322f";
   return isDark ? alpha("#fff", 0.42) : alpha("#000", 0.45);
@@ -1297,7 +1314,6 @@ function ReelStep({ step, isFailReel, isLast }) {
       : isDark
         ? alpha("#fff", 0.28)
         : alpha("#000", 0.28);
-  const pointer = step.spanPointer || step.span;
   const raw = step.rawJson || step.raw;
   const note = step.note;
   const rColor = roleColor(isFailure, isDark);
@@ -1339,7 +1355,6 @@ function ReelStep({ step, isFailReel, isLast }) {
           {step.meta}
         </Box>
       )}
-      {pointer && <SpanPointer pointer={pointer} />}
     </Stack>
   );
 
@@ -1408,46 +1423,50 @@ function ReelStep({ step, isFailReel, isLast }) {
           )}
         </Box>
       ) : (
-        <>
-          {header}
-          {raw && (
-            <Box
-              onClick={() => setShowRaw((v) => !v)}
-              sx={{
-                fontSize: "10.5px",
-                color: "text.disabled",
-                mt: 0.4,
-                cursor: "pointer",
-                userSelect: "none",
-                "&:hover": { color: "text.secondary" },
-              }}
-            >
-              {showRaw ? "− raw JSON" : "+ raw JSON ▾"}
-            </Box>
-          )}
-          {raw && showRaw && (
-            <Box
-              component="pre"
-              sx={{
-                m: 0,
-                mt: 0.5,
-                p: 1,
-                borderRadius: "6px",
-                bgcolor: isDark ? alpha("#fff", 0.03) : alpha("#000", 0.03),
-                fontFamily: "ui-monospace, SFMono-Regular, monospace",
-                fontSize: "11px",
-                lineHeight: 1.5,
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-                color: "text.secondary",
-                maxHeight: 200,
-                overflow: "auto",
-              }}
-            >
-              {typeof raw === "string" ? raw : JSON.stringify(raw, null, 2)}
-            </Box>
-          )}
-        </>
+        header
+      )}
+      {raw && (
+        <Box
+          component="button"
+          type="button"
+          aria-expanded={showRaw}
+          onClick={() => setShowRaw((v) => !v)}
+          sx={{
+            border: 0,
+            p: 0,
+            bgcolor: "transparent",
+            fontSize: "10.5px",
+            color: "text.disabled",
+            mt: 0.4,
+            cursor: "pointer",
+            "&:hover": { color: "text.secondary" },
+          }}
+        >
+          {showRaw ? "Hide cited excerpt" : "Show cited excerpt"}
+        </Box>
+      )}
+      {raw && showRaw && (
+        <Box
+          component="pre"
+          sx={{
+            m: 0,
+            mt: 0.5,
+            p: 1,
+            borderRadius: "6px",
+            bgcolor: isDark ? alpha("#fff", 0.03) : alpha("#000", 0.03),
+            fontFamily: "ui-monospace, SFMono-Regular, monospace",
+            fontSize: "11px",
+            lineHeight: 1.5,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            color: "text.secondary",
+            maxHeight: 200,
+            overflow: "auto",
+          }}
+        >
+          {step.evidence_id && `Evidence ${step.evidence_id}\n`}
+          {typeof raw === "string" ? raw : JSON.stringify(raw, null, 2)}
+        </Box>
       )}
     </Box>
   );
@@ -1458,7 +1477,7 @@ ReelStep.propTypes = {
   isLast: PropTypes.bool,
 };
 
-function BreadcrumbList({ steps, isFailReel, showFooter = true }) {
+function BreadcrumbList({ steps, isFailReel }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const accent = isFailReel ? FAIL_COLOR : PASS_COLOR;
@@ -1498,31 +1517,12 @@ function BreadcrumbList({ steps, isFailReel, showFooter = true }) {
           />
         ))}
       </Box>
-      {showFooter && (
-        <Stack
-          direction="row"
-          alignItems="center"
-          justifyContent="flex-end"
-          gap={0.4}
-          sx={{ mt: 1.25 }}
-        >
-          <Iconify
-            icon="mdi:cursor-default-click-outline"
-            width={11}
-            sx={{ color: "text.disabled" }}
-          />
-          <Typography fontSize="10.5px" color="text.disabled">
-            click any pointer to open that span in the trace drawer
-          </Typography>
-        </Stack>
-      )}
     </Box>
   );
 }
 BreadcrumbList.propTypes = {
   steps: PropTypes.array.isRequired,
   isFailReel: PropTypes.bool,
-  showFooter: PropTypes.bool,
 };
 
 function ReelColumn({
@@ -1596,11 +1596,7 @@ function ReelColumn({
       </Stack>
       <Box sx={{ flex: 1, px: 1.25, py: 1 }}>
         {steps.length > 0 ? (
-          <BreadcrumbList
-            steps={steps}
-            isFailReel={isFailReel}
-            showFooter={false}
-          />
+          <BreadcrumbList steps={steps} isFailReel={isFailReel} />
         ) : (
           <Stack
             alignItems="center"
@@ -1852,7 +1848,9 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
             color="text.secondary"
             sx={{ textTransform: "uppercase", letterSpacing: "0.06em" }}
           >
-            Trace Evidence
+            {failReel.some((step) => step.label === "RECEIPT")
+              ? "Investigation Evidence"
+              : "Trace Evidence"}
           </Typography>
         </Stack>
 
@@ -1971,7 +1969,7 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
 
       {/* ── Body ── */}
       <Box sx={{ p: 1.75 }}>
-        {/* Agent Graph / Agent Path — single trace, OR split with working. */}
+        {/* Agent Graph / Agent Path — single trace, or split with a working trace. */}
         {isGraphMode &&
           (traceId ? (
             splitView ? (
@@ -2177,14 +2175,30 @@ RootCauses.propTypes = { causes: PropTypes.array.isRequired };
 
 // ── Recommendations ──────────────────────────────────────────────────────────
 const PRIORITY_META = {
-  critical: { color: "#DB2F2D", label: "Critical", icon: "mdi:alert-circle" },
-  high: { color: "#F5A623", label: "High", icon: "mdi:alert-circle-outline" },
+  critical: {
+    color: "#DB2F2D",
+    darkColor: "#E87876",
+    label: "Critical",
+    icon: "mdi:alert-circle",
+  },
+  high: {
+    color: "#F5A623",
+    darkColor: "#F5A623",
+    label: "High",
+    icon: "mdi:alert-circle-outline",
+  },
   medium: {
     color: "#2F7CF7",
+    darkColor: "#78AAFA",
     label: "Medium",
     icon: "mdi:information-outline",
   },
-  low: { color: "#5ACE6D", label: "Low", icon: "mdi:check-circle-outline" },
+  low: {
+    color: "#5ACE6D",
+    darkColor: "#5ACE6D",
+    label: "Low",
+    icon: "mdi:check-circle-outline",
+  },
 };
 const EFFORT_COLOR = { Low: "#5ACE6D", Medium: "#F5A623", High: "#DB2F2D" };
 
@@ -2208,7 +2222,8 @@ RecSectionLabel.propTypes = { icon: PropTypes.string, label: PropTypes.string };
 
 function RecommendationCard({ rec, rootCauses, isDark }) {
   const [expanded, setExpanded] = useState(false);
-  const pm = PRIORITY_META[rec.priority] || PRIORITY_META.medium;
+  const pmBase = PRIORITY_META[rec.priority] || PRIORITY_META.medium;
+  const pm = { ...pmBase, color: isDark ? pmBase.darkColor : pmBase.color };
   const linkedCause = rootCauses?.find((c) => c.rank === rec.root_cause_link);
 
   return (

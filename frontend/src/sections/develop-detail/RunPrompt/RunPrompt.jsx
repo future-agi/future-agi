@@ -638,8 +638,14 @@ export const RunPromptForm = React.forwardRef(
           onClose();
           reset();
         },
-        onError: () => {
-          enqueueSnackbar("Failed to update Run Prompt", {
+        meta: { errorHandled: true },
+        onError: (error) => {
+          const message =
+            error?.detail ||
+            error?.message ||
+            error?.result ||
+            "Failed to update Run Prompt";
+          enqueueSnackbar(message, {
             variant: "error",
           });
         },
@@ -1121,7 +1127,12 @@ export const RunPromptForm = React.forwardRef(
         setAnchorEl(false);
         setOpenRunPreViewModal(false);
       } catch (error) {
-        enqueueSnackbar("Failed to run prompt", { variant: "error" });
+        const message =
+          error?.detail ||
+          error?.message ||
+          error?.result ||
+          "Failed to run prompt";
+        enqueueSnackbar(message, { variant: "error" });
         logger.error("Failed to run prompt", error);
       }
     };

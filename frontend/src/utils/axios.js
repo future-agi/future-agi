@@ -16,14 +16,58 @@ import { apiPath } from "src/api/contracts/api-surface";
 import {
   assertContractedRequestConfig,
   assertContractedResponse,
+  findOpenApiEndpoint,
 } from "src/api/contracts/openapi-contract";
 import { resetUser } from "./Mixpanel";
 import logger from "./logger";
 import { RESPONSE_CODES } from "./constants";
+import { SS_KEY_ORG_ID, SS_KEY_WORKSPACE_ID } from "./sessionKeys";
 
 // ----------------------------------------------------------------------
 //
 const axiosInstance = axios.create({ baseURL: HOST_API });
+const MAX_PICKER_GET_URL_LENGTH = 8192;
+
+// Only source-declared read aliases use POST; unrelated reads remain GET.
+export const readQuery = (url, { params = {}, ...config } = {}) => {
+  const endpoint = findOpenApiEndpoint(url, "post");
+  if (!endpoint?.contract.readQueryPost) {
+    return axiosInstance.get(url, { params, ...config });
+  }
+  if (config.data !== undefined)
+    throw new Error("Read query body is owned by params.");
+  const [path, search = ""] = url.split("?");
+  const data = Object.fromEntries(
+    Object.entries(params).filter(([, value]) => value != null),
+  );
+  for (const [key, value] of new URLSearchParams(search)) {
+    if (Object.hasOwn(data, key))
+      throw new Error("Duplicate read query parameter.");
+    data[key] = value;
+  }
+  return axiosInstance.post(path, data, config).catch((error) => {
+    // Older backends expose these picker reads through GET only.
+    if (
+      error.statusCode !== 405 ||
+      ![
+        "/tracer/dashboard/metrics/",
+        "/tracer/dashboard/filter_values/",
+      ].includes(endpoint.template)
+    ) {
+      throw error;
+    }
+    const getConfig = { ...config, params: data };
+    if (
+      axiosInstance.getUri({ ...getConfig, url: path }).length >
+      MAX_PICKER_GET_URL_LENGTH
+    ) {
+      throw new Error(
+        "This picker request is too large for legacy GET compatibility. Upgrade the backend or reduce the selected projects and filters.",
+      );
+    }
+    return axiosInstance.get(path, getConfig);
+  });
+};
 
 const avoidRedirect = [
   "/auth/jwt/register",
@@ -136,11 +180,11 @@ axiosInstance.interceptors.response.use(
         setSession(newAccessToken, organizationId);
 
         // 🔄 Re-apply per-tab headers from sessionStorage (survives refresh)
-        const wsId = sessionStorage.getItem("workspaceId");
+        const wsId = sessionStorage.getItem(SS_KEY_WORKSPACE_ID);
         if (wsId) {
           axiosInstance.defaults.headers.common["X-Workspace-Id"] = wsId;
         }
-        const orgId = sessionStorage.getItem("organizationId");
+        const orgId = sessionStorage.getItem(SS_KEY_ORG_ID);
         if (orgId) {
           axiosInstance.defaults.headers.common["X-Organization-Id"] = orgId;
         }
@@ -207,12 +251,18 @@ axiosInstance.interceptors.response.use(
     }
 
     const errData = (error.response && error.response.data) || {
-      message: "Something went wrong",
+      // Request interceptors (including the development OpenAPI guard) fail
+      // before Axios has a response. Preserve their actual explanation rather
+      // than replacing it with a generic error that cannot be diagnosed.
+      message: error?.message || "Something went wrong",
     };
 
     const customError = {
       ...errData,
       statusCode: error.response?.status,
+      // Keep Axios' transport classification without overwriting a semantic
+      // API error code from the response body (for example snapshot_changed).
+      transportCode: error.code,
     };
 
     return Promise.reject(customError);
@@ -279,14 +329,18 @@ export const endpoints = {
         uidb64,
         token,
       }),
-    service: (provider) =>
-      withQuery(apiPath("/saml2_auth/login/"), { provider }),
+    service: (provider, onboardingToken) =>
+      withQuery(apiPath("/saml2_auth/login/"), {
+        provider,
+        onboarding_token: onboardingToken || undefined,
+      }),
     create_org: apiPath("/accounts/team/users/"),
     ssoLogin: (email) =>
       withQuery(apiPath("/saml2_auth/idp-login/"), { email }),
     logout: apiPath("/accounts/logout/"),
     refreshToken: apiPath("/accounts/token/refresh/"),
     awsSignUp: apiPath("/accounts/aws-marketplace/signup/"),
+    gcpSignUp: apiPath("/accounts/gcp-marketplace/signup/"),
     config: apiPath("/accounts/config/"),
     createOrganization: apiPath("/accounts/organizations/create/"),
   },
@@ -590,6 +644,9 @@ export const endpoints = {
         apiPath("/usage/v2/payment-methods/{pm_id}/", { pm_id: pmId }),
       deploymentInfo: apiPath("/api/deployment-info/"),
     },
+  },
+  ossSetup: {
+    setupChecks: apiPath("/api/setup-checks/"),
   },
   tools: {
     create: apiPath("/model-hub/tools/"),
@@ -1261,6 +1318,8 @@ export const endpoints = {
     updateSessionListColumnVisibility: () =>
       apiPath("/tracer/project/update_project_session_config/"),
     traceSession: apiPath("/tracer/trace-session/"),
+    traceSessionQuery: (id) =>
+      apiPath("/tracer/trace-session/{id}/query/", { id }),
     projectExperimentDetail: (projectId) =>
       apiPath("/tracer/project/{id}/", { id: projectId }),
     deleteObservePrototype: apiPath("/tracer/project/"),
@@ -1502,10 +1561,17 @@ export const endpoints = {
   runTests: {
     list: apiPath("/simulate/run-tests/"),
     create: apiPath("/simulate/run-tests/create/"),
+    validateLiveKitCredentials: apiPath(
+      "/simulate/api/livekit/validate-credentials/",
+    ),
     detail: (id) =>
       apiPath("/simulate/run-tests/{run_test_id}/", { run_test_id: id }),
     detailExecutions: (id) =>
       apiPath("/simulate/run-tests/{run_test_id}/executions/", {
+        run_test_id: id,
+      }),
+    previewExecutions: (id) =>
+      apiPath("/simulate/run-tests/{run_test_id}/preview-executions/", {
         run_test_id: id,
       }),
     detailScenarios: (id) =>
@@ -1573,6 +1639,10 @@ export const endpoints = {
       }),
   },
   testExecutions: {
+    previewCalls: (id) =>
+      apiPath("/simulate/test-executions/{test_execution_id}/preview-calls/", {
+        test_execution_id: id,
+      }),
     callDetail: (id) =>
       apiPath("/simulate/call-executions/{call_execution_id}/", {
         call_execution_id: id,
@@ -1845,6 +1915,7 @@ export const endpoints = {
     requestLogDetail: (id) =>
       apiPath("/agentcc/request-logs/{id}/", { id: id }),
     requestLogSearch: apiPath("/agentcc/request-logs/search/"),
+    requestLogMetadataValues: apiPath("/agentcc/request-logs/metadata-values/"),
     requestLogSessions: apiPath("/agentcc/request-logs/sessions/"),
     requestLogSessionDetail: (sessionId) =>
       apiPath("/agentcc/request-logs/sessions/{session_id}/", {

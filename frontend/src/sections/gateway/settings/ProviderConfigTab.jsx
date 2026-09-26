@@ -10,6 +10,8 @@ import {
   Alert,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { RouterLink } from "src/routes/components";
+import { paths } from "src/routes/paths";
 import { useProviderHealth } from "../providers/hooks/useGatewayConfig";
 import { useGatewayContext } from "../context/useGatewayContext";
 
@@ -34,7 +36,8 @@ const ProviderConfigTab = ({ providers: _providers, onChange: _onChange }) => {
           size="small"
           variant="outlined"
           startIcon={<Iconify icon="solar:arrow-right-up-bold" width={18} />}
-          href="/gateway/providers"
+          component={RouterLink}
+          href={paths.dashboard.gateway.providers}
           target="_blank"
         >
           Manage Providers
@@ -60,7 +63,8 @@ const ProviderConfigTab = ({ providers: _providers, onChange: _onChange }) => {
             <Button
               size="small"
               sx={{ mt: 1 }}
-              href="/gateway/providers"
+              component={RouterLink}
+              href={paths.dashboard.gateway.providers}
               startIcon={<Iconify icon="solar:add-circle-bold" width={18} />}
             >
               Add Provider

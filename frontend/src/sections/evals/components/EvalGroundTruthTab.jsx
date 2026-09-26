@@ -19,13 +19,20 @@ import {
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useDropzone } from "react-dropzone";
 import { useSnackbar } from "notistack";
 import { AgGridReact } from "ag-grid-react";
 import { useAgTheme } from "src/hooks/use-ag-theme";
 import Iconify from "src/components/iconify";
 import { apiPath } from "src/api/contracts/api-surface";
+import axios from "src/utils/axios";
 
 import {
   useDevelopDatasetList,
@@ -45,6 +52,10 @@ import {
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import {
+  createEmptyGroundTruthDatasetRead,
+  readNextGroundTruthDatasetPage,
+} from "./ground_truth_dataset_pagination";
 
 // ═══════════════════════════════════════════════════════════════
 // Status Badge
@@ -177,9 +188,7 @@ const parseCsvText = (text) => {
     row.push(field);
     records.push(row);
   }
-  const nonEmpty = records.filter(
-    (r) => !(r.length === 1 && r[0] === ""),
-  );
+  const nonEmpty = records.filter((r) => !(r.length === 1 && r[0] === ""));
   if (nonEmpty.length === 0) return { columns: [], rows: [] };
   const [header, ...body] = nonEmpty;
   const columns = header.map((c) => c.trim());
@@ -193,7 +202,7 @@ const parseCsvText = (text) => {
   return { columns, rows };
 };
 
-const UploadDrawer = ({
+export const UploadDrawer = ({
   open,
   onClose,
   templateId,
@@ -214,6 +223,12 @@ const UploadDrawer = ({
   const [datasetSearch, setDatasetSearch] = useState("");
   const [selectedDataset, setSelectedDataset] = useState(null);
   const [loadingDatasetData, setLoadingDatasetData] = useState(false);
+  const [datasetRead, setDatasetRead] = useState(() =>
+    createEmptyGroundTruthDatasetRead(),
+  );
+  const [datasetReadError, setDatasetReadError] = useState("");
+  const [datasetReadBlocked, setDatasetReadBlocked] = useState(false);
+  const datasetReadGeneration = useRef(0);
 
   // Fetch datasets list
   const { data: datasets = [], isLoading: datasetsLoading } =
@@ -226,6 +241,7 @@ const UploadDrawer = ({
   });
 
   const reset = useCallback(() => {
+    datasetReadGeneration.current += 1;
     setStep(0);
     setFile(null);
     setName("");
@@ -234,6 +250,9 @@ const UploadDrawer = ({
     setDatasetSearch("");
     setSelectedDataset(null);
     setLoadingDatasetData(false);
+    setDatasetRead(createEmptyGroundTruthDatasetRead());
+    setDatasetReadError("");
+    setDatasetReadBlocked(false);
   }, []);
 
   const handleClose = useCallback(() => {
@@ -328,46 +347,152 @@ const UploadDrawer = ({
 
   // ── Dataset selection flow ──
   const handleDatasetSelect = useCallback((ds) => {
+    datasetReadGeneration.current += 1;
     setSelectedDataset(ds);
     setName(ds.name);
+    setVariableMapping({});
+    setDatasetRead(createEmptyGroundTruthDatasetRead());
+    setDatasetReadError("");
+    setDatasetReadBlocked(false);
+    setLoadingDatasetData(false);
     setStep(3);
   }, []);
 
   // Derive column names from dataset columns response
   const datasetColumnNames = useMemo(() => {
-    if (!datasetColumns) return [];
-    return datasetColumns.map(
-      (col) => col.name || col.label || col.id || String(col),
+    const columns = datasetRead.columns || datasetColumns;
+    if (!columns) return [];
+    return columns.map((col) => col.name || col.label || col.id || String(col));
+  }, [datasetColumns, datasetRead.columns]);
+
+  // The independent column-preview request is advisory. Once the exact
+  // snapshot returns its signed inventory, remove mappings that do not exist
+  // in that authoritative inventory so a dataset switch/race cannot retain a
+  // stale column reference.
+  useEffect(() => {
+    if (!Array.isArray(datasetRead.columns)) return;
+    const exactNames = new Set(
+      datasetRead.columns
+        .map((column) => String(column?.name || "").trim())
+        .filter(Boolean),
     );
-  }, [datasetColumns]);
+    setVariableMapping((previous) =>
+      Object.fromEntries(
+        Object.entries(previous).filter(
+          ([, columnName]) => !columnName || exactNames.has(columnName),
+        ),
+      ),
+    );
+  }, [datasetRead.columns]);
+
+  const handleLoadDatasetRows = useCallback(async () => {
+    if (
+      !selectedDataset ||
+      loadingDatasetData ||
+      datasetRead.complete ||
+      datasetReadBlocked
+    )
+      return;
+    const datasetId = selectedDataset.dataset_id || selectedDataset.id;
+    const readGeneration = datasetReadGeneration.current;
+    setLoadingDatasetData(true);
+    setDatasetReadError("");
+    setDatasetReadBlocked(false);
+    try {
+      const nextRead = await readNextGroundTruthDatasetPage({
+        previous: datasetRead,
+        requestPage: ({ pageIndex, pageSize, cursor, signal, timeout }) =>
+          axios.get(
+            apiPath("/model-hub/develops/{dataset_id}/get-dataset-table/", {
+              dataset_id: datasetId,
+            }),
+            {
+              params: {
+                current_page_index: pageIndex,
+                page_size: pageSize,
+                exact_snapshot: true,
+                ...(cursor ? { cursor } : {}),
+              },
+              signal,
+              timeout,
+            },
+          ),
+      });
+      if (datasetReadGeneration.current !== readGeneration) return;
+      setDatasetRead(nextRead);
+      if (nextRead.complete && nextRead.totalRows === 0) {
+        enqueueSnackbar("Dataset has no rows", { variant: "warning" });
+      }
+    } catch (err) {
+      if (datasetReadGeneration.current !== readGeneration) return;
+      const message =
+        err?.response?.data?.message ||
+        err?.message ||
+        "Dataset rows could not be loaded exactly. Retry.";
+      setDatasetReadError(message);
+      setDatasetReadBlocked(
+        err?.code === "dataset_exact_limit_exceeded" ||
+          err?.response?.data?.code === "dataset_exact_limit_exceeded",
+      );
+      enqueueSnackbar(message, { variant: "error" });
+    } finally {
+      if (datasetReadGeneration.current === readGeneration) {
+        setLoadingDatasetData(false);
+      }
+    }
+  }, [
+    datasetRead,
+    datasetReadBlocked,
+    enqueueSnackbar,
+    loadingDatasetData,
+    selectedDataset,
+  ]);
 
   const handleDatasetUpload = useCallback(async () => {
     if (!selectedDataset || !name) return;
+    if (!datasetRead.complete) {
+      enqueueSnackbar("Load every dataset row before importing.", {
+        variant: "warning",
+      });
+      return;
+    }
     setLoadingDatasetData(true);
     try {
-      // Fetch dataset rows
-      const datasetId = selectedDataset.dataset_id || selectedDataset.id;
-      const { data: res } = await (
-        await import("src/utils/axios")
-      ).default.get(
-        apiPath("/model-hub/develops/{dataset_id}/get-dataset-table/", {
-          dataset_id: datasetId,
-        }),
-        {
-          params: { current_page_index: 0, page_size: 10000 },
-        },
-      );
-      const tableData = res?.result;
-      const tableRows = tableData?.table || [];
+      const tableRows = datasetRead.rows;
 
-      // Build column ID → name map from already-fetched datasetColumns
+      // Build the map from the exact paginated response rather than the
+      // independently cached column query. Every page is required to carry
+      // the same ordered column identity before it can be accumulated.
       const colMap = {};
-      (datasetColumns || []).forEach((col) => {
+      (datasetRead.columns || []).forEach((col) => {
         const colId = String(col.id || col.column_id);
         colMap[colId] = col.name || col.label || colId;
       });
 
       const colNames = Object.values(colMap);
+      if (
+        colNames.some((columnName) => !String(columnName).trim()) ||
+        new Set(colNames).size !== colNames.length
+      ) {
+        enqueueSnackbar(
+          "Dataset column names must be non-empty and unique before importing.",
+          { variant: "error" },
+        );
+        setLoadingDatasetData(false);
+        return;
+      }
+
+      const invalidMappings = Object.entries(variableMapping).filter(
+        ([, columnName]) => columnName && !colNames.includes(columnName),
+      );
+      if (invalidMappings.length > 0) {
+        enqueueSnackbar(
+          "Variable mappings no longer match the exact dataset columns. Review them before importing.",
+          { variant: "error" },
+        );
+        setLoadingDatasetData(false);
+        return;
+      }
       let flatRows = [];
 
       // table rows are: {column_uuid: {cell_value, ...}, row_id: "..."}
@@ -422,10 +547,11 @@ const UploadDrawer = ({
   }, [
     selectedDataset,
     name,
+    datasetRead,
     variableMapping,
-    upload,
     enqueueSnackbar,
     handleClose,
+    upload,
   ]);
 
   // Columns for the mapping step (from file or from dataset)
@@ -845,12 +971,94 @@ const UploadDrawer = ({
                 <IconButton
                   size="small"
                   onClick={() => {
+                    datasetReadGeneration.current += 1;
                     setSelectedDataset(null);
+                    setDatasetRead(createEmptyGroundTruthDatasetRead());
+                    setDatasetReadError("");
+                    setDatasetReadBlocked(false);
+                    setLoadingDatasetData(false);
                     setStep(2);
                   }}
                 >
                   <Iconify icon="mdi:close" width={16} />
                 </IconButton>
+              </Box>
+            )}
+
+            {step === 3 && selectedDataset && (
+              <Box
+                sx={{
+                  p: 1.5,
+                  borderRadius: "8px",
+                  border: "1px solid",
+                  borderColor: datasetReadError ? "error.main" : "divider",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 1,
+                }}
+              >
+                <Box
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 1,
+                  }}
+                >
+                  <Box sx={{ minWidth: 0 }}>
+                    <Typography variant="body2" fontWeight={600}>
+                      Dataset rows
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {datasetRead.totalRows === null
+                        ? "Load one exact page at a time before importing."
+                        : `${datasetRead.rows.length} of ${datasetRead.totalRows} rows loaded`}
+                    </Typography>
+                  </Box>
+                  {datasetRead.complete && (
+                    <Chip
+                      label="Complete"
+                      size="small"
+                      color="success"
+                      variant="outlined"
+                      sx={{ height: 22, fontSize: "10px", flexShrink: 0 }}
+                    />
+                  )}
+                </Box>
+                {datasetRead.totalRows !== null &&
+                  datasetRead.totalRows > 0 && (
+                    <LinearProgress
+                      variant="determinate"
+                      value={Math.min(
+                        100,
+                        (datasetRead.rows.length / datasetRead.totalRows) * 100,
+                      )}
+                    />
+                  )}
+                {datasetReadError && (
+                  <Typography variant="caption" color="error.main">
+                    {datasetReadError}
+                  </Typography>
+                )}
+                {datasetRead.rows.length > 0 &&
+                  !datasetRead.complete &&
+                  !datasetReadBlocked && (
+                    <Button
+                      variant="text"
+                      color="inherit"
+                      size="small"
+                      disabled={loadingDatasetData}
+                      onClick={() => {
+                        datasetReadGeneration.current += 1;
+                        setDatasetRead(createEmptyGroundTruthDatasetRead());
+                        setDatasetReadError("");
+                        setDatasetReadBlocked(false);
+                      }}
+                      sx={{ alignSelf: "flex-start", px: 0 }}
+                    >
+                      Restart row loading
+                    </Button>
+                  )}
               </Box>
             )}
 
@@ -991,11 +1199,21 @@ const UploadDrawer = ({
             <Button
               variant="contained"
               size="small"
-              onClick={step === 1 ? handleFileUpload : handleDatasetUpload}
+              onClick={
+                step === 1
+                  ? handleFileUpload
+                  : datasetRead.complete
+                    ? handleDatasetUpload
+                    : handleLoadDatasetRows
+              }
               disabled={
                 !canEdit ||
                 (step === 1 && (!file || !name)) ||
                 (step === 3 && (!selectedDataset || !name)) ||
+                (step === 3 &&
+                  datasetRead.complete &&
+                  datasetRead.totalRows === 0) ||
+                (step === 3 && datasetReadBlocked) ||
                 isSubmitting
               }
               sx={{ flex: 1 }}
@@ -1003,7 +1221,13 @@ const UploadDrawer = ({
               {isSubmitting ? (
                 <CircularProgress size={16} sx={{ color: "inherit" }} />
               ) : step === 3 ? (
-                "Import"
+                datasetRead.complete ? (
+                  "Import"
+                ) : datasetRead.rows.length > 0 ? (
+                  "Load more"
+                ) : (
+                  "Load rows"
+                )
               ) : (
                 "Upload"
               )}
@@ -1082,7 +1306,6 @@ const EmptyState = ({ onUpload, canEdit = true }) => (
   </Box>
 );
 
-
 // Flat single-save form for the GT tab. Posts to
 // /ground-truth/<id>/setup/, which rejects when the mandatory `output`
 // column is missing. The output-type hint reads
@@ -1102,7 +1325,6 @@ export function shouldTriggerEmbed({
 }) {
   return Boolean(enabled && (mappingDirty || !embeddingsReady) && hasOnEmbed);
 }
-
 
 function describeReferenceOutputColumn(evalConfig) {
   if (!evalConfig) {
@@ -1161,9 +1383,7 @@ const GroundTruthSetupForm = ({
   );
 
   const initialOutputColumn =
-    persistedRoleMapping.output ||
-    persistedRoleMapping.expected_output ||
-    "";
+    persistedRoleMapping.output || persistedRoleMapping.expected_output || "";
   const initialExplanationColumn =
     persistedRoleMapping.explanation ||
     persistedRoleMapping.reasoning ||
@@ -1173,8 +1393,7 @@ const GroundTruthSetupForm = ({
   const templateConfig = template?.config || {};
   // Runtime knobs live on the GT row itself; the previous template.config
   // snapshot was removed in favour of per-tenant typed columns.
-  const persistedMaxExamples =
-    gt.max_examples ?? gt.maxExamples ?? 3;
+  const persistedMaxExamples = gt.max_examples ?? gt.maxExamples ?? 3;
   const persistedEnabled = Boolean(gt.enabled);
 
   const [varMapping, setVarMapping] = useState(persistedVarMapping);
@@ -1220,8 +1439,7 @@ const GroundTruthSetupForm = ({
     Number(maxExamples) !== Number(persistedMaxExamples) ||
     enabled !== persistedEnabled;
 
-  const hasMapping =
-    Object.keys(normalizeMapping(varMapping)).length > 0;
+  const hasMapping = Object.keys(normalizeMapping(varMapping)).length > 0;
   const canSave =
     Boolean(outputColumn) && (!enabled || hasMapping) && !save.isPending;
   const embedActive =
@@ -1229,8 +1447,7 @@ const GroundTruthSetupForm = ({
     embedPending ||
     embeddingStatus === "processing" ||
     (embeddingStatus === "pending" && embedPending);
-  const embeddingsReady =
-    embeddingStatus === "completed" && !embeddingsStale;
+  const embeddingsReady = embeddingStatus === "completed" && !embeddingsStale;
 
   const configDirty = mappingDirty || paramsDirty;
   // Embed only matters when GT is enabled; a paused GT should settle to
@@ -1260,9 +1477,14 @@ const GroundTruthSetupForm = ({
   const handleCtaClick = async () => {
     try {
       if (configDirty) await save.mutateAsync(buildPayload());
-      if (shouldTriggerEmbed({
-        enabled, mappingDirty, embeddingsReady, hasOnEmbed: !!onEmbed,
-      })) {
+      if (
+        shouldTriggerEmbed({
+          enabled,
+          mappingDirty,
+          embeddingsReady,
+          hasOnEmbed: !!onEmbed,
+        })
+      ) {
         setEmbedChainRunning(true);
         await onEmbed();
       }
@@ -1375,7 +1597,8 @@ const GroundTruthSetupForm = ({
             variant="caption"
             sx={{ color: "error.main", fontSize: "11px", mt: 0.25 }}
           >
-            Map at least one input variable before saving with ground truth enabled.
+            Map at least one input variable before saving with ground truth
+            enabled.
           </Typography>
         ) : null}
         {liveVariables.length === 0 ? (
@@ -1449,7 +1672,8 @@ const GroundTruthSetupForm = ({
             variant="caption"
             sx={{ color: "warning.dark", fontSize: "11px", mt: -0.25 }}
           >
-            Values in this column must match the eval&apos;s output type. {referenceHint}
+            Values in this column must match the eval&apos;s output type.{" "}
+            {referenceHint}
           </Typography>
         )}
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
@@ -1517,8 +1741,8 @@ const GroundTruthSetupForm = ({
           variant="caption"
           sx={{ color: "text.secondary", fontSize: "11px", mt: -0.5 }}
         >
-          On each eval run, the rows most similar to the input are attached
-          to the judge prompt as calibration examples.
+          On each eval run, the rows most similar to the input are attached to
+          the judge prompt as calibration examples.
         </Typography>
         <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
           <Tooltip
@@ -1802,7 +2026,9 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
               >
                 <LinearProgress
                   variant={
-                    embeddingStatus === "processing" ? "determinate" : "indeterminate"
+                    embeddingStatus === "processing"
+                      ? "determinate"
+                      : "indeterminate"
                   }
                   value={
                     embeddingStatus === "processing" && totalRows > 0

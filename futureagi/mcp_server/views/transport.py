@@ -1,5 +1,6 @@
 """Internal API endpoints for MCP tool calls (used by stdio proxy and direct API)."""
 
+import json
 import time
 
 import structlog
@@ -8,10 +9,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from ai_tools.base import ToolContext
-from ai_tools.registry import registry
-from mcp_server.constants import CATEGORY_TO_GROUP
+from mcp_server.api_executor import APIExecutionError, MCPRequestContext, executor
 from mcp_server.exceptions import RateLimitExceededError
+from mcp_server.generated_registry import registry
 from mcp_server.rate_limiter import check_rate_limit, get_rate_limit_tier
 from mcp_server.serializers.contracts import (
     MCPErrorResponseSerializer,
@@ -104,44 +104,62 @@ class MCPToolCallView(APIView):
                 status=403,
             )
 
-        # Build context and execute
-        context = ToolContext(
+        # Build context and execute through the existing Django API boundary.
+        context = MCPRequestContext(
             user=user,
             organization=organization,
             workspace=workspace,
+            api_key=getattr(request, "org_api_key", None),
         )
 
         start_time = time.time()
         try:
-            result = tool.run(params, context)
+            data = executor.execute_sync(tool, params, context)
             latency_ms = int((time.time() - start_time) * 1000)
 
             # Update session counters
-            update_session_counters(session, result.is_error)
+            update_session_counters(session, is_error=False)
 
             # Record usage
-            tool_group = CATEGORY_TO_GROUP.get(tool.category, "")
             record_usage(
                 session=session,
                 tool_name=tool_name,
-                tool_group=tool_group,
+                tool_group=tool.group,
                 params=params,
-                status="error" if result.is_error else "success",
-                error_msg=result.content if result.is_error else "",
+                status="success",
+                error_msg="",
                 latency_ms=latency_ms,
             )
 
             return Response(
                 {
-                    "status": not result.is_error,
+                    "status": True,
                     "result": {
-                        "content": result.content,
-                        "data": result.data,
-                        "is_error": result.is_error,
-                        "error_code": result.error_code,
+                        "content": json.dumps(data, default=str),
+                        "data": data,
+                        "is_error": False,
+                        "error_code": None,
                     },
                     "session_id": str(session.id),
                 }
+            )
+        except APIExecutionError as e:
+            latency_ms = int((time.time() - start_time) * 1000)
+            update_session_counters(session, is_error=True)
+            record_usage(
+                session=session,
+                tool_name=tool_name,
+                tool_group=tool.group,
+                params=params,
+                status="error",
+                error_msg=str(e),
+                latency_ms=latency_ms,
+            )
+            return Response(
+                build_error_envelope(
+                    str(e), status_code=e.status_code, extra={"details": e.data}
+                ),
+                status=e.status_code,
             )
         except Exception as e:
             latency_ms = int((time.time() - start_time) * 1000)
@@ -149,11 +167,10 @@ class MCPToolCallView(APIView):
 
             update_session_counters(session, is_error=True)
 
-            tool_group = CATEGORY_TO_GROUP.get(tool.category, "")
             record_usage(
                 session=session,
                 tool_name=tool_name,
-                tool_group=tool_group,
+                tool_group=tool.group,
                 params=params,
                 status="error",
                 error_msg=str(e),
@@ -196,7 +213,7 @@ class MCPToolListView(APIView):
         tools = []
         for tool in registry.list_all():
             if tool.name in enabled_tools:
-                tools.append(tool.to_dict())
+                tools.append(tool.to_discovery_dict())
 
         return Response(
             {

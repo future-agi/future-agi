@@ -392,6 +392,7 @@ def monitor_test_execution_for_chat(test_execution_id: str):
 
         is_evaluating = False
         all_terminal = True
+        runs_all_done = True
         has_any_completed = False
         has_any_failed = False
 
@@ -402,6 +403,11 @@ def monitor_test_execution_for_chat(test_execution_id: str):
                 CallExecution.CallStatus.CANCELLED,
             ]:
                 all_terminal = False
+                # A call whose run is not finished keeps the whole execution in
+                # RUNNING — matching the native rollup, which only advances to
+                # EVALUATING once every call has left the voice leg. Without this
+                # the execution flips to EVALUATING while other calls still run.
+                runs_all_done = False
 
             call_metadata = call_execution.call_metadata or {}
 
@@ -424,7 +430,7 @@ def monitor_test_execution_for_chat(test_execution_id: str):
 
         status_changed = False
 
-        if is_evaluating and not all_terminal:
+        if is_evaluating and runs_all_done:
             test_execution.status = TestExecution.ExecutionStatus.EVALUATING
             test_execution.save(update_fields=["status"])
             status_changed = True

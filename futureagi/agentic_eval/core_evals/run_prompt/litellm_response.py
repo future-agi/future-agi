@@ -20,7 +20,7 @@ from model_hub.utils.websocket_manager import get_websocket_manager
 from channels.db import sync_to_async
 
 import litellm
-import av
+from tfc.utils.lazy_extras import av
 import requests
 import base64
 import copy

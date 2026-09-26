@@ -21,6 +21,7 @@ export function darkElevatedStyles(theme, { boxShadow, borderOnly } = {}) {
   return {
     border: `1px solid ${border}`,
     backgroundColor: theme.palette.background.neutral,
+    "--input-surface": theme.palette.background.neutral,
     backgroundImage: "none",
     boxShadow: boxShadow || "0px 12px 32px -4px rgba(0, 0, 0, 0.6)",
   };

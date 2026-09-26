@@ -22,20 +22,33 @@ on:
       - "frontend/scripts/check-runtime-management-api-contract-coverage.mjs"
       - "frontend/scripts/check-api-endpoint-registry-contract.mjs"
       - "frontend/scripts/check-api-surface-usage.mjs"
-      - "futureagi/model_hub/serializers/annotation_queues.py"
-      - "futureagi/model_hub/serializers/scores.py"
-      - "futureagi/model_hub/views/annotation_queues.py"
-      - "futureagi/model_hub/views/ai_filter.py"
-      - "futureagi/model_hub/views/scores.py"
+      # Every app whose serializers and views define operations in
+      # api_contracts/openapi/swagger.json. Keep these directory-wide: a
+      # per-file list silently stops covering each new serializer, and a
+      # source-only change that skips this workflow ships contract drift.
+      - "futureagi/accounts/serializers/**"
+      - "futureagi/accounts/views/**"
+      - "futureagi/agentcc/serializers/**"
+      - "futureagi/agentcc/views/**"
+      - "futureagi/model_hub/serializers/**"
+      - "futureagi/model_hub/views/**"
+      - "futureagi/mcp_server/serializers/**"
+      - "futureagi/mcp_server/views/**"
+      - "futureagi/simulate/serializers/**"
+      - "futureagi/simulate/views/**"
+      - "futureagi/tracer/serializers/**"
+      - "futureagi/tracer/views/**"
+      - "futureagi/model_hub/utils/annotation_queue_helpers.py"
       - "futureagi/tfc/utils/api_contracts.py"
       - "futureagi/tfc/utils/general_methods.py"
-      - "futureagi/model_hub/utils/annotation_queue_helpers.py"
-      - "futureagi/tracer/serializers/**"
       - "futureagi/tracer/services/clickhouse/query_builders/**"
       - "futureagi/tracer/utils/filter_operators.py"
       - "futureagi/tracer/utils/filters.py"
       - "futureagi/tracer/utils/helper.py"
-      - "futureagi/tracer/views/**"
+      - "futureagi/tfc/deployment_telemetry/**"
+      - "futureagi/mcp_server/catalog/**"
+      - "futureagi/mcp_server/tool_generation.py"
+      - "scripts/generate-mcp-tools.py"
       - ".github/workflows/api-contracts.yml"
   push:
     branches: [main, develop, dev]
@@ -58,20 +71,33 @@ on:
       - "frontend/scripts/check-runtime-management-api-contract-coverage.mjs"
       - "frontend/scripts/check-api-endpoint-registry-contract.mjs"
       - "frontend/scripts/check-api-surface-usage.mjs"
-      - "futureagi/model_hub/serializers/annotation_queues.py"
-      - "futureagi/model_hub/serializers/scores.py"
-      - "futureagi/model_hub/views/annotation_queues.py"
-      - "futureagi/model_hub/views/ai_filter.py"
-      - "futureagi/model_hub/views/scores.py"
+      # Every app whose serializers and views define operations in
+      # api_contracts/openapi/swagger.json. Keep these directory-wide: a
+      # per-file list silently stops covering each new serializer, and a
+      # source-only change that skips this workflow ships contract drift.
+      - "futureagi/accounts/serializers/**"
+      - "futureagi/accounts/views/**"
+      - "futureagi/agentcc/serializers/**"
+      - "futureagi/agentcc/views/**"
+      - "futureagi/model_hub/serializers/**"
+      - "futureagi/model_hub/views/**"
+      - "futureagi/mcp_server/serializers/**"
+      - "futureagi/mcp_server/views/**"
+      - "futureagi/simulate/serializers/**"
+      - "futureagi/simulate/views/**"
+      - "futureagi/tracer/serializers/**"
+      - "futureagi/tracer/views/**"
+      - "futureagi/model_hub/utils/annotation_queue_helpers.py"
       - "futureagi/tfc/utils/api_contracts.py"
       - "futureagi/tfc/utils/general_methods.py"
-      - "futureagi/model_hub/utils/annotation_queue_helpers.py"
-      - "futureagi/tracer/serializers/**"
       - "futureagi/tracer/services/clickhouse/query_builders/**"
       - "futureagi/tracer/utils/filter_operators.py"
       - "futureagi/tracer/utils/filters.py"
       - "futureagi/tracer/utils/helper.py"
-      - "futureagi/tracer/views/**"
+      - "futureagi/tfc/deployment_telemetry/**"
+      - "futureagi/mcp_server/catalog/**"
+      - "futureagi/mcp_server/tool_generation.py"
+      - "scripts/generate-mcp-tools.py"
       - ".github/workflows/api-contracts.yml"
   workflow_dispatch:
 
@@ -85,6 +111,7 @@ jobs:
     env:
       EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN }}
       EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
+      EE_BASE_REF: ${{ github.base_ref || 'dev' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -100,24 +127,34 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: future-agi/ee
-          path: futureagi/ee
+          path: futureagi/ee/cloud
           token: ${{ env.EE_REPO_READ_TOKEN }}
           persist-credentials: true
           fetch-depth: 1
 
       - name: Use matching EE branch when available
-        working-directory: futureagi/ee
+        working-directory: futureagi/ee/cloud
         run: |
-          if git ls-remote --exit-code --heads origin "${EE_REPO_BRANCH}" >/dev/null 2>&1; then
-            git fetch --depth=1 origin "${EE_REPO_BRANCH}"
-            git checkout --detach FETCH_HEAD
-            echo "Using EE branch ${EE_REPO_BRANCH}"
-          else
-            echo "::notice::No EE branch named ${EE_REPO_BRANCH}; using the EE repository default branch."
-          fi
+          # EE's default branch trails its own dev, so never settle for whatever
+          # the checkout landed on: walk the same candidate chain backend-ci
+          # and the SDK compatibility workflow use and take the first branch
+          # that exists.
+          for candidate in "${EE_REPO_BRANCH}" "${EE_BASE_REF}" dev main; do
+            if [ -z "${candidate}" ]; then
+              continue
+            fi
+            if git ls-remote --exit-code --heads origin "${candidate}" >/dev/null 2>&1; then
+              git fetch --depth=1 origin "${candidate}"
+              git checkout --detach FETCH_HEAD
+              echo "::notice::Using EE branch ${candidate}"
+              exit 0
+            fi
+          done
+          echo "::error::No EE branch found among ${EE_REPO_BRANCH}, ${EE_BASE_REF}, dev, main"
+          exit 1
 
       - name: Drop EE checkout credentials
-        working-directory: futureagi/ee
+        working-directory: futureagi/ee/cloud
         run: git config --unset-all http.https://github.com/.extraheader || true
 
       - name: Setup Node.js
@@ -194,6 +231,7 @@ jobs:
       TESTING: "false"
       EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN }}
       EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
+      EE_BASE_REF: ${{ github.base_ref || 'dev' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -235,24 +273,34 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: future-agi/ee
-          path: futureagi/ee
+          path: futureagi/ee/cloud
           token: ${{ env.EE_REPO_READ_TOKEN }}
           persist-credentials: true
           fetch-depth: 1
 
       - name: Use matching EE branch when available
-        working-directory: futureagi/ee
+        working-directory: futureagi/ee/cloud
         run: |
-          if git ls-remote --exit-code --heads origin "${EE_REPO_BRANCH}" >/dev/null 2>&1; then
-            git fetch --depth=1 origin "${EE_REPO_BRANCH}"
-            git checkout --detach FETCH_HEAD
-            echo "Using EE branch ${EE_REPO_BRANCH}"
-          else
-            echo "::notice::No EE branch named ${EE_REPO_BRANCH}; using the EE repository default branch."
-          fi
+          # EE's default branch trails its own dev, so never settle for whatever
+          # the checkout landed on: walk the same candidate chain backend-ci
+          # and the SDK compatibility workflow use and take the first branch
+          # that exists.
+          for candidate in "${EE_REPO_BRANCH}" "${EE_BASE_REF}" dev main; do
+            if [ -z "${candidate}" ]; then
+              continue
+            fi
+            if git ls-remote --exit-code --heads origin "${candidate}" >/dev/null 2>&1; then
+              git fetch --depth=1 origin "${candidate}"
+              git checkout --detach FETCH_HEAD
+              echo "::notice::Using EE branch ${candidate}"
+              exit 0
+            fi
+          done
+          echo "::error::No EE branch found among ${EE_REPO_BRANCH}, ${EE_BASE_REF}, dev, main"
+          exit 1
 
       - name: Drop EE checkout credentials
-        working-directory: futureagi/ee
+        working-directory: futureagi/ee/cloud
         run: git config --unset-all http.https://github.com/.extraheader || true
 
       - name: Setup Python
@@ -264,7 +312,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Install backend dependencies
-        run: uv sync --frozen
+        run: uv sync --frozen --all-extras
 
       - name: Apply ClickHouse test schema
         run: >
@@ -284,11 +332,15 @@ jobs:
           fi
           git diff --exit-code api_contracts/openapi/swagger.json
 
+      - name: Check generated MCP tool manifest
+        run: uv run python ../scripts/generate-mcp-tools.py --check
+
       - name: Run annotation/filter contract tests
         env:
           TESTING: "true"
         run: >
           uv run pytest -q --tb=line
+          --ds=tfc.settings.openapi
           tracer/tests/test_filter_contract.py
           tracer/tests/test_filter_api_contract.py
           tracer/tests/test_validate_filters_helper.py
@@ -296,9 +348,9 @@ jobs:
           model_hub/tests/test_annotation_api_contract.py
           model_hub/tests/test_annotation_workflow_api.py
           tfc/tests/test_falcon_api_contract_debt.py
-          tfc/tests/test_usage_api_contract_debt.py
+          ee/cloud/tests/test_usage_api_contract_debt.py
           ee/usage/tests/test_events_schema.py
-          ee/usage/tests/test_billing_api.py
+          ee/cloud/tests/test_billing_api.py
           tfc/tests/test_api_contracts.py
           tfc/tests/test_accounts_api_contract_debt.py
           tfc/tests/test_core_api_contract_debt.py
@@ -317,3 +369,4 @@ jobs:
           simulate/tests/test_simulator_agent_api_contract.py
           simulate/tests/test_test_execution_api_contract.py
           tracer/tests/test_tracer_feed_api_contract.py
+          tfc/deployment_telemetry/tests/test_schema_contract.py

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/futureagi/agentcc-gateway/internal/config"
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	otelpkg "github.com/futureagi/agentcc-gateway/internal/otel"
 	"github.com/futureagi/agentcc-gateway/internal/pipeline"
@@ -138,20 +139,23 @@ func TestPlugin_FullSpanLifecycle(t *testing.T) {
 	}
 
 	// Check attributes.
-	assertAttr(t, s, "gen_ai.system", "agentcc-gateway")
+	assertAttr(t, s, "gen_ai.span.kind", "llm")
+	assertAttr(t, s, "gen_ai.operation.name", "chat")
+	assertAttr(t, s, "gen_ai.system", "openai")
+	assertAttr(t, s, "gen_ai.provider.name", "openai")
 	assertAttr(t, s, "gen_ai.request.model", "gpt-4")
 	assertAttr(t, s, "gen_ai.response.model", "gpt-4-0613")
-	assertAttr(t, s, "gen_ai.provider", "openai")
 	assertAttr(t, s, "gen_ai.usage.input_tokens", 150)
 	assertAttr(t, s, "gen_ai.usage.output_tokens", 50)
+	assertAttr(t, s, "gen_ai.usage.total_tokens", 200)
 	assertAttr(t, s, "gen_ai.request.max_tokens", 1000)
+	assertAttr(t, s, "gen_ai.cost.total", 0.005)
+	assertAttr(t, s, "gen_ai.server.time_to_first_token", 0.12)
+	assertAttr(t, s, "session.id", "session-1")
+	assertAttr(t, s, "user.id", "user-1")
 	assertAttr(t, s, "agentcc.request_id", "req-123")
 	assertAttr(t, s, "agentcc.is_stream", false)
-	assertAttr(t, s, "agentcc.user_id", "user-1")
-	assertAttr(t, s, "agentcc.session_id", "session-1")
-	assertAttr(t, s, "agentcc.cost", 0.005)
 	assertAttr(t, s, "agentcc.cache_status", "miss")
-	assertAttr(t, s, "agentcc.ttft_ms", float64(120))
 	assertAttr(t, s, "agentcc.guardrail_triggered", true)
 	assertAttr(t, s, "agentcc.budget_remaining", 95.50)
 
@@ -462,5 +466,227 @@ func assertAttr(t *testing.T, s *otelpkg.Span, key string, want interface{}) {
 	}
 	if fmt.Sprintf("%v", got) != fmt.Sprintf("%v", want) {
 		t.Fatalf("attribute %q = %v (%T), want %v (%T)", key, got, got, want, want)
+	}
+}
+
+func TestPlugin_CustomMetadataOnSpan(t *testing.T) {
+	exp := &captureExporter{}
+	p := NewWithExporter(exp, 1.0, true)
+
+	rc := newTestRC()
+	// Caller-supplied dimensions, as parsed from x-agentcc-metadata.
+	rc.Metadata["profile_id"] = "milestone-p1"
+	rc.Metadata["business_id"] = "biz-42"
+	rc.CustomMetadataKeys = []string{"profile_id", "business_id"}
+	// Written by the cost plugin, not by the caller — must stay unprefixed.
+	rc.Metadata["cost"] = "0.0042"
+
+	ctx := context.Background()
+	p.ProcessRequest(ctx, rc)
+	p.ProcessResponse(ctx, rc)
+
+	spans := exp.Spans()
+	if len(spans) != 1 {
+		t.Fatalf("got %d spans, want 1", len(spans))
+	}
+	attrs := spans[0].Attributes
+
+	// One JSON object under the conventional `metadata` key — a Go map would
+	// reach the consumer as a Go repr, not JSON.
+	raw, ok := attrs["metadata"].(string)
+	if !ok {
+		t.Fatalf("metadata = %#v, want a JSON string", attrs["metadata"])
+	}
+	var got map[string]string
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("metadata is not valid JSON (%q): %v", raw, err)
+	}
+	if got["profile_id"] != "milestone-p1" || got["business_id"] != "biz-42" {
+		t.Errorf("metadata = %v", got)
+	}
+	// Only caller keys — plugin-written metadata must not appear as caller input.
+	if _, leaked := got["cost"]; leaked {
+		t.Error("plugin-written metadata was exported as caller metadata")
+	}
+	if _, leaked := attrs["profile_id"]; leaked {
+		t.Error("caller metadata leaked into the span's top-level namespace")
+	}
+	if attrs["gen_ai.cost.total"] != 0.0042 {
+		t.Errorf("gen_ai.cost.total = %v, want 0.0042", attrs["gen_ai.cost.total"])
+	}
+}
+
+func TestPlugin_NoCustomMetadata(t *testing.T) {
+	exp := &captureExporter{}
+	p := NewWithExporter(exp, 1.0, true)
+
+	rc := newTestRC()
+	rc.Metadata["cost"] = "0.01" // internal only, no CustomMetadataKeys
+
+	ctx := context.Background()
+	p.ProcessRequest(ctx, rc)
+	p.ProcessResponse(ctx, rc)
+
+	spans := exp.Spans()
+	if len(spans) != 1 {
+		t.Fatalf("got %d spans, want 1", len(spans))
+	}
+	if v, ok := spans[0].Attributes["metadata"]; ok {
+		t.Errorf("metadata attribute set with no caller input: %v", v)
+	}
+}
+
+// The platform files a span by gen_ai.span.kind and falls back to UNKNOWN, so
+// every endpoint the gateway serves must produce a kind it recognises.
+func TestPlugin_SpanKindPerEndpoint(t *testing.T) {
+	known := map[string]bool{
+		"llm": true, "chain": true, "tool": true, "retriever": true,
+		"embedding": true, "agent": true, "reranker": true, "guardrail": true,
+		"evaluator": true, "conversation": true,
+	}
+	endpoints := []struct {
+		endpointType string
+		wantKind     string
+	}{
+		{"", "llm"},
+		{"chat", "llm"},
+		{"completion", "llm"},
+		{"responses", "llm"},
+		{"assistants", "llm"},
+		{"anthropic_messages", "llm"},
+		{"genai_generate", "llm"},
+		{"genai_stream", "llm"},
+		{"embedding", "embedding"},
+		{"genai_embed", "embedding"},
+		{"rerank", "reranker"},
+		{"search", "retriever"},
+		{"vector_stores", "retriever"},
+		{"image", "llm"},
+		{"speech", "llm"},
+		{"transcription", "llm"},
+		{"translation", "llm"},
+		{"ocr", "llm"},
+		{"video", "llm"},
+	}
+
+	for _, e := range endpoints {
+		t.Run(e.endpointType, func(t *testing.T) {
+			exp := &captureExporter{}
+			p := NewWithExporter(exp, 1.0, true)
+			rc := newTestRC()
+			rc.EndpointType = e.endpointType
+
+			ctx := context.Background()
+			p.ProcessRequest(ctx, rc)
+			p.ProcessResponse(ctx, rc)
+
+			attrs := exp.Spans()[0].Attributes
+			kind, _ := attrs["gen_ai.span.kind"].(string)
+			if kind != e.wantKind {
+				t.Errorf("gen_ai.span.kind = %q, want %q", kind, e.wantKind)
+			}
+			if !known[kind] {
+				t.Errorf("gen_ai.span.kind %q is not one the platform recognises — the span files as UNKNOWN", kind)
+			}
+			if op, _ := attrs["gen_ai.operation.name"].(string); op == "" {
+				t.Error("gen_ai.operation.name is empty")
+			}
+		})
+	}
+}
+
+// gen_ai.system is an accepted alias for the provider, so naming the gateway
+// there would record "agentcc-gateway" as the provider of every call.
+func TestPlugin_ProviderAttributes(t *testing.T) {
+	exp := &captureExporter{}
+	p := NewWithExporter(exp, 1.0, true)
+	rc := newTestRC()
+	rc.Provider = "azure"
+
+	ctx := context.Background()
+	p.ProcessRequest(ctx, rc)
+	p.ProcessResponse(ctx, rc)
+
+	attrs := exp.Spans()[0].Attributes
+	if attrs["gen_ai.provider.name"] != "azure" {
+		t.Errorf("gen_ai.provider.name = %v, want azure", attrs["gen_ai.provider.name"])
+	}
+	if attrs["gen_ai.system"] != "azure" {
+		t.Errorf("gen_ai.system = %v, want the upstream provider", attrs["gen_ai.system"])
+	}
+}
+
+// Session and user are read from these literal keys, not through the alias
+// registry, so gen_ai.conversation.id / enduser.id would silently not land.
+func TestPlugin_ConventionalAttributeNames(t *testing.T) {
+	exp := &captureExporter{}
+	p := NewWithExporter(exp, 1.0, true)
+	rc := newTestRC()
+	rc.ResolvedModel = "gpt-4-0613"
+
+	ctx := context.Background()
+	p.ProcessRequest(ctx, rc)
+	p.ProcessResponse(ctx, rc)
+
+	attrs := exp.Spans()[0].Attributes
+	for _, want := range []string{
+		"gen_ai.span.kind", "gen_ai.operation.name", "gen_ai.request.model",
+		"gen_ai.response.model", "gen_ai.provider.name", "gen_ai.system",
+		"gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens",
+		"gen_ai.usage.total_tokens", "gen_ai.client.operation.duration",
+		"session.id", "user.id",
+	} {
+		if _, ok := attrs[want]; !ok {
+			t.Errorf("missing conventional attribute %q", want)
+		}
+	}
+	// Superseded names must be gone, not emitted alongside.
+	for _, gone := range []string{
+		"gen_ai.provider", "agentcc.cost", "agentcc.session_id", "agentcc.user_id",
+		"agentcc.duration_ms", "agentcc.ttft_ms",
+	} {
+		if v, ok := attrs[gone]; ok {
+			t.Errorf("superseded attribute %q still emitted: %v", gone, v)
+		}
+	}
+	// Gateway-only facts keep the agentcc namespace — no platform equivalent.
+	for _, want := range []string{"agentcc.request_id", "agentcc.is_stream"} {
+		if _, ok := attrs[want]; !ok {
+			t.Errorf("missing gateway attribute %q", want)
+		}
+	}
+}
+
+func TestNew_OTLPExporterSelected(t *testing.T) {
+	p := New(config.OTelConfig{
+		Enabled:     true,
+		Exporter:    "otlp",
+		Endpoint:    "http://otel-collector:4318",
+		ServiceName: "agentcc-gateway-stage",
+	})
+	defer p.Close()
+
+	if _, ok := p.exporter.(*otelpkg.OTLPExporter); !ok {
+		t.Fatalf("exporter = %T, want *otel.OTLPExporter", p.exporter)
+	}
+}
+
+func TestNew_OTLPBadEndpointFallsBackToStdout(t *testing.T) {
+	// Config.Validate normally catches this; the plugin must still degrade to
+	// stdout rather than nil-panic on the first request.
+	p := New(config.OTelConfig{Enabled: true, Exporter: "otlp", Endpoint: "not-a-url"})
+	defer p.Close()
+
+	if _, ok := p.exporter.(*otelpkg.StdoutExporter); !ok {
+		t.Fatalf("exporter = %T, want *otel.StdoutExporter", p.exporter)
+	}
+}
+
+func TestNew_UnknownExporterFallsBackToStdout(t *testing.T) {
+	p := New(config.OTelConfig{Enabled: true, Exporter: "jaeger"})
+	defer p.Close()
+
+	if _, ok := p.exporter.(*otelpkg.StdoutExporter); !ok {
+		t.Fatalf("exporter = %T, want *otel.StdoutExporter", p.exporter)
 	}
 }

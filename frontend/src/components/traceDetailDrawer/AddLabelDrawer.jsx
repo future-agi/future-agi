@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
+  Alert,
   Box,
   Button,
   Checkbox,
@@ -12,10 +13,11 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import {
-  useAnnotationLabelsList,
+  useInfiniteAnnotationLabelsList,
   annotationLabelKeys,
 } from "src/api/annotation-labels/annotation-labels";
 import {
+  extractErrorMessage,
   useGetOrCreateDefaultQueue,
   useAddLabelToQueue,
   useRemoveLabelFromQueue,
@@ -23,41 +25,8 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import PropTypes from "prop-types";
 import CreateLabelDrawer from "src/sections/annotations/labels/create-label-drawer";
-
-const TYPE_CHIP_COLORS = {
-  text: { bg: "#f0f4ff", color: "#3b6ce7" },
-  numeric: { bg: "#f0faf4", color: "#1a8a4a" },
-  categorical: { bg: "#fef6ee", color: "#c4631a" },
-  thumbs_up_down: { bg: "#fdf2f8", color: "#c026a3" },
-  star: { bg: "#fffbeb", color: "#b45309" },
-};
-
-function TypeChip({ type }) {
-  const label = (type || "")
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-  const colors = TYPE_CHIP_COLORS[type] || { bg: "#f5f5f5", color: "#666" };
-  return (
-    <Box
-      sx={{
-        px: 1,
-        py: 0.25,
-        borderRadius: 0.5,
-        bgcolor: colors.bg,
-        fontSize: 11,
-        fontWeight: 500,
-        color: colors.color,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {label}
-    </Box>
-  );
-}
-
-TypeChip.propTypes = {
-  type: PropTypes.string,
-};
+import LabelTypeChip from "src/components/label-type-chip/LabelTypeChip";
+import { useDebounce } from "src/hooks/use-debounce";
 
 const AddLabelDrawerContent = ({
   projectId,
@@ -69,17 +38,31 @@ const AddLabelDrawerContent = ({
   const [search, setSearch] = useState("");
   const [defaultQueue, setDefaultQueue] = useState(null);
   const [queueLabelIds, setQueueLabelIds] = useState(new Set());
+  const [knownLabelsById, setKnownLabelsById] = useState(new Map());
   const [saving, setSaving] = useState(false);
   const [createLabelOpen, setCreateLabelOpen] = useState(false);
+  const [queueError, setQueueError] = useState("");
   const queryClient = useQueryClient();
+  const debouncedSearch = useDebounce(search.trim(), 300);
 
-  const { data: labelsData } = useAnnotationLabelsList({
-    search: "",
-    limit: 100,
+  const {
+    data: labelsData,
+    isLoading: isLabelsLoading,
+    isError: isLabelsError,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+    refetch: retryLabels,
+  } = useInfiniteAnnotationLabelsList({
+    search: debouncedSearch,
+    limit: 50,
   });
-  const allLabels = labelsData?.results || [];
+  const labels = labelsData?.results || [];
 
-  const getOrCreateDefault = useGetOrCreateDefaultQueue();
+  const { mutate: getOrCreateDefault, isPending: isDefaultQueuePending } =
+    useGetOrCreateDefaultQueue({
+      notifyOnError: false,
+    });
   const addLabelMutation = useAddLabelToQueue();
   const removeLabelMutation = useRemoveLabelFromQueue();
 
@@ -90,10 +73,11 @@ const AddLabelDrawerContent = ({
   useEffect(() => {
     if (scopeId && !defaultQueue && !hasFetchedRef.current) {
       hasFetchedRef.current = true;
-      getOrCreateDefault.mutate(
+      getOrCreateDefault(
         { projectId, datasetId, agentDefinitionId },
         {
           onSuccess: (response) => {
+            setQueueError("");
             const result = response.data?.result || response.data;
             const queue = result?.queue;
             if (queue) setDefaultQueue(queue);
@@ -101,17 +85,33 @@ const AddLabelDrawerContent = ({
               (result?.labels || []).map((l) => l.id),
             );
             setQueueLabelIds(existingIds);
+            setKnownLabelsById(
+              new Map(
+                (result?.labels || [])
+                  .filter((label) => label?.id)
+                  .map((label) => [label.id, label]),
+              ),
+            );
+          },
+          onError: (error) => {
+            setDefaultQueue(null);
+            setQueueLabelIds(new Set());
+            setKnownLabelsById(new Map());
+            setQueueError(
+              extractErrorMessage(error, "Failed to get default queue"),
+            );
           },
         },
       );
     }
-  }, [scopeId, defaultQueue, projectId, datasetId, agentDefinitionId]);
-
-  const filteredLabels = search
-    ? allLabels.filter((l) =>
-        l.name?.toLowerCase().includes(search.toLowerCase()),
-      )
-    : allLabels;
+  }, [
+    scopeId,
+    defaultQueue,
+    projectId,
+    datasetId,
+    agentDefinitionId,
+    getOrCreateDefault,
+  ]);
 
   const handleToggle = async (labelId) => {
     if (!defaultQueue?.id) return;
@@ -134,6 +134,12 @@ const AddLabelDrawerContent = ({
           labelId,
         });
         setQueueLabelIds((prev) => new Set([...prev, labelId]));
+        const selectedLabel = labels.find((label) => label.id === labelId);
+        if (selectedLabel) {
+          setKnownLabelsById((prev) =>
+            new Map(prev).set(selectedLabel.id, selectedLabel),
+          );
+        }
       }
       onLabelsChanged?.();
     } finally {
@@ -141,7 +147,22 @@ const AddLabelDrawerContent = ({
     }
   };
 
-  const selectedLabels = allLabels.filter((l) => queueLabelIds.has(l.id));
+  const visibleLabelsById = new Map(knownLabelsById);
+  labels.forEach((label) => visibleLabelsById.set(label.id, label));
+  const selectedLabels = Array.from(queueLabelIds)
+    .map((labelId) => visibleLabelsById.get(labelId))
+    .filter(Boolean);
+  const isInitialLoading =
+    isDefaultQueuePending || (isLabelsLoading && labels.length === 0);
+
+  const handleLabelsScroll = (event) => {
+    const element = event.currentTarget;
+    const isNearBottom =
+      element.scrollHeight - element.scrollTop - element.clientHeight < 32;
+    if (isNearBottom && hasNextPage && !isFetchingNextPage) {
+      fetchNextPage();
+    }
+  };
 
   return (
     <Box
@@ -178,13 +199,16 @@ const AddLabelDrawerContent = ({
           flexDirection: "column",
           gap: 2,
           flex: 1,
-          overflow: "auto",
+          minHeight: 0,
+          overflow: "hidden",
         }}
       >
         <Typography variant="body2" color="text.secondary">
           Select labels to add to the default annotation queue. All team members
           can annotate using these labels.
         </Typography>
+
+        {queueError && <Alert severity="error">{queueError}</Alert>}
 
         {/* Selected labels */}
         {selectedLabels.length > 0 && (
@@ -222,15 +246,18 @@ const AddLabelDrawerContent = ({
 
         {/* Label list */}
         <Box
+          data-testid="annotation-labels-scroll-region"
+          onScroll={handleLabelsScroll}
           sx={{
-            flex: 1,
-            overflow: "auto",
+            flex: "1 1 0",
+            minHeight: 120,
+            overflowY: "auto",
             border: "1px solid",
             borderColor: "divider",
             borderRadius: 1,
           }}
         >
-          {getOrCreateDefault.isPending ? (
+          {isInitialLoading ? (
             <Typography
               variant="body2"
               color="text.secondary"
@@ -238,18 +265,41 @@ const AddLabelDrawerContent = ({
             >
               Loading...
             </Typography>
+          ) : isLabelsError && labels.length === 0 ? (
+            <Alert
+              severity="error"
+              action={
+                <Button
+                  color="inherit"
+                  size="small"
+                  onClick={() => retryLabels()}
+                >
+                  Retry
+                </Button>
+              }
+              sx={{ m: 1 }}
+            >
+              We couldn&apos;t load labels. Please retry.
+            </Alert>
           ) : (
-            filteredLabels.map((label) => (
+            labels.map((label) => (
               <Box
                 key={label.id}
-                onClick={() => !saving && handleToggle(label.id)}
+                onClick={() =>
+                  !saving && defaultQueue?.id && handleToggle(label.id)
+                }
                 sx={{
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "space-between",
                   px: 1,
                   py: 0.5,
-                  cursor: saving ? "wait" : "pointer",
+                  cursor: saving
+                    ? "wait"
+                    : defaultQueue?.id
+                      ? "pointer"
+                      : "not-allowed",
+                  opacity: defaultQueue?.id ? 1 : 0.6,
                   borderBottom: "1px solid",
                   borderColor: "divider",
                   "&:last-child": { borderBottom: 0 },
@@ -266,6 +316,7 @@ const AddLabelDrawerContent = ({
                 >
                   <Checkbox
                     checked={queueLabelIds.has(label.id)}
+                    disabled={!defaultQueue?.id || saving}
                     size="small"
                     sx={{ p: 0.5 }}
                   />
@@ -273,11 +324,11 @@ const AddLabelDrawerContent = ({
                     {label.name}
                   </Typography>
                 </Box>
-                <TypeChip type={label.type} />
+                <LabelTypeChip type={label.type} />
               </Box>
             ))
           )}
-          {!getOrCreateDefault.isPending && filteredLabels.length === 0 && (
+          {!isInitialLoading && !isLabelsError && labels.length === 0 && (
             <Typography
               variant="body2"
               color="text.secondary"
@@ -286,6 +337,17 @@ const AddLabelDrawerContent = ({
               No labels found
             </Typography>
           )}
+          {!isInitialLoading && hasNextPage && (
+            <Button
+              fullWidth
+              size="small"
+              disabled={isFetchingNextPage}
+              onClick={() => fetchNextPage()}
+              sx={{ borderRadius: 0, py: 1 }}
+            >
+              {isFetchingNextPage ? "Loading more..." : "Load more labels"}
+            </Button>
+          )}
         </Box>
 
         {/* Create new label */}
@@ -293,6 +355,7 @@ const AddLabelDrawerContent = ({
           size="small"
           startIcon={<Iconify icon="mingcute:add-line" width={16} />}
           onClick={() => setCreateLabelOpen(true)}
+          disabled={!defaultQueue?.id}
           sx={{ alignSelf: "flex-start", fontSize: 12 }}
         >
           Create new label

@@ -1,12 +1,13 @@
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render } from "src/utils/test-utils";
+import { screen, waitFor } from "@testing-library/react";
 
 import EvalPickerProvider from "./context/EvalPickerProvider";
 import EvalPickerConfigFull from "./EvalPickerConfigFull";
 
 const { capturedProps } = vi.hoisted(() => ({
-  capturedProps: { tracing: null },
+  capturedProps: { tracing: null, instruction: null },
 }));
 
 vi.mock("src/sections/evals/components/TracingTestMode", () => {
@@ -48,7 +49,10 @@ vi.mock("src/sections/evals/components/ModelSelector", () => ({
 }));
 
 vi.mock("src/sections/evals/components/InstructionEditor", () => ({
-  default: () => <div />,
+  default: (props) => {
+    capturedProps.instruction = props;
+    return <div />;
+  },
 }));
 
 vi.mock("src/sections/evals/components/LLMPromptEditor", () => ({
@@ -92,9 +96,11 @@ const {
     data: {
       id: "tpl-1",
       name: "toxicity",
-      eval_type: "llm",
+      owner: "system",
+      eval_type: "agent",
       output_type: "pass_fail",
-      config: {},
+      instructions: "Template instructions",
+      config: { model: "template-model", tools: { template: true } },
     },
     isLoading: false,
     isError: false,
@@ -124,8 +130,23 @@ vi.mock("src/sections/evals/hooks/useCompositeChildrenKeys", () => ({
   useCompositeChildrenUnionKeys: () => stableUnionKeys,
 }));
 
+vi.mock("src/hooks/useCapabilities", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    useFeatureAllowed: () => ({ allowed: true, isLoading: false }),
+    useFeatureLocked: () => ({ locked: false, isLoading: false }),
+    useCapabilities: () => ({ data: undefined, isLoading: false }),
+  };
+});
+const { deploymentMode } = vi.hoisted(() => ({
+  // Mutable on purpose: TH-7177 tests flip the mode per test. Reset in the
+  // gating suite's beforeEach; default matches cloud so other suites keep
+  // seeing the pre-existing UI.
+  deploymentMode: { mode: "cloud", isCloud: true, isOSS: false, isEE: false },
+}));
 vi.mock("src/hooks/useDeploymentMode", () => ({
-  useDeploymentMode: () => ({ isOSS: false }),
+  useDeploymentMode: () => deploymentMode,
 }));
 
 vi.mock("notistack", async (importOriginal) => {
@@ -142,7 +163,7 @@ const TIME_WINDOW = {
   endDate: "2026-05-18T18:29:59.000Z",
 };
 
-const renderConfigFull = ({ sourceTimeWindow } = {}) =>
+const renderConfigFull = ({ sourceTimeWindow, evalData } = {}) =>
   render(
     <EvalPickerProvider
       source="task"
@@ -153,15 +174,44 @@ const renderConfigFull = ({ sourceTimeWindow } = {}) =>
       onEvalAdded={() => {}}
       onClose={() => {}}
       sourceTimeWindow={sourceTimeWindow}
+      initialEval={evalData || null}
     >
       <EvalPickerConfigFull
-        evalData={{ id: "tpl-1", templateId: "tpl-1", name: "toxicity" }}
+        evalData={
+          evalData || { id: "tpl-1", templateId: "tpl-1", name: "toxicity" }
+        }
         onBack={() => {}}
         onSave={() => {}}
         isSaving={false}
       />
     </EvalPickerProvider>,
   );
+
+it("restores saved system-eval binding configuration", async () => {
+  renderConfigFull({
+    evalData: {
+      id: "tpl-1",
+      templateId: "tpl-1",
+      userEvalId: "binding-1",
+      name: "toxicity_dataset",
+      bindingConfig: {
+        template_format: "jinja",
+      },
+      runConfig: {
+        model: "saved-model",
+        tools: { github: true },
+      },
+    },
+  });
+
+  await waitFor(() =>
+    expect(capturedProps.instruction).toMatchObject({
+      model: "saved-model",
+      templateFormat: "jinja",
+    }),
+  );
+  expect(capturedProps.instruction.activeConnectorIds).toEqual(["github"]);
+});
 
 describe("EvalPickerConfigFull — task preview time window", () => {
   beforeEach(() => {
@@ -196,5 +246,33 @@ describe("EvalPickerConfigFull — task preview time window", () => {
         (f) => f.column_id === "created_at",
       ),
     ).toBe(false);
+  });
+});
+
+describe("EvalPickerConfigFull — error localization gating (TH-7177)", () => {
+  beforeEach(() => {
+    Object.assign(deploymentMode, {
+      mode: "cloud",
+      isCloud: true,
+      isOSS: false,
+      isEE: false,
+    });
+  });
+
+  it("shows the Error Localization checkbox on cloud", () => {
+    renderConfigFull();
+    expect(screen.getByText("Error Localization")).toBeTruthy();
+  });
+
+  it("hides the Error Localization checkbox on OSS", () => {
+    Object.assign(deploymentMode, { mode: "oss", isCloud: false, isOSS: true });
+    renderConfigFull();
+    expect(screen.queryByText("Error Localization")).toBeNull();
+  });
+
+  it("shows the Error Localization checkbox on licensed self-hosted EE", () => {
+    Object.assign(deploymentMode, { mode: "ee", isCloud: false, isEE: true });
+    renderConfigFull();
+    expect(screen.getByText("Error Localization")).toBeTruthy();
   });
 });

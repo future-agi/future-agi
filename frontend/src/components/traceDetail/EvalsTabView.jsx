@@ -198,7 +198,7 @@ const EvalTableRow = ({
           py: 0.5,
           borderBottom: "1px solid",
           borderColor: "divider",
-          "&:hover": { bgcolor: "rgba(0,0,0,0.02)" },
+          "&:hover": { bgcolor: "action.hover" },
           minHeight: 32,
         }}
       >

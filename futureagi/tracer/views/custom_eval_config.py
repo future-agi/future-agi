@@ -76,7 +76,8 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
                 data["config"]["choices"] = choices
 
             serializer = self.get_serializer(data=data)
-            serializer.is_valid(raise_exception=True)
+            if not serializer.is_valid():
+                return self._gm.bad_request(serializer.errors)
 
             mapping = serializer.validated_data.get("mapping", {})
 
@@ -133,7 +134,8 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
             serializer = self.get_serializer(
                 custom_eval_config, data=data, partial=True
             )
-            serializer.is_valid(raise_exception=True)
+            if not serializer.is_valid():
+                return self._gm.bad_request(serializer.errors)
 
             if "mapping" in serializer.validated_data:
                 mapping = serializer.validated_data["mapping"]

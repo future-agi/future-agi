@@ -940,6 +940,48 @@ func TestSchemaValidation_WrongType(t *testing.T) {
 	}
 }
 
+func TestSchemaValidation_EmptyArgumentsStillChecksRequired(t *testing.T) {
+	s := newTestServer(t)
+	defer s.Close()
+
+	schema := `{"type":"object","required":["name"],"properties":{"name":{"type":"string"}}}`
+	tools := []Tool{{Name: "action", InputSchema: json.RawMessage(schema)}}
+	s.Registry().RegisterServer("srv", tools)
+
+	mockUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var msg Message
+		json.NewDecoder(r.Body).Decode(&msg)
+		resp, _ := NewResponse(msg.ID, ToolCallResult{Content: []ContentPart{{Type: "text", Text: "ok"}}})
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockUpstream.Close()
+
+	client := NewClient(ClientConfig{ServerID: "srv", URL: mockUpstream.URL, TransportType: "http"})
+	client.transport = NewHTTPTransport(mockUpstream.URL, AuthConfig{})
+	client.healthy.Store(true)
+	client.tools.Store(&tools)
+	s.clientsMu.Lock()
+	s.clients["srv"] = client
+	s.clientsMu.Unlock()
+
+	sessionID := initializeSession(t, s)
+
+	// Empty arguments, but "name" is required.
+	params := ToolCallParams{Name: "srv_action", Arguments: map[string]interface{}{}}
+	paramsData, _ := json.Marshal(params)
+	msg := &Message{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: MethodToolsCall, Params: paramsData}
+
+	w := postMCP(t, s, msg, map[string]string{"MCP-Session-Id": sessionID})
+	resp := decodeResponse(t, w)
+	if resp.Error == nil {
+		t.Fatal("expected error for missing required field with empty arguments")
+	}
+	if resp.Error.Code != ErrCodeInvalidParams {
+		t.Fatalf("expected code %d, got %d", ErrCodeInvalidParams, resp.Error.Code)
+	}
+}
+
 func TestSchemaValidation_ValidArgs(t *testing.T) {
 	s := newTestServer(t)
 	defer s.Close()

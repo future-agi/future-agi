@@ -12,6 +12,7 @@
         "api_key": { "type": "string" },
         "base_url": { "type": "string" },
         "api_format": { "type": "string" },
+        "api_path_prefix": { "type": "string" },
         "models": { "type": "array", "items": { "type": "string" } },
         "timeout": { "type": "integer" },
         "weight": { "type": "number" },
@@ -21,7 +22,8 @@
         "aws_access_key_id": { "type": "string" },
         "aws_secret_access_key": { "type": "string" },
         "aws_region": { "type": "string" },
-        "aws_session_token": { "type": "string" }
+        "aws_session_token": { "type": "string" },
+        "service_account_json": { "type": "string" }
       }
     },
     "GuardrailCheck": {

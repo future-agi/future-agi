@@ -277,6 +277,71 @@ export default function AnnotationQueuesView() {
       <Box sx={{ flexShrink: 0, px: 3 }}>
         <AnnotationsTabs />
       </Box>
+      <Stack
+        direction="row"
+        spacing={2}
+        mb={2}
+        alignItems="center"
+        flexShrink={0}
+      >
+        <FormSearchField
+          size="small"
+          placeholder="Search"
+          searchQuery={searchInput}
+          onChange={handleSearch}
+          sx={{
+            minWidth: "250px",
+            "& .MuiOutlinedInput-root": { height: "30px" },
+          }}
+        />
+        <ToggleButtonGroup
+          exclusive
+          size="small"
+          value={filters.archived ? "archived" : "active"}
+          onChange={handleArchiveViewChange}
+          sx={{
+            height: 30,
+            "& .MuiToggleButton-root": {
+              px: 1.25,
+              borderRadius: "4px",
+              typography: "s2",
+              fontWeight: "fontWeightMedium",
+            },
+          }}
+        >
+          <ToggleButton value="active">Active</ToggleButton>
+          <ToggleButton value="archived">Archived</ToggleButton>
+        </ToggleButtonGroup>
+        <TextField
+          size="small"
+          select
+          value={filters.status}
+          onChange={handleStatusFilter}
+          sx={{ minWidth: 160 }}
+          SelectProps={{
+            displayEmpty: true,
+            renderValue: (v) =>
+              STATUS_OPTIONS.find((o) => o.value === v)?.label ||
+              "All Statuses",
+          }}
+        >
+          {STATUS_OPTIONS.map((opt) => (
+            <MenuItem key={opt.value} value={opt.value}>
+              {opt.label}
+            </MenuItem>
+          ))}
+        </TextField>
+        <Box sx={{ flex: 1 }} />
+        <Button
+          variant="contained"
+          color="primary"
+          startIcon={<Iconify icon="mingcute:add-line" />}
+          onClick={handleCreateNew}
+          disabled={!canWrite}
+        >
+          Create Queue
+        </Button>
+      </Stack>
 
       {isEmpty ? (
         <AnnotationQueueEmpty onCreateClick={handleCreateNew} />
@@ -290,72 +355,6 @@ export default function AnnotationQueuesView() {
             px: 3,
           }}
         >
-          <Stack
-            direction="row"
-            spacing={2}
-            mb={2}
-            alignItems="center"
-            flexShrink={0}
-          >
-            <FormSearchField
-              size="small"
-              placeholder="Search"
-              searchQuery={searchInput}
-              onChange={handleSearch}
-              sx={{
-                minWidth: "250px",
-                "& .MuiOutlinedInput-root": { height: "30px" },
-              }}
-            />
-            <ToggleButtonGroup
-              exclusive
-              size="small"
-              value={filters.archived ? "archived" : "active"}
-              onChange={handleArchiveViewChange}
-              sx={{
-                height: 30,
-                "& .MuiToggleButton-root": {
-                  px: 1.25,
-                  borderRadius: "4px",
-                  typography: "s2",
-                  fontWeight: "fontWeightMedium",
-                },
-              }}
-            >
-              <ToggleButton value="active">Active</ToggleButton>
-              <ToggleButton value="archived">Archived</ToggleButton>
-            </ToggleButtonGroup>
-            <TextField
-              size="small"
-              select
-              value={filters.status}
-              onChange={handleStatusFilter}
-              sx={{ minWidth: 160 }}
-              SelectProps={{
-                displayEmpty: true,
-                renderValue: (v) =>
-                  STATUS_OPTIONS.find((o) => o.value === v)?.label ||
-                  "All Statuses",
-              }}
-            >
-              {STATUS_OPTIONS.map((opt) => (
-                <MenuItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </MenuItem>
-              ))}
-            </TextField>
-            <Box sx={{ flex: 1 }} />
-            <Button
-              variant="contained"
-              color="primary"
-              startIcon={<Iconify icon="mingcute:add-line" />}
-              onClick={handleCreateNew}
-              disabled={!canWrite}
-            >
-              Create Queue
-            </Button>
-          </Stack>
-
           <AnnotationQueueTable
             data={results}
             loading={isLoading}

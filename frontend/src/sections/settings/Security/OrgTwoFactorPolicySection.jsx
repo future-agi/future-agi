@@ -239,7 +239,7 @@ const OrgTwoFactorPolicySection = ({ onStatusChange }) => {
               sx={{
                 fontWeight: "fontWeightSemiBold",
                 verticalAlign: "baseline",
-                color: "#0066CC",
+                color: "accent.info",
                 textDecoration: "underline",
                 cursor: "pointer",
                 border: "none",

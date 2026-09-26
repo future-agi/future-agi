@@ -37,6 +37,7 @@ class ProviderConfig(GatewayAdminContractModel):
     api_key: str | None = Field(None, validation_alias=AliasChoices('api_key', 'apiKey'))
     base_url: str | None = Field(None, validation_alias=AliasChoices('base_url', 'baseUrl', 'baseURL'))
     api_format: str | None = Field(None, validation_alias=AliasChoices('api_format', 'apiFormat'))
+    api_path_prefix: str | None = Field(None, validation_alias=AliasChoices('api_path_prefix', 'apiPathPrefix'))
     models: list[str] | None = None
     timeout: int | None = None
     weight: float | None = None
@@ -47,6 +48,7 @@ class ProviderConfig(GatewayAdminContractModel):
     aws_secret_access_key: str | None = Field(None, validation_alias=AliasChoices('aws_secret_access_key', 'awsSecretAccessKey'))
     aws_region: str | None = Field(None, validation_alias=AliasChoices('aws_region', 'awsRegion'))
     aws_session_token: str | None = Field(None, validation_alias=AliasChoices('aws_session_token', 'awsSessionToken'))
+    service_account_json: str | None = Field(None, validation_alias=AliasChoices('service_account_json', 'serviceAccountJson'))
 
 
 class GuardrailCheck(GatewayAdminContractModel):

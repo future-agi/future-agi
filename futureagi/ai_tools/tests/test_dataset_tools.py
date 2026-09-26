@@ -515,6 +515,103 @@ class TestDeleteColumnTool:
         assert result.is_error
 
 
+class TestDeleteDatasetEvalTool:
+    def test_delete_eval_stamps_metric_columns_and_cells(
+        self, tool_context, writable_dataset, mock_resource_limit
+    ):
+        from model_hub.models.choices import (
+            DataTypeChoices,
+            SourceChoices,
+            StatusType,
+        )
+        from model_hub.models.develop_dataset import Cell, Column, Row
+        from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
+
+        template = EvalTemplate.objects.create(
+            name="delete-dataset-eval-tool",
+            organization=tool_context.organization,
+            workspace=tool_context.workspace,
+            criteria="Evaluate {{output}}",
+            model="gpt-4",
+        )
+        metric = UserEvalMetric.objects.create(
+            name="Delete Dataset Eval Tool",
+            organization=tool_context.organization,
+            workspace=tool_context.workspace,
+            dataset=writable_dataset,
+            template=template,
+            status=StatusType.COMPLETED.value,
+            config={},
+            user=tool_context.user,
+        )
+        eval_column = Column.objects.create(
+            name="Tool Eval",
+            data_type=DataTypeChoices.TEXT.value,
+            dataset=writable_dataset,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(metric.id),
+        )
+        reason_column = Column.objects.create(
+            name="Tool Eval Reason",
+            data_type=DataTypeChoices.TEXT.value,
+            dataset=writable_dataset,
+            source=SourceChoices.EVALUATION_REASON.value,
+            source_id=f"{eval_column.id}-sourceid-{metric.id}",
+        )
+        row = Row.objects.create(dataset=writable_dataset, order=0)
+        eval_cell = Cell.objects.create(
+            dataset=writable_dataset,
+            column=eval_column,
+            row=row,
+            value="Pass",
+        )
+        reason_cell = Cell.objects.create(
+            dataset=writable_dataset,
+            column=reason_column,
+            row=row,
+            value="Reason",
+        )
+        writable_dataset.column_order.extend(
+            [str(eval_column.id), str(reason_column.id)]
+        )
+        writable_dataset.save(update_fields=["column_order"])
+        previous_updates = {
+            metric.id: metric.updated_at,
+            eval_column.id: eval_column.updated_at,
+            reason_column.id: reason_column.updated_at,
+            eval_cell.id: eval_cell.updated_at,
+            reason_cell.id: reason_cell.updated_at,
+        }
+
+        result = run_tool(
+            "delete_dataset_eval",
+            {
+                "dataset_id": str(writable_dataset.id),
+                "eval_id": str(metric.id),
+                "delete_column": True,
+            },
+            tool_context,
+        )
+
+        assert not result.is_error
+        assert result.data["columns_deleted"] == 2
+        assert result.data["cells_deleted"] == 2
+        deleted_objects = [
+            metric,
+            eval_column,
+            reason_column,
+            eval_cell,
+            reason_cell,
+        ]
+        for obj in deleted_objects:
+            obj.refresh_from_db()
+            assert obj.deleted is True
+            assert obj.deleted_at is not None
+            assert obj.updated_at == obj.deleted_at
+            assert obj.updated_at > previous_updates[obj.id]
+        assert len({obj.updated_at for obj in deleted_objects}) == 1
+
+
 class TestDeleteRowsTool:
     def test_delete_rows(self, tool_context, populated_dataset, mock_resource_limit):
         ds, cols, rows = populated_dataset

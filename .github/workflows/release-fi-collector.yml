@@ -14,8 +14,7 @@ on:
         description: 'Branch to build from'
         required: true
         default: 'main'
-        type: choice
-        options: [main, dev]
+        type: string
 
 permissions:
   contents: read

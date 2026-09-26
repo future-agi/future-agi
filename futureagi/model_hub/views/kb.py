@@ -5,13 +5,6 @@ from django.db.models import Q
 from django.http import Http404
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
-from rest_framework import filters, viewsets
-from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError as DRFValidationError
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.request import Request
-from rest_framework.response import Response
-
 from model_hub.models.kb import KnowledgeBase
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
@@ -23,6 +16,12 @@ from model_hub.serializers.kb import (
     KnowledgeBaseCreateSerializer,
     KnowledgeBaseSerializer,
 )
+from rest_framework import filters, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.request import Request
+from rest_framework.response import Response
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.error_codes import get_error_message
@@ -65,16 +64,20 @@ class KnowledgeBaseViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewS
         request_serializer=KnowledgeBaseCreateSerializer,
         responses={201: KnowledgeBaseResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
         reject_unknown_fields=True,
+        serializer_context=lambda request: {"request": request},
     )
     def create(self, request: Request, *args: Any, **kwargs: Any) -> Response:
-        from tfc.ee_gating import EEFeature, check_ee_feature
+        from tfc.ee_gating import check_ee_feature
 
+        # knowledge_base is oss_baseline (not a paid feature), so this is a
+        # pass-through today; it stays as the enforcement hook if the
+        # capability ever becomes plan-gated.
         org = getattr(request, "organization", None) or request.user.organization
-        check_ee_feature(EEFeature.KNOWLEDGE_BASE, org_id=str(org.id))
+        check_ee_feature("knowledge_base", org_id=str(org.id))
 
         try:
-            serializer = self.get_serializer(data=request.validated_data)
-            serializer.is_valid(raise_exception=True)
+
+            serializer = request.validated_serializer
             self.perform_create(serializer)
             return self._gm.success_response(serializer.data, status=201)
         except Exception as e:
@@ -165,7 +168,9 @@ class KnowledgeBaseViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewS
         except DRFValidationError as e:
             return self._gm.bad_request(e.detail)
         except Exception as e:
-            logger.exception(f"Error in partially updating the knowledge base: {str(e)}")
+            logger.exception(
+                f"Error in partially updating the knowledge base: {str(e)}"
+            )
             return self._gm.internal_server_error_response(
                 f"Failed to update knowledge base: {get_error_message('FAILED_TO_UPDATE_KB')}"
             )

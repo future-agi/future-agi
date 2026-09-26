@@ -8,7 +8,7 @@ function findChildRoute(route, path) {
 
 describe("dashboard route registry", () => {
   it("keeps the model list/detail route family reachable", () => {
-    const [dashboardRoute] = dashboardRoutes(null, null, { isOSS: false });
+    const [dashboardRoute] = dashboardRoutes(null, null, { isCloud: true });
     const modelsRoute = findChildRoute(dashboardRoute, "models");
     const detailRoute = findChildRoute(modelsRoute, ":id");
     const datasetsRoute = findChildRoute(detailRoute, "datasets");

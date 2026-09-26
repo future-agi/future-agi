@@ -9,7 +9,6 @@ import {
   DialogContent,
   DialogTitle,
 } from "@mui/material";
-import { grey } from "src/theme/palette";
 import Iconify from "src/components/iconify";
 import PropTypes from "prop-types";
 import { AgGridReact } from "ag-grid-react";
@@ -416,7 +415,8 @@ const VariablesTable = ({
             height: "26px",
             width: "26px",
             padding: "0",
-            border: `1px solid ${grey[300]}`,
+            border: "1px solid",
+            borderColor: "divider",
             top: `min(${117 + rows.length * 359}px,calc(100% - 90px))`,
             position: "absolute",
             left: "54px",
@@ -424,7 +424,7 @@ const VariablesTable = ({
             backgroundColor: "background.paper",
             boxShadow: "0px 1px 6px rgba(0, 0, 0, 0.15)",
             "&:hover": {
-              backgroundColor: `${grey[300]}`,
+              backgroundColor: "action.hover",
             },
           }}
           onClick={handleAddRow}
@@ -440,12 +440,13 @@ const VariablesTable = ({
             top: `calc(129px + ${359 / 2}px)`,
             right: "5px",
             transform: "translateY(-50%)",
-            border: `1px solid ${grey[300]}`,
+            border: "1px solid",
+            borderColor: "divider",
             position: "absolute",
             zIndex: "10",
             boxShadow: "0px 1px 6px rgba(0, 0, 0, 0.15)",
             "&:hover": {
-              backgroundColor: `${grey[300]}`,
+              backgroundColor: "action.hover",
             },
           }}
           onClick={() =>

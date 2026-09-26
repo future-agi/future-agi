@@ -38,5 +38,5 @@ export function usePostLoginPath() {
 
   const returnTo = localStorage.getItem("redirectUrl");
   if (returnTo) return returnTo;
-  return isOSS ? paths.dashboard.develop : paths.dashboard.falconAI;
+  return isOSS ? paths.dashboard.getstarted : paths.dashboard.falconAI;
 }

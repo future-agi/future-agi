@@ -1,12 +1,13 @@
-/* eslint-disable react/prop-types */
 import React, {
   forwardRef,
   useCallback,
+  useEffect,
   useImperativeHandle,
   useMemo,
   useRef,
   useState,
 } from "react";
+import PropTypes from "prop-types";
 import {
   Box,
   Breadcrumbs,
@@ -29,6 +30,7 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { paths } from "src/routes/paths";
 import {
@@ -57,6 +59,7 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import WidgetChart from "./WidgetChart";
 import { resolveGlobalDateRange } from "./dashboardDateRange";
 import useCanEditDashboard from "./hooks/useCanEditDashboard";
+import TruncatedTooltipText from "./TruncatedTooltipText";
 import {
   DndContext,
   DragOverlay,
@@ -91,6 +94,17 @@ function computeRows(widgets) {
   return rows;
 }
 
+const widgetPropType = PropTypes.shape({
+  id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+  name: PropTypes.string,
+  description: PropTypes.string,
+  position: PropTypes.number,
+  width: PropTypes.number,
+  height: PropTypes.number,
+  query_config: PropTypes.object,
+  chart_config: PropTypes.object,
+});
+
 // ---------------------------------------------------------------------------
 // InlineEdit — click-to-edit text field
 // ---------------------------------------------------------------------------
@@ -102,14 +116,14 @@ const InlineEdit = forwardRef(function InlineEdit(
   const [draft, setDraft] = useState(value || "");
   const inputRef = useRef(null);
 
-  const startEdit = () => {
+  const startEdit = useCallback(() => {
     if (readOnly) return;
     setDraft(value || "");
     setEditing(true);
     setTimeout(() => inputRef.current?.focus(), 0);
-  };
+  }, [readOnly, value]);
 
-  useImperativeHandle(ref, () => ({ startEdit }), [value]);
+  useImperativeHandle(ref, () => ({ startEdit }), [startEdit]);
 
   const save = () => {
     setEditing(false);
@@ -183,6 +197,15 @@ const InlineEdit = forwardRef(function InlineEdit(
   );
 });
 
+InlineEdit.propTypes = {
+  value: PropTypes.string,
+  onSave: PropTypes.func.isRequired,
+  placeholder: PropTypes.string,
+  typographyProps: PropTypes.object,
+  multiline: PropTypes.bool,
+  readOnly: PropTypes.bool,
+};
+
 // ---------------------------------------------------------------------------
 // DropZone — droppable area that shows a blue indicator line when hovered
 // ---------------------------------------------------------------------------
@@ -244,6 +267,12 @@ function DropZone({ id, direction = "vertical", isDragging }) {
     </Box>
   );
 }
+
+DropZone.propTypes = {
+  id: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+  direction: PropTypes.oneOf(["horizontal", "vertical"]),
+  isDragging: PropTypes.bool,
+};
 
 // ---------------------------------------------------------------------------
 // ResizeHandle — draggable divider between adjacent widgets in a row
@@ -366,6 +395,13 @@ function ResizeHandle({
   );
 }
 
+ResizeHandle.propTypes = {
+  leftWidget: widgetPropType.isRequired,
+  rightWidget: widgetPropType.isRequired,
+  containerWidth: PropTypes.number.isRequired,
+  onResizeEnd: PropTypes.func.isRequired,
+};
+
 // ---------------------------------------------------------------------------
 // RowResizeHandle — a single horizontal bar below the entire row
 // ---------------------------------------------------------------------------
@@ -430,6 +466,11 @@ function RowResizeHandle({ row, onRowResize }) {
   );
 }
 
+RowResizeHandle.propTypes = {
+  row: PropTypes.arrayOf(widgetPropType).isRequired,
+  onRowResize: PropTypes.func.isRequired,
+};
+
 // ---------------------------------------------------------------------------
 // DraggableWidgetCard — individual widget card with drag handle
 // ---------------------------------------------------------------------------
@@ -443,6 +484,8 @@ function DraggableWidgetCard({
   rowHeight,
   datePreset,
   isReadOnly,
+  refreshRequestId,
+  onQuerySettled,
 }) {
   const theme = useTheme();
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
@@ -450,6 +493,7 @@ function DraggableWidgetCard({
     data: { widget },
     disabled: isReadOnly,
   });
+  const description = widget.description?.trim();
 
   const widgetHeight =
     rowHeight ||
@@ -497,76 +541,104 @@ function DraggableWidgetCard({
             overflow: "hidden",
           }}
         >
-          {/* Header row — entire bar is the drag activator */}
+          {/* Header — title row plus description; the block is the drag activator */}
           <div
             {...(isReadOnly ? {} : { ...attributes, ...listeners })}
             style={{
               display: "flex",
-              flexDirection: "row",
-              alignItems: "center",
+              flexDirection: "column",
               marginBottom: 4,
-              minHeight: 24,
               cursor: isReadOnly ? "default" : "grab",
             }}
           >
-            {!isReadOnly && (
-              <Iconify
-                icon="mdi:drag"
-                width={16}
-                sx={{ color: "text.disabled", mr: 0.5, flexShrink: 0 }}
-              />
-            )}
-
-            <Typography
-              variant="subtitle2"
-              fontWeight="fontWeightSemiBold"
-              noWrap
-              sx={{
-                flex: 1,
-                cursor: "pointer",
-                "&:hover": { textDecoration: "underline" },
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "row",
+                alignItems: "center",
+                minHeight: 24,
               }}
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={() =>
-                navigate(
-                  `/dashboard/dashboards/${dashboardId}/widget/${widget.id}${datePreset ? `?timePreset=${datePreset}` : ""}`,
-                )
-              }
             >
-              {widget.name}
-            </Typography>
+              {!isReadOnly && (
+                <Iconify
+                  icon="mdi:drag"
+                  width={16}
+                  sx={{ color: "text.disabled", mr: 0.5, flexShrink: 0 }}
+                />
+              )}
 
-            {/* Actions */}
-            {!isReadOnly && (
-              <Stack
-                className="widget-actions"
-                direction="row"
-                spacing={0}
+              <Typography
+                variant="subtitle2"
+                fontWeight="fontWeightSemiBold"
+                noWrap
+                sx={{
+                  flex: 1,
+                  cursor: "pointer",
+                  "&:hover": { textDecoration: "underline" },
+                }}
                 onPointerDown={(e) => e.stopPropagation()}
-                sx={{ opacity: 0, transition: "opacity 0.15s" }}
+                onClick={() =>
+                  navigate(
+                    `/dashboard/dashboards/${dashboardId}/widget/${widget.id}${datePreset ? `?timePreset=${datePreset}` : ""}`,
+                  )
+                }
               >
-                <Tooltip title="Edit">
-                  <IconButton
-                    size="small"
-                    onClick={() =>
-                      navigate(
-                        `/dashboard/dashboards/${dashboardId}/widget/${widget.id}${datePreset ? `?timePreset=${datePreset}` : ""}`,
-                      )
-                    }
+                {widget.name}
+              </Typography>
+
+              {/* Actions */}
+              {!isReadOnly && (
+                <Stack
+                  className="widget-actions"
+                  direction="row"
+                  spacing={0}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  sx={{ opacity: 0, transition: "opacity 0.15s" }}
+                >
+                  <Tooltip title="Edit">
+                    <IconButton
+                      size="small"
+                      onClick={() =>
+                        navigate(
+                          `/dashboard/dashboards/${dashboardId}/widget/${widget.id}${datePreset ? `?timePreset=${datePreset}` : ""}`,
+                        )
+                      }
+                    >
+                      <Iconify icon="mdi:pencil-outline" width={16} />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="More">
+                    <IconButton
+                      size="small"
+                      aria-label="Widget options"
+                      onClick={(e) => onMenuOpen(e, widget)}
+                    >
+                      <Iconify icon="mdi:dots-vertical" width={16} />
+                    </IconButton>
+                  </Tooltip>
+                </Stack>
+              )}
+            </div>
+
+            {description && (
+              <TruncatedTooltipText text={description}>
+                {(measureRef) => (
+                  <Typography
+                    ref={measureRef}
+                    variant="caption"
+                    noWrap
+                    onPointerDown={(e) => e.stopPropagation()}
+                    sx={{
+                      color: "text.secondary",
+                      pl: isReadOnly ? 0 : "20px",
+                      pr: 1,
+                      mt: 0.25,
+                    }}
                   >
-                    <Iconify icon="mdi:pencil-outline" width={16} />
-                  </IconButton>
-                </Tooltip>
-                <Tooltip title="More">
-                  <IconButton
-                    size="small"
-                    aria-label="Widget options"
-                    onClick={(e) => onMenuOpen(e, widget)}
-                  >
-                    <Iconify icon="mdi:dots-vertical" width={16} />
-                  </IconButton>
-                </Tooltip>
-              </Stack>
+                    {description}
+                  </Typography>
+                )}
+              </TruncatedTooltipText>
             )}
           </div>
 
@@ -579,7 +651,10 @@ function DraggableWidgetCard({
                   : ""
               }`}
               widget={widget}
+              dashboardId={dashboardId}
               globalDateRange={globalDateRange}
+              refreshRequestId={refreshRequestId}
+              onQuerySettled={onQuerySettled}
             />
           </Box>
         </CardContent>
@@ -587,6 +662,21 @@ function DraggableWidgetCard({
     </Box>
   );
 }
+
+DraggableWidgetCard.propTypes = {
+  widget: widgetPropType.isRequired,
+  dashboardId: PropTypes.oneOfType([PropTypes.string, PropTypes.number])
+    .isRequired,
+  navigate: PropTypes.func.isRequired,
+  onMenuOpen: PropTypes.func.isRequired,
+  globalDateRange: PropTypes.object,
+  _isDragActive: PropTypes.bool,
+  rowHeight: PropTypes.number,
+  datePreset: PropTypes.string,
+  isReadOnly: PropTypes.bool,
+  refreshRequestId: PropTypes.number,
+  onQuerySettled: PropTypes.func,
+};
 
 // ---------------------------------------------------------------------------
 // DragOverlayCard — compact preview shown while dragging
@@ -633,6 +723,10 @@ function DragOverlayCard({ widget }) {
     </Card>
   );
 }
+
+DragOverlayCard.propTypes = {
+  widget: widgetPropType.isRequired,
+};
 
 // ---------------------------------------------------------------------------
 // Main Component
@@ -689,6 +783,25 @@ export default function DashboardDetailView() {
 
   // Drag state
   const [activeWidget, setActiveWidget] = useState(null);
+  const refreshSequenceRef = useRef(0);
+  const pendingRefreshWidgetsRef = useRef(new Set());
+  const refreshFailedRef = useRef(false);
+  const refreshPausedRef = useRef(false);
+  const refreshTimesRef = useRef([]);
+  const [refreshRequestId, setRefreshRequestId] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const activeDashboardIdRef = useRef(dashboardId);
+  activeDashboardIdRef.current = dashboardId;
+
+  useEffect(() => {
+    pendingRefreshWidgetsRef.current.clear();
+    refreshFailedRef.current = false;
+    refreshPausedRef.current = false;
+    refreshTimesRef.current = [];
+    setIsRefreshing(false);
+    setLastUpdated(null);
+  }, [dashboardId]);
 
   // DnD sensors
   const sensors = useSensors(
@@ -708,6 +821,75 @@ export default function DashboardDetailView() {
   // The time filter only acts on widgets — hide the bar until one exists
   // (an interactive-but-inert bar on an empty dashboard reads as broken).
   const hasWidgets = widgets.length > 0;
+
+  const handleRefreshDashboard = useCallback(() => {
+    const queryableWidgetIds = widgets
+      .filter((widget) => widget.query_config?.metrics?.length > 0)
+      .map((widget) => widget.id);
+    if (!queryableWidgetIds.length) return;
+
+    refreshSequenceRef.current += 1;
+    pendingRefreshWidgetsRef.current = new Set(queryableWidgetIds);
+    refreshFailedRef.current = false;
+    refreshPausedRef.current = false;
+    refreshTimesRef.current = [];
+    setIsRefreshing(true);
+    setRefreshRequestId(refreshSequenceRef.current);
+  }, [widgets]);
+
+  const handleWidgetQuerySettled = useCallback(
+    ({
+      dashboardId: settledDashboardId,
+      widgetId,
+      refreshRequestId: requestId,
+      manualRefresh,
+      exact,
+      pollingPaused,
+      updatedAt,
+    }) => {
+      if (
+        String(settledDashboardId || "") !==
+        String(activeDashboardIdRef.current || "")
+      ) {
+        return;
+      }
+      const parsedUpdatedAt = updatedAt ? new Date(updatedAt) : null;
+      const validUpdatedAt =
+        parsedUpdatedAt && !Number.isNaN(parsedUpdatedAt.getTime())
+          ? parsedUpdatedAt
+          : null;
+
+      if (!manualRefresh) {
+        if (exact && validUpdatedAt) {
+          setLastUpdated((current) =>
+            !current || validUpdatedAt > current ? validUpdatedAt : current,
+          );
+        }
+        return;
+      }
+
+      if (requestId !== refreshSequenceRef.current) return;
+      const pending = pendingRefreshWidgetsRef.current;
+      if (!pending.has(widgetId)) return;
+
+      pending.delete(widgetId);
+      if (!exact && !pollingPaused) refreshFailedRef.current = true;
+      if (pollingPaused) refreshPausedRef.current = true;
+      if (exact && validUpdatedAt) refreshTimesRef.current.push(validUpdatedAt);
+
+      if (pending.size === 0) {
+        setIsRefreshing(false);
+        if (!refreshFailedRef.current && !refreshPausedRef.current) {
+          const completedAt = refreshTimesRef.current.reduce(
+            (latest, value) => (!latest || value > latest ? value : latest),
+            null,
+          );
+          if (completedAt) setLastUpdated(completedAt);
+        }
+      }
+    },
+    [],
+  );
 
   // --- Handlers ---
 
@@ -1025,18 +1207,7 @@ export default function DashboardDetailView() {
   // --- Render ---
 
   if (isLoading) {
-    return (
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          height: "60vh",
-        }}
-      >
-        <CircularProgress />
-      </Box>
-    );
+    return <LoadingScreen sx={{ height: "60vh" }} />;
   }
 
   if (!dashboard) {
@@ -1090,6 +1261,41 @@ export default function DashboardDetailView() {
         </Breadcrumbs>
 
         <Stack direction="row" spacing={0.5} alignItems="center">
+          {hasWidgets && lastUpdated && (
+            <Stack
+              direction="row"
+              spacing={0.5}
+              alignItems="center"
+              sx={{ mr: 0.5 }}
+            >
+              <Iconify
+                icon="mdi:clock-outline"
+                width={14}
+                sx={{ color: "text.secondary" }}
+              />
+              <Typography variant="caption" color="text.secondary" noWrap>
+                Last updated {format(lastUpdated, "MMM d, yyyy, h:mm a")}
+              </Typography>
+            </Stack>
+          )}
+          {hasWidgets && (
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={
+                isRefreshing ? (
+                  <CircularProgress size={14} color="inherit" />
+                ) : (
+                  <Iconify icon="mdi:refresh" width={16} />
+                )
+              }
+              onClick={handleRefreshDashboard}
+              disabled={isRefreshing}
+              sx={{ textTransform: "none" }}
+            >
+              {isRefreshing ? "Refreshing" : "Refresh"}
+            </Button>
+          )}
           <Tooltip title={linkCopied ? "Copied!" : "Copy link to share"}>
             <IconButton
               size="small"
@@ -1212,6 +1418,7 @@ export default function DashboardDetailView() {
               fontWeight: 700,
               color: "text.primary",
               lineHeight: 1.3,
+              wordBreak: "break-word",
             },
           }}
         />
@@ -1227,6 +1434,8 @@ export default function DashboardDetailView() {
               color: dashboard.description ? "text.secondary" : "text.disabled",
               mt: 0.5,
               fontSize: "14px",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
             },
           }}
         />
@@ -1381,6 +1590,8 @@ export default function DashboardDetailView() {
                               rowHeight={rowHeight}
                               datePreset={datePreset}
                               isReadOnly={isReadOnly}
+                              refreshRequestId={refreshRequestId}
+                              onQuerySettled={handleWidgetQuerySettled}
                             />
 
                             {/* Resize handle between adjacent widgets */}

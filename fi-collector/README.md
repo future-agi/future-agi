@@ -16,11 +16,19 @@ Customer SDK (OTLP / HTTP / gRPC)
     → ClickHouse 25.3 spans table
 ```
 
-No PG. No Redis buffer. No CDC. No `spans_mv`. The typed-Map split that used
+No PG span-write path. No Redis buffer. No CDC. No `spans_mv`. The typed-Map split that used
 to run inside CH (and caused the OOMs) now runs in this Go binary at ingest
 time, with bounded per-batch memory.
 
 ## Two run modes
+
+### Observed attributes
+
+The collector durably enqueues attribute observations after source inserts and
+publishes them to one Kafka topic. `fi-property-catalog-consumer` writes two
+additive indexes; native metadata readers remain in place. See
+[OSS/local setup and recovery](PROPERTY_CATALOG_OSS.md) for Compose, credentials,
+storage preservation and bounded historical backfill.
 
 ### 1. Bundled with the FutureAGI backend (single docker compose up)
 
@@ -101,6 +109,50 @@ make bench               # benchmark adapter + writer
 ```
 
 For OCB (the OTel Collector builder): the Makefile installs it if missing.
+
+## PostgreSQL authentication configuration
+
+The collector still needs PostgreSQL to resolve API keys and project IDs. For
+each write/read endpoint, configuration precedence is:
+
+1. Explicit `FI_PG_WRITE` / `FI_PG_READ` connection string, preserved verbatim
+   (including its TLS options).
+2. Separate `FI_PG_{WRITE,READ}_{HOST,PORT,DATABASE,USER}` fields. All four are
+   required together; `PASSWORD` is optional. Use a DNS hostname or an
+   **unbracketed** IPv4/IPv6 address, with the numeric port supplied separately.
+3. YAML `auth.pg_write` / `auth.pg_read`.
+
+Any nonempty separate field activates validation, even when an explicit
+connection string is also set. Partial fields, invalid hosts or invalid ports
+fail startup with an error naming the setting, without logging its value;
+they never silently select a fallback. If no read endpoint is configured, auth
+reuses the write endpoint. Separate passwords are URL-encoded by Go, not by a
+deployment template; an empty/unset `PASSWORD` leaves the driver's normal
+`PGPASSWORD` / password-file or passwordless-authentication behavior available.
+
+The separate-field form does **not** force `sslmode=disable`. Like the Python
+backend's libpq connection, pgx honors `PGSSLMODE`, `PGSSLROOTCERT`, `PGSSLCERT`,
+and `PGSSLKEY`. Explicit connection-string options take precedence over these
+environment variables. Invalid TLS settings fail connection initialization;
+they do not trigger a fallback to another configured endpoint.
+
+Production/remote PostgreSQL **must explicitly configure `verify-full`**:
+set `PGSSLMODE=verify-full` and provide the appropriate CA with `PGSSLROOTCERT`
+(plus `PGSSLCERT`/`PGSSLKEY` if client certificates are required), or supply the
+equivalent TLS options in each explicit connection string. Audit both write and
+read strings: their options override the shared environment.
+`verify-full` verifies the server identity and has no plaintext fallback.
+`require` requires encryption but is not equivalent to hostname verification.
+For an intentionally non-TLS local database, set `PGSSLMODE=disable` explicitly.
+With no SSL mode configured, pgx retains libpq's `prefer` default for OSS/local
+compatibility: it tries TLS but **can fall back to plaintext**. This default is
+deliberately compatible with Python/libpq and existing non-TLS local PostgreSQL,
+not a secure default for remote connections. The collector does not infer
+deployment type from hostnames: production TLS is mandatory deployment
+configuration, not automatic runtime enforcement. The root Compose file forwards
+these four TLS variables; mount certificate files read-only at their configured
+container paths using a deployment override. Other deployments must explicitly
+pass the variables and mounts to the collector process/container.
 
 ## Pricing Configuration
 

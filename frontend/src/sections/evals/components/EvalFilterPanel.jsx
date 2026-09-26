@@ -757,7 +757,9 @@ function rowsToApiFilters(rows) {
 // ---------------------------------------------------------------------------
 const AI_FILTER_SCHEMA = FILTER_FIELDS.map((f) => ({
   field: f.value,
+  property_id: `system_attribute:evals:${f.value}`,
   label: f.label,
+  category: "system",
   type: f.type,
   operators:
     f.type === "enum"
@@ -910,7 +912,15 @@ const EvalFilterPanel = ({
     if (!aiQuery.trim()) return;
 
     // Try LLM-backed AI filter first
-    const aiFilters = await aiParseQuery(aiQuery);
+    let aiFilters;
+    try {
+      aiFilters = await aiParseQuery(aiQuery);
+    } catch {
+      // Transport, timeout, and malformed-response failures remain visible
+      // through useAIFilter.error. Never reinterpret them as an exact empty
+      // result and apply an unrelated local parser.
+      return;
+    }
 
     let parsed;
     if (aiFilters.length > 0) {
@@ -1017,7 +1027,7 @@ const EvalFilterPanel = ({
             color="text.secondary"
             sx={{ fontSize: "11px", px: 0.5 }}
           >
-            AI unavailable, using local parser
+            AI filter unavailable. Retry or build the filter manually.
           </Typography>
         )}
 

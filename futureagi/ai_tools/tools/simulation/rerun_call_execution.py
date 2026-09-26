@@ -47,7 +47,6 @@ class RerunCallExecutionTool(BaseTool):
     def execute(
         self, params: RerunCallExecutionInput, context: ToolContext
     ) -> ToolResult:
-
         from simulate.models.agent_definition import AgentDefinition
         from simulate.models.test_execution import (
             CallExecution,
@@ -98,6 +97,19 @@ class RerunCallExecutionTool(BaseTool):
                     "Use rerun_type='eval_only' instead.",
                     error_code="VALIDATION_ERROR",
                 )
+            if (
+                agent_def
+                and agent_def.agent_type == AgentDefinition.AgentTypeChoices.VOICE
+            ):
+                from tfc.ee_gates import voice_sim_gate_response
+
+                denial = voice_sim_gate_response(context.organization)
+                if denial is not None:
+                    return ToolResult.error(
+                        denial.data["message"],
+                        data=denial.data,
+                        error_code=denial.data["code"],
+                    )
 
         scenario_name = call.scenario.name if call.scenario else "—"
         previous_status = call.status

@@ -8,13 +8,9 @@ import NumberQuickFilterValue from "./NumberQuickFilterValue";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { NumberQuickFilterValidationSchema } from "./validation";
 import { avoidDuplicateFilterSet } from "../../common";
+import { coerceFilterValue } from "src/api/contracts/filter-contract";
 
-const NumberQuickFilterPopoverChild = ({
-  filterData,
-  onClose,
-  setFilters,
-  setFilterOpen,
-}) => {
+const NumberQuickFilterPopoverChild = ({ filterData, onClose, setFilters }) => {
   const { control, handleSubmit } = useForm({
     defaultValues: {
       operator: "equals",
@@ -25,11 +21,22 @@ const NumberQuickFilterPopoverChild = ({
   });
 
   const onSubmit = (data) => {
-    const filter = filterData.filter;
-    filter.filter_config.filter_value = [data.value1, data.value2];
-    filter.filter_config.filter_op = data.operator;
+    const source = filterData.filter;
+    // The form always yields two fields; only range ops take a pair.
+    const filter = {
+      ...source,
+      filter_config: {
+        ...source.filter_config,
+        filter_op: data.operator,
+        filter_value: coerceFilterValue(
+          [data.value1, data.value2],
+          data.operator,
+          source.filter_config?.filter_type,
+        ),
+      },
+    };
 
-    setFilterOpen(true);
+    // Not setFilterOpen(true): the panel seeds its rows before this lands.
     setFilters((prev) => avoidDuplicateFilterSet(prev, filter));
     onClose();
   };
@@ -39,7 +46,7 @@ const NumberQuickFilterPopoverChild = ({
       <Stack gap={1}>
         <Stack direction="row" gap={2} alignItems="center">
           <Typography typography="s3" sx={{ whiteSpace: "nowrap" }}>
-            Where score is
+            Where {filterData?.filter?.display_name || "value"} is
           </Typography>
           <FormSelectField
             control={control}
@@ -63,7 +70,6 @@ NumberQuickFilterPopoverChild.propTypes = {
   filterData: PropTypes.object,
   onClose: PropTypes.func,
   setFilters: PropTypes.func,
-  setFilterOpen: PropTypes.func,
 };
 
 const NumberQuickFilterPopover = ({
@@ -71,7 +77,6 @@ const NumberQuickFilterPopover = ({
   filterData,
   onClose,
   setFilters,
-  setFilterOpen,
 }) => {
   return (
     <Popover
@@ -102,7 +107,6 @@ const NumberQuickFilterPopover = ({
         filterData={filterData}
         onClose={onClose}
         setFilters={setFilters}
-        setFilterOpen={setFilterOpen}
       />
     </Popover>
   );
@@ -113,7 +117,6 @@ NumberQuickFilterPopover.propTypes = {
   filterData: PropTypes.object,
   onClose: PropTypes.func,
   setFilters: PropTypes.func,
-  setFilterOpen: PropTypes.func,
 };
 
 export default NumberQuickFilterPopover;

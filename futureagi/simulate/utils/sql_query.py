@@ -244,6 +244,9 @@ def get_kpi_eval_metrics_query(test_execution_id):
                     WHEN output_type = 'Pass/Fail' AND output_text = 'Failed' THEN 0.0
                     WHEN output_type = 'score' AND jsonb_typeof(output_raw) IN ('number')
                          THEN (output_text)::numeric * 100
+                    WHEN output_type = 'score' AND jsonb_typeof(output_raw) = 'object'
+                         AND jsonb_typeof(output_raw->'score') = 'number'
+                         THEN (output_raw->>'score')::numeric * 100
                 END
             )::numeric, 1) AS avg_value,
             NULL::text AS choice_value,
@@ -253,7 +256,6 @@ def get_kpi_eval_metrics_query(test_execution_id):
         GROUP BY metric_id, metric_name, output_type
     ),
 
-    -- Choices: unnest strings, numbers, and arrays into individual rows
     choice_rows AS (
         -- string values
         SELECT metric_id, metric_name,
@@ -269,6 +271,25 @@ def get_kpi_eval_metrics_query(test_execution_id):
         FROM eval_entries,
              jsonb_array_elements_text(output_raw) AS elem
         WHERE output_type = 'choices' AND jsonb_typeof(output_raw) = 'array'
+
+        UNION ALL
+
+        SELECT metric_id, metric_name,
+               output_raw->>'choice' AS choice_value
+        FROM eval_entries
+        WHERE output_type = 'choices' AND jsonb_typeof(output_raw) = 'object'
+              AND output_raw ? 'choice'
+              AND NOT (output_raw ? 'choices')
+
+        UNION ALL
+
+        SELECT metric_id, metric_name,
+               elem AS choice_value
+        FROM eval_entries,
+             jsonb_array_elements_text(output_raw->'choices') AS elem
+        WHERE output_type = 'choices' AND jsonb_typeof(output_raw) = 'object'
+              AND output_raw ? 'choices'
+              AND jsonb_typeof(output_raw->'choices') = 'array'
     ),
 
     choice_agg AS (

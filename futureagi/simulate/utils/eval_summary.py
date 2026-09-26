@@ -18,7 +18,14 @@ def iter_live_eval_outputs(eval_outputs, eval_configs: Container[str]):
     if not isinstance(eval_outputs, dict):
         return
     for eval_id, eval_data in eval_outputs.items():
-        if str(eval_id) in eval_configs:
+        # Harness-native checks are already-computed execution evidence and do
+        # not necessarily have a reusable EvalTemplate/SimulateEvalConfig. They
+        # remain live by source marker; template-backed harness judgements use a
+        # normal config ID and pass the membership check below.
+        is_harness_result = (
+            isinstance(eval_data, dict) and eval_data.get("source") == "harness"
+        )
+        if str(eval_id) in eval_configs or is_harness_result:
             yield eval_id, eval_data
 
 

@@ -53,6 +53,7 @@ class TestAgentccSafeNameValidationAPI:
         assert NAME_ERROR in response.json()["result"]
         mock_bridge.update_key.assert_not_called()
 
+    @pytest.mark.requires_ee
     def test_create_webhook_rejects_xss_name(self, auth_client):
         response = auth_client.post(
             "/agentcc/webhooks/",

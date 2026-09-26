@@ -62,18 +62,21 @@ const EditKeyDialog = ({ open, onClose, keyData }) => {
             label="Name"
             fullWidth
             required
+            size="small"
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
           <TextField
             label="Owner"
             fullWidth
+            size="small"
             value={owner}
             onChange={(e) => setOwner(e.target.value)}
           />
           <Autocomplete
             multiple
             freeSolo
+            size="small"
             options={[]}
             value={allowedModels}
             onChange={(_, val) => setAllowedModels(val)}
@@ -99,6 +102,7 @@ const EditKeyDialog = ({ open, onClose, keyData }) => {
           <Autocomplete
             multiple
             freeSolo
+            size="small"
             options={[]}
             value={allowedProviders}
             onChange={(_, val) => setAllowedProviders(val)}
@@ -129,8 +133,11 @@ const EditKeyDialog = ({ open, onClose, keyData }) => {
         </Stack>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose}>Cancel</Button>
+        <Button size="small" onClick={onClose}>
+          Cancel
+        </Button>
         <Button
+          size="small"
           variant="contained"
           onClick={handleSave}
           disabled={!name.trim() || updateMutation.isPending}

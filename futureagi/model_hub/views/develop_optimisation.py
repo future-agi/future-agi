@@ -18,9 +18,9 @@ from model_hub.serializers.contracts import (
     ModelHubStringResultResponseSerializer,
 )
 from model_hub.serializers.develop_optimisation import (
-    get_optimization_link_errors,
     OptimizationDatasetGetSerializer,
     OptimizationDatasetSerializer,
+    get_optimization_link_errors,
 )
 from model_hub.utils.eval_list import build_user_eval_list_items
 from model_hub.utils.workspace_scope import (

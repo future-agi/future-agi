@@ -82,24 +82,29 @@ describe("AutomationRulesTab", () => {
     const user = userEvent.setup();
     mockUseAutomationRules.mockReturnValue({
       isLoading: false,
-      data: [
-        {
-          id: "rule-1",
-          name: "Rule One",
-          source_type: "trace",
-          enabled: true,
-          trigger_frequency: "manual",
-          trigger_count: 0,
-        },
-        {
-          id: "rule-2",
-          name: "Rule Two",
-          source_type: "trace",
-          enabled: true,
-          trigger_frequency: "manual",
-          trigger_count: 0,
-        },
-      ],
+      data: {
+        results: [
+          {
+            id: "rule-1",
+            name: "Rule One",
+            source_type: "trace",
+            enabled: true,
+            trigger_frequency: "manual",
+            trigger_count: 0,
+          },
+          {
+            id: "rule-2",
+            name: "Rule Two",
+            source_type: "trace",
+            enabled: true,
+            trigger_frequency: "manual",
+            trigger_count: 0,
+          },
+        ],
+      },
+      hasNextPage: false,
+      fetchNextPage: vi.fn(),
+      isFetchingNextPage: false,
     });
     const pendingByRow = [true, false];
     let call = 0;
@@ -122,5 +127,106 @@ describe("AutomationRulesTab", () => {
       queueId: "queue-1",
       ruleId: "rule-2",
     });
+  });
+
+  it("shows an explicit bounded Load more control", async () => {
+    const user = userEvent.setup();
+    const fetchNextPage = vi.fn();
+    mockUseAutomationRules.mockReturnValue({
+      isLoading: false,
+      data: {
+        results: [
+          {
+            id: "rule-1",
+            name: "Rule One",
+            source_type: "trace",
+            enabled: true,
+            trigger_frequency: "manual",
+            trigger_count: 0,
+          },
+        ],
+      },
+      hasNextPage: true,
+      fetchNextPage,
+      isFetchingNextPage: false,
+    });
+    mockUseEvaluateRule.mockReturnValue({
+      mutate: mockEvaluateRule,
+      isPending: false,
+    });
+
+    render(<AutomationRulesTab queueId="queue-1" queue={{ id: "queue-1" }} />);
+
+    await user.click(screen.getByRole("button", { name: "Load more" }));
+
+    expect(fetchNextPage).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows an initial failure instead of the no-rules state and retries explicitly", async () => {
+    const user = userEvent.setup();
+    const refetch = vi.fn();
+    mockUseAutomationRules.mockReturnValue({
+      isLoading: false,
+      data: undefined,
+      hasNextPage: false,
+      fetchNextPage: vi.fn(),
+      isFetchingNextPage: false,
+      isError: true,
+      isFetchNextPageError: false,
+      refetch,
+    });
+    mockUseEvaluateRule.mockReturnValue({
+      mutate: mockEvaluateRule,
+      isPending: false,
+    });
+
+    render(<AutomationRulesTab queueId="queue-1" queue={{ id: "queue-1" }} />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "We couldn't load automation rules",
+    );
+    expect(
+      screen.queryByText("No automation rules configured."),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps prior rows and retries only the failed next page", async () => {
+    const user = userEvent.setup();
+    const fetchNextPage = vi.fn();
+    const refetch = vi.fn();
+    mockUseAutomationRules.mockReturnValue({
+      isLoading: false,
+      data: {
+        results: [
+          {
+            id: "rule-1",
+            name: "Rule One",
+            source_type: "trace",
+            enabled: true,
+            trigger_frequency: "manual",
+            trigger_count: 0,
+          },
+        ],
+      },
+      hasNextPage: true,
+      fetchNextPage,
+      isFetchingNextPage: false,
+      isError: true,
+      isFetchNextPageError: true,
+      refetch,
+    });
+    mockUseEvaluateRule.mockReturnValue({
+      mutate: mockEvaluateRule,
+      isPending: false,
+    });
+
+    render(<AutomationRulesTab queueId="queue-1" queue={{ id: "queue-1" }} />);
+
+    expect(screen.getByText("Rule One")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(fetchNextPage).toHaveBeenCalledTimes(1);
+    expect(refetch).not.toHaveBeenCalled();
   });
 });

@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import structlog
+from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import DatabaseError
 from django.db.models import DateTimeField, F, FloatField, Q
@@ -15,6 +16,9 @@ from model_hub.models.choices import (
 )
 from simulate.serializers import CallTranscriptSerializer
 from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
+
+if TYPE_CHECKING:
+    from model_hub.models.annotation_queues import AutomationRule
 
 logger = structlog.get_logger(__name__)
 
@@ -173,11 +177,16 @@ def filter_available_source_ids_for_annotation(
     as in-progress). FAIL OPEN on a CH error — a transient read must not silently
     drop every add. ``organization`` / ``workspace`` are already applied upstream by
     ``resolve_filtered_trace_ids``. Returns ``(available_ids, unavailable_count,
-    unavailable_message)`` preserving input order. Never query PG.
+    unavailable_message, previews_by_id)`` preserving input order. Never query PG.
+
+    ``previews_by_id`` ({trace_id: payload}) hands the caller the grid preview built
+    from the roots this function already read, so the add path can persist
+    ``QueueItem.source_preview`` without a second CH read (TH-7211). Empty for
+    non-trace types and whenever the roots could not be read.
     """
     ordered_ids = [str(source_id) for source_id in source_ids]
     if source_type != QueueItemSourceType.TRACE.value or not ordered_ids:
-        return ordered_ids, 0, None
+        return ordered_ids, 0, None, {}
 
     roots_by_trace = _batch_ch_trace_roots(
         ordered_ids,
@@ -192,9 +201,14 @@ def filter_available_source_ids_for_annotation(
         return root is None or _is_terminal_span_status(getattr(root, "status", None))
 
     available_ids = [sid for sid in ordered_ids if _available(sid)]
+    previews_by_id = {
+        trace_id: _trace_preview_payload(root)
+        for trace_id, root in roots_by_trace.items()
+        if root is not None
+    }
     unavailable_count = len(ordered_ids) - len(available_ids)
     if unavailable_count <= 0:
-        return available_ids, 0, None
+        return available_ids, 0, None, previews_by_id
 
     if unavailable_count == 1:
         message = (
@@ -205,7 +219,7 @@ def filter_available_source_ids_for_annotation(
             f"{unavailable_count} traces are still in progress and "
             "were not added to the annotation queue."
         )
-    return available_ids, unavailable_count, message
+    return available_ids, unavailable_count, message, previews_by_id
 
 
 def source_project(source_obj, organization=None):
@@ -734,7 +748,11 @@ def _ch_root_span_for_trace(trace_id):
 
     try:
         with get_reader() as reader:
-            roots = reader.roots_by_trace_ids([str(trace_id)], include_heavy=False)
+            roots = reader.roots_by_trace_ids(
+                [str(trace_id)],
+                include_heavy=False,
+                dedup_via_limit_by=True,  # see _batch_ch_trace_roots (TH-7226)
+            )
     except Exception as exc:
         logger.warning("ch_trace_render_error", trace_id=str(trace_id), error=str(exc))
         return None
@@ -760,7 +778,14 @@ def _ch_session_fields_for_item(session_id):
         return None
 
 
-def _batch_ch_spans(span_ids, *, project_id=None, include_heavy=True, caller="render"):
+def _batch_ch_spans(
+    span_ids,
+    *,
+    project_id=None,
+    include_heavy=True,
+    caller="render",
+    reject_ambiguous_ids=False,
+):
     """Batch CH point-read for a render path: ``{str(id): CHSpan}`` over *span_ids*
     in one query. CH error → ``{}`` (FAIL OPEN — the per-item collector branch then
     renders the ``deleted`` sentinel, same as a single-read miss). Backs
@@ -769,7 +794,10 @@ def _batch_ch_spans(span_ids, *, project_id=None, include_heavy=True, caller="re
     omit for prior behavior — see :func:`_batch_ch_trace_roots` on why not ``org_id``.
     ``include_heavy`` defaults True (the render path needs the preview/content columns);
     the add path passes ``False`` to read only the identity/status columns it gates and
-    stamps on, so a large scoped add stays a sub-second point read, not a heavy scan."""
+    stamps on, so a large scoped add stays a sub-second point read, not a heavy scan.
+    ``reject_ambiguous_ids`` omits any bare id that resolves to more than one physical
+    span; the enumerated add path enables it because QueueItem cannot store the full
+    physical identity tuple."""
     if not span_ids:
         return {}
     from tracer.services.clickhouse.v2 import get_reader
@@ -780,6 +808,7 @@ def _batch_ch_spans(span_ids, *, project_id=None, include_heavy=True, caller="re
                 [str(s) for s in span_ids],
                 project_id=project_id,
                 include_heavy=include_heavy,
+                dedup_via_limit_by=True,  # see _batch_ch_trace_roots (TH-7226)
             )
     except Exception as exc:
         logger.warning(
@@ -790,7 +819,33 @@ def _batch_ch_spans(span_ids, *, project_id=None, include_heavy=True, caller="re
             caller=caller,
         )
         return {}
-    return {str(span.id): span for span in spans}
+    if not reject_ambiguous_ids:
+        return {str(span.id): span for span in spans}
+
+    # QueueItem's existing API/storage contract accepts only a bare span id,
+    # while ClickHouse's physical span identity is (trace_id, id, start_time).
+    # Never let a dict overwrite silently choose one physical row when the OTel
+    # span id was reused in another trace. Omitting the ambiguous id makes the
+    # add-items response report it as unresolved instead of adding the wrong row.
+    resolved = {}
+    ambiguous_ids = set()
+    for span in spans:
+        span_id = str(span.id)
+        if span_id in ambiguous_ids:
+            continue
+        if span_id in resolved:
+            resolved.pop(span_id, None)
+            ambiguous_ids.add(span_id)
+            continue
+        resolved[span_id] = span
+
+    if ambiguous_ids:
+        logger.warning(
+            "annotation_queue_ambiguous_span_identity",
+            count=len(ambiguous_ids),
+            caller=caller,
+        )
+    return resolved
 
 
 # Chunk the trace-id IN-list so one batch can't grow unbounded; a queue's selection
@@ -827,7 +882,13 @@ def _batch_ch_trace_roots(trace_ids, *, project_id=None, caller="render"):
             for start in range(0, len(ids), _CH_TRACE_ID_BATCH):
                 chunk = ids[start : start + _CH_TRACE_ID_BATCH]
                 for span in reader.roots_by_trace_ids(
-                    chunk, include_heavy=False, project_id=project_id
+                    chunk,
+                    include_heavy=False,
+                    project_id=project_id,
+                    # Dedup without FINAL: 25-id page 179ms/221MiB -> 50ms/40MiB
+                    # on dev, 500-id export chunk 2,358ms/3.4GiB -> 123ms/67MiB,
+                    # same rows. The memory is what 504s an export (TH-7226).
+                    dedup_via_limit_by=True,
                 ):
                     roots_by_trace.setdefault(str(span.trace_id), []).append(span)
     except Exception as exc:
@@ -1109,7 +1170,11 @@ def _resolve_ch_sources_bulk(source_type, ids, *, project_id, organization, work
         }
     if source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
         spans = _batch_ch_spans(
-            ids, project_id=pid, include_heavy=False, caller="add_items"
+            ids,
+            project_id=pid,
+            include_heavy=False,
+            caller="add_items",
+            reject_ambiguous_ids=True,
         )
         return {(source_type, str(span_id)): span for span_id, span in spans.items()}
     if source_type == QueueItemSourceType.TRACE_SESSION.value:
@@ -1245,6 +1310,79 @@ def _get_source_workspace(obj):
     return None
 
 
+def _trace_preview_payload(root_span):
+    """Grid payload for a trace, from its CH root span."""
+    return {
+        "type": "trace",
+        "name": root_span.name or "",
+        "project_id": str(root_span.project_id) if root_span.project_id else None,
+        "input_preview": _truncate(str(root_span.input or ""), 200),
+        "output_preview": _truncate(str(root_span.output or ""), 200),
+        # CH has no response_time column; latency is the only signal.
+        "latency_ms": root_span.latency_ms,
+        "response_time_ms": root_span.latency_ms,
+    }
+
+
+def _span_preview_payload(ch_span):
+    """Grid payload for an observation span."""
+    return {
+        "type": "observation_span",
+        "name": ch_span.name or "",
+        "observation_type": ch_span.observation_type or "",
+        "input_preview": _truncate(str(ch_span.input or ""), 200),
+        "output_preview": _truncate(str(ch_span.output or ""), 200),
+        # CH has no response_time column; latency is the only signal.
+        "latency_ms": ch_span.latency_ms,
+        "response_time_ms": ch_span.latency_ms,
+    }
+
+
+def _session_preview_payload(session_id, fields):
+    """Grid payload for a trace session, from its CH identity fields."""
+    return {
+        "type": "trace_session",
+        "session_id": str(session_id),
+        "name": fields.get("display_name") or fields.get("external_session_id") or "",
+        "project_id": (str(fields["project_id"]) if fields.get("project_id") else None),
+    }
+
+
+def preview_payload_for_source(source_type, source_obj):
+    """Grid payload for an ALREADY-RESOLVED source object, or ``None``.
+
+    Lets the add path persist ``QueueItem.source_preview`` from the object it has
+    just resolved, so rendering a page never re-reads ClickHouse (TH-7211). Shares
+    the payload builders with :func:`resolve_source_preview`, so the cached dict and
+    the live one cannot drift.
+
+    Only the three CH-backed source types are captured — they are the ones whose
+    render costs a ``spans FINAL`` merge. ``dataset_row`` / ``prototype_run`` /
+    ``call_execution`` resolve from prefetched Postgres rows and are already cheap,
+    so they return ``None`` and keep using the live path. ``None`` is also the
+    answer when the source did not resolve; the serializer then falls back.
+    """
+    if source_obj is None:
+        return None
+    try:
+        if source_type == QueueItemSourceType.TRACE.value:
+            root_span = getattr(source_obj, "root_span", None)
+            return _trace_preview_payload(root_span) if root_span is not None else None
+        if source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
+            return _span_preview_payload(source_obj)
+        if source_type == QueueItemSourceType.TRACE_SESSION.value:
+            return _session_preview_payload(
+                getattr(source_obj, "id", ""),
+                {
+                    "display_name": getattr(source_obj, "name", ""),
+                    "project_id": getattr(source_obj, "project_id", None),
+                },
+            )
+    except Exception as exc:  # never block an add on a preview
+        logger.warning("source_preview_capture_failed", error=str(exc))
+    return None
+
+
 def resolve_source_preview(item, *, ch_cache=None):
     """Return a standardized preview dict for a QueueItem's source.
 
@@ -1274,18 +1412,7 @@ def resolve_source_preview(item, *, ch_cache=None):
             )
             if root_span is None:
                 return {"type": "trace", "deleted": True}
-            return {
-                "type": "trace",
-                "name": root_span.name or "",
-                "project_id": (
-                    str(root_span.project_id) if root_span.project_id else None
-                ),
-                "input_preview": _truncate(str(root_span.input or ""), 200),
-                "output_preview": _truncate(str(root_span.output or ""), 200),
-                # CH has no response_time column; latency is the only signal.
-                "latency_ms": root_span.latency_ms,
-                "response_time_ms": root_span.latency_ms,
-            }
+            return _trace_preview_payload(root_span)
 
         elif item.source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
             # CH-only: resolve the span from CH by its soft id.
@@ -1296,16 +1423,7 @@ def resolve_source_preview(item, *, ch_cache=None):
             )
             if ch_span is None:
                 return {"type": "observation_span", "deleted": True}
-            return {
-                "type": "observation_span",
-                "name": ch_span.name or "",
-                "observation_type": ch_span.observation_type or "",
-                "input_preview": _truncate(str(ch_span.input or ""), 200),
-                "output_preview": _truncate(str(ch_span.output or ""), 200),
-                # CH has no response_time column; latency is the only signal.
-                "latency_ms": ch_span.latency_ms,
-                "response_time_ms": ch_span.latency_ms,
-            }
+            return _span_preview_payload(ch_span)
 
         elif item.source_type == QueueItemSourceType.PROTOTYPE_RUN.value:
             run = item.prototype_run
@@ -1339,16 +1457,7 @@ def resolve_source_preview(item, *, ch_cache=None):
             )
             if fields is None:
                 return {"type": "trace_session", "deleted": True}
-            return {
-                "type": "trace_session",
-                "session_id": str(item.trace_session_id),
-                "name": fields.get("display_name")
-                or fields.get("external_session_id")
-                or "",
-                "project_id": (
-                    str(fields["project_id"]) if fields.get("project_id") else None
-                ),
-            }
+            return _session_preview_payload(item.trace_session_id, fields)
 
     except Exception as e:
         logger.warning("source_preview_error", item_id=str(item.id), error=str(e))
@@ -1456,7 +1565,8 @@ def resolve_source_content(item, *, ch_cache=None, cell_cache=None):
             data["type"] = "trace"
             data["trace_id"] = str(item.trace_id)
             data.pop("span_id", None)
-            # The FE picks the voice call UI off project_source == "simulator".
+            # The FE picks the voice call UI off observation_type ==
+            # "conversation", with project_source == "simulator" as a fallback.
             data["project_source"] = _queue_item_project_source(item)
             return data
 
@@ -1588,14 +1698,27 @@ def resolve_source_content(item, *, ch_cache=None, cell_cache=None):
     return {"type": item.source_type, "error": "Could not resolve content"}
 
 
-def assign_items_to_all_annotators(queue, items):
+_DEADLINE_CHECK_INTERVAL = settings.ANNOTATION_QUEUE_DEADLINE_CHECK_INTERVAL
+_DEADLINE_BULK_BATCH_SIZE = settings.ANNOTATION_QUEUE_DEADLINE_BULK_BATCH_SIZE
+
+
+def _assignment_deadline_checkpoint(deadline_check, *, index=None):
+    if deadline_check is not None and (
+        index is None or index % _DEADLINE_CHECK_INTERVAL == 0
+    ):
+        deadline_check()
+
+
+def assign_items_to_all_annotators(queue, items, *, deadline_check=None):
     """Assign every item to every queue member with the annotator role."""
     from model_hub.models.annotation_queues import (
         QueueItemAssignment,
         annotation_queue_role_q,
     )
 
+    _assignment_deadline_checkpoint(deadline_check)
     item_list = list(items or [])
+    _assignment_deadline_checkpoint(deadline_check)
     if not item_list:
         return 0
 
@@ -1605,28 +1728,63 @@ def assign_items_to_all_annotators(queue, items):
         .values_list("user_id", flat=True)
         .distinct()
     )
+    _assignment_deadline_checkpoint(deadline_check)
     if not annotator_ids:
         return 0
 
-    assignments = [
-        QueueItemAssignment(queue_item=item, user_id=user_id)
-        for item in item_list
-        for user_id in annotator_ids
-    ]
-    QueueItemAssignment.objects.bulk_create(assignments, ignore_conflicts=True)
-    return len(assignments)
+    if deadline_check is None:
+        assignments = [
+            QueueItemAssignment(queue_item=item, user_id=user_id)
+            for item in item_list
+            for user_id in annotator_ids
+        ]
+        QueueItemAssignment.objects.bulk_create(assignments, ignore_conflicts=True)
+        return len(assignments)
+
+    # The request-owned filter-mode path can produce a large Cartesian product.
+    # Build and write it incrementally so a deadline failure is observed during
+    # Python materialization, while the caller's outer transaction still rolls
+    # every completed chunk back.
+    pending = []
+    assignment_count = 0
+    for item in item_list:
+        for user_id in annotator_ids:
+            assignment_count += 1
+            _assignment_deadline_checkpoint(
+                deadline_check,
+                index=assignment_count,
+            )
+            pending.append(QueueItemAssignment(queue_item=item, user_id=user_id))
+            if len(pending) == _DEADLINE_BULK_BATCH_SIZE:
+                QueueItemAssignment.objects.bulk_create(
+                    pending,
+                    batch_size=_DEADLINE_BULK_BATCH_SIZE,
+                    ignore_conflicts=True,
+                )
+                pending = []
+                _assignment_deadline_checkpoint(deadline_check)
+    if pending:
+        QueueItemAssignment.objects.bulk_create(
+            pending,
+            batch_size=_DEADLINE_BULK_BATCH_SIZE,
+            ignore_conflicts=True,
+        )
+    _assignment_deadline_checkpoint(deadline_check)
+    return assignment_count
 
 
-def auto_assign_items(queue, items):
+def auto_assign_items(queue, items, *, deadline_check=None):
     """Assign items to annotators based on queue strategy. Mutates items in-place."""
     from model_hub.models.annotation_queues import QueueItem, annotation_queue_role_q
 
+    _assignment_deadline_checkpoint(deadline_check)
     annotator_ids = list(
         queue.queue_annotators.filter(deleted=False)
         .filter(annotation_queue_role_q(AnnotatorRole.ANNOTATOR.value))
         .values_list("user_id", flat=True)
         .distinct()
     )
+    _assignment_deadline_checkpoint(deadline_check)
     if not annotator_ids or queue.assignment_strategy == "manual":
         return
 
@@ -1637,7 +1795,9 @@ def auto_assign_items(queue, items):
             .exclude(assigned_to__isnull=True)
             .count()
         )
+        _assignment_deadline_checkpoint(deadline_check)
         for i, item in enumerate(items):
+            _assignment_deadline_checkpoint(deadline_check, index=i + 1)
             idx = (existing_count + i) % len(annotator_ids)
             item.assigned_to_id = annotator_ids[idx]
 
@@ -1655,13 +1815,17 @@ def auto_assign_items(queue, items):
             .values("assigned_to_id")
             .annotate(cnt=Count("id"))
         )
-        for row in qs:
+        for i, row in enumerate(qs, start=1):
+            _assignment_deadline_checkpoint(deadline_check, index=i)
             if row["assigned_to_id"] in counts:
                 counts[row["assigned_to_id"]] = row["cnt"]
-        for item in items:
+        _assignment_deadline_checkpoint(deadline_check)
+        for i, item in enumerate(items, start=1):
+            _assignment_deadline_checkpoint(deadline_check, index=i)
             uid = min(counts, key=counts.get)
             item.assigned_to_id = uid
             counts[uid] += 1
+    _assignment_deadline_checkpoint(deadline_check)
 
 
 def calculate_agreement(queue):
@@ -2217,6 +2381,17 @@ RULE_TRIGGER_INTERVALS = {
 # auto-assign + finalize work bounded enough to fit inside an HTTP timeout.
 RULE_RUN_SYNC_THRESHOLD = 500
 
+# Automation writes are intentionally bounded.  The ClickHouse bulk selector
+# can prove an exact prefix plus one sentinel up to this size; if the sentinel
+# exists we fail before creating any QueueItem so a run is never a silent
+# partial selection.
+AUTOMATION_RULE_MATCH_LIMIT = 10_000
+AUTOMATION_RULE_MATCH_LIMIT_ERROR = (
+    "Automation rules support at most 10,000 matching items per run. "
+    "This rule matched more than 10,000 items, so nothing was added. "
+    "Narrow the filters or shorten the time range and run it again."
+)
+
 
 def is_automation_rule_due(rule, now=None):
     """Return True when a non-manual automation rule should run."""
@@ -2583,16 +2758,20 @@ def _resolve_dataset_rule_ids(rule, filters, dataset_id, cap):
         rows = rows.filter(id__in=matching_cells.values_list("row_id", flat=True))
 
     rows = rows.order_by("order", "id")
-    total_matching = rows.count()
-    ids = list(rows.values_list("id", flat=True)[:cap])
+    # Fetch one bounded sentinel row instead of counting the full filtered
+    # queryset.  At or below the cap this is the exact total; above it the
+    # cap+1 value is sufficient for the caller's all-or-nothing overflow
+    # guard, without an unbounded COUNT(*) on a large dataset.
+    candidate_ids = list(rows.values_list("id", flat=True)[: cap + 1])
+    truncated = len(candidate_ids) > cap
+    ids = candidate_ids[:cap]
+    total_matching = len(ids) + (1 if truncated else 0)
     return total_matching, ids
 
 
 def _add_source_ids_to_queue(
     rule, source_ids, total_matching, dry_run=False, project_id=None
 ):
-    from model_hub.models.annotation_queues import QueueItem
-
     fk_field = get_fk_field_name(rule.source_type)
     if not fk_field:
         return {"matched": 0, "added": 0, "duplicates": 0, "error": "Invalid FK field"}
@@ -2606,6 +2785,20 @@ def _add_source_ids_to_queue(
         if total_matching > len(source_ids):
             result["truncated"] = True
         return result
+
+    # The resolver returns at most ``cap`` ids plus an exact overflow signal.
+    # Refuse the entire run before any queue read/write when it cannot prove
+    # the full selection fits within the supported ceiling.
+    if total_matching > len(source_ids):
+        return {
+            "matched": total_matching,
+            "added": 0,
+            "duplicates": 0,
+            "truncated": True,
+            "error": AUTOMATION_RULE_MATCH_LIMIT_ERROR,
+        }
+
+    from model_hub.models.annotation_queues import QueueItem
 
     candidate_ids = list(dict.fromkeys(source_ids))
     existing_source_ids = {
@@ -2860,7 +3053,12 @@ def _evaluate_filter_mode_rule(
     )
 
 
-def evaluate_rule(rule, dry_run=False, user=None, cap=1000):
+def evaluate_rule(
+    rule: "AutomationRule",
+    dry_run: bool = False,
+    user: Any | None = None,
+    cap: int = AUTOMATION_RULE_MATCH_LIMIT,
+) -> dict[str, Any]:
     """Evaluate an automation rule and add matching items to the queue.
     Returns dict with 'matched', 'added', 'duplicates' counts.
     """
@@ -3096,6 +3294,18 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
         if truncated:
             result["truncated"] = True
         return result
+
+    if truncated:
+        # Deterministic all-or-nothing semantics: never enqueue only the first
+        # page of a larger selection.  This check precedes every QueueItem
+        # query, bulk_create, rule watermark update, assignment, and email.
+        return {
+            "matched": matched,
+            "added": 0,
+            "duplicates": 0,
+            "truncated": True,
+            "error": AUTOMATION_RULE_MATCH_LIMIT_ERROR,
+        }
 
     added = 0
     duplicates = 0

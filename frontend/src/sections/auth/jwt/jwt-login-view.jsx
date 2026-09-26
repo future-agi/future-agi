@@ -42,8 +42,10 @@ import {
 } from "@simplewebauthn/browser";
 import RightSectionAuth from "./RightSectionAuth";
 import { isValidUtm } from "src/utils/utmUtils";
-import { usePostLoginPath } from "src/hooks/useDeploymentMode";
-import { OssSetupModal, useOssSetupModal } from "./oss-setup";
+import {
+  useDeploymentMode,
+  usePostLoginPath,
+} from "src/hooks/useDeploymentMode";
 
 // ----------------------------------------------------------------------
 
@@ -52,7 +54,7 @@ export default function JwtLoginView() {
   const postLoginPath = usePostLoginPath();
   const router = useRouter();
   const [errorMsg, setErrorMsg] = useState("");
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const returnTo = searchParams.get("returnTo");
   // Persist returnTo on a login action so it survives flows that drop the
   // URL param (OAuth round-trip, login → setup-org).
@@ -67,29 +69,10 @@ export default function JwtLoginView() {
   const { enqueueSnackbar } = useSnackbar();
   const { uuid, token } = useParams();
 
-  const ossSetup = useOssSetupModal({
-    enabled: !token,
-    autoOpenTab: searchParams.get("ossSetup"),
-  });
   // Only apply OSS treatment on a confirmed "oss" response; a failed
   // deployment-info read falls back to the full login (social/SSO shown).
-  const confirmedOSS = ossSetup.isSuccess && ossSetup.isOSS;
-  const showOssUi = confirmedOSS;
-  const showSocial = !confirmedOSS;
-
-  // The hint has done its job once the modal opens on the right tab; strip it
-  // so a reload doesn't reopen the modal.
-  useEffect(() => {
-    if (searchParams.get("ossSetup")) {
-      setSearchParams(
-        (prev) => {
-          prev.delete("ossSetup");
-          return prev;
-        },
-        { replace: true },
-      );
-    }
-  }, [searchParams, setSearchParams]);
+  const { isOSS, isSuccess: modeConfirmed } = useDeploymentMode();
+  const showSocial = !(modeConfirmed && isOSS);
 
   const [inviteFailed, setInviteFailed] = useState(false);
 
@@ -585,14 +568,10 @@ export default function JwtLoginView() {
           color="primary"
           underline="always"
           href={paths.auth.jwt["forget-password"]}
-          onClick={(e) => {
+          onClick={() => {
             trackEvent(Events.forgotPasswordClicked, {
               [PropertyName.click]: true,
             });
-            if (showOssUi) {
-              e.preventDefault();
-              ossSetup.openReset();
-            }
           }}
         >
           Forgot Password
@@ -780,34 +759,14 @@ export default function JwtLoginView() {
           Don’t have an account?
           <Link
             variant="subtitle2"
-            component={showOssUi ? "button" : RouterLink}
-            type={showOssUi ? "button" : undefined}
-            to={showOssUi ? undefined : paths.auth.jwt.register + search}
-            onClick={(e) => {
-              if (showOssUi) {
-                e.preventDefault();
-                ossSetup.openCreate();
-              }
-            }}
+            component={RouterLink}
+            to={paths.auth.jwt.register + search}
             sx={{ color: "primary.main" }}
           >
             {" "}
             Sign up
           </Link>
         </Typography>
-
-        {showOssUi && (
-          <Link
-            component="button"
-            type="button"
-            variant="s2"
-            underline="hover"
-            onClick={ossSetup.openCreate}
-            sx={{ color: "text.secondary", alignSelf: "center" }}
-          >
-            Self-hosted? Set up via CLI
-          </Link>
-        )}
       </Stack>
     </Stack>
   );
@@ -824,6 +783,7 @@ export default function JwtLoginView() {
             justifyContent: "center",
             alignItems: "center",
             bgcolor: "background.paper",
+            overflowY: "auto",
           }}
         >
           <Stack spacing={2} alignItems="center">
@@ -836,6 +796,7 @@ export default function JwtLoginView() {
             </Typography>
           </Stack>
         </Box>
+
         <Box
           sx={{
             width: "50%",
@@ -878,13 +839,6 @@ export default function JwtLoginView() {
           </FormProvider>
         </Box>
       </Box>
-
-      <OssSetupModal
-        open={ossSetup.open}
-        onClose={ossSetup.onClose}
-        activeTab={ossSetup.activeTab}
-        onTabChange={ossSetup.setActiveTab}
-      />
 
       {/* Right Side - Image with Text Overlay */}
       <Box

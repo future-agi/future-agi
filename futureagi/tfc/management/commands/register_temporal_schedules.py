@@ -3,6 +3,7 @@ Django management command to register Temporal schedules.
 
 Usage:
     python manage.py register_temporal_schedules
+    python manage.py register_temporal_schedules --cleanup-orphans
     python manage.py register_temporal_schedules --list
     python manage.py register_temporal_schedules --delete-all
     python manage.py register_temporal_schedules --pause <schedule_id>
@@ -12,9 +13,12 @@ Usage:
 
 import asyncio
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
-from tfc.temporal import ALL_SCHEDULES, MODEL_HUB_SCHEDULES
+from tfc.temporal import (
+    ALL_SCHEDULES,
+    MODEL_HUB_SCHEDULES,
+)
 from tfc.temporal.common.client import get_client
 from tfc.temporal.schedules import (
     a_delete_schedule,
@@ -47,6 +51,14 @@ class Command(BaseCommand):
             help="Only register model_hub schedules",
         )
         parser.add_argument(
+            "--cleanup-orphans",
+            action="store_true",
+            help=(
+                "Delete schedules outside the full registration set "
+                "(explicit opt-in; incompatible with --model-hub-only or actions)"
+            ),
+        )
+        parser.add_argument(
             "--pause",
             type=str,
             metavar="SCHEDULE_ID",
@@ -75,6 +87,28 @@ class Command(BaseCommand):
         asyncio.run(self._handle_async(options))
 
     async def _handle_async(self, options):
+        id_actions = ("pause", "unpause", "trigger", "describe")
+        has_action = options["list"] or options["delete_all"] or any(
+            options[name] is not None for name in id_actions
+        )
+        if options["cleanup_orphans"] and (
+            options["model_hub_only"] or has_action
+        ):
+            raise CommandError(
+                "--cleanup-orphans requires full registration without schedule actions"
+            )
+        if options["model_hub_only"] and has_action:
+            raise CommandError(
+                "registration scope flags cannot be combined with schedule actions"
+            )
+        if any(options[name] == "" for name in id_actions):
+            raise CommandError("schedule actions require a non-empty schedule ID")
+
+        if options["model_hub_only"]:
+            schedules = MODEL_HUB_SCHEDULES
+        else:
+            schedules = ALL_SCHEDULES
+
         client = await get_client()
 
         if options["list"]:
@@ -102,10 +136,15 @@ class Command(BaseCommand):
             return
 
         # Register schedules
-        schedules = MODEL_HUB_SCHEDULES if options["model_hub_only"] else ALL_SCHEDULES
         self.stdout.write(f"Registering {len(schedules)} schedules...")
 
-        await a_register_schedules(client, schedules)
+        # Registration preserves unknown schedules unless cleanup is explicitly
+        # requested for the full set. Upgrades must not imply legacy retirement.
+        await a_register_schedules(
+            client,
+            schedules,
+            cleanup_orphans=options["cleanup_orphans"],
+        )
 
         self.stdout.write(
             self.style.SUCCESS(f"Successfully registered {len(schedules)} schedules")

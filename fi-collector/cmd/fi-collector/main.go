@@ -11,7 +11,7 @@
 //  1. Defaults coded into chwriter.New / server.New
 //  2. YAML file path from --config (or /etc/fi-collector/config.yaml)
 //  3. Environment overrides (FI_CH_URL, FI_GRPC_ADDR, FI_HTTP_ADDR,
-//     FI_DEAD_LETTER_FILE)
+//     FI_GRPC_MAX_RECV_MIB, FI_DEAD_LETTER_FILE, ...)
 //
 // Health surfaces:
 //   - /healthz (HTTP 200 unless writer dead-letter rate > threshold)
@@ -22,25 +22,36 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
+	"github.com/future-agi/future-agi/fi-collector/pkg/observedcatalog"
 	"github.com/future-agi/future-agi/fi-collector/pkg/pricing"
 	"github.com/future-agi/future-agi/fi-collector/pkg/server"
+	"github.com/future-agi/future-agi/fi-collector/pkg/traceavailable"
 	"github.com/redis/go-redis/v9"
 	"gopkg.in/yaml.v3"
 )
 
 type rootConfig struct {
-	Writer chwriter.Config `yaml:"writer"`
-	Server server.Config   `yaml:"server"`
-	Auth   auth.Config     `yaml:"auth"`
+	Writer   chwriter.Config               `yaml:"writer"`
+	Server   server.Config                 `yaml:"server"`
+	Auth     auth.Config                   `yaml:"auth"`
+	Observed observedcatalog.RuntimeConfig `yaml:"observed_catalog"`
+	Catalog  struct {
+		Mode string `yaml:"mode"`
+	} `yaml:"catalog"`
+	PropertyCatalog struct {
+		Mode string `yaml:"mode"`
+	} `yaml:"property_catalog"`
 }
 
 func main() {
@@ -51,7 +62,10 @@ func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
 	cfg := loadConfig(log, configPath)
-	applyEnvOverrides(&cfg)
+	if err := applyEnvOverrides(log, &cfg); err != nil {
+		log.Error("invalid environment override", "err", err)
+		os.Exit(1)
+	}
 
 	writer, err := chwriter.New(cfg.Writer)
 	if err != nil {
@@ -61,7 +75,7 @@ func main() {
 	defer writer.Close()
 
 	if !cfg.Auth.IsEnabled() {
-		log.Error("FI_PG_WRITE is required — without it the collector cannot resolve API keys or project IDs")
+		log.Error("PostgreSQL auth configuration is required (auth.pg_write, FI_PG_WRITE, or FI_PG_WRITE_{HOST,PORT,DATABASE,USER}) — without it the collector cannot resolve API keys or project IDs")
 		os.Exit(1)
 	}
 
@@ -70,7 +84,7 @@ func main() {
 		rdb = redis.NewClient(&redis.Options{Addr: cfg.Auth.RedisAddr})
 		defer rdb.Close()
 	} else {
-		log.Warn("FI_AUTH_REDIS_ADDR not set — quota enforcement and usage metering are disabled")
+		log.Warn("FI_AUTH_REDIS_ADDR not set — quota enforcement, usage metering, key-revocation and project-delete cache invalidation are disabled; auth cache entries only expire via TTL")
 	}
 
 	authenticator, err := auth.New(context.Background(), cfg.Auth, rdb, log)
@@ -97,17 +111,52 @@ func main() {
 		pricer = pricing.New(priceTable, custom)
 	}
 
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
 	opts := []server.Option{server.WithLogger(log)}
 	if pricer != nil {
 		opts = append(opts, server.WithPricer(pricer))
+	}
+	var catalog *observedcatalog.Writer
+	var producer *observedcatalog.Producer
+	var replayDone chan struct{}
+	if cfg.Observed.Mode == "kafka" {
+		catalog, err = observedcatalog.NewWriter(cfg.Observed.Spool, cfg.Observed.Limits)
+		if err != nil {
+			log.Error("observed catalog spool init failed", "err", err)
+			os.Exit(1)
+		}
+		defer catalog.Close()
+		producer, err = observedcatalog.NewProducer(cfg.Observed.Kafka)
+		if err != nil {
+			log.Error("observed catalog producer init failed", "err", err)
+			os.Exit(1)
+		}
+		defer producer.Close()
+		opts = append(opts, server.WithPropertyCatalogWriter(catalog))
+		replayDone = make(chan struct{})
+		go func() {
+			defer close(replayDone)
+			runObservedReplay(ctx, catalog, producer, cfg.Observed.ReplayInterval, log)
+		}()
+	}
+	traceNotifications, err := traceavailable.FromEnv(log)
+	if err != nil {
+		log.Error("Error Feed notification configuration failed", "error", err)
+		os.Exit(1)
+	}
+	if traceNotifications != nil {
+		if cfg.Writer.AsyncInsert {
+			log.Error("Error Feed stored-root notifications require synchronous ClickHouse inserts")
+			os.Exit(1)
+		}
+		opts = append(opts, server.WithTraceNotifier(traceNotifications))
 	}
 	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, opts...)
 
 	// Admin HTTP server — internal only, health check endpoint.
 	go runAdmin(":9464", writer, log)
-
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
 
 	go authenticator.WatchRevocations(ctx)
 
@@ -116,11 +165,28 @@ func main() {
 		"http_addr", cfg.Server.HTTPAddr,
 		"ch_url", cfg.Writer.URL,
 	)
-	if err := srv.Run(ctx); err != nil && ctx.Err() == nil {
-		log.Error("server exited with error", "err", err)
-		os.Exit(1)
+	runErr := srv.Run(ctx)
+	if traceNotifications != nil {
+		drainCtx, stopDrain := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := traceNotifications.Shutdown(drainCtx); err != nil {
+			log.Warn("Error Feed notification shutdown left a gap", "error", err)
+		}
+		stopDrain()
+	}
+	unexpectedExit := runErr != nil && ctx.Err() == nil
+	if unexpectedExit {
+		log.Error("server exited with error; draining catalog lifecycle", "err", runErr)
+	}
+	// Server.Run has completed its final canonical drain and synchronous spool
+	// handoff. Unpublished observations remain durable for the next startup.
+	cancel()
+	if replayDone != nil {
+		<-replayDone
 	}
 	log.Info("shutdown complete", "stats", writer.Snapshot())
+	if unexpectedExit {
+		os.Exit(1)
+	}
 }
 
 // loadPriceTable resolves the token-pricing table. FI_PRICING_JSON is
@@ -169,7 +235,7 @@ func loadConfig(log *slog.Logger, path string) rootConfig {
 
 // applyEnvOverrides — surgical, only the fields ops most often need to
 // override at runtime without baking a new image.
-func applyEnvOverrides(c *rootConfig) {
+func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	if v := os.Getenv("FI_CH_URL"); v != "" {
 		c.Writer.URL = v
 	}
@@ -198,19 +264,53 @@ func applyEnvOverrides(c *rootConfig) {
 			c.Server.HTTPAddr = v
 		}
 	}
+	if v := os.Getenv("FI_GRPC_MAX_RECV_MIB"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.Server.GRPCMaxRecvMiB = n
+		} else {
+			// Silent fallback here would reproduce the silent-loss failure
+			// mode this knob exists to fix — an operator must see it.
+			log.Warn("ignoring invalid FI_GRPC_MAX_RECV_MIB", "value", v)
+		}
+	}
 	if v := os.Getenv("FI_DEAD_LETTER_FILE"); v != "" {
 		c.Writer.DeadLetterFile = v
 	}
-	// Auth overrides (auth is active when PG_WRITE is set)
-	if v := os.Getenv("FI_PG_WRITE"); v != "" {
-		c.Auth.PGWrite = v
-	}
-	if v := os.Getenv("FI_PG_READ"); v != "" {
-		c.Auth.PGRead = v
+	// Explicit connection strings keep their TLS/options and take precedence
+	// over separate fields. Still reject partial fields so a typo cannot silently
+	// select another database via URI/YAML fallback. Errors contain names only.
+	for _, endpoint := range []struct {
+		prefix string
+		target *string
+	}{
+		{"FI_PG_WRITE", &c.Auth.PGWrite},
+		{"FI_PG_READ", &c.Auth.PGRead},
+	} {
+		fields, err := auth.EndpointFromEnv(os.Getenv, endpoint.prefix)
+		if err != nil {
+			return err
+		}
+		if uri := os.Getenv(endpoint.prefix); uri != "" {
+			*endpoint.target = uri
+		} else if fields != "" {
+			*endpoint.target = fields
+		}
 	}
 	if v := os.Getenv("FI_AUTH_REDIS_ADDR"); v != "" {
 		c.Auth.RedisAddr = v
 	}
+	if (c.Catalog.Mode != "" && c.Catalog.Mode != "disabled") || (c.PropertyCatalog.Mode != "" && c.PropertyCatalog.Mode != "disabled") {
+		return fmt.Errorf("legacy catalog YAML mode is obsolete; configure observed_catalog")
+	}
+	var err error
+	c.Observed, err = observedcatalog.RuntimeFromEnv(c.Observed, os.Getenv)
+	if err != nil {
+		return err
+	}
+	if c.Observed.Mode == "kafka" && c.Writer.AsyncInsert {
+		return fmt.Errorf("observed catalog requires confirmed canonical inserts; async_insert without wait is unsupported")
+	}
+	return nil
 }
 
 // runAdmin serves /healthz for container health checks.

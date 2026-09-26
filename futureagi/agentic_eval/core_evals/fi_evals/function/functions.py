@@ -188,8 +188,10 @@ def _pil_to_uint8_tensor(img, size: int = 299):
     Requires torch and torchvision to be installed.
     """
     import numpy as np
-    import torch
-    from torchvision.transforms import functional as TF
+    from tfc.utils.lazy_extras import load_extra
+
+    torch = load_extra("torch", "ml")
+    TF = load_extra("torchvision.transforms.functional", "ml")
 
     img = img.convert("RGB")
     img = TF.resize(img, [size, size], antialias=True)
@@ -1344,7 +1346,7 @@ def contains_valid_link(text, **kwargs):
                         "result": False,
                         "reason": f"link {matched_url} found in output but is invalid",
                     }
-            except:
+            except Exception:
                 return {
                     "result": False,
                     "reason": f"link {matched_url} found in output but is invalid",
@@ -1380,7 +1382,7 @@ def no_invalid_links(text, **kwargs):
                         "result": False,
                         "reason": f"link {matched_url} found in output but is invalid",
                     }
-            except:
+            except Exception:
                 return {
                     "result": False,
                     "reason": f"link {matched_url} found in output but is invalid",

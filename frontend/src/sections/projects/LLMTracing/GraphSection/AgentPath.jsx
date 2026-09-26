@@ -1,4 +1,4 @@
-// AgentPath — Sankey-style flow view of an agent trace's span types.
+// AgentPath — Sankey-style parent/child flow view of agent span types.
 import React, { useMemo, useRef, useState, useEffect } from "react";
 import PropTypes from "prop-types";
 import {
@@ -13,6 +13,7 @@ import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import FullscreenGraphDialog from "./FullscreenGraphDialog";
+import { GRAPH_LOADING_MESSAGE } from "src/utils/queryReadState";
 import {
   PAD,
   COL_WIDTH,
@@ -26,6 +27,8 @@ import {
   nodeHeightFor,
   computeSankeyLayout,
   computeNaturalSize,
+  computeFlowBands,
+  buildFlowBandPath,
 } from "./agentPathUtils";
 
 const SankeyChart = ({ layout, width, height, zoom, onNodeClick, theme }) => {
@@ -39,7 +42,7 @@ const SankeyChart = ({ layout, width, height, zoom, onNodeClick, theme }) => {
 
   const nodePositions = new Map();
   columns.forEach((col, colIdx) => {
-    const x = padding.left + colIdx * colGap;
+    const x = padding.left + (layout.cycleGutter || 0) + colIdx * colGap;
     let yOffset = padding.top;
     col.nodes.forEach((node) => {
       const h = nodeHeightFor(node, maxSpans);
@@ -48,66 +51,31 @@ const SankeyChart = ({ layout, width, height, zoom, onNodeClick, theme }) => {
     });
   });
 
-  const flowPaths = flows.map((flow, idx) => {
-    const src = nodePositions.get(flow.source);
-    const tgt = nodePositions.get(flow.target);
-    if (!src || !tgt) return null;
+  const flowPaths = computeFlowBands(flows, nodePositions).map(
+    ({ flow, index, src, tgt, srcBandH, tgtBandH, srcYOffset, tgtYOffset }) => {
+      const d = buildFlowBandPath({
+        flow,
+        index,
+        src,
+        tgt,
+        srcBandH,
+        tgtBandH,
+        srcYOffset,
+        tgtYOffset,
+        barWidth,
+      });
 
-    const srcTotal = flows
-      .filter((f) => f.source === flow.source)
-      .reduce((s, f) => s + f.count, 0);
-    const tgtTotal = flows
-      .filter((f) => f.target === flow.target)
-      .reduce((s, f) => s + f.count, 0);
-
-    const srcBandH = Math.max(4, (flow.count / srcTotal) * src.h);
-    const tgtBandH = Math.max(4, (flow.count / tgtTotal) * tgt.h);
-
-    const srcFlowsBefore = flows
-      .slice(0, idx)
-      .filter((f) => f.source === flow.source);
-    const tgtFlowsBefore = flows
-      .slice(0, idx)
-      .filter((f) => f.target === flow.target);
-
-    const srcYOffset = srcFlowsBefore.reduce((sum, f) => {
-      const t = flows
-        .filter((ff) => ff.source === f.source)
-        .reduce((s, ff) => s + ff.count, 0);
-      return sum + Math.max(4, (f.count / t) * src.h);
-    }, 0);
-
-    const tgtYOffset = tgtFlowsBefore.reduce((sum, f) => {
-      const t = flows
-        .filter((ff) => ff.target === f.target)
-        .reduce((s, ff) => s + ff.count, 0);
-      return sum + Math.max(4, (f.count / t) * tgt.h);
-    }, 0);
-
-    const x0 = src.x + barWidth;
-    const y0 = src.y + srcYOffset;
-    const x1 = tgt.x;
-    const y1 = tgt.y + tgtYOffset;
-    const cpx = (x0 + x1) / 2;
-
-    const d = [
-      `M ${x0} ${y0}`,
-      `C ${cpx} ${y0}, ${cpx} ${y1}, ${x1} ${y1}`,
-      `L ${x1} ${y1 + tgtBandH}`,
-      `C ${cpx} ${y1 + tgtBandH}, ${cpx} ${y0 + srcBandH}, ${x0} ${y0 + srcBandH}`,
-      `Z`,
-    ].join(" ");
-
-    return (
-      <path
-        key={`flow-${idx}`}
-        d={d}
-        fill={flow.sourceColor.band}
-        opacity={0.25}
-        stroke="none"
-      />
-    );
-  });
+      return (
+        <path
+          key={`flow-${index}`}
+          d={d}
+          fill={flow.sourceColor.band}
+          opacity={0.25}
+          stroke="none"
+        />
+      );
+    },
+  );
 
   const nodeElements = [];
   nodePositions.forEach(({ x, y, h, color, node }, id) => {
@@ -229,6 +197,7 @@ SankeyChart.propTypes = {
 const AgentPathInner = ({
   data,
   isLoading,
+  isError,
   onNodeClick,
   isFullscreen = false,
   onToggleFullscreen,
@@ -240,7 +209,10 @@ const AgentPathInner = ({
   const [isHovering, setIsHovering] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [zoom, setZoom] = useState(1);
-  const layout = useMemo(() => computeSankeyLayout(data), [data]);
+  const layout = useMemo(
+    () => (isLoading || isError || !data ? null : computeSankeyLayout(data)),
+    [data, isError, isLoading],
+  );
   const natural = useMemo(() => computeNaturalSize(layout), [layout]);
 
   useEffect(() => {
@@ -297,10 +269,32 @@ const AgentPathInner = ({
           display: "flex",
           justifyContent: "center",
           alignItems: "center",
+          flexDirection: "column",
+          gap: 1,
           height: 80,
         }}
       >
         <CircularProgress size={24} />
+        <Typography color="text.secondary" variant="body2">
+          {GRAPH_LOADING_MESSAGE}
+        </Typography>
+      </Box>
+    );
+  }
+
+  if (isError) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          height: 80,
+        }}
+      >
+        <Typography color="text.secondary" variant="body2">
+          We couldn&apos;t load the agent path. Please retry in a moment.
+        </Typography>
       </Box>
     );
   }
@@ -452,6 +446,7 @@ const AgentPathInner = ({
 AgentPathInner.propTypes = {
   data: PropTypes.object,
   isLoading: PropTypes.bool,
+  isError: PropTypes.bool,
   onNodeClick: PropTypes.func,
   isFullscreen: PropTypes.bool,
   onToggleFullscreen: PropTypes.func,
@@ -474,6 +469,7 @@ const AgentPath = (props) => (
 AgentPath.propTypes = {
   data: PropTypes.object,
   isLoading: PropTypes.bool,
+  isError: PropTypes.bool,
   onNodeClick: PropTypes.func,
 };
 

@@ -9,7 +9,6 @@ Pattern:
 - Helper functions: create, update, delete, pause, unpause, trigger, exists
 """
 
-
 from asgiref.sync import async_to_sync
 from temporalio.client import (
     Client,
@@ -96,7 +95,9 @@ async def a_update_schedule(
     async def updater(input: ScheduleUpdateInput) -> ScheduleUpdate:
         if keep_tz and input.description.schedule.spec:
             # Preserve existing timezone
-            schedule.spec.time_zone_name = input.description.schedule.spec.time_zone_name
+            schedule.spec.time_zone_name = (
+                input.description.schedule.spec.time_zone_name
+            )
         return ScheduleUpdate(schedule=schedule)
 
     await handle.update(updater)
@@ -259,8 +260,8 @@ def _build_schedule_for_config(config: ScheduleConfig) -> Schedule:
             TaskRunnerWorkflow.run,
             TaskRunnerInput(
                 activity_name=config.activity_name,
-                args=[],
-                kwargs={},
+                args=list(config.activity_args),
+                kwargs=dict(config.activity_kwargs),
                 queue=config.queue,
                 max_retries=activity_metadata.get("max_retries"),
                 retry_delay=activity_metadata.get("retry_delay"),
@@ -336,15 +337,16 @@ async def cleanup_orphaned_schedules(
 async def a_register_schedules(
     client: Client,
     schedules: list[ScheduleConfig],
-    cleanup_orphans: bool = True,
+    cleanup_orphans: bool = False,
 ) -> None:
     """
-    Register multiple schedules with Temporal.
+    Register multiple schedules with Temporal, preserving unknown schedules by default.
 
     Args:
         client: Temporal client
         schedules: List of schedule configs to register
-        cleanup_orphans: If True, delete schedules not in the provided list (default: True)
+        cleanup_orphans: Explicitly delete schedules outside the provided full set
+            (default: False). Legacy/operator schedules otherwise remain untouched.
     """
     from tfc.temporal.common.registry import _import_temporal_activity_modules
 
@@ -409,9 +411,12 @@ async def a_register_schedules(
 async def register_schedules(
     client: Client,
     schedules: list[ScheduleConfig],
-    cleanup_orphans: bool = True,
+    cleanup_orphans: bool = False,
 ) -> None:
-    """Sync wrapper for a_register_schedules."""
+    """Sync registration; preserve unknown schedules unless cleanup is explicit.
+
+    cleanup_orphans defaults to False; True deletes schedules outside the full set.
+    """
     return await a_register_schedules(
         client, schedules, cleanup_orphans=cleanup_orphans
     )

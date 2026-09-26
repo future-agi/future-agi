@@ -1,0 +1,69 @@
+{
+  "scope": {
+    "project_id": "123e4567-e89b-12d3-a456-426614174000",
+    "seen_at": "2026-08-13T12:34:56.789012Z",
+    "catalog_epoch": 7
+  },
+  "limits": {
+    "max_keys": 20,
+    "max_array_members": 20,
+    "max_encoded_bytes": 10000
+  },
+  "attributes": {
+    "strings": {
+      "B.Key": "Whatfix\n\"voice\" ☃",
+      "a.key": "duplicate"
+    },
+    "numbers": {
+      "n.key": 42
+    },
+    "booleans": {
+      "flag": 1
+    },
+    "extra": {
+      "array": ["voice", "voice", 7, true, null, ["nested"], {"map": 1}, "tail"],
+      "map": {"inner": "x"},
+      "json": null
+    }
+  },
+  "expected": {
+    "keys": [
+      ["B.Key", "b.key", "string"],
+      ["a.key", "a.key", "string"],
+      ["array", "array", "array"],
+      ["flag", "flag", "boolean"],
+      ["json", "json", "json"],
+      ["map", "map", "map"],
+      ["n.key", "n.key", "number"]
+    ],
+    "values": [
+      ["B.Key", "string", "\"Whatfix\\n\\\"voice\\\" ☃\"", "7cd78d7c5c8e98608f08f37ae5798d1cd219975830da3337cfd7f3a199628ced"],
+      ["a.key", "string", "\"duplicate\"", "28dcb5a6a22284a97248a61a2d6c5f627f04aba24e2b6532994b98b1688b846e"],
+      ["array", "array", "\"voice\"", "c56650e52ec3f3a7cf6897010588980f538b1b27d3c1f58227a4254062554b39"],
+      ["array", "array", "7", "b1e91c45b519382d7729d21684e4f67c3a9ac50e7a8419f90fe8110283ae2285"],
+      ["array", "array", "true", "8a01aab0b28a538977e59a53820685135160300de4f38f931b3caa83a16726e5"],
+      ["array", "array", "\"tail\"", "c9aab7541cc4edfd2195389d944d456efa6d81fe88c3ca270f4fac9dc7d92423"],
+      ["flag", "boolean", "true", "8a01aab0b28a538977e59a53820685135160300de4f38f931b3caa83a16726e5"],
+      ["n.key", "number", "42", "7ed0718bee97e87a0424e1bcf93fed288094d13beca7be92b3409d4e9f462f84"]
+    ],
+    "metadata": {
+      "complete": true,
+      "truncated": false,
+      "gap_reasons": [],
+      "candidate_keys": 7,
+      "valid_candidate_keys": 7,
+      "key_rows_emitted": 7,
+      "keys_omitted": 0,
+      "value_rows_emitted": 8,
+      "array_members_total": 8,
+      "array_members_inspected": 8,
+      "array_members_omitted": 0,
+      "non_scalar_array_members_skipped": 3,
+      "duplicate_values_skipped": 1,
+      "invalid_attribute_keys": 0,
+      "invalid_scalar_values": 0,
+      "invalid_boolean_values": 0,
+      "encoded_bytes": 802
+    }
+  }
+}
