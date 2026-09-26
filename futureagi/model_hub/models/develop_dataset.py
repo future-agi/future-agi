@@ -310,6 +310,22 @@ class Cell(BaseModel):
     completion_tokens = models.IntegerField(null=True, blank=True)
     response_time = models.FloatField(null=True, blank=True)
 
+    # Tracing fields for issue #2665 - dataset execution trace tracking
+    trace_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Root trace ID for this dataset/experiment run"
+    )
+    span_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Span ID for this specific row execution"
+    )
+
     class Meta(BaseModel.Meta):
         indexes = [
             models.Index(fields=["row", "column", "dataset"]),

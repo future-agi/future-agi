@@ -3201,6 +3201,9 @@ class GetDatasetTableView(APIView):
                         "status": cell.status,
                         "value_infos": value_infos if value_infos else cell.value_infos,
                         "feedback_info": cell.feedback_info,
+                        # Issue #2665: trace identifiers for the row-execution trace
+                        "trace_id": cell.trace_id,
+                        "span_id": cell.span_id,
                     }
 
                     if search and search_results and search_results.get(str(cell.id)):
