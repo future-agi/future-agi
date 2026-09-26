@@ -23,10 +23,13 @@ def resolve_gateway_internal_url():
     # `AGENTCC_INTERNAL_URL` is the older docker-compose/.env key still used by
     # local stacks. Keep it as a compatibility fallback so container-to-container
     # gateway calls do not silently fall back to localhost inside the backend.
+    # An explicit `AGENTCC_GATEWAY_URL` still wins for host-side tools; the
+    # default is the in-network port (8090 is only the host-published port).
     return (
         os.environ.get("AGENTCC_GATEWAY_INTERNAL_URL")
         or os.environ.get("AGENTCC_INTERNAL_URL")
-        or resolve_gateway_public_url()
+        or os.environ.get("AGENTCC_GATEWAY_URL")
+        or "http://agentcc-gateway:8080"
     )
 
 
