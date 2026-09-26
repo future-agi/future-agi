@@ -15,14 +15,7 @@ import { fToNow } from "src/utils/format-time";
 import Label from "src/components/label";
 import FileThumbnail from "src/components/file-thumbnail";
 
-// Simple HTML sanitizer for notification content
-const sanitizeHtml = (html) => {
-  // Remove script tags and event handlers
-  return html
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
-    .replace(/on\w+="[^"]*"/gi, "")
-    .replace(/javascript:/gi, "");
-};
+import { sanitizeNotificationHtml } from "./notification-sanitize";
 
 // ----------------------------------------------------------------------
 
@@ -257,7 +250,8 @@ NotificationItem.propTypes = {
 function reader(data) {
   return (
     <Box
-      dangerouslySetInnerHTML={{ __html: sanitizeHtml(data) }}
+      data-testid="notification-title"
+      dangerouslySetInnerHTML={{ __html: sanitizeNotificationHtml(data) }}
       sx={{
         mb: 0.5,
         "& p": { typography: "body2", m: 0 },
