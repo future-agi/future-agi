@@ -11,6 +11,7 @@ const HeaderButton = ({ icon, tooltip, onClick, disabled }) => (
     <span style={{ display: "inline-flex" }}>
       <Box
         component="button"
+        type="button"
         onClick={onClick}
         disabled={disabled}
         sx={{
@@ -54,6 +55,7 @@ const NavButton = ({ icon, tooltip, onClick, disabled }) => (
     <span style={{ display: "inline-flex" }}>
       <Box
         component="button"
+        type="button"
         onClick={onClick}
         disabled={disabled}
         sx={{
@@ -93,6 +95,8 @@ NavButton.propTypes = {
 /* ── DrawerHeader ─────────────────────────────────────── */
 
 const DrawerHeader = ({
+  open = true,
+  closeOnEscape = true,
   traceId,
   projectId,
   onClose,
@@ -106,9 +110,21 @@ const DrawerHeader = ({
   onDownload,
   onShare,
 }) => {
-  // Keyboard shortcuts: J = next, K = prev
+  // Keyboard shortcuts: J = next, K = prev, Esc = close. They belong to the
+  // open drawer only: the persistent Drawer keeps this header mounted while
+  // closed, and a document listener would otherwise act on the page behind it.
   const handleKeyDown = useCallback(
     (e) => {
+      // A nested dialog or menu already handled it, or it is a browser/OS
+      // shortcut (Cmd/Ctrl/Alt/Shift + key), not ours.
+      if (
+        e.defaultPrevented ||
+        e.altKey ||
+        e.ctrlKey ||
+        e.metaKey ||
+        e.shiftKey
+      )
+        return;
       // Don't trigger if user is typing in an input/textarea
       if (
         e.target.tagName === "INPUT" ||
@@ -117,7 +133,11 @@ const DrawerHeader = ({
       )
         return;
 
-      if ((e.key === "j" || e.key === "J") && hasNext) {
+      if (e.key === "Escape") {
+        if (!closeOnEscape) return;
+        e.preventDefault();
+        onClose?.();
+      } else if ((e.key === "j" || e.key === "J") && hasNext) {
         e.preventDefault();
         onNext?.();
       } else if ((e.key === "k" || e.key === "K") && hasPrev) {
@@ -125,13 +145,14 @@ const DrawerHeader = ({
         onPrev?.();
       }
     },
-    [onPrev, onNext, hasPrev, hasNext],
+    [closeOnEscape, onClose, onPrev, onNext, hasPrev, hasNext],
   );
 
   useEffect(() => {
+    if (!open) return undefined;
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [handleKeyDown]);
+  }, [open, handleKeyDown]);
 
   const handleCopy = () => {
     if (!traceId) return;
@@ -192,6 +213,7 @@ const DrawerHeader = ({
           <Tooltip title="Copy Trace ID" arrow placement="bottom">
             <Box
               component="button"
+              type="button"
               onClick={handleCopy}
               sx={{
                 display: "inline-flex",
@@ -262,9 +284,14 @@ const DrawerHeader = ({
         </Stack>
 
         {/* Close button */}
-        <Tooltip title="Close (Esc)" arrow placement="bottom">
+        <Tooltip
+          title={closeOnEscape ? "Close (Esc)" : "Close"}
+          arrow
+          placement="bottom"
+        >
           <Box
             component="button"
+            type="button"
             onClick={onClose}
             sx={{
               display: "inline-flex",
@@ -291,6 +318,10 @@ const DrawerHeader = ({
 };
 
 DrawerHeader.propTypes = {
+  open: PropTypes.bool,
+  // Off on the full-page trace view: there Close leaves the page, and Esc
+  // did not navigate away before; Esc closes only the drawer.
+  closeOnEscape: PropTypes.bool,
   traceId: PropTypes.string,
   projectId: PropTypes.string,
   onClose: PropTypes.func.isRequired,

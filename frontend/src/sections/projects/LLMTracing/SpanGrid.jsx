@@ -768,7 +768,19 @@ const SpanGrid = React.forwardRef(
             } finally {
               // Completion releases AG Grid's slot even for an obsolete cache.
               // A scheduled continuation owns its callback until resume runs.
-              if (!continuationPending) finishRequest();
+              if (!continuationPending) {
+                finishRequest();
+                if (
+                  !pageLoadSucceeded &&
+                  requestGeneration !== null &&
+                  !cursorPagination.current.isCurrent(requestGeneration)
+                ) {
+                  // A same-cache refresh (purge: false) cannot re-mark a block
+                  // that is still loading, so this obsolete read's fail() just
+                  // left it failed. Queue it again for the current generation.
+                  retryServerSideCursorLoad(params.api);
+                }
+              }
               finishPageLoad(pageLoadRequestId, {
                 succeeded: pageLoadSucceeded,
                 rowCount: pageLoadRowCount,

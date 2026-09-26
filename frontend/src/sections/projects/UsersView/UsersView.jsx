@@ -781,12 +781,11 @@ const UsersView = ({
     searchState === "empty" &&
     !hasActiveFilter;
 
-  const shouldShowGrid =
-    hasData === true ||
-    (isLoading && searchState !== "empty") ||
-    searchState === "searching" ||
-    searchState === "error" ||
-    hasActiveFilter;
+  // Every state shows either the confirmed empty screen or the grid. A reload
+  // of a confirmed-empty page, or a first page paused at the continuation
+  // limit (its "Continue search" button lives in the grid), matched neither
+  // an enumerated grid state nor the empty screen and left the page blank.
+  const shouldShowGrid = !shouldShowEmptyLayout;
 
   return (
     <>
