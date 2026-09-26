@@ -237,7 +237,10 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
     () => nodeDetail?.outputs || [],
     [nodeDetail?.outputs],
   );
-  const hasErrorMessage = !!errorMessage && outputs.length === 0;
+  const isNodeFailed = nodeStatus === "failed" || nodeStatus === "error";
+  const hasErrorMessage =
+    isNodeFailed && !!errorMessage && outputs.length === 0;
+  const hasPartialError = isNodeFailed && !!errorMessage && outputs.length > 0;
   const isPairedMode = inputs.length > 0 && inputs.length === outputs.length;
 
   // Map API response to AG Grid row data
@@ -536,6 +539,17 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
           }
         />
       </Box>
+
+      {hasPartialError && (
+        <Typography
+          role="alert"
+          typography="s2"
+          color="error.main"
+          sx={{ mb: 2, whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+        >
+          {errorMessage}
+        </Typography>
+      )}
 
       {/* AG Grid Table */}
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
