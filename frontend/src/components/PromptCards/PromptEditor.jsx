@@ -11,6 +11,7 @@ import PropTypes from "prop-types";
 import { Box, useTheme } from "@mui/material";
 import {
   getBlocks,
+  getTextSelectionRange,
   handleRemoveEditVariable,
   normalizeContentBlocks,
   placeEditBolt,
@@ -407,6 +408,25 @@ const PromptEditor = React.forwardRef(
         readOnly: disabled,
         modules: {
           toolbar: false,
+          keyboard: {
+            bindings: {
+              selectAll: {
+                key: "a",
+                shortKey: true,
+                handler(range) {
+                  const selectionRange = getTextSelectionRange(this.quill, range);
+                  if (selectionRange) {
+                    this.quill.setSelection(
+                      selectionRange.index,
+                      selectionRange.length,
+                      Quill.sources.USER,
+                    );
+                  }
+                  return false;
+                },
+              },
+            },
+          },
           clipboard: {
             matchers: [
               [

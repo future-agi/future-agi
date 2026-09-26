@@ -540,6 +540,77 @@ export function normalizeContentBlocks(blocks) {
   });
 }
 
+export const getTextSelectionRange = (quill, currentRange) => {
+  if (!quill) return null;
+  const delta = typeof quill.getContents === "function" ? quill.getContents() : { ops: [] };
+  const ops = delta?.ops || [];
+
+  const segments = [];
+  let currentIndex = 0;
+  let currentSegment = null;
+
+  for (let i = 0; i < ops.length; i++) {
+    const op = ops[i];
+    const isMediaEmbed =
+      op.insert &&
+      typeof op.insert === "object" &&
+      (op.insert.ImageBlot || op.insert.AudioBlot || op.insert.PdfBlot);
+
+    const opLength = typeof op.insert === "string" ? op.insert.length : 1;
+
+    if (isMediaEmbed) {
+      if (currentSegment) {
+        segments.push(currentSegment);
+        currentSegment = null;
+      }
+    } else {
+      if (!currentSegment) {
+        currentSegment = { start: currentIndex, end: currentIndex + opLength };
+      } else {
+        currentSegment.end += opLength;
+      }
+    }
+
+    currentIndex += opLength;
+  }
+
+  if (currentSegment) {
+    segments.push(currentSegment);
+  }
+
+  if (segments.length === 0) {
+    return null;
+  }
+
+  if (segments.length === 1) {
+    const seg = segments[0];
+    return { index: seg.start, length: seg.end - seg.start };
+  }
+
+  const cursorIndex = currentRange?.index ?? 0;
+  const matchingSegment = segments.find(
+    (s) => cursorIndex >= s.start && cursorIndex <= s.end,
+  );
+
+  if (matchingSegment) {
+    return {
+      index: matchingSegment.start,
+      length: matchingSegment.end - matchingSegment.start,
+    };
+  }
+
+  const closest = segments.reduce((prev, curr) =>
+    Math.abs(curr.start - cursorIndex) < Math.abs(prev.start - cursorIndex)
+      ? curr
+      : prev,
+  );
+
+  return {
+    index: closest.start,
+    length: closest.end - closest.start,
+  };
+};
+
 export const getBlocks = (quill) => {
   const blocks = [];
   const delta = quill.getContents();
