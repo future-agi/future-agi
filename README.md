@@ -129,13 +129,17 @@ pip install ai-evaluation
 
 **One installer, full stack. The collector builds from this checkout.**
 
+macOS / Linux / WSL
+
 ```bash
-# macOS / Linux / WSL
 git clone https://github.com/future-agi/future-agi.git
 cd future-agi
 ./bin/install
+```
 
-# Windows (PowerShell)
+Windows (PowerShell)
+
+```bash
 git clone https://github.com/future-agi/future-agi.git
 cd future-agi
 .\bin\install.ps1

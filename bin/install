@@ -673,6 +673,100 @@ count_applied_migrations() {
   $DC logs --tail 2000 backend 2>/dev/null | grep -ac 'Applying ' || true
 }
 
+# Live progress line for the wait, redrawn in place on a TTY only. Piped and
+# CI output keep the plain lines below, byte for byte.
+progress_active=0
+progress_started=0
+migrations_total=0
+migrations_total_file=""
+migrations_total_pid=""
+migrations_rate_since=0
+migrations_rate_base=0
+
+fmt_secs() { printf '%dm%02ds' $(( $1 / 60 )) $(( $1 % 60 )); }
+
+progress_clear() {
+  if (( progress_active )); then printf '\r\033[K'; progress_active=0; fi
+}
+
+# The exact number `migrate` will apply, read from the migration graph on disk.
+# Runs once in the background because Django takes a few seconds to boot.
+refresh_migrations_total() {
+  local value
+  (( migrations_total > 0 )) && return 0
+  [[ -n "$migrations_total_file" ]] || migrations_total_file=$(mktemp)
+  if [[ -n "$migrations_total_pid" ]] && kill -0 "$migrations_total_pid" 2>/dev/null; then
+    return 0
+  fi
+  value=$(tail -1 "$migrations_total_file" 2>/dev/null || true)
+  if [[ "$value" =~ ^[0-9]+$ ]] && (( value > 0 )); then
+    migrations_total="$value"
+    return 0
+  fi
+  ( $DC exec -T backend python -c 'import django; django.setup()
+from django.db.migrations.loader import MigrationLoader
+print(len(MigrationLoader(None, ignore_no_migrations=True).graph.nodes))' \
+      2>/dev/null | tail -1 >"$migrations_total_file" || true ) &
+  migrations_total_pid=$!
+}
+
+backend_phase() {
+  $DC logs --tail 2000 backend 2>/dev/null \
+    | grep -aoE 'Waiting for database|Creating cache table|Running database migrations|Running migrations:|Migrations completed|Static files collected|Listening at' \
+    | tail -1 || true
+}
+
+render_progress() {
+  local now elapsed label bar="" pct applied left eta="" i
+  [[ -t 1 ]] || return 0
+  refresh_migrations_total
+  now=$(date +%s)
+  (( progress_started > 0 )) || progress_started="$now"
+  elapsed=$(( now - progress_started ))
+  if (( all_ready == 1 )); then
+    label="all services up, confirming stable $(( now - ready_since ))/${stability_seconds}s"
+  elif (( backend_healthy == 1 )); then
+    label="backend up, waiting on ${pending_gate}"
+  else
+    case "$(backend_phase)" in
+      "Waiting for database")        label="backend waiting for Postgres" ;;
+      "Creating cache table")        label="backend preparing its cache table" ;;
+      "Running database migrations") label="loading Django before migrations (slowest under emulation)" ;;
+      "Running migrations:")         label="applying migrations" ;;
+      "Migrations completed")        label="collecting static files" ;;
+      "Static files collected")      label="booting the web server" ;;
+      "Listening at")                label="web server up, waiting for /health/" ;;
+      *)                             label="starting the backend container" ;;
+    esac
+    if [[ "$label" == "applying migrations" ]]; then
+      applied="$last_migrations_applied"
+      if (( migrations_rate_since == 0 )); then
+        migrations_rate_since="$now"; migrations_rate_base="$applied"
+      fi
+      if (( migrations_total > 0 )); then
+        pct=$(( applied * 100 / migrations_total )); (( pct > 100 )) && pct=100
+        for (( i = 0; i < 25; i++ )); do (( i < pct / 4 )) && bar+="█" || bar+="░"; done
+        bar="${bar} ${pct}%  "
+        left=$(( migrations_total - applied ))
+        if (( applied > migrations_rate_base && left > 0 )); then
+          eta=" · ~$(fmt_secs $(( left * (now - migrations_rate_since) / (applied - migrations_rate_base) ))) left"
+        fi
+        label="applying migrations ${applied}/${migrations_total}${eta}"
+      else
+        label="applying migrations (${applied} so far)"
+      fi
+    fi
+  fi
+  printf '\r\033[K  %s%s%s · %s elapsed%s' "$DIM" "$bar" "$label" "$(fmt_secs "$elapsed")" "$RESET"
+  progress_active=1
+}
+
+stop_progress() {
+  progress_clear
+  [[ -n "$migrations_total_pid" ]] && kill "$migrations_total_pid" 2>/dev/null || true
+  [[ -n "$migrations_total_file" ]] && rm -f "$migrations_total_file" || true
+}
+
 bounded_env_int INSTALL_READY_TIMEOUT_SECONDS 600 60 1800
 ready_timeout="$BOUNDED_ENV_INT"
 bounded_env_int INSTALL_STABILITY_SECONDS 15 5 120
@@ -759,13 +853,18 @@ while true; do
     migrations_applied=$(count_applied_migrations)
     if (( migrations_applied > last_migrations_applied )); then
       last_migrations_applied="$migrations_applied"
-      say "  ${DIM}migrations in progress (${migrations_applied} applied), extending the readiness window${RESET}"
+      if [[ -t 1 ]]; then
+        log_only "  migrations in progress (${migrations_applied} applied), extending the readiness window"
+      else
+        say "  ${DIM}migrations in progress (${migrations_applied} applied), extending the readiness window${RESET}"
+      fi
       deadline=$(( now + ready_timeout ))
       (( deadline > hard_deadline )) && deadline=$hard_deadline
     fi
   fi
 
   if [[ -n "$fatal_reason" ]]; then
+    stop_progress
     $DC ps -a >&3 2>&1 || true
     $DC logs --tail 80 property-catalog-kafka property-catalog-kafka-volume-init \
       property-catalog-runtime-volume-init property-catalog-topic-init \
@@ -781,6 +880,7 @@ while true; do
       last_ready_signature="$ready_signature"
       ready_since="$now"
     elif (( now - ready_since >= stability_seconds )); then
+      stop_progress
       ok "Kafka healthy; observation topic and isolated catalog bootstrap completed"
       ok "Collector and observation consumer stable for ${stability_seconds}s"
       ok "Backend healthy at http://localhost:${backend_port}"
@@ -792,6 +892,7 @@ while true; do
   fi
 
   if (( now >= deadline )); then
+    stop_progress
     $DC ps -a >&3 2>&1 || true
     $DC logs --tail 80 property-catalog-kafka property-catalog-kafka-volume-init \
       property-catalog-runtime-volume-init property-catalog-topic-init \
@@ -801,6 +902,7 @@ while true; do
       >&3 2>&1 || true
     die "Stack did not become fully ready, still waiting on ${pending_gate:-$GATE_CONTAINERS}. Relevant service logs were appended to $LOG_FILE"
   fi
+  render_progress
   sleep 5
 done
 
