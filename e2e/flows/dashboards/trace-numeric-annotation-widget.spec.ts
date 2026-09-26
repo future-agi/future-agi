@@ -486,7 +486,10 @@ test('DASH-E2E-010: a saved trace annotation widget retains numeric scores', {
           const annotateSince = Date.now(); await surface.getByRole('button', { name: 'Actions', exact: true }).click();
           await surface.getByRole('menuitem', { name: 'Annotate', exact: true }).click();
           const sourceInput = { sources: JSON.stringify([{ source_type: 'trace', source_id: seed.traceId, span_notes_source_id: seed.spanIds[0] },
-            { source_type: 'observation_span', source_id: seed.spanIds[0] }]) };
+            { source_type: 'observation_span', source_id: seed.spanIds[0] }]),
+            // useQueueItemsForSource sends the drawer's project: the same trace id can exist in
+            // several projects, and only this project's queues belong in its sidebar.
+            project_id: projectId };
           type QueueBody = { result: { queue: Queue; item: null; labels: Wire[]; existing_scores: Wire; existing_notes: string; existing_label_notes: Wire }[] };
           const forSource = await readNative<QueueBody>(`${QUEUES}for-source/`, sourceInput, annotateSince, 'GET', owner);
           expect(forSource.body!.result).toHaveLength(1); expect(forSource.body!.result[0]).toMatchObject({
