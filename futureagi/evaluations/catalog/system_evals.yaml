@@ -1550,7 +1550,7 @@ evaluate_function_calling:
   output: Pass/Fail
   required_keys: [input, output]
   description: Evaluates function call correctness
-  tags: [Code, Function Calling]
+  tags: [Code, Function Calling, Tools]
   rule_prompt: |
     You are evaluating whether the model correctly selects and invokes functions with appropriate arguments.
 
@@ -1897,7 +1897,7 @@ customer_agent_objection_handling:
   output: choices
   required_keys: [conversation]
   description: Evaluates objection handling
-  tags: [Agents, Voice]
+  tags: [Agents, Voice, Sales]
   rule_prompt: |
     You are evaluating whether the agent effectively handles customer objections, hesitations, or refusals.
 

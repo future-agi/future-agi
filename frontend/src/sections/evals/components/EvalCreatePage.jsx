@@ -93,6 +93,10 @@ const EVAL_TAGS = [
   { value: "medical", label: "Medical", icon: "mdi:medical-bag" },
   { value: "finance", label: "Finance", icon: "mdi:currency-usd" },
   { value: "agents", label: "Agents", icon: "mdi:robot-excited-outline" },
+  { value: "compliance", label: "Compliance", icon: "mdi:scale-balance" },
+  { value: "insurance", label: "Insurance", icon: "mdi:umbrella-outline" },
+  { value: "sales", label: "Sales", icon: "mdi:handshake-outline" },
+  { value: "tools", label: "Tools", icon: "mdi:tools" },
 ];
 
 const extractSelectedTools = (tools) => {

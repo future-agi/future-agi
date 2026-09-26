@@ -23,6 +23,7 @@ eval_tags:
 - Conversation
 - Voice
 - Insurance
+- Compliance
 visible_ui: true
 permissions:
   allow_edit: false

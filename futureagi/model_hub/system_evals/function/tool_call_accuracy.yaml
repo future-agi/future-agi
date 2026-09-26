@@ -7,6 +7,7 @@ criteria: Measures how accurately an agent selects and parameterizes tool calls 
 eval_tags:
 - Agents
 - Code
+- Tools
 visible_ui: true
 permissions:
   allow_edit: false

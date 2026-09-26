@@ -239,6 +239,30 @@ export const EVAL_TAGS = [
     icon: "mdi:format-text",
     match: ["TEXT", "Text"],
   },
+  {
+    value: "COMPLIANCE",
+    label: "Compliance",
+    icon: "mdi:scale-balance",
+    match: ["COMPLIANCE", "compliance", "Compliance"],
+  },
+  {
+    value: "INSURANCE",
+    label: "Insurance",
+    icon: "mdi:umbrella-outline",
+    match: ["INSURANCE", "insurance", "Insurance"],
+  },
+  {
+    value: "SALES",
+    label: "Sales",
+    icon: "mdi:handshake-outline",
+    match: ["SALES", "sales", "Sales"],
+  },
+  {
+    value: "TOOLS",
+    label: "Tools",
+    icon: "mdi:tools",
+    match: ["TOOLS", "tools", "Tools"],
+  },
 ];
 
 // Lookup: any DB tag string → EVAL_TAG entry

@@ -1,0 +1,94 @@
+eval_id: 210
+name: action_confirmation_gating
+description: 'Checks that before committing an action on the user''s behalf (booking, scheduling, payment, cancellation, account
+  change) the agent stated the details and had clear consent: a yes to its recap, or the user''s own explicit and complete
+  instruction, not a backchannel or an ambiguous reply. Reads what was said from the conversation (call audio or transcript)
+  and the agent''s tool calls from the transcript. The agent prompt, if provided, can require a stricter confirmation flow.'
+criteria: "You are evaluating whether the agent obtained clear consent before committing an action on the user's behalf, such\
+  \ as a booking, scheduling, payment, order, cancellation, or account change. If the agent prompt defines how confirmation\
+  \ must be obtained, judge against the prompt; otherwise apply the criteria below. The conversation shows what was said,\
+  \ as call audio or transcript; the transcript also carries the agent's tool calls and their results.\n\n## Criteria\n1.\
+  \ Details stated before commit: Before committing, the agent states the details the user is agreeing to (what, when, where,\
+  \ and amount, as applicable), either in a recap or by repeating back the user's own complete request.\n2. Clear consent:\
+  \ The agent commits only on a clear yes to that recap or confirmation question, or on the user's own explicit and complete\
+  \ instruction to proceed.\n3. Recovery after interruption or ambiguity: If the user interrupted the recap, or the reply\
+  \ is ambiguous, the agent restates the details and asks again before acting.\n\n## Anti-bias Rules\n- This eval only has\
+  \ something to judge when the agent commits an action. A Pass/Fail eval has no 'not applicable' result, so if no action\
+  \ was committed there is nothing that could violate consent: return PASS and begin the explanation with 'Not applicable:\
+  \ no action committed', so these calls can be filtered out of the pass rate.\n- Backchannels ('okay', 'mm-hm', 'yeah') heard\
+  \ while the agent is still speaking are acknowledgements, not consent.\n- If the user gives an explicit and complete instruction\
+  \ ('cancel order 1234'), the agent may proceed after repeating back what it is about to do; a separate confirmation question\
+  \ is needed only when the agent prompt requires one or the request was incomplete or ambiguous.\n- Judge commitment by the\
+  \ agent's statements in the conversation and the tool calls in the transcript; a transcript with no tool calls means no\
+  \ tool was called.\n- Only the final commit counts. Passing a selected option or a form detail to a tool while gathering\
+  \ information is not a commit and needs no recap.\n- Assume the user heard an agent turn in full unless timestamps, overlap\
+  \ markers, or a visibly cut-off agent turn show otherwise.\n\n## Scoring\n- Return PASS if every committed action was preceded\
+  \ by the details being stated and clear consent, or by the confirmation flow the agent prompt prescribes.\n- Return FAIL\
+  \ if any action was committed without the details being stated, on a backchannel or ambiguous reply, after an interrupted\
+  \ recap that was not restated, or without a confirmation the agent prompt requires.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n\
+  <conversation>{{conversation}}</conversation>\n<transcript>{{transcript}}</transcript>"
+eval_tags:
+- Agents
+- Conversation
+- Audio
+- Compliance
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+choices:
+- Passed
+- Failed
+output_type_normalized: pass_fail
+pass_threshold: 0.5
+config:
+  required_keys:
+  - agent_prompt
+  - conversation
+  - transcript
+  optional_keys:
+  - agent_prompt
+  output: Pass/Fail
+  eval_type_id: AgentEvaluator
+  config: {}
+  config_params_desc:
+    agent_prompt: 'The agent''s system prompt (persona, script and behavioural instructions). Optional: leave unmapped if
+      not available'
+    conversation: The full conversation (user and agent turns), as call audio or transcript text
+    transcript: The call transcript as text or JSON turns, including the agent's tool calls and their results
+  param_modalities:
+    agent_prompt:
+    - TEXT
+    conversation:
+    - TEXT
+    - AUDIO
+    - JSON
+    - LIST
+    transcript:
+    - TEXT
+    - JSON
+    - LIST
+  rule_prompt: "You are evaluating whether the agent obtained clear consent before committing an action on the user's behalf,\
+    \ such as a booking, scheduling, payment, order, cancellation, or account change. If the agent prompt defines how confirmation\
+    \ must be obtained, judge against the prompt; otherwise apply the criteria below. The conversation shows what was said,\
+    \ as call audio or transcript; the transcript also carries the agent's tool calls and their results.\n\n## Criteria\n\
+    1. Details stated before commit: Before committing, the agent states the details the user is agreeing to (what, when,\
+    \ where, and amount, as applicable), either in a recap or by repeating back the user's own complete request.\n2. Clear\
+    \ consent: The agent commits only on a clear yes to that recap or confirmation question, or on the user's own explicit\
+    \ and complete instruction to proceed.\n3. Recovery after interruption or ambiguity: If the user interrupted the recap,\
+    \ or the reply is ambiguous, the agent restates the details and asks again before acting.\n\n## Anti-bias Rules\n- This\
+    \ eval only has something to judge when the agent commits an action. A Pass/Fail eval has no 'not applicable' result,\
+    \ so if no action was committed there is nothing that could violate consent: return PASS and begin the explanation with\
+    \ 'Not applicable: no action committed', so these calls can be filtered out of the pass rate.\n- Backchannels ('okay',\
+    \ 'mm-hm', 'yeah') heard while the agent is still speaking are acknowledgements, not consent.\n- If the user gives an\
+    \ explicit and complete instruction ('cancel order 1234'), the agent may proceed after repeating back what it is about\
+    \ to do; a separate confirmation question is needed only when the agent prompt requires one or the request was incomplete\
+    \ or ambiguous.\n- Judge commitment by the agent's statements in the conversation and the tool calls in the transcript;\
+    \ a transcript with no tool calls means no tool was called.\n- Only the final commit counts. Passing a selected option\
+    \ or a form detail to a tool while gathering information is not a commit and needs no recap.\n- Assume the user heard\
+    \ an agent turn in full unless timestamps, overlap markers, or a visibly cut-off agent turn show otherwise.\n\n## Scoring\n\
+    - Return PASS if every committed action was preceded by the details being stated and clear consent, or by the confirmation\
+    \ flow the agent prompt prescribes.\n- Return FAIL if any action was committed without the details being stated, on a\
+    \ backchannel or ambiguous reply, after an interrupted recap that was not restated, or without a confirmation the agent\
+    \ prompt requires.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n<conversation>{{conversation}}</conversation>\n\
+    <transcript>{{transcript}}</transcript>"
