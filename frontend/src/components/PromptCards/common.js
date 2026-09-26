@@ -515,6 +515,8 @@ const CAMEL_TO_SNAKE_INNER = {
 
 export function normalizeContentBlocks(blocks) {
   if (!blocks) return blocks;
+  if (typeof blocks === "string") return [{ type: "text", text: blocks }];
+  if (!Array.isArray(blocks)) return [];
   return blocks.map((block) => {
     if (!block || typeof block !== "object") return block;
     const fixedType = CAMEL_TO_SNAKE_OUTER[block.type] || block.type;

@@ -857,6 +857,8 @@ class TestDeleteEvalsView:
         )
         dataset.column_order.append(str(reason_col.id))
         dataset.save()
+        previous_eval_updated_at = eval_col.updated_at
+        previous_reason_updated_at = reason_col.updated_at
 
         response = auth_client.delete(
             f"/model-hub/develops/{dataset.id}/delete_user_eval/{user_eval_metric.id}/",
@@ -873,6 +875,11 @@ class TestDeleteEvalsView:
         assert reason_col.deleted is True
         assert eval_col.deleted_at is not None
         assert reason_col.deleted_at is not None
+        assert eval_col.updated_at == eval_col.deleted_at
+        assert reason_col.updated_at == reason_col.deleted_at
+        assert eval_col.updated_at > previous_eval_updated_at
+        assert reason_col.updated_at > previous_reason_updated_at
+        assert eval_col.updated_at == reason_col.updated_at
 
         # Both should be removed from column_order
         dataset.refresh_from_db()
@@ -904,6 +911,8 @@ class TestDeleteEvalsView:
         reason_cell = Cell.objects.create(
             dataset=dataset, row=row, column=reason_col, value="Looks grounded"
         )
+        previous_eval_updated_at = eval_cell.updated_at
+        previous_reason_updated_at = reason_cell.updated_at
 
         response = auth_client.delete(
             f"/model-hub/develops/{dataset.id}/delete_user_eval/{user_eval_metric.id}/",
@@ -918,6 +927,11 @@ class TestDeleteEvalsView:
         assert reason_cell.deleted is True
         assert eval_cell.deleted_at is not None
         assert reason_cell.deleted_at is not None
+        assert eval_cell.updated_at == eval_cell.deleted_at
+        assert reason_cell.updated_at == reason_cell.deleted_at
+        assert eval_cell.updated_at > previous_eval_updated_at
+        assert reason_cell.updated_at > previous_reason_updated_at
+        assert eval_cell.updated_at == reason_cell.updated_at
 
     def test_delete_column_of_running_eval_cancels_runner(
         self, auth_client, dataset, user_eval_metric
@@ -2023,8 +2037,12 @@ class TestPreviewRunEvalView:
         input_cell,
         organization,
         workspace,
+        settings,
     ):
         """Preview should pass function params to code eval kwargs."""
+        # No code-executor runs under pytest; let the eval use the local runner.
+        settings.CODE_EXECUTOR_LOCAL_FALLBACK = True
+        settings.CLOUD_DEPLOYMENT = ""
         template = EvalTemplate.objects.create(
             name="word_count_preview_test",
             organization=organization,

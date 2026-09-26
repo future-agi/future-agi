@@ -1,0 +1,42 @@
+slug: localize-errors
+name: Localize Errors
+icon: mdi:target
+description: Run error localization on eval results to pinpoint which parts of the input caused failures.
+trigger_phrases:
+- localize errors
+- error localization
+- pinpoint errors
+- why did eval fail
+- find errors in output
+- debug eval failure
+tool_names:
+- trigger_error_localization
+- get_error_localization_status
+- get_error_localization_results
+- get_evaluation
+- get_eval_log_detail
+- list_evaluations
+instructions: |-
+  Help the user run error localization on evaluation results to pinpoint failure sources.
+
+  Approach:
+  1. Understand which evaluation or eval log the user wants to analyze
+  2. Trigger error localization using trigger_error_localization
+  3. Poll for completion using get_error_localization_status
+  4. Once complete, retrieve and present results using get_error_localization_results
+  5. Explain the error analysis: which input segments caused failures, ranked by severity
+
+  Error localization identifies specific parts of the input (sentences for text, patches for images, segments for audio) that contributed to the evaluation failure, with ranked severity weights.
+  Always explain the results in plain English and suggest actionable improvements.
+example_trajectories:
+- user: Why did my faithfulness eval fail on this trace?
+  steps:
+  - tool: get_eval_log_detail
+    params:
+      log_id: <log_id>
+  - tool: trigger_error_localization
+    params:
+      eval_log_id: <log_id>
+  - tool: get_error_localization_results
+    params:
+      task_id: <task_id>

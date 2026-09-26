@@ -139,7 +139,7 @@ const FunctionDefinition = ({ toolDefinitions = [] }) => {
                         <Box
                           sx={{
                             borderBottom: "1px solid",
-                            borderColor: "grey.300",
+                            borderColor: "divider",
                             display: "flex",
                             alignItems: "center",
                             gap: 1,
@@ -175,7 +175,7 @@ const FunctionDefinition = ({ toolDefinitions = [] }) => {
                           sx={{
                             padding: 1.5,
                             fontSize: "14px",
-                            backgroundColor: "grey.200",
+                            backgroundColor: "background.neutral",
                           }}
                         >
                           {param.description || "No description"}

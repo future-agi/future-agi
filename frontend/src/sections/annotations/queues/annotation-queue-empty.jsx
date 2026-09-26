@@ -37,7 +37,7 @@ export default function AnnotationQueueEmpty({ onCreateClick }) {
         />
       </Box>
       <Typography variant="h6" gutterBottom>
-        No annotation queues yet
+        No Active annotation queues yet
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
         Create your first annotation queue to start collecting human feedback.

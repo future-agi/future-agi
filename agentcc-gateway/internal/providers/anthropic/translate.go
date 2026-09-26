@@ -22,7 +22,7 @@ type anthropicRequest struct {
 	TopP          *float64               `json:"top_p,omitempty"`
 	StopSequences []string               `json:"stop_sequences,omitempty"`
 	Stream        bool                   `json:"stream,omitempty"`
-	Tools         []anthropicTool        `json:"tools,omitempty"`
+	Tools         []json.RawMessage      `json:"tools,omitempty"`
 	ToolChoice    *anthropicToolChoice   `json:"tool_choice,omitempty"`
 	OutputConfig  *anthropicOutputConfig `json:"output_config,omitempty"`
 }
@@ -51,6 +51,7 @@ type anthropicContentBlock struct {
 	Content   json.RawMessage `json:"content,omitempty"`
 	Source    *imageSource    `json:"source,omitempty"`
 	Thinking  string          `json:"thinking,omitempty"`
+	Citations json.RawMessage `json:"citations,omitempty"`
 }
 
 type imageSource struct {
@@ -82,8 +83,21 @@ type anthropicResponse struct {
 }
 
 type anthropicUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
+	InputTokens   int                  `json:"input_tokens"`
+	OutputTokens  int                  `json:"output_tokens"`
+	ServerToolUse *anthropicServerTool `json:"server_tool_use,omitempty"`
+}
+
+type anthropicServerTool struct {
+	WebSearchRequests int `json:"web_search_requests,omitempty"`
+}
+
+// anthropicCitation is one web_search_result_location entry on a text block.
+type anthropicCitation struct {
+	Type      string `json:"type"`
+	URL       string `json:"url,omitempty"`
+	Title     string `json:"title,omitempty"`
+	CitedText string `json:"cited_text,omitempty"`
 }
 
 type anthropicErrorResponse struct {
@@ -156,17 +170,27 @@ func translateRequest(req *models.ChatCompletionRequest) (*anthropicRequest, err
 		ar.System = system
 	}
 
-	// Translate tools.
-	if len(req.Tools) > 0 {
-		for _, t := range req.Tools {
-			if t.Type != "function" {
-				continue
-			}
-			ar.Tools = append(ar.Tools, anthropicTool{
+	// Translate tools.  A function tool is rebuilt in Anthropic's shape; a
+	// server tool — web_search_20250305 and its successors, code_execution,
+	// anything Anthropic runs itself — is forwarded byte for byte, because its
+	// fields (max_uses, allowed_domains, user_location, allowed_callers) have
+	// nowhere to live on the canonical struct.  Dropping it, which is what this
+	// did before, left the model with no tool and no error to explain why.
+	for _, t := range req.Tools {
+		if t.Type == "function" {
+			encoded, err := json.Marshal(anthropicTool{
 				Name:        t.Function.Name,
 				Description: t.Function.Description,
 				InputSchema: t.Function.Parameters,
 			})
+			if err != nil {
+				return nil, fmt.Errorf("encoding tool %q: %w", t.Function.Name, err)
+			}
+			ar.Tools = append(ar.Tools, encoded)
+			continue
+		}
+		if len(t.Raw) > 0 {
+			ar.Tools = append(ar.Tools, t.Raw)
 		}
 	}
 
@@ -443,10 +467,18 @@ func translateResponse(resp *anthropicResponse) *models.ChatCompletionResponse {
 	}
 	var thinkingBlocks []thinkingBlock
 
+	// Citations arrive attached to the text block they support. The canonical
+	// message carries one flat annotation list over the joined text, so track
+	// where each block lands in that string to give every annotation a span.
+	var annotations []urlCitation
+	textLen := 0
+
 	for _, block := range resp.Content {
 		switch block.Type {
 		case "text":
 			textParts = append(textParts, block.Text)
+			annotations = append(annotations, citationsForBlock(block, textLen)...)
+			textLen += len(block.Text)
 		case "thinking":
 			// Anthropic extended thinking blocks (Claude 3.7+).
 			// Stash on the canonical message so the inbound translator can
@@ -482,6 +514,12 @@ func translateResponse(resp *anthropicResponse) *models.ChatCompletionResponse {
 	if len(thinkingBlocks) > 0 {
 		if b, err := json.Marshal(thinkingBlocks); err == nil {
 			msg.ThinkingBlocks = b
+		}
+	}
+
+	if len(annotations) > 0 {
+		if b, err := json.Marshal(annotations); err == nil {
+			msg.Annotations = b
 		}
 	}
 
@@ -552,8 +590,66 @@ func translateResponse(resp *anthropicResponse) *models.ChatCompletionResponse {
 			PromptTokens:     resp.Usage.InputTokens,
 			CompletionTokens: resp.Usage.OutputTokens,
 			TotalTokens:      resp.Usage.InputTokens + resp.Usage.OutputTokens,
+			ServerToolUse:    serverToolUsage(resp.Usage.ServerToolUse),
 		},
 	}
+}
+
+// urlCitation is OpenAI's annotation shape, which its own web-search responses
+// use, so a caller already handling those needs no gateway-specific parsing.
+type urlCitation struct {
+	Type        string          `json:"type"`
+	URLCitation urlCitationBody `json:"url_citation"`
+}
+
+type urlCitationBody struct {
+	StartIndex int    `json:"start_index"`
+	EndIndex   int    `json:"end_index"`
+	URL        string `json:"url"`
+	Title      string `json:"title,omitempty"`
+	CitedText  string `json:"cited_text,omitempty"`
+}
+
+// citationsForBlock maps one text block's citations onto the joined response
+// text. Anthropic cites a whole block rather than a character range, so the
+// span is the block's own extent — offset is where it starts in the join.
+func citationsForBlock(block anthropicContentBlock, offset int) []urlCitation {
+	if len(block.Citations) == 0 {
+		return nil
+	}
+	var cites []anthropicCitation
+	if err := json.Unmarshal(block.Citations, &cites); err != nil {
+		slog.Warn("anthropic: could not decode citations, dropping them",
+			"error", err)
+		return nil
+	}
+	out := make([]urlCitation, 0, len(cites))
+	for _, c := range cites {
+		if c.URL == "" {
+			continue
+		}
+		out = append(out, urlCitation{
+			Type: "url_citation",
+			URLCitation: urlCitationBody{
+				StartIndex: offset,
+				EndIndex:   offset + len(block.Text),
+				URL:        c.URL,
+				Title:      c.Title,
+				CitedText:  c.CitedText,
+			},
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func serverToolUsage(u *anthropicServerTool) *models.ServerToolUsage {
+	if u == nil || u.WebSearchRequests == 0 {
+		return nil
+	}
+	return &models.ServerToolUsage{WebSearchRequests: u.WebSearchRequests}
 }
 
 func mapStopReason(reason string) string {
@@ -566,6 +662,11 @@ func mapStopReason(reason string) string {
 		return "stop"
 	case "tool_use":
 		return "tool_calls"
+	case "pause_turn":
+		// A long-running server tool turn that Anthropic paused and expects to
+		// be handed back. It is not finished, so do not report "stop" — the
+		// nearest honest OpenAI reason is a truncated generation.
+		return "length"
 	default:
 		return "stop"
 	}

@@ -197,6 +197,17 @@ def _create_trace_graph(*, project):
         resource_attributes={"service.name": "annotation-render-test"},
         metadata={"span": "child"},
     )
+    from tracer.tests._ch_seed import (
+        seed_ch_span,
+        seed_ch_trace,
+        seed_ch_trace_sessions,
+    )
+
+    seed_ch_trace_sessions([session])
+    seed_ch_trace(trace)
+    seed_ch_span(root)
+    seed_ch_span(child)
+
     return session, trace, root, child
 
 
@@ -511,15 +522,15 @@ def test_trace_rule_creates_pending_item_with_trace_preview(
     item = _assert_single_item_for_rule(rule, "trace", seed["trace"])
     preview = resolve_source_preview(item)
     assert preview["type"] == "trace"
-    assert preview["name"] == seed["trace"].name
+    assert preview["name"] == seed["root_span"].name
     assert preview["project_id"] == str(seed["project"].id)
     assert "hello" in preview["input_preview"]
 
     detail = _annotate_detail(auth_client, seed["queue"], item)
     content = detail["item"]["source_content"]
+    assert detail["item"]["source_type"] == "trace"
     assert content["trace_id"] == str(seed["trace"].id)
-    assert content["project_source"] == "prototype"
-    assert content["input"] == {"user": "hello"}
+    assert content["input"] == {"message": "hello"}
 
 
 @pytest.mark.django_db

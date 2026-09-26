@@ -77,6 +77,7 @@ export const normalizeDatasetOptimizationRun = (run = {}) => ({
   startedAt: run.startedAt ?? run.started_at,
   optimizerAlgorithm: run.optimizerAlgorithm ?? run.optimizer_algorithm,
   optimizerModelId: run.optimizerModelId ?? run.optimizer_model_id,
+  modelDeprecated: run.modelDeprecated ?? run.model_deprecated ?? false,
   optimizerConfig: run.optimizerConfig ?? run.optimizer_config,
   columnId: run.columnId ?? run.column_id,
 });
@@ -95,6 +96,8 @@ export const normalizeDatasetOptimizationDetail = (optimization = {}) => ({
   columnConfig: optimization.columnConfig ?? optimization.column_config,
   optimizerModelId:
     optimization.optimizerModelId ?? optimization.optimizer_model_id,
+  modelDeprecated:
+    optimization.modelDeprecated ?? optimization.model_deprecated ?? false,
   userEvalTemplates:
     optimization.userEvalTemplates ?? optimization.user_eval_templates,
 });

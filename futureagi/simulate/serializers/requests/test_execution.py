@@ -1,4 +1,8 @@
+import re
+
 from rest_framework import serializers
+
+from simulate.serializers.harness_job import RUNNER_RESERVED_ENVIRONMENT
 
 
 class TestExecutionCancelSerializer(serializers.Serializer):
@@ -29,6 +33,41 @@ class CallExecutionRerunSerializer(serializers.Serializer):
         default=False,
         help_text="Whether to rerun all call executions in the test execution",
     )
+
+    environment_values = serializers.DictField(
+        child=serializers.CharField(
+            max_length=65536, allow_blank=True, trim_whitespace=False
+        ),
+        required=False,
+        default=dict,
+        write_only=True,
+        help_text=(
+            "Fresh job-scoped environment for a repository-backed harness rerun. "
+            "Values are forwarded to the sandbox and are not persisted."
+        ),
+    )
+
+    def validate_environment_values(self, value):
+        invalid = [
+            str(name)
+            for name, item in value.items()
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(name))
+            or "\x00" in item
+            or str(name) in RUNNER_RESERVED_ENVIRONMENT
+            or str(name).startswith("ALK_")
+        ]
+        if invalid:
+            raise serializers.ValidationError(
+                f"invalid environment variable names or values: {', '.join(invalid)}"
+            )
+        if len(value) > 256 or sum(
+            len(str(name).encode()) + len(item.encode())
+            for name, item in value.items()
+        ) > 262_144:
+            raise serializers.ValidationError(
+                "uploaded rerun environment exceeds the 256 variable / 256 KiB limit"
+            )
+        return value
 
     def validate(self, data):
         """Validate that either call_execution_ids or select_all is provided"""

@@ -1,16 +1,9 @@
 import json
 import uuid
 from pathlib import Path
-from unittest.mock import Mock, patch
-
-from rest_framework.test import APIRequestFactory
 
 from tracer.views.error_analysis import TraceErrorTaskUpdateRequestSerializer
 from tracer.views.imagine_analysis import ImagineAnalysisQuerySerializer
-from tracer.views.observability_provider import (
-    WebhookHandlerView,
-    WebhookRequestSerializer,
-)
 
 
 def _repo_root():
@@ -111,7 +104,6 @@ def test_feed_contract_debt_stays_burned_down():
         "/tracer/shared/{token}/",
         "/tracer/trace-error-analysis/{trace_id}/",
         "/tracer/v1/health",
-        "/tracer/webhook/",
     }
 
     body_debt = {
@@ -155,26 +147,10 @@ def test_protocol_and_public_tracer_endpoints_have_explicit_contracts():
             "TraceErrorAnalysisResponse"
         ),
         ("GET", "/tracer/v1/health"): "OTLPHealthResponse",
-        ("POST", "/tracer/webhook/"): "WebhookResponse",
-    }
-    expected_bodies = {
-        ("POST", "/tracer/webhook/"): "WebhookRequest",
     }
 
     for (method, path), definition_name in expected_responses.items():
         assert _response_ref(_operation(path, method)) == definition_name
-
-    for (method, path), definition_name in expected_bodies.items():
-        operation = _operation(path, method)
-        if definition_name == "object":
-            body = next(
-                parameter
-                for parameter in operation.get("parameters", [])
-                if parameter.get("in") == "body"
-            )
-            assert body["schema"]["type"] == definition_name
-        else:
-            assert _body_ref(operation) == definition_name
 
 
 def test_runtime_contract_serializers_reject_drift_without_aliases():
@@ -188,99 +164,3 @@ def test_runtime_contract_serializers_reject_drift_without_aliases():
     trace_task = TraceErrorTaskUpdateRequestSerializer(data={"sampling_rate": 1.1})
     assert not trace_task.is_valid()
     assert "sampling_rate" in trace_task.errors
-
-    webhook = WebhookRequestSerializer(
-        data={
-            "call": {
-                "agent_id": "agent-1",
-                "retell_extra_field": {"nested": True},
-            },
-        }
-    )
-    assert webhook.is_valid(), webhook.errors
-    assert webhook.validated_data["call"]["retell_extra_field"]["nested"] is True
-
-
-def test_webhook_signature_uses_original_retell_payload():
-    payload = {
-        "event": "call_analyzed",
-        "interaction_type": "voice",
-        "call": {
-            "agent_id": "agent-1",
-            "retell_extra_field": {"nested": True},
-        },
-    }
-    agent_definition = Mock(id="agent-definition-1")
-    agent_definition.latest_version.credentials.get_api_key.return_value = "retell-secret"
-    queryset = Mock()
-    queryset.iterator.return_value = [agent_definition]
-
-    with (
-        patch(
-            "tracer.views.observability_provider.AgentDefinition.no_workspace_objects.select_related"
-        ) as select_related,
-        patch(
-            "tracer.views.observability_provider.verify_retell_webhook"
-        ) as verify_retell_webhook,
-        patch(
-            "tracer.views.observability_provider.normalize_and_store_logs"
-        ) as normalize_and_store_logs,
-    ):
-        select_related.return_value.filter.return_value = queryset
-        verify_retell_webhook.return_value = True
-
-        request = APIRequestFactory().post(
-            "/tracer/webhook/",
-            payload,
-            format="json",
-            HTTP_X_RETELL_SIGNATURE="signature",
-        )
-        response = WebhookHandlerView.as_view()(request)
-
-    assert response.status_code == 200
-    signed_payload = verify_retell_webhook.call_args.args[0]
-    assert json.loads(signed_payload) == payload
-    assert verify_retell_webhook.call_args.kwargs["api_key"] == "retell-secret"
-    assert verify_retell_webhook.call_args.kwargs["signature"] == "signature"
-    normalize_and_store_logs.delay.assert_called_once()
-    assert normalize_and_store_logs.delay.call_args.kwargs["body"] == payload
-
-
-def test_webhook_invalid_signature_does_not_dispatch_logs():
-    payload = {
-        "event": "call_analyzed",
-        "interaction_type": "voice",
-        "call": {
-            "agent_id": "agent-1",
-        },
-    }
-    agent_definition = Mock(id="agent-definition-1")
-    agent_definition.latest_version.credentials.get_api_key.return_value = "retell-secret"
-    queryset = Mock()
-    queryset.iterator.return_value = [agent_definition]
-
-    with (
-        patch(
-            "tracer.views.observability_provider.AgentDefinition.no_workspace_objects.select_related"
-        ) as select_related,
-        patch(
-            "tracer.views.observability_provider.verify_retell_webhook"
-        ) as verify_retell_webhook,
-        patch(
-            "tracer.views.observability_provider.normalize_and_store_logs"
-        ) as normalize_and_store_logs,
-    ):
-        select_related.return_value.filter.return_value = queryset
-        verify_retell_webhook.return_value = False
-
-        request = APIRequestFactory().post(
-            "/tracer/webhook/",
-            payload,
-            format="json",
-            HTTP_X_RETELL_SIGNATURE="bad-signature",
-        )
-        response = WebhookHandlerView.as_view()(request)
-
-    assert response.status_code == 400
-    assert response.data["result"] == "Invalid webhook signature"
-    normalize_and_store_logs.delay.assert_not_called()

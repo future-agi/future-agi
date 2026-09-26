@@ -26,6 +26,12 @@ def spy(monkeypatch):
         "tracer.views.eval_task.start_eval_task_workflow_sync",
         lambda task, **kw: (calls["start"].append(str(task.id)), "wf")[1],
     )
+    # These orchestration tests run inside pytest-django's rollback-only outer
+    # transaction, so an actual on_commit callback would be discarded. Execute
+    # it here; the real commit-order contract has dedicated transaction tests.
+    monkeypatch.setattr(
+        "tracer.views.eval_task.transaction.on_commit", lambda callback: callback()
+    )
     return calls
 
 
@@ -221,3 +227,39 @@ class TestCutoverUnpause:
         assert spy["start"]
         historical_task.refresh_from_db()
         assert historical_task.status == EvalTaskStatus.PENDING
+
+    def test_unpause_recovers_a_failed_task(self, auth_client, historical_task, spy):
+        """A task whose workflow died has no other way back: a control activity
+        that exhausts its retry budget writes FAILED, and nothing else restarts
+        a task. Its entries are untouched, so a fresh run reconciles, reaps and
+        drains them."""
+        historical_task.status = EvalTaskStatus.FAILED
+        historical_task.save(update_fields=["status"])
+
+        resp = auth_client.post(
+            f"/tracer/eval-task/unpause_eval_task/?eval_task_id={historical_task.id}",
+            {},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert spy["start"] == [str(historical_task.id)]
+        historical_task.refresh_from_db()
+        assert historical_task.status == EvalTaskStatus.PENDING
+
+    def test_unpause_still_refuses_a_completed_task(
+        self, auth_client, historical_task, spy
+    ):
+        """Only paused/failed are resumable — resuming a completed task would
+        re-spend evaluations on work that already produced results."""
+        historical_task.status = EvalTaskStatus.COMPLETED
+        historical_task.save(update_fields=["status"])
+
+        resp = auth_client.post(
+            f"/tracer/eval-task/unpause_eval_task/?eval_task_id={historical_task.id}",
+            {},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert not spy["start"]

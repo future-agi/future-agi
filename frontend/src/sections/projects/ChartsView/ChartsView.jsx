@@ -34,6 +34,10 @@ import Iconify from "src/components/iconify";
 import TraceFilterPanel from "../LLMTracing/TraceFilterPanel";
 import FilterChips from "../LLMTracing/FilterChips";
 import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
+import {
+  AGGREGATION_PREPARING_MESSAGE,
+  getExactAggregationReadState,
+} from "src/utils/queryReadState";
 
 const DateRangeButtonOptions = [
   { title: "Hour", value: "hour" },
@@ -278,6 +282,7 @@ const ChartsView = () => {
   const {
     data: graphData,
     isLoading,
+    isError: graphError,
     refetch: refetchSystemMetrics,
     isRefetching: isRefetchingSystemMetrics,
   } = useQuery({
@@ -295,10 +300,18 @@ const ChartsView = () => {
     enabled: Boolean(observeId) && filters?.length > 0,
   });
 
+  const systemMetrics = graphData?.result?.system_metrics;
+  const graphReadState = getExactAggregationReadState(systemMetrics, {
+    isError: graphError,
+  });
+  const graphReadMessage =
+    graphReadState === "complete" ? null : AGGREGATION_PREPARING_MESSAGE;
+
   const chartCategories = useMemo(() => {
     if (
-      graphData?.result?.system_metrics &&
-      Object.keys(graphData?.result?.system_metrics)?.length > 0
+      graphReadState === "complete" &&
+      systemMetrics &&
+      Object.keys(systemMetrics)?.length > 0
     ) {
       setIsData(true);
       return [
@@ -315,7 +328,7 @@ const ChartsView = () => {
                 {
                   name: "Latency",
                   data:
-                    graphData?.result?.system_metrics?.latency?.map((item) => ({
+                    systemMetrics?.latency?.map((item) => ({
                       x: normalizeTimestamp(item?.timestamp),
                       y: item?.latency,
                     })) || [],
@@ -332,7 +345,7 @@ const ChartsView = () => {
                 {
                   name: "Tokens",
                   data:
-                    graphData?.result?.system_metrics?.tokens?.map((item) => ({
+                    systemMetrics?.tokens?.map((item) => ({
                       x: normalizeTimestamp(item?.timestamp),
                       y: item?.tokens,
                     })) || [],
@@ -349,7 +362,7 @@ const ChartsView = () => {
                 {
                   name: "Traffic",
                   data:
-                    graphData?.result?.system_metrics?.traffic?.map((item) => ({
+                    systemMetrics?.traffic?.map((item) => ({
                       x: normalizeTimestamp(item?.timestamp),
                       y: item?.traffic,
                     })) || [],
@@ -366,7 +379,7 @@ const ChartsView = () => {
                 {
                   name: "Cost",
                   data:
-                    graphData?.result?.system_metrics?.cost?.map((item) => ({
+                    systemMetrics?.cost?.map((item) => ({
                       x: normalizeTimestamp(item?.timestamp),
                       y: item?.cost,
                     })) || [],
@@ -379,7 +392,7 @@ const ChartsView = () => {
     }
 
     return [];
-  }, [graphData]);
+  }, [graphReadState, systemMetrics]);
 
   const refreshGrid = useCallback(() => {
     queryClient.invalidateQueries({
@@ -564,6 +577,16 @@ const ChartsView = () => {
 
       {/* Chart Categories and Charts */}
       <Box sx={{ paddingTop: theme.spacing(3) }}>
+        {graphReadMessage && (
+          <Typography
+            role="status"
+            variant="caption"
+            color="text.secondary"
+            sx={{ display: "block", mb: 1 }}
+          >
+            {graphReadMessage}
+          </Typography>
+        )}
         {isLoading ? (
           <>
             <Skeleton

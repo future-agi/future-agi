@@ -92,24 +92,19 @@ async def fetch_trace_data(input: FetchTraceInput) -> str:
 @activity.defn
 async def run_llm_analysis(input: RunAnalysisInput) -> str:
     """Run LLM analysis using Falcon's LLM client. Returns markdown."""
-    # Falcon is gated on deployment mode (EE / Cloud) AND code presence.
-    try:
-        from ee.usage.deployment import DeploymentMode
+    from tfc.ee_gating import EEFeature, check_ee_feature
 
-        _is_oss = DeploymentMode.is_oss()
-    except ImportError:
-        _is_oss = True
-
-    if _is_oss:
-        raise RuntimeError(
-            "Imagine requires Falcon AI (EE). Not available on OSS."
-        )
+    check_ee_feature(EEFeature.FALCON_AI, org_id=input.org_id, activity=True)
 
     try:
         from ee.falcon_ai.llm_client import FalconLLMClient
     except ImportError:
-        raise RuntimeError(
-            "Imagine requires Falcon AI (EE). Not available on OSS."
+        from temporalio.exceptions import ApplicationError
+
+        raise ApplicationError(
+            "Falcon AI module not available.",
+            type="FeatureUnavailable",
+            non_retryable=True,
         )
 
     client = FalconLLMClient()

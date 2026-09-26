@@ -1,0 +1,651 @@
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import PropTypes from "prop-types";
+import {
+  Box,
+  Stack,
+  Typography,
+  Link,
+  Collapse,
+  Divider,
+  IconButton,
+  Tooltip,
+  useTheme,
+} from "@mui/material";
+import { alpha } from "@mui/material/styles";
+import LoadingButton from "@mui/lab/LoadingButton";
+import Iconify from "src/components/iconify";
+import { useSetupChecks } from "src/api/ossSetup/oss-setup";
+import {
+  CHECK_STATUS,
+  CHECK_REVEAL_STAGGER_MS,
+  CONNECTION_STATE,
+  LAUNCH_MODE,
+} from "./constants";
+
+const { PENDING, PASSED, WARNING, FAILED, SKIPPED } = CHECK_STATUS;
+
+// Fast while the stack boots, then back off so a long outage doesn't hammer it.
+const FAST_POLL_MS = 2000;
+const SLOW_POLL_MS = 10000;
+const FAST_POLL_WINDOW_MS = 30000;
+
+// The server caches a snapshot for 3s, so anything faster is wasted.
+const UNSETTLED_POLL_MS = 5000;
+
+// A cached snapshot comes back in milliseconds, so a spinner tied purely to the
+// request would flash and read as a dead button. Hold it for one full turn.
+const REVALIDATE_MIN_SPIN_MS = 900;
+
+// How long a snapshot may go unchanged before polling gives up and leaves it
+// to the re-run controls.
+const STALL_TIMEOUT_MS = 60000;
+
+const PANEL_MAX_WIDTH = 460;
+
+const SUPPORT_EMAIL = "support@futureagi.com";
+
+// A `fix` string carries inline code spans and nothing else, so a markdown
+// dependency would be overkill.
+function renderFix(text) {
+  return String(text)
+    .split("`")
+    .map((part, i) =>
+      i % 2 === 1 ? (
+        <Box
+          key={`${i}:${part}`}
+          component="code"
+          sx={{
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+            fontSize: "0.92em",
+            color: "text.primary",
+            bgcolor: (t) => alpha(t.palette.common.white, 0.07),
+            px: 0.6,
+            py: 0.15,
+            borderRadius: 0.5,
+          }}
+        >
+          {part}
+        </Box>
+      ) : (
+        part
+      ),
+    );
+}
+
+// `warning.main` disappears on a light surface.
+const WARNING_COLOR = "amber.600";
+
+const STATUS_META = {
+  [PASSED]: {
+    icon: "solar:check-circle-bold",
+    color: "success.main",
+    label: "Ready",
+  },
+  [WARNING]: {
+    icon: "solar:danger-triangle-bold",
+    color: WARNING_COLOR,
+    label: "Caution",
+  },
+  [FAILED]: {
+    icon: "solar:close-circle-bold",
+    color: "error.main",
+    label: "Failed",
+  },
+  [SKIPPED]: {
+    icon: "solar:minus-circle-linear",
+    color: "text.disabled",
+    label: "Optional",
+  },
+  [PENDING]: {
+    icon: "svg-spinners:90-ring",
+    color: "primary.main",
+    labelColor: "text.primary",
+    label: "Checking…",
+  },
+};
+
+export default function ValidationStep({
+  mode,
+  onSwitchMode,
+  onContinue,
+  onProgress,
+}) {
+  const theme = useTheme();
+  const [expanded, setExpanded] = useState(true);
+  const [revealCount, setRevealCount] = useState(0);
+  const [pollInterval, setPollInterval] = useState(FAST_POLL_MS);
+  const [revalidating, setRevalidating] = useState(false);
+  const unreachableSince = useRef(null);
+  const timers = useRef([]);
+  const hasStaggered = useRef(false);
+  const lastSignature = useRef(null);
+  const stalledSince = useRef(null);
+  const spinTimer = useRef(null);
+
+  const { data, isError, refetch, errorUpdatedAt } = useSetupChecks(mode, {
+    refetchInterval: pollInterval,
+  });
+
+  const checks = useMemo(() => data?.checks ?? [], [data]);
+
+  let connectionState = CONNECTION_STATE.CONNECTING;
+  if (isError) connectionState = CONNECTION_STATE.UNREACHABLE;
+  else if (data) connectionState = CONNECTION_STATE.REACHABLE;
+  const reachable = connectionState === CONNECTION_STATE.REACHABLE;
+
+  // Warnings are down services too, just ones this mode tolerates.
+  const settled = useMemo(
+    () =>
+      checks.length > 0 &&
+      checks.every((c) => c.status !== FAILED && c.status !== WARNING),
+    [checks],
+  );
+
+  const signature = useMemo(
+    () => checks.map((c) => `${c.id}:${c.status}`).join("|"),
+    [checks],
+  );
+
+  // Keyed on `errorUpdatedAt`, not `isError`: consecutive failures leave
+  // isError identical and the backoff would never engage.
+  useEffect(() => {
+    if (reachable) {
+      unreachableSince.current = null;
+      if (settled) {
+        setPollInterval(false);
+        return;
+      }
+      // A service that stays down is not necessarily still starting: on a box
+      // that is simply missing one, polling would never end. Keep going only
+      // while the snapshot is still changing, and give up once it stops.
+      if (signature !== lastSignature.current) {
+        lastSignature.current = signature;
+        stalledSince.current = performance.now();
+      }
+      const stalledFor = performance.now() - (stalledSince.current ?? 0);
+      setPollInterval(
+        stalledFor > STALL_TIMEOUT_MS ? false : UNSETTLED_POLL_MS,
+      );
+      return;
+    }
+    if (unreachableSince.current === null) {
+      unreachableSince.current = performance.now();
+    }
+    const elapsed = performance.now() - unreachableSince.current;
+    setPollInterval(
+      elapsed > FAST_POLL_WINDOW_MS ? SLOW_POLL_MS : FAST_POLL_MS,
+    );
+  }, [reachable, settled, signature, errorUpdatedAt]);
+
+  const clearTimers = useCallback(() => {
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+  }, []);
+
+  const handleRevalidate = useCallback(() => {
+    setRevalidating(true);
+    const startedAt = performance.now();
+    const stopSpinning = () => {
+      const elapsed = performance.now() - startedAt;
+      spinTimer.current = setTimeout(
+        () => setRevalidating(false),
+        Math.max(0, REVALIDATE_MIN_SPIN_MS - elapsed),
+      );
+    };
+    refetch().then(stopSpinning, stopSpinning);
+  }, [refetch]);
+
+  useEffect(() => () => clearTimeout(spinTimer.current), []);
+
+  // First response only — re-animating every poll would restart the rows under
+  // the reader.
+  useEffect(() => {
+    if (!checks.length) return undefined;
+    if (hasStaggered.current) {
+      setRevealCount(checks.length);
+      return undefined;
+    }
+    hasStaggered.current = true;
+    clearTimers();
+    checks.forEach((_, i) => {
+      timers.current.push(
+        setTimeout(() => setRevealCount(i + 1), i * CHECK_REVEAL_STAGGER_MS),
+      );
+    });
+    return clearTimers;
+  }, [checks, clearTimers]);
+
+  useEffect(() => () => clearTimers(), [clearTimers]);
+
+  useEffect(() => {
+    onProgress?.(checks.length ? revealCount / checks.length : 0);
+  }, [revealCount, checks.length, onProgress]);
+
+  const resolved = useMemo(
+    () => checks.slice(0, revealCount),
+    [checks, revealCount],
+  );
+  const stillRevealing = revealCount < checks.length;
+
+  // The stagger flips each row's status rather than adding rows, so the card
+  // never grows under the reader's cursor.
+  const displayChecks = useMemo(
+    () =>
+      checks.map((check, i) =>
+        i < revealCount ? check : { ...check, status: PENDING, detail: "" },
+      ),
+    [checks, revealCount],
+  );
+
+  const counts = useMemo(() => {
+    const c = { passed: 0, warning: 0, failed: 0, optional: 0 };
+    resolved.forEach((check) => {
+      if (check.status === PASSED) c.passed += 1;
+      else if (check.status === WARNING) c.warning += 1;
+      else if (check.status === FAILED) c.failed += 1;
+      else if (check.status === SKIPPED) c.optional += 1;
+    });
+    return c;
+  }, [resolved]);
+
+  const summary = useMemo(() => {
+    if (!reachable) {
+      return "Waiting for your instance to power up. Normal on a first run.";
+    }
+    const parts = [];
+    if (counts.passed) parts.push(`${counts.passed} ready`);
+    if (counts.warning) parts.push(`${counts.warning} caution`);
+    if (counts.failed) parts.push(`${counts.failed} failed`);
+    if (counts.optional) parts.push(`${counts.optional} optional`);
+    return parts.join(" · ") || "Running pre-flight…";
+  }, [counts, reachable]);
+
+  // One line per check that is actually down, warnings included: on a test
+  // flight a stopped minio comes back WARNING and its uploads still fail, so
+  // the operator needs the same remedy. The row itself already says what
+  // breaks, so this stays a single sentence.
+  const needsFix = useMemo(
+    () => checks.filter((c) => (c.status === FAILED || c.status === WARNING) && c.fix),
+    [checks],
+  );
+
+  const supportHref = useMemo(() => {
+    const ids = checks
+      .filter((c) => c.status === FAILED)
+      .map((c) => c.id)
+      .join(", ");
+    const subject = `Self-hosted pre-flight: ${ids || "need a hand"}`;
+    const body = `Launch mode: ${mode}\nFailed checks: ${ids || "none"}\n\nWhat I have already tried:\n`;
+    // mailto, not Gmail's web compose: that sends anyone on Outlook, Fastmail
+    // or a corporate client to a Google sign-in page instead of a draft.
+    return (
+      `mailto:${SUPPORT_EMAIL}` +
+      `?subject=${encodeURIComponent(subject)}` +
+      `&body=${encodeURIComponent(body)}`
+    );
+  }, [checks, mode]);
+
+  const amberMain = theme.palette.amber[600];
+  const tint = (key, opacity = 0.16) => alpha(theme.palette[key].main, opacity);
+
+  // An unreachable server shows a spinner, never a wall of failed checks.
+  let summaryIcon = {
+    icon: "svg-spinners:90-ring-with-bg",
+    color: "text.secondary",
+    bg: alpha(theme.palette.text.primary, 0.08),
+  };
+  if (reachable && counts.failed) {
+    summaryIcon = {
+      icon: "solar:close-circle-bold",
+      color: "error.main",
+      bg: tint("error"),
+    };
+  } else if (reachable && counts.warning) {
+    summaryIcon = {
+      icon: "solar:danger-triangle-bold",
+      color: WARNING_COLOR,
+      bg: alpha(amberMain, 0.16),
+    };
+  } else if (reachable) {
+    summaryIcon = {
+      icon: "solar:check-circle-bold",
+      color: "success.main",
+      bg: tint("success"),
+    };
+  }
+
+  // Only live mode blocks on results, and only on FAILED: in that mode the
+  // server downgrades every non-required check to a warning, so this is exactly
+  // its required set.
+  const hasFailure = useMemo(
+    () => checks.some((check) => check.status === FAILED),
+    [checks],
+  );
+  const blockedByFailure = mode === LAUNCH_MODE.LIVE && hasFailure;
+
+  const blocked =
+    !reachable || !checks.length || stillRevealing || blockedByFailure;
+
+  const rerunDisabled = stillRevealing || revalidating;
+
+  const spinSx = {
+    "@keyframes revalidateSpin": { to: { transform: "rotate(360deg)" } },
+    animation: revalidating ? "revalidateSpin 0.8s linear infinite" : "none",
+  };
+
+  const renderHead = (
+    <Stack sx={{ mb: 2.5 }}>
+      <Typography
+        variant="l2"
+        component="h1"
+        fontWeight="fontWeightSemiBold"
+        sx={{ color: "text.primary" }}
+      >
+        Pre-flight checks
+      </Typography>
+      <Typography
+        variant="s1_2"
+        sx={{ color: "text.secondary", maxWidth: PANEL_MAX_WIDTH, mt: 1 }}
+      >
+        We&apos;re running through your onboard systems now. Re-run anything
+        that needs attention. The{" "}
+        <Link
+          href="https://docs.futureagi.com/docs/self-hosting"
+          target="_blank"
+          rel="noopener"
+          underline="always"
+        >
+          self-host docs
+        </Link>{" "}
+        are your co-pilot if a check needs a hand.
+      </Typography>
+    </Stack>
+  );
+
+  const renderRow = (check) => {
+    const meta = STATUS_META[check.status] || STATUS_META[PENDING];
+    const failed = check.status === FAILED;
+    const canRerun = check.status === WARNING || failed;
+    return (
+      <Stack
+        key={check.id}
+        direction="row"
+        alignItems="center"
+        spacing={1.5}
+        sx={{
+          px: 2,
+          py: 1.5,
+          borderTop: "1px solid",
+          borderColor: failed ? tint("error", 0.28) : "divider",
+          bgcolor: failed ? tint("error", 0.1) : "transparent",
+        }}
+      >
+        <Box
+          sx={{
+            width: 22,
+            display: "flex",
+            justifyContent: "center",
+            flexShrink: 0,
+          }}
+        >
+          <Iconify icon={meta.icon} width={22} sx={{ color: meta.color }} />
+        </Box>
+
+        <Stack sx={{ flex: 1, minWidth: 0 }}>
+          <Typography
+            variant="s1"
+            fontWeight="fontWeightMedium"
+            sx={{ color: "text.primary" }}
+          >
+            {check.label}
+          </Typography>
+          {check.detail && (
+            <Typography variant="s2" sx={{ color: "text.secondary" }}>
+              {check.detail}
+            </Typography>
+          )}
+        </Stack>
+
+        {canRerun && (
+          <Tooltip title="Re-run pre-flight">
+            <span>
+              <IconButton
+                size="small"
+                disabled={rerunDisabled}
+                onClick={handleRevalidate}
+                sx={{ color: "text.primary", flexShrink: 0 }}
+              >
+                <Iconify icon="solar:refresh-linear" width={16} sx={spinSx} />
+              </IconButton>
+            </span>
+          </Tooltip>
+        )}
+
+        <Typography
+          variant="s2_1"
+          fontWeight="fontWeightSemiBold"
+          sx={{ color: meta.labelColor || meta.color, flexShrink: 0 }}
+        >
+          {meta.label}
+        </Typography>
+      </Stack>
+    );
+  };
+
+  const renderChecks = (
+    <Box
+      sx={{
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+        overflow: "hidden",
+        maxWidth: PANEL_MAX_WIDTH,
+      }}
+    >
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1.5}
+        sx={{ px: 2, py: 1.75 }}
+      >
+        <Box
+          sx={{
+            width: 36,
+            height: 36,
+            borderRadius: "50%",
+            flexShrink: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            bgcolor: summaryIcon.bg,
+            color: summaryIcon.color,
+          }}
+        >
+          <Iconify icon={summaryIcon.icon} width={20} />
+        </Box>
+        <Stack sx={{ flex: 1 }}>
+          <Typography
+            variant="s1_2"
+            fontWeight="fontWeightSemiBold"
+            sx={{ color: "text.primary" }}
+          >
+            Onboard systems
+          </Typography>
+          <Typography variant="s2_1" sx={{ color: "text.secondary" }}>
+            {summary}
+          </Typography>
+        </Stack>
+        <IconButton size="small" onClick={() => setExpanded((v) => !v)}>
+          <Iconify
+            icon={
+              expanded
+                ? "solar:alt-arrow-up-linear"
+                : "solar:alt-arrow-down-linear"
+            }
+            width={18}
+          />
+        </IconButton>
+      </Stack>
+
+      <Collapse in={expanded}>
+        {displayChecks.map(renderRow)}
+
+        <Stack
+          direction="row"
+          alignItems="center"
+          justifyContent="center"
+          spacing={1}
+          onClick={rerunDisabled ? undefined : handleRevalidate}
+          sx={{
+            px: 2,
+            py: 1.5,
+            borderTop: "1px solid",
+            borderColor: "divider",
+            cursor: rerunDisabled ? "default" : "pointer",
+            color: rerunDisabled ? "text.disabled" : "text.primary",
+            userSelect: "none",
+            transition: "background-color 0.2s ease",
+            "&:hover": {
+              bgcolor: rerunDisabled ? "transparent" : "action.hover",
+            },
+          }}
+        >
+          <Iconify icon="solar:refresh-linear" width={16} sx={spinSx} />
+          <Typography variant="s2_1" fontWeight="fontWeightSemiBold">
+            {revalidating ? "Re-running…" : "Re-run pre-flight"}
+          </Typography>
+        </Stack>
+      </Collapse>
+    </Box>
+  );
+
+  const renderDetails = needsFix.length > 0 && !stillRevealing && (
+    <Box
+      sx={{
+        maxWidth: PANEL_MAX_WIDTH,
+        mt: 1.25,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+      }}
+    >
+      <Typography
+        variant="s2_1"
+        fontWeight="fontWeightSemiBold"
+        sx={{
+          display: "block",
+          px: 2,
+          pt: 1.5,
+          color: "text.disabled",
+          textTransform: "uppercase",
+          letterSpacing: "0.09em",
+        }}
+      >
+        Details
+      </Typography>
+      {needsFix.map((check, i) => (
+        <Stack
+          key={check.id}
+          direction="row"
+          spacing={1.25}
+          sx={{
+            px: 2,
+            py: 1.25,
+            borderTop: i === 0 ? "none" : "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Link
+            href={check.docs_url || undefined}
+            target="_blank"
+            rel="noopener"
+            variant="s2_2"
+            fontWeight="fontWeightSemiBold"
+            sx={{ width: 150, flexShrink: 0, color: "text.primary" }}
+          >
+            {check.label}
+          </Link>
+          <Typography variant="s2_1" sx={{ color: "text.secondary" }}>
+            {renderFix(check.fix)}
+          </Typography>
+        </Stack>
+      ))}
+    </Box>
+  );
+
+  return (
+    <>
+      {renderHead}
+      {renderChecks}
+      {renderDetails}
+
+      <Stack spacing={0.5} sx={{ maxWidth: PANEL_MAX_WIDTH, mt: 2 }}>
+        <LoadingButton
+          fullWidth
+          color="primary"
+          variant="contained"
+          onClick={onContinue}
+          disabled={blocked}
+          sx={{ height: 40, borderRadius: 0.5 }}
+        >
+          Continue
+        </LoadingButton>
+        {blockedByFailure && !stillRevealing && (
+          <>
+            <Typography
+              variant="s2_1"
+              sx={{ color: "error.main", textAlign: "center", pt: 0.5 }}
+            >
+              Fix the failed systems to continue with a production launch.
+            </Typography>
+            <Divider sx={{ my: 1, color: "text.disabled" }}>
+              <Typography variant="s2_1">or</Typography>
+            </Divider>
+            <LoadingButton
+              fullWidth
+              variant="outlined"
+              onClick={() => onSwitchMode(LAUNCH_MODE.EXPERIMENT)}
+              sx={{ height: 40, borderRadius: 0.5 }}
+            >
+              Continue with Test flight
+            </LoadingButton>
+          </>
+        )}
+        {/* Once a mode is picked the only moves are forward: there is no Back. */}
+        {mode === LAUNCH_MODE.EXPERIMENT && (
+          <LoadingButton
+            fullWidth
+            variant="text"
+            onClick={() => onSwitchMode(LAUNCH_MODE.LIVE)}
+            sx={{ height: 34, borderRadius: 0.5, color: "text.secondary" }}
+          >
+            Switch to Production
+          </LoadingButton>
+        )}
+        <LoadingButton
+          fullWidth
+          variant="text"
+          href={supportHref}
+          target="_blank"
+          rel="noopener"
+          sx={{ height: 34, borderRadius: 0.5, color: "text.secondary" }}
+        >
+          Contact support
+        </LoadingButton>
+      </Stack>
+    </>
+  );
+}
+
+ValidationStep.propTypes = {
+  mode: PropTypes.string,
+  onSwitchMode: PropTypes.func.isRequired,
+  onContinue: PropTypes.func.isRequired,
+  onProgress: PropTypes.func,
+};

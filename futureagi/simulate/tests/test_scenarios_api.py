@@ -479,7 +479,7 @@ class TestScenarioDetailView:
         assert "dataset_rows" in data
 
 
-    def test_get_scenario_detail_dataset_column_config_shape_and_null(self, auth_client, scenario):
+    def test_get_scenario_detail_dataset_column_config_shape_and_null(self, auth_client, scenario, user):
         # 1. Test null branch when scenario has no dataset
         scenario.dataset = None
         scenario.save()
@@ -488,9 +488,19 @@ class TestScenarioDetailView:
         assert response.json()["dataset_column_config"] is None
 
         # 2. Test response shape when dataset exists
-        from model_hub.models.develop_dataset import Dataset, Column
-        dataset = Dataset.objects.create(name="test", project=scenario.project)
-        col1 = Column.objects.create(name="Age", data_type="integer", dataset=dataset, project=scenario.project)
+        dataset = Dataset.no_workspace_objects.create(
+            name="test",
+            organization=scenario.organization,
+            workspace=scenario.workspace,
+            user=user,
+            source=DatasetSourceChoices.SCENARIO.value,
+        )
+        col1 = Column.objects.create(
+            name="Age",
+            data_type="integer",
+            dataset=dataset,
+            source=SourceChoices.OTHERS.value,
+        )
         dataset.column_order = [str(col1.id)]
         dataset.save()
         scenario.dataset = dataset
@@ -503,12 +513,21 @@ class TestScenarioDetailView:
         assert str(col1.id) in config
         assert config[str(col1.id)] == {"name": "Age", "type": "integer"}
 
-    def test_get_scenario_detail_dataset_column_ordering(self, auth_client, scenario):
-        from model_hub.models.develop_dataset import Dataset, Column
-        dataset = Dataset.objects.create(name="test", project=scenario.project)
-        col1 = Column.objects.create(name="Col1", data_type="text", dataset=dataset, project=scenario.project)
-        col2 = Column.objects.create(name="Col2", data_type="text", dataset=dataset, project=scenario.project)
-        
+    def test_get_scenario_detail_dataset_column_ordering(self, auth_client, scenario, user):
+        dataset = Dataset.no_workspace_objects.create(
+            name="test",
+            organization=scenario.organization,
+            workspace=scenario.workspace,
+            user=user,
+            source=DatasetSourceChoices.SCENARIO.value,
+        )
+        col1 = Column.objects.create(
+            name="Col1", data_type="text", dataset=dataset, source=SourceChoices.OTHERS.value,
+        )
+        col2 = Column.objects.create(
+            name="Col2", data_type="text", dataset=dataset, source=SourceChoices.OTHERS.value,
+        )
+
         # Declare in reverse order of creation
         dataset.column_order = [str(col2.id), str(col1.id)]
         dataset.save()
@@ -518,19 +537,34 @@ class TestScenarioDetailView:
         response = auth_client.get(f"/simulate/scenarios/{scenario.id}/")
         assert response.status_code == 200
         config = response.json()["dataset_column_config"]
-        
+
         # dicts preserve insertion order in Python 3.7+
         keys = list(config.keys())
         assert keys == [str(col2.id), str(col1.id)]
 
-    def test_get_scenario_detail_dataset_column_isolation(self, auth_client, scenario):
-        from model_hub.models.develop_dataset import Dataset, Column
-        dataset = Dataset.objects.create(name="test", project=scenario.project)
-        col1 = Column.objects.create(name="Valid", data_type="text", dataset=dataset, project=scenario.project)
-        
+    def test_get_scenario_detail_dataset_column_isolation(self, auth_client, scenario, user):
+        dataset = Dataset.no_workspace_objects.create(
+            name="test",
+            organization=scenario.organization,
+            workspace=scenario.workspace,
+            user=user,
+            source=DatasetSourceChoices.SCENARIO.value,
+        )
+        col1 = Column.objects.create(
+            name="Valid", data_type="text", dataset=dataset, source=SourceChoices.OTHERS.value,
+        )
+
         # Create a foreign column in another dataset
-        other_dataset = Dataset.objects.create(name="other", project=scenario.project)
-        col_foreign = Column.objects.create(name="Foreign", data_type="text", dataset=other_dataset, project=scenario.project)
+        other_dataset = Dataset.no_workspace_objects.create(
+            name="other",
+            organization=scenario.organization,
+            workspace=scenario.workspace,
+            user=user,
+            source=DatasetSourceChoices.SCENARIO.value,
+        )
+        col_foreign = Column.objects.create(
+            name="Foreign", data_type="text", dataset=other_dataset, source=SourceChoices.OTHERS.value,
+        )
 
         # Pollute column_order with foreign column ID
         dataset.column_order = [str(col1.id), str(col_foreign.id)]
@@ -541,7 +575,7 @@ class TestScenarioDetailView:
         response = auth_client.get(f"/simulate/scenarios/{scenario.id}/")
         assert response.status_code == 200
         config = response.json()["dataset_column_config"]
-        
+
         # Should only contain col1, foreign column should be isolated out
         assert str(col1.id) in config
         assert str(col_foreign.id) not in config
@@ -1819,3 +1853,155 @@ class TestGetMultiDatasetsColumnConfigs:
         )
 
         assert_unknown_field_error(response, "legacyFilter")
+
+
+# ============================================================================
+# Cross-workspace 404 scope for Scenarios write endpoints
+# ============================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestScenariosWriteActionWorkspaceScope:
+    """Foreign-workspace Scenarios must be invisible to write endpoints."""
+
+    @pytest.fixture
+    def hidden_scenario(self, db, organization, user):
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other Scenario Workspace",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        other_agent = AgentDefinition.no_workspace_objects.create(
+            agent_name="Hidden Agent",
+            agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+            contact_number="+1999999999",
+            inbound=True,
+            description="Hidden agent",
+            organization=organization,
+            workspace=other_workspace,
+            languages=["en"],
+        )
+        other_simulator = SimulatorAgent.no_workspace_objects.create(
+            name="Hidden Simulator",
+            prompt="Hidden simulator prompt.",
+            voice_provider="elevenlabs",
+            voice_name="marissa",
+            model="gpt-4",
+            organization=organization,
+            workspace=other_workspace,
+        )
+        other_dataset = Dataset.no_workspace_objects.create(
+            name="Hidden Dataset",
+            organization=organization,
+            workspace=other_workspace,
+            user=user,
+            source=DatasetSourceChoices.SCENARIO.value,
+        )
+        hidden_col = Column.objects.create(
+            dataset=other_dataset,
+            name="hidden_col",
+            data_type="text",
+            source=SourceChoices.OTHERS.value,
+        )
+        other_dataset.column_order = [str(hidden_col.id)]
+        other_dataset.save()
+        Row.objects.create(dataset=other_dataset, order=0)
+        return Scenarios.no_workspace_objects.create(
+            name="Hidden Scenario",
+            description="Not visible from the active workspace",
+            source="Hidden source",
+            scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=organization,
+            workspace=other_workspace,
+            dataset=other_dataset,
+            agent_definition=other_agent,
+            simulator_agent=other_simulator,
+            status=StatusType.COMPLETED.value,
+        )
+
+    def test_edit_foreign_scenario_returns_404(self, auth_client, hidden_scenario):
+        response = auth_client.put(
+            f"/simulate/scenarios/{hidden_scenario.id}/edit/",
+            {"name": "leaked"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        hidden_scenario.refresh_from_db()
+        assert hidden_scenario.name == "Hidden Scenario"
+
+    def test_delete_foreign_scenario_returns_404(self, auth_client, hidden_scenario):
+        response = auth_client.delete(
+            f"/simulate/scenarios/{hidden_scenario.id}/delete/"
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        hidden_scenario.refresh_from_db()
+        assert hidden_scenario.deleted is False
+        assert hidden_scenario.deleted_at is None
+
+    def test_edit_prompts_foreign_scenario_returns_404(
+        self, auth_client, hidden_scenario
+    ):
+        response = auth_client.put(
+            f"/simulate/scenarios/{hidden_scenario.id}/prompts/",
+            {"prompts": "leaked prompt"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        hidden_scenario.simulator_agent.refresh_from_db()
+        assert hidden_scenario.simulator_agent.prompt == "Hidden simulator prompt."
+
+    @patch("simulate.views.scenarios.start_add_scenario_rows_workflow_sync")
+    def test_add_rows_foreign_scenario_returns_404(
+        self, mock_workflow, auth_client, hidden_scenario
+    ):
+        rows_before = Row.objects.filter(
+            dataset=hidden_scenario.dataset, deleted=False
+        ).count()
+
+        response = auth_client.post(
+            f"/simulate/scenarios/{hidden_scenario.id}/add-rows/",
+            {"num_rows": 10, "description": "should not run"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        rows_after = Row.objects.filter(
+            dataset=hidden_scenario.dataset, deleted=False
+        ).count()
+        assert rows_after == rows_before
+        mock_workflow.assert_not_called()
+
+    @patch("simulate.views.scenarios.start_add_columns_workflow_sync")
+    def test_add_columns_foreign_scenario_returns_404(
+        self, mock_workflow, auth_client, hidden_scenario
+    ):
+        cols_before = Column.objects.filter(
+            dataset=hidden_scenario.dataset, deleted=False
+        ).count()
+
+        response = auth_client.post(
+            f"/simulate/scenarios/{hidden_scenario.id}/add-columns/",
+            {
+                "columns": [
+                    {
+                        "name": "leaked_col",
+                        "data_type": "text",
+                        "description": "should not run",
+                    }
+                ]
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        cols_after = Column.objects.filter(
+            dataset=hidden_scenario.dataset, deleted=False
+        ).count()
+        assert cols_after == cols_before
+        mock_workflow.assert_not_called()

@@ -114,6 +114,20 @@ def test_session_trace_ids_is_final_oom_safe():
     _assert_final_oom_safe(client, "spans.project_id = %(p)s")
 
 
+def test_list_by_session_keeps_legacy_unscoped_contract():
+    client = _RecordingClient()
+    _reader_with(client).list_by_session("s1")
+    assert "spans.project_id = %(project_id)s" not in client.sql
+    assert client.params == {"session_id": "s1"}
+
+
+def test_list_by_session_prunes_by_project_when_supplied():
+    client = _RecordingClient()
+    _reader_with(client).list_by_session("s1", project_id="p1")
+    assert "spans.project_id = %(project_id)s" in client.sql
+    assert client.params == {"session_id": "s1", "project_id": "p1"}
+
+
 def test_totals_by_trace_ids_prunes_by_project():
     # totals_by_trace_ids is NON-FINAL (analytics convention) so it keeps
     # is_deleted = 0 and gets no skip-index setting; the only lever here is
@@ -134,6 +148,47 @@ def test_totals_by_trace_ids_prunes_by_project():
     client2 = _RecordingClient()
     _reader_with(client2).totals_by_trace_ids(["t1"])
     assert "project_id IN" not in client2.sql
+
+
+def test_project_root_count_event_window_prunes_on_start_time():
+    client = _RecordingClient()
+    _reader_with(client).count_with_filters(
+        project_id="p1",
+        roots_only=True,
+        start_time_range=("2026-07-01", "2026-07-02"),
+    )
+
+    assert "project_id = %(pid)s" in client.sql
+    assert "start_time >= %(str_s)s" in client.sql
+    assert "start_time < %(str_e)s" in client.sql
+    assert "created_at" not in client.sql
+    assert client.params["str_s"] == "2026-07-01"
+    assert client.params["str_e"] == "2026-07-02"
+
+    since_client = _RecordingClient()
+    _reader_with(since_client).count_with_filters(
+        project_id="p1",
+        roots_only=True,
+        start_time_gte="2026-07-01",
+    )
+    assert "start_time >= %(stg)s" in since_client.sql
+    assert "created_at" not in since_client.sql
+    assert since_client.params["stg"] == "2026-07-01"
+
+
+def test_project_root_count_arrival_window_supports_half_open_end():
+    client = _RecordingClient()
+    _reader_with(client).count_with_filters(
+        project_id="p1",
+        roots_only=True,
+        created_at_half_open_range=("2026-07-01", "2026-07-02"),
+    )
+
+    assert "created_at >= %(chr_s)s" in client.sql
+    assert "created_at < %(chr_e)s" in client.sql
+    assert "created_at BETWEEN" not in client.sql
+    assert client.params["chr_s"] == "2026-07-01"
+    assert client.params["chr_e"] == "2026-07-02"
 
 
 # ── Feed-caller wiring (Lever B delivery) ─────────────────────────────────────
@@ -162,6 +217,33 @@ def test_users_affected_in_window_threads_project():
     with patch.object(feed, "get_reader", return_value=cm):
         feed._users_affected_in_window(["t1"], "p1")
     reader.distinct_end_users_by_trace_ids.assert_called_once_with(["t1"], ["p1"])
+
+
+def test_project_scope_eval_denominator_preserves_arrival_time_parity():
+    cm, reader = _reader_cm()
+    reader.count_with_filters.return_value = 7
+
+    with patch.object(feed, "get_reader", return_value=cm):
+        total = feed._project_scope_total(
+            "p1", feed.ClusterSource.EVAL, "2026-07-01", "2026-07-02"
+        )
+
+    assert total == 7
+    reader.count_with_filters.assert_called_once_with(
+        project_id="p1",
+        created_at_half_open_range=("2026-07-01", "2026-07-02"),
+        roots_only=True,
+    )
+
+    reader.count_with_filters.reset_mock()
+    with patch.object(feed, "get_reader", return_value=cm):
+        total = feed._project_scope_total("p1", feed.ClusterSource.EVAL, "2026-07-01")
+    assert total == 7
+    reader.count_with_filters.assert_called_once_with(
+        project_id="p1",
+        created_at_gte="2026-07-01",
+        roots_only=True,
+    )
 
 
 def test_root_input_texts_threads_project():

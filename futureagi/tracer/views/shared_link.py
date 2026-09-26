@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
 from accounts.models.user import User
+from accounts.utils import get_request_organization
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.shared_link import (
@@ -85,11 +86,15 @@ class SharedLinkViewSet(BaseModelViewSetMixin, ModelViewSet):
 
         if data["resource_type"] not in SUPPORTED_SHARED_RESOURCE_TYPES:
             return self._gm.bad_request("This resource type cannot be shared yet")
+
+        organization = get_request_organization(request)
+        workspace = getattr(request, "workspace", None)
+
         if not _shared_resource_exists(
             data["resource_type"],
             data["resource_id"],
-            request.organization,
-            getattr(request, "workspace", None),
+            organization,
+            workspace,
         ):
             return self._gm.not_found("Shared resource not found")
 
@@ -99,8 +104,8 @@ class SharedLinkViewSet(BaseModelViewSetMixin, ModelViewSet):
             access_type=data.get("access_type", AccessType.RESTRICTED),
             expires_at=data.get("expires_at"),
             created_by=request.user,
-            organization=request.organization,
-            workspace=getattr(request, "workspace", None),
+            organization=organization,
+            workspace=workspace,
         )
 
         # Add ACL entries if provided

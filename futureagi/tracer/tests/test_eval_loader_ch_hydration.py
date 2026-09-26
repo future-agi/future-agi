@@ -54,7 +54,10 @@ class TestEvalLoaderChHydration:
         assert str(obj.id) == span.id
         assert obj.input == {"k": "v"}
         assert str(obj.trace.id) == str(trace.id)  # resolved from CH, no PG span
-        assert ObservationSpan.objects.count() == 0
+        # CH-hydrated span must not be written to PG. Scope by id — other tests
+        # can leave committed rows in the shared PG table, so a global count is
+        # not isolation-safe.
+        assert not ObservationSpan.objects.filter(id=span.id).exists()
 
     def test_ch_hydrated_span_save_does_not_insert_pg(self, project):
         trace = Trace.objects.create(project=project, name="t")
@@ -63,7 +66,7 @@ class TestEvalLoaderChHydration:
             obj = get_observation_span(span.id)
         obj.eval_status = "COMPLETED"
         obj.save()  # bound no-op — must not INSERT into PG
-        assert ObservationSpan.objects.count() == 0
+        assert not ObservationSpan.objects.filter(id=span.id).exists()
 
     def test_get_trace_hydrates_trace_level_fields_from_ch(self, project):
         # get_trace reads the CH `traces` table, so trace-level fields
@@ -86,7 +89,7 @@ class TestEvalLoaderChHydration:
         assert t.output == {"a": "yo"}
         assert t.tags == ["x", "y"]
         assert t.metadata == {"m": 1}
-        assert Trace.objects.count() == 0  # came from CH, not PG
+        assert not Trace.objects.filter(id=trace.id).exists()  # from CH, not PG
 
     def test_get_trace_session_builds_vehicle(self, observe_project):
         session = TraceSession.objects.create(project=observe_project, name="sess-x")

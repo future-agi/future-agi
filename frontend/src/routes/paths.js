@@ -9,6 +9,8 @@ const ROOTS = {
 
 export const paths = {
   minimalUI: "https://mui.com/store/items/minimal-dashboard/",
+  // OSS self-hosted first-run flow (pre-auth, no dashboard layout)
+  ossSetup: "/setup",
   // AUTH
   auth: {
     jwt: {
@@ -85,6 +87,13 @@ export const paths = {
       personas: `${ROOTS.DASHBOARD}/simulate/personas`,
       simulatorAgent: `${ROOTS.DASHBOARD}/simulate/simulator-agent`,
       test: `${ROOTS.DASHBOARD}/simulate/test`,
+      testCallDetails: (testId, executionId) =>
+        `${ROOTS.DASHBOARD}/simulate/test/${testId}/${executionId}/call-details`,
+      harness: {
+        root: `${ROOTS.DASHBOARD}/simulate/harness`,
+        new: `${ROOTS.DASHBOARD}/simulate/harness/new`,
+        detail: (jobId) => `${ROOTS.DASHBOARD}/simulate/harness/${jobId}`,
+      },
     },
     feed: `${ROOTS.DASHBOARD}/error-feed`,
     errorFeed: {

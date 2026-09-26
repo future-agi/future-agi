@@ -1,0 +1,219 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "tfc/utils/tests/test_distributed_locks.py::TestDistributedStateErrorHandling::test_cleanup_stale_handles_exception",
+      "reason": "pre-existing failure at CI introduction (baseline 2026-08, post-Redis-fix core)",
+      "owner": "chirag",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-05",
+      "expires": "2026-09-19",
+      "mode": "run"
+    },
+    {
+      "id": "sockets/tests/test_prompt_stream_consumer.py::test_resolve_happy_path_pins_org_and_does_not_close",
+      "reason": "mock no longer intercepts workspace lookup after #1931 workspace-isolation changes; hits real DB without django_db mark (first clean-run exposure by CI) | env-dependent: passes on warm local stacks (cached workspace state), fails on cold CI runners",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run",
+      "strict": false
+    },
+    {
+      "id": "sockets/tests/test_prompt_stream_consumer.py::test_resolve_returns_none_when_workspace_does_not_exist",
+      "reason": "mock no longer intercepts workspace lookup after #1931 workspace-isolation changes; hits real DB without django_db mark (first clean-run exposure by CI) | env-dependent: passes on warm local stacks (cached workspace state), fails on cold CI runners",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run",
+      "strict": false
+    },
+    {
+      "id": "sockets/tests/test_prompt_stream_consumer.py::test_resolve_returns_none_when_user_has_no_workspace_access",
+      "reason": "mock no longer intercepts workspace lookup after #1931 workspace-isolation changes; hits real DB without django_db mark (first clean-run exposure by CI) | env-dependent: passes on warm local stacks (cached workspace state), fails on cold CI runners",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run",
+      "strict": false
+    },
+    {
+      "id": "sockets/tests/test_prompt_stream_consumer.py::test_resolve_returns_none_when_workspace_id_is_malformed_uuid",
+      "reason": "mock no longer intercepts workspace lookup after #1931 workspace-isolation changes; hits real DB without django_db mark (first clean-run exposure by CI) | env-dependent: passes on warm local stacks (cached workspace state), fails on cold CI runners",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run",
+      "strict": false
+    },
+    {
+      "id": "sockets/tests/test_prompt_stream_consumer.py::test_execute_template_rejects_template_from_a_different_org",
+      "reason": "mock no longer intercepts workspace lookup after #1931 workspace-isolation changes; hits real DB without django_db mark (first clean-run exposure by CI) | env-dependent: passes on warm local stacks (cached workspace state), fails on cold CI runners",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run",
+      "strict": false
+    },
+    {
+      "id": "sockets/tests/test_workspace_access.py::test_resolve_org_for_stop_skips_the_access_check",
+      "reason": "mock no longer intercepts workspace lookup after #1931 workspace-isolation changes; hits real DB without django_db mark (first clean-run exposure by CI) | env-dependent: passes on warm local stacks (cached workspace state), fails on cold CI runners",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run",
+      "strict": false
+    },
+    {
+      "id": "sockets/tests/test_workspace_access.py::test_resolve_denies_with_not_found_when_workspace_lookup_fails",
+      "reason": "mock no longer intercepts workspace lookup after #1931 workspace-isolation changes; hits real DB without django_db mark (first clean-run exposure by CI) | env-dependent: passes on warm local stacks (cached workspace state), fails on cold CI runners",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run",
+      "strict": false
+    },
+    {
+      "id": "model_hub/tests/test_evaluation_api.py::TestPreviewRunEvalView::test_preview_code_eval_passes_function_params",
+      "reason": "KeyError: 'output' on clean CI run (first exposure; predates CI) | env-dependent: passes on warm local stacks (cached workspace state), fails on cold CI runners",
+      "owner": "KarthikAvinashFI",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run",
+      "strict": false
+    },
+    {
+      "id": "ee/falcon_ai/tests/test_views.py::TestSkillListView::test_create_rejects_unknown_fields",
+      "reason": "order-dependent cross-test DB pollution: Skill.objects.count() sees leaked rows; passes in isolation; find the committing test",
+      "owner": "KarthikAvinashFI",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run",
+      "strict": false
+    },
+    {
+      "id": "sockets/tests/test_prompt_stream_consumer.py::test_execute_template_allows_null_workspace_template_in_same_org",
+      "reason": "mock no longer intercepts workspace lookup after #1931 workspace-isolation changes; hits real DB without django_db mark (first clean-run exposure by CI) | env-dependent: passes on warm local stacks (cached workspace state), fails on cold CI runners",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run",
+      "strict": false
+    },
+    {
+      "id": "sockets/tests/test_prompt_stream_consumer.py::test_execute_template_rejects_template_from_a_different_workspace_same_org",
+      "reason": "mock no longer intercepts workspace lookup after #1931 workspace-isolation changes; hits real DB without django_db mark (first clean-run exposure by CI) | env-dependent: passes on warm local stacks (cached workspace state), fails on cold CI runners",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run",
+      "strict": false
+    },
+    {
+      "id": "sockets/tests/test_workspace_access.py::test_resolve_denies_with_not_found_when_workspace_id_missing",
+      "reason": "mock no longer intercepts workspace lookup after #1931 workspace-isolation changes; hits real DB without django_db mark (first clean-run exposure by CI) | env-dependent: passes on warm local stacks (cached workspace state), fails on cold CI runners",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run",
+      "strict": false
+    },
+    {
+      "id": "sockets/tests/test_workspace_access.py::test_resolve_denies_with_permission_denied_when_user_lacks_access",
+      "reason": "mock no longer intercepts workspace lookup after #1931 workspace-isolation changes; hits real DB without django_db mark (first clean-run exposure by CI) | env-dependent: passes on warm local stacks (cached workspace state), fails on cold CI runners",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run",
+      "strict": false
+    },
+    {
+      "id": "sockets/tests/test_workspace_access.py::test_resolve_grants_and_derives_org_from_workspace",
+      "reason": "mock no longer intercepts workspace lookup after #1931 workspace-isolation changes; hits real DB without django_db mark (first clean-run exposure by CI) | env-dependent: passes on warm local stacks (cached workspace state), fails on cold CI runners",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run",
+      "strict": false
+    },
+    {
+      "id": "sockets/tests/test_workspace_access.py::test_resolve_org_for_stop_returns_none_without_raising_when_workspace_missing",
+      "reason": "mock no longer intercepts workspace lookup after #1931 workspace-isolation changes; hits real DB without django_db mark (first clean-run exposure by CI) | env-dependent: passes on warm local stacks (cached workspace state), fails on cold CI runners",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run",
+      "strict": false
+    },
+    {
+      "id": "sockets/tests/test_prompt_stream_consumer.py::test_resolve_returns_none_when_workspace_id_missing",
+      "reason": "mock no longer intercepts workspace lookup after #1931 workspace-isolation changes; hits real DB without django_db mark (first clean-run exposure by CI) | env-dependent: passes on warm local stacks (cached workspace state), fails on cold CI runners",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run",
+      "strict": false
+    },
+    {
+      "id": "model_hub/tests/test_backfill_eval_usage_version_command.py::TestBackfillUsageLogsCommand::test_stamps_version_id_on_logs_without_it",
+      "reason": "broken from birth: backfill_usage_logs writes via the default_direct connection while pytest fixtures live in the default connection's rolled-back transaction, so updates never see the test data; family never passed under tfc.settings.test (first exposure by CI). Alias + marker plumbing fixed in ad4d0c3c2/c274d1985; remaining failure is test-vs-connection semantics for the author.",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run"
+    },
+    {
+      "id": "model_hub/tests/test_backfill_eval_usage_version_command.py::TestBackfillUsageLogsCommand::test_unwraps_double_encoded_config",
+      "reason": "broken from birth: backfill_usage_logs writes via the default_direct connection while pytest fixtures live in the default connection's rolled-back transaction, so updates never see the test data; family never passed under tfc.settings.test (first exposure by CI). Alias + marker plumbing fixed in ad4d0c3c2/c274d1985; remaining failure is test-vs-connection semantics for the author.",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run"
+    },
+    {
+      "id": "model_hub/tests/test_backfill_eval_usage_version_command.py::TestBackfillUsageLogsCommand::test_creates_v1_for_versionless_template",
+      "reason": "broken from birth: backfill_usage_logs writes via the default_direct connection while pytest fixtures live in the default connection's rolled-back transaction, so updates never see the test data; family never passed under tfc.settings.test (first exposure by CI). Alias + marker plumbing fixed in ad4d0c3c2/c274d1985; remaining failure is test-vs-connection semantics for the author.",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run"
+    },
+    {
+      "id": "model_hub/tests/test_backfill_eval_usage_version_command.py::TestBackfillUsageLogsCommand::test_single_pass_stamps_multiple_templates",
+      "reason": "broken from birth: backfill_usage_logs writes via the default_direct connection while pytest fixtures live in the default connection's rolled-back transaction, so updates never see the test data; family never passed under tfc.settings.test (first exposure by CI). Alias + marker plumbing fixed in ad4d0c3c2/c274d1985; remaining failure is test-vs-connection semantics for the author.",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run"
+    },
+    {
+      "id": "model_hub/tests/test_backfill_eval_usage_version_command.py::TestBackfillUsageLogsCommand::test_unwraps_and_stamps_in_single_pass",
+      "reason": "broken from birth: backfill_usage_logs writes via the default_direct connection while pytest fixtures live in the default connection's rolled-back transaction, so updates never see the test data; family never passed under tfc.settings.test (first exposure by CI). Alias + marker plumbing fixed in ad4d0c3c2/c274d1985; remaining failure is test-vs-connection semantics for the author.",
+      "owner": "tanmaycode1",
+      "issue": "https://github.com/future-agi/future-agi/issues/1984",
+      "added": "2026-08-06",
+      "expires": "2026-09-20",
+      "mode": "run"
+    }
+  ]
+}

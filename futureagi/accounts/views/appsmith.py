@@ -1,21 +1,11 @@
 from django.conf import settings
-from django.core.cache import cache
 from django.db.models import Q
-from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from accounts.authentication import (
-    generate_encrypted_message,
-)
 from accounts.models import OrgApiKey
-from accounts.models.auth_token import (
-    AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES,
-    AuthToken,
-    AuthTokenType,
-)
 from accounts.models.organization import Organization
 from accounts.models.user import User
 from accounts.serializers.contracts import (
@@ -31,6 +21,7 @@ from accounts.serializers.user import (
     UserCreateSerializer,
     UserSerializer,
 )
+from accounts.services.sos_service import start_sos_session
 from tfc.constants.roles import OrganizationRoles
 from tfc.permissions.permissions import APIKeyPermission
 from tfc.utils.api_contracts import validated_request
@@ -161,50 +152,15 @@ class SOSLoginView(APIView):
             except User.DoesNotExist:
                 raise Exception("User not found") from None
 
-            # Create new refresh token
-            refresh_token = AuthToken.objects.create(
-                user=user,
-                auth_type=AuthTokenType.REFRESH.value,
-                last_used_at=timezone.now(),
-                is_active=True,
-            )
-            refresh_token_encrypted = generate_encrypted_message(
-                {"user_id": str(user.id), "id": str(refresh_token.id)}
-            )
-            cache.set(
-                f"refresh_token_{str(refresh_token.id)}",
-                {"token": refresh_token_encrypted, "user": user},
-                timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES
-                * 60
-                * 24
-                * 7,  # 7 days
-            )
+            tokens = start_sos_session(user, source="appsmith_api")
 
-            # Create new access token
-            access_token = AuthToken.objects.create(
-                user=user,
-                auth_type=AuthTokenType.ACCESS.value,
-                last_used_at=timezone.now(),
-                is_active=True,
-            )
-            access_token_encrypted = generate_encrypted_message(
-                {"user_id": str(user.id), "id": str(access_token.id)}
-            )
-            cache.set(
-                f"access_token_{str(access_token.id)}",
-                {"token": access_token_encrypted, "user": user},
-                timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
-            )
-
-            response = Response(
+            return Response(
                 {
-                    "access": access_token_encrypted,
-                    "refresh": refresh_token_encrypted,
+                    "access": tokens["access"],
+                    "refresh": tokens["refresh"],
                 },
                 status=status.HTTP_200_OK,
             )
-
-            return response
 
         except Exception as e:
             return self._gm.bad_request(f"Failed to login: {str(e)}")

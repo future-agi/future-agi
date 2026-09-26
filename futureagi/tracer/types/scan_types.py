@@ -5,7 +5,7 @@ Single source of truth — queries, utils, and tasks all import from here.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import structlog
 from django.conf import settings
@@ -82,11 +82,22 @@ class ClusterableIssue:
     brief: str
     confidence: str
     key_moments_text: List[str] = field(default_factory=list)
+    # Canonical failure phrase distilled from the brief by a cheap LLM
+    # (trace-specific noise stripped). None when distillation is unavailable
+    # (OSS) or failed — embedding falls back to the raw brief.
+    distilled: Optional[str] = None
 
     @property
     def embedding_text(self) -> str:
-        """Embed only the issue brief."""
-        return self.brief
+        """What the clustering embeds — the distilled phrase when there is one.
+
+        The raw brief stays the title. Briefs name this trace's ticker, client
+        and feature, and those entities dominate the embedding: across one
+        project's 1,277 real issues, 1,229 briefs (96%) were distinct strings
+        describing far fewer distinct bugs, so the same defect seeded a new
+        cluster on nearly every occurrence.
+        """
+        return self.distilled or self.brief
 
 
 @dataclass

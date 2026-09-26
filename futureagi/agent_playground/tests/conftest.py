@@ -36,6 +36,21 @@ from agent_playground.models.prompt_template_node import PromptTemplateNode
 # which causes FieldError on models without a workspace field (GraphVersion,
 # Node, Port, Edge, etc.) when BaseModelManager tries to filter by workspace.
 
+
+@pytest.fixture(autouse=True)
+def _clean_seeded_node_templates(request):
+    """Start every DB test from a NodeTemplate-free slate.
+
+    The post_migrate signal (AgentPlaygroundConfig) seeds registry templates
+    whenever migrate runs — including when pytest builds the test database.
+    Tests here construct their own NodeTemplate rows (llm_prompt included),
+    which would collide with the partial unique index on name where
+    deleted=False. Deleting inside the test transaction rolls back afterwards.
+    """
+    if "db" in request.fixturenames or "transactional_db" in request.fixturenames:
+        request.getfixturevalue("db")
+        NodeTemplate.no_workspace_objects.all().delete()
+
 # Store original APIView.initial for patching
 _original_apiview_initial = APIView.initial
 _REQUEST_INJECTION_ACTIVE = False

@@ -4,11 +4,12 @@ TH-6515 (PR #1373) gave the multi-trace batch reads
 (``list_by_trace_ids`` / ``roots_by_trace_ids``) the ``use_skip_indexes_if_final``
 setting and dropped the redundant ``is_deleted = 0`` predicate, but left the
 single-row / point-read siblings that back the annotation add + trace-detail
-render paths. Each does ``SELECT <fat cols incl attributes_extra> FROM spans
-FINAL WHERE <id | trace_id | parent_span_id> = X`` — pruning only via a bloom
-skip index, which CH 25.3 disables under FINAL by default. Without the setting
-the read does a full in-order merge over every part and OOMs (code 241) on a
-wide (voice) span whose ``attributes_extra`` carries a whole raw log.
+render paths, and the eval FK resolver's ``list_root_spans_by_trace_ids``.
+Each does ``SELECT <fat cols incl attributes_extra> FROM spans FINAL WHERE
+<id | trace_id | parent_span_id> = X`` — pruning only via a bloom skip index,
+which CH 25.3 disables under FINAL by default. Without the setting the read
+does a full in-order merge over every part and OOMs (code 241) on a wide
+(voice) span whose ``attributes_extra`` carries a whole raw log.
 
 A 9 GiB OOM can't be reproduced in test-CH, so — mirroring
 ``test_scan_project_scoped_read.py`` — these pin the two levers that prevent the
@@ -85,3 +86,9 @@ def test_list_by_ids_is_final_oom_safe():
     client = _RecordingClient()
     _reader_with(client).list_by_ids(["s1", "s2"])
     _assert_final_oom_safe(client, "id IN %(ids)s")
+
+
+def test_list_root_spans_by_trace_ids_is_final_oom_safe():
+    client = _RecordingClient()
+    _reader_with(client).list_root_spans_by_trace_ids(["t1", "t2"])
+    _assert_final_oom_safe(client, "trace_id IN %(tids)s")

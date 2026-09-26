@@ -19,8 +19,16 @@ from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.trace_error_analysis import TraceErrorGroup
-from tracer.queries.feed import trace_judge, priority_to_severity
-from tracer.views.feed._permissions import resolve_requested_project_ids
+from tracer.queries.feed import priority_to_severity, trace_judge
+from tracer.services.grouping.human_edits import (
+    GroupingHumanEditUnavailable,
+    edit_grouping_issue,
+    is_grouping_issue,
+)
+from tracer.views.feed._permissions import (
+    ErrorFeedLicenseRequired,
+    resolve_requested_project_ids,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -144,7 +152,7 @@ def _build_issue_description(cluster: TraceErrorGroup, trace_id: str | None) -> 
     return "\n\n".join(parts)
 
 
-class CreateLinearIssueView(APIView):
+class CreateLinearIssueView(ErrorFeedLicenseRequired, APIView):
     """POST /tracer/feed/issues/{cluster_id}/create-linear-issue/"""
 
     permission_classes = [IsAuthenticated]
@@ -212,6 +220,20 @@ class CreateLinearIssueView(APIView):
                 cluster, request.validated_data.get("trace_id")
             )
 
+        f6_owned = is_grouping_issue(cluster.pk)
+        if f6_owned:
+            # Protect the issue before the remote request. No database lock is
+            # held across Linear I/O; a failed request can be retried without
+            # allowing an automatic merge/split to retire this user-owned issue.
+            try:
+                edit_grouping_issue(
+                    cluster.pk,
+                    _require_unlinked_issue,
+                    protect_on_intent=True,
+                )
+            except GroupingHumanEditUnavailable:
+                return self._gm.not_found(f"Cluster {cluster_id} not found")
+
         try:
             from integrations.services.linear_service import LinearService
 
@@ -227,12 +249,22 @@ class CreateLinearIssueView(APIView):
             logger.exception("linear_create_issue_failed", cluster_id=cluster_id)
             return self._gm.bad_request("Failed to create Linear issue")
 
-        # Store the link on the cluster
-        cluster.external_issue_url = issue["url"]
-        cluster.external_issue_id = issue["identifier"]
-        cluster.save(
-            update_fields=["external_issue_url", "external_issue_id", "updated_at"]
-        )
+        # Store the link through the same F6 scope/issue fence as Feed PATCH.
+        if f6_owned:
+            try:
+                edit_grouping_issue(
+                    cluster.pk,
+                    lambda current: _set_linear_issue_link(current, issue),
+                )
+            except GroupingHumanEditUnavailable:
+                logger.error("linear_issue_link_conflict", cluster_id=cluster_id)
+                return self._gm.bad_request("Failed to link Linear issue")
+        else:
+            cluster.external_issue_url = issue["url"]
+            cluster.external_issue_id = issue["identifier"]
+            cluster.save(
+                update_fields=["external_issue_url", "external_issue_id", "updated_at"]
+            )
 
         logger.info(
             "linear_issue_created",
@@ -250,7 +282,26 @@ class CreateLinearIssueView(APIView):
         )
 
 
-class LinearTeamsView(APIView):
+def _require_unlinked_issue(cluster: TraceErrorGroup) -> list[str]:
+    if cluster.external_issue_url:
+        raise GroupingHumanEditUnavailable("issue was linked concurrently")
+    return []
+
+
+def _set_linear_issue_link(cluster: TraceErrorGroup, issue: dict) -> list[str]:
+    if cluster.external_issue_url and cluster.external_issue_url != issue["url"]:
+        raise GroupingHumanEditUnavailable("issue was linked concurrently")
+    if (
+        cluster.external_issue_url == issue["url"]
+        and cluster.external_issue_id == issue["identifier"]
+    ):
+        return []
+    cluster.external_issue_url = issue["url"]
+    cluster.external_issue_id = issue["identifier"]
+    return ["external_issue_url", "external_issue_id"]
+
+
+class LinearTeamsView(ErrorFeedLicenseRequired, APIView):
     """GET /tracer/feed/integrations/linear/teams/
 
     Returns the list of Linear teams for the team picker dropdown.

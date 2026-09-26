@@ -18,11 +18,11 @@ import {
   TableHead,
   TableRow,
   Chip,
-  CircularProgress,
   Skeleton,
   IconButton,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { LoadingScreen } from "src/components/loading-screen";
 import SectionHeader from "../components/SectionHeader";
 import { GATEWAY_ICONS } from "../constants/gatewayIcons";
 import { enqueueSnackbar } from "notistack";
@@ -559,9 +559,7 @@ const AuditLogTab = ({ gatewayId }) => {
 
   if (isLoading) {
     return (
-      <Box display="flex" justifyContent="center" py={4}>
-        <CircularProgress />
-      </Box>
+      <LoadingScreen variant="orbit" sx={{ minHeight: "50vh" }} />
     );
   }
 

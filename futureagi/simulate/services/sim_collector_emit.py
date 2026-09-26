@@ -163,6 +163,8 @@ def export_sim_spans(
             project=project_name,
             result=str(result),
             span_count=len(readable),
+            span_names=[s.name for s in readable[:5]],
+            trace_ids=[format(s.context.trace_id, "032x") for s in readable[:5]],
         )
         return 0
     return len(readable)

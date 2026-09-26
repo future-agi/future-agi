@@ -1454,6 +1454,7 @@ class TestExperimentDeleteV2:
         mock_cancel,
         auth_client,
         experiment_with_evals,
+        experiment_dataset,
         output_column,
         eval_column_per_edt,
         eval_column_base,
@@ -1476,6 +1477,18 @@ class TestExperimentDeleteV2:
             source_id=f"{eval_column_base.id}-sourceid-{user_eval_metric.id}",
             status=StatusType.COMPLETED.value,
         )
+        columns = [
+            output_column,
+            eval_column_per_edt,
+            per_edt_reason,
+            eval_column_base,
+            base_reason,
+        ]
+        previous_column_updates = {
+            column.id: column.updated_at for column in columns
+        }
+        previous_edt_updated_at = experiment_dataset.updated_at
+        previous_experiment_updated_at = experiment_with_evals.updated_at
 
         response = auth_client.delete(
             f"{BASE_URL}/delete/",
@@ -1486,12 +1499,21 @@ class TestExperimentDeleteV2:
         assert response.status_code == status.HTTP_200_OK, response.json()
         mock_cancel.assert_called_once_with(str(experiment_with_evals.id))
 
-        for column in [
-            output_column,
-            eval_column_per_edt,
-            per_edt_reason,
-            eval_column_base,
-            base_reason,
-        ]:
+        for column in columns:
             column.refresh_from_db()
             assert column.deleted is True, column.name
+            assert column.deleted_at is not None, column.name
+            assert column.updated_at == column.deleted_at, column.name
+            assert column.updated_at > previous_column_updates[column.id], column.name
+
+        experiment_dataset.refresh_from_db()
+        assert experiment_dataset.deleted is True
+        assert experiment_dataset.deleted_at is not None
+        assert experiment_dataset.updated_at == experiment_dataset.deleted_at
+        assert experiment_dataset.updated_at > previous_edt_updated_at
+
+        experiment_with_evals.refresh_from_db()
+        assert experiment_with_evals.deleted is True
+        assert experiment_with_evals.deleted_at is not None
+        assert experiment_with_evals.updated_at == experiment_with_evals.deleted_at
+        assert experiment_with_evals.updated_at > previous_experiment_updated_at

@@ -54,6 +54,15 @@ class JsonArrayQueryParamField(serializers.CharField):
         return data
 
 
+class TestExecutionListQuerySerializer(serializers.Serializer):
+    search = serializers.CharField(required=False, allow_blank=True, default="")
+    status = serializers.CharField(required=False, allow_blank=True, default="")
+    page = serializers.IntegerField(required=False, min_value=1)
+    # The list never capped `limit`; documenting it must not start rejecting
+    # callers that already passed values above 100.
+    limit = serializers.IntegerField(required=False, min_value=1)
+
+
 class ExecutionDetailQuerySerializer(StrictInputSerializer):
     search = serializers.CharField(required=False, allow_blank=True, default="")
     filters = filter_list_query_param_field(required=False, default=list)
@@ -251,7 +260,9 @@ class CallExecutionErrorLocalizerTaskSerializer(serializers.Serializer):
         child=serializers.CharField(), allow_empty=True, required=False
     )
     input_types = serializers.JSONField(allow_null=True, required=False)
-    rule_prompt = serializers.CharField(allow_null=True, allow_blank=True, required=False)
+    rule_prompt = serializers.CharField(
+        allow_null=True, allow_blank=True, required=False
+    )
     error_analysis = serializers.JSONField(allow_null=True, required=False)
     selected_input_key = serializers.CharField(
         allow_null=True, allow_blank=True, required=False
@@ -259,8 +270,12 @@ class CallExecutionErrorLocalizerTaskSerializer(serializers.Serializer):
     error_message = serializers.CharField(
         allow_null=True, allow_blank=True, required=False
     )
-    created_at = serializers.CharField(allow_null=True, allow_blank=True, required=False)
-    updated_at = serializers.CharField(allow_null=True, allow_blank=True, required=False)
+    created_at = serializers.CharField(
+        allow_null=True, allow_blank=True, required=False
+    )
+    updated_at = serializers.CharField(
+        allow_null=True, allow_blank=True, required=False
+    )
 
 
 def _normalize_eval_value(value, output_type):
@@ -272,6 +287,12 @@ def _normalize_eval_value(value, output_type):
     a single-element list. Values that are already lists, None, or for other
     output types are returned unchanged.
     """
+    if output_type == "choices" and isinstance(value, dict):
+        choices = value.get("choices")
+        if isinstance(choices, list):
+            return choices
+        choice = value.get("choice")
+        return [choice] if choice is not None else []
     if output_type == "choices" and value is not None and not isinstance(value, list):
         return [value]
     return value
@@ -463,20 +484,23 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         ):
             return {}
 
-        provider_payload = None
-        if hasattr(obj, "provider_call_data") and isinstance(
-            obj.provider_call_data, dict
-        ):
-            provider_payload = obj.provider_call_data.get(
-                ProviderChoices.VAPI.value
-            )
+        pcd = (
+            obj.provider_call_data
+            if hasattr(obj, "provider_call_data")
+            and isinstance(obj.provider_call_data, dict)
+            else {}
+        )
+        provider_payload = pcd.get(ProviderChoices.VAPI.value)
 
-        # Shortcut dict from the provider payload's "recording" sub-object.
+        # Per-channel recording URLs live under <provider>.recording for whatever
+        # provider produced the call (vapi, livekit, ...). Read the shortcut from
+        # whichever bucket carries a "recording" dict — not just vapi — so
+        # LiveKit's per-channel customer/assistant tracks surface here too.
         shortcut = {}
-        if isinstance(provider_payload, dict):
-            raw_shortcut = provider_payload.get("recording")
-            if isinstance(raw_shortcut, dict):
-                shortcut = raw_shortcut
+        for bucket in pcd.values():
+            if isinstance(bucket, dict) and isinstance(bucket.get("recording"), dict):
+                shortcut = bucket["recording"]
+                break
 
         recordings: dict[str, str] = {}
         # Model fields (FAGI-rehosted S3 URLs) win, then the provider shortcut.
@@ -490,6 +514,26 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             recordings["customer"] = shortcut["customer"]
         if shortcut.get("assistant"):
             recordings["assistant"] = shortcut["assistant"]
+
+        # Hosted harness artifacts are re-hosted by the platform rather than
+        # nested in provider_call_data.  Surface all available tracks through
+        # the same recording shape consumed by the existing drawer.
+        call_metadata = (
+            obj.call_metadata
+            if hasattr(obj, "call_metadata") and isinstance(obj.call_metadata, dict)
+            else {}
+        )
+        hosted = call_metadata.get("hosted_harness_artifacts") or {}
+        hosted_track_kinds = {
+            "combined": "recording_combined",
+            "stereo": "recording_stereo",
+            "customer": "recording_customer",
+            "assistant": "recording_assistant",
+        }
+        for track, artifact_kind in hosted_track_kinds.items():
+            artifact = hosted.get(artifact_kind)
+            if track not in recordings and isinstance(artifact, dict) and artifact.get("url"):
+                recordings[track] = artifact["url"]
 
         # Fall back to the VoiceServiceManager resolution when no URLs are present.
         if not recordings:
@@ -595,6 +639,13 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
 
     def _is_chat_simulation(self, obj):
         """Check if this call execution is a chat/text simulation (agent-based or prompt-based)."""
+        # The executed call is authoritative. Hosted harness runs may reuse an
+        # AgentDefinition whose legacy/default type is text while projecting a
+        # real voice call. Falling through to that stale definition hides voice
+        # duration and recordings from the call-details response.
+        simulation_call_type = getattr(obj, "simulation_call_type", None)
+        if simulation_call_type is not None:
+            return simulation_call_type == CallExecution.SimulationCallType.TEXT
         if not hasattr(obj, "test_execution") or not obj.test_execution:
             return False
         run_test = obj.test_execution.run_test
@@ -712,7 +763,6 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             else None
         )
         if eval_configs is None:
-
             logger.debug(
                 "eval_outputs_serialized_without_live_config_context",
                 method="get_eval_outputs",
@@ -777,7 +827,6 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             else None
         )
         if eval_configs is None:
-
             logger.debug(
                 "eval_outputs_serialized_without_live_config_context",
                 method="get_eval_metrics",
@@ -858,7 +907,15 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         if isinstance(obj, dict) and "count" in obj:
             return {}
 
-        row_id = call_metadata.get("row_id")
+        # Prefer the authoritative FK column over call_metadata: a rerun wipes
+        # call_metadata (to drop the ALK batch claim), which used to blank these
+        # columns for the reran row. obj.row_id survives the reset.
+        if hasattr(obj, "row_id"):
+            row_id = getattr(obj, "row_id", None) or call_metadata.get("row_id")
+        elif isinstance(obj, dict):
+            row_id = obj.get("row_id") or call_metadata.get("row_id")
+        else:
+            row_id = call_metadata.get("row_id")
         if row_id:
             row_id_str = str(row_id)
 

@@ -7,15 +7,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 import requests
 import structlog
-import weaviate
 from django.db import close_old_connections, transaction
 from django.db.models import Q
 from drf_yasg.utils import swagger_auto_schema
-from pinecone import Pinecone
-from qdrant_client import QdrantClient
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
-from weaviate import AuthApiKey
 
 from agentic_eval.core.embeddings.embedding_manager import (
     model_manager,
@@ -238,6 +234,10 @@ class AddVectorDBColumnView(APIView):
         }
 
         """
+        from tfc.utils.lazy_extras import load_extra
+
+        Pinecone = load_extra("pinecone", "vectordb").Pinecone
+
         pc = Pinecone(api_key=SecretModel.objects.get(id=config["api_key"]).actual_key)
         index = pc.Index(config["index_name"])
         query_object = {}
@@ -317,6 +317,10 @@ class AddVectorDBColumnView(APIView):
                 )
 
             # Initialize Qdrant client
+            from tfc.utils.lazy_extras import load_extra
+
+            QdrantClient = load_extra("qdrant_client", "vectordb").QdrantClient
+
             client = QdrantClient(
                 url=config["url"],
                 api_key=SecretModel.objects.get(id=config["api_key"]).actual_key,
@@ -351,6 +355,11 @@ class AddVectorDBColumnView(APIView):
             raise ValueError(f"Failed to query Qdrant: {str(e)}")  # noqa: B904
 
     def get_client(self, config, organization_id, workspace_id=None, use_hybrid=False):
+        from tfc.utils.lazy_extras import load_extra
+
+        weaviate = load_extra("weaviate", "vectordb")
+        AuthApiKey = weaviate.AuthApiKey
+
         embedding_config = config.get("embedding_config", {})
         embedding_type = embedding_config.get("type", "")
         key = None

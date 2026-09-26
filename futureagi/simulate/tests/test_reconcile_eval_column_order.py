@@ -50,6 +50,57 @@ def test_no_evals_preserves_non_eval_columns():
     assert changed is False
 
 
+def test_harness_native_eval_is_preserved_without_platform_config():
+    harness_id = "551ee8d9-1bb2-5450-a6e4-b0ea4181998a"
+    output = {
+        "source": "harness",
+        "name": "ride_booked",
+        "output": "Passed",
+        "output_type": "Pass/Fail",
+    }
+
+    reconciled, changed = reconcile_eval_column_order(
+        column_order=list(BASE_COLS),
+        eval_configs=[],
+        evaluated_eval_ids={harness_id},
+        harness_eval_outputs={harness_id: output},
+    )
+
+    assert changed is True
+    assert _eval_cols(reconciled) == [
+        {
+            "column_name": "ride_booked",
+            "id": harness_id,
+            "eval_config": {"output_type": "Pass/Fail"},
+            "visible": True,
+            "type": "evaluation",
+            "source": "harness",
+        }
+    ]
+
+
+def test_existing_harness_native_eval_column_is_not_dropped():
+    harness_id = "551ee8d9-1bb2-5450-a6e4-b0ea4181998a"
+    existing = {
+        "column_name": "ride_booked",
+        "id": harness_id,
+        "type": "evaluation",
+        "source": "harness",
+        "visible": True,
+    }
+    output = {"source": "harness", "name": "ride_booked"}
+
+    reconciled, changed = reconcile_eval_column_order(
+        column_order=[*BASE_COLS, existing],
+        eval_configs=[],
+        evaluated_eval_ids={harness_id},
+        harness_eval_outputs={harness_id: output},
+    )
+
+    assert changed is False
+    assert _eval_cols(reconciled) == [existing]
+
+
 def test_appends_missing_eval_column_when_evaluated():
     e1 = _EC(id="e1", name="toxicity", template_config={"a": 1})
     reconciled, changed = reconcile_eval_column_order(

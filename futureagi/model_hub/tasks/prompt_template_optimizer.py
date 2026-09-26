@@ -131,7 +131,7 @@ def gather_data_for_optimization():
 
                 # print(filter_query)
 
-                clickhouse_data = client.execute(filter_query)
+                clickhouse_data = client.execute_read(filter_query)
 
                 node_ids = [d[0] for d in clickhouse_data]
                 uuids = [d[1] for d in clickhouse_data]
@@ -437,7 +437,7 @@ def get_topk_prompts(
 
                 """
     data_to_process = []
-    clickhouse_data = client.execute(filter_query)
+    clickhouse_data = client.execute_read(filter_query)
 
     node_ids = [d[0] for d in clickhouse_data]
     # clickhouse_data will now return tuples (FeatureValue, TagKeys, TagValues)
@@ -594,7 +594,7 @@ def get_template_results(optimization_id):
                         1,2
                         """
 
-    clickhouse_data = client.execute(filter_query)
+    clickhouse_data = client.execute_read(filter_query)
     templates = [d[0] for d in clickhouse_data]
     metrics = [d[1] for d in clickhouse_data]
     scores = [d[2] for d in clickhouse_data]
@@ -666,7 +666,7 @@ def get_template_explore(optimization_id):
                             1,2
                     """
 
-    clickhouse_data = client.execute(filter_query)
+    clickhouse_data = client.execute_read(filter_query)
     node_ids = [d[0] for d in clickhouse_data]
     metrics = [d[1] for d in clickhouse_data]
     ans_type_arr = [d[2] for d in clickhouse_data]

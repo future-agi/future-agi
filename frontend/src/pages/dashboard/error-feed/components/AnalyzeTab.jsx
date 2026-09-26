@@ -25,12 +25,12 @@ import Iconify from "src/components/iconify";
 import { purple } from "src/theme/palette";
 import { useErrorFeedStore } from "../store";
 import { useFollowUpRunner } from "../useAnalyzeRunner";
+import { useStreamingText } from "../useStreamingText";
 import {
   CONF_META,
   MESSAGE_TYPE,
   RUN_STATE,
   STEP_STATUS,
-  STREAM_CHARS_PER_TICK,
   STREAM_STATUS,
   STREAM_TICK_MS,
 } from "../constants";
@@ -44,63 +44,6 @@ import {
 // ── Visual primitives ─────────────────────────────────────────────────────
 
 const ACCENT = purple[500];
-
-// Per-tab-session memory of which streams have already finished. Keyed by
-// a caller-supplied `identityKey` (typically `${message.id}-${slot}`). Once
-// a stream completes, its key is recorded here; subsequent mounts (e.g.,
-// the user tabbed away and came back) start in instant mode so the
-// animation doesn't replay for content they've already seen.
-//
-// Resets on a hard reload of the page — that's the intended scope. The
-// shared analyze thread state lives in the zustand store, but stream
-// completion is a UI concern that's specific to the current session.
-const STREAMED_KEYS = new Set();
-
-// Reveal `text` one chunk per tick. Reset whenever the input text changes
-// (new message arrives). Returns the visible substring + whether more is
-// still incoming so the caller can render a cursor.
-//
-// Options:
-//   - instant: jump straight to the full text (review mode)
-//   - identityKey: a stable id for "this particular stream". Once the
-//     stream completes, the key is remembered globally so re-mounts skip
-//     the animation. Without a key, the stream replays on every mount.
-function useStreamingText(text, options = {}) {
-  const { instant = false, identityKey } = options;
-  const fullText = typeof text === "string" ? text : "";
-  const skipFromMemory = !!identityKey && STREAMED_KEYS.has(identityKey);
-  const shouldSkip = instant || skipFromMemory;
-  const [revealedLen, setRevealedLen] = useState(
-    shouldSkip ? fullText.length : 0,
-  );
-
-  useEffect(() => {
-    const skip = instant || (!!identityKey && STREAMED_KEYS.has(identityKey));
-    setRevealedLen(skip ? fullText.length : 0);
-  }, [fullText, instant, identityKey]);
-
-  useEffect(() => {
-    if (revealedLen >= fullText.length) {
-      // Stream just hit the end — remember it so we don't replay on
-      // remount.
-      if (fullText.length > 0 && identityKey) {
-        STREAMED_KEYS.add(identityKey);
-      }
-      return undefined;
-    }
-    const id = setInterval(() => {
-      setRevealedLen((n) =>
-        Math.min(n + STREAM_CHARS_PER_TICK, fullText.length),
-      );
-    }, STREAM_TICK_MS);
-    return () => clearInterval(id);
-  }, [fullText, revealedLen, identityKey]);
-
-  return {
-    revealed: fullText.slice(0, revealedLen),
-    isStreaming: revealedLen < fullText.length,
-  };
-}
 
 // Inline blinking caret rendered at the end of streaming text — same
 // visual cue every chat LLM uses to say "still typing".
@@ -626,10 +569,14 @@ function StepCard({ step }) {
   const isQueued = step.status === STEP_STATUS.QUEUED;
   const isDone = step.status === STEP_STATUS.DONE;
   const hasDetails = (isRunning || isDone) && step.details?.length > 0;
-  // Done steps default collapsed; the actively-running step auto-expands so
-  // you watch the reasoning stream live (like Claude Code).
+  // Expansion is user-driven only. Auto-expanding the running step animated
+  // every card open on step_start and snapped it shut the moment its result
+  // landed — a grow/shrink cycle per tool call, which is most of what reads as
+  // the panel "bouncing". It also bought nothing: a step's tool output arrives
+  // with the result that ended the run state, so the auto-opened panel was
+  // empty for its whole lifetime.
   const [expanded, setExpanded] = useState(false);
-  const open = expanded || (isRunning && hasDetails);
+  const open = expanded && hasDetails;
 
   return (
     <Box
@@ -889,13 +836,13 @@ function SynthesisCard({ synthesis }) {
         <Iconify
           icon="mdi:star-four-points"
           width={12}
-          sx={{ color: "#7857FC" }}
+          sx={{ color: isDark ? "#A792FD" : "#7857FC" }}
         />
         <Typography
           fontSize="10.5px"
           fontWeight={700}
           sx={{
-            color: "#7857FC",
+            color: isDark ? "#A792FD" : "#7857FC",
             textTransform: "uppercase",
             letterSpacing: "0.08em",
           }}
@@ -1501,23 +1448,32 @@ export default function AnalyzeTab({ error }) {
   // there were no follow-ups but reads awkwardly once the user is mid-Q&A.)
   const scrollerRef = useRef(null);
 
-  // Always follow the latest message — for streaming runs AND for follow-ups
-  // the user just submitted, the bottom is where the action is.
+  // Follow the latest message only while the user is already at the bottom.
+  // Pinning unconditionally means scrolling up to re-read an earlier step
+  // snaps you back to the bottom on the next tick — with the interval below
+  // running every 64ms, reading anything during a run is impossible. The
+  // threshold is generous because the content grows between ticks, so "at the
+  // bottom" drifts by a few px on its own.
+  const isNearBottom = (el) =>
+    el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+
   useEffect(() => {
-    if (!scrollerRef.current) return;
-    scrollerRef.current.scrollTop = scrollerRef.current.scrollHeight;
+    const el = scrollerRef.current;
+    if (!el || !isNearBottom(el)) return;
+    el.scrollTop = el.scrollHeight;
   }, [messages.length, runState, followUpRunState]);
 
   // While text is actively streaming, the reasoning / answer body grows
   // char-by-char inside useStreamingText (internal state — message count and
   // length don't change), so the effect above never re-fires and the live
-  // text overflows below the fold. Keep the scroller pinned to the bottom on
-  // an interval for as long as either side is streaming.
+  // text overflows below the fold. Keep the scroller pinned for as long as
+  // either side is streaming — but only while the user has stayed at the
+  // bottom; the moment they scroll away, leave them where they put themselves.
   useEffect(() => {
     if (!isStreaming && !isFollowUpStreaming) return undefined;
     const id = setInterval(() => {
       const el = scrollerRef.current;
-      if (el) el.scrollTop = el.scrollHeight;
+      if (el && isNearBottom(el)) el.scrollTop = el.scrollHeight;
     }, STREAM_TICK_MS * 4);
     return () => clearInterval(id);
   }, [isStreaming, isFollowUpStreaming]);
@@ -1647,7 +1603,7 @@ export default function AnalyzeTab({ error }) {
                 <Iconify
                   icon="mdi:star-four-points-outline"
                   width={20}
-                  sx={{ color: "#7857FC" }}
+                  sx={{ color: "accent.brand" }}
                 />
               </Box>
               <Typography fontSize="14px" fontWeight={600} color="text.primary">

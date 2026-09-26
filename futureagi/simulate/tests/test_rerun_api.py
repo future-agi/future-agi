@@ -7,15 +7,24 @@ Tests cover:
 """
 
 import uuid
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
+from django.test import override_settings
+from django.utils import timezone
 from rest_framework import status
 
+from accounts.models.workspace import Workspace
 from model_hub.models.choices import DatasetSourceChoices, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.evals_metric import EvalTemplate
-from simulate.models import AgentDefinition, Scenarios, SimulateEvalConfig
+from simulate.models import (
+    AgentDefinition,
+    HostedHarnessJob,
+    Scenarios,
+    SimulateEvalConfig,
+)
 from simulate.models.run_test import CreateCallExecution, RunTest
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import (
@@ -316,6 +325,7 @@ class TestCallExecutionRerunView:
         assert call_execution.eval_outputs == {"eval1": {"score": 0.9}}
         assert call_execution.call_metadata["eval_completed"] is True
 
+    @pytest.mark.requires_ee
     @patch("simulate.temporal.client.rerun_call_executions")
     def test_rerun_call_and_eval_select_all(
         self, mock_rerun, auth_client, test_execution, call_execution
@@ -338,6 +348,127 @@ class TestCallExecutionRerunView:
         test_execution.refresh_from_db()
         assert test_execution.status == TestExecution.ExecutionStatus.RUNNING
 
+    @pytest.mark.requires_ee
+    @override_settings(HARNESS_PROVIDER="sandbox")
+    @patch(
+        "simulate.services.harness_credentials.credentials_for_rerun",
+        return_value=({"LIVEKIT_URL": "wss://example.invalid"}, {}),
+    )
+    @patch("simulate.services.harness_sandbox.HarnessSandboxClient.rerun")
+    def test_repository_harness_rerun_restarts_saved_environment_without_resetting_calls(
+        self,
+        rerun_saved_job,
+        _saved_credentials,
+        auth_client,
+        test_execution,
+        call_execution,
+    ):
+        job_id = uuid.uuid4()
+        # Repository registrations may use a generic TEXT shell even when the
+        # authoritative ALK contract is voice. That shell must not block the
+        # saved environment rerun.
+        agent = test_execution.run_test.agent_definition
+        agent.agent_type = AgentDefinition.AgentTypeChoices.TEXT
+        agent.save(update_fields=["agent_type"])
+        HostedHarnessJob.no_workspace_objects.create(
+            id=job_id,
+            organization=test_execution.run_test.organization,
+            workspace=test_execution.run_test.workspace,
+            run_id=uuid.uuid4(),
+            idempotency_key=f"rerun-{job_id}",
+            request_digest=f"sha256:{'0' * 64}",
+            schema_version="1.4",
+            payload={},
+            state=HostedHarnessJob.State.COMPLETED,
+            seed=1,
+            scenario_count=1,
+            artifact_level="standard",
+            max_artifact_bytes=1,
+            deadline_at=timezone.now() + timedelta(hours=1),
+            run_test=test_execution.run_test,
+            test_execution=test_execution,
+        )
+        rerun_saved_job.return_value = {
+            "status": {"stage": "queued", "detail": "waiting to restart"}
+        }
+        original_metadata = dict(call_execution.call_metadata)
+
+        response = auth_client.post(
+            self.URL_TEMPLATE.format(test_execution.id),
+            {
+                "rerun_type": "call_and_eval",
+                "select_all": True,
+                "environment_values": {"LIVEKIT_URL": "wss://example.invalid"},
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        assert response.json()["harness_job_id"] == str(job_id)
+        rerun_saved_job.assert_called_once_with(
+            str(job_id),
+            {
+                "environment_values": {
+                    "LIVEKIT_URL": "wss://example.invalid"
+                },
+                "secret_refs": {},
+                "only": [],
+            },
+        )
+        call_execution.refresh_from_db()
+        assert call_execution.status == CallExecution.CallStatus.COMPLETED
+        assert call_execution.call_metadata == original_metadata
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestRepositoryRunAgainView:
+    """The simulation header and grid must share the repository lifecycle."""
+
+    URL_TEMPLATE = "/simulate/test-executions/{}/rerun-calls/"
+
+    @override_settings(HARNESS_PROVIDER="sandbox")
+    @patch("simulate.views.run_test._voice_sim_gate_response", return_value=None)
+    @patch(
+        "simulate.services.harness_credentials.credentials_for_rerun",
+        return_value=({}, {}),
+    )
+    @patch("simulate.services.harness_sandbox.HarnessSandboxClient.rerun")
+    def test_run_again_restarts_saved_harness_instead_of_creating_pending_execution(
+        self,
+        rerun_saved_job,
+        _saved_credentials,
+        _voice_gate,
+        auth_client,
+        run_test,
+        test_execution,
+        scenario,
+    ):
+        job_id = uuid.uuid4()
+        run_test.agent_definition.agent_type = AgentDefinition.AgentTypeChoices.TEXT
+        run_test.agent_definition.save(update_fields=["agent_type"])
+        test_execution.execution_metadata = {"harness_job_id": str(job_id)}
+        test_execution.scenario_ids = [str(scenario.id)]
+        test_execution.save(update_fields=["execution_metadata", "scenario_ids"])
+        rerun_saved_job.return_value = {"status": {"stage": "queued"}}
+        execution_count = TestExecution.objects.count()
+
+        response = auth_client.post(
+            f"/simulate/run-tests/{run_test.id}/execute/",
+            {"scenario_ids": [str(scenario.id)]},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["status"] == "queued"
+        assert TestExecution.objects.count() == execution_count
+        rerun_saved_job.assert_called_once_with(
+            str(job_id),
+            {"environment_values": {}, "secret_refs": {}, "only": []},
+        )
+
+    @pytest.mark.requires_ee
+    @patch("simulate.views.run_test._hosted_execution_eligible", return_value=False)
     @patch(
         "simulate.temporal.client.rerun_call_executions",
         side_effect=TimeoutError("temporal dispatch timed out"),
@@ -345,6 +476,7 @@ class TestCallExecutionRerunView:
     def test_rerun_call_and_eval_marks_failed_when_dispatch_fails(
         self,
         mock_rerun,
+        _native_execution,
         auth_client,
         test_execution,
         call_execution,
@@ -435,12 +567,7 @@ class TestCallExecutionRerunView:
             {"rerun_type": "eval_only", "select_all": True},
             format="json",
         )
-
-        # get_object_or_404 raises Http404, caught by generic except -> 500
-        assert response.status_code in (
-            status.HTTP_404_NOT_FOUND,
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
     def test_rerun_unauthenticated(self, api_client, test_execution):
         """Test rerun without authentication."""
@@ -481,6 +608,50 @@ class TestTestExecutionRerunView:
     """Tests for POST /simulate/run-tests/<uuid>/rerun-test-executions/"""
 
     URL_TEMPLATE = "/simulate/run-tests/{}/rerun-test-executions/"
+
+    @override_settings(HARNESS_PROVIDER="sandbox")
+    @patch("simulate.views.run_test._voice_sim_gate_response", return_value=None)
+    @patch(
+        "simulate.services.harness_credentials.credentials_for_rerun",
+        return_value=({}, {}),
+    )
+    @patch("simulate.services.harness_sandbox.HarnessSandboxClient.rerun")
+    def test_grid_rerun_restarts_saved_harness_without_resetting_calls(
+        self,
+        rerun_saved_job,
+        _saved_credentials,
+        _voice_gate,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+    ):
+        job_id = uuid.uuid4()
+        run_test.agent_definition.agent_type = AgentDefinition.AgentTypeChoices.TEXT
+        run_test.agent_definition.save(update_fields=["agent_type"])
+        test_execution.execution_metadata = {"harness_job_id": str(job_id)}
+        test_execution.save(update_fields=["execution_metadata"])
+        rerun_saved_job.return_value = {"status": {"stage": "queued"}}
+        original_metadata = dict(call_execution.call_metadata)
+
+        response = auth_client.post(
+            self.URL_TEMPLATE.format(run_test.id),
+            {
+                "rerun_type": "call_and_eval",
+                "test_execution_ids": [str(test_execution.id)],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["overall_success_count"] == 1
+        rerun_saved_job.assert_called_once_with(
+            str(job_id),
+            {"environment_values": {}, "secret_refs": {}, "only": []},
+        )
+        call_execution.refresh_from_db()
+        assert call_execution.status == CallExecution.CallStatus.COMPLETED
+        assert call_execution.call_metadata == original_metadata
 
     @patch("simulate.temporal.client.rerun_call_executions")
     def test_rerun_eval_only_select_all(
@@ -636,6 +807,7 @@ class TestTestExecutionRerunView:
         assert data["total_test_executions"] == 1
         assert data["results"][0]["test_execution_id"] == str(test_execution_2.id)
 
+    @pytest.mark.requires_ee
     @patch("simulate.temporal.client.rerun_call_executions")
     def test_rerun_call_and_eval_select_all(
         self,
@@ -717,12 +889,7 @@ class TestTestExecutionRerunView:
             {"rerun_type": "eval_only", "select_all": True},
             format="json",
         )
-
-        # get_object_or_404 raises Http404, caught by generic except -> 500
-        assert response.status_code in (
-            status.HTTP_404_NOT_FOUND,
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
     def test_rerun_unauthenticated(self, api_client, run_test):
         """Test rerun without authentication."""
@@ -781,6 +948,138 @@ class TestTestExecutionRerunView:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+# ============================================================================
+# RunTestEvalExplanationSummaryView Tests
+# ============================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestGetEvalExplanationSummary:
+    """Tests for GET /simulate/test-executions/<uuid>/eval-explanation-summary/"""
+
+    URL_TEMPLATE = "/simulate/test-executions/{}/eval-explanation-summary/"
+
+    def test_get_eval_explanation_summary_returns_summary(
+        self, auth_client, test_execution
+    ):
+        """Populated summary is returned with status and last_updated."""
+        summary_payload = {
+            "total_evals": 3,
+            "buckets": [
+                {"label": "pass", "count": 2},
+                {"label": "fail", "count": 1},
+            ],
+        }
+        last_updated = timezone.now()
+        test_execution.eval_explanation_summary = summary_payload
+        test_execution.eval_explanation_summary_last_updated = last_updated
+        test_execution.eval_explanation_summary_status = (
+            EvalExplanationSummaryStatus.COMPLETED
+        )
+        test_execution.save(
+            update_fields=[
+                "eval_explanation_summary",
+                "eval_explanation_summary_last_updated",
+                "eval_explanation_summary_status",
+            ]
+        )
+
+        url = self.URL_TEMPLATE.format(test_execution.id)
+        response = auth_client.get(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        body = response.json()
+        assert body["status"] is True
+        result = body["result"]
+        assert result["response"] == summary_payload
+        assert result["status"] == EvalExplanationSummaryStatus.COMPLETED
+        assert result["last_updated"] is not None
+
+        # Status should not be flipped back to PENDING when summary already exists
+        test_execution.refresh_from_db()
+        assert (
+            test_execution.eval_explanation_summary_status
+            == EvalExplanationSummaryStatus.COMPLETED
+        )
+
+    def test_get_eval_explanation_summary_unauthenticated_returns_401(
+        self, api_client, test_execution
+    ):
+        """Unauthenticated request is rejected before hitting the view logic."""
+        url = self.URL_TEMPLATE.format(test_execution.id)
+        response = api_client.get(url)
+
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+        body = response.json()
+        assert "detail" in body or body.get("status") is False
+
+    def test_get_eval_explanation_summary_not_found_returns_404(self, auth_client):
+        """Unknown test-execution id returns 404 with the standard error body."""
+        url = self.URL_TEMPLATE.format(uuid.uuid4())
+        response = auth_client.get(url)
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        body = response.json()
+        assert body.get("status") is False
+
+    def test_get_eval_explanation_summary_other_workspace_returns_404(
+        self,
+        auth_client,
+        organization,
+        user,
+        agent_definition,
+        simulator_agent,
+    ):
+        """A test-execution scoped to another workspace of the same org is not visible."""
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other EvalSummary Workspace",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        hidden_run_test = RunTest.no_workspace_objects.create(
+            name="Hidden Run Test",
+            description="Hidden run test in another workspace.",
+            agent_definition=agent_definition,
+            simulator_agent=simulator_agent,
+            organization=organization,
+            workspace=other_workspace,
+        )
+        hidden_summary = {"total_evals": 42, "buckets": []}
+        hidden_last_updated = timezone.now()
+        hidden_test_execution = TestExecution.no_workspace_objects.create(
+            run_test=hidden_run_test,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            total_scenarios=1,
+            total_calls=1,
+            simulator_agent=simulator_agent,
+            agent_definition=agent_definition,
+            eval_explanation_summary=hidden_summary,
+            eval_explanation_summary_last_updated=hidden_last_updated,
+            eval_explanation_summary_status=EvalExplanationSummaryStatus.COMPLETED,
+        )
+
+        url = self.URL_TEMPLATE.format(hidden_test_execution.id)
+        response = auth_client.get(url)
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        body = response.json()
+        assert body.get("status") is False
+
+        # Target row untouched
+        hidden_test_execution.refresh_from_db()
+        assert hidden_test_execution.eval_explanation_summary == hidden_summary
+        assert (
+            hidden_test_execution.eval_explanation_summary_status
+            == EvalExplanationSummaryStatus.COMPLETED
+        )
 
 
 @pytest.mark.integration
@@ -856,6 +1155,44 @@ class TestTestExecutionRuntimeContracts:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert response.data["status"] is False
         assert response.data["details"]["legacy_extra"] == ["Unknown field."]
+
+    def test_cancel_other_workspace_returns_404(
+        self,
+        auth_client,
+        organization,
+        user,
+        agent_definition,
+        simulator_agent,
+    ):
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other Cancel Workspace",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        hidden_run_test = RunTest.no_workspace_objects.create(
+            name="Hidden Cancel Run Test",
+            description="Run test in another workspace",
+            agent_definition=agent_definition,
+            simulator_agent=simulator_agent,
+            organization=organization,
+            workspace=other_workspace,
+        )
+        hidden_te = TestExecution.no_workspace_objects.create(
+            run_test=hidden_run_test,
+            status=TestExecution.ExecutionStatus.RUNNING,
+            total_scenarios=1,
+            total_calls=1,
+            simulator_agent=simulator_agent,
+            agent_definition=agent_definition,
+        )
+        url = f"/simulate/test-executions/{hidden_te.id}/cancel/"
+        response = auth_client.post(url, {}, format="json")
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        hidden_te.refresh_from_db()
+        assert hidden_te.status == TestExecution.ExecutionStatus.RUNNING
 
     def test_eval_summary_refresh_rejects_unknown_fields(
         self, auth_client, test_execution
@@ -1179,10 +1516,7 @@ class TestTestExecutionBulkDeleteView:
             format="json",
         )
 
-        assert response.status_code in (
-            status.HTTP_404_NOT_FOUND,
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
     def test_delete_unauthenticated(self, api_client, run_test):
         """Test delete without authentication."""
@@ -1208,3 +1542,127 @@ class TestTestExecutionBulkDeleteView:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestTestExecutionDeleteView:
+    """Tests for DELETE /simulate/test-executions/<uuid>/delete/.
+
+    Happy-path child-cascade coverage lives in
+    ``test_call_execution_action_scope.TestCallExecutionActionScope
+    ::test_test_execution_delete_soft_deletes_child_call_execution``, and
+    cross-tenant coverage lives beside it. This class fills the remaining
+    not-found + unauthenticated gaps.
+    """
+
+    def test_test_execution_delete_not_found_returns_404(self, auth_client):
+        response = auth_client.delete(
+            f"/simulate/test-executions/{uuid.uuid4()}/delete/"
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert "not found" in str(response.content).lower()
+
+    def test_test_execution_delete_unauthenticated_returns_401(
+        self, api_client, test_execution
+    ):
+        response = api_client.delete(
+            f"/simulate/test-executions/{test_execution.id}/delete/"
+        )
+
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+        test_execution.refresh_from_db()
+        assert test_execution.deleted is False
+
+
+# ============================================================================
+# RunTestEvalExplanationSummaryRefreshView Tests
+# ============================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestEvalExplanationSummaryRefreshView:
+    """Tests for POST /simulate/test-executions/<uuid>/eval-explanation-summary/refresh/"""
+
+    URL_TEMPLATE = (
+        "/simulate/test-executions/{}/eval-explanation-summary/refresh/"
+    )
+
+    @patch(
+        "simulate.views.run_test.run_eval_summary_task.apply_async",
+        side_effect=TimeoutError("temporal dispatch timed out"),
+    )
+    def test_eval_explanation_refresh_marks_failed_when_dispatch_fails(
+        self, mock_apply_async, auth_client, test_execution
+    ):
+        # Seed a terminal state so we can prove the view moved it off COMPLETED
+        # and did not leave it stuck mid-refresh when dispatch blew up.
+        test_execution.eval_explanation_summary_status = (
+            EvalExplanationSummaryStatus.COMPLETED
+        )
+        test_execution.save(update_fields=["eval_explanation_summary_status"])
+
+        url = self.URL_TEMPLATE.format(test_execution.id)
+        response = auth_client.post(url, {}, format="json")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["status"] is True
+        assert "marked pending" in response.data["result"]["message"]
+        mock_apply_async.assert_called_once_with(args=(str(test_execution.id),))
+
+        test_execution.refresh_from_db()
+        # Should be PENDING or FAILED; must not be stuck in a live state like
+        # RUNNING or lie about COMPLETED.
+        assert test_execution.eval_explanation_summary_status in {
+            EvalExplanationSummaryStatus.PENDING,
+            EvalExplanationSummaryStatus.FAILED,
+        }
+        assert test_execution.eval_explanation_summary_status not in {
+            EvalExplanationSummaryStatus.RUNNING,
+            EvalExplanationSummaryStatus.COMPLETED,
+        }
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestOptimiserAnalysisRefreshView:
+    URL_TEMPLATE = "/simulate/test-executions/{}/optimiser-analysis/refresh/"
+
+    @patch("simulate.utils.agent_optimiser.prepare_simulation_analysis_input")
+    @patch("simulate.tasks.agent_optimiser_tasks.execute_optimiser_run")
+    def test_optimiser_analysis_refresh_marks_failed_when_dispatch_fails(
+        self,
+        mock_task,
+        mock_prepare,
+        auth_client,
+        test_execution,
+        call_execution,
+    ):
+        from simulate.models import AgentOptimiserRun
+
+        mock_prepare.return_value = {"test_execution_id": str(test_execution.id)}
+        mock_task.delay.side_effect = TimeoutError("temporal dispatch timed out")
+
+        response = auth_client.post(
+            self.URL_TEMPLATE.format(test_execution.id), {}, format="json"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["status"] is True
+        assert response.data["result"]["status"] == AgentOptimiserRun.OptimiserStatus.FAILED
+        mock_task.delay.assert_called_once()
+
+        run = AgentOptimiserRun.objects.order_by("-created_at").first()
+        assert run is not None
+        assert run.status == AgentOptimiserRun.OptimiserStatus.FAILED
+        assert (run.metadata or {}).get("error", {}).get("dispatch_error") == (
+            "temporal dispatch timed out"
+        )
+
+
+# ============================================================================

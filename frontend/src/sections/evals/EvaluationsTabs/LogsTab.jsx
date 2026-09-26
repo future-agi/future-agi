@@ -1,4 +1,13 @@
-import { Box, Typography, IconButton, Chip, Skeleton } from "@mui/material";
+import {
+  Box,
+  Button,
+  Typography,
+  IconButton,
+  Chip,
+  Skeleton,
+  alpha,
+  useTheme,
+} from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Iconify from "src/components/iconify";
@@ -29,6 +38,9 @@ import _ from "lodash";
 import FormattedValueReason from "./FormattedReason";
 import logger from "src/utils/logger";
 import { APP_CONSTANTS } from "src/utils/constants";
+import { QUERY_FAILED_RETRY_MESSAGE } from "src/utils/queryReadState";
+import { readEvalLogGridPage } from "../utils/eval_log_grid_read";
+import { INTERACTIVE_TABLE_PAGE_SIZE } from "src/config/runtime_limits";
 
 const EvaluateArrayCellRenderer = ({ value }) => {
   return (
@@ -372,6 +384,8 @@ const CustomDevelopDetailColumn = (props) => {
   const { displayName, showColumnMenu, col, hideMenu, eGridHeader, api } =
     props;
 
+  const theme = useTheme();
+  const isDark = theme.palette.mode === "dark";
   const colDef = props?.column?.colDef;
   const refButton = useRef(null);
 
@@ -440,13 +454,16 @@ const CustomDevelopDetailColumn = (props) => {
       originType === "evaluation" ||
       originType === "optimisation_evaluation"
     ) {
-      return "#EEFDFE"; // Same color as evaluation
+      // Same color as evaluation
+      return isDark ? alpha("#22B3B7", 0.16) : "#EEFDFE";
     } else if (originType === "run_prompt") {
-      return "#EEF4FF";
+      return isDark ? alpha("#2F7CF7", 0.18) : "#EEF4FF";
     } else if (originType === "optimisation") {
-      return "primary.lighter";
+      return isDark
+        ? alpha(theme.palette.primary.main, 0.16)
+        : "primary.lighter";
     } else if (originType === "annotation_label") {
-      return "#FFE2FE";
+      return isDark ? alpha("#FF85C0", 0.16) : "#FFE2FE";
     }
     return "background.default";
   };
@@ -527,6 +544,7 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
   const [columnData] = useState([]);
   const { evalId } = useParams();
   const [isRefreshing, setIsRefreshing] = useState(null);
+  const [readError, setReadError] = useState(null);
   const [, setIsData] = useState(true);
   const [, setRowData] = useState([]);
   const [columnDefs, setColumnDefs] = useState([
@@ -581,28 +599,31 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
         const pageNumber = Math.floor(request.startRow / pageSize);
 
         try {
-          const { data } = await axios.get(
-            endpoints.develop.eval.getEvalsLogs,
-            {
-              params: {
-                eval_template_id: evalId,
-                current_page_index: pageNumber,
-                page_size: pageSize,
-                filters: JSON.stringify(validatedFilters),
-                sort: JSON.stringify(
-                  request?.sortModel?.map(({ colId, sort }) => ({
-                    column_id: colId,
-                    type: sort === "asc" ? "ascending" : "descending",
-                  })),
-                ),
-              },
-            },
+          const page = await readEvalLogGridPage(
+            ({ signal, timeout }) =>
+              axios.get(endpoints.develop.eval.getEvalsLogs, {
+                signal,
+                timeout,
+                params: {
+                  eval_template_id: evalId,
+                  current_page_index: pageNumber,
+                  page_size: pageSize,
+                  filters: JSON.stringify(validatedFilters),
+                  sort: JSON.stringify(
+                    request?.sortModel?.map(({ colId, sort }) => ({
+                      column_id: colId,
+                      type: sort === "asc" ? "ascending" : "descending",
+                    })),
+                  ),
+                },
+              }),
+            { currentPageIndex: pageNumber, pageSize },
           );
 
-          setColumnDataNew(data?.result?.column_config);
-          // const rows = generateRowData(data?.result?.table, data?.result?.column_config);
-          const rows = data?.result?.table;
+          setColumnDataNew(page.columns);
+          const rows = page.rows;
           setRowData(rows);
+          setReadError(null);
           if (!rows || rows.length === 0) {
             setTimeout(() => {
               if (gridRef.current?.api) {
@@ -620,7 +641,7 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
           }
           params.success({
             rowData: rows,
-            rowCount: data?.result?.metadata?.total_rows,
+            rowCount: page.totalRows,
           });
           if (rows?.length === 0) {
             setTimeout(() => {
@@ -631,12 +652,8 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
           }
         } catch (error) {
           setIsRefreshing(null);
+          setReadError(QUERY_FAILED_RETRY_MESSAGE);
           params.fail();
-          setTimeout(() => {
-            if (gridRef.current?.api) {
-              gridRef.current.api.showNoRowsOverlay();
-            }
-          }, 0);
         }
       },
       getRowId: (data) => data.rowId,
@@ -872,17 +889,27 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
 
     for (let p = 0; p < totalPages; p++) {
       try {
-        // Fetch updated column data from your API
-        const { data } = await axios.post(endpoints.develop.eval.getEvalLogs, {
-          eval_template_id: evalId,
-          current_page_index: p,
-          filters: validatedFilters,
-        });
+        const page = await readEvalLogGridPage(
+          ({ signal, timeout }) =>
+            axios.get(endpoints.develop.eval.getEvalsLogs, {
+              signal,
+              timeout,
+              params: {
+                eval_template_id: evalId,
+                current_page_index: p,
+                page_size: INTERACTIVE_TABLE_PAGE_SIZE,
+                filters: JSON.stringify(validatedFilters),
+                sort: JSON.stringify([]),
+              },
+            }),
+          { currentPageIndex: p, pageSize: INTERACTIVE_TABLE_PAGE_SIZE },
+        );
 
-        setColumnDataNew(data, false, true, true);
+        setColumnDataNew(page.columns, false, true);
 
-        const rows = data?.result?.table;
+        const rows = page.rows;
         setRowData(rows);
+        setReadError(null);
         const transaction = {
           update: rows,
         };
@@ -890,6 +917,7 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
           gridRef.current.api.applyServerSideTransaction(transaction);
         }
       } catch (e) {
+        setReadError(QUERY_FAILED_RETRY_MESSAGE);
         logger.error("Failed to refresh rows", e);
       }
     }
@@ -1029,6 +1057,33 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
           />
         </Box>
       )}
+      {readError && (
+        <Box
+          role="alert"
+          sx={{
+            px: 1.5,
+            py: 0.75,
+            fontSize: 12,
+            color: "warning.main",
+            bgcolor: "warning.lighter",
+            borderBottom: "1px solid",
+            borderColor: "warning.light",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          {readError}
+          <Button
+            size="small"
+            onClick={() =>
+              gridRef.current?.api?.refreshServerSide({ purge: false })
+            }
+          >
+            Retry
+          </Button>
+        </Box>
+      )}
       <Box className="ag-theme-quartz" style={{ height: "100%" }}>
         <SingleImageViewerProvider>
           <AgGridReact
@@ -1054,7 +1109,7 @@ const LogsTab = ({ evalFilterOpen, setEvalFilterOpen }) => {
             columnDefs={columnDefs}
             // defaultColDef={defaultColDef}
             pagination={false}
-            cacheBlockSize={10}
+            cacheBlockSize={INTERACTIVE_TABLE_PAGE_SIZE}
             maxBlocksInCache={10}
             statusBar={statusBar}
             suppressRowClickSelection={true}

@@ -55,6 +55,38 @@ export const normalizeAlertListRow = (row = {}) => ({
   filters: normalizeAlertFilters(row?.filters),
 });
 
+export const normalizeAlertDetail = (detail = {}) => ({
+  ...detail,
+  createdBy: detail?.createdBy ?? detail?.created_by?.name,
+  createdAt: detail?.createdAt ?? detail?.created_at,
+  lastTriggered:
+    detail?.lastTriggered ??
+    detail?.last_triggered_at ??
+    detail?.last_checked_at,
+  metricType: detail?.metricType ?? detail?.metric_type,
+  metricName: detail?.metricName ?? detail?.metric_name,
+  thresholdType: detail?.thresholdType ?? detail?.threshold_type,
+  thresholdOperator: detail?.thresholdOperator ?? detail?.threshold_operator,
+  thresholdMetricValue:
+    detail?.thresholdMetricValue ?? detail?.threshold_metric_value,
+  criticalThresholdValue:
+    detail?.criticalThresholdValue ?? detail?.critical_threshold_value,
+  warningThresholdValue:
+    detail?.warningThresholdValue ?? detail?.warning_threshold_value,
+  alertFrequency: detail?.alertFrequency ?? detail?.alert_frequency,
+  // The span across every fire, aggregated server-side before the issue grid's
+  // type filter and pagination — so it stays put whichever slice is loaded.
+  windowStart: detail?.windowStart ?? detail?.window_start,
+  windowEnd: detail?.windowEnd ?? detail?.window_end,
+  autoThresholdTimeWindow:
+    detail?.autoThresholdTimeWindow ?? detail?.auto_threshold_time_window,
+  notificationEmails: detail?.notificationEmails ?? detail?.notification_emails,
+  slackWebhookUrl: detail?.slackWebhookUrl ?? detail?.slack_webhook_url,
+  slackNotes: detail?.slackNotes ?? detail?.slack_notes,
+  isMute: detail?.isMute ?? detail?.is_mute ?? false,
+  filters: normalizeAlertFilters(detail?.filters),
+});
+
 export const isAlertMuted = (row) => Boolean(row?.isMute ?? row?.is_mute);
 
 export const getAlertFilterValue = (data) => {
@@ -196,7 +228,7 @@ export const getDefaultDateRange = () => {
     return [
       formatDate(
         sub(new Date(), {
-          months: 6,
+          days: 7,
         }),
       ),
       formatDate(endOfToday()),
@@ -205,7 +237,7 @@ export const getDefaultDateRange = () => {
 
   return {
     dateFilter: getDateArray(),
-    dateOption: "6M",
+    dateOption: "7D",
   };
 };
 
@@ -536,7 +568,11 @@ const STATUS_COLORS = {
   INSUFFICIENT_DATA: "#9E9E9E",
 };
 
-export function getCompareChartConfig(apiData, customOptions = {}) {
+export function getCompareChartConfig(
+  apiData,
+  customOptions = {},
+  { isDark = false } = {},
+) {
   if (!apiData?.result?.graph_data || !apiData?.result?.alert_bar_data) {
     throw new Error("Invalid API data structure");
   }
@@ -657,6 +693,7 @@ export function getCompareChartConfig(apiData, customOptions = {}) {
       },
     },
     tooltip: {
+      theme: isDark ? "dark" : "light",
       enabledOnSeries: [1],
       marker: {
         show: true,
@@ -792,6 +829,7 @@ export function getSimpleLineChartConfig(
       },
     },
     tooltip: {
+      theme: isDark ? "dark" : "light",
       y: {
         formatter: (value) => `${value}`,
       },
@@ -878,3 +916,17 @@ export const isSpanAttrFilterValid = (spanFilters = []) => {
 
   return spanFilters.every((filter) => apiFilterHasValue(filter));
 };
+
+// FilterPanel `filterFields` for the issues table. `choices` hold the values
+// the API expects; `choiceLabels` map them to what the user sees.
+export const ISSUE_FILTER_FIELDS = [
+  {
+    value: "type",
+    label: "Trigger Type",
+    type: "enum",
+    operators: ["is"],
+    single: true,
+    choices: ["critical", "warning"],
+    choiceLabels: { critical: "Critical", warning: "Warning" },
+  },
+];

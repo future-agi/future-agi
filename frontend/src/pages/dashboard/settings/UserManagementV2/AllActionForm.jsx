@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import {
   alpha,
@@ -13,13 +13,16 @@ import {
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import ActionForm from "./ActionForm";
 import { enqueueSnackbar } from "notistack";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useWorkspacesList } from "src/api/workspaces/list";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { LoadingButton } from "@mui/lab";
 import axios, { endpoints } from "src/utils/axios";
 import { orgRoleOptions, wsRoleOptions, LEVELS } from "./constant";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { InviteLinksResult, normalizeInvites } from "./invite-links";
 import { ShowComponent } from "src/components/show";
 import { useAuthContext } from "src/auth/hooks";
 import ChipsInput from "src/components/ChipsInput/ChipsInput";
@@ -98,9 +101,16 @@ const AllActionForm = ({
   userData,
   gridApi,
   workspaceId,
+  showInviteLinks = false,
 }) => {
   const theme = useTheme();
   const queryClient = useQueryClient();
+  // Opt-in, for mounts with no member list behind them to read links off.
+  const { isOSS, isSuccess: modeConfirmed } = useDeploymentMode();
+  const revealInviteLinks = showInviteLinks && modeConfirmed && isOSS;
+  const [inviteLinks, setInviteLinks] = useState(null);
+  // The request outlives a close, so the next open would show the old batch.
+  const awaitingInviteRef = useRef(false);
   const { user, orgLevel: actorOrgLevel } = useAuthContext();
   const { usersList } = useUserManagementStore();
   const existingEmails = usersList.map((u) => u.email);
@@ -123,18 +133,15 @@ const AllActionForm = ({
   }, [isOwner, isAdmin]);
 
   // Fetch workspace list for the org
-  const { data: workspacesData } = useQuery({
-    queryKey: ["workspace-list-for-invite"],
-    queryFn: () => axios.get(endpoints.workspace.workspaceList),
-    staleTime: 30000,
-  });
-  const allWorkspaces = useMemo(() => {
-    const list =
-      workspacesData?.data?.result?.results ||
-      workspacesData?.data?.results ||
-      [];
-    return list.map((ws) => ({ id: String(ws.id), name: ws.name }));
-  }, [workspacesData]);
+  const { data: workspacesData } = useWorkspacesList();
+  const allWorkspaces = useMemo(
+    () =>
+      (workspacesData || []).map((ws) => ({
+        id: String(ws.id),
+        name: ws.name,
+      })),
+    [workspacesData],
+  );
 
   // Invite form
   const inviteForm = useForm({
@@ -219,6 +226,8 @@ const AllActionForm = ({
     editForm.reset();
     wsEditForm.reset();
     resendForm.reset();
+    setInviteLinks(null);
+    awaitingInviteRef.current = false;
     onClose();
   };
 
@@ -242,27 +251,32 @@ const AllActionForm = ({
         return;
       }
 
-      // Success case - show success message only if invites were sent
-      const successCount = result?.invited?.length || 0;
-      if (successCount > 0) {
-        enqueueSnackbar(`Successfully invited ${successCount} user(s)`, {
-          variant: "success",
-        });
-      }
-
       trackEvent(Events.workspaceSendInviteClicked, {
         [PropertyName.click]: "click",
         emails: variables?.emails,
         orgLevel: variables?.org_level,
       });
       refetchData();
+
+      if (revealInviteLinks && awaitingInviteRef.current) {
+        setInviteLinks(normalizeInvites(result, variables?.emails));
+        return;
+      }
+
+      const successCount = result?.invited?.length || 0;
+      if (successCount > 0) {
+        enqueueSnackbar(`Successfully invited ${successCount} user(s)`, {
+          variant: "success",
+        });
+      }
       handleOnClose();
     },
+    // `error.result`: the interceptor rejects with the flattened body.
+    meta: { errorHandled: true },
     onError: (error) => {
-      enqueueSnackbar(
-        error?.response?.data?.result || "Failed to send invite",
-        { variant: "error" },
-      );
+      enqueueSnackbar(error?.result || "Failed to send invite", {
+        variant: "error",
+      });
     },
   });
 
@@ -476,6 +490,7 @@ const AllActionForm = ({
             level: wsLevel,
           }));
 
+    awaitingInviteRef.current = true;
     inviteMutate({
       emails: formData.emails,
       org_level: orgLevel,
@@ -577,6 +592,21 @@ const AllActionForm = ({
     openActionForm?.action === "edit-role" &&
     watchedEditOrgLevel != null &&
     watchedEditOrgLevel < LEVELS.ADMIN;
+
+  if (inviteLinks) {
+    return (
+      <InviteLinksResult
+        open={Boolean(openActionForm)}
+        invites={inviteLinks}
+        onClose={handleOnClose}
+        onInviteMore={() => {
+          // Clear emails or the next submit re-invites the same batch.
+          inviteForm.resetField("emails");
+          setInviteLinks(null);
+        }}
+      />
+    );
+  }
 
   return (
     <Box>
@@ -1128,4 +1158,5 @@ AllActionForm.propTypes = {
   onClose: PropTypes.func,
   gridApi: PropTypes.object,
   workspaceId: PropTypes.string,
+  showInviteLinks: PropTypes.bool,
 };

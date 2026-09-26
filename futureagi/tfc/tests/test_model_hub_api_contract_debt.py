@@ -315,8 +315,36 @@ def _model_hub_eval_experiment_utility_guard_cases():
         ),
         ("get", "/model-hub/experiment-detail/", None),
         ("post", "/model-hub/get-column-values/", {}),
-        ("patch", "/model-hub/knowledge-base/", {}),
         ("get", "/model-hub/metrics/by-column/", None),
+    ]
+
+
+def _model_hub_knowledge_base_guard_cases():
+    return [
+        ("get", "/model-hub/kb/", None),
+        ("post", "/model-hub/kb/", {"name": "anon kb", "chunk_size": 256}),
+        ("get", f"/model-hub/kb/{MODEL_HUB_GUARD_UUID}/", None),
+        (
+            "put",
+            f"/model-hub/kb/{MODEL_HUB_GUARD_UUID}/",
+            {"name": "anon kb", "chunk_size": 256},
+        ),
+        ("patch", f"/model-hub/kb/{MODEL_HUB_GUARD_UUID}/", {"name": "anon kb"}),
+        ("delete", f"/model-hub/kb/{MODEL_HUB_GUARD_UUID}/", None),
+        ("get", "/model-hub/kb/supported-embedding-models", None),
+        ("get", "/model-hub/kb/supported_embedding_models/", None),
+        ("get", "/model-hub/knowledge-base/", None),
+        ("post", "/model-hub/knowledge-base/", {}),
+        ("patch", "/model-hub/knowledge-base/", {}),
+        ("delete", "/model-hub/knowledge-base/", {"kb_ids": [MODEL_HUB_GUARD_UUID]}),
+        ("get", "/model-hub/knowledge-base/get/", None),
+        ("get", "/model-hub/knowledge-base/list/", None),
+        ("post", "/model-hub/knowledge-base/files/", {"kb_id": MODEL_HUB_GUARD_UUID}),
+        (
+            "delete",
+            "/model-hub/knowledge-base/files/",
+            {"kb_id": MODEL_HUB_GUARD_UUID, "file_ids": []},
+        ),
     ]
 
 
@@ -771,6 +799,26 @@ def test_model_hub_eval_experiment_utility_routes_reject_anonymous_before_work(
     assert response.data["code"] == "not_authenticated"
 
 
+@pytest.mark.parametrize("method,path,body", _model_hub_knowledge_base_guard_cases())
+def test_model_hub_knowledge_base_routes_reject_anonymous_before_work(
+    api_client, method, path, body
+):
+    request = getattr(api_client, method)
+    response = (
+        request(path, data=body, format="json")
+        if body is not None
+        else request(path)
+    )
+
+    assert response.status_code in {
+        status.HTTP_401_UNAUTHORIZED,
+        status.HTTP_403_FORBIDDEN,
+    }
+    assert response["Content-Type"].startswith("application/json")
+    assert response.data["type"] == "authentication_error"
+    assert response.data["code"] == "not_authenticated"
+
+
 @pytest.mark.parametrize("method,path,body", _model_hub_optimisation_guard_cases())
 def test_model_hub_optimisation_routes_reject_anonymous_before_work(
     api_client, method, path, body
@@ -1141,6 +1189,7 @@ def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts()
         ): "ExperimentFeedbackSubmitRequest",
         ("POST", "/model-hub/kb/"): "KnowledgeBaseCreate",
         ("PUT", "/model-hub/kb/{id}/"): "KnowledgeBase",
+        ("PATCH", "/model-hub/kb/{id}/"): "KnowledgeBase",
         ("POST", "/model-hub/knowledge-base/"): (
             "LegacyKnowledgeBaseMutationRequest"
         ),
@@ -1497,6 +1546,7 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ),
         ("GET", "/model-hub/kb/{id}/"): "KnowledgeBaseResponse",
         ("PUT", "/model-hub/kb/{id}/"): "KnowledgeBaseResponse",
+        ("PATCH", "/model-hub/kb/{id}/"): "KnowledgeBaseResponse",
         ("GET", "/model-hub/knowledge-base/"): (
             "LegacyKnowledgeBaseSdkCodeResponse"
         ),

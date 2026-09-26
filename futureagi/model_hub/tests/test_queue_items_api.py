@@ -429,6 +429,41 @@ class TestListItems:
         assert resp.data["results"][0]["workflow_status"] == "resubmitted"
         assert resp.data["results"][0]["workflow_status_label"] == "Resubmitted"
 
+    def test_workflow_status_resolves_without_the_queryset_annotation(
+        self, auth_client, queue, dataset_with_rows, user, organization
+    ):
+        """TH-7211: the un-annotated fallback must still say ``resubmitted``.
+
+        ``_has_addressed_review`` is annotated by ``QueueItemViewSet.get_queryset``,
+        but next-item / navigation responses serialize an item they fetched
+        themselves and so carry no annotation. That path has to fall back to the
+        lookup rather than read a missing attribute as "no addressed review".
+        """
+        from model_hub.serializers.annotation_queues import QueueItemSerializer
+
+        _, rows = dataset_with_rows
+        self._add_rows(auth_client, queue, rows)
+        item = QueueItem.objects.filter(queue_id=queue).order_by("order").first()
+        item.status = "in_progress"
+        item.review_status = "pending_review"
+        item.save(update_fields=["status", "review_status", "updated_at"])
+        QueueItemReviewThread.objects.create(
+            queue_item=item,
+            created_by=user,
+            action=QueueItemReviewThread.ACTION_REQUEST_CHANGES,
+            scope=QueueItemReviewThread.SCOPE_ITEM,
+            blocking=True,
+            status=QueueItemReviewThread.STATUS_ADDRESSED,
+            organization=organization,
+        )
+
+        fresh = QueueItem.objects.get(pk=item.pk)
+        assert not hasattr(fresh, "_has_addressed_review")
+
+        data = QueueItemSerializer(fresh).data
+        assert data["workflow_status"] == "resubmitted"
+        assert data["workflow_status_label"] == "Resubmitted"
+
     def test_status_all_does_not_filter_items(
         self, auth_client, queue, dataset_with_rows
     ):
@@ -806,4 +841,48 @@ class TestItemsListQueryCount:
             f"{(large - small) / 20:.1f} extra queries per row. Something in the "
             "serializer is querying per item instead of reading an annotation "
             "(TH-7104)."
+        )
+
+    def test_query_count_is_flat_for_items_awaiting_review(
+        self, auth_client, queue, organization, workspace
+    ):
+        """TH-7211: same flatness contract, for items in ``pending_review``.
+
+        The test above leaves ``review_status`` NULL, which is the one state that
+        short-circuits ``get_workflow_status`` before its review-thread lookup — so
+        it passed while the list still queried twice per row (``workflow_status``
+        and ``workflow_status_label`` each resolved the same lookup) for every item
+        actually awaiting review. A queue in review is precisely when the grid is
+        being used, so that is the state that has to be flat.
+        """
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        for i in range(30):
+            QueueItem.objects.create(
+                queue_id=queue,
+                source_type="trace",
+                trace_id=uuid.uuid4(),
+                organization=organization,
+                workspace=workspace,
+                order=i,
+                review_status="pending_review",
+            )
+
+        def count_queries(limit):
+            url = f"{items_url(queue)}?limit={limit}&page=1"
+            auth_client.get(url)  # warm: auth/session lookups are one-offs
+            with CaptureQueriesContext(connection) as ctx:
+                resp = auth_client.get(url)
+            assert resp.status_code == status.HTTP_200_OK
+            assert len(resp.data["results"]) == limit
+            return len(ctx.captured_queries)
+
+        small = count_queries(5)
+        large = count_queries(25)
+
+        assert large == small, (
+            f"items list ran {small} queries for 5 pending-review items and "
+            f"{large} for 25 — {(large - small) / 20:.1f} extra queries per row "
+            "(TH-7211)."
         )

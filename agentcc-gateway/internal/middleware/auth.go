@@ -27,6 +27,11 @@ func KeyAuth(keyStore *auth.KeyStore, enabled ...bool) func(http.Handler) http.H
 				return
 			}
 
+			if IsLicenseAuthorized(r.Context()) {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			// If auth is disabled, pass through.
 			if !authEnabled || keyStore == nil {
 				next.ServeHTTP(w, r)

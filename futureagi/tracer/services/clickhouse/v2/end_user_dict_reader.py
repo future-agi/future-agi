@@ -42,8 +42,12 @@ import structlog
 
 from tracer.services.clickhouse.v2 import get_v2_config
 from tracer.services.clickhouse.v2.id_remap_sql import (
-    remap_left_join,
+    bounded_survivor_map_subquery,
     resolved_id_expr,
+)
+from tracer.services.clickhouse.v2.query_settings import (
+    application_read_settings,
+    current_settings,
 )
 
 log = structlog.get_logger("ch25.end_user_dict_reader")
@@ -80,17 +84,35 @@ def _get_client():
         return _client
     with _client_lock:
         if _client is None:
-            import clickhouse_connect
-
             cfg = get_v2_config()
-            _client = clickhouse_connect.get_client(
-                host=cfg["host"],
-                port=cfg["http_port"],
-                username=cfg["user"],
-                password=cfg["password"] or "",
-                database=cfg["database"],
-                send_receive_timeout=15,
-            )
+            if cfg["server_enforced_readonly"]:
+                from tracer.services.clickhouse.server_readonly import (
+                    ServerEnforcedReadOnlyNativeClient,
+                )
+
+                _client = ServerEnforcedReadOnlyNativeClient(
+                    host=cfg["host"],
+                    port=cfg["tcp_port"],
+                    username=cfg["user"],
+                    password=cfg["password"] or "",
+                    database=cfg["database"],
+                    application_read=True,
+                )
+            else:
+                from tracer.services.clickhouse.application_read_transport import (
+                    create_application_read_http_client,
+                )
+
+                _client = create_application_read_http_client(
+                    host=cfg["host"],
+                    port=cfg["http_port"],
+                    username=cfg["user"],
+                    password=cfg["password"] or "",
+                    database=cfg["database"],
+                    # Finite initialization only; application response reads
+                    # have no statement cutoff after the client is initialized.
+                    send_receive_timeout=9.5,
+                )
     return _client
 
 
@@ -124,7 +146,10 @@ def resolve_user_ids(end_user_ids: Iterable[object]) -> dict[str, str | None]:
 
     client = _get_client()
     resolved = resolved_id_expr("ids.eid")
-    remap_join = remap_left_join("ids.eid", "end_user_id_remap")
+    bounded_map = bounded_survivor_map_subquery(
+        "end_user_id_remap", candidate_param="ids"
+    )
+    remap_join = f"LEFT JOIN ({bounded_map}) AS id_remap ON ids.eid = id_remap.any_id"
     try:
         # arrayJoin over the literal id list resolves the whole batch in ONE
         # round-trip. dictGetOrNull keeps the missing-key → NULL semantics.
@@ -145,6 +170,7 @@ def resolve_user_ids(end_user_ids: Iterable[object]) -> dict[str, str | None]:
                 f"{remap_join}"
             ),
             parameters={"ids": list(ids)},
+            settings=current_settings(),
         )
     except Exception:
         # A read error is real (parity must not silently degrade). Reset the
@@ -160,6 +186,9 @@ def resolve_user_ids(end_user_ids: Iterable[object]) -> dict[str, str | None]:
 
 def resolve_end_user_fields(
     end_user_ids: Iterable[object],
+    *,
+    timeout_ms: int | None = None,
+    settings: dict | None = None,
 ) -> dict[str, dict[str, str | None]]:
     """Batch-resolve ``{end_user_id (str) -> {user_id, user_id_type,
     user_id_hash}}`` from the CH ``end_users_dict`` — the curated fields the
@@ -192,7 +221,10 @@ def resolve_end_user_fields(
 
     client = _get_client()
     resolved = resolved_id_expr("ids.eid")
-    remap_join = remap_left_join("ids.eid", "end_user_id_remap")
+    bounded_map = bounded_survivor_map_subquery(
+        "end_user_id_remap", candidate_param="ids"
+    )
+    remap_join = f"LEFT JOIN ({bounded_map}) AS id_remap ON ids.eid = id_remap.any_id"
     try:
         # arrayJoin over the literal id list resolves the whole batch in ONE
         # round-trip. dictGetOrNull keeps the missing-key → NULL semantics for
@@ -203,6 +235,13 @@ def resolve_end_user_fields(
         # id (a new-id span is not a key in the OLD-keyed dict). The returned KEY
         # stays the ORIGINAL input id (`eid`) so callers key by the id they
         # passed. Pre-flip a no-op (no id matches a `new_id`) → gate B.
+        query_kwargs = {"parameters": {"ids": list(ids)}}
+        if timeout_ms is not None and timeout_ms <= 0:
+            raise ValueError("timeout_ms must be positive")
+        query_kwargs["settings"] = application_read_settings(
+            {**current_settings(), **(settings or {})},
+            timeout_ms=timeout_ms,
+        )
         result = client.query(
             (
                 f"SELECT toString(ids.eid), "
@@ -212,7 +251,7 @@ def resolve_end_user_fields(
                 f"FROM (SELECT arrayJoin(%(ids)s::Array(UUID)) AS eid) AS ids "
                 f"{remap_join}"
             ),
-            parameters={"ids": list(ids)},
+            **query_kwargs,
         )
     except Exception:
         _reset_client()
@@ -237,6 +276,8 @@ def resolve_end_user_ids_by_user_id(
     project_id: object | None = None,
     organization_id: object | None = None,
     user_id_type: object | None = _UNSET,
+    timeout_ms: int | None = None,
+    settings: dict | None = None,
 ) -> list[str]:
     """Reverse-resolve a human ``user_id`` label → the curated ``end_user_id``
     SET from the CH ``end_users`` RMT (the state-robust reverse lookup,
@@ -298,8 +339,25 @@ def resolve_end_user_ids_by_user_id(
         )
     if user_id is None or str(user_id) == "":
         return []
+    if timeout_ms is not None and timeout_ms <= 0:
+        raise ValueError("timeout_ms must be positive")
 
     client = _get_client()
+    if timeout_ms is not None:
+        # The readonly=1 native adapter must omit every query setting, including
+        # max_execution_time. Returning an empty ID set after silently dropping
+        # the caller's hard deadline would make the user detail page lie. Fail
+        # as a typed budget error so the API reports a retryable unavailable
+        # read instead.
+        from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
+        from tracer.services.clickhouse.server_readonly import (
+            ServerEnforcedReadOnlyNativeClient,
+        )
+
+        if isinstance(client, ServerEnforcedReadOnlyNativeClient):
+            raise ReadDeadlineExceeded(
+                "server-locked end-user lookup cannot enforce request deadline"
+            )
     conds = ["user_id = %(uid)s", "is_deleted = 0"]
     params: dict[str, object] = {"uid": str(user_id)}
     if project_id is not None:
@@ -314,9 +372,14 @@ def resolve_end_user_ids_by_user_id(
         params["utype"] = "" if user_id_type in (None, "") else str(user_id_type)
     where = " AND ".join(conds)
     try:
+        query_kwargs = {"parameters": params}
+        query_kwargs["settings"] = application_read_settings(
+            {**current_settings(), **(settings or {})},
+            timeout_ms=timeout_ms,
+        )
         result = client.query(
             f"SELECT DISTINCT toString(end_user_id) FROM end_users FINAL WHERE {where}",
-            parameters=params,
+            **query_kwargs,
         )
     except Exception:
         _reset_client()

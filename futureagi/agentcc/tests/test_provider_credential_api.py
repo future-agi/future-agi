@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -8,6 +8,7 @@ from accounts.models.workspace import Workspace, WorkspaceMembership
 from conftest import WorkspaceAwareAPIClient
 from integrations.services.credentials import CredentialManager
 from agentcc.models.provider_credential import AgentccProviderCredential
+from agentcc.views.provider_credential import _join_api_endpoint
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 
@@ -140,7 +141,7 @@ class TestAgentccProviderCredentialOrganizationIsolation:
 
         assert response.status_code == 200, response.json()
         args, _ = mock_fetch.call_args
-        # Signature: (provider_name, base_url, api_key, api_format)
+        # Signature: (provider_name, base_url, api_key, api_format, api_path_prefix)
         assert args[0] == "openai"
         assert args[2] == "sk-org-b"
 
@@ -174,3 +175,375 @@ class TestAgentccProviderCredentialOrganizationIsolation:
         assert response.status_code == 400, response.json()
         assert "could not be decrypted" in response.json()["message"]
         mock_fetch.assert_not_called()
+
+    def test_retrieve_returns_metadata_without_decrypted_credentials(
+        self, secondary_org_context, secondary_org_client
+    ):
+        org_b, _ = secondary_org_context
+        cred = AgentccProviderCredential.no_workspace_objects.create(
+            organization=org_b,
+            provider_name="openai",
+            display_name="Org B OpenAI",
+            encrypted_credentials=CredentialManager.encrypt({"api_key": "sk-org-b"}),
+            api_format="openai",
+        )
+
+        response = secondary_org_client.get(
+            f"/agentcc/provider-credentials/{cred.id}/"
+        )
+
+        assert response.status_code == 200, response.json()
+        data = response.json()["result"]
+        assert data["provider_name"] == "openai"
+        assert data["display_name"] == "Org B OpenAI"
+        # Encrypted-credential bytes must not appear in the response.
+        assert "encrypted_credentials" not in data
+        # Credentials field is masked (present but value redacted); the
+        # plaintext api_key must never appear on the wire.
+        creds = data.get("credentials") or {}
+        assert creds.get("api_key") in (None, "****", "")
+        assert "sk-org-b" not in str(data)
+
+    def test_retrieve_cross_tenant_returns_404(
+        self, user, secondary_org_context, secondary_org_client
+    ):
+        # Credential belongs to org A; secondary_org_client is scoped to org B.
+        cred = AgentccProviderCredential.no_workspace_objects.create(
+            organization=user.organization,
+            provider_name="openai",
+            display_name="Org A OpenAI",
+            encrypted_credentials=CredentialManager.encrypt({"api_key": "sk-org-a"}),
+            api_format="openai",
+        )
+
+        response = secondary_org_client.get(
+            f"/agentcc/provider-credentials/{cred.id}/"
+        )
+        assert response.status_code == 404
+
+    def test_update_writes_safe_fields_and_pushes_config(
+        self, secondary_org_context, secondary_org_client
+    ):
+        org_b, _ = secondary_org_context
+        cred = AgentccProviderCredential.no_workspace_objects.create(
+            organization=org_b,
+            provider_name="openai",
+            display_name="Old Display",
+            encrypted_credentials=CredentialManager.encrypt({"api_key": "sk-untouched"}),
+            api_format="openai",
+            models_list=["gpt-4o-mini"],
+        )
+
+        with patch(
+            "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._push_config_to_gateway",
+            return_value=True,
+        ) as mock_push:
+            response = secondary_org_client.put(
+                f"/agentcc/provider-credentials/{cred.id}/",
+                {
+                    "provider_name": "openai",
+                    "display_name": "New Display",
+                    "models_list": ["gpt-4o"],
+                    "api_format": "openai",
+                },
+                format="json",
+            )
+
+        assert response.status_code == 200, response.json()
+        body = response.json()
+        # PUT falls through to DRF's default UpdateModelMixin (no override in
+        # the view) so the payload comes back raw; PATCH is overridden to
+        # wrap via _gm.success_response. Accept both shapes.
+        data = body.get("result", body)
+        assert data["display_name"] == "New Display"
+
+        cred.refresh_from_db()
+        assert cred.display_name == "New Display"
+        assert cred.models_list == ["gpt-4o"]
+        # Current behavior: PUT does not push to the gateway because the
+        # view only overrides create/partial_update/destroy/rotate. PATCH
+        # (below) is the client path that fans out to the gateway. If PUT
+        # is ever overridden to push, this assertion should flip.
+        assert mock_push.call_count == 0
+
+    def test_patch_updates_single_field_leaving_others_intact(
+        self, secondary_org_context, secondary_org_client
+    ):
+        org_b, _ = secondary_org_context
+        cred = AgentccProviderCredential.no_workspace_objects.create(
+            organization=org_b,
+            provider_name="openai",
+            display_name="Original Display",
+            encrypted_credentials=CredentialManager.encrypt({"api_key": "sk-org-b"}),
+            api_format="openai",
+            default_timeout_seconds=30,
+            max_concurrent=5,
+        )
+
+        with patch(
+            "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._push_config_to_gateway",
+            return_value=True,
+        ):
+            response = secondary_org_client.patch(
+                f"/agentcc/provider-credentials/{cred.id}/",
+                {"default_timeout_seconds": 45},
+                format="json",
+            )
+
+        assert response.status_code == 200, response.json()
+        cred.refresh_from_db()
+        assert cred.default_timeout_seconds == 45
+        assert cred.max_concurrent == 5  # untouched
+        assert cred.display_name == "Original Display"  # untouched
+
+    def test_destroy_soft_deletes_and_pushes_config(
+        self, secondary_org_context, secondary_org_client
+    ):
+        org_b, _ = secondary_org_context
+        cred = AgentccProviderCredential.no_workspace_objects.create(
+            organization=org_b,
+            provider_name="anthropic",
+            display_name="To Delete",
+            encrypted_credentials=CredentialManager.encrypt({"api_key": "sk-x"}),
+            api_format="anthropic",
+        )
+
+        with patch(
+            "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._push_config_to_gateway",
+            return_value=True,
+        ) as mock_push:
+            response = secondary_org_client.delete(
+                f"/agentcc/provider-credentials/{cred.id}/"
+            )
+
+        assert response.status_code == 200, response.json()
+        assert response.json()["result"]["deleted"] is True
+        assert response.json()["result"]["gateway_synced"] is True
+        mock_push.assert_called_once()
+
+        cred.refresh_from_db()
+        # Soft-delete, not hard-delete.
+        assert cred.deleted is True
+        assert cred.deleted_at is not None
+        # List should now exclude it.
+        list_response = secondary_org_client.get("/agentcc/provider-credentials/")
+        list_ids = {item["id"] for item in list_response.json()["result"]}
+        assert str(cred.id) not in list_ids
+
+    def test_list_unauthenticated(self, api_client, db):
+        response = api_client.get("/agentcc/provider-credentials/")
+        assert response.status_code in (401, 403)
+
+    def test_create_encrypts_credentials_before_persisting(
+        self, secondary_org_context, secondary_org_client
+    ):
+        org_b, _ = secondary_org_context
+        raw_api_key = "sk-plaintext-must-not-appear-at-rest"
+
+        with patch(
+            "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._push_config_to_gateway",
+            return_value=True,
+        ):
+            response = secondary_org_client.post(
+                "/agentcc/provider-credentials/",
+                {
+                    "provider_name": "openai",
+                    "display_name": "Org B OpenAI",
+                    "credentials": {"api_key": raw_api_key},
+                    "api_format": "openai",
+                },
+                format="json",
+            )
+        assert response.status_code == 201, response.json()
+
+        cred = AgentccProviderCredential.no_workspace_objects.get(
+            provider_name="openai", organization=org_b, deleted=False
+        )
+        # The raw api_key must not sit in the DB in plaintext, either as
+        # the encrypted-credentials bytes or anywhere else.
+        assert raw_api_key.encode() not in cred.encrypted_credentials
+        # But CredentialManager.decrypt should yield the original.
+        assert CredentialManager.decrypt(cred.encrypted_credentials) == {
+            "api_key": raw_api_key
+        }
+
+    def test_api_path_prefix_round_trips_through_credential_api(
+        self, secondary_org_context, secondary_org_client
+    ):
+        org_b, _ = secondary_org_context
+        with patch(
+            "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._push_config_to_gateway",
+            return_value=True,
+        ):
+            response = secondary_org_client.post(
+                "/agentcc/provider-credentials/",
+                {
+                    "provider_name": "perplexity",
+                    "credentials": {"api_key": "sk-perplexity"},
+                    "api_format": "openai",
+                    "extra_config": {"api_path_prefix": ""},
+                },
+                format="json",
+            )
+
+        assert response.status_code == 201, response.json()
+        credential = AgentccProviderCredential.no_workspace_objects.get(
+            organization=org_b, provider_name="perplexity", deleted=False
+        )
+        assert credential.extra_config == {"api_path_prefix": ""}
+
+        read_response = secondary_org_client.get(
+            f"/agentcc/provider-credentials/{credential.id}/"
+        )
+        assert read_response.status_code == 200, read_response.json()
+        assert read_response.json()["result"]["extra_config"] == {
+            "api_path_prefix": ""
+        }
+
+        with patch(
+            "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._push_config_to_gateway",
+            return_value=True,
+        ):
+            update_response = secondary_org_client.patch(
+                f"/agentcc/provider-credentials/{credential.id}/",
+                {"extra_config": {"api_path_prefix": "/v1"}},
+                format="json",
+            )
+
+        assert update_response.status_code == 200, update_response.json()
+        credential.refresh_from_db()
+        assert credential.extra_config == {"api_path_prefix": "/v1"}
+
+
+@pytest.mark.parametrize(
+    "base_url,prefix,expected",
+    [
+        # No prefix stated: the default applies, exactly as the gateway does.
+        ("https://provider.example", None, "https://provider.example/v1/models"),
+        # The case this PR exists for.
+        (
+            "https://provider.example",
+            "/openai/v1",
+            "https://provider.example/openai/v1/models",
+        ),
+        # Explicitly empty means no version segment at all.
+        ("https://provider.example", "", "https://provider.example/models"),
+        # A base_url that already carries the prefix must not repeat it.
+        ("https://api.openai.com/v1", "/v1", "https://api.openai.com/v1/models"),
+        ("https://api.openai.com/v1", None, "https://api.openai.com/v1/models"),
+        # Normalisation: missing leading slash, trailing slash, whitespace.
+        (
+            "https://provider.example/",
+            "openai/v1/",
+            "https://provider.example/openai/v1/models",
+        ),
+        ("https://provider.example", "  /v2  ", "https://provider.example/v2/models"),
+    ],
+)
+def test_join_api_endpoint_matches_the_gateway(base_url, prefix, expected):
+    assert _join_api_endpoint(base_url, prefix, "/models") == expected
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestFetchModelsHonoursThePathPrefix:
+    """Discovery has to probe the same versioned path the proxy will use."""
+
+    def _credential(self, org, extra_config):
+        return AgentccProviderCredential.no_workspace_objects.create(
+            organization=org,
+            provider_name="perplexity",
+            display_name="Perplexity",
+            encrypted_credentials=CredentialManager.encrypt({"api_key": "sk-pplx"}),
+            api_format="openai",
+            base_url="https://provider.example",
+            extra_config=extra_config,
+        )
+
+    def test_saved_credential_prefix_reaches_the_fetch(
+        self, secondary_org_context, secondary_org_client
+    ):
+        org_b, _ = secondary_org_context
+        self._credential(org_b, {"api_path_prefix": "/openai/v1"})
+
+        with patch(
+            "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._fetch_models_from_provider",
+            return_value=["sonar"],
+        ) as mock_fetch:
+            response = secondary_org_client.post(
+                "/agentcc/provider-credentials/fetch_models/",
+                {"provider_name": "perplexity"},
+                format="json",
+            )
+
+        assert response.status_code == 200, response.json()
+        args, _ = mock_fetch.call_args
+        assert args[4] == "/openai/v1"
+
+    def test_body_prefix_overrides_the_saved_one_including_an_empty_string(
+        self, secondary_org_context, secondary_org_client
+    ):
+        org_b, _ = secondary_org_context
+        self._credential(org_b, {"api_path_prefix": "/v1"})
+
+        with patch(
+            "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._fetch_models_from_provider",
+            return_value=[],
+        ) as mock_fetch:
+            response = secondary_org_client.post(
+                "/agentcc/provider-credentials/fetch_models/",
+                {"provider_name": "perplexity", "api_path_prefix": ""},
+                format="json",
+            )
+
+        assert response.status_code == 200, response.json()
+        args, _ = mock_fetch.call_args
+        # "" is the value the user typed, not a missing field to fill from the DB.
+        assert args[4] == ""
+
+    def test_a_credential_saved_before_the_field_existed_still_gets_the_default(
+        self, secondary_org_context, secondary_org_client
+    ):
+        org_b, _ = secondary_org_context
+        self._credential(org_b, {})
+
+        with patch(
+            "agentcc.views.provider_credential.AgentccProviderCredentialViewSet._fetch_models_from_provider",
+            return_value=[],
+        ) as mock_fetch:
+            response = secondary_org_client.post(
+                "/agentcc/provider-credentials/fetch_models/",
+                {"provider_name": "perplexity"},
+                format="json",
+            )
+
+        assert response.status_code == 200, response.json()
+        args, _ = mock_fetch.call_args
+        assert args[4] is None
+
+    def test_the_prefix_lands_in_the_url_discovery_actually_requests(
+        self, secondary_org_context, secondary_org_client
+    ):
+        org_b, _ = secondary_org_context
+        self._credential(org_b, {"api_path_prefix": "/openai/v1"})
+
+        session = MagicMock()
+        session.get.return_value.json.return_value = {"data": [{"id": "sonar"}]}
+
+        with (
+            patch("agentcc.views.provider_credential.ensure_public_http_url"),
+            patch(
+                "agentcc.views.provider_credential.build_ssrf_safe_session",
+                return_value=session,
+            ),
+        ):
+            response = secondary_org_client.post(
+                "/agentcc/provider-credentials/fetch_models/",
+                {"provider_name": "perplexity"},
+                format="json",
+            )
+
+        assert response.status_code == 200, response.json()
+        assert response.json()["result"]["models"] == ["sonar"]
+        called_url = session.get.call_args[0][0]
+        assert called_url == "https://provider.example/openai/v1/models"

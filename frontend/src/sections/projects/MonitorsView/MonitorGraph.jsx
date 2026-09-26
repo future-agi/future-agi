@@ -1,5 +1,5 @@
-import { Box, Typography, useTheme } from "@mui/material";
-import React from "react";
+import { Alert, Box, Button, Typography, useTheme } from "@mui/material";
+import React, { useEffect, useRef } from "react";
 import PropTypes from "prop-types";
 import { useWatch } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
@@ -7,6 +7,12 @@ import axios, { endpoints } from "src/utils/axios";
 import { useParams } from "react-router";
 
 import ChartsGenerator from "../ChartsView/ChartsGenerator";
+import {
+  keepPreviousMonitorGraphData,
+  MONITOR_GRAPH_ERROR_MESSAGE,
+  monitorGraphDisplayState,
+  monitorGraphRequestConfig,
+} from "../monitor_graph_read";
 
 const MonitorGraph = ({ selectedMetric, control, metricList }) => {
   const metric = useWatch({ control, name: "metric" });
@@ -15,7 +21,13 @@ const MonitorGraph = ({ selectedMetric, control, metricList }) => {
   const metricDetails = metricList?.find((m) => m.id === metric);
   const { observeId } = useParams();
 
-  const { data: graphData } = useQuery({
+  const retainedGraphDataRef = useRef();
+  const {
+    data: latestGraphData,
+    isError: isGraphError,
+    isFetching: isGraphFetching,
+    refetch: refetchGraph,
+  } = useQuery({
     queryKey: [
       "monitor-graph",
       observeId,
@@ -23,18 +35,22 @@ const MonitorGraph = ({ selectedMetric, control, metricList }) => {
       thresholdOperator,
       thresholdValue,
     ],
-    queryFn: () =>
-      axios.post(endpoints.project.getAlertGraphPreview, {
-        name: "Preview",
-        project: observeId,
-        metric_type: metricDetails?.metric_type,
-        ...(metricDetails?.metric_type === "evaluation_metrics" && {
-          metric: metricDetails?.id,
-        }),
-        threshold_operator: thresholdOperator,
-        threshold_type: "static",
-        critical_threshold_value: Number(thresholdValue),
-      }),
+    queryFn: ({ signal }) =>
+      axios.post(
+        endpoints.project.getAlertGraphPreview,
+        {
+          name: "Preview",
+          project: observeId,
+          metric_type: metricDetails?.metric_type,
+          ...(metricDetails?.metric_type === "evaluation_metrics" && {
+            metric: metricDetails?.id,
+          }),
+          threshold_operator: thresholdOperator,
+          threshold_type: "static",
+          critical_threshold_value: Number(thresholdValue),
+        },
+        monitorGraphRequestConfig({ signal }),
+      ),
     enabled:
       !!observeId &&
       !!metricDetails &&
@@ -42,11 +58,24 @@ const MonitorGraph = ({ selectedMetric, control, metricList }) => {
       thresholdValue !== undefined &&
       thresholdValue !== "",
     select: (data) => data.data.result,
+    placeholderData: keepPreviousMonitorGraphData,
+    retry: false,
   });
 
-  const chartData = Array.isArray(graphData)
-    ? graphData
-    : graphData?.graph_data || [];
+  useEffect(() => {
+    if (latestGraphData !== undefined) {
+      retainedGraphDataRef.current = latestGraphData;
+    }
+  }, [latestGraphData]);
+
+  const graphState = monitorGraphDisplayState({
+    latestData: latestGraphData,
+    retainedData: retainedGraphDataRef.current,
+    isError: isGraphError,
+  });
+  const chartData = Array.isArray(graphState.data)
+    ? graphState.data
+    : graphState.data?.graph_data || [];
   const theme = useTheme();
 
   const chartCategories = [
@@ -80,6 +109,24 @@ const MonitorGraph = ({ selectedMetric, control, metricList }) => {
         flexDirection: "column",
       }}
     >
+      {graphState.showError && (
+        <Alert
+          severity="error"
+          sx={{ mb: 2 }}
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              disabled={isGraphFetching}
+              onClick={() => refetchGraph()}
+            >
+              {isGraphFetching ? "Retrying…" : "Retry"}
+            </Button>
+          }
+        >
+          {MONITOR_GRAPH_ERROR_MESSAGE}
+        </Alert>
+      )}
       {!metricDetails ? (
         <Box
           sx={{
@@ -103,7 +150,7 @@ const MonitorGraph = ({ selectedMetric, control, metricList }) => {
             Please fill out the alert details to see the data here
           </Typography>
         </Box>
-      ) : (
+      ) : graphState.showGraph ? (
         <Box>
           {chartCategories.map((category) =>
             category.charts.map((chart) => (
@@ -117,7 +164,7 @@ const MonitorGraph = ({ selectedMetric, control, metricList }) => {
             )),
           )}
         </Box>
-      )}
+      ) : null}
     </Box>
   );
 };

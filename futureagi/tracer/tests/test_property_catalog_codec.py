@@ -1,0 +1,116 @@
+from __future__ import annotations
+
+import math
+from uuid import UUID
+
+import pytest
+
+from tracer.services.clickhouse.v2.property_catalog.codec import (
+    MAX_DEFINITION_JSON_BYTES,
+    CatalogCodecError,
+    canonical_json,
+    casefold_text,
+    like_contains_pattern,
+    stable_property_id,
+)
+
+
+def test_stable_property_ids_are_namespaced_and_uuid_canonical() -> None:
+    assert (
+        stable_property_id(
+            "system_attribute",
+            "llm.model_name",
+            primary_source="traces",
+        )
+        == "system_attribute:traces:llm.model_name"
+    )
+    assert (
+        stable_property_id("custom_attribute", "customer.plan")
+        == "custom_attribute:customer.plan"
+    )
+    assert (
+        stable_property_id(
+            "eval_config",
+            "82E4BDFC-FB55-482D-A7A0-28E8755BF66A",
+        )
+        == "eval_config:82e4bdfc-fb55-482d-a7a0-28e8755bf66a"
+    )
+    assert (
+        stable_property_id(
+            "dataset_column",
+            UUID("9ff81177-4efd-41fd-8df0-2e0d2d325a12"),
+        )
+        == "dataset_column:9ff81177-4efd-41fd-8df0-2e0d2d325a12"
+    )
+
+
+@pytest.mark.parametrize(
+    ("kind", "key", "primary_source"),
+    [
+        ("unknown", "x", ""),
+        ("system_attribute", "x", "trace:span"),
+        ("custom_attribute", "x", "traces"),
+        ("annotation", "not-a-uuid", ""),
+        ("annotation", "00000000-0000-0000-0000-000000000000", ""),
+        ("system_attribute", "bad\nkey", "traces"),
+        ("custom_attribute", "x" * 4097, ""),
+    ],
+)
+def test_stable_property_id_rejects_ambiguous_or_invalid_components(
+    kind: str,
+    key: str,
+    primary_source: str,
+) -> None:
+    with pytest.raises(CatalogCodecError):
+        stable_property_id(kind, key, primary_source=primary_source)
+
+
+def test_casefold_contract_does_not_normalize_unicode() -> None:
+    assert casefold_text("Straße") == "strasse"
+    assert casefold_text("İtem") == "i\u0307tem"
+    assert casefold_text("é") != casefold_text("e\u0301")
+
+
+def test_like_contains_pattern_escapes_clickhouse_wildcards() -> None:
+    assert like_contains_pattern("") == "%"
+    assert like_contains_pattern("a%b_c\\d") == r"%a\%b\_c\\d%"
+
+
+def test_canonical_json_is_sorted_utf8_and_bounded_by_bytes() -> None:
+    payload = canonical_json({"z": "東京", "a": [True, None, 3]})
+    assert payload == '{"a":[true,null,3],"z":"東京"}'
+
+    exactly_full = canonical_json({"x": "a" * (MAX_DEFINITION_JSON_BYTES - 8)})
+    assert len(exactly_full.encode()) == MAX_DEFINITION_JSON_BYTES
+    with pytest.raises(CatalogCodecError, match="exceeds 32768"):
+        canonical_json({"x": "a" * (MAX_DEFINITION_JSON_BYTES - 7)})
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"number": math.nan},
+        {"number": math.inf},
+        {"bad": object()},
+        {1: "non-string key"},
+        {"surrogate": "\ud800"},
+    ],
+)
+def test_canonical_json_rejects_non_json_or_invalid_unicode(payload: object) -> None:
+    with pytest.raises(CatalogCodecError):
+        canonical_json(payload)  # type: ignore[arg-type]
+
+
+def test_finite_floats_use_fixed_minimal_number_contract() -> None:
+    payload = canonical_json(
+        {
+            "fraction": 0.125,
+            "large": 1e20,
+            "negative_zero": -0.0,
+            "small": 1e-7,
+        }
+    )
+    assert payload == (
+        '{"fraction":0.125,"large":100000000000000000000,'
+        '"negative_zero":0,"small":0.0000001}'
+    )

@@ -121,3 +121,14 @@ func extractTextFromPart(raw json.RawMessage) string {
 	}
 	return ""
 }
+
+// ExtractModelVersion names the concrete model behind an alias.
+func ExtractModelVersion(respBody []byte) string {
+	var m struct {
+		ModelVersion string `json:"modelVersion"`
+	}
+	if err := json.Unmarshal(respBody, &m); err != nil {
+		return ""
+	}
+	return m.ModelVersion
+}

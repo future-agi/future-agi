@@ -11,7 +11,7 @@ import json
 import structlog
 
 from agentic_eval.core.llm.llm import LLM
-from agentic_eval.core.utils.model_config import ModelConfigs
+from simulate.services.chat_constants import CHAT_SIM_MODEL_CONFIG
 from simulate.constants.chat_initial_message_prompt import (
     build_chat_initial_message_messages,
 )
@@ -201,7 +201,7 @@ def _generate_chat_initial_message(
             guidance_lines=len(guidance.split("\n")) if guidance else 0,
             hint_present=bool(hint),
         )
-        model_cfg = ModelConfigs.CLAUDE_4_5_SONNET_BEDROCK_ARN
+        model_cfg = CHAT_SIM_MODEL_CONFIG
         llm = LLM(
             model_name=model_cfg.model_name,
             temperature=0.7,  # Higher for more natural variation

@@ -232,7 +232,7 @@ const PrimitiveValue = ({ value, tokens }) => {
       sx={{
         fontSize: 11,
         fontFamily: "monospace",
-        color: typeof value === "string" ? "#b5520a" : "text.primary",
+        color: typeof value === "string" ? "syntax.string" : "text.primary",
         overflowWrap: "anywhere",
         whiteSpace: "pre-wrap",
       }}

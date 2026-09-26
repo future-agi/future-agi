@@ -55,7 +55,9 @@ export function apiFilterToPanel(
   const canonicalOp = normalizeApiFilterOp(rawOp);
   const rawVal = config.filter_value;
   const filterType = config.filter_type;
-  const isNumberType = filterType === "number" || property?.type === "number";
+  const canonicalFilterType = normalizeFilterType(filterType, rawVal);
+  const isNumberType =
+    canonicalFilterType === "number" || property?.type === "number";
   const isRange = isRangeFilterOp(canonicalOp);
   const isDateType =
     filterType === "datetime" ||
@@ -79,8 +81,17 @@ export function apiFilterToPanel(
     value = rawVal ? formatDateInputValue(rawVal) : "";
   } else if (isNumberType) {
     value = rawVal != null ? String(rawVal) : "";
-  } else if (filterType === "boolean") {
+  } else if (canonicalFilterType === "boolean") {
     value = rawVal != null ? String(rawVal) : "true";
+  } else if (canonicalFilterType === "map") {
+    // The map editor accepts the canonical object directly and renders it as
+    // JSON.  String(rawVal) would turn a saved map into "[object Object]",
+    // making the rule impossible to edit or re-save without changing it.
+    value = rawVal ?? "";
+  } else if (canonicalFilterType === "array") {
+    // Array attributes can contain typed scalar members.  Preserve numbers
+    // and booleans instead of stringifying every member during hydration.
+    value = Array.isArray(rawVal) ? rawVal : rawVal == null ? [] : [rawVal];
   } else if (Array.isArray(rawVal)) {
     value = rawVal.map((v) => String(v));
   } else {
@@ -95,8 +106,9 @@ export function apiFilterToPanel(
   const fieldType = (() => {
     if (isDateType) return dateFieldType;
     if (isNumberType) return "number";
-    if (filterType === "boolean") return "boolean";
-    if (filterType === "array") return "array";
+    if (canonicalFilterType === "boolean") return "boolean";
+    if (canonicalFilterType === "map") return "map";
+    if (canonicalFilterType === "array") return "array";
     if (filterType === "categorical") return "categorical";
     if (filterType === "text" && rawColType === "ANNOTATION") return "text";
     return property?.type || "string";
@@ -104,6 +116,9 @@ export function apiFilterToPanel(
 
   return {
     field: api.column_id,
+    ...((api.property_id || property?.registryId) && {
+      registryId: api.property_id || property?.registryId,
+    }),
     fieldName: api.display_name || property?.name,
     fieldCategory:
       COL_TYPE_TO_PANEL_CAT[rawColType] ||
@@ -112,5 +127,6 @@ export function apiFilterToPanel(
     fieldType,
     operator: canonicalOp,
     value,
+    valueTypes: config.attribute_value_types,
   };
 }

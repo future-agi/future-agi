@@ -14,15 +14,18 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace
 from agentcc.models import (
     AgentccAPIKey,
+    AgentccCustomPropertySchema,
     AgentccGuardrailPolicy,
     AgentccOrgConfig,
     AgentccProject,
     AgentccProviderCredential,
     AgentccRequestLog,
 )
+from agentcc.services import analytics as analytics_service
 from integrations.services.credentials import CredentialManager
 
 
@@ -197,6 +200,7 @@ class TestAgentccGatewayAPI:
                     "max_concurrent": 3,
                     "conn_pool_size": 5,
                     "base_url": "https://api.example.com/v1",
+                    "api_path_prefix": "",
                 },
             },
             format="json",
@@ -216,6 +220,7 @@ class TestAgentccGatewayAPI:
         assert credential.display_name == "Gateway Action Provider"
         assert credential.models_list == ["gpt-4o-mini"]
         assert credential.default_timeout_seconds == 17
+        assert credential.extra_config == {"api_path_prefix": ""}
         assert CredentialManager.decrypt(credential.encrypted_credentials) == {
             "api_key": "sk-gateway-action-secret"
         }
@@ -337,6 +342,286 @@ class TestAgentccGatewayAPI:
         )
         assert no_mcp.status_code == status.HTTP_400_BAD_REQUEST
         mock_client.mcp_test_tool.assert_not_called()
+
+    def test_retrieve_gateway_unauthenticated(self, api_client, gateway_id):
+        response = api_client.get(f"/agentcc/gateways/{gateway_id}/")
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_get_providers_unauthenticated(self, api_client, gateway_id):
+        response = api_client.get(f"/agentcc/gateways/{gateway_id}/providers/")
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_get_providers_when_gateway_client_unreachable(
+        self, auth_client, gateway_id
+    ):
+        from agentcc.services.gateway_client import GatewayClientError
+
+        with patch("agentcc.views.gateway.get_gateway_client") as mock_get:
+            mock_client = MagicMock()
+            mock_client.provider_health.side_effect = GatewayClientError("down")
+            mock_get.return_value = mock_client
+
+            response = auth_client.get(f"/agentcc/gateways/{gateway_id}/providers/")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"] == {"providers": []}
+
+    @patch("agentcc.views.gateway.push_org_config", return_value=True)
+    def test_reload_happy_path_pushes_current_config(
+        self, mock_push, auth_client, gateway_id, organization
+    ):
+        # Seed an active org config so _push_current_config has something to push.
+        AgentccOrgConfig.no_workspace_objects.create(
+            organization=organization, version=1, is_active=True
+        )
+        response = auth_client.post(f"/agentcc/gateways/{gateway_id}/reload/")
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        assert response.json()["result"]["gateway_synced"] is True
+
+    def test_reload_unauthenticated(self, api_client, gateway_id):
+        response = api_client.post(f"/agentcc/gateways/{gateway_id}/reload/")
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    @patch("agentcc.views.gateway.push_org_config", return_value=False)
+    def test_reload_when_gateway_unreachable_reports_warning(
+        self, mock_push, auth_client, gateway_id, organization
+    ):
+        AgentccOrgConfig.no_workspace_objects.create(
+            organization=organization, version=1, is_active=True
+        )
+        response = auth_client.post(f"/agentcc/gateways/{gateway_id}/reload/")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["gateway_synced"] is False
+        assert "gateway_warning" in response.json()["result"]
+
+    @patch("agentcc.views.gateway.push_org_config", return_value=True)
+    def test_update_provider_standalone_creates_credential(
+        self, mock_push, auth_client, gateway_id, organization
+    ):
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/update-provider/",
+            {
+                "name": "standalone-openai",
+                "config": {
+                    "api_key": "sk-standalone",
+                    "display_name": "Standalone OpenAI",
+                    "api_format": "openai",
+                    "models": ["gpt-4o"],
+                    "default_timeout": 20,
+                    "max_concurrent": 4,
+                    "conn_pool_size": 6,
+                    "base_url": "https://api.openai.com/v1",
+                },
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        assert AgentccProviderCredential.no_workspace_objects.filter(
+            organization=organization,
+            provider_name="standalone-openai",
+            deleted=False,
+        ).exists()
+
+    @patch("agentcc.views.gateway.push_org_config", return_value=True)
+    @patch("agentcc.views.gateway._prepare_vertex_provider_config")
+    def test_update_vertex_provider_encrypts_pasted_json(
+        self, mock_prepare, mock_push, auth_client, gateway_id, organization
+    ):
+        mock_prepare.return_value = {
+            "base_url": (
+                "https://us-central1-aiplatform.googleapis.com/v1beta1/"
+                "projects/demo-project/locations/us-central1"
+            ),
+            "api_format": "gemini",
+            "models": ["gemini-3.7-flash"],
+            "service_account_json": '{"type":"service_account"}',
+        }
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/update-provider/",
+            {"name": "vertex", "config": {"gcp_project": "demo-project"}},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        credential = AgentccProviderCredential.no_workspace_objects.get(
+            organization=organization, provider_name="vertex", deleted=False
+        )
+        assert CredentialManager.decrypt(bytes(credential.encrypted_credentials)) == {
+            "service_account_json": '{"type":"service_account"}'
+        }
+        assert "service_account_json" not in credential.extra_config
+
+    def test_update_vertex_provider_rejects_invalid_pasted_json(
+        self, auth_client, gateway_id, organization
+    ):
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/update-provider/",
+            {
+                "name": "vertex",
+                "config": {
+                    "gcp_project": "demo-project",
+                    "gcp_location": "us-central1",
+                    "service_account_json": "not-json",
+                },
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not AgentccProviderCredential.no_workspace_objects.filter(
+            organization=organization, provider_name="vertex", deleted=False
+        ).exists()
+
+    @patch("agentcc.views.gateway.push_org_config", return_value=True)
+    def test_remove_provider_standalone_soft_deletes(
+        self, mock_push, auth_client, gateway_id, organization
+    ):
+        cred = AgentccProviderCredential.no_workspace_objects.create(
+            organization=organization,
+            provider_name="to-remove",
+            display_name="To Remove",
+            encrypted_credentials=b"placeholder",
+            api_format="openai",
+        )
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/remove-provider/",
+            {"name": "to-remove"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        cred.refresh_from_db()
+        assert cred.deleted is True
+
+    @patch("agentcc.views.gateway.push_org_config", return_value=True)
+    def test_update_config_patches_active_row_and_bumps_version(
+        self, mock_push, auth_client, gateway_id, organization
+    ):
+        AgentccOrgConfig.no_workspace_objects.create(
+            organization=organization,
+            version=1,
+            is_active=True,
+            routing={"strategy": "round_robin"},
+        )
+
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/update-config/",
+            {"cache": {"enabled": True, "default_ttl": 60}},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        result = response.json()["result"]
+        assert result["version"] == 2  # bump
+        assert result["gateway_synced"] is True
+        mock_push.assert_called_once()
+
+        new_active = AgentccOrgConfig.no_workspace_objects.get(
+            organization=organization, is_active=True, deleted=False
+        )
+        # Patched field applied, untouched field preserved.
+        assert new_active.cache == {"enabled": True, "default_ttl": 60}
+        assert new_active.routing == {"strategy": "round_robin"}
+        assert new_active.version == 2
+
+    def test_update_config_rejects_unknown_field(
+        self, auth_client, gateway_id, organization
+    ):
+        AgentccOrgConfig.no_workspace_objects.create(
+            organization=organization, version=1, is_active=True
+        )
+
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/update-config/",
+            {"not_a_real_field": {"x": 1}},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    @patch("agentcc.views.gateway.push_org_config", return_value=True)
+    def test_set_budget_writes_level_and_bumps_version(
+        self, mock_push, auth_client, gateway_id, organization
+    ):
+        AgentccOrgConfig.no_workspace_objects.create(
+            organization=organization, version=1, is_active=True, budgets={}
+        )
+
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/set-budget/",
+            {
+                "level": "organization",
+                "config": {"limit_usd": 100, "action_mode": "hard"},
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        result = response.json()["result"]
+        assert result["budget"] == "organization"
+        assert result["action"] == "set"
+        assert result["gateway_synced"] is True
+
+        new_active = AgentccOrgConfig.no_workspace_objects.get(
+            organization=organization, is_active=True, deleted=False
+        )
+        # Budget should be present under the "organization" level in some form.
+        assert new_active.budgets  # not empty
+        assert new_active.version == 2
+
+    def test_set_budget_rejects_missing_fields(
+        self, auth_client, gateway_id, organization
+    ):
+        AgentccOrgConfig.no_workspace_objects.create(
+            organization=organization, version=1, is_active=True
+        )
+
+        # Empty body: reject_unknown_fields=True, so validator rejects.
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/set-budget/",
+            {},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    @patch("agentcc.views.gateway.push_org_config", return_value=True)
+    def test_remove_budget_strips_level_and_bumps_version(
+        self, mock_push, auth_client, gateway_id, organization
+    ):
+        AgentccOrgConfig.no_workspace_objects.create(
+            organization=organization,
+            version=1,
+            is_active=True,
+            budgets={
+                "organization": {"limit_usd": 100, "action_mode": "hard"},
+                "user": {"limit_usd": 20, "action_mode": "warn"},
+            },
+        )
+
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/remove-budget/",
+            {"level": "organization"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        result = response.json()["result"]
+        assert result["budget"] == "organization"
+        assert result["action"] == "removed"
+
+        new_active = AgentccOrgConfig.no_workspace_objects.get(
+            organization=organization, is_active=True, deleted=False
+        )
+        assert "organization" not in new_active.budgets
+        assert "user" in new_active.budgets  # other levels preserved
+        assert new_active.version == 2
 
 
 @pytest.mark.integration
@@ -713,6 +998,174 @@ class TestAgentccAPIKeyAPI:
         key.refresh_from_db()
         assert key.status == AgentccAPIKey.ACTIVE
 
+    def test_retrieve_api_key_returns_key_metadata(
+        self, auth_client, organization, workspace
+    ):
+        key = AgentccAPIKey.objects.create(
+            gateway_key_id="gw-retrieve",
+            key_prefix="pk-retrieve",
+            name="retrieve-me",
+            organization=organization,
+            workspace=workspace,
+        )
+
+        response = auth_client.get(f"/agentcc/api-keys/{key.id}/")
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()["result"]
+        assert data["id"] == str(key.id)
+        assert data["name"] == "retrieve-me"
+        assert data["gateway_key_id"] == "gw-retrieve"
+        # Raw key is never rehydrated on retrieve; only the prefix survives.
+        assert "key" not in data
+        assert data["key_prefix"] == "pk-retrieve"
+
+    def test_retrieve_api_key_unauthenticated(
+        self, api_client, organization, workspace
+    ):
+        key = AgentccAPIKey.objects.create(
+            gateway_key_id="gw-retrieve-unauth",
+            name="unauth",
+            organization=organization,
+            workspace=workspace,
+        )
+
+        response = api_client.get(f"/agentcc/api-keys/{key.id}/")
+        assert response.status_code in [
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        ]
+
+    def test_destroy_api_key_removes_row(self, auth_client, organization, workspace):
+        key = AgentccAPIKey.objects.create(
+            gateway_key_id="gw-destroy",
+            name="destroy-me",
+            organization=organization,
+            workspace=workspace,
+        )
+
+        response = auth_client.delete(f"/agentcc/api-keys/{key.id}/")
+
+        assert response.status_code in (
+            status.HTTP_200_OK,
+            status.HTTP_204_NO_CONTENT,
+        )
+        # DELETE either soft-deletes (deleted=True) or hard-deletes; either way
+        # the key must not appear on a subsequent list call.
+        list_response = auth_client.get("/agentcc/api-keys/")
+        ids = {item["id"] for item in list_response.json()["result"]}
+        assert str(key.id) not in ids
+
+    @patch("agentcc.views.api_key.auth_bridge")
+    def test_sync_api_keys_calls_bridge_sync_keys(
+        self, mock_bridge, auth_client, organization
+    ):
+        mock_bridge.sync_keys.return_value = 3
+
+        response = auth_client.post("/agentcc/api-keys/sync/")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"] == {"synced": 3}
+        mock_bridge.sync_keys.assert_called_once()
+        # Sync is scoped to the active-request organization.
+        assert mock_bridge.sync_keys.call_args.kwargs["org"].id == organization.id
+
+    def test_sync_api_keys_unauthenticated(self, api_client):
+        response = api_client.post("/agentcc/api-keys/sync/")
+        assert response.status_code in [
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        ]
+
+    def test_list_api_keys_cross_tenant_isolation(
+        self, auth_client, api_client, organization, workspace, user
+    ):
+        from accounts.models.organization import Organization
+
+        # Seed a key belonging to the current org and one to a foreign org.
+        AgentccAPIKey.objects.create(
+            gateway_key_id="gw-mine",
+            name="mine",
+            organization=organization,
+            workspace=workspace,
+        )
+        foreign_org = Organization.objects.create(name="API Key Foreign Org")
+        AgentccAPIKey.no_workspace_objects.create(
+            gateway_key_id="gw-not-mine",
+            name="not-mine",
+            organization=foreign_org,
+            workspace=None,
+        )
+
+        response = auth_client.get("/agentcc/api-keys/")
+        assert response.status_code == status.HTTP_200_OK
+        ids = {row["gateway_key_id"] for row in response.json()["result"]}
+        assert "gw-mine" in ids
+        assert "gw-not-mine" not in ids
+
+    @patch("agentcc.views.api_key.auth_bridge")
+    def test_put_api_key_cross_tenant_returns_404(
+        self, mock_bridge, auth_client, user, organization
+    ):
+        from accounts.models.organization import Organization
+
+        foreign_org = Organization.objects.create(name="PUT Foreign Org")
+        foreign_key = AgentccAPIKey.no_workspace_objects.create(
+            gateway_key_id="gw-foreign",
+            name="foreign",
+            organization=foreign_org,
+            workspace=None,
+        )
+
+        response = auth_client.put(
+            f"/agentcc/api-keys/{foreign_key.id}/",
+            {"name": "hijacked"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        mock_bridge.update_key.assert_not_called()
+
+    def test_patch_api_key_updates_name(self, auth_client, organization, workspace):
+        key = AgentccAPIKey.objects.create(
+            gateway_key_id="gw-patch",
+            name="before",
+            organization=organization,
+            workspace=workspace,
+        )
+        with patch("agentcc.views.api_key.auth_bridge") as mock_bridge:
+
+            def _update(api_key, **kwargs):
+                for k, v in kwargs.items():
+                    setattr(api_key, k, v)
+                api_key.save(update_fields=[*kwargs.keys(), "updated_at"])
+                return api_key
+
+            mock_bridge.update_key.side_effect = _update
+            response = auth_client.patch(
+                f"/agentcc/api-keys/{key.id}/",
+                {"name": "after"},
+                format="json",
+            )
+        assert response.status_code == status.HTTP_200_OK
+        key.refresh_from_db()
+        assert key.name == "after"
+
+    def test_revoke_api_key_idempotence(self, auth_client, organization, workspace):
+        key = AgentccAPIKey.objects.create(
+            gateway_key_id="gw-revoke-twice",
+            name="revoke-twice",
+            status=AgentccAPIKey.REVOKED,
+            organization=organization,
+            workspace=workspace,
+        )
+        with patch("agentcc.views.api_key.auth_bridge") as mock_bridge:
+            mock_bridge.revoke_key.return_value = (key, False)
+            response = auth_client.post(f"/agentcc/api-keys/{key.id}/revoke/")
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_bridge.revoke_key.assert_called_once_with(key)
+        assert response.json()["result"]["status"] == AgentccAPIKey.REVOKED
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -819,8 +1272,34 @@ class TestAgentccRequestLogAPI:
         response = auth_client.get("/agentcc/request-logs/")
         assert response.status_code == status.HTTP_200_OK
 
+    def test_list_request_logs_keeps_accepting_large_limits(self, auth_client):
+        """Documenting the list query must not cap `limit`; limit=200 worked
+        before the query serializer existed."""
+        response = auth_client.get("/agentcc/request-logs/?limit=200")
+        assert response.status_code == status.HTTP_200_OK
+
+    def test_list_request_logs_still_rejects_non_positive_limit(self, auth_client):
+        response = auth_client.get("/agentcc/request-logs/?limit=0")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
     def test_list_request_logs_unauthenticated(self, api_client):
         response = api_client.get("/agentcc/request-logs/")
+        assert response.status_code in [
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        ]
+
+    def test_retrieve_request_log_unknown_id_returns_404(self, auth_client):
+        # A random UUID that does not belong to any log row.
+        import uuid
+
+        response = auth_client.get(f"/agentcc/request-logs/{uuid.uuid4()}/")
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_retrieve_request_log_unauthenticated(self, api_client):
+        import uuid
+
+        response = api_client.get(f"/agentcc/request-logs/{uuid.uuid4()}/")
         assert response.status_code in [
             status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
@@ -1365,6 +1844,256 @@ class TestRequestLogExport:
         assert response["Content-Type"] == "text/csv"
 
 
+@pytest.fixture
+def tagged_logs(organization, workspace):
+    """Request logs tagged with application, service and custom metadata.
+
+    Two more logs belong to another organization and must never surface.
+    """
+    now = timezone.now()
+    own = [
+        # request_id, model, provider, status, error, session, metadata
+        (
+            "tag-001",
+            "gpt-4",
+            "openai",
+            500,
+            "checkout upstream timeout",
+            "sess-checkout",
+            {
+                "application": "checkout",
+                "service": "recommendations",
+                "team": "growth",
+                "env": "prod",
+            },
+        ),
+        (
+            "tag-002",
+            "gpt-4",
+            "openai",
+            200,
+            "",
+            "sess-checkout",
+            {"application": "checkout", "service": "fraud-check", "team": "growth"},
+        ),
+        (
+            "tag-003",
+            "claude-3",
+            "anthropic",
+            429,
+            "search rate limited",
+            "sess-search",
+            {"application": "search", "service": "answer", "team": "core"},
+        ),
+        ("tag-004", "gpt-4", "openai", 200, "", "sess-untagged", {}),
+    ]
+    logs = [
+        AgentccRequestLog.objects.create(
+            organization=organization,
+            workspace=workspace,
+            request_id=request_id,
+            model=model,
+            provider=provider,
+            status_code=status_code,
+            is_error=status_code >= 400,
+            error_message=error_message,
+            latency_ms=100,
+            cost=Decimal("0.001000"),
+            total_tokens=100,
+            session_id=session_id,
+            started_at=now,
+            metadata=metadata,
+        )
+        for request_id, model, provider, status_code, error_message, session_id, metadata in own
+    ]
+
+    foreign_org = Organization.objects.create(name="Tagged Logs Foreign Org")
+    for request_id, metadata in [
+        (
+            "tag-foreign-001",
+            {"application": "checkout", "service": "recommendations", "team": "growth"},
+        ),
+        (
+            "tag-foreign-002",
+            {
+                "application": "foreign-app",
+                "service": "foreign-svc",
+                "team": "foreign-team",
+            },
+        ),
+    ]:
+        AgentccRequestLog.no_workspace_objects.create(
+            organization=foreign_org,
+            workspace=None,
+            request_id=request_id,
+            model="gpt-4",
+            provider="openai",
+            status_code=500,
+            is_error=True,
+            error_message="foreign failure",
+            session_id="sess-foreign",
+            started_at=now,
+            metadata=metadata,
+        )
+    AgentccCustomPropertySchema.no_workspace_objects.create(
+        organization=foreign_org, name="team"
+    )
+    return logs
+
+
+def _request_ids(response):
+    return {row["request_id"] for row in response.json()["results"]}
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestRequestLogTagFilters:
+    """Tests for filtering request logs by application, service and custom tags."""
+
+    def test_filter_by_application(self, auth_client, tagged_logs):
+        response = auth_client.get("/agentcc/request-logs/?application=checkout")
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["count"] == 2
+        assert _request_ids(response) == {"tag-001", "tag-002"}
+        assert {row["metadata"]["application"] for row in data["results"]} == {
+            "checkout"
+        }
+
+    def test_filter_by_multiple_applications_matches_any(
+        self, auth_client, tagged_logs
+    ):
+        response = auth_client.get("/agentcc/request-logs/?application=checkout,search")
+        assert response.status_code == status.HTTP_200_OK
+        assert _request_ids(response) == {"tag-001", "tag-002", "tag-003"}
+
+    def test_filter_by_service(self, auth_client, tagged_logs):
+        response = auth_client.get("/agentcc/request-logs/?service=answer")
+        assert response.status_code == status.HTTP_200_OK
+        assert _request_ids(response) == {"tag-003"}
+
+    def test_filter_by_tag(self, auth_client, tagged_logs):
+        response = auth_client.get("/agentcc/request-logs/?tags=team:growth")
+        assert response.status_code == status.HTTP_200_OK
+        assert _request_ids(response) == {"tag-001", "tag-002"}
+
+    def test_filter_by_same_tag_key_matches_any(self, auth_client, tagged_logs):
+        response = auth_client.get("/agentcc/request-logs/?tags=team:growth,team:core")
+        assert response.status_code == status.HTTP_200_OK
+        assert _request_ids(response) == {"tag-001", "tag-002", "tag-003"}
+
+    def test_filter_by_multiple_tags_requires_all(self, auth_client, tagged_logs):
+        response = auth_client.get("/agentcc/request-logs/?tags=team:growth,env:prod")
+        assert response.status_code == status.HTTP_200_OK
+        assert _request_ids(response) == {"tag-001"}
+
+    def test_filter_by_unknown_application_returns_nothing(
+        self, auth_client, tagged_logs
+    ):
+        response = auth_client.get("/agentcc/request-logs/?application=nope")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["count"] == 0
+
+    def test_tag_without_key_value_is_rejected(self, auth_client, tagged_logs):
+        response = auth_client.get("/agentcc/request-logs/?tags=team")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_other_org_logs_never_match(self, auth_client, tagged_logs):
+        response = auth_client.get("/agentcc/request-logs/?application=foreign-app")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["count"] == 0
+
+    def test_sessions_apply_tag_filters(self, auth_client, tagged_logs):
+        response = auth_client.get("/agentcc/request-logs/sessions/?application=search")
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["count"] == 1
+        assert data["results"][0]["session_id"] == "sess-search"
+        assert data["results"][0]["request_count"] == 1
+
+    def test_search_applies_tag_filters(self, auth_client, tagged_logs):
+        response = auth_client.get(
+            "/agentcc/request-logs/search/?q=gpt&application=checkout"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        assert _request_ids(response) == {"tag-001", "tag-002"}
+
+    def test_export_applies_tag_filters(self, auth_client, tagged_logs):
+        response = auth_client.get(
+            "/agentcc/request-logs/export/?export_format=csv&application=search"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        content = b"".join(response.streaming_content).decode()
+        lines = content.strip().split("\n")
+        assert len(lines) == 2  # header + 1 data row
+        assert "tag-003" in lines[1]
+        assert "tag-001" not in content
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestRequestLogMetadataValues:
+    """Tests for GET /agentcc/request-logs/metadata-values/"""
+
+    def test_returns_distinct_application_and_service_values(
+        self, auth_client, tagged_logs
+    ):
+        response = auth_client.get("/agentcc/request-logs/metadata-values/")
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["application"] == ["checkout", "search"]
+        assert result["service"] == ["answer", "fraud-check", "recommendations"]
+
+    def test_tags_only_cover_declared_custom_properties(
+        self, auth_client, organization, tagged_logs
+    ):
+        AgentccCustomPropertySchema.objects.create(
+            organization=organization, name="team"
+        )
+        response = auth_client.get("/agentcc/request-logs/metadata-values/")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["tags"] == ["team:core", "team:growth"]
+
+    def test_tags_empty_without_custom_properties(self, auth_client, tagged_logs):
+        response = auth_client.get("/agentcc/request-logs/metadata-values/")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["tags"] == []
+
+    def test_values_with_a_comma_are_not_offered(
+        self, auth_client, organization, workspace, tagged_logs
+    ):
+        AgentccRequestLog.objects.create(
+            organization=organization,
+            workspace=workspace,
+            request_id="tag-comma",
+            started_at=timezone.now(),
+            metadata={"application": "billing,payments"},
+        )
+        response = auth_client.get("/agentcc/request-logs/metadata-values/")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["application"] == ["checkout", "search"]
+
+    def test_other_org_values_are_excluded(
+        self, auth_client, organization, tagged_logs
+    ):
+        AgentccCustomPropertySchema.objects.create(
+            organization=organization, name="team"
+        )
+        response = auth_client.get("/agentcc/request-logs/metadata-values/")
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert "foreign-app" not in result["application"]
+        assert "foreign-svc" not in result["service"]
+        assert "team:foreign-team" not in result["tags"]
+
+    def test_metadata_values_unauthenticated(self, api_client):
+        response = api_client.get("/agentcc/request-logs/metadata-values/")
+        assert response.status_code in [
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        ]
+
+
 @pytest.mark.integration
 @pytest.mark.api
 class TestWebhookWithBodies:
@@ -1824,3 +2553,137 @@ class TestAnalyticsModelComparison:
         response = auth_client.get("/agentcc/analytics/model-comparison/")
         assert response.status_code == status.HTTP_200_OK
         assert len(response.json()["result"]["models"]) == 0
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestAnalyticsTagGroupBy:
+    """Tests for grouping analytics by the application and service tags."""
+
+    def test_usage_grouped_by_application(self, auth_client, tagged_logs):
+        response = auth_client.get(
+            "/agentcc/analytics/usage-timeseries/?group_by=application"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["group_by"] == "application"
+        totals = {
+            name: sum(point["request_count"] for point in points)
+            for name, points in result["groups"].items()
+        }
+        assert totals == {"checkout": 2, "search": 1, "unknown": 1}
+
+    def test_cost_grouped_by_service(self, auth_client, tagged_logs):
+        response = auth_client.get(
+            "/agentcc/analytics/cost-breakdown/?group_by=service"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["group_by"] == "service"
+        counts = {row["name"]: row["request_count"] for row in result["breakdown"]}
+        assert counts == {
+            "recommendations": 1,
+            "fraud-check": 1,
+            "answer": 1,
+            "unknown": 1,
+        }
+
+    def test_errors_grouped_by_application(self, auth_client, tagged_logs):
+        response = auth_client.get(
+            "/agentcc/analytics/error-breakdown/?group_by=application"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["group_by"] == "application"
+        breakdown = {row["name"]: row for row in result["breakdown"]}
+        assert set(breakdown) == {"checkout", "search"}
+        assert breakdown["checkout"]["error_count"] == 1
+        assert (
+            breakdown["checkout"]["sample_error_message"] == "checkout upstream timeout"
+        )
+
+    def test_usage_grouped_by_application_sums_the_tail_into_other(
+        self, auth_client, tagged_logs, monkeypatch
+    ):
+        monkeypatch.setattr(analytics_service, "MAX_USAGE_TAG_GROUPS", 1)
+        response = auth_client.get(
+            "/agentcc/analytics/usage-timeseries/?group_by=application"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        totals = {
+            name: sum(point["request_count"] for point in points)
+            for name, points in response.json()["result"]["groups"].items()
+        }
+        assert totals == {"checkout": 2, "Other": 2}
+
+    def test_usage_other_application_never_splits_into_two_series(
+        self, auth_client, organization, workspace, tagged_logs, monkeypatch
+    ):
+        for index in range(3):
+            AgentccRequestLog.objects.create(
+                organization=organization,
+                workspace=workspace,
+                request_id=f"tag-other-{index}",
+                started_at=timezone.now(),
+                latency_ms=100,
+                metadata={"application": "Other"},
+            )
+        monkeypatch.setattr(analytics_service, "MAX_USAGE_TAG_GROUPS", 2)
+
+        response = auth_client.get(
+            "/agentcc/analytics/usage-timeseries/?group_by=application"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        groups = response.json()["result"]["groups"]
+        totals = {
+            name: sum(point["request_count"] for point in points)
+            for name, points in groups.items()
+        }
+        assert totals == {"checkout": 2, "search": 1, "Other": 4}
+        buckets = [point["bucket"] for point in groups["Other"]]
+        assert len(buckets) == len(set(buckets))
+
+    def test_cost_other_application_never_splits_into_two_rows(
+        self, auth_client, organization, workspace, tagged_logs
+    ):
+        for index in range(3):
+            AgentccRequestLog.objects.create(
+                organization=organization,
+                workspace=workspace,
+                request_id=f"cost-other-{index}",
+                started_at=timezone.now(),
+                cost=Decimal("0.001000"),
+                metadata={"application": "Other"},
+            )
+
+        response = auth_client.get(
+            "/agentcc/analytics/cost-breakdown/?group_by=application&top_n=2"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        breakdown = response.json()["result"]["breakdown"]
+        names = [row["name"] for row in breakdown]
+        assert len(names) == len(set(names))
+        counts = {row["name"]: row["request_count"] for row in breakdown}
+        assert counts == {"checkout": 2, "search": 1, "Other": 4}
+
+    def test_empty_application_groups_as_unknown(
+        self, auth_client, organization, workspace, tagged_logs
+    ):
+        AgentccRequestLog.objects.create(
+            organization=organization,
+            workspace=workspace,
+            request_id="tag-empty",
+            started_at=timezone.now(),
+            metadata={"application": ""},
+        )
+        response = auth_client.get(
+            "/agentcc/analytics/cost-breakdown/?group_by=application"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        counts = {
+            row["name"]: row["request_count"]
+            for row in response.json()["result"]["breakdown"]
+        }
+        assert counts == {"checkout": 2, "search": 1, "unknown": 2}

@@ -9,6 +9,9 @@ from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
+pytest.importorskip("ee.evals.localizer.error_localizer", reason="requires ee/")
+pytestmark = pytest.mark.requires_ee
+
 from ee.evals.localizer.error_localizer import LocalizerResult
 
 

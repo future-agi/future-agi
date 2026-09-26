@@ -13,6 +13,7 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from model_hub.utils.eval_mapping import non_path_mapping_keys
 
 logger = structlog.get_logger(__name__)
 
@@ -187,6 +188,19 @@ class CreateCustomEvalConfigTool(BaseTool):
 
         if params.mapping:
             # --- User provided mapping: validate attribute values exist ---
+            # Fourth write path into CustomEvalConfig.mapping. The
+            # attribute-membership check below only sees truthy values, so a
+            # falsy non-string ({} or []) used to slip through and get stored;
+            # a truthy one was rejected with a misleading "not a valid span
+            # attribute". The shared predicate answers the type question first.
+            bad_mapping_keys = non_path_mapping_keys(params.mapping)
+            if bad_mapping_keys:
+                return ToolResult.error(
+                    "Mapping values must be attribute path strings. "
+                    f"Non-string values for: {', '.join(bad_mapping_keys)}.",
+                    error_code="VALIDATION_ERROR",
+                )
+
             invalid_attrs = []
             for key, attr_value in params.mapping.items():
                 if attr_value and attr_value not in available_attributes:

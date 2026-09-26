@@ -37,6 +37,7 @@ from accounts.serializers.rbac import (
 from accounts.services import member_role_service
 from accounts.services.workspace_members import list_workspace_members
 from accounts.utils import (
+    build_invite_links,
     existing_member_access_will_change,
     generate_password,
     resolve_org,
@@ -237,6 +238,15 @@ class InviteCreateAPIView(APIView):
         result = {"invited": created_invites}
         if already_members:
             result["already_members"] = already_members
+        # Saves the admin a round trip to the members list, which is the only
+        # other place the link is exposed.
+        links = build_invite_links(created_invites)
+        if links:
+            result["invites"] = [
+                {"email": email, "invite_link": links[email.lower()]}
+                for email in created_invites
+                if email.lower() in links
+            ]
         return gm.success_response(result)
 
     def _dual_write_legacy(
@@ -523,8 +533,13 @@ class MemberListAPIView(APIView):
         # Org-level member list always returns full workspace memberships;
         # workspace_id is NOT used here (it's only for workspace-scoped endpoints).
 
+        viewer_membership = get_org_membership(request.user)
+        viewer_org_level = (
+            viewer_membership.level_or_legacy if viewer_membership else 0
+        )
+
         # Build pending/expired invites
-        invites = self._get_invites(organization)
+        invites = self._get_invites(organization, viewer_org_level)
 
         # Collect emails with pending invites so we can deduplicate
         invited_emails = {inv["email"] for inv in invites}
@@ -737,11 +752,13 @@ class MemberListAPIView(APIView):
 
         return results
 
-    def _get_invites(self, organization):
+    def _get_invites(self, organization, viewer_org_level=0):
         """Return pending/expired invites as dicts."""
-        invites = OrganizationInvite.objects.filter(
-            organization=organization,
-            status=InviteStatus.PENDING,
+        invites = list(
+            OrganizationInvite.objects.filter(
+                organization=organization,
+                status=InviteStatus.PENDING,
+            )
         )
 
         # Pre-fetch all active workspaces for this org to avoid N+1 queries
@@ -751,6 +768,8 @@ class MemberListAPIView(APIView):
                 organization=organization, is_active=True
             )
         }
+
+        invite_links = build_invite_links([inv.target_email for inv in invites])
 
         results = []
         for inv in invites:
@@ -785,21 +804,26 @@ class MemberListAPIView(APIView):
                             }
                         )
 
-            results.append(
-                {
-                    "id": str(inv.id),
-                    "name": inv.target_email.split("@")[0],
-                    "email": inv.target_email,
-                    "org_level": inv.level,
-                    "org_role": Level.to_org_string(inv.level),
-                    "ws_level": ws_level,
-                    "ws_role": ws_role,
-                    "workspaces": invite_workspaces,
-                    "status": inv.effective_status,  # "Pending" or "Expired"
-                    "created_at": inv.created_at.isoformat() if inv.created_at else "",
-                    "type": "invite",
-                }
-            )
+            row = {
+                "id": str(inv.id),
+                "name": inv.target_email.split("@")[0],
+                "email": inv.target_email,
+                "org_level": inv.level,
+                "org_role": Level.to_org_string(inv.level),
+                "ws_level": ws_level,
+                "ws_role": ws_role,
+                "workspaces": invite_workspaces,
+                "status": inv.effective_status,  # "Pending" or "Expired"
+                "created_at": inv.created_at.isoformat() if inv.created_at else "",
+                "type": "invite",
+            }
+
+            if viewer_org_level >= inv.level:
+                invite_link = invite_links.get(inv.target_email.lower())
+                if invite_link:
+                    row["invite_link"] = invite_link
+
+            results.append(row)
 
         return results
 
@@ -1151,6 +1175,7 @@ class WorkspaceMemberListAPIView(APIView):
             sort=params.get("sort", "-created_at"),
             page=params.get("page", 1),
             limit=params.get("limit", 20),
+            viewer_org_level=org_level,
         )
         return gm.success_response(page_data)
 

@@ -1,6 +1,7 @@
 import React, { useEffect } from "react";
 import { useParams, useNavigate, Navigate } from "react-router-dom";
-import { Box, CircularProgress, Typography } from "@mui/material";
+import { Box, Typography } from "@mui/material";
+import { LoadingScreen } from "src/components/loading-screen";
 import { useGetScenarioDetail } from "src/api/scenarios/scenarios";
 
 const DatasetScenarioView = () => {
@@ -19,16 +20,7 @@ const DatasetScenarioView = () => {
 
   if (isLoading) {
     return (
-      <Box
-        sx={{
-          height: "100vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <CircularProgress />
-      </Box>
+      <LoadingScreen sx={{ height: "100vh" }} />
     );
   }
 

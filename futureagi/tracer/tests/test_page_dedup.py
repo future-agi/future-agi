@@ -74,3 +74,20 @@ class TestPaginateDeduped:
     def test_has_more_false_on_exact_boundary(self):
         page, has_more = paginate_deduped(_rows(["a", "b", "c"]), "id", 0, 3)
         assert len(page) == 3 and has_more is False
+
+    def test_composite_span_identity_does_not_collapse_other_trace(self):
+        rows = [
+            {"trace_id": "trace-a", "id": "shared"},
+            {"trace_id": "trace-b", "id": "shared"},
+            {"trace_id": "trace-a", "id": "shared"},
+        ]
+
+        page, has_more = paginate_deduped(
+            rows, ("trace_id", "id"), page_number=0, page_size=10
+        )
+
+        assert [(row["trace_id"], row["id"]) for row in page] == [
+            ("trace-a", "shared"),
+            ("trace-b", "shared"),
+        ]
+        assert has_more is False

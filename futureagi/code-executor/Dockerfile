@@ -7,48 +7,11 @@
 #   3. No network access inside sandbox
 #   4. Resource limits (CPU, memory, file size, processes)
 #   5. Timeout enforcement
+#
+# System packages, the nsjail build and the sandbox Python libs live in
+# Dockerfile.base, published as futureagi/code-executor-base.
 
-FROM python:3.11-slim-bookworm
-
-# Install system dependencies + Node.js + nsjail build deps
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    # nsjail build dependencies
-    protobuf-compiler libprotobuf-dev libnl-3-dev libnl-route-3-dev \
-    pkg-config bison flex git make g++ \
-    # Node.js
-    nodejs \
-    # Runtime
-    libprotobuf32 libnl-3-200 libnl-route-3-200 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Build nsjail from source
-RUN cd /tmp \
-    && git clone --depth 1 --branch 3.4 https://github.com/google/nsjail.git \
-    && cd nsjail \
-    && make -j$(nproc) \
-    && cp nsjail /usr/local/bin/ \
-    && cd / && rm -rf /tmp/nsjail
-
-# Remove build dependencies to keep image small
-RUN apt-get purge -y protobuf-compiler libprotobuf-dev libnl-3-dev libnl-route-3-dev \
-    pkg-config bison flex git make g++ \
-    && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python packages available inside the sandbox
-# - numpy/pandas/scipy/sklearn: numerical + ML metrics
-# - pillow: image processing
-# - requests/httpx: HTTP clients
-# - nltk + rouge-score: BLEU/ROUGE for text-similarity evals
-# - Levenshtein: edit-distance based evals
-RUN pip install --no-cache-dir \
-    numpy pandas pillow scipy scikit-learn requests httpx \
-    nltk rouge-score Levenshtein \
-    && pip install --no-cache-dir falcon gunicorn
-
-# Create sandbox directories
-RUN mkdir -p /sandbox/tmp /sandbox/python-libs /sandbox/config \
-    && chmod 755 /sandbox/tmp
+FROM futureagi/code-executor-base:v1.0.0
 
 # Copy nsjail configs and server
 COPY config/ /sandbox/config/

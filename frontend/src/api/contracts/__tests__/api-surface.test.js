@@ -93,8 +93,7 @@ describe("api surface contract", () => {
     expect(
       apiPath("/usage/v2/invoices/{invoice_id}/", { invoice_id: "invoice/1" }),
     ).toBe("/usage/v2/invoices/invoice%2F1/");
-    expect(getContractedApiMethods("/usage/ee/licenses/")).toEqual([
-      "get",
+    expect(getContractedApiMethods("/v1/internal/licenses")).toEqual([
       "post",
     ]);
     expect(getContractedApiMethods("/falcon-ai/conversations/")).toEqual([
@@ -128,7 +127,7 @@ describe("api surface contract", () => {
     ).toBeGreaterThan(360);
     expect(
       Object.keys(API_SURFACE_CONTRACT.groups.tracer).length,
-    ).toBeGreaterThan(153);
+    ).toBeGreaterThan(152);
     expect(
       Object.keys(API_SURFACE_CONTRACT.groups.accounts).length,
     ).toBeGreaterThan(75);

@@ -15,9 +15,8 @@ Public surface:
                               decides).
     check_ee_feature(...)   — imperative form of the decorator for use mid-
                               function (e.g. inside Temporal activity bodies).
-    EE_FEATURES_OSS         — local mirror of ee.usage.deployment.EE_FEATURES.
-                              A unit test keeps this in sync when ee/ is
-                              present.
+    EE_FEATURES_OSS         — paid feature names mirrored from the canonical
+                              capability registry.
 """
 
 from __future__ import annotations
@@ -31,7 +30,7 @@ from typing import Any, Callable, Optional, Union
 from rest_framework import status as drf_status
 from rest_framework.exceptions import APIException
 from temporalio.exceptions import ApplicationError
-
+from tfc.capabilities.registry import PAID_FEATURES
 from tfc.ee_loader import has_ee
 
 logger = logging.getLogger(__name__)
@@ -40,13 +39,11 @@ logger = logging.getLogger(__name__)
 class EEFeature(str, Enum):
     """Canonical names of EE-only features.
 
-    Mirrors `ee.usage.deployment.EE_FEATURES`. A unit test asserts the two
-    stay in sync when ee/ is present. Pass enum members (or their `.value`)
+    Mirrors the canonical paid capability registry. Pass enum members (or
+    their `.value`)
     to `check_ee_feature` / `require_ee_feature`.
     """
 
-    KNOWLEDGE_BASE = "knowledge_base"
-    REVIEW_WORKFLOW = "review_workflow"
     AGREEMENT_METRICS = "agreement_metrics"
     REQUIRED_LABELS = "required_labels"
     AUDIT_LOGS = "audit_logs"
@@ -61,6 +58,12 @@ class EEFeature(str, Enum):
     EXTENDED_RETENTION = "extended_retention"
     CUSTOM_BRAND = "custom_brand"
     DEDICATED_SUPPORT = "dedicated_support"
+    FALCON_AI = "falcon_ai"
+    TURING_MODELS = "turing_models"
+    PROTECT = "protect"
+    SCENARIOS = "scenarios"
+    ERROR_FEED = "error_feed"
+    FIX_MY_AGENT = "fix_my_agent"
 
 
 class EEResource(str, Enum):
@@ -81,8 +84,8 @@ class EEResource(str, Enum):
     DATASET_ROWS = "dataset_rows"
 
 
-# Convenience set for callers that expect a frozenset of feature-name strings.
-EE_FEATURES_OSS = frozenset(f.value for f in EEFeature)
+# Compatibility alias for callers that expect the historical name.
+EE_FEATURES_OSS = PAID_FEATURES
 
 # Type alias for inputs that accept either the enum or its string value.
 FeatureName = Union[EEFeature, str]
@@ -148,8 +151,8 @@ def check_ee_feature(
 ) -> None:
     """Imperative pre-flight check. Raises on deny.
 
-    Use inside function bodies where a decorator is awkward (e.g. deep inside
-    a Temporal activity or an AI tool execute() method).
+    Delegates to tfc.capabilities.service when configured (after
+    AppConfig.ready). Falls back to legacy logic during early startup.
 
     Args:
         feature: EEFeature member, or a string present in EE_FEATURES_OSS.
@@ -173,49 +176,114 @@ def check_ee_feature(
     if feature_str not in EE_FEATURES_OSS:
         return
 
-    if is_oss():
-        _raise_denied(feature_str, activity=activity)
+    # Try the new capability service first (available after AppConfig.ready)
+    if _try_capability_service(feature_str, org_id=org_id, activity=activity):
         return
 
-    if org_id is None:
+    # Legacy fallback for early startup or when capability service isn't wired
+    if is_oss():
+        # Mirror the service's two-tier rule: only oss_locked features
+        # deny off-cloud; the rest of the paid set is free self-hosted.
+        from tfc.capabilities.registry import get_feature
+
+        definition = get_feature(feature_str)
+        if definition is None or definition.oss_locked:
+            _raise_denied(feature_str, activity=activity)
         return
 
     try:
+        from ee.usage.deployment import DeploymentMode
         from ee.usage.services.entitlements import Entitlements
-
-        # Use check_feature so we can thread upgrade_cta through to the FE.
-        # has_feature_unified is the underlying bool; check_feature wraps it
-        # with CheckResult(allowed, reason, upgrade_cta) on Cloud.
-        if not Entitlements.has_feature_unified(str(org_id), feature_str):
-            # Fetch the full CheckResult for Cloud upsell CTA. OSS/EE
-            # fallbacks inside has_feature_unified handle the boolean; the
-            # CTA only exists on Cloud, so guard against attribute errors.
-            cta = None
-            reason = None
-            try:
-                result = Entitlements.check_feature(
-                    str(org_id), f"has_{feature_str}"
-                )
-                reason = getattr(result, "reason", None)
-                raw_cta = getattr(result, "upgrade_cta", None)
-                if raw_cta is not None:
-                    cta = (
-                        raw_cta.model_dump()
-                        if hasattr(raw_cta, "model_dump")
-                        else dict(raw_cta)
-                    )
-            except Exception:  # pragma: no cover — best-effort CTA fetch
-                pass
-            _raise_denied(
-                feature_str,
-                activity=activity,
-                detail=reason,
-                upgrade_cta=cta,
-            )
-    except ImportError:  # pragma: no cover — ee present but entitlements broken
-        logger.warning(
-            "ee.usage.services.entitlements import failed; allowing by default"
+    except ImportError:
+        logger.exception("ee_entitlements_unavailable")
+        _raise_denied(
+            feature_str,
+            activity=activity,
+            detail="Feature entitlement service is unavailable.",
         )
+
+    if org_id is None and DeploymentMode.is_cloud():
+        _raise_denied(
+            feature_str,
+            activity=activity,
+            detail="Organization identity is required for this feature.",
+        )
+
+    try:
+        allowed = Entitlements.has_feature_unified(str(org_id or ""), feature_str)
+    except Exception:
+        logger.exception("ee_entitlements_check_failed")
+        _raise_denied(
+            feature_str,
+            activity=activity,
+            detail="Feature entitlement service is unavailable.",
+        )
+
+    if allowed is not True:
+        cta = None
+        reason = None
+        try:
+            result = Entitlements.check_feature(str(org_id or ""), f"has_{feature_str}")
+            reason = getattr(result, "reason", None)
+            raw_cta = getattr(result, "upgrade_cta", None)
+            if raw_cta is not None:
+                cta = (
+                    raw_cta.model_dump()
+                    if hasattr(raw_cta, "model_dump")
+                    else dict(raw_cta)
+                )
+        except Exception:  # pragma: no cover — best-effort CTA fetch
+            logger.debug("ee_gating_upgrade_cta_lookup_failed", exc_info=True)
+        _raise_denied(
+            feature_str,
+            activity=activity,
+            detail=reason,
+            upgrade_cta=cta,
+        )
+
+
+def _try_capability_service(
+    feature_str: str,
+    *,
+    org_id: Optional[str] = None,
+    activity: bool = False,
+) -> bool:
+    """Attempt to use the new capability service. Returns True if handled.
+
+    Returns False if the service isn't configured yet (early startup),
+    signalling the caller to fall back to legacy logic.
+    """
+    try:
+        from tfc.capabilities import service
+        from tfc.capabilities.registry import is_registered
+    except Exception:
+        return False
+
+    if not service.is_configured():
+        return False
+
+    if not is_registered(feature_str):
+        return False
+
+    try:
+        decision = service.check(feature_str, org_id=org_id)
+    except Exception:
+        logger.exception("capability_check_failed")
+        _raise_denied(
+            feature_str,
+            activity=activity,
+            detail="Feature entitlement service is unavailable.",
+        )
+
+    if getattr(decision, "allowed", None) is not True:
+        if hasattr(decision, "feature_id") and hasattr(decision, "reason_code"):
+            service._raise_denied(decision, activity=activity)
+        _raise_denied(
+            feature_str,
+            activity=activity,
+            detail="Feature entitlement service is unavailable.",
+        )
+    return True
 
 
 ResourceName = Union[EEResource, str]
@@ -229,46 +297,68 @@ def check_ee_can_create(
 ) -> None:
     """Limit-based counterpart to `check_ee_feature` for `EEResource` keys.
 
-    No ee present → raises FeatureUnavailable.
-    EE/Cloud → calls `Entitlements.can_create(org_id, resource, count)` and
-    raises FeatureUnavailable if `allowed=False`. Threads `upgrade_cta`
-    through so Cloud users see their targeted upsell.
+    Count limits are a cloud-plan concept: self-hosted deployments (OSS or
+    EE) are uncapped — there is no billing to enforce against. Cloud calls
+    `Entitlements.can_create(org_id, resource, count)` and raises
+    FeatureUnavailable if `allowed=False`, threading `upgrade_cta` through
+    so Cloud users see their targeted upsell.
     """
     resource_str = resource.value if isinstance(resource, EEResource) else resource
-    if is_oss():
-        _raise_denied(resource_str, activity=False)
+    try:
+        from ee.usage.deployment import DeploymentMode
+    except ImportError:
+        return  # no ee code at all → self-hosted OSS → uncapped
+    if not DeploymentMode.is_cloud():
         return
+    if not org_id:
+        raise FeatureUnavailable(
+            resource_str,
+            detail="Organization identity is required for this resource.",
+            metadata={"resource": resource_str},
+        )
 
     try:
         from ee.usage.services.entitlements import Entitlements
+    except ImportError:
+        logger.exception("ee_entitlements_unavailable")
+        raise FeatureUnavailable(
+            resource_str,
+            detail="Feature entitlement service is unavailable.",
+            metadata={"resource": resource_str},
+        )
 
+    try:
         result = Entitlements.can_create(str(org_id), resource_str, current_count)
-        if not getattr(result, "allowed", True):
-            raw_cta = getattr(result, "upgrade_cta", None)
-            cta = None
-            if raw_cta is not None:
-                cta = (
-                    raw_cta.model_dump()
-                    if hasattr(raw_cta, "model_dump")
-                    else dict(raw_cta)
-                )
-            metadata = {"resource": resource_str}
-            current_usage = getattr(result, "current_usage", None)
-            limit = getattr(result, "limit", None)
-            if current_usage is not None:
-                metadata["current_usage"] = current_usage
-            if limit is not None:
-                metadata["limit"] = limit
-            raise FeatureUnavailable(
-                resource_str,
-                detail=getattr(result, "reason", None),
-                code=getattr(result, "error_code", None),
-                upgrade_cta=cta,
-                metadata=metadata,
+    except Exception:
+        logger.exception("ee_entitlements_create_check_failed")
+        raise FeatureUnavailable(
+            resource_str,
+            detail="Feature entitlement service is unavailable.",
+            metadata={"resource": resource_str},
+        )
+
+    if getattr(result, "allowed", None) is not True:
+        raw_cta = getattr(result, "upgrade_cta", None)
+        cta = None
+        if raw_cta is not None:
+            cta = (
+                raw_cta.model_dump()
+                if hasattr(raw_cta, "model_dump")
+                else dict(raw_cta)
             )
-    except ImportError:  # pragma: no cover — ee present but entitlements broken
-        logger.warning(
-            "ee.usage.services.entitlements import failed; allowing by default"
+        metadata = {"resource": resource_str}
+        current_usage = getattr(result, "current_usage", None)
+        limit = getattr(result, "limit", None)
+        if current_usage is not None:
+            metadata["current_usage"] = current_usage
+        if limit is not None:
+            metadata["limit"] = limit
+        raise FeatureUnavailable(
+            resource_str,
+            detail=getattr(result, "reason", None),
+            code=getattr(result, "error_code", None),
+            upgrade_cta=cta,
+            metadata=metadata,
         )
 
 

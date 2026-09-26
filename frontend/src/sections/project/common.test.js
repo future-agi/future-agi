@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { buildProjectListApiFilters, projectOperatorFilter } from "./common";
+import {
+  buildProjectListApiFilters,
+  projectOperatorFilter,
+} from "./common";
 
 const parse = (json) => (json == null ? json : JSON.parse(json));
 

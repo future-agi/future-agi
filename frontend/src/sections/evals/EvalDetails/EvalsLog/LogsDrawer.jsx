@@ -182,7 +182,7 @@ const LogsDrawerChild = ({
         <Divider orientation="horizontal" />
       </Box>
       <Box display={"flex"} gap="16px" height="calc(100% - 80px)">
-        <Box sx={{ width: "100%" }}>
+        <Box sx={{ width: "100%", height: "100%" }}>
           <LogDrawerRight
             output={data?.output}
             error={data?.error_details || {}}

@@ -9,6 +9,7 @@ import {
   getLoadingStateWithRespectiveStatus,
   TestRunExecutionStatus,
 } from "src/sections/test-detail/common";
+import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import CallAnalyticsView from "./CallAnalyticsView";
 import { isLiveKitProvider } from "src/sections/agents/constants";
@@ -238,10 +239,19 @@ const VoiceRightPanel = ({
           scoreLabel =
             rawValue.length > 24 ? `${rawValue.slice(0, 24)}…` : rawValue;
         }
-      } else if (Array.isArray(rawValue) && rawValue.length > 0) {
-        // Choices-type results surface their selected labels as an array —
-        // keep them as items so the table can render one chip per label.
-        scoreItems = rawValue.map((v) => String(v));
+      } else if (rawValue && typeof rawValue === "object") {
+        const result = normalizeEvalResult(rawValue, e?.type || e?.output_type);
+        if (result?.kind === "choices" && Array.isArray(result.items)) {
+          scoreItems = result.items;
+        } else if (
+          result?.kind === "score" &&
+          typeof result.score === "number"
+        ) {
+          score =
+            result.score <= 1
+              ? Math.round(result.score * 100)
+              : Math.round(result.score);
+        }
       }
 
       return {

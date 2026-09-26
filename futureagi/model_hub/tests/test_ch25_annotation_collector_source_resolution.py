@@ -160,7 +160,7 @@ class _ReaderCM:
         return [self._span] if str(self._span.trace_id) == str(trace_id) else []
 
     def roots_by_trace_ids(
-        self, trace_ids, *, include_heavy=False, project_id=None, org_id=None
+        self, trace_ids, *, include_heavy=False, project_id=None, org_id=None, **_
     ):
         # Mirror the real reader: parentless spans for the given traces.
         if self._span is None or getattr(self._span, "parent_span_id", None):
@@ -836,7 +836,7 @@ class _CountingReaderCM:
     def __exit__(self, *exc):
         return False
 
-    def list_by_ids(self, span_ids, *, project_id=None, include_heavy=True):
+    def list_by_ids(self, span_ids, *, project_id=None, include_heavy=True, **_):
         ids = [str(s) for s in span_ids]
         self.list_by_ids_calls.append(ids)
         return [self._by_id[i] for i in ids if i in self._by_id]
@@ -1100,7 +1100,7 @@ class _MultiSpanReaderCM:
         return False
 
     def roots_by_trace_ids(
-        self, trace_ids, *, include_heavy=False, project_id=None, org_id=None
+        self, trace_ids, *, include_heavy=False, project_id=None, org_id=None, **_
     ):
         self.roots_calls.append((tuple(sorted(str(t) for t in trace_ids)), project_id))
         ids = {str(t) for t in trace_ids}

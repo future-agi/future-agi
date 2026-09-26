@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { isLiveKitProvider } from "src/sections/agents/constants";
 
 /**
  * Downsamples a Float32Array of PCM samples into N peak values (0–1).
@@ -41,7 +42,11 @@ function extractPeaks(channelData, numPeaks = 800) {
  * @param {string} stereoUrl - URL of the stereo recording
  * @returns {{ assistantUrl: string, customerUrl: string, assistantPeaks: number[]|null, customerPeaks: number[]|null, loading: boolean, error: string|null }}
  */
-export default function useStereoChannels(stereoUrl, isInbound = false) {
+export default function useStereoChannels(
+  stereoUrl,
+  isInbound = false,
+  provider = null,
+) {
   const [state, setState] = useState({
     assistantUrl: "",
     customerUrl: "",
@@ -92,8 +97,12 @@ export default function useStereoChannels(stereoUrl, isInbound = false) {
         const leftData = decoded.getChannelData(0);
         const rightData =
           numChannels >= 2 ? decoded.getChannelData(1) : leftData;
-        // Base: left=sim, right=agent; inbound flips.
-        const [aData, cData] = isInbound
+        // Base: left=sim/customer (ch0), right=agent/assistant (ch1).
+        // LiveKit-based runs always write this fixed semantic channel order
+        // regardless of call direction, so they must NOT flip. Other providers
+        // encode channels per direction, so inbound flips there.
+        const shouldFlip = isInbound && !isLiveKitProvider(provider);
+        const [aData, cData] = shouldFlip
           ? [leftData, rightData]
           : [rightData, leftData];
 
