@@ -11,9 +11,22 @@
 #   docker build -f Dockerfile.simulation-runner \
 #     --build-arg FI_VERSION=<published-version> \
 #     -t futureagi/future-agi-simulation-runner:latest .
+#
+# Everything else comes from the backend image: its user (root), WORKDIR,
+# STOPSIGNAL, role-aware HEALTHCHECK (a Temporal worker reports healthy
+# while it runs) and SERVICE_VERSION. The default base floats on :latest for
+# a quick local build; a release passes this version's backend pinned by
+# digest (release-images.yml). Conventions: docs/images.md.
+#
+# The base must be the default (standard) backend variant, never -slim: the
+# simulation_runner queue runs the hosted-harness activities, which need the
+# Daytona/E2B SDKs (`sandbox` extra) and git for GitHub sources.
 ARG BACKEND_IMAGE=futureagi/future-agi:latest
 FROM ${BACKEND_IMAGE}
 ARG BACKEND_IMAGE
+
+# Fails the build on a base without them, before the SDK install.
+RUN python -c "import daytona, e2b" && git --version
 
 # Published SDK version (public PyPI); resolved at release time. The runner/
 # backend contract is the versioned job schema, so a mismatch fails fast.
@@ -40,7 +53,23 @@ RUN test -n "${FI_VERSION}" || (echo "FI_VERSION build-arg is required" && exit 
 
 # The activity reads this to spawn the SDK child.
 ENV ALK_RUNNER_PYTHON=/opt/alk-venv/bin/python
-LABEL ai.futureagi.sdk.version="${FI_VERSION}" \
-      ai.futureagi.backend.image="${BACKEND_IMAGE}"
 
-ENTRYPOINT ["bash", "./entrypoint.sh"]
+ENTRYPOINT ["bash", "/app/backend/entrypoint.sh"]
+
+# Image metadata (docs/images.md). Declared last: a new version, commit or
+# build time changes the image config only, never a cached layer.
+ARG VERSION=dev
+ARG REVISION=unknown
+ARG CREATED=""
+LABEL org.opencontainers.image.title="Future AGI simulation runner" \
+      org.opencontainers.image.description="Temporal worker for the simulation_runner queue: the backend image plus the released Agent Learning Kit SDK in its own venv (/opt/alk-venv)." \
+      org.opencontainers.image.source="https://github.com/future-agi/future-agi" \
+      org.opencontainers.image.url="https://futureagi.com" \
+      org.opencontainers.image.documentation="https://github.com/future-agi/future-agi/blob/main/docs/images.md" \
+      org.opencontainers.image.vendor="Future AGI" \
+      org.opencontainers.image.licenses="Apache-2.0 AND LicenseRef-FutureAGI-Enterprise-1.0" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.created="${CREATED}" \
+      ai.futureagi.sdk.version="${FI_VERSION}" \
+      ai.futureagi.backend.image="${BACKEND_IMAGE}"

@@ -5,7 +5,14 @@ set -euo pipefail
 # The image references may be tags for local checks or immutable digests in CI.
 #
 # Usage: ./scripts/verify-image-contents.sh [version] [oss|ee|cloud|all]
-# Overrides: OSS_IMAGE, EE_IMAGE, CLOUD_IMAGE, CLOUD_DEPLOYMENT_SECRET
+# Overrides: OSS_IMAGE, EE_IMAGE, CLOUD_IMAGE, CLOUD_DEPLOYMENT_SECRET,
+#   OSS_VARIANT: the backend variant OSS_IMAGE was built as
+#   (futureagi/Dockerfile.oss IMAGE_VARIANT, docs/images.md). standard is
+#   feature-complete (uv, git, the sandbox SDKs, Debian ffmpeg, every NLTK
+#   package); slim is the lean base of futureagi/platform. Default: slim for a
+#   tag ending in -slim, else standard. Standalone local builds
+#   (./bin/install --from-source, ./bin/dev) are slim: pass OSS_VARIANT=slim;
+#   ./bin/install --distributed --from-source builds standard.
 
 VERSION="${1:-latest}"
 FLAVOR="${2:-all}"
@@ -14,6 +21,14 @@ case "$FLAVOR" in
   *) echo "Usage: $0 [version] [oss|ee|cloud|all]" >&2; exit 2 ;;
 esac
 OSS_IMAGE="${OSS_IMAGE:-futureagi/future-agi:${VERSION}}"
+case "$OSS_IMAGE" in
+  *-slim|*-slim@*) OSS_VARIANT="${OSS_VARIANT:-slim}" ;;
+  *) OSS_VARIANT="${OSS_VARIANT:-standard}" ;;
+esac
+case "$OSS_VARIANT" in
+  standard|slim) ;;
+  *) echo "OSS_VARIANT must be standard or slim, not '${OSS_VARIANT}'" >&2; exit 2 ;;
+esac
 EE_IMAGE="${EE_IMAGE:-futureagi/future-agi-ee:${VERSION}}"
 CLOUD_IMAGE="${CLOUD_IMAGE:-futureagi/future-agi-cloud:${VERSION}}"
 CLOUD_DEPLOYMENT_SECRET="${CLOUD_DEPLOYMENT_SECRET:-}"
@@ -110,12 +125,35 @@ fi
 echo ""
 
 if [[ "$FLAVOR" == oss || "$FLAVOR" == all ]]; then
-echo "=== OSS Image: ${OSS_IMAGE} ==="
+echo "=== OSS Image: ${OSS_IMAGE} (${OSS_VARIANT} variant) ==="
 check "Has shared EE package tree" image_test "$OSS_IMAGE" test -d /app/backend/ee
 check_absent "No cloud-private package" image_test "$OSS_IMAGE" test -e /app/backend/ee/cloud
 check "Has required NLTK runtime corpora" image_python "$OSS_IMAGE" -c \
-  "from pathlib import Path; import nltk; [nltk.data.find(path) for path in ('corpora/stopwords', 'tokenizers/punkt', 'taggers/averaged_perceptron_tagger', 'taggers/averaged_perceptron_tagger_eng', 'corpora/wordnet.zip', 'corpora/omw-1.4.zip')]; assert any((Path(root) / 'tokenizers/punkt_tab').is_dir() for root in nltk.data.path)"
+  "import nltk; [nltk.data.find(p) for p in ('corpora/stopwords/', 'tokenizers/punkt_tab/english/', 'taggers/averaged_perceptron_tagger_eng/', 'corpora/wordnet/')]; assert nltk.word_tokenize('Future AGI') == ['Future', 'AGI']; assert nltk.pos_tag(['Future'])[0][1]"
+check "ffmpeg can encode mp3 and png" image_test "$OSS_IMAGE" sh -c "ffmpeg -hide_banner -encoders | grep -q libmp3lame && ffmpeg -hide_banner -encoders | grep -qw png"
+if [[ "$OSS_VARIANT" == standard ]]; then
+  # A drop-in for what builds on it: the EE and cloud images run
+  # `uv pip install` in it, and the simulation runner's hosted-harness jobs
+  # need the sandbox SDKs and git.
+  check "Has uv (EE and cloud images install on top)" image_test "$OSS_IMAGE" sh -c "command -v uv"
+  check "Has git (hosted-harness GitHub sources)" image_test "$OSS_IMAGE" sh -c "git --version"
+  check "Has the optional groups of the base dependencies" image_python "$OSS_IMAGE" -c \
+    "import daytona, e2b, httpx_ws, stripe, flower, vertexai, langchain_community, channels_rabbitmq"
+  check "Has every NLTK package" image_python "$OSS_IMAGE" -c \
+    "import nltk; [nltk.data.find(p) for p in ('corpora/omw-1.4/', 'tokenizers/punkt/', 'taggers/averaged_perceptron_tagger/')]"
+  check "Keeps every googleapiclient discovery document" image_python "$OSS_IMAGE" -c \
+    "from googleapiclient.discovery_cache import get_static_doc; assert get_static_doc('drive', 'v3')"
+else
+  check "Ships the ffmpeg LGPL notice" image_test "$OSS_IMAGE" test -f /usr/local/share/doc/ffmpeg/COPYING.LGPLv2.1
+  check_absent "No uv in the runtime image" image_test "$OSS_IMAGE" sh -c "command -v uv"
+  check_absent "No git in the runtime image" image_test "$OSS_IMAGE" sh -c "command -v git"
+fi
 check "Django boots without cloud-private code" image_python "$OSS_IMAGE" -c "import django; django.setup()"
+check "Django boots as uid 1000 and can write where the app writes" docker run --rm \
+  --user 1000:1000 \
+  --entrypoint python \
+  -e DJANGO_SETTINGS_MODULE=tfc.settings.settings \
+  "$OSS_IMAGE" -c "import django, tempfile; django.setup(); [tempfile.NamedTemporaryFile(dir=d).close() for d in ('/app/backend/logs', '/app/backend/media', '/app/backend/static', '/app/backend/tfc/logs', '/app/backend/tfc/saml_logs', '/app/backend/tfc/metadata', '/app/backend/tfc/compare')]"
 check "No cloud routes" check_routes "$OSS_IMAGE" absent \
   /v1/internal/licenses /v1/self-hosted/activations /v1/enterprise/heartbeats
 check "CE base remains self-hosted with an invalid cloud secret" docker run --rm \

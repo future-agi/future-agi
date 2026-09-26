@@ -29,6 +29,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       backend: ${{ steps.filter.outputs.backend || steps.always.outputs.backend }}
+      executor_base: ${{ steps.filter.outputs.executor_base || 'false' }}
     steps:
       - uses: actions/checkout@v4
       - id: filter
@@ -41,8 +42,12 @@ jobs:
               - 'docker-compose*.yml'
               - 'fi-collector/Dockerfile'
               - 'bin/install*'
+              - 'bin/uninstall'
               - 'deploy/**'
               - '.github/workflows/backend-ci.yml'
+            executor_base:
+              - 'futureagi/code-executor/Dockerfile.base'
+              - 'futureagi/code-executor/requirements.sandbox.txt'
       - id: always
         if: github.event_name != 'pull_request'
         run: echo "backend=true" >> "$GITHUB_OUTPUT"
@@ -266,15 +271,41 @@ jobs:
       - name: Install base dependencies only (no extras)
         run: uv sync --frozen --no-dev
 
+      - name: uv.lock matches pyproject.toml and uv.toml
+        # Run from futureagi/ so uv.toml applies (prerelease = if-necessary is
+        # recorded in the lock). A stale lock would otherwise be rewritten by
+        # every `uv run` and developer `uv sync`.
+        run: uv lock --check
+
       - name: Requirements exports match uv.lock (drift check)
+        # requirements.txt = the base dependencies the OSS image installs;
+        # ee/requirements.txt = every extra but `dev` (what the EE and cloud
+        # images install), so a new extra lands there without editing this
+        # step. The generated header lines record the exact command and are
+        # not compared.
         run: |
+          set -euo pipefail
           uv export --frozen --no-dev --no-hashes --no-emit-project \
-            -o requirements.txt
+            -o "$RUNNER_TEMP/requirements.txt" >/dev/null
           uv export --frozen --no-dev --no-hashes --no-emit-project \
-            --extra audio --extra ml --extra voice --extra pii \
-            --extra prompt-opt --extra vectordb \
-            -o ee/requirements.txt
-          git diff --exit-code -- requirements.txt ee/requirements.txt
+            --all-extras --no-extra dev \
+            -o "$RUNNER_TEMP/ee-requirements.txt" >/dev/null
+          drift=0
+          for pair in "requirements.txt:$RUNNER_TEMP/requirements.txt" \
+                      "ee/requirements.txt:$RUNNER_TEMP/ee-requirements.txt"; do
+            committed=${pair%%:*}
+            fresh=${pair#*:}
+            if ! diff -u <(grep -v '^#' "$committed") <(grep -v '^#' "$fresh"); then
+              echo "::error file=futureagi/${committed}::${committed} is out of date with uv.lock"
+              drift=1
+            fi
+          done
+          if [ "$drift" -ne 0 ]; then
+            echo "Regenerate from futureagi/:"
+            echo "  uv export --frozen --no-dev --no-hashes --no-emit-project -o requirements.txt"
+            echo "  uv export --frozen --no-dev --no-hashes --no-emit-project --all-extras --no-extra dev -o ee/requirements.txt"
+          fi
+          exit "$drift"
 
       - name: Boot Django, load URLconf and temporal registry
         run: |
@@ -332,9 +363,45 @@ jobs:
           print(f"temporal activity registry OK: {activity_count} activities")
           EOF
 
+  code-executor-base-pin:
+    # futureagi/code-executor/Dockerfile builds FROM the base image tag it
+    # pins (ARG CODE_EXECUTOR_BASE), and base tags are immutable: a release
+    # publishes the pinned tag only when it does not exist yet. So a change to
+    # what goes into the base must come with a new, unpublished pin, or it
+    # would never ship.
+    name: code-executor base pin is new
+    needs: changes
+    if: needs.changes.outputs.executor_base == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: The pinned base tag is not published yet
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref=$(sed -nE 's/^[[:space:]]*ARG[[:space:]]+CODE_EXECUTOR_BASE=([^[:space:]]+).*/\1/p' \
+            futureagi/code-executor/Dockerfile | head -n1)
+          re='^futureagi/code-executor-base:(v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?)(@sha256:[a-f0-9]{64})?$'
+          if [[ ! "$ref" =~ $re ]]; then
+            echo "::error file=futureagi/code-executor/Dockerfile::pin ARG CODE_EXECUTOR_BASE=futureagi/code-executor-base:vX.Y.Z (found '${ref}')"
+            exit 1
+          fi
+          tag=${BASH_REMATCH[1]}
+          code=$(curl -sS --max-time 20 --retry 3 --retry-all-errors -o /dev/null -w '%{http_code}' \
+            "https://hub.docker.com/v2/repositories/futureagi/code-executor-base/tags/${tag}")
+          case "$code" in
+            404) echo "futureagi/code-executor-base:${tag} is not published yet; the next release publishes it." ;;
+            200)
+              echo "::error file=futureagi/code-executor/Dockerfile::Dockerfile.base or requirements.sandbox.txt changed, but CODE_EXECUTOR_BASE still pins the published ${tag}. Bump it to a new version."
+              exit 1
+              ;;
+            *) echo "::error::Docker Hub answered HTTP ${code}; re-run the job"; exit 1 ;;
+          esac
+
   backend-tests:
     name: Backend Tests Pass # the ONLY required status check
-    needs: [changes, plan, test, slim-smoke]
+    needs: [changes, plan, test, slim-smoke, code-executor-base-pin]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

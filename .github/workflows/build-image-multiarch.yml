@@ -1,0 +1,380 @@
+# Reusable image build: one native runner per architecture (no QEMU), push by
+# digest, check, then publish. Every image of a release goes through here
+# (release-images.yml), and so do the per-image workflow_dispatch builds
+# (release-<image>.yml), so the two paths cannot drift.
+#
+# Each architecture builds on its own runner and pushes by digest; nothing is
+# tagged yet. The leg then runs the image (verify-command) and checks its
+# compressed size (scripts/image_size_budget.py): the absolute budget in
+# scripts/image_size_budget.json, the growth over <image>:latest<suffix> when
+# size-budget-percent > 0, and, for the standalone install's app image, the whole
+# standalone install's download. Only when every leg passed does `publish` point
+# <image>:<version><suffix>, :<minor><suffix> and optionally :latest<suffix>
+# at one multi-arch manifest (a -suffix version moves neither alias). Same
+# pattern as base-image-publish.yml.
+#
+# Layer cache: a registry cache per image and architecture in
+# ghcr.io/future-agi/future-agi/build-cache, not the GitHub Actions cache. A
+# release runs on a tag ref, and GHA caches written under one tag are not
+# restored under the next, so every release used to rebuild cold and publish
+# every layer with a new digest: each patch release made users re-download
+# ~723 of the backend's 771 MB. A registry cache hit reproduces the same
+# layer blobs, so an upgrade downloads only the layers whose inputs changed.
+# The check prints that upgrade delta. A failed cache write fails the leg
+# (no ignore-error), so a release can never silently lose the cache.
+#
+# Image labels (docs/images.md): every image gets VERSION (the version
+# input), REVISION (the commit, resolved once so both architectures build the
+# same one) and CREATED (one UTC timestamp per run) as build args, which its
+# Dockerfile turns into the org.opencontainers.image.* labels; each leg
+# checks the labels on the image it pushed.
+name: build-image-multiarch
+
+on:
+  workflow_call:
+    inputs:
+      image:       { required: true, type: string }   # e.g. futureagi/platform
+      context:     { required: true, type: string }   # e.g. ./deploy/platform
+      dockerfile:  { required: true, type: string }
+      version:     { required: true, type: string }   # vX.Y.Z or vX.Y.Z-suffix
+      ref:         { required: true, type: string }   # git ref to build from
+      push-latest: { required: false, type: boolean, default: false }
+      cache-scope: { required: true, type: string }   # cache tag prefix; also names the digest artifacts
+      use-cache:   { required: false, type: boolean, default: true }
+      # Further registry caches to read (newline-separated refs), e.g. the
+      # amd64 caches e2e-ci.yml writes on every push to dev and main.
+      cache-from-extra: { required: false, type: string, default: '' }
+      build-args:  { required: false, type: string, default: '' }   # newline-separated KEY=VALUE
+      # JSON list; a variant such as the CUDA serving image is amd64 only.
+      arches:      { required: false, type: string, default: '["amd64","arm64"]' }
+      # Appended to every tag of a variant, e.g. -slim (backend) or -gpu (serving):
+      # <version>-gpu, <minor>-gpu, latest-gpu. The size budget entry and the
+      # cache scope and digest artifacts of the variant are its own.
+      tag-suffix:  { required: false, type: string, default: '' }
+      free-disk:   { required: false, type: boolean, default: false }
+      timeout-minutes: { required: false, type: number, default: 90 }
+      # enforce: a leg over budget fails and no tag moves. report: print only
+      # (ad-hoc builds). off: skip.
+      size-budget: { required: false, type: string, default: enforce }
+      size-budget-percent: { required: false, type: number, default: 0 }   # max growth over :latest; 0 = off
+      default-install-total: { required: false, type: boolean, default: false }   # futureagi/platform only
+      verify-command: { required: false, type: string, default: '' }   # sh script run inside each arch's image
+    outputs:
+      digest:
+        description: Digest of the published multi-arch manifest
+        value: ${{ jobs.publish.outputs.digest }}
+    secrets:
+      dockerhub-username: { required: true }
+      dockerhub-token:    { required: true }
+
+permissions:
+  contents: read
+
+env:
+  BUILD_CACHE: ghcr.io/future-agi/future-agi/build-cache
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      minor: ${{ steps.version.outputs.minor }}
+      revision: ${{ steps.source.outputs.revision }}
+      created: ${{ steps.source.outputs.created }}
+    steps:
+      - name: Resolve version & minor
+        id: version
+        shell: bash
+        env:
+          RAW_VERSION: ${{ inputs.version }}
+          TAG_SUFFIX: ${{ inputs.tag-suffix }}
+          SIZE_BUDGET: ${{ inputs.size-budget }}
+        run: |
+          set -eu
+          # Same whole-string check as build-image.yml: a crafted version can
+          # neither inject shell nor smuggle a newline into GITHUB_OUTPUT.
+          v="$RAW_VERSION"
+          if [[ ! "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
+            echo "::error::Version '$v' does not match vX.Y.Z[-suffix]"
+            exit 1
+          fi
+          if [[ ! "$TAG_SUFFIX" =~ ^(-[a-z0-9]+)?$ ]]; then
+            echo "::error::tag-suffix '$TAG_SUFFIX' must be empty or look like -gpu"
+            exit 1
+          fi
+          case "$SIZE_BUDGET" in
+            enforce|report|off) ;;
+            *) echo "::error::size-budget must be enforce, report or off"; exit 1 ;;
+          esac
+          base="${v%%-*}"
+          { echo "version=$v"; echo "minor=${base%.*}"; } >> "$GITHUB_OUTPUT"
+      # A branch can move while the legs run: resolve the commit once, build
+      # exactly it on every architecture, and name it in the labels.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 1
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: Source revision and build time (image labels)
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision=$(git rev-parse HEAD)
+          if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::unexpected revision '$revision'"
+            exit 1
+          fi
+          { echo "revision=$revision"; echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"; } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build (${{ matrix.arch }})
+    needs: prepare
+    strategy:
+      matrix:
+        arch: ${{ fromJSON(inputs.arches) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    environment: production
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+      packages: write # the ghcr build cache
+    steps:
+      - name: Free up disk space
+        if: inputs.free-disk
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # main as of 2026-07-23
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: false
+          swap-storage: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.revision }}
+          submodules: false
+      - name: Every build arg is declared in the Dockerfile
+        # docker only warns about an unused --build-arg, so a renamed ARG
+        # would silently build from the Dockerfile's default image instead.
+        if: inputs.build-args != ''
+        shell: bash
+        env:
+          BUILD_ARGS: ${{ inputs.build-args }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+        run: |
+          set -euo pipefail
+          missing=0
+          while IFS= read -r line; do
+            name="${line%%=*}"
+            name="${name//[[:space:]]/}"
+            [ -n "$name" ] || continue
+            if ! grep -Eq "^[[:space:]]*ARG[[:space:]]+${name}([=[:space:]]|$)" "$DOCKERFILE"; then
+              echo "::error::build arg ${name} is not declared as an ARG in ${DOCKERFILE}"
+              missing=1
+            fi
+          done <<<"$BUILD_ARGS"
+          exit "$missing"
+      - name: Layer cache
+        id: cache
+        if: inputs.use-cache
+        shell: bash
+        env:
+          SCOPE: ${{ inputs.cache-scope }}${{ inputs.tag-suffix }}-${{ matrix.arch }}
+          CACHE_FROM_EXTRA: ${{ inputs.cache-from-extra }}
+        run: |
+          set -euo pipefail
+          ref="${BUILD_CACHE}:${SCOPE}"
+          {
+            echo 'from<<EOF'
+            echo "type=registry,ref=${ref}"
+            while IFS= read -r extra; do
+              if [ -n "$extra" ]; then
+                echo "type=registry,ref=${extra}"
+              fi
+            done <<<"$CACHE_FROM_EXTRA"
+            echo 'EOF'
+            echo "to=type=registry,ref=${ref},mode=max,image-manifest=true,oci-mediatypes=true"
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.dockerhub-username }}
+          password: ${{ secrets.dockerhub-token }}
+      - uses: docker/login-action@v3
+        if: inputs.use-cache
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: linux/${{ matrix.arch }}
+          provenance: false
+          # The standard label args first; the caller's own follow.
+          build-args: |
+            VERSION=${{ needs.prepare.outputs.version }}
+            REVISION=${{ needs.prepare.outputs.revision }}
+            CREATED=${{ needs.prepare.outputs.created }}
+            ${{ inputs.build-args }}
+          outputs: type=image,name=docker.io/${{ inputs.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: ${{ steps.cache.outputs.from }}
+          cache-to: ${{ steps.cache.outputs.to }}
+      - name: OCI labels (linux/${{ matrix.arch }})
+        # The Dockerfile must turn the three build args into labels
+        # (docs/images.md); a Dockerfile without them would publish an image
+        # nobody can trace back to its commit.
+        shell: bash
+        env:
+          IMAGE: docker.io/${{ inputs.image }}@${{ steps.build.outputs.digest }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          REVISION: ${{ needs.prepare.outputs.revision }}
+          CREATED: ${{ needs.prepare.outputs.created }}
+        run: |
+          set -euo pipefail
+          labels=$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Image}}' \
+            | jq -c 'if has("config") then .config.Labels else (to_entries[0].value.config.Labels) end')
+          printf '%s\n' "$labels" | jq .
+          failed=0
+          for key in title description source url documentation vendor licenses; do
+            if ! jq -e --arg k "org.opencontainers.image.$key" '.[$k] // "" | length > 0' <<<"$labels" >/dev/null; then
+              echo "::error::label org.opencontainers.image.$key is missing"
+              failed=1
+            fi
+          done
+          for pair in "version=$VERSION" "revision=$REVISION" "created=$CREATED"; do
+            key=${pair%%=*}
+            want=${pair#*=}
+            got=$(jq -r --arg k "org.opencontainers.image.$key" '.[$k] // ""' <<<"$labels")
+            if [ "$got" != "$want" ]; then
+              echo "::error::label org.opencontainers.image.$key is '$got', expected '$want'"
+              failed=1
+            fi
+          done
+          exit "$failed"
+      - name: Verify the image on linux/${{ matrix.arch }}
+        if: inputs.verify-command != ''
+        env:
+          IMAGE: docker.io/${{ inputs.image }}@${{ steps.build.outputs.digest }}
+          VERIFY_COMMAND: ${{ inputs.verify-command }}
+        run: docker run --rm --entrypoint sh "$IMAGE" -ec "$VERIFY_COMMAND"
+      - name: Size budget (linux/${{ matrix.arch }})
+        if: inputs.size-budget != 'off'
+        shell: bash
+        env:
+          IMAGE: ${{ inputs.image }}
+          TAG_SUFFIX: ${{ inputs.tag-suffix }}
+          NEW_REF: docker.io/${{ inputs.image }}@${{ steps.build.outputs.digest }}
+          BASELINE_REF: docker.io/${{ inputs.image }}:latest${{ inputs.tag-suffix }}
+          ARCH: ${{ matrix.arch }}
+          GROWTH_PERCENT: ${{ inputs.size-budget-percent }}
+          DEFAULT_INSTALL: ${{ inputs.default-install-total }}
+          MODE: ${{ inputs.size-budget }}
+        run: |
+          set -euo pipefail
+          if [ ! -f scripts/image_size_budget.py ]; then
+            echo "::notice::scripts/image_size_budget.py is not in this ref; size budget skipped"
+            exit 0
+          fi
+          args=(check --image "$IMAGE" "--tag-suffix=${TAG_SUFFIX}" --arch "$ARCH"
+                --ref "$NEW_REF" --baseline "$BASELINE_REF" --max-growth-percent "$GROWTH_PERCENT")
+          if [ "$DEFAULT_INSTALL" = true ]; then args+=(--default-install); fi
+          if [ "$MODE" = report ]; then args+=(--report-only); fi
+          python3 scripts/image_size_budget.py "${args[@]}"
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/digests"
+          touch "${RUNNER_TEMP}/digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@v4
+        with:
+          # Scoped by cache-scope and suffix: one release run calls this
+          # workflow for several images, and artifact names are unique per run.
+          # `_` separates the parts, so publish's pattern for `serving` cannot
+          # pick up the digests of `serving-gpu` (or base-image-publish's).
+          name: digests_${{ inputs.cache-scope }}${{ inputs.tag-suffix }}_${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests_${{ inputs.cache-scope }}${{ inputs.tag-suffix }}_*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.dockerhub-username }}
+          password: ${{ secrets.dockerhub-token }}
+      - name: Point the tags at the multi-arch manifest
+        working-directory: ${{ runner.temp }}/digests
+        shell: bash
+        env:
+          IMAGE: docker.io/${{ inputs.image }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          MINOR: ${{ needs.prepare.outputs.minor }}
+          SUFFIX: ${{ inputs.tag-suffix }}
+          PUSH_LATEST: ${{ inputs.push-latest }}
+        run: |
+          set -euo pipefail
+          tags=(-t "${IMAGE}:${VERSION}${SUFFIX}")
+          case "$VERSION" in
+            *-*)
+              echo "Prerelease tag detected; shared minor/latest aliases will not move."
+              ;;
+            *)
+              tags+=(-t "${IMAGE}:${MINOR}${SUFFIX}")
+              if [ "$PUSH_LATEST" = "true" ]; then
+                tags+=(-t "${IMAGE}:latest${SUFFIX}")
+              fi
+              ;;
+          esac
+          # Filenames here are the per-arch manifest digests exported by the
+          # build legs; if-no-files-found=error upstream keeps the glob non-empty.
+          sources=()
+          for digest in *; do
+            sources+=("${IMAGE}@sha256:${digest}")
+          done
+          docker buildx imagetools create "${tags[@]}" "${sources[@]}"
+      - name: Verify every architecture is present
+        env:
+          IMAGE: docker.io/${{ inputs.image }}
+          TAG: ${{ needs.prepare.outputs.version }}${{ inputs.tag-suffix }}
+          ARCHES: ${{ join(fromJSON(inputs.arches), ' ') }}
+        run: |
+          out="$(docker buildx imagetools inspect "${IMAGE}:${TAG}")"
+          printf '%s\n' "$out"
+          for arch in $ARCHES; do
+            if ! printf '%s' "$out" | grep -q "linux/${arch}"; then
+              echo "::error::published manifest is missing linux/${arch}"
+              exit 1
+            fi
+          done
+      - name: Published digest
+        id: digest
+        env:
+          IMAGE: docker.io/${{ inputs.image }}
+          TAG: ${{ needs.prepare.outputs.version }}${{ inputs.tag-suffix }}
+        run: |
+          set -euo pipefail
+          digest=$(docker buildx imagetools inspect "${IMAGE}:${TAG}" --format '{{json .Manifest}}' | jq -er '.digest')
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "::error::unexpected digest '$digest'"; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "${IMAGE}:${TAG} = ${digest}" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,99 @@
+{
+  "_comment": [
+    "Compressed MB (10^6 bytes) per linux/<arch>, read from registry manifests: what `docker pull` downloads. Read by scripts/image_size_budget.py.",
+    "Checked before any tag moves (build-image-multiarch.yml, on release and on the per-image dispatch builds) and on pull requests (platform-ci.yml). An image without an entry fails the check.",
+    "budget_mb = max(measured, projected) + 10% where measured_mb is present (the arm64 measurement can undercount amd64, e.g. Go binaries) (measured 2026-09-25 on a linux/arm64 from-source build of this branch, `docker save | gzip -6`, which tracks the registry's gzip layer sizes); otherwise the docker-size plan's projection (projected_mb) plus ~15% headroom. Lower budgets as further slimming lands. Raise one only in a reviewed pull request that says why.",
+    "Before the patches (v1.41, amd64, measured): future-agi 770.5, frontend 89.0, serving 3613 (arm64 650), code-executor 331 (arm64 319), fi-collector 22.6, agentcc-gateway 7.2; postgres:16 160.3, clickhouse-server:25.3-alpine 175.3.",
+    "enforce=false: measured and reported, never fails."
+  ],
+  "arches": [
+    "amd64",
+    "arm64"
+  ],
+  "images": [
+    {
+      "image": "futureagi/future-agi",
+      "budget_mb": 890,
+      "projected_mb": 771,
+      "note": "The default, feature-complete variant (IMAGE_VARIANT=standard): the dependency set, uv, git, Debian ffmpeg, full NLTK data and untrimmed site-packages of the releases before the variants, so projected at v1.41's 770.5 (amd64) until a release measures it. Distributed, Helm, the simulation runner and the EE and cloud builds use it."
+    },
+    {
+      "image": "futureagi/future-agi",
+      "tag_suffix": "-slim",
+      "budget_mb": 376,
+      "projected_mb": 341,
+      "measured_mb": 341,
+      "note": "IMAGE_VARIANT=slim, the base of futureagi/platform."
+    },
+    {
+      "image": "futureagi/platform",
+      "budget_mb": 549,
+      "projected_mb": 499,
+      "measured_mb": 479
+    },
+    {
+      "image": "futureagi/frontend",
+      "budget_mb": 42,
+      "projected_mb": 38,
+      "measured_mb": 37.6
+    },
+    {
+      "image": "futureagi/fi-collector",
+      "budget_mb": 25,
+      "projected_mb": 22.6,
+      "measured_mb": 17.7
+    },
+    {
+      "image": "futureagi/agentcc-gateway",
+      "budget_mb": 9,
+      "projected_mb": 8.0,
+      "measured_mb": 6.5,
+      "note": "projected 7.2 + 0.8: the static HEALTHCHECK probe (/usr/local/bin/healthcheck, 0.79 MB gzip on amd64; scratch has no shell or wget). fi-collector carries the same probe within its budget."
+    },
+    {
+      "image": "futureagi/serving",
+      "budget_mb": {
+        "amd64": 520,
+        "arm64": 480
+      },
+      "projected_mb": {
+        "amd64": 450,
+        "arm64": 400
+      }
+    },
+    {
+      "image": "futureagi/serving",
+      "tag_suffix": "-gpu",
+      "arches": [
+        "amd64"
+      ],
+      "budget_mb": 3800,
+      "projected_mb": 3340
+    },
+    {
+      "image": "futureagi/code-executor",
+      "budget_mb": 225,
+      "projected_mb": 185
+    },
+    {
+      "image": "futureagi/future-agi-simulation-runner",
+      "arches": [
+        "amd64"
+      ],
+      "budget_mb": 1350,
+      "projected_mb": 1172,
+      "enforce": false,
+      "note": "FROM the default futureagi/future-agi variant plus a ~401 MB SDK venv (v1.41.1: 1171.4 = 770.5 + 400.9). Published by build-image.yml, so it is reported after the release, not gated."
+    }
+  ],
+  "default_install": {
+    "app": "futureagi/platform",
+    "with": [
+      "postgres:16",
+      "clickhouse/clickhouse-server:25.3-alpine"
+    ],
+    "budget_mb": 884,
+    "projected_mb": 835,
+    "measured_mb": 803
+  }
+}

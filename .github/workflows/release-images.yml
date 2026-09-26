@@ -1,7 +1,32 @@
-# Tag-triggered release: builds all seven platform images at the pushed vX.Y.Z
+# Tag-triggered release: builds every platform image at the pushed vX.Y.Z
 # tag, then fans out (ee overlay dispatch, deployment values-bump PR, docs
 # changelog dispatch). Pre-release tags (-suffix) never reach this workflow
 # (release-please only cuts bare vX.Y.Z; the guard job double-checks).
+#
+# Every image builds through build-image-multiarch.yml: linux/amd64 and
+# linux/arm64 on native runners (the CUDA serving variant: amd64 only),
+# pushed by digest, run, checked against its compressed-size budget
+# (scripts/image_size_budget.json), and tagged only when every architecture
+# passed. Layers come from a registry build cache, so an upgrade downloads
+# only the layers that changed. The simulation runner (amd64 only) still uses
+# build-image.yml, and the code-executor base base-image-publish.yml.
+#
+# The backend has two variants (futureagi/Dockerfile.oss IMAGE_VARIANT,
+# docs/images.md): the default, feature-complete futureagi/future-agi:<tag>,
+# which Distributed and Helm run and the simulation runner and the EE and
+# cloud images build on (future-agi/ee Dockerfile.ee: FROM it, then
+# `uv pip install`), and the lean <tag>-slim.
+#
+# Order: component images -> futureagi/platform (the Standalone install's app
+# image, assembled FROM the -slim backend and three components of this same
+# version, pinned by digest). The simulation runner builds FROM the default
+# backend's digest. code-executor builds FROM the base image its Dockerfile
+# pins; that base is published first when the tag does not exist.
+#
+# Tags (docs/images.md): vX.Y.Z, vX.Y and latest for every image; the slim
+# backend adds -slim and the CUDA serving variant -gpu to each. Labels: the
+# reusable build workflows pass VERSION, REVISION and CREATED to every
+# Dockerfile.
 name: release-images
 
 on:
@@ -46,25 +71,22 @@ jobs:
   build:
     needs: guard
     if: github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write # ghcr build cache
     strategy:
       fail-fast: false
       matrix:
         include:
+          # cache-from-extra: the amd64 layer cache e2e-ci.yml writes on
+          # every push to dev and main, usually from this very commit.
           - {
               name: frontend,
               image: futureagi/frontend,
               context: ./frontend,
               dockerfile: ./frontend/Dockerfile,
               free-disk: true,
-              platforms: "linux/amd64,linux/arm64",
-            }
-          - {
-              name: backend,
-              image: futureagi/future-agi,
-              context: ./futureagi,
-              dockerfile: ./futureagi/Dockerfile.oss,
-              free-disk: false,
-              platforms: linux/amd64,
+              cache-from-extra: "ghcr.io/future-agi/future-agi/e2e-cache:frontend",
             }
           - {
               name: agentcc-gateway,
@@ -72,23 +94,16 @@ jobs:
               context: ./agentcc-gateway,
               dockerfile: ./agentcc-gateway/Dockerfile,
               free-disk: false,
-              platforms: "linux/amd64,linux/arm64",
+              cache-from-extra: "ghcr.io/future-agi/future-agi/e2e-cache:gateway",
             }
+          # CPU torch on both architectures; the CUDA variant is serving-gpu.
           - {
               name: serving,
               image: futureagi/serving,
               context: ./futureagi/model_serving,
               dockerfile: ./futureagi/model_serving/Dockerfile.oss,
               free-disk: false,
-              platforms: "linux/amd64,linux/arm64",
-            }
-          - {
-              name: code-executor,
-              image: futureagi/code-executor,
-              context: ./futureagi/code-executor,
-              dockerfile: ./futureagi/code-executor/Dockerfile,
-              free-disk: false,
-              platforms: "linux/amd64,linux/arm64",
+              cache-from-extra: "",
             }
           - {
               name: fi-collector,
@@ -96,19 +111,274 @@ jobs:
               context: ./fi-collector,
               dockerfile: ./fi-collector/Dockerfile,
               free-disk: false,
-              platforms: "linux/amd64,linux/arm64",
+              cache-from-extra: "ghcr.io/future-agi/future-agi/e2e-cache:fi-collector",
             }
-    uses: ./.github/workflows/build-image.yml
+    uses: ./.github/workflows/build-image-multiarch.yml
     with:
       image: ${{ matrix.image }}
       context: ${{ matrix.context }}
       dockerfile: ${{ matrix.dockerfile }}
       version: ${{ needs.guard.outputs.version }}
       ref: ${{ github.ref }}
-      platforms: ${{ matrix.platforms }}
       push-latest: true
       free-disk: ${{ matrix.free-disk }}
       cache-scope: ${{ matrix.name }}
+      cache-from-extra: ${{ matrix.cache-from-extra }}
+    secrets:
+      dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+      dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  # The CUDA serving image, for hosts with an NVIDIA GPU: <version>-gpu,
+  # <minor>-gpu, latest-gpu. linux/amd64 only. The default futureagi/serving
+  # tags are CPU-only on both architectures (CUDA wheels made the amd64 image
+  # ~3.6 GB for compose installs that never pass a GPU through).
+  serving-gpu:
+    needs: guard
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write # ghcr build cache
+    uses: ./.github/workflows/build-image-multiarch.yml
+    with:
+      image: futureagi/serving
+      context: ./futureagi/model_serving
+      dockerfile: ./futureagi/model_serving/Dockerfile.oss
+      version: ${{ needs.guard.outputs.version }}
+      ref: ${{ github.ref }}
+      push-latest: true
+      arches: '["amd64"]'
+      tag-suffix: -gpu
+      free-disk: true
+      cache-scope: serving
+      build-args: |
+        TORCH_BACKEND=cu124
+    secrets:
+      dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+      dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  # futureagi/code-executor builds FROM the base image its Dockerfile pins
+  # (ARG CODE_EXECUTOR_BASE=futureagi/code-executor-base:vX.Y.Z). Base tags
+  # are immutable and bumped by hand when Dockerfile.base changes (backend-ci
+  # refuses a Dockerfile.base change whose pin names a published tag), so a
+  # release publishes the pinned tag only when it does not exist yet.
+  code-executor-base-pin:
+    needs: guard
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.pin.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: futureagi/code-executor/Dockerfile
+          sparse-checkout-cone-mode: false
+      - id: pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref=$(sed -nE 's/^[[:space:]]*ARG[[:space:]]+CODE_EXECUTOR_BASE=([^[:space:]]+).*/\1/p' \
+            futureagi/code-executor/Dockerfile | head -n1)
+          re='^futureagi/code-executor-base:(v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?)(@sha256:[a-f0-9]{64})?$'
+          if [[ ! "$ref" =~ $re ]]; then
+            echo "::error::futureagi/code-executor/Dockerfile must pin ARG CODE_EXECUTOR_BASE=futureagi/code-executor-base:vX.Y.Z[@sha256:...] (found '${ref}')"
+            exit 1
+          fi
+          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+
+  code-executor-base:
+    needs: [guard, code-executor-base-pin]
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/base-image-publish.yml
+    with:
+      image: code-executor-base
+      version: ${{ needs.code-executor-base-pin.outputs.version }}
+      if-missing: true
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  code-executor:
+    needs: [guard, code-executor-base]
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write # ghcr build cache
+    uses: ./.github/workflows/build-image-multiarch.yml
+    with:
+      image: futureagi/code-executor
+      context: ./futureagi/code-executor
+      dockerfile: ./futureagi/code-executor/Dockerfile
+      version: ${{ needs.guard.outputs.version }}
+      ref: ${{ github.ref }}
+      push-latest: true
+      cache-scope: code-executor
+    secrets:
+      dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+      dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  # Native amd64 + arm64 (no QEMU: the arm64 leg compiles wheels), so the
+  # platform image below, and anyone pulling the backend on Apple Silicon or
+  # Graviton, get a native image.
+  #
+  # The default variant (IMAGE_VARIANT=standard). It stays a drop-in for what
+  # builds on it: the EE and cloud images run `uv pip install` in it, and the
+  # simulation runner's hosted-harness jobs need the sandbox SDKs and git, so
+  # no tag moves unless they are there.
+  backend:
+    needs: guard
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write # ghcr build cache
+    uses: ./.github/workflows/build-image-multiarch.yml
+    with:
+      image: futureagi/future-agi
+      context: ./futureagi
+      dockerfile: ./futureagi/Dockerfile.oss
+      version: ${{ needs.guard.outputs.version }}
+      ref: ${{ github.ref }}
+      push-latest: true
+      cache-scope: backend
+      cache-from-extra: ghcr.io/future-agi/future-agi/e2e-cache:backend
+      verify-command: |
+        uv --version
+        git --version
+        python -c "import daytona, e2b, httpx_ws, stripe, flower, vertexai, langchain_community, channels_rabbitmq"
+    secrets:
+      dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+      dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  # The slim variant: futureagi/future-agi:<version>-slim, <minor>-slim and
+  # latest-slim, the base of futureagi/platform. Its builder's dependency
+  # layers are the default variant's, so it also reads that variant's caches.
+  backend-slim:
+    needs: guard
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write # ghcr build cache
+    uses: ./.github/workflows/build-image-multiarch.yml
+    with:
+      image: futureagi/future-agi
+      context: ./futureagi
+      dockerfile: ./futureagi/Dockerfile.oss
+      version: ${{ needs.guard.outputs.version }}
+      ref: ${{ github.ref }}
+      push-latest: true
+      tag-suffix: -slim
+      cache-scope: backend
+      cache-from-extra: |
+        ghcr.io/future-agi/future-agi/e2e-cache:backend
+        ghcr.io/future-agi/future-agi/build-cache:backend-amd64
+        ghcr.io/future-agi/future-agi/build-cache:backend-arm64
+      build-args: |
+        IMAGE_VARIANT=slim
+    secrets:
+      dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+      dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
+
+  # The platform image is FROM the -slim backend and copies files out of three
+  # more images. Pin all four to the digests this run just published and
+  # checked, so the Standalone app image is built from exactly those bytes,
+  # whatever a tag points at later.
+  platform-inputs:
+    needs: [guard, build, backend-slim]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      build-args: ${{ steps.pin.outputs.build-args }}
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - id: pin
+        shell: bash
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          set -euo pipefail
+          pin() { # build arg, image, tag
+            local digest
+            digest=$(docker buildx imagetools inspect "docker.io/$2:$3" --format '{{json .Manifest}}' | jq -er '.digest')
+            if [[ ! "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+              echo "::error::no digest for $2:$3" >&2
+              exit 1
+            fi
+            printf '%s=docker.io/%s:%s@%s\n' "$1" "$2" "$3" "$digest"
+          }
+          args=$(
+            pin BACKEND_IMAGE futureagi/future-agi "${VERSION}-slim"
+            pin FRONTEND_IMAGE futureagi/frontend "$VERSION"
+            pin FI_COLLECTOR_IMAGE futureagi/fi-collector "$VERSION"
+            pin AGENTCC_GATEWAY_IMAGE futureagi/agentcc-gateway "$VERSION"
+          )
+          printf '%s\n' "$args"
+          { echo 'build-args<<EOF'; printf '%s\n' "$args"; echo 'EOF'; } >> "$GITHUB_OUTPUT"
+
+  # futureagi/platform, the Standalone install's app image (docker-compose.yml).
+  # Besides its own budget, each architecture's leg checks what a fresh
+  # standalone install downloads (platform + postgres + clickhouse, distinct
+  # layers), and the growth over :latest may be at most
+  # PLATFORM_SIZE_BUDGET_PERCENT (repository variable, default 10; 0 turns
+  # that part off), or no tag moves.
+  platform:
+    needs: [guard, platform-inputs]
+    if: github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write # required by the reusable workflow; no cache is used
+    uses: ./.github/workflows/build-image-multiarch.yml
+    with:
+      image: futureagi/platform
+      context: ./deploy/platform
+      dockerfile: ./deploy/platform/Dockerfile
+      version: ${{ needs.guard.outputs.version }}
+      ref: ${{ github.ref }}
+      push-latest: true
+      cache-scope: platform
+      # Every release changes the base image, so a layer cache never hits.
+      use-cache: false
+      timeout-minutes: 45
+      size-budget-percent: ${{ fromJSON(vars.PLATFORM_SIZE_BUDGET_PERCENT || '10') }}
+      default-install-total: true
+      build-args: ${{ needs.platform-inputs.outputs.build-args }}
+      # Every bundled binary must be this architecture's and must start:
+      # a single-arch source image would otherwise ship an x86 binary in the
+      # arm64 image. Keep in sync with VERIFY_PLATFORM in platform-ci.yml.
+      verify-command: |
+        python - <<'PY'
+        import os, platform, shutil, subprocess, sys
+        machine = {"x86_64": 0x3E, "aarch64": 0xB7}[platform.machine()]
+        failed = []
+        for argv in (["fi-collector", "--help"], ["agentcc-gateway", "--help"],
+                     ["temporal", "--version"], ["minio", "--version"],
+                     ["redis-server", "--version"], ["nginx", "-v"],
+                     ["supervisord", "--version"]):
+            path = shutil.which(argv[0])
+            if path is None:
+                failed.append(f"{argv[0]}: not on PATH")
+                continue
+            with open(os.path.realpath(path), "rb") as binary:
+                head = binary.read(20)
+            if head[:4] == b"\x7fELF" and int.from_bytes(head[18:20], "little") != machine:
+                failed.append(f"{argv[0]}: built for another architecture")
+                continue
+            try:
+                subprocess.run(argv, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=10)
+            except subprocess.TimeoutExpired:
+                pass  # it started and kept running
+            except OSError as exc:
+                failed.append(f"{argv[0]}: {exc}")
+                continue
+            print(f"ok  {path}")
+        import channels_redis, falcon, gunicorn  # noqa: F401
+        sys.exit("\n".join(failed) or None)
+        PY
     secrets:
       dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
       dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -141,8 +411,11 @@ jobs:
           { echo "sdk_version=$sdk"; echo "sdk_wheel_sha256=$sha"; } >> "$GITHUB_OUTPUT"
           echo "agent-learning-kit ${sdk} (wheel sha256 ${sha})"
 
+  # FROM this release's default (feature-complete) backend, pinned by the
+  # digest the backend job published; never the -slim variant
+  # (Dockerfile.simulation-runner checks for the sandbox SDKs and git).
   simulation-runner:
-    needs: [guard, build, resolve-sdk]
+    needs: [guard, build, backend, resolve-sdk]
     if: github.event_name == 'push'
     uses: ./.github/workflows/build-image.yml
     with:
@@ -157,14 +430,14 @@ jobs:
       cache-scope: simulation-runner
       timeout-minutes: 45
       build-args: |
-        BACKEND_IMAGE=futureagi/future-agi:${{ needs.guard.outputs.version }}
+        BACKEND_IMAGE=docker.io/futureagi/future-agi:${{ needs.guard.outputs.version }}@${{ needs.backend.outputs.digest }}
         FI_VERSION=${{ needs.resolve-sdk.outputs.sdk_version }}
     secrets:
       dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
       dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
 
   dispatch-ee:
-    needs: [guard, build]
+    needs: [guard, build, backend, code-executor]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
@@ -190,10 +463,12 @@ jobs:
             -F 'client_payload[release_body_b64]'="${body_b64}"
 
   release-worker:
-    needs: [guard, build]
+    needs: [guard, build, backend, code-executor]
     if: >-
       always() && needs.guard.result == 'success' &&
-      (github.event_name == 'workflow_dispatch' || needs.build.result == 'success')
+      (github.event_name == 'workflow_dispatch' ||
+        (needs.build.result == 'success' && needs.backend.result == 'success' &&
+          needs.code-executor.result == 'success'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: ${{ github.event_name == 'push' && 'production-auto' || 'production' }}
@@ -234,7 +509,7 @@ jobs:
           test "$actual" = "$EXPECTED_DIGEST"
 
   dispatch-docs:
-    needs: [guard, build]
+    needs: [guard, build, backend, code-executor]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     continue-on-error: true
@@ -259,6 +534,29 @@ jobs:
             -F 'client_payload[version]'="${VERSION}" \
             -F 'client_payload[release_url]'="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${VERSION}" \
             -F 'client_payload[release_body_b64]'="${body_b64}"
+
+  # Every image of this release next to its budget, in one table for the
+  # release notes. Each image was already checked before its tags moved; this
+  # job never fails the release.
+  size-report:
+    needs: [guard, build, serving-gpu, code-executor, backend, backend-slim, platform, simulation-runner]
+    if: always() && needs.guard.result == 'success' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Image sizes
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: python3 scripts/image_size_budget.py report --tag "$VERSION"
 
   bump-deployment:
     needs: [guard, dispatch-ee, resolve-sdk, simulation-runner, release-worker]

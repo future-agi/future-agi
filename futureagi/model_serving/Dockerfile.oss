@@ -1,34 +1,122 @@
 # ============================================================================
 # Future AGI — OSS model-serving image
 # Self-contained public base. No private registry required.
+#
+# CPU image (default, futureagi/serving:<ver>, linux/amd64 + linux/arm64):
+#   docker build -f Dockerfile.oss .
+# GPU image (CUDA 12.4 torch, linux/amd64 only; published as
+# futureagi/serving:<ver>-gpu):
+#   docker build -f Dockerfile.oss --build-arg TORCH_BACKEND=cu124 .
+#
+# Size (futureagi/serving:latest was 3,613 MB gzip on amd64, 650 MB on arm64):
+#   * torch/torchaudio come from the PyTorch CPU index by default
+#     (uv --torch-backend). PyPI's x86_64 torch==2.6.0 is the CUDA build
+#     (766.7 MB) and pulls 13 nvidia-* wheels + triton (2.28 GB); the +cpu
+#     wheel is 178.7 MB. arm64 PyPI wheels are already CPU-only, which is why
+#     the two arches differed by ~3 GB.
+#   * compilers stay in the build stage (a 198 MB gzip layer in the old image).
+#   * no uv binary and no uv cache in the image.
+#   * same digest-pinned Python base as the backend and code-executor images.
+#
+# Runs as root by default, a documented exception (docs/images.md): the cloud
+# embedding pod mounts a root-owned model-cache volume (HF_HOME) with no
+# fsGroup, which uid 1000 could not write. The image is ready for uid 1000
+# (appuser, the backend image's uid): Helm runs it that way with fsGroup
+# 1000, and compose can with `user: "1000:1000"`. It serves on :8080 and
+# writes only model caches (under $HOME/.cache unless HF_HOME and friends
+# point elsewhere). Conventions shared by every futureagi/* image:
+# docs/images.md.
 # ============================================================================
 
-FROM python:3.11-slim
+ARG PYTHON_IMAGE=python:3.11-slim-bookworm@sha256:a36c24f9cbdf4fd0f52d67f0823eeac19c2028c637cecc392d97f980d4fec56b
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.11.16@sha256:440fd6477af86a2f1b38080c539f1672cd22acb1b1a47e321dba5158ab08864d
+# cpu (default) | cu124 | cu126 | ... — see `uv pip install --help`.
+ARG TORCH_BACKEND=cpu
 
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    UV_HTTP_TIMEOUT=300
+FROM ${UV_IMAGE} AS uv
 
-WORKDIR /app/embedding
-
+# --------------- build stage ---------------
+FROM ${PYTHON_IMAGE} AS build
+ARG TORCH_BACKEND
+ENV UV_HTTP_TIMEOUT=300 \
+    UV_LINK_MODE=copy \
+    UV_NO_CACHE=1
+# Compilers for the few sdists without wheels (hdbscan on linux/arm64).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
-        gcc \
-        g++ \
-        python3-dev \
         libffi-dev \
-        libpq-dev \
-        curl \
-        git \
-    && rm -rf /var/lib/apt/lists/* \
-    && pip install uv
-
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=uv /uv /bin/uv
+WORKDIR /app/embedding
 COPY pyproject.toml ./
-RUN uv pip install --system .
+# --torch-backend routes torch/torchaudio/torchvision/triton to
+# download.pytorch.org/whl/<backend> and everything else to PyPI. Resolution
+# checked with uv 0.11.16 for linux x86_64 and aarch64: cpu gives
+# torch==2.6.0+cpu and torchaudio==2.6.0 with no nvidia-*/triton packages;
+# cu124 gives torch==2.6.0+cu124 with the nvidia-* wheels.
+RUN uv pip install --system --torch-backend="${TORCH_BACKEND}" .
+# The build arg is in RUN's environment; fail the build when the installed
+# torch does not match TORCH_BACKEND. A layer of its own: the install above
+# stays cached when only this check changes.
+# hadolint ignore=DL3059
+RUN python -c "import importlib.metadata as md, os, torch; \
+backend = os.environ['TORCH_BACKEND']; \
+nvidia = sorted(d.metadata['Name'] for d in md.distributions() if d.metadata['Name'].lower().startswith(('nvidia-', 'triton'))); \
+print('torch', torch.__version__, 'cuda', torch.version.cuda, 'nvidia/triton:', nvidia); \
+assert backend != 'cpu' or (torch.version.cuda is None and not nvidia), 'CPU build pulled CUDA packages'; \
+assert not backend.startswith('cu') or torch.version.cuda is not None, backend + ' build installed a CPU-only torch'"
+RUN find /usr/local/lib/python3.11/site-packages -mindepth 1 -type d -name tests -prune -exec rm -rf {} + \
+    && find /usr/local/lib/python3.11/site-packages -type f -name '*.pyi' -delete
 
+# --------------- runtime stage ---------------
+FROM ${PYTHON_IMAGE}
+ARG TORCH_BACKEND
+LABEL ai.futureagi.torch-backend="${TORCH_BACKEND}"
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+# soundfile 0.12.1 ships libsndfile only in its x86_64 wheel (PyPI has no
+# aarch64 wheel), so on arm64 librosa needs the system library.
+RUN if [ "$(dpkg --print-architecture)" != "amd64" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends libsndfile1 \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi
+WORKDIR /app/embedding
+COPY --from=build /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=build /usr/local/bin /usr/local/bin
+RUN python -c "import torch, torchaudio, transformers, sentence_transformers, sklearn, hdbscan, librosa, soundfile, av, wav2clip, fastapi, gunicorn, uvicorn; print('serving import smoke: OK')"
+# The non-root user (`--user 1000:1000`, Helm runAsUser), after the large
+# layers so adding it reused their cache. NUMBA_CACHE_DIR: librosa's numba
+# functions cache compiled code, and neither site-packages nor (for an
+# arbitrary Kubernetes runAsUser) $HOME is writable.
+RUN groupadd --gid 1000 appuser \
+    && useradd --uid 1000 --gid appuser --shell /usr/sbin/nologin --create-home appuser
+ENV NUMBA_CACHE_DIR=/tmp/numba-cache
 COPY . .
 RUN chmod +x entrypoint.sh
 
 EXPOSE 8000 8080
 
-ENTRYPOINT ["./entrypoint.sh"]
+# Root by default; see the header and docs/images.md.
+# hadolint ignore=DL3002
+USER root
+STOPSIGNAL SIGTERM
+# Models load on the first request, not at start (app/utils/load_model.py).
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=5 \
+    CMD ["python", "-I", "-S", "-c", "import urllib.request as u; u.build_opener(u.ProxyHandler({})).open('http://127.0.0.1:8080/health', timeout=5).close()"]
+ENTRYPOINT ["/app/embedding/entrypoint.sh"]
+
+# Image metadata (docs/images.md). Declared last: a new version, commit or
+# build time changes the image config only, never a cached layer.
+ARG VERSION=dev
+ARG REVISION=unknown
+ARG CREATED=""
+LABEL org.opencontainers.image.title="Future AGI model serving" \
+      org.opencontainers.image.description="Embedding and audio/image model server for embedding-based evals and knowledge bases (FastAPI on :8080). CPU torch; the -gpu tags carry CUDA torch." \
+      org.opencontainers.image.source="https://github.com/future-agi/future-agi" \
+      org.opencontainers.image.url="https://futureagi.com" \
+      org.opencontainers.image.documentation="https://github.com/future-agi/future-agi/blob/main/docs/images.md" \
+      org.opencontainers.image.vendor="Future AGI" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.created="${CREATED}"
