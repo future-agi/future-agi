@@ -54,4 +54,106 @@ describe("VoiceRightPanel", () => {
     expect(screen.getByText("raw_log")).toBeInTheDocument();
     expect(screen.getByText("vapi.call_id")).toBeInTheDocument();
   });
+
+  it("shows utterance-level error localization when an environment eval is expanded", async () => {
+    renderWithQueryClient(
+      <VoiceRightPanel
+        data={{
+          id: "call-1",
+          module: "simulate",
+          status: "completed",
+          provider: "livekit",
+          transcript: [],
+          eval_metrics: {
+            "eval-1": {
+              id: "eval-1",
+              name: "Greeting quality",
+              value: "Failed",
+              type: "Pass/Fail",
+              reason: "The greeting was not appropriate.",
+              error_localizer: true,
+              error_localizer_status: "completed",
+              selected_input_key: "conversation",
+              input_data: {
+                conversation:
+                  "Simulator: Hello.\nAgent: Stop wasting my time.\nSimulator: Goodbye.",
+              },
+              input_types: { conversation: "text" },
+              error_analysis: {
+                conversation: [
+                  {
+                    orgSen: { startIdx: 25, endIdx: 46 },
+                    reason: "The agent utterance is hostile.",
+                  },
+                ],
+              },
+            },
+          },
+        }}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: "Evals" }));
+    await userEvent.click(screen.getByText("Greeting quality"));
+
+    expect(screen.getByText("Possible Error")).toBeInTheDocument();
+    expect(screen.getByText("Stop wasting my time.")).toBeInTheDocument();
+  });
+
+  it("shows image-region error localization when an image eval is expanded", async () => {
+    const getContext = vi
+      .spyOn(HTMLCanvasElement.prototype, "getContext")
+      .mockReturnValue({ clearRect: vi.fn() });
+
+    renderWithQueryClient(
+      <VoiceRightPanel
+        data={{
+          id: "call-image",
+          module: "simulate",
+          status: "completed",
+          provider: "browser",
+          transcript: [],
+          eval_metrics: {
+            "eval-image": {
+              id: "eval-image",
+              name: "Screenshot quality",
+              value: "Failed",
+              type: "Pass/Fail",
+              error_localizer: true,
+              error_localizer_status: "completed",
+              selected_input_key: "screenshot",
+              input_data: {
+                screenshot:
+                  "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==",
+              },
+              input_types: { screenshot: "image" },
+              error_analysis: {
+                screenshot: [
+                  {
+                    orgPatch: {
+                      coordinates: {
+                        topLeft: [0, 0],
+                        bottomRight: [1, 1],
+                      },
+                    },
+                    reason: "The button is obscured.",
+                  },
+                ],
+              },
+            },
+          },
+        }}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: "Evals" }));
+    await userEvent.click(screen.getByText("Screenshot quality"));
+
+    expect(screen.getByText("Possible Error")).toBeInTheDocument();
+    expect(screen.getByAltText("Overlayed")).toHaveAttribute(
+      "src",
+      expect.stringContaining("data:image/gif;base64"),
+    );
+    getContext.mockRestore();
+  });
 });

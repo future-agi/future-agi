@@ -29,6 +29,10 @@ import { canonicalEntries } from "src/utils/utils";
  *      /tracer/custom-eval-config/run_evaluation/ (which recomputes the
  *      error analysis as a side effect).
  *
+ *   3. Inline mode — call-detail payloads provide the analysis/status and
+ *      localized input directly, without IDs for starting a new task. This is
+ *      the read-only mode used by Environment run drawers.
+ *
  * UI states across both modes:
  *   • completed + analysis → ErrorLocalizeCard with highlighted segments
  *   • running / pending    → purple spinner banner
@@ -43,6 +47,7 @@ const EvalErrorLocalization = ({
   projectVersionId,
   initialAnalysis,
   initialStatus,
+  initialMessage,
   datapoint,
   selectedInputKey,
 }) => {
@@ -249,9 +254,6 @@ const EvalErrorLocalization = ({
     }
   }
 
-  // Without any IDs we can't offer run/retry actions.
-  if (!mode) return null;
-
   // ── State 2: running ─────────────────────────────────────────────────────
   if (effectiveStatus === "pending" || effectiveStatus === "running") {
     return (
@@ -314,27 +316,29 @@ const EvalErrorLocalization = ({
         <Typography variant="caption" fontWeight={600} color="error.main">
           Error localization failed
         </Typography>
-        {cellPollData?.error_message && (
+        {(cellPollData?.error_message || initialMessage) && (
           <Typography
             variant="caption"
             color="text.secondary"
             sx={{ fontSize: 10 }}
           >
-            {cellPollData.error_message}
+            {cellPollData?.error_message || initialMessage}
           </Typography>
         )}
-        <Box>
-          <Button
-            size="small"
-            variant="outlined"
-            color="primary"
-            onClick={() => triggerMutation.mutate()}
-            disabled={triggerMutation.isPending}
-            sx={{ textTransform: "none", fontSize: 11, mt: 0.25 }}
-          >
-            Retry
-          </Button>
-        </Box>
+        {mode && (
+          <Box>
+            <Button
+              size="small"
+              variant="outlined"
+              color="primary"
+              onClick={() => triggerMutation.mutate()}
+              disabled={triggerMutation.isPending}
+              sx={{ textTransform: "none", fontSize: 11, mt: 0.25 }}
+            >
+              Retry
+            </Button>
+          </Box>
+        )}
       </Box>
     );
   }
@@ -342,7 +346,9 @@ const EvalErrorLocalization = ({
   // ── State 4: skipped ─────────────────────────────────────────────────────
   if (effectiveStatus === "skipped") {
     return (
-      <SkippedLocalizationBanner message={cellPollData?.error_message} />
+      <SkippedLocalizationBanner
+        message={cellPollData?.error_message || initialMessage}
+      />
     );
   }
 
@@ -420,6 +426,7 @@ EvalErrorLocalization.propTypes = {
   projectVersionId: PropTypes.string,
   initialAnalysis: PropTypes.object,
   initialStatus: PropTypes.string,
+  initialMessage: PropTypes.string,
   datapoint: PropTypes.object,
   selectedInputKey: PropTypes.string,
 };

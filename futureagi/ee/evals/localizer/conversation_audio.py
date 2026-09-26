@@ -8,6 +8,48 @@ from io import BytesIO
 from tfc.utils.storage import audio_bytes_from_url_or_base64, upload_audio_to_s3
 
 
+def deduplicate_utterance_turns(turns):
+    """Collapse partial/final transcript rows that cover the same audio window.
+
+    Streaming voice providers can persist both an interim transcript (for
+    example, ``"I'm transferring"``) and its final transcript with identical
+    speaker/timing boundaries.  They are one utterance and therefore one piece
+    of localization evidence.  Prefer the most complete text while retaining
+    the original position in the conversation.
+    """
+    deduplicated = []
+    positions = {}
+    for turn in turns:
+        start, end = turn.get("start_time"), turn.get("end_time")
+        role = turn.get("speaker_role")
+        if (
+            isinstance(start, (int, float))
+            and isinstance(end, (int, float))
+            and math.isfinite(start)
+            and math.isfinite(end)
+            and role in {"assistant", "user"}
+        ):
+            # Transcript timing is stored in milliseconds. Rounding back to
+            # that clock also handles harmless float serialization drift.
+            key = (role, round(start * 1000), round(end * 1000))
+        else:
+            key = None
+
+        if key is None or key not in positions:
+            if key is not None:
+                positions[key] = len(deduplicated)
+            deduplicated.append(turn)
+            continue
+
+        index = positions[key]
+        current = deduplicated[index]
+        if len(str(turn.get("content") or "").strip()) > len(
+            str(current.get("content") or "").strip()
+        ):
+            deduplicated[index] = turn
+    return deduplicated
+
+
 def simulation_audio_snapshot(call_execution, eval_config, input_types):
     """Snapshot exactly the drawer's aligned roles and recording-relative times.
 
@@ -44,17 +86,19 @@ def simulation_audio_snapshot(call_execution, eval_config, input_types):
                 "user" if assistant_channel_role == "assistant" else "assistant"
             },
         }.get(source, set())
-        result[key] = [
-            {
-                "utterance_id": str(row["id"]),
-                "speaker_role": row["speaker_role"],
-                "content": row["content"],
-                "start_time": row["start_time_seconds"],
-                "end_time": row["end_time_seconds"],
-            }
-            for row in rows
-            if row.get("speaker_role") in roles
-        ]
+        result[key] = deduplicate_utterance_turns(
+            [
+                {
+                    "utterance_id": str(row["id"]),
+                    "speaker_role": row["speaker_role"],
+                    "content": row["content"],
+                    "start_time": row["start_time_seconds"],
+                    "end_time": row["end_time_seconds"],
+                }
+                for row in rows
+                if row.get("speaker_role") in roles
+            ]
+        )
     return result
 
 
@@ -62,6 +106,7 @@ def create_utterance_segments(audio_input, turns):
     """Cut at stored boundaries; never guess missing times or speaker roles."""
     from pydub import AudioSegment
 
+    turns = deduplicate_utterance_turns(turns)
     if not turns:
         raise ValueError("No conversation utterances available")
     raw = (

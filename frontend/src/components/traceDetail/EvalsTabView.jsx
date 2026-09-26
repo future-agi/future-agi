@@ -118,6 +118,7 @@ const EvalTableRow = ({
   onSelectSpan,
   showSpanColumn,
   onFixWithFalcon,
+  showFixWithFalcon,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const isSkipped = ev?.skipped === true;
@@ -182,7 +183,8 @@ const EvalTableRow = ({
     ev.error_localizer_status || ev.errorLocalizerStatus || null;
   const hasErrorLocalization =
     !isComposite &&
-    (!!initialAnalysis ||
+    (ev?.error_localizer === true ||
+      !!initialAnalysis ||
       !!cellId ||
       !!initialStatus ||
       !!(observationSpanId && customEvalConfigId));
@@ -221,18 +223,37 @@ const EvalTableRow = ({
         </Box>
 
         {/* Eval name — widens to fill space when Span column is hidden */}
-        <Typography
-          noWrap
+        <Box
           onClick={() => canExpand && setExpanded((p) => !p)}
           sx={{
             width: showSpanColumn ? "30%" : "60%",
-            fontSize: 11.5,
-            fontWeight: 500,
+            display: "flex",
+            alignItems: "center",
+            gap: 0.5,
+            minWidth: 0,
             cursor: canExpand ? "pointer" : "default",
           }}
         >
-          {evalName}
-        </Typography>
+          <Typography noWrap sx={{ fontSize: 11.5, fontWeight: 500 }}>
+            {evalName}
+          </Typography>
+          {ev.removed && (
+            <Chip
+              data-testid="removed-eval-marker"
+              size="small"
+              label="Removed"
+              sx={{
+                height: 18,
+                flexShrink: 0,
+                fontSize: 10,
+                fontWeight: 600,
+                bgcolor: "background.neutral",
+                color: "text.subtitle",
+                "& .MuiChip-label": { px: 0.75 },
+              }}
+            />
+          )}
+        </Box>
 
         {/* Score — non-score states (queued/evaluating/skipped/errored) show
             the shared indicator; choices render as violet chips; else a
@@ -385,6 +406,9 @@ const EvalTableRow = ({
               projectVersionId={projectVersionId}
               initialAnalysis={initialAnalysis}
               initialStatus={initialStatus}
+              initialMessage={
+                ev.error_localizer_message || ev.errorLocalizerMessage
+              }
               datapoint={ev.datapoint}
               selectedInputKey={ev.selected_input_key || ev.selectedInputKey}
             />
@@ -392,7 +416,7 @@ const EvalTableRow = ({
 
           {/* Fix with Falcon — hidden for passed evals (nothing to fix);
               shown for failed and unscored rows whenever expanded. */}
-          {!isPassedEval(ev) && (
+          {showFixWithFalcon && !isPassedEval(ev) && (
             <Box
               onClick={(e) => {
                 e.stopPropagation();
@@ -438,6 +462,7 @@ EvalTableRow.propTypes = {
   onSelectSpan: PropTypes.func,
   showSpanColumn: PropTypes.bool,
   onFixWithFalcon: PropTypes.func,
+  showFixWithFalcon: PropTypes.bool,
 };
 
 /**
@@ -452,6 +477,8 @@ const EvalsTabView = ({
   emptyMessage,
   showSpanColumn = true,
   onFixWithFalcon,
+  showFixWithFalcon = true,
+  showAddEvals = true,
 }) => {
   const [search, setSearch] = useState("");
   const list = useMemo(() => (Array.isArray(evals) ? evals : []), [evals]);
@@ -565,7 +592,7 @@ const EvalsTabView = ({
             label-based non-passes also keep the button visible (e.g. an
             eval with score=null and no Pass label still shows up as
             non-passing in the "X/N passed" text). */}
-        {list.some((e) => !isPassedEval(e)) && (
+        {showFixWithFalcon && list.some((e) => !isPassedEval(e)) && (
           <Box
             onClick={() => {
               if (onFixWithFalcon) {
@@ -651,7 +678,7 @@ const EvalsTabView = ({
             }}
           />
         </Box>
-        <Box
+        {showAddEvals && <Box
           sx={{
             display: "inline-flex",
             alignItems: "center",
@@ -692,7 +719,7 @@ const EvalsTabView = ({
           >
             Coming soon
           </Box>
-        </Box>
+        </Box>}
       </Box>
 
       {/* Table */}
@@ -757,6 +784,7 @@ const EvalsTabView = ({
             onSelectSpan={onSelectSpan}
             showSpanColumn={showSpanColumn}
             onFixWithFalcon={onFixWithFalcon}
+            showFixWithFalcon={showFixWithFalcon}
           />
         ))}
       </Box>
@@ -770,6 +798,8 @@ EvalsTabView.propTypes = {
   emptyMessage: PropTypes.string,
   showSpanColumn: PropTypes.bool,
   onFixWithFalcon: PropTypes.func,
+  showFixWithFalcon: PropTypes.bool,
+  showAddEvals: PropTypes.bool,
 };
 
 export default EvalsTabView;

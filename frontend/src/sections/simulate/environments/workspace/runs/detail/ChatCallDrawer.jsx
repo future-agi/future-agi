@@ -4,6 +4,7 @@ import { alpha } from "@mui/material/styles";
 import { Box, Chip, CircularProgress, Stack, Typography, IconButton, Tooltip, Tab } from "@mui/material";
 
 import Iconify from "src/components/iconify";
+import EvalsTabView from "src/components/traceDetail/EvalsTabView";
 import { CustomTabs } from "src/components/tabs/tabs";
 import { useCallDetail } from "src/api/simulate-environments/runDetail";
 
@@ -112,6 +113,18 @@ export default function ChatCallDrawer({
   const stats = callDetail?.stats || {};
   const evalResults = callDetail?.evalResults ?? task.evalResults ?? [];
   const failed = evalResults.filter((r) => r.passed === false);
+  const drawerEvals = evalResults.map((result) => ({
+    ...result,
+    eval_name: result.name,
+    score: result.score == null ? null : Math.round(result.score * 100),
+    score_label:
+      result.output_type === "Pass/Fail" && result.passed != null
+        ? result.passed
+          ? "Passed"
+          : "Failed"
+        : undefined,
+    explanation: result.reason,
+  }));
   const durationMs = callDetail?.durationS != null ? callDetail.durationS * 1000 : task.durationMs;
   const turnCount = stats.turnCount ?? task.turns;
   const tokens = callDetail?.tokens ?? task.tokens;
@@ -245,44 +258,13 @@ export default function ChatCallDrawer({
             )}
 
             {side === "evals" && (
-              <Stack>
-                {evalResults.map((r) => (
-                  <Stack
-                    key={r.id}
-                    direction="row"
-                    spacing={1.5}
-                    alignItems="flex-start"
-                    sx={{ px: 2, py: 1.5, borderBottom: "1px solid", borderColor: "divider" }}
-                  >
-                    <Iconify
-                      icon={r.passed === false ? "solar:close-circle-bold" : "solar:check-circle-bold"}
-                      width={15}
-                      sx={{ color: r.passed === false ? BUILD_TONES.red : BUILD_TONES.green, flexShrink: 0, mt: "1px" }}
-                    />
-                    <Box flex={1} minWidth={0}>
-                      <Stack direction="row" alignItems="center" spacing={0.75} minWidth={0}>
-                        <Typography sx={{ typography: "s2", fontWeight: 600 }}>{r.name}</Typography>
-                        {r.removed && <RemovedChip />}
-                      </Stack>
-                      {r.reason && (
-                        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-                          {r.reason}
-                        </Typography>
-                      )}
-                    </Box>
-                    {r.score != null && (
-                      <Typography sx={{ typography: "s2", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-                        {Math.round(r.score * 100)}
-                      </Typography>
-                    )}
-                  </Stack>
-                ))}
-                {evalResults.length === 0 && (
-                  <Typography sx={{ p: 2, typography: "s2", color: "text.subtitle" }}>
-                    No evaluations ran on this call.
-                  </Typography>
-                )}
-              </Stack>
+              <EvalsTabView
+                evals={drawerEvals}
+                emptyMessage="No evaluations ran on this call."
+                showSpanColumn={false}
+                showFixWithFalcon={false}
+                showAddEvals={false}
+              />
             )}
 
             {side === "messages" && (
