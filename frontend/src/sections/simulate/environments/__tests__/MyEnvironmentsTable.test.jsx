@@ -147,7 +147,7 @@ describe("MyEnvironmentsTable", () => {
     renderTab();
     await screen.findByText("Customer Support Line");
 
-    ["Completed", "Running…", "Building", "Failed"].forEach((label) =>
+    ["Ready", "Running…", "Building", "Failed"].forEach((label) =>
       expect(screen.getByText(label)).toBeInTheDocument(),
     );
   });
@@ -187,7 +187,7 @@ describe("MyEnvironmentsTable", () => {
     // A row the backend has not authored these fields for: domain and sub-goals
     // fall back to a dash, and a null runs_count reads as a dash too.
     const row = within(rowFor("Repo Triage Bot"));
-    expect(row.getAllByText("—").length).toBeGreaterThan(0);
+    expect(row.getAllByText("-").length).toBeGreaterThan(0);
   });
 
   it("shows the empty state when the environments list resolves empty", async () => {

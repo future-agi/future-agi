@@ -292,6 +292,54 @@ const callDetailPayload = () => ({
 });
 
 describe("mapCallDetail", () => {
+  it.each([
+    ["a plain string (voice, older chat)", "hello there", "hello there"],
+    ["null", null, ""],
+    ["undefined", undefined, ""],
+    ["a number", 42, "42"],
+    ["an OpenAI-style part list", [{ role: "user", content: "hi" }], "hi"],
+    ["a list of strings", ["a", "b"], "a\nb"],
+    ["a {text} part", { text: "from text" }, "from text"],
+    ["a single {content} object", { content: "from content" }, "from content"],
+    ["a nested list", [[{ content: "deep" }], "flat"], "deep\nflat"],
+    ["an empty list", [], ""],
+  ])("turns %s into transcript text without crashing", (_label, content, text) => {
+    const d = mapCallDetail({
+      id: "c",
+      simulation_call_type: "text",
+      transcript: [{ role: "user", content }],
+    });
+    expect(d.turns[0].text).toBe(text);
+    expect(typeof d.stats.words).toBe("number");
+  });
+
+  it("reads a hosted chat's message content lists as text (real Retell chat shape)", () => {
+    // Each transcript row is one chat message whose content is a list of
+    // OpenAI-style {role, content} items, not a string.
+    const d = mapCallDetail({
+      id: "chat-1",
+      simulation_call_type: "text",
+      transcript: [
+        {
+          role: "user",
+          content: [{ role: "user", content: "Hi there, pricing please" }],
+        },
+        {
+          role: "assistant",
+          content: [{ role: "assistant", content: "Sure — two plans." }],
+        },
+        { role: "user", content: ["plain", { text: "text part" }] },
+      ],
+    });
+
+    expect(d.turns.map((t) => t.text)).toEqual([
+      "Hi there, pricing please",
+      "Sure — two plans.",
+      "plain\ntext part",
+    ]);
+    expect(d.stats.words).toBe(11);
+  });
+
   it("maps a real voice call-detail payload to the CallDetail view-model", () => {
     const d = mapCallDetail(callDetailPayload());
     expect(d.id).toBe("call-1");

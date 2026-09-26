@@ -29,11 +29,11 @@ export const GAP_AREA_TO_TAB = {
 // Header, overflow-menu and empty-state copy for the workspace shell.
 export const WORKSPACE_COPY = {
   back: "All environments",
-  live: "Live",
+  live: "Ready",
   buildingLabel: "Building",
   finalizingLabel: "Finalizing",
   failedLabel: "Failed",
-  liveTooltip: "Environment is live. You can edit via the builder or inline.",
+  liveTooltip: "Environment is ready to run. You can edit via the builder or inline.",
   buildingTooltip: "Environment is still being built…",
   finalizingTooltip: "Wrapping up the build…",
   cancellingLabel: "Cancelling",
@@ -88,7 +88,7 @@ export const WORKSPACE_COPY = {
     title: "Environment is still being built",
     progress: (done, total) => `${done} of ${total} steps done.`,
     deriving: "Scenarios and personas are still deriving.",
-    tail: "You can leave and come back — this page will fill in as each stage lands.",
+    tail: "You can leave and come back. This page will fill in as each stage lands.",
   },
   // Banner shown when an older env version is pinned — the amber pin is the
   // control, this is the reminder so edits do not silently sit on the wrong world.
@@ -111,7 +111,7 @@ export const WORKSPACE_COPY = {
     testSubject: "Test subject",
     scenariosShared: (n) => `${n} scenarios, shared across agent versions`,
     pairingTooltip: (envLabel, envNote, agentLabel) =>
-      `Environment ${envLabel} — ${envNote}. Test subject: agent ${agentLabel}. Different agents can run against this env; the env stays put.`,
+      `Environment ${envLabel} - ${envNote}. Test subject: agent ${agentLabel}. Different agents can run against this env; the env stays put.`,
     scenariosTooltip:
       "Scenarios belong to the environment, so the same set runs against any agent version",
   },

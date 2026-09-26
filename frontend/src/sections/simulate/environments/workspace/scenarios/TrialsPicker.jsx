@@ -36,7 +36,7 @@ export default function TrialsPicker({ trials, onChange, scenarioCount = 0, size
 
   return (
     <>
-      <Tooltip arrow title="How many times to run each scenario — reliability across trials">
+      <Tooltip arrow title="How many times to run each scenario (reliability across trials)">
         <Button
           size="small"
           variant="outlined"

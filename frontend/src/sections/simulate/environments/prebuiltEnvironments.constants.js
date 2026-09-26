@@ -14,7 +14,7 @@ export const AGENT_TYPE_GROUPS = [
 export const GROUP_BLURBS = {
   "Voice & chat": "Conversational agents on a phone line or a chat endpoint, graded on outcome, policy and tone.",
   "Computer use": "Agents that drive real software by looking at the screen.",
-  Robotics: "Physical AI in a physics engine — policies that act and get scored.",
+  Robotics: "Physical AI in a physics engine: policies that act and get scored.",
   "Games & worldsims": "Agents that play, explore and beat interactive worlds.",
   "Tools & protocol": "Agents acting through tool APIs against live-looking systems.",
   Code: "Agents that read, write and ship code, graded by real toolchains.",
@@ -49,7 +49,7 @@ export const BROWSE_COPY = {
   backTooltip: "Back to how you want to start",
   title: "Use our template",
   subtitle:
-    "Prebuilt worlds with seeded state, tools, and rules. Pick one, then build it — here or locally.",
+    "Prebuilt worlds with seeded state, tools, and rules. Pick one, then build it (here or locally).",
   searchPlaceholder: "Search templates…",
   emptyLibrary: "No prebuilt environments yet.",
   noMatch: (query) => `No templates match "${query}". Try a different search.`,

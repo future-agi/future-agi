@@ -103,7 +103,7 @@ describe("TemplateBuildPanel", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("2 suggested")).toBeInTheDocument();
     expect(
-      screen.getByText("Seeded baseline — swap in yours after"),
+      screen.getByText("Seeded baseline (swap in yours after)"),
     ).toBeInTheDocument();
   });
 

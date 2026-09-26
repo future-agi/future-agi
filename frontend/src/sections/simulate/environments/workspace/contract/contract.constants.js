@@ -29,11 +29,11 @@ export const CONTRACT_COPY = {
     spaces: {
       title: "Observation and action spaces",
       blurb:
-        "Four fields are the same in every modality. The adapter fills the rest — which is why one runner serves all six.",
+        "Four fields are the same in every modality. The adapter fills the rest, which is why one runner serves all six.",
     },
     dynamics: {
       title: "Transition dynamics",
-      blurb: "What moves the world between steps — and it is never only the agent.",
+      blurb: "What moves the world between steps, and it is never only the agent.",
     },
     reward: {
       title: "Reward spec",
@@ -48,7 +48,7 @@ export const CONTRACT_COPY = {
 
   adapterSurfaceNote: "· from this environment's surface",
   adapterDerivedNote:
-    "Everything below is derived from this. Connecting a different kind of agent rewrites the observation and action spaces, the fidelity controls and the runtime connection together — so the modality changes on the Agent step, not here.",
+    "Everything below is derived from this. Connecting a different kind of agent rewrites the observation and action spaces, the fidelity controls and the runtime connection together, so the modality changes on the Agent step, not here.",
 
   observationLabel: "Observation",
   actionLabel: "Action",
@@ -65,7 +65,7 @@ export const CONTRACT_COPY = {
   terminateLabel: "Terminate",
   terminateBlurb: "The episode has a value. Goal verifiers settle.",
   truncateLabel: "Truncate",
-  truncateBlurb: "Not a failure, and not terminal — bootstrap from the last state.",
+  truncateBlurb: "Not a failure, and not terminal. Bootstrap from the last state.",
   clockLabel: (mode) => `Clock · ${mode}`,
   seedTitle: "Deterministic seed",
 
@@ -80,7 +80,7 @@ export const CONTRACT_COPY = {
       "Other parties in the world, each with a goal that is not the task. They pull the episode off-course, which is what makes them part of the environment's dynamics rather than part of the task.",
     calloutLead: "Not the same as a persona.",
     calloutBody:
-      "The persona is who your agent is serving — the one whose goal the task is. An actor is someone else: you are trying to book a cab, and your colleague is saying let's get pizza instead.",
+      "The persona is who your agent is serving, the one whose goal the task is. An actor is someone else: you are trying to book a cab, and your colleague is saying let's get pizza instead.",
     calloutLink: "See scenarios",
     create: "Create actor",
     castTitle: (n) => `In this environment (${n})`,
@@ -88,7 +88,7 @@ export const CONTRACT_COPY = {
     emptyIcon: "solar:users-group-two-rounded-linear",
     emptyTitle: "No actors yet",
     emptyBody:
-      "Without one, every run is a clean two-party conversation — which is rarely what happens in the wild.",
+      "Without one, every run is a clean two-party conversation, which is rarely what happens in the wild.",
     wants: "Wants:",
     builtIn: "built in",
     usedBy: (n) => `used by ${n}`,

@@ -25,28 +25,28 @@ export const ORIGIN_KINDS = {
     label: "prompt only",
     short: "PROMPT",
     color: BUILD_TONES.amber,
-    note: "Stated in the system prompt and nowhere else. Nothing enforces it at runtime — which is precisely why it is worth grading rather than assuming.",
+    note: "Stated in the system prompt and nowhere else. Nothing enforces it at runtime, which is precisely why it is worth grading rather than assuming.",
   },
   doc: {
     id: "doc",
     label: "prose only",
     short: "PROSE",
     color: BUILD_TONES.red,
-    note: "Read out of a comment or a README. Anything in the repo can write prose — a vendored dependency, a stale note, someone who wanted a softer grader — so a rule found here is recorded and held back until you confirm it.",
+    note: "Read out of a comment or a README. Anything in the repo can write prose (a vendored dependency, a stale note, someone who wanted a softer grader), so a rule found here is recorded and held back until you confirm it.",
   },
   callGraph: {
     id: "callGraph",
     label: "read from the call-graph",
     short: "CALL-GRAPH",
     color: BUILD_TONES.sky,
-    note: "The tool is invoked by name from the agent's own code. Not just declared — actually reached at runtime.",
+    note: "The tool is invoked by name from the agent's own code. Not just declared, actually reached at runtime.",
   },
   policy: {
     id: "policy",
     label: "read from policy.yaml",
     short: "POLICY.YAML",
     color: BUILD_TONES.blue,
-    note: "Declared in a policy manifest the agent loads at startup. Data, not judgement — the rule is what the file says.",
+    note: "Declared in a policy manifest the agent loads at startup. Data, not judgement: the rule is what the file says.",
   },
   fixture: {
     id: "fixture",
@@ -60,7 +60,7 @@ export const ORIGIN_KINDS = {
     label: "inferred",
     short: "INFERRED",
     color: BUILD_TONES.amber,
-    note: "Nothing in the agent's code or policy stated this — the reader guessed based on prompt phrasing or call patterns. Confirm before you rely on it.",
+    note: "Nothing in the agent's code or policy stated this. The reader guessed based on prompt phrasing or call patterns. Confirm before you rely on it.",
   },
 };
 

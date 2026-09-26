@@ -30,9 +30,10 @@ const STAGE_LED_STAGES = new Set([
 // The harness pipeline reports fine-grained stages; the table only needs the
 // states its status pill knows. "failed" is a real failure, "canceled" is the
 // user's own cancel, cleanup reads as finalizing, and every stage before the
-// terminal ones is still assembling the environment.
+// terminal ones is still assembling the environment. A finished build is Ready,
+// never Completed: more simulations can always run in it (PRD §7.1).
 export const stageToStatus = (stage) => {
-  if (stage === HARNESS_STAGE.COMPLETED) return ENV_STATUS.COMPLETED;
+  if (stage === HARNESS_STAGE.COMPLETED) return ENV_STATUS.READY;
   if (stage === HARNESS_STAGE.FAILED) return ENV_STATUS.FAILED;
   if (stage === HARNESS_STAGE.CANCELED) return ENV_STATUS.CANCELLED;
   if (FINALIZING_STAGES.has(stage)) return ENV_STATUS.FINALIZING;
@@ -40,8 +41,14 @@ export const stageToStatus = (stage) => {
   return ENV_STATUS.BUILDING;
 };
 
-export const envStatusFor = (stage, status) =>
-  STAGE_LED_STAGES.has(stage) ? stageToStatus(stage) : status;
+// The list endpoint still reports a built environment as "completed"; it reads
+// as Ready here for the same reason stageToStatus says so.
+const LIST_STATUS_COMPLETED = "completed";
+
+export const envStatusFor = (stage, status) => {
+  if (STAGE_LED_STAGES.has(stage)) return stageToStatus(stage);
+  return status === LIST_STATUS_COMPLETED ? ENV_STATUS.READY : status;
+};
 
 export const jobStatusFor = (status) =>
   status?.cancel_requested_at && !terminalStages.has(status?.stage)

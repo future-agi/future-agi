@@ -5,19 +5,19 @@
 // The DerivingAnimation copy, one line per milestone the builder is working on,
 // plus the loading branch once all three are done. Verbatim from DerivedPanels.
 export const DERIVING_LABEL = {
-  understand: "Reading your agent — extracting tools and rules",
-  build: "Building the world — seeding data and wiring handlers",
-  scenarios: "Writing scenarios — proving each one solvable",
+  understand: "Reading your agent: extracting tools and rules",
+  build: "Building the world: seeding data and wiring handlers",
+  scenarios: "Writing scenarios: proving each one solvable",
   loading: "Loading the editor for what we derived",
   idle: "Reading your agent…",
   // Preflight already passed inline; this stage is the create call landing.
   creating: "Creating your environment…",
   // Terminal-failed build: the hero reads as failed (the specific reason shows
   // on the failed pipeline step below), not the raw stage name.
-  failed: "Build failed — the environment couldn’t be assembled",
+  failed: "Build failed: the environment couldn’t be assembled",
   // Terminal-canceled build: the user stopped it, so it reads as stopped rather
   // than failed (no step is at fault).
-  canceled: "Build canceled — you stopped it before it finished",
+  canceled: "Build canceled: you stopped it before it finished",
   // Fallback for the source-panel header before a source label is known.
   readingSource: "reading source…",
 };
@@ -40,6 +40,6 @@ export const CONSOLE_COPY = {
 };
 
 export const PIPELINE_CHECKS_COPY = {
-  heading: "Setup — building the environment",
+  heading: "Setup: building the environment",
   queued: "queued",
 };

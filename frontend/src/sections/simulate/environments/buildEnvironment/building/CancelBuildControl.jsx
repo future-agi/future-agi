@@ -29,7 +29,7 @@ export default function CancelBuildControl({ envId, building = false }) {
       onSuccess: () => enqueueSnackbar("Build canceled", { variant: "success" }),
       // A cancel that fails quietly reads as a dead button, so surface it.
       onError: () =>
-        enqueueSnackbar("Couldn't cancel the build — try again", { variant: "error" }),
+        enqueueSnackbar("Couldn't cancel the build. Try again", { variant: "error" }),
     });
   };
 

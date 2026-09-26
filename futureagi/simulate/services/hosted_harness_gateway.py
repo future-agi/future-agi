@@ -317,6 +317,12 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "SIMULATOR_STT_PROVIDER",
         "SIMULATOR_TTS_MODEL",
         "SIMULATOR_TTS_PROVIDER",
+        # Observe credentials for the guest. The harness's model calls happen inside the sandbox,
+        # so without these a run is only readable as log text in the diagnostics archive.
+        "HARNESS_OBSERVABILITY",
+        "FI_API_KEY",
+        "FI_SECRET_KEY",
+        "FI_HARNESS_PROJECT",
         # The caller's surroundings. Without these a hosted call is always heard in the clear,
         # whatever the scenario asked for, because the simulator reads them from its environment.
         "ALK_BACKGROUND_NOISE",
@@ -2500,7 +2506,9 @@ class HostedHarnessGateway:
             simulator_env,
             platform_host,
         )
-        _validate_resolved_egress_domains(allowed_domains)
+        _validate_resolved_egress_domains(
+            allowed_domains, max_domains=self.client.max_egress_domains
+        )
         ttl_seconds = max(
             300, int(getattr(settings, "ALK_HOSTED_CHAT_TTL_SECONDS", 1800))
         )

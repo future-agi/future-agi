@@ -50,12 +50,12 @@ const OUTCOME_COLORS = {
 };
 export const number = (value, digits = 1) =>
   value == null
-    ? "—"
+    ? "-"
     : new Intl.NumberFormat(undefined, {
         maximumFractionDigits: digits,
       }).format(value);
 export const format = (value, unit = "number") => {
-  if (value == null) return "—";
+  if (value == null) return "-";
   if (unit === "cents") return `$${number(value / 100, 3)}`;
   if (unit === "ratio") return `${number(value, 0)}/${number(100 - value, 0)}`;
   return `${number(value)}${{ ms: "ms", seconds: "s", percent: "%" }[unit] || ""}`;
@@ -158,6 +158,7 @@ const pieLabel = (label) =>
   })[label.toLowerCase()] || label;
 export function Donut({ data, onOpen }) {
   if (!data?.total) return <NoMeasurement />;
+  const emptyHeadline = Boolean(data.headline) && data.headline.share == null;
   return (
     <Box sx={{ px: 1.5, pb: 2 }}>
       <Box sx={{ height: 165, position: "relative" }}>
@@ -205,7 +206,13 @@ export function Donut({ data, onOpen }) {
           <Typography sx={{ fontSize: 10, color: "text.secondary" }}>
             {data.headline ? pieLabel(data.headline.label) : "Calls"}
           </Typography>
-          <Typography sx={{ fontSize: 22, fontWeight: 600 }}>
+          <Typography
+            sx={{
+              fontSize: 22,
+              fontWeight: emptyHeadline ? 400 : 600,
+              color: emptyHeadline ? "text.disabled" : "text.primary",
+            }}
+          >
             {data.headline
               ? format(data.headline.share, "percent")
               : number(data.total, 0)}

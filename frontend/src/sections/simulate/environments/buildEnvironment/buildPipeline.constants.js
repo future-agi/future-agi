@@ -77,7 +77,7 @@ export const BUILD_PIPELINE = [
     phase: "setup",
     milestone: "scenarios",
     label: "Validating scenarios",
-    detail: "Three gates: ready, solvable, not vacuous — kept only if all three pass",
+    detail: "Three gates: ready, solvable, not vacuous. Kept only if all three pass",
   },
   {
     id: "connect-agent",
@@ -119,8 +119,8 @@ export const BUILD_PIPELINE = [
 export const STAGE_ORDER = ["understand", "build", "scenarios"];
 
 export const PIPELINE_PHASES = [
-  { id: "setup", label: "Setup — building the environment" },
-  { id: "run", label: "First run — putting the agent through it" },
+  { id: "setup", label: "Setup: building the environment" },
+  { id: "run", label: "First run: putting the agent through it" },
 ];
 
 // Compute the pipeline's live status. `done` is the builder's own set of

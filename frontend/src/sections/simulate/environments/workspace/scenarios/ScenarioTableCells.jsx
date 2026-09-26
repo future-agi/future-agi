@@ -27,7 +27,7 @@ TruncTooltip.propTypes = { title: PropTypes.node, children: PropTypes.node };
 // Multi-line text cell — clamped to 3 lines so the row stays a predictable
 // height, full content one hover away. Empty values render as an em-dash.
 export function ClampCell({ text }) {
-  const value = text || "—";
+  const value = text || "-";
   return (
     <TruncTooltip title={text}>
       <Typography
@@ -67,7 +67,7 @@ function normaliseSubTasks(subTasks) {
 export function SubTasksCell({ subTasks }) {
   const list = normaliseSubTasks(subTasks);
   if (!list.length) {
-    return <Typography sx={{ typography: "s3", color: "text.subtitle" }}>—</Typography>;
+    return <Typography sx={{ typography: "s3", color: "text.subtitle" }}>-</Typography>;
   }
   const fullList = list.map((st, i) => `${i + 1}. ${st.label}`).join("\n");
   return (

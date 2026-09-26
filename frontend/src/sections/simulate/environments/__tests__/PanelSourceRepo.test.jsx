@@ -104,7 +104,7 @@ describe("PanelSourceRepo", () => {
     // Run preflight is disabled with nothing typed; Build is disabled with a hint.
     expect(screen.getByRole("button", { name: "Run preflight" })).toBeDisabled();
     expect(buildBtn()).toBeDisabled();
-    expect(screen.getByText("Run preflight to continue")).toBeInTheDocument();
+    expect(screen.getByText("Run preflight to check your setup before building")).toBeInTheDocument();
   });
 
   it("enables Run preflight on a valid repo but keeps Build disabled until it passes", () => {

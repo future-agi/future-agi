@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Box,
   Stack,
@@ -10,6 +10,9 @@ import {
   TableHead,
   TableRow,
   Button,
+  tableCellClasses,
+  tableHeadClasses,
+  tableRowClasses,
 } from "@mui/material";
 
 import Iconify from "src/components/iconify";
@@ -25,22 +28,59 @@ import {
 import { MetricValue, Score, Field } from "./traceCells";
 import TraceGroupHeaderRow from "./TraceGroupHeaderRow";
 
+// The theme hides every border on a table's last row, which here is the head
+// row and the final call row. The column dividers are cell left borders, so put
+// those back, and the head's bottom line; the body's last bottom line stays
+// hidden so it doesn't double up with the container edge.
+const lastRowDividersSx = {
+  minWidth: 1000,
+  tableLayout: "auto",
+  [`& .${tableRowClasses.root}:last-of-type .${tableCellClasses.root}:not(:first-of-type)`]:
+    { borderLeftColor: "divider" },
+  [`& .${tableHeadClasses.root} .${tableCellClasses.root}`]: {
+    borderBottomColor: "divider",
+  },
+};
+
 /**
  * The per-call traces, as a grouped table. Real data only: rows read the mapped
  * `RunTask` scalars (no mock derivations); each evaluation renders as a heat-
  * tinted score column. Row-click opens the call; past results are read-only.
  */
+// The free-text columns stay narrow so a collapsed table (one count per group)
+// doesn't stretch; long text is cut at four lines — the drawer has the rest.
+const TEXT_COL_WIDTH = { long: 260, short: 200 };
+const textCellSx = (width) => ({
+  ...bodyCellSx,
+  width,
+  minWidth: width,
+  maxWidth: width,
+  typography: "s2",
+  color: "text.secondary",
+});
+const clampSx = {
+  display: "-webkit-box",
+  WebkitLineClamp: 4,
+  WebkitBoxOrient: "vertical",
+  overflow: "hidden",
+  wordBreak: "break-word",
+};
+
 export default function TraceTable({
   groups,
   evals,
   onOpen,
   columns,
+  activeCallId = null,
 }) {
   const [collapsed, setCollapsed] = useState(null);
+  const activeRowRef = useRef(null);
+  // The call already expanded for, so a group the user collapses afterwards
+  // stays collapsed across refetches.
+  const expandedForRef = useRef(null);
   const visible = columns || defaultTraceColumns();
   const show = (key) => visible.has(key);
   const showEvals = show("evals");
-
 
   const collapsedSet = collapsed ?? new Set(groups.map((g) => g.label));
   const toggleCollapsed = (label) =>
@@ -50,6 +90,27 @@ export default function TraceTable({
       else next.add(label);
       return next;
     });
+  // The open call's row must be visible: expand its group once per call, then
+  // bring the row into view.
+  const activeGroupLabel = activeCallId
+    ? groups.find((g) => g.rows.some((row) => row.id === activeCallId))?.label
+    : undefined;
+  useEffect(() => {
+    if (!activeGroupLabel || expandedForRef.current === activeCallId) return;
+    expandedForRef.current = activeCallId;
+    setCollapsed((prev) => {
+      const next = new Set(prev ?? groups.map((g) => g.label));
+      next.delete(activeGroupLabel);
+      return next;
+    });
+  }, [activeCallId, activeGroupLabel, groups]);
+  // Its row only mounts once its group expands, so scroll again when that
+  // happens — not just when the call changes.
+  const activeGroupCollapsed = collapsedSet.has(activeGroupLabel);
+  useEffect(() => {
+    activeRowRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [activeCallId, activeGroupLabel, activeGroupCollapsed]);
+
   const allCollapsed =
     groups.length > 0 && groups.every((g) => collapsedSet.has(g.label));
   const toggleAllGroups = () =>
@@ -59,17 +120,21 @@ export default function TraceTable({
 
   const renderRow = (t) => {
     const outcome = runOutcome(t.status);
+    const active = t.id === activeCallId;
     return (
       <TableRow
         key={t.id}
+        ref={active ? activeRowRef : undefined}
+        aria-selected={active}
         sx={{
           cursor: "pointer",
-          bgcolor: "transparent",
+          bgcolor: active ? "action.selected" : "transparent",
         }}
       >
-
         {show("callDetails") && (
-          <TableCell sx={bodyCellSx} onClick={() => onOpen(t)}>
+          // Indented past the group row's chevron so a call reads as nested
+          // under its group, lined up with the group name.
+          <TableCell sx={{ ...bodyCellSx, pl: 5 }} onClick={() => onOpen(t)}>
             <Box minWidth={0}>
               <Stack
                 direction="row"
@@ -91,7 +156,7 @@ export default function TraceTable({
                   <CustomTooltip
                     show
                     arrow
-                    title="Critical — a failure here is a release blocker"
+                    title="Critical: a failure here is a release blocker"
                   >
                     <Box sx={{ display: "flex" }}>
                       <Iconify
@@ -162,7 +227,7 @@ export default function TraceTable({
               </Stack>
             ) : (
               <Typography sx={{ typography: "s3", color: "text.disabled" }}>
-                —
+                -
               </Typography>
             )}
           </TableCell>
@@ -170,43 +235,28 @@ export default function TraceTable({
 
         {show("scenario") && (
           <TableCell
-            sx={{
-              ...bodyCellSx,
-              minWidth: 420,
-              typography: "s2",
-              color: "text.secondary",
-            }}
+            sx={textCellSx(TEXT_COL_WIDTH.long)}
             onClick={() => onOpen(t)}
           >
-            {t.scenarioDetails || t.scenario || "—"}
+            <Box sx={clampSx}>{t.scenarioDetails || t.scenario || "-"}</Box>
           </TableCell>
         )}
 
         {show("idealOutcome") && (
           <TableCell
-            sx={{
-              ...bodyCellSx,
-              minWidth: 420,
-              typography: "s2",
-              color: "text.secondary",
-            }}
+            sx={textCellSx(TEXT_COL_WIDTH.long)}
             onClick={() => onOpen(t)}
           >
-            {t.idealOutcome || "—"}
+            <Box sx={clampSx}>{t.idealOutcome || "-"}</Box>
           </TableCell>
         )}
 
         {show("conversationBranch") && (
           <TableCell
-            sx={{
-              ...bodyCellSx,
-              minWidth: 320,
-              typography: "s2",
-              color: "text.secondary",
-            }}
+            sx={textCellSx(TEXT_COL_WIDTH.short)}
             onClick={() => onOpen(t)}
           >
-            {t.conversationBranch || "—"}
+            <Box sx={clampSx}>{t.conversationBranch || "-"}</Box>
           </TableCell>
         )}
 
@@ -244,7 +294,7 @@ export default function TraceTable({
                   <Score result={r} />
                 ) : (
                   <Box sx={{ p: 2, typography: "s2", color: "text.disabled" }}>
-                    —
+                    -
                   </Box>
                 )}
               </TableCell>
@@ -295,7 +345,7 @@ export default function TraceTable({
         </Typography>
       </Stack>
       <Box sx={{ overflowX: "auto" }}>
-        <Table size="small" sx={{ minWidth: 1000, tableLayout: "auto" }}>
+        <Table size="small" sx={lastRowDividersSx}>
           <TableHead>
             <TableRow>
               {show("callDetails") && (
@@ -309,17 +359,17 @@ export default function TraceTable({
                 </TableCell>
               )}
               {show("scenario") && (
-                <TableCell sx={{ ...headCellSx, width: 420, minWidth: 420 }}>
+                <TableCell sx={{ ...headCellSx, width: TEXT_COL_WIDTH.long }}>
                   Scenario
                 </TableCell>
               )}
               {show("idealOutcome") && (
-                <TableCell sx={{ ...headCellSx, width: 420, minWidth: 420 }}>
+                <TableCell sx={{ ...headCellSx, width: TEXT_COL_WIDTH.long }}>
                   Ideal outcome
                 </TableCell>
               )}
               {show("conversationBranch") && (
-                <TableCell sx={{ ...headCellSx, width: 320, minWidth: 320 }}>
+                <TableCell sx={{ ...headCellSx, width: TEXT_COL_WIDTH.short }}>
                   Conversation branch
                 </TableCell>
               )}
@@ -377,4 +427,5 @@ TraceTable.propTypes = {
   evals: PropTypes.array.isRequired,
   onOpen: PropTypes.func,
   columns: PropTypes.instanceOf(Set),
+  activeCallId: PropTypes.string,
 };

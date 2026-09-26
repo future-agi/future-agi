@@ -78,12 +78,12 @@ export default function ScenarioDetail({ row, defaultOpen = false }) {
               }}
             >
               {s.task}{" "}
-              {s.persona && `You are ${s.persona.name}${s.persona.role ? `, ${s.persona.role.toLowerCase()}` : ""}${s.persona.traits?.length ? ` — ${s.persona.traits.join(", ")}` : ""}.`}
+              {s.persona && `You are ${s.persona.name}${s.persona.role ? `, ${s.persona.role.toLowerCase()}` : ""}${s.persona.traits?.length ? ` (${s.persona.traits.join(", ")})` : ""}.`}
             </Typography>
           </Section>
 
           {steps.length > 0 && (
-            <Section title={`Sub-goals — the moves that settle it (${steps.length})`}>
+            <Section title={`Sub-goals: the moves that settle it (${steps.length})`}>
               <Stack spacing={0.75}>
                 {steps.map((st, i) => (
                   <Stack key={st.id || i} direction="row" spacing={1.25} alignItems="flex-start">

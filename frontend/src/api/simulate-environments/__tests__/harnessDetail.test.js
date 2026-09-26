@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { harnessDetailToEnvironment } from "../harnessDetail";
+import { ENV_STATUS } from "src/sections/simulate/environments/myEnvironments.constants";
 
 // The §6 example body from environments-api-contracts, trimmed to the fields the
 // adapter reads. Kept close to verbatim so the mapping is checked against the
@@ -125,6 +126,7 @@ describe("harnessDetailToEnvironment", () => {
     expect(env.agentType).toBe("voice");
     expect(env.surface).toBe("voice");
     expect(env.buildStatus).toBe("ready");
+    expect(env.status).toBe(ENV_STATUS.READY);
     expect(env.platform).toMatchObject({
       runTestId: "rt-1",
       testExecutionId: "ex-1",

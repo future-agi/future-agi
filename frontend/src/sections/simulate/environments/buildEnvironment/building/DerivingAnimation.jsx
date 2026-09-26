@@ -66,8 +66,8 @@ const truncate = (s, n) => {
 const shortRule = (r) => truncate(String(r || "").replace(/\.\s*$/, ""), 22);
 
 // Real derived artifacts → the chips that land in the sandbox. Tools and tables
-// carry natural short labels; rules are clipped sentences. Capped so a large
-// world can't overflow the container.
+// carry natural short labels; rules are clipped sentences. All of them are
+// kept: the sandbox body scrolls when a large world overflows it.
 function chipsFromWorld(world) {
   const tools = world?.tools || [];
   const rules = world?.rules || [];
@@ -82,7 +82,7 @@ function chipsFromWorld(world) {
     ...rules.map((r, i) => ({ id: `rule-${i}`, kind: "rule", label: shortRule(r) })),
   ].filter((c) => c.label);
   return {
-    chips: chips.slice(0, 14),
+    chips,
     counts: { tool: tools.length, rule: rules.length, data: tables.length },
   };
 }
@@ -331,7 +331,7 @@ export default function DerivingAnimation({ label, source, world = null, failed 
 
           {/* landed chips — real derived world, or neutral skeleton pills until
               the environment stage lands */}
-          <Box sx={{ p: 1, height: 172, overflow: "hidden" }}>
+          <Box sx={{ p: 1, height: 172, overflowY: "auto", overflowX: "hidden" }}>
             <Stack direction="row" flexWrap="wrap" gap={0.5}>
               {hasReal
                 ? chips.map((item) => <LandedChip key={item.id} item={item} dark={dark} />)

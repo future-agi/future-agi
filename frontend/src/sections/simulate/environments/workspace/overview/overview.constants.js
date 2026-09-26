@@ -22,19 +22,19 @@ export const OVERVIEW_COPY = {
   connectAgent: "Connect agent",
   noArguments: "no arguments",
   hardRulesTitle: "Hard rules",
-  hardRulesSubtitle: "Told to the agent, graded afterwards — hover a badge for where it was found",
-  noRules: "No rules yet — add them on the Contract tab or as the agent introduces them.",
+  hardRulesSubtitle: "Told to the agent, graded afterwards. Hover a badge for where it was found",
+  noRules: "No rules yet. Add them on the Contract tab or as the agent introduces them.",
   useCasesTitle: "Use cases",
   useCasesSubtitle: "What it is actually for",
   amendmentsTitle: "Amendments",
   amendmentsSubtitle: "Changed after reading, each with its reason",
-  amendmentsEmpty: "No amendments — nothing was changed after reading.",
+  amendmentsEmpty: "No amendments. Nothing was changed after reading.",
   seededTitle: "Seeded data",
   dependsTitle: "What it depends on",
   dependsSubtitle: "Built and torn down with the environment",
   dependsEmpty: "No dependencies recorded for this environment.",
   seedBlurb: (rows) =>
-    `${rows.toLocaleString()} rows that fill this environment before your agent arrives — the world it actually works in. Rebuilt for every task, so nothing carries over.`,
+    `${rows.toLocaleString()} rows that fill this environment before your agent arrives: the world it actually works in. Rebuilt for every task, so nothing carries over.`,
   usedBy: (name) => `used by ${Array.isArray(name) ? name.join(", ") : name}`,
 };
 
@@ -151,7 +151,7 @@ export const ruleRowsFor = (env) =>
 export const REFRESH_COPY = {
   title: (label) => `Agent ${label} is newer than this environment`,
   body: (label) =>
-    `Optional — re-derive the world against ${label}, or keep running the current one.`,
+    `Optional: re-derive the world against ${label}, or keep running the current one.`,
   action: "Refresh environment",
   note: (label) => `Re-derived against agent ${label}`,
 };
@@ -161,7 +161,7 @@ export const REFRESH_COPY = {
 export const CHECKLIST_COPY = {
   title: "Next steps",
   subtitle: (done, total) =>
-    `${done} of ${total} complete — ${total - done} left to run your first simulation`,
+    `${done} of ${total} complete, ${total - done} left to run your first simulation`,
   created: {
     title: "Environment created",
     body: (name) => `${name} is set up and ready for configuration.`,
@@ -174,16 +174,16 @@ export const CHECKLIST_COPY = {
   scenarios: {
     title: "Add scenarios",
     body: "Tasks the agent has to complete. Add a few concrete cases the run will grade against.",
-    cta: (n) => (n > 0 ? `${n} added — add more` : "Add scenarios"),
+    cta: (n) => (n > 0 ? `${n} added - add more` : "Add scenarios"),
   },
   evals: {
     title: "Add evaluations",
     body: "Graders that decide whether each run passed. Pick from the library or author your own.",
-    cta: (n) => (n > 0 ? `${n} added — add more` : "Add evaluations"),
+    cta: (n) => (n > 0 ? `${n} added - add more` : "Add evaluations"),
   },
   run: {
     title: "Run your first simulation",
-    body: "Kick off a run — you'll see the transcript, tool calls, and eval verdicts land in real time.",
+    body: "Kick off a run. You'll see the transcript, tool calls, and eval verdicts land in real time.",
     cta: "Run simulation",
   },
 };

@@ -27,7 +27,7 @@ import { harnessJobQuery } from "./environment";
 import { projectConversation, conversationInFlight } from "./conversationProjection";
 
 const RUNTIME_WARMING =
-  "The agent runtime is warming up — chat opens once it's ready.";
+  "The agent runtime is warming up. Chat opens once it's ready.";
 const NO_WORKSPACE =
   "This run has no saved workspace to restore, so chat isn't available.";
 const NOT_A_HARNESS_ENV = "Chat connects once this environment is built.";

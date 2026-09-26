@@ -169,7 +169,7 @@ describe("WorkspacePanels", () => {
     // and it counts towards the remaining-steps line.
     expect(screen.queryByRole("button", { name: "Add evaluations" })).toBeNull();
     expect(
-      screen.getByText("3 of 5 complete — 2 left to run your first simulation"),
+      screen.getByText("3 of 5 complete, 2 left to run your first simulation"),
     ).toBeInTheDocument();
   });
 
@@ -184,7 +184,7 @@ describe("WorkspacePanels", () => {
 
     expect(screen.getByRole("button", { name: "Add evaluations" })).toBeInTheDocument();
     expect(
-      screen.getByText("2 of 5 complete — 3 left to run your first simulation"),
+      screen.getByText("2 of 5 complete, 3 left to run your first simulation"),
     ).toBeInTheDocument();
   });
 

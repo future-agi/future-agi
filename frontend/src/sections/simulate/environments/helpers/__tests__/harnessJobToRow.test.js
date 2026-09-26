@@ -29,7 +29,7 @@ describe("harnessJobToRow", () => {
   });
 
   it.each([
-    ["completed", ENV_STATUS.COMPLETED],
+    ["completed", ENV_STATUS.READY],
     ["failed", ENV_STATUS.FAILED],
     ["canceled", ENV_STATUS.CANCELLED],
     ["running", ENV_STATUS.RUNNING],
@@ -100,7 +100,7 @@ describe("harnessEnvToRow", () => {
       id: "env-1",
       name: "Support Line",
       description: "Handles inbound billing calls",
-      status: ENV_STATUS.COMPLETED,
+      status: ENV_STATUS.READY,
       agentType: "voice",
       tools: 4,
       scenarios: 12,
@@ -184,7 +184,7 @@ describe("jobStatusFor", () => {
     ["running", cancel, ENV_STATUS.CANCELLING],
     ["generating_scenarios", cancel, ENV_STATUS.CANCELLING],
     ["canceled", cancel, ENV_STATUS.CANCELLED],
-    ["completed", cancel, ENV_STATUS.COMPLETED],
+    ["completed", cancel, ENV_STATUS.READY],
     ["failed", cancel, ENV_STATUS.FAILED],
     ["cleaning_up", null, ENV_STATUS.FINALIZING],
     ["running", null, ENV_STATUS.RUNNING],
@@ -209,7 +209,7 @@ describe("envStatusFor", () => {
     ["running", ENV_STATUS.RUNNING, ENV_STATUS.RUNNING],
     ["failed", ENV_STATUS.FAILED, ENV_STATUS.FAILED],
     ["generating_scenarios", ENV_STATUS.BUILDING, ENV_STATUS.BUILDING],
-    ["completed", ENV_STATUS.COMPLETED, ENV_STATUS.COMPLETED],
+    ["completed", "completed", ENV_STATUS.READY],
   ])("stage %s with backend status %s reads %s", (stage, status, expected) => {
     expect(envStatusFor(stage, status)).toBe(expected);
   });
@@ -230,4 +230,19 @@ describe("harnessEnvToRow cleanup and cancel stages", () => {
   it("keeps a real failure as Failed", () => {
     expect(row("failed", "failed").status).toBe(ENV_STATUS.FAILED);
   });
+
+  it.each([0, 3])(
+    "shows Ready, never Completed, for a built environment with %i runs",
+    (runs) => {
+      const built = harnessEnvToRow({
+        id: "env-1",
+        name: "Support Line",
+        agent_type: "voice",
+        stage: "completed",
+        status: "completed",
+        runs_count: runs,
+      });
+      expect(built.status).toBe(ENV_STATUS.READY);
+    },
+  );
 });

@@ -4,7 +4,7 @@ import { Box } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
 
 const TOOLTIP =
-  "Sample data — the backend doesn't provide this field yet, so a placeholder is shown. It fills in with real data once the API does.";
+  "Sample data: the backend doesn't provide this field yet, so a placeholder is shown. It fills in with real data once the API does.";
 
 // A small amber "Sample" pill for a workspace section whose value was mock-filled
 // (env.provenance[field] === "mock"), so real vs placeholder is never ambiguous.

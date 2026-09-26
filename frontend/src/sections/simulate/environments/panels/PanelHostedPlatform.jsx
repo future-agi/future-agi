@@ -229,7 +229,7 @@ export default function PanelHostedPlatform() {
       <ContinueRow
         disabled={!build.readyToSubmit || !isValidScenarioCount(scenarioCount)}
         busy={build.committing}
-        hint={build.status === "done" ? "Resolve the checks above" : "Run preflight to continue"}
+        hint={build.status === "done" ? "Resolve the failed preflight checks above to continue" : "Run preflight to check your setup before building"}
         onClick={build.commitBuild}
       />
     </Stack>

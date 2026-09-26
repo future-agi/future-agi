@@ -12,7 +12,15 @@ import { isVoiceCall } from "./callRouting";
  *   - chat / other → the ported lean designer drawer (`ChatCallDrawer`).
  * The outer drawer is the only shell; each branch owns its own header/chrome.
  */
-export default function CallDrawer({ task, agentType, onClose }) {
+export default function CallDrawer({
+  task,
+  agentType,
+  onClose,
+  onPrev,
+  onNext,
+  hasPrev = false,
+  hasNext = false,
+}) {
   const open = !!task;
   const voice = isVoiceCall(task, agentType);
 
@@ -37,9 +45,23 @@ export default function CallDrawer({ task, agentType, onClose }) {
     >
       {task &&
         (voice ? (
-          <VoiceCallDrawer task={task} onClose={onClose} />
+          <VoiceCallDrawer
+            task={task}
+            onClose={onClose}
+            onPrev={onPrev}
+            onNext={onNext}
+            hasPrev={hasPrev}
+            hasNext={hasNext}
+          />
         ) : (
-          <ChatCallDrawer task={task} onClose={onClose} />
+          <ChatCallDrawer
+            task={task}
+            onClose={onClose}
+            onPrev={onPrev}
+            onNext={onNext}
+            hasPrev={hasPrev}
+            hasNext={hasNext}
+          />
         ))}
     </Drawer>
   );
@@ -51,4 +73,8 @@ CallDrawer.propTypes = {
   }),
   agentType: PropTypes.string,
   onClose: PropTypes.func,
+  onPrev: PropTypes.func,
+  onNext: PropTypes.func,
+  hasPrev: PropTypes.bool,
+  hasNext: PropTypes.bool,
 };

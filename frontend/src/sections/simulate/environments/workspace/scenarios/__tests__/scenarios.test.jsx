@@ -352,7 +352,7 @@ describe("ScenariosStep — hide group", () => {
       fireEvent.click(screen.getAllByRole("button", { name: "Hide this group" })[0]);
     }
     expect(
-      screen.getByText("Every group is hidden — click Show all to bring them back."),
+      screen.getByText("Every group is hidden. Click Show all to bring them back."),
     ).toBeInTheDocument();
     expect(screen.getByText(new RegExp(`· ${n} groups hidden`))).toBeInTheDocument();
 

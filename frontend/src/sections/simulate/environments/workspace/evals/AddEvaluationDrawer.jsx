@@ -45,7 +45,7 @@ const DETAIL_FALLBACK = EVALS_COPY.addedError;
 // run-level endpoint for that eval. The heading has to say, in the row
 // itself, why these are here and what pressing the button does — the group is
 // otherwise indistinguishable from the offer above it.
-const BOUND_GROUP_TITLE = "Already on this environment — grade this run's finished calls";
+const BOUND_GROUP_TITLE = "Already on this environment: grade this run's finished calls";
 
 // The Evaluations tab's subtitle: from there an add binds the eval and grades
 // future calls only.
@@ -78,13 +78,13 @@ const ENV_MODE_SUBTITLE =
 // bound group's press also adds something.
 const runModeSubtitle = (completedCallsCount) => {
   if (!Number.isFinite(completedCallsCount)) {
-    return "Expand a row to see what fills each input. Each row below also grades this run's finished calls — any that already have a verdict for it are left alone.";
+    return "Expand a row to see what fills each input. Each row below also grades this run's finished calls. Any that already have a verdict for it are left alone.";
   }
   if (completedCallsCount === 0) {
     return "Expand a row to see what fills each input. Nothing is graded yet: no call in this run has finished. An offered row is still added, and every call from here on is graded by it.";
   }
   const calls = completedCallsCount === 1 ? "call" : "calls";
-  return `Expand a row to see what fills each input. Each row below also grades this run's ${completedCallsCount} finished ${calls} — any that already have a verdict for it are left alone.`;
+  return `Expand a row to see what fills each input. Each row below also grades this run's ${completedCallsCount} finished ${calls}. Any that already have a verdict for it are left alone.`;
 };
 
 // Moved out of the component body so `PickerRow`, which both groups render, can
@@ -353,7 +353,7 @@ export default function AddEvaluationDrawer({
               // traced the memo.
               (runMode && boundEntries.length > 0 ? (
                 <Typography sx={{ typography: "s3", color: "text.secondary", py: 1 }}>
-                  Every eval is already on this environment — grade this run below.
+                  Every eval is already on this environment. Grade this run below.
                 </Typography>
               ) : (
                 <EmptyState
@@ -404,7 +404,6 @@ export default function AddEvaluationDrawer({
                         <PickerRow
                           key={item.name}
                           entry={item}
-                          runMode={runMode}
                           isExpanded={expanded === item.name}
                           onToggle={() => setExpanded(expanded === item.name ? null : item.name)}
                           actionLabel={added ? "Added" : "Add"}
@@ -476,7 +475,6 @@ export default function AddEvaluationDrawer({
                         <PickerRow
                           key={key}
                           entry={item}
-                          runMode={runMode}
                           isExpanded={expanded === key}
                           onToggle={() => setExpanded(expanded === key ? null : key)}
                           actionLabel="Grade this run"
@@ -517,7 +515,6 @@ AddEvaluationDrawer.propTypes = {
 // endpoint for one it already has.
 function PickerRow({
   entry,
-  runMode,
   isExpanded,
   onToggle,
   actionLabel,
@@ -581,7 +578,7 @@ function PickerRow({
             <Typography noWrap sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>
               {entry.name}
             </Typography>
-            <EvalEntryChips entry={entry} runMode={runMode} />
+            <EvalEntryChips entry={entry} />
           </Stack>
         </TableCell>
       </TableRow>
@@ -599,7 +596,6 @@ function PickerRow({
 
 PickerRow.propTypes = {
   entry: EVAL_ENTRY_SHAPE,
-  runMode: PropTypes.bool,
   isExpanded: PropTypes.bool,
   onToggle: PropTypes.func,
   actionLabel: PropTypes.string,
