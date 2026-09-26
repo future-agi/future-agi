@@ -879,11 +879,12 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 	handler = middleware.Recovery(handler)
 
 	s.httpServer = &http.Server{
-		Addr:         cfg.Addr(),
-		Handler:      handler,
-		ReadTimeout:  cfg.Server.ReadTimeout,
-		WriteTimeout: cfg.Server.WriteTimeout,
-		IdleTimeout:  cfg.Server.IdleTimeout,
+		Addr:              cfg.Addr(),
+		Handler:           handler,
+		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		WriteTimeout:      cfg.Server.WriteTimeout,
+		IdleTimeout:       cfg.Server.IdleTimeout,
 	}
 
 	return s

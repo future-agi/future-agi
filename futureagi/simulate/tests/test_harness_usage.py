@@ -168,6 +168,45 @@ def test_authoring_tokens_become_deterministic_ai_credit_events(
 
 @pytest.mark.django_db
 @pytest.mark.requires_ee
+def test_saved_simulation_run_does_not_rebill_authoring(
+    metered_attempt, django_capture_on_commit_callbacks
+):
+    capability, events = metered_attempt
+    job = capability.attempt.job
+    job.payload["metadata"] = {
+        "simulation_only": True,
+        "harness_spend": {
+            "attempts": {
+                "1": {
+                    "stages": [
+                        {
+                            "stage": "build-environment",
+                            "models": ["gemini-3.7-flash"],
+                            "tokens_in": 1_000_000,
+                            "tokens_out": 100_000,
+                        }
+                    ]
+                }
+            }
+        },
+    }
+    job.save(update_fields=["payload"])
+    capability.attempt.cleanup_verified_at = datetime.now(UTC)
+    capability.attempt.sandbox_runtime = {"seconds": 10}
+    capability.attempt.save(update_fields=["cleanup_verified_at", "sandbox_runtime"])
+
+    with django_capture_on_commit_callbacks(execute=True):
+        harness_usage.replay_harness_usage(capability.attempt)
+
+    capability.attempt.refresh_from_db()
+    job.refresh_from_db()
+    assert capability.attempt.authoring_usage_report is None
+    assert events == []
+    assert harness_usage.harness_consumption(job)["ai_credits"] == 0
+
+
+@pytest.mark.django_db
+@pytest.mark.requires_ee
 @requires_cloud_billing
 def test_live_authoring_estimates_refresh_without_charging_or_double_counting(
     metered_attempt, django_capture_on_commit_callbacks

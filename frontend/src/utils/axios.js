@@ -1716,6 +1716,24 @@ export const endpoints = {
         { call_execution_id: id },
       ),
   },
+  runResultsV3: {
+    calls: (id) =>
+      apiPath("/simulate/v3/test-executions/{test_execution_id}/calls/", {
+        test_execution_id: id,
+      }),
+    callDetail: (id) =>
+      apiPath("/simulate/v3/call-executions/{call_execution_id}/", {
+        call_execution_id: id,
+      }),
+    analytics: (id) =>
+      apiPath("/simulate/v3/test-executions/{test_execution_id}/analytics/", {
+        test_execution_id: id,
+      }),
+    export: (id) =>
+      apiPath("/simulate/v3/test-executions/{test_execution_id}/export/", {
+        test_execution_id: id,
+      }),
+  },
   optimizeSimulate: {
     createOptimization: apiPath("/simulate/api/agent-prompt-optimiser/"),
     getOptimizationDetails: (id) =>

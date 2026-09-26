@@ -1,0 +1,274 @@
+import PropTypes from "prop-types";
+import { useEffect, useReducer, useRef } from "react";
+import { alpha } from "@mui/material/styles";
+import { Box, Stack, Typography, TextField, IconButton } from "@mui/material";
+import Iconify from "src/components/iconify";
+
+import { BUILD_TONES } from "../buildTones";
+import { CONSOLE_COPY } from "../build.constants";
+import { Turn, Working } from "./ConsoleTurn";
+// Voice input is temporarily disabled (Web Speech is blocked in Brave); re-enable
+// with a server-side transcription path. Kept for that follow-up.
+// import VoiceInput from "./VoiceInput";
+import { subscribeComposerScaffold } from "./composerScaffoldBus";
+
+const INITIAL = { draft: "", scaffolds: [] };
+
+function composerReducer(state, action) {
+  switch (action.type) {
+    case "draft":
+      return { ...state, draft: action.value };
+    case "scaffold":
+      return state.scaffolds.includes(action.text)
+        ? state
+        : { ...state, scaffolds: [...state.scaffolds, action.text] };
+    case "unscaffold":
+      return { ...state, scaffolds: state.scaffolds.filter((_, i) => i !== action.index) };
+    case "clear":
+      return INITIAL;
+    default:
+      return state;
+  }
+}
+
+/**
+ * The console, as a chat.
+ *
+ * Read like a conversation rather than a log: a measured column, the user's own
+ * turns in a bubble and the builder's in plain text, tool calls folded into
+ * quiet rows. Steps stream in one at a time so you can watch the work and
+ * interrupt it.
+ *
+ * `preComposer` is kept for parity with the designer (an intake questionnaire
+ * or a selection-context chip pins there).
+ *
+ * `frozen` locks the composer until the environment is Live: it blocks input
+ * the same way `running` does, but stays blocked until the env finishes
+ * building rather than until the last message returns.
+ */
+export default function BuilderConsole({
+  turns,
+  running,
+  onSend,
+  onStop,
+  canStop = false,
+  preComposer,
+  frozen = false,
+  frozenReason,
+}) {
+  const [state, dispatch] = useReducer(composerReducer, INITIAL);
+  const { draft, scaffolds } = state;
+  const endRef = useRef(null);
+
+  useEffect(
+    () => subscribeComposerScaffold((text) => dispatch({ type: "scaffold", text })),
+    [],
+  );
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [turns, running, canStop]);
+
+  // Frozen === the env is not Live yet, so the builder can't accept edits. It
+  // blocks the composer exactly like `running`, but persists across turns.
+  const blocked = running || frozen;
+  const reason = frozenReason || CONSOLE_COPY.frozen;
+
+  const hasContent = draft.trim() || scaffolds.length > 0;
+
+  // "Busy" drives the working indicator: the brief send round-trip (running) OR a
+  // turn still in flight (canStop = a queued/responding message waiting on the
+  // agent). Distinct from `blocked`, so the composer stays usable while waiting.
+  const busy = running || canStop;
+
+  const send = () => {
+    const text = draft.trim();
+    const scaffoldText = scaffolds.join(". ");
+    const combined = [scaffoldText, text].filter(Boolean).join(scaffoldText && text ? ". " : "");
+    if (!combined || blocked) return;
+    dispatch({ type: "clear" });
+    onSend?.(combined);
+  };
+
+  return (
+    <Stack sx={{ height: "100%", minWidth: 0 }}>
+      <Stack
+        direction="row" alignItems="center" spacing={1.25}
+        sx={{ flexShrink: 0, px: 2.5, py: 1.5, borderBottom: "1px solid", borderColor: "divider" }}
+      >
+        <Box
+          sx={{
+            width: 30, height: 30, borderRadius: 1, display: "grid", placeItems: "center", flexShrink: 0,
+            bgcolor: (t) => alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.16 : 0.1),
+            color: BUILD_TONES.accent,
+          }}
+        >
+          <Iconify icon="solar:chat-round-line-linear" width={15} />
+        </Box>
+        <Box flex={1} minWidth={0}>
+          <Typography sx={{ typography: "s3", color: "text.subtitle", lineHeight: 1.2 }}>
+            {frozen ? reason : busy ? CONSOLE_COPY.working : CONSOLE_COPY.idle}
+          </Typography>
+        </Box>
+      </Stack>
+
+      <Box sx={{ flex: 1, overflowY: "auto", px: 2.5, py: 3 }}>
+        <Stack spacing={4}>
+          {(turns || []).length === 0 && !busy ? (
+            <Stack alignItems="center" spacing={1.25} sx={{ py: 6, opacity: 0.7 }}>
+              <Box
+                sx={{
+                  width: 36, height: 36, borderRadius: 999, display: "grid", placeItems: "center",
+                  bgcolor: (t) => alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.16 : 0.1),
+                  color: BUILD_TONES.accent,
+                }}
+              >
+                <Iconify icon="solar:chat-round-line-linear" width={17} />
+              </Box>
+              <Typography sx={{ typography: "s2", color: "text.subtitle", textAlign: "center", maxWidth: 320 }}>
+                {CONSOLE_COPY.empty}
+              </Typography>
+            </Stack>
+          ) : (
+            <>
+              {(turns || []).map((turn) => <Turn key={turn.id} turn={turn} />)}
+              {busy && <Working label={CONSOLE_COPY.workingDot} />}
+            </>
+          )}
+          <Box ref={endRef} />
+        </Stack>
+      </Box>
+
+      {/* Slot for anything a caller wants to pin above the composer (the intake
+          questionnaire or the selection-context chip drops in here). */}
+      {preComposer && <Box sx={{ px: 2.5, pb: 1 }}>{preComposer}</Box>}
+
+      <Box sx={{ px: 2.5, pb: 2.5, pt: 1 }}>
+        <Box
+          sx={{
+            p: 1.5, borderRadius: 2, border: "1.5px solid",
+            borderColor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.16 : 0.14),
+            bgcolor: "background.paper",
+            boxShadow: (t) => (t.palette.mode === "dark"
+              ? "0 4px 20px rgba(0,0,0,0.25)"
+              : "0 2px 10px rgba(16,24,40,0.05)"),
+            transition: "border-color 0.15s ease, box-shadow 0.15s ease",
+            "&:focus-within": {
+              borderColor: BUILD_TONES.accent,
+              boxShadow: (t) => `0 0 0 3px ${alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.18 : 0.12)}`,
+            },
+          }}
+        >
+          {scaffolds.length > 0 && (
+            <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75, mb: 1 }}>
+              {scaffolds.map((s, i) => (
+                <Stack
+                  key={`${s}-${i}`}
+                  direction="row" alignItems="center" spacing={0.5}
+                  sx={{
+                    pl: 1, pr: 0.5, py: 0.375, borderRadius: 999,
+                    bgcolor: (t) => alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.14 : 0.08),
+                    border: "1px solid",
+                    borderColor: (t) => alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.35 : 0.24),
+                    maxWidth: "100%",
+                  }}
+                >
+                  <Iconify icon="solar:magic-stick-3-linear" width={12} sx={{ color: BUILD_TONES.accent, flexShrink: 0 }} />
+                  <Typography
+                    sx={{
+                      typography: "s3", fontWeight: "fontWeightSemiBold", color: BUILD_TONES.accent,
+                      maxWidth: 260, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                    }}
+                  >
+                    {s}
+                  </Typography>
+                  <IconButton
+                    size="small"
+                    aria-label={`Remove ${s}`}
+                    onClick={() => dispatch({ type: "unscaffold", index: i })}
+                    sx={{ p: 0, ml: 0.25 }}
+                  >
+                    <Iconify icon="solar:close-circle-linear" width={13} sx={{ color: alpha(BUILD_TONES.accent, 0.6) }} />
+                  </IconButton>
+                </Stack>
+              ))}
+            </Stack>
+          )}
+
+          {/* Row 1: the text field on its own line so long drafts get the full width. */}
+          <TextField
+            fullWidth
+            multiline
+            maxRows={8}
+            variant="standard"
+            placeholder={frozen ? reason : CONSOLE_COPY.placeholder}
+            value={draft}
+            disabled={blocked}
+            onChange={(e) => dispatch({ type: "draft", value: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+            }}
+            InputProps={{ disableUnderline: true, sx: { typography: "s2", lineHeight: 1.55, px: 0.75, py: 0.5 } }}
+          />
+
+          {/* Row 2: toolbar — flex-spacer · stop · send. */}
+          <Stack direction="row" alignItems="center" spacing={0.25} sx={{ mt: 0.5, pl: 0.25 }}>
+            {/* Voice input disabled for now: the Web Speech API is blocked in
+                Brave, so it only works in Chrome/Edge/Safari. Re-enable once a
+                server-side transcription endpoint (record -> /audio/transcriptions)
+                is wired so it works in every browser. VoiceInput.jsx is kept. */}
+            {/* <VoiceInput onTranscript={(text) => dispatch({ type: "draft", value: text })} disabled={blocked} /> */}
+
+            <Box flex={1} />
+
+            {onStop && canStop && !frozen && (
+              <IconButton
+                aria-label="Stop"
+                title={CONSOLE_COPY.stop}
+                disabled={running}
+                onClick={onStop}
+                sx={{
+                  width: 30, height: 30, borderRadius: 1, mr: 0.5,
+                  color: "text.subtitle",
+                  border: "1px solid", borderColor: "divider",
+                  "&:hover": { bgcolor: "action.hover", color: "text.primary" },
+                }}
+              >
+                <Iconify icon="solar:stop-bold" width={13} />
+              </IconButton>
+            )}
+
+            <IconButton
+              aria-label="Send"
+              disabled={!hasContent || blocked}
+              onClick={send}
+              sx={{
+                width: 30, height: 30, borderRadius: 1,
+                bgcolor: hasContent && !blocked ? BUILD_TONES.accent : undefined,
+                color: hasContent && !blocked ? "common.white" : undefined,
+                "&:hover": { bgcolor: hasContent && !blocked ? BUILD_TONES.accentHover : undefined },
+                "&.Mui-disabled": {
+                  bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.06),
+                  color: "text.disabled",
+                },
+              }}
+            >
+              <Iconify icon="solar:arrow-up-bold" width={15} />
+            </IconButton>
+          </Stack>
+        </Box>
+      </Box>
+    </Stack>
+  );
+}
+
+BuilderConsole.propTypes = {
+  turns: PropTypes.array,
+  running: PropTypes.bool,
+  onSend: PropTypes.func,
+  onStop: PropTypes.func,
+  canStop: PropTypes.bool,
+  preComposer: PropTypes.node,
+  frozen: PropTypes.bool,
+  frozenReason: PropTypes.string,
+};

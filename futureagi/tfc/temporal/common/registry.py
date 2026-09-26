@@ -730,6 +730,7 @@ def _ensure_activities_registered() -> None:
             cancel_hosted_harness_attempt,
             launch_hosted_harness_job,
             poll_hosted_harness_attempt,
+            record_hosted_harness_launch_failure,
         )
         from simulate.temporal.activities.hosted_runner import (
             build_runner_job,
@@ -746,11 +747,12 @@ def _ensure_activities_registered() -> None:
                 finalize_hosted_execution,
                 author_hosted_harness_job,
                 launch_hosted_harness_job,
+                record_hosted_harness_launch_failure,
                 poll_hosted_harness_attempt,
                 cancel_hosted_harness_attempt,
             ],
         )
-        log.info("registered_hosted_runner_activities", count=7)
+        log.info("registered_hosted_runner_activities", count=8)
     except ImportError as e:
         log.warning("could_not_load_hosted_runner_activities", error=str(e))
 

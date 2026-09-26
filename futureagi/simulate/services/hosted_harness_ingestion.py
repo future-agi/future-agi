@@ -18,6 +18,7 @@ from simulate.models import (
     HostedHarnessArtifact,
     HostedHarnessAttempt,
     HostedHarnessEvent,
+    HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessManifest,
     HostedHarnessReceipt,
@@ -46,6 +47,16 @@ _EVENT_TYPES = {
     "scenario_retried",
     "log",
     "terminal",
+}
+# Closed parallelism-degrade enum, exactly C4 §2's FIVE members (v1.3, FROZEN).
+# ``port_not_consumable`` is deliberately NOT here — it is a TERMINAL JOB FAILURE
+# (decision D28 / C1 v1.3 §4), surfaced via failure.code, never a degrade event.
+_DEGRADE_REASONS = {
+    "resource_limited",
+    "literal_local_endpoint",
+    "world_start_failed",
+    "fixed_port",
+    "conformance_gate_failed",
 }
 _TERMINAL_STAGES = {"completed", "failed", "canceled"}
 _ARTIFACT_KINDS = {
@@ -141,6 +152,7 @@ def ingest_result_receipt(
     body: dict[str, Any],
     *,
     digest_body: dict[str, Any] | None = None,
+    recovered_artifact_ids: list[str] | None = None,
 ) -> tuple[HostedHarnessReceipt, bool]:
     from simulate.services.harness_usage import replay_harness_usage
 
@@ -163,28 +175,49 @@ def ingest_result_receipt(
             .get(id=attempt.id)
         )
         _assert_current_attempt(attempt)
-        try:
-            registration = (
-                HostedHarnessScenario.no_workspace_objects.select_related(
-                    "call_execution"
-                )
-                .select_for_update(of=("self",))
-                .get(job=attempt.job, scenario_key=body["scenario_key"])
+        execution = (
+            HostedHarnessExecution.no_workspace_objects.select_related(
+                "source_scenario", "call_execution"
             )
-        except HostedHarnessScenario.DoesNotExist as exc:
-            raise HostedHarnessError(
-                "scenario_unknown", "scenario_key is not registered", status_code=404
-            ) from exc
+            .select_for_update(of=("self",))
+            .filter(job=attempt.job, execution_key=body["scenario_key"])
+            .first()
+        )
+        if execution is not None:
+            allocation = execution
+            registration = execution.source_scenario
+        else:
+            try:
+                registration = (
+                    HostedHarnessScenario.no_workspace_objects.select_related(
+                        "call_execution"
+                    )
+                    .select_for_update(of=("self",))
+                    .get(job=attempt.job, scenario_key=body["scenario_key"])
+                )
+            except HostedHarnessScenario.DoesNotExist as exc:
+                raise HostedHarnessError(
+                    "scenario_unknown",
+                    "scenario execution key is not registered",
+                    status_code=404,
+                ) from exc
+            allocation = registration
         if str(registration.scenario_id) != str(body["scenario_id"]):
             raise HostedHarnessError(
                 "scenario_mismatch",
-                "scenario_id does not match scenario_key",
+                "scenario_id does not match scenario execution",
                 status_code=403,
             )
         _assert_receipt_artifacts(attempt.job, body)
+        receipt_filter = {"job": attempt.job}
+        if execution is not None:
+            receipt_filter["execution"] = execution
+        else:
+            receipt_filter["scenario"] = registration
+            receipt_filter["execution__isnull"] = True
         existing = (
             HostedHarnessReceipt.no_workspace_objects.select_for_update()
-            .filter(job=attempt.job, scenario=registration)
+            .filter(**receipt_filter)
             .first()
         )
         if existing:
@@ -194,7 +227,9 @@ def ingest_result_receipt(
                 # contract modality) was synchronized.  Re-applying the same
                 # sealed receipt is safe and repairs that derived state without
                 # requiring another customer call.
-                _apply_receipt_to_call(registration, body)
+                _apply_receipt_to_call(
+                    allocation, body, recovered_artifact_ids=recovered_artifact_ids
+                )
                 update_execution_counts(attempt.job)
                 transaction.on_commit(lambda: replay_harness_usage(attempt))
                 return existing, False
@@ -215,7 +250,7 @@ def ingest_result_receipt(
             )
             receipt_history = dict(previous_attempt.receipt_history or {})
             receipt_history.setdefault(
-                registration.scenario_key,
+                body["scenario_key"],
                 {
                     "status": existing.status,
                     "body": existing.body,
@@ -249,12 +284,15 @@ def ingest_result_receipt(
                 job=attempt.job,
                 attempt=attempt,
                 scenario=registration,
+                execution=execution,
                 attempt_number=attempt.attempt_number,
                 digest=supplied_digest,
                 status=body["status"],
                 body=_json_ready(body),
             )
-        _apply_receipt_to_call(registration, body)
+        _apply_receipt_to_call(
+            allocation, body, recovered_artifact_ids=recovered_artifact_ids
+        )
         update_execution_counts(attempt.job)
         transaction.on_commit(lambda: replay_harness_usage(attempt))
         return receipt, True
@@ -348,15 +386,20 @@ def ingest_artifact(
     )
     temporary.seek(0)
     object_key = f"alk-harness/{attempt.job.organization_id}/{attempt.job_id}/{digest}"
-    get_storage_client().put_object(
-        bucket_name=UPLOAD_BUCKET_NAME,
-        object_name=object_key,
-        data=temporary,
-        length=size,
-        content_type=content_type,
-    )
-    temporary.close()
+    try:
+        get_storage_client().put_object(
+            bucket_name=UPLOAD_BUCKET_NAME,
+            object_name=object_key,
+            data=temporary,
+            length=size,
+            content_type=content_type,
+        )
+    finally:
+        # Every scenario can upload artifacts concurrently; do not retain a spooled file when
+        # storage is unavailable or rejects the object.
+        temporary.close()
 
+    budget_exceeded = False
     with transaction.atomic():
         job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
             id=attempt.job_id
@@ -376,9 +419,35 @@ def ingest_artifact(
                 job=job, sha256=digest
             )
             return artifact, False
-        job.uploaded_artifact_bytes += size
-        job.save(update_fields=["uploaded_artifact_bytes", "updated_at"])
-        return artifact, True
+        # The first budget check is only an early rejection. Other scenario uploads can finish
+        # while this artifact is being streamed to object storage, so repeat the decision while
+        # holding the job row lock immediately before accounting bytes.
+        absolute_budget = int(job.max_artifact_bytes * 1.1)
+        if job.uploaded_artifact_bytes + size > absolute_budget:
+            budget_exceeded = True
+        else:
+            job.uploaded_artifact_bytes += size
+            job.save(update_fields=["uploaded_artifact_bytes", "updated_at"])
+            return artifact, True
+
+    # The object was uploaded before the final accounting lock. Remove a rejected unique object
+    # so a losing concurrent upload does not leave untracked storage behind. Cleanup is best effort
+    # because the budget rejection itself must remain authoritative if storage is degraded.
+    if budget_exceeded:
+        try:
+            get_storage_client().remove_object(UPLOAD_BUCKET_NAME, object_key)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "failed to remove over-budget harness artifact", exc_info=True
+            )
+        raise HostedHarnessError(
+            "artifact_budget_exceeded",
+            "artifact exceeds the remaining job upload budget",
+            status_code=413,
+        )
+    raise HostedHarnessError(
+        "artifact_ingest_failed", "artifact could not be accounted", status_code=500
+    )
 
 
 def ingest_manifest(
@@ -492,6 +561,19 @@ def _validate_event(
     )
     if payload_error:
         return reject("event_payload_invalid", payload_error)
+    if event["type"] == "scenario_started":
+        scenario_key = event["payload"]["scenario_key"]
+        if not (
+            HostedHarnessExecution.no_workspace_objects.filter(
+                job_id=attempt.job_id, execution_key=scenario_key
+            ).exists()
+            or HostedHarnessScenario.no_workspace_objects.filter(
+                job_id=attempt.job_id, scenario_key=scenario_key
+            ).exists()
+        ):
+            return reject(
+                "scenario_unknown", "scenario key is not registered for this job"
+            )
     existing_id = HostedHarnessEvent.no_workspace_objects.filter(
         event_id=event["event_id"]
     ).first()
@@ -538,25 +620,91 @@ def _store_event(
     )
     if rejection is None and event["type"] == "stage_changed":
         attempt.job.current_stage = event["payload"]["to"]
-        attempt.job.save(update_fields=["current_stage", "updated_at"])
-    if rejection is None and event["type"] == "scenario_started":
-        # Registrations and their CallExecution rows are allocated before the guest starts.
-        # Project the guest's lifecycle event into the existing platform row so the simulation
-        # UI shows an active call instead of leaving it PENDING until the terminal receipt.  The
-        # receipt remains authoritative for the provider's exact started_at/ended_at timestamps.
-        registration = (
-            HostedHarnessScenario.no_workspace_objects.select_related("call_execution")
-            .filter(
-                job=attempt.job,
-                scenario_key=event["payload"]["scenario_key"],
-            )
-            .first()
+        attempt.job.content_updated_at = timezone.now()
+        attempt.job.save(
+            update_fields=["current_stage", "content_updated_at", "updated_at"]
         )
-        if registration and registration.call_execution_id:
-            CallExecution.objects.filter(
-                id=registration.call_execution_id,
-                status=CallExecution.CallStatus.PENDING,
-            ).update(status=CallExecution.CallStatus.ONGOING)
+    if rejection is None and event["type"] == "scenario_started":
+        scenario_key = event["payload"]["scenario_key"]
+        execution = HostedHarnessExecution.no_workspace_objects.filter(
+            job=attempt.job, execution_key=scenario_key
+        ).first()
+        if execution is not None:
+            call_id = execution.call_execution_id
+            receipt_filter = {"execution": execution}
+        else:
+            registration = HostedHarnessScenario.no_workspace_objects.filter(
+                job=attempt.job, scenario_key=scenario_key
+            ).first()
+            call_id = registration.call_execution_id if registration else None
+            receipt_filter = {"scenario": registration, "execution__isnull": True}
+        if (
+            call_id
+            and not HostedHarnessReceipt.no_workspace_objects.filter(
+                job=attempt.job,
+                attempt_number=attempt.attempt_number,
+                **receipt_filter,
+            ).exists()
+        ):
+            CallExecution.objects.filter(id=call_id).update(
+                status=CallExecution.CallStatus.ONGOING,
+                completed_at=None,
+                error_message="",
+            )
+    if rejection is None and event["type"] == "parallelism_degraded":
+        # Attempt-level degrade projection (C4 §6, decision D26). We reach here
+        # only on the FIRST store of the event — the event_id dedup guard at the
+        # top of _store_event returns early for a redelivered duplicate — so a
+        # redelivery can never double-append a reason. Effective parallelism is
+        # min-monotone (an out-of-order duplicate carrying a HIGHER effective can
+        # never raise it) and the reason is appended only if absent.
+        payload = event["payload"]
+        effective = payload["effective"]
+        reason = payload["reason"]
+        current = attempt.effective_parallelism
+        reasons = list(attempt.degrade_reasons or [])
+        # C4 §8 per-attempt cross-event invariant check. The two invariants —
+        # effective STRICTLY DECREASING across accepted degrade events, and <=1
+        # event per reason — are WARNING-ONLY: a violation is logged but never
+        # rejects and never changes the projection (still min-monotone below +
+        # append-if-absent), so an out-of-order or duplicate delivery is absorbed.
+        if current is not None and effective >= current:
+            logger.warning(
+                "harness degrade event violates strictly-decreasing effective "
+                "parallelism invariant (C4 §8)",
+                extra={
+                    "job_id": str(attempt.job_id),
+                    "attempt_id": str(attempt.id),
+                    "reason": reason,
+                    "incoming_effective": effective,
+                    "recorded_effective": current,
+                },
+            )
+        if reason in reasons:
+            logger.warning(
+                "harness degrade event repeats a reason already recorded for "
+                "the attempt (C4 §8)",
+                extra={
+                    "job_id": str(attempt.job_id),
+                    "attempt_id": str(attempt.id),
+                    "reason": reason,
+                    "incoming_effective": effective,
+                    "recorded_effective": current,
+                },
+            )
+        attempt.effective_parallelism = (
+            effective if current is None else min(current, effective)
+        )
+        if reason not in reasons:
+            reasons.append(reason)
+        attempt.degrade_reasons = reasons
+        attempt.save(
+            update_fields=[
+                "effective_parallelism",
+                "degrade_reasons",
+                "updated_at",
+            ]
+        )
     if rejection is None and event["type"] == "terminal":
         payload = event["payload"]
         attempt.terminal_stage = payload["stage"]
@@ -615,10 +763,14 @@ def _event_payload_error(event_type: str, stage: str, payload: object) -> str | 
     if event_type == "stage_changed":
         if set(payload) != {"from", "to"} or payload["to"] != stage:
             return "stage_changed requires exactly from/to and stage == to"
+    elif event_type == "scenario_started":
+        key = payload.get("scenario_key")
+        if not isinstance(key, str) or not key.strip() or len(key) > 255:
+            return "scenario_started requires a nonempty scenario key"
     elif event_type == "parallelism_degraded":
         if set(payload) != {"requested", "effective", "reason"}:
             return "parallelism_degraded requires requested/effective/reason"
-        if payload["reason"] not in {"conformance_gate_failed", "fixed_port"}:
+        if payload["reason"] not in _DEGRADE_REASONS:
             return "invalid parallelism degradation reason"
         if not (
             isinstance(payload["requested"], int)
@@ -689,19 +841,42 @@ def _assert_receipt_artifacts(job: HostedHarnessJob, body: dict[str, Any]) -> No
         )
 
 
+def _merge_recovered_call_artifacts(artifacts, recovered):
+    """Fill missing media kinds only when the attempt spool is unambiguous."""
+    result = list(artifacts)
+    present = {artifact.kind for artifact in result}
+    allowed = {
+        "transcript",
+        "recording_combined",
+        "recording_stereo",
+        "recording_customer",
+        "recording_assistant",
+    }
+    for kind in sorted(allowed - present):
+        candidates = {item.sha256: item for item in recovered if item.kind == kind}
+        if len(candidates) == 1:
+            result.append(next(iter(candidates.values())))
+    return result
+
+
 def _apply_receipt_to_call(
-    registration: HostedHarnessScenario, body: dict[str, Any]
+    allocation: Any,
+    body: dict[str, Any],
+    *,
+    recovered_artifact_ids: list[str] | None = None,
 ) -> None:
-    call = registration.call_execution
+    call = allocation.call_execution
     if call is None:
         raise HostedHarnessError(
             "scenario_not_begun",
             "scenario has no pre-allocated execution",
             status_code=409,
         )
+    job = allocation.job
+    scenario_key = getattr(allocation, "execution_key", None) or allocation.scenario_key
     call.status = _call_lifecycle_status(body)
     call_data = body.get("call")
-    resolved_modality = _resolve_scenario_modality(registration.job, body)
+    resolved_modality = _resolve_scenario_modality(job, body)
     if call_data and call_data.get("recording_artifacts"):
         # A persisted audio recording is definitive evidence of a voice call,
         # even if scenario provisioning raced ahead of contract synchronization.
@@ -716,6 +891,13 @@ def _apply_receipt_to_call(
     elif body["status"] == "skipped":
         call.completed_at = timezone.now()
     metadata = dict(call.call_metadata or {})
+    previous_receipt = metadata.get("hosted_harness_receipt") or {}
+    if previous_receipt.get("digest") != body.get("digest"):
+        metadata.pop("hosted_harness_recovered_artifact_ids", None)
+    if recovered_artifact_ids is not None:
+        metadata["hosted_harness_recovered_artifact_ids"] = recovered_artifact_ids
+    else:
+        recovered_artifact_ids = metadata.get("hosted_harness_recovered_artifact_ids")
     metadata["hosted_harness_receipt"] = _json_ready(body)
     metadata["harness_evaluations"] = _receipt_evaluations(body)
     metadata["harness_outcome_status"] = body["status"]
@@ -750,14 +932,28 @@ def _apply_receipt_to_call(
             artifact_ids.append(transcript_id)
         artifacts = list(
             HostedHarnessArtifact.no_workspace_objects.filter(
-                job=registration.job,
+                job=job,
                 sha256__in=[item.removeprefix("sha256:") for item in artifact_ids],
             )
         )
+        # Offline recovery can persist files whose original upload was never
+        # acknowledged. Enrich only the projection, never the signed receipt.
+        # Use the current attempt's spool IDs, not all historical scenario files.
+        if recovered_artifact_ids:
+            recovered = list(
+                HostedHarnessArtifact.no_workspace_objects.filter(
+                    job=job,
+                    scenario_key=scenario_key,
+                    sha256__in=[
+                        item.removeprefix("sha256:") for item in recovered_artifact_ids
+                    ],
+                )
+            )
+            artifacts = _merge_recovered_call_artifacts(artifacts, recovered)
         tool_trace = (
             HostedHarnessArtifact.no_workspace_objects.filter(
-                job=registration.job,
-                scenario_key=registration.scenario_key,
+                job=job,
+                scenario_key=scenario_key,
                 kind="tool_trace",
             )
             .order_by("created_at")
@@ -791,6 +987,7 @@ def _apply_receipt_to_call(
             )
             update_fields.append("stereo_recording_url")
         if combined is not None or stereo is not None:
+            call.simulation_call_type = CallExecution.SimulationCallType.VOICE
             call.recording_available = True
             update_fields.append("recording_available")
 
@@ -815,7 +1012,10 @@ def _apply_receipt_to_call(
         _dispatch_csat_once,
         _dispatch_evaluations_once,
     )
-    from simulate.services.harness_evals import runnable_eval_config_ids
+    from simulate.services.harness_evals import (
+        _tool_evaluation_on,
+        runnable_eval_config_ids,
+    )
 
     _apply_harness_evaluation_outputs(call)
     update_fields.append("eval_outputs")
@@ -859,7 +1059,7 @@ def _apply_receipt_to_call(
             )
     call.save(update_fields=list(dict.fromkeys(update_fields)))
     if resolved_modality == CallExecution.SimulationCallType.VOICE:
-        _ensure_run_agent_is_voice(registration.job)
+        _ensure_run_agent_is_voice(job)
     if call.status == CallExecution.CallStatus.COMPLETED:
         call_id = call.id
         run_test_id = getattr(call.test_execution, "run_test_id", None)
@@ -868,20 +1068,21 @@ def _apply_receipt_to_call(
         )
         # A hosted receipt never travels the SDK result path, so dispatch here, after commit.
         try:
-            selected = (
-                runnable_eval_config_ids(run_test_id)
-                if isinstance(run_test_id, (str, UUID))
-                else []
-            )
-        except Exception:  # noqa: BLE001 - a receipt is never lost over what it schedules next
+            known = isinstance(run_test_id, (str, UUID))
+            selected = runnable_eval_config_ids(run_test_id) if known else []
+            tool_on = _tool_evaluation_on(run_test_id) if known else False
+        except Exception:  # noqa: BLE001 - a receipt is never lost over scheduling
             logger.exception(
-                "harness_eval_selection_lookup_failed", call_id=str(call_id)
+                "harness_eval_selection_lookup_failed for call %s", call_id
             )
-            selected = []
-        if selected:
+            selected, tool_on = [], False
+        # The tool-call judge switch is independent of the eval catalogue, so
+        # it must still dispatch when this environment has no runnable eval selected.
+        if selected or tool_on:
             transaction.on_commit(
                 lambda: _dispatch_evaluations_once(
-                    CallExecution.objects.get(id=call_id), eval_config_ids=selected
+                    CallExecution.objects.get(id=call_id),
+                    eval_config_ids=selected,  # [] stays [], never None
                 )
             )
 
@@ -1145,21 +1346,52 @@ def _ingest_hosted_transcript(
 
 
 def _backfill_missing_receipts(attempt: HostedHarnessAttempt) -> None:
-    existing = set(
-        HostedHarnessReceipt.no_workspace_objects.filter(job=attempt.job).values_list(
-            "scenario_id", flat=True
-        )
+    executions = list(
+        HostedHarnessExecution.no_workspace_objects.filter(job=attempt.job)
+        .select_related("source_scenario", "call_execution")
+        .order_by("created_at")
     )
-    registrations = HostedHarnessScenario.no_workspace_objects.filter(job=attempt.job)
-    for registration in registrations:
-        if registration.id in existing:
-            continue
+    if executions:
+        existing = set(
+            HostedHarnessReceipt.no_workspace_objects.filter(
+                job=attempt.job, execution__isnull=False
+            ).values_list("execution_id", flat=True)
+        )
+        allocations: list[
+            tuple[Any, HostedHarnessScenario, HostedHarnessExecution | None]
+        ] = [
+            (execution, execution.source_scenario, execution)
+            for execution in executions
+            if execution.id not in existing
+        ]
+    elif attempt.job.test_execution_id:
+        existing = set(
+            HostedHarnessReceipt.no_workspace_objects.filter(
+                job=attempt.job, execution__isnull=True
+            ).values_list("scenario_id", flat=True)
+        )
+        allocations = [
+            (registration, registration, None)
+            for registration in HostedHarnessScenario.no_workspace_objects.filter(
+                job=attempt.job
+            )
+            if registration.id not in existing
+        ]
+    else:
+        # An authored environment has registrations but intentionally no
+        # simulation results until a user submits a Run.
+        return
+
+    for allocation, registration, execution in allocations:
+        scenario_key = (
+            getattr(allocation, "execution_key", None) or registration.scenario_key
+        )
         body = {
             "schema_version": "futureagi.harness-result.v1",
             "job_id": str(attempt.job_id),
             "attempt_id": str(attempt.id),
             "attempt_number": attempt.attempt_number,
-            "scenario_key": registration.scenario_key,
+            "scenario_key": scenario_key,
             "scenario_id": str(registration.scenario_id),
             "scenario_attempt": 1,
             "world_index": None,
@@ -1175,12 +1407,13 @@ def _backfill_missing_receipts(attempt: HostedHarnessAttempt) -> None:
             job=attempt.job,
             attempt=attempt,
             scenario=registration,
+            execution=execution,
             attempt_number=attempt.attempt_number,
             digest=digest,
             status="skipped",
             body=body,
         )
-        _apply_receipt_to_call(registration, body)
+        _apply_receipt_to_call(allocation, body)
 
 
 def _json_ready(value: object) -> object:

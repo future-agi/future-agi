@@ -10,7 +10,9 @@ from simulate.temporal.types.hosted_harness_gateway import (
     HostedHarnessAttemptInput,
     HostedHarnessAuthoringOutput,
     HostedHarnessGatewayInput,
+    HostedHarnessLaunchFailureInput,
     HostedHarnessLaunchOutput,
+    HostedHarnessLaunchRecoveryOutput,
     HostedHarnessPollOutput,
 )
 
@@ -124,6 +126,44 @@ async def launch_hosted_harness_job(
     return HostedHarnessLaunchOutput(attempt_id=attempt_id)
 
 
+@activity.defn(name="record_hosted_harness_launch_failure")
+async def record_hosted_harness_launch_failure(
+    input: HostedHarnessLaunchFailureInput,
+) -> HostedHarnessLaunchRecoveryOutput:
+    """Make exhausted pre-attempt launch failures visible instead of leaving jobs queued."""
+    from simulate.models import HostedHarnessJob
+
+    def _record() -> HostedHarnessLaunchRecoveryOutput:
+        job = HostedHarnessJob.no_workspace_objects.get(id=input.job_id)
+        if job.state in {
+            HostedHarnessJob.State.COMPLETED,
+            HostedHarnessJob.State.FAILED,
+            HostedHarnessJob.State.CANCELED,
+        }:
+            return HostedHarnessLaunchRecoveryOutput(state=job.state)
+        # If a launch created an attempt, its provider cleanup belongs to the
+        # gateway's attempt protocol.  Do not turn an active call into a false
+        # terminal job just because the Temporal activity response was lost.
+        attempt = job.attempts.order_by('-attempt_number').first()
+        if attempt is not None and attempt.provider_ref:
+            return HostedHarnessLaunchRecoveryOutput(
+                state=job.state, attempt_id=str(attempt.id)
+            )
+        job.state = HostedHarnessJob.State.FAILED
+        job.current_stage = "failed"
+        job.failure = {
+            "domain": "infrastructure",
+            "stage": "acquiring_source",
+            "code": "hosted_launch_failed",
+            "message": "The hosted run could not launch after its bounded retries; no call was attempted.",
+        }
+        job.terminal_at = timezone.now()
+        job.save(update_fields=["state", "current_stage", "failure", "terminal_at", "updated_at"])
+        return HostedHarnessLaunchRecoveryOutput(state=job.state)
+
+    return await _run_db(_record)
+
+
 @activity.defn(name="poll_hosted_harness_attempt")
 async def poll_hosted_harness_attempt(
     input: HostedHarnessAttemptInput,
@@ -164,8 +204,8 @@ async def cancel_hosted_harness_attempt(
         state = await _run_db(_cancel)
     except Exception:
         activity.logger.exception(
-            "hosted harness cancellation cleanup is still pending",
-            attempt_id=input.attempt_id,
+            "hosted harness cancellation cleanup is still pending; attempt_id=%s",
+            input.attempt_id,
         )
         return HostedHarnessPollOutput(
             done=False,

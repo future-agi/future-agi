@@ -127,8 +127,8 @@ describe("mergeEgressDomains", () => {
 });
 
 describe("MAX_SCENARIO_COUNT", () => {
-  it("is 200", () => {
-    expect(MAX_SCENARIO_COUNT).toBe(200);
+  it("matches the ceiling the API accepts", () => {
+    expect(MAX_SCENARIO_COUNT).toBe(1000);
   });
 });
 
@@ -196,8 +196,8 @@ describe("buildJobPayload", () => {
   });
 
   it("clamps scenario_count to MAX_SCENARIO_COUNT", () => {
-    expect(buildJobPayload({ ...baseState, scenarioCount: 201 }).scenario_count).toBe(200);
-    expect(buildJobPayload({ ...baseState, scenarioCount: 200 }).scenario_count).toBe(200);
+    expect(buildJobPayload({ ...baseState, scenarioCount: 1001 }).scenario_count).toBe(1000);
+    expect(buildJobPayload({ ...baseState, scenarioCount: 1000 }).scenario_count).toBe(1000);
     expect(buildJobPayload({ ...baseState, scenarioCount: 0 }).scenario_count).toBe(1);
     expect(buildJobPayload({ ...baseState, scenarioCount: -5 }).scenario_count).toBe(1);
   });

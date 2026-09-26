@@ -464,7 +464,7 @@ def test_conversation_runtime_lease_starts_once_and_reuses_warm_sandbox(
     monkeypatch.setattr(
         gateway_module,
         "_resolved_egress_domains",
-        lambda *_args: {"platform.example"},
+        lambda *_args: {f"host-{index}.example" for index in range(25)},
     )
 
     gateway = object.__new__(gateway_module.HostedHarnessGateway)
