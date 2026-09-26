@@ -291,6 +291,44 @@ def test_pinned_project_serves_its_copy_over_a_newer_one(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("extra", [{"format": "json"}, {"unrelated": "1"}])
+def test_trace_detail_ignores_unknown_query_params(auth_client, replayed_trace, extra):
+    """The project pin must not make trace detail reject params it used to ignore.
+
+    Before the pin, GET /tracer/trace/{id}/ read no query serializer, so DRF's
+    ``?format=json`` and any param an external caller sends were ignored.
+    """
+    older = str(replayed_trace.older.id)
+
+    unpinned = auth_client.get(f"/tracer/trace/{replayed_trace.trace_id}/", extra)
+    pinned = auth_client.get(
+        f"/tracer/trace/{replayed_trace.trace_id}/", {"project_id": older, **extra}
+    )
+
+    assert unpinned.status_code == status.HTTP_200_OK, unpinned.data
+    assert _ENDPOINTS["trace"][1](unpinned.data["result"]) == str(
+        replayed_trace.newer.id
+    )
+    assert pinned.status_code == status.HTTP_200_OK, pinned.data
+    assert _ENDPOINTS["trace"][1](pinned.data["result"]) == older
+
+
+@pytest.mark.django_db
+def test_trace_detail_still_rejects_a_malformed_project_pin(
+    auth_client, replayed_trace
+):
+    response = auth_client.get(
+        f"/tracer/trace/{replayed_trace.trace_id}/",
+        {"project_id": "not-a-uuid", "format": "json"},
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert "project_id" in json.dumps(response.data)
+    assert "format" not in json.dumps(response.data)
+    assert replayed_trace.analytics.calls == []
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize("endpoint", _ENDPOINTS)
 @pytest.mark.parametrize("pin", ["foreign", "unknown", "empty"])
 def test_pin_outside_scope_or_without_the_id_answers_like_a_missing_id(

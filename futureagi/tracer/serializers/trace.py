@@ -570,8 +570,12 @@ _DETAIL_PROJECT_ID_HELP = (
 )
 
 
-class TraceDetailQuerySerializer(StrictInputSerializer):
-    """Optional project pin for the trace-detail identity."""
+class TraceDetailQuerySerializer(serializers.Serializer):
+    """Optional project pin for the trace-detail identity.
+
+    Not strict: trace detail read no query params before the pin, so callers'
+    extra params (DRF's ``?format=json`` included) keep being ignored.
+    """
 
     project_id = serializers.UUIDField(
         required=False, help_text=_DETAIL_PROJECT_ID_HELP
