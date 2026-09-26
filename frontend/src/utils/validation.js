@@ -58,3 +58,12 @@ export const getNumberValidation = (
 
   return schema;
 };
+
+export const ColumnNameValidationSchema = z
+  .string()
+  .min(1, "Column name is required")
+  .max(50, "Column name must be less than 50 characters")
+  .regex(
+    /^[a-z0-9_-]+$/,
+    "Only lowercase letters, numbers, underscores, and hyphens are allowed (no spaces)",
+  );
