@@ -59,6 +59,7 @@ class Harness:
         self.fail_write = None
         self.retain_failed_write = True
         self.fail_read = None
+        self.outbox_capture = False
         self.pg = SimpleNamespace(execute=Mock(side_effect=self.pg_read), close=Mock())
         self.raw = SimpleNamespace(query=Mock(side_effect=self.ch_read), close=Mock())
         self.writer = SimpleNamespace(
@@ -148,6 +149,14 @@ class Harness:
             rows = [(True,)]
         elif "current_database()" in statement and "FROM" not in statement:
             rows = [("source_db",)]
+        elif "to_regclass" in statement:
+            assert "pg_catalog.pg_trigger" in statement
+            assert parameters == {
+                "outbox": "public.fi_cdc_outbox",
+                "state": "public.fi_cdc_state",
+                "triggers": ["fi_cdc_ins", "fi_cdc_upd", "fi_cdc_del", "fi_cdc_trunc"],
+            }
+            rows = [(self.outbox_capture,)]
         elif "FROM information_schema.columns" in statement:
             assert parameters == {"database": "source_db", "tables": sorted(TABLES)}
             rows = []
@@ -301,6 +310,38 @@ def test_default_fresh_check_never_opens_writer(harness):
     harness.pg.close.assert_called_once()
     harness.raw.close.assert_called_once()
     assert all("pg_try_advisory" not in e[1] for e in harness.events if e[0] == "pg")
+
+
+@pytest.mark.parametrize(
+    "kwargs", [{}, {"apply": True}, {"wait_for_mirrors": True}]
+)
+def test_default_install_database_is_refused_before_any_peerdb_call(
+    harness, kwargs
+):
+    """A database the standalone install's outbox CDC set up has landing tables
+    without mirrors and capture triggers nothing here drains. Switching with
+    retained data is unsupported, and the refusal says what to do instead."""
+    harness.retained()
+    harness.outbox_capture = True
+
+    with pytest.raises(setup.SetupError) as refused:
+        harness.run(**kwargs)
+
+    assert str(refused.value) == setup.OUTBOX_DATA_MESSAGE
+    assert "./bin/uninstall --wipe-data" in str(refused.value)
+    assert harness.writes == []
+    assert not [e for e in harness.events if e[0] in ("api", "ch")]
+    harness.pg.close.assert_called_once()
+
+
+def test_outbox_markers_match_the_outbox_module():
+    from tracer.services.clickhouse import oss_outbox_cdc
+
+    assert setup._OUTBOX_TABLES == (
+        f"public.{oss_outbox_cdc.OUTBOX}",
+        f"public.{oss_outbox_cdc.STATE}",
+    )
+    assert setup._OUTBOX_TRIGGERS == tuple(oss_outbox_cdc.TRIGGERS)
 
 
 @pytest.mark.parametrize("legacy_drop_flag", [None, "false", "true"])
