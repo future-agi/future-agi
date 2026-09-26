@@ -757,6 +757,14 @@ class LegacyKnowledgeBaseMutationRequestSerializer(serializers.Serializer):
         required=False,
         default=list,
     )
+    # Alternative source to `file` uploads: build the KB from an existing
+    # dataset's rows instead, indexing only the chosen columns.
+    dataset_id = serializers.UUIDField(required=False)
+    column_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
 
 
 class LegacyKnowledgeBaseFilesRequestSerializer(serializers.Serializer):

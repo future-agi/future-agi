@@ -12,8 +12,20 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework import status
 
 from model_hub.constants import MAX_KB_SIZE
-from model_hub.models.choices import StatusType
-from model_hub.models.develop_dataset import Files, KnowledgeBaseFile
+from model_hub.models.choices import (
+    DataTypeChoices,
+    DatasetSourceChoices,
+    SourceChoices,
+    StatusType,
+)
+from model_hub.models.develop_dataset import (
+    Cell,
+    Column,
+    Dataset,
+    Files,
+    KnowledgeBaseFile,
+    Row,
+)
 from tfc.constants.api_calls import APICallStatusChoices
 
 VIEW = "model_hub.views.develop_dataset.CreateKnowledgeBaseView"
@@ -34,6 +46,23 @@ def _existing_file(name="already-there.txt"):
         updated_by="Test User",
         uploaded_url="https://example.com/test.txt",
     )
+
+
+def _dataset_with_column(organization, workspace=None, column_name="content"):
+    dataset = Dataset.objects.create(
+        name="kb-source-dataset",
+        source=DatasetSourceChoices.BUILD.value,
+        organization=organization,
+        workspace=workspace,
+    )
+    column = Column.objects.create(
+        name=column_name,
+        data_type=DataTypeChoices.TEXT.value,
+        dataset=dataset,
+        source=SourceChoices.OTHERS.value,
+        status=StatusType.COMPLETED.value,
+    )
+    return dataset, column
 
 
 @pytest.fixture
@@ -259,6 +288,198 @@ class TestLegacyKbCreateHappyPath:
         kb = KnowledgeBaseFile.objects.get(id=response.json()["result"]["kb_id"])
         assert kb.organization_id == organization.id
         assert kb.size == 0
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestLegacyKbCreateFromDataset:
+    """``dataset_id``/``column_ids`` as an alternative source to ``file`` uploads."""
+
+    def test_missing_dataset_is_rejected(
+        self, auth_client, allow_entitlements, organization
+    ):
+        response = auth_client.post(
+            KB_URL,
+            {"name": "ghost-dataset-kb", "dataset_id": "00000000-0000-0000-0000-000000000000"},
+            format="multipart",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not KnowledgeBaseFile.objects.filter(name="ghost-dataset-kb").exists()
+
+    def test_no_columns_selected_is_rejected(
+        self, auth_client, allow_entitlements, organization
+    ):
+        dataset, _column = _dataset_with_column(organization)
+
+        response = auth_client.post(
+            KB_URL,
+            {"name": "no-columns-kb", "dataset_id": str(dataset.id)},
+            format="multipart",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not KnowledgeBaseFile.objects.filter(name="no-columns-kb").exists()
+
+    def test_column_from_another_dataset_is_rejected(
+        self, auth_client, allow_entitlements, organization
+    ):
+        dataset, _column = _dataset_with_column(organization)
+        _other_dataset, foreign_column = _dataset_with_column(
+            organization, column_name="other"
+        )
+
+        response = auth_client.post(
+            KB_URL,
+            {
+                "name": "wrong-column-kb",
+                "dataset_id": str(dataset.id),
+                "column_ids": [str(foreign_column.id)],
+            },
+            format="multipart",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not KnowledgeBaseFile.objects.filter(name="wrong-column-kb").exists()
+
+    def test_creates_kb_with_no_files_and_schedules_dataset_ingestion(
+        self, mocker, auth_client, allow_entitlements, organization
+    ):
+        # Posted as multipart, matching how the drawer actually submits this
+        # (CreateKnowledgeBaseDrawer.jsx appends dataset_id/column_ids to a
+        # FormData) — a JSON body would mask a QueryDict-only parsing bug.
+        dataset, column = _dataset_with_column(organization)
+        schedule = mocker.patch(
+            f"{MODULE}.schedule_dataset_kb_ingestion_on_commit"
+        )
+
+        response = auth_client.post(
+            KB_URL,
+            {
+                "name": "dataset-sourced-kb",
+                "dataset_id": str(dataset.id),
+                "column_ids": [str(column.id)],
+            },
+            format="multipart",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["file_ids"] == []
+
+        kb = KnowledgeBaseFile.objects.get(id=result["kb_id"])
+        assert kb.organization_id == organization.id
+        assert kb.workspace_id == dataset.workspace_id
+        # No cells for this column in this dataset, so no content to size.
+        assert kb.size == 0
+        assert kb.files.count() == 0
+
+        # column_ids is a ListField(UUIDField) — validated_data holds UUID
+        # objects, not the strings that were posted.
+        schedule.assert_called_once_with(dataset.id, [column.id], kb.id, organization.id)
+
+    def test_duplicate_column_ids_are_deduped_before_scheduling(
+        self, mocker, auth_client, allow_entitlements, organization
+    ):
+        dataset, column = _dataset_with_column(organization)
+        schedule = mocker.patch(
+            f"{MODULE}.schedule_dataset_kb_ingestion_on_commit"
+        )
+
+        response = auth_client.post(
+            KB_URL,
+            {
+                "name": "dedup-columns-kb",
+                "dataset_id": str(dataset.id),
+                "column_ids": [str(column.id), str(column.id)],
+            },
+            format="multipart",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        kb = KnowledgeBaseFile.objects.get(id=response.json()["result"]["kb_id"])
+        schedule.assert_called_once_with(
+            dataset.id, [column.id], kb.id, organization.id
+        )
+
+    def test_kb_size_reflects_selected_column_content(
+        self, mocker, auth_client, allow_entitlements, organization
+    ):
+        """size must come from the actual cell content, not stay pinned at 0
+        (a create-time quota gate that reads kb.size would fail open otherwise)."""
+        dataset, column = _dataset_with_column(organization)
+        row = Row.objects.create(dataset=dataset, order=0)
+        Cell.objects.create(
+            dataset=dataset, column=column, row=row, value="twelve chars"
+        )
+        mocker.patch(f"{MODULE}.schedule_dataset_kb_ingestion_on_commit")
+
+        response = auth_client.post(
+            KB_URL,
+            {
+                "name": "sized-dataset-kb",
+                "dataset_id": str(dataset.id),
+                "column_ids": [str(column.id)],
+            },
+            format="multipart",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        kb = KnowledgeBaseFile.objects.get(id=response.json()["result"]["kb_id"])
+        assert kb.size == len("twelve chars")
+
+    def test_dataset_in_another_workspace_is_rejected(
+        self, mocker, auth_client, allow_entitlements, organization, user, workspace
+    ):
+        """The picker is org-wide (GetDatasetsView), but indexing must stay
+        workspace-scoped like every other dataset lookup in this file."""
+        from accounts.models.workspace import Workspace
+
+        other_workspace = Workspace.objects.create(
+            name="other-workspace",
+            organization=organization,
+            is_default=False,
+            created_by=user,
+        )
+        dataset, column = _dataset_with_column(
+            organization, workspace=other_workspace
+        )
+        schedule = mocker.patch(
+            f"{MODULE}.schedule_dataset_kb_ingestion_on_commit"
+        )
+
+        response = auth_client.post(
+            KB_URL,
+            {
+                "name": "cross-workspace-kb",
+                "dataset_id": str(dataset.id),
+                "column_ids": [str(column.id)],
+            },
+            format="multipart",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not KnowledgeBaseFile.objects.filter(name="cross-workspace-kb").exists()
+        schedule.assert_not_called()
+
+    def test_dataset_and_files_together_is_rejected(
+        self, auth_client, allow_entitlements, organization
+    ):
+        dataset, column = _dataset_with_column(organization)
+
+        response = auth_client.post(
+            KB_URL,
+            {
+                "name": "mixed-source-kb",
+                "dataset_id": str(dataset.id),
+                "column_ids": [str(column.id)],
+                "file": _upload(),
+            },
+            format="multipart",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not KnowledgeBaseFile.objects.filter(name="mixed-source-kb").exists()
 
 
 @pytest.mark.integration
