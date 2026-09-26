@@ -7,6 +7,10 @@ const pageBytesLimit = 2 * 1024 * 1024;
 const maxCalls = 50000;
 const callKeys = ['call_execution_id', 'status', 'simulation_call_type', 'scenario', 'call_summary', 'error_message', 'ended_reason', 'transcript'];
 const transcriptKeys = ['id', 'speaker', 'content', 'start_time', 'end_time'];
+const evaluationKeys = ['name', 'value', 'passed', 'reason'];
+const goalKeys = ['use_case', 'sub_goals', 'expected_outcome'];
+// Optional so this worker accepts pages from platforms that predate them.
+const optionalCallKeys = ['evaluations', 'goals'];
 
 function exactKeys(value, keys, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
@@ -27,8 +31,31 @@ function validTime(value) {
   return value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0);
 }
 
+function validateEvaluations(evaluations) {
+  if (!Array.isArray(evaluations) || evaluations.length > 200) throw new Error('Invalid simulation evaluations');
+  for (const item of evaluations) {
+    exactKeys(item, evaluationKeys, 'simulation evaluation');
+    requiredText(item.name, 256, 'simulation evaluation name');
+    optionalText(item.value, 8000, 'simulation evaluation value');
+    if (item.passed !== null && typeof item.passed !== 'boolean') throw new Error('Invalid simulation evaluation verdict');
+    optionalText(item.reason, pageBytesLimit, 'simulation evaluation reason');
+  }
+}
+
+function validateGoals(goals) {
+  if (goals === null) return;
+  exactKeys(goals, goalKeys, 'simulation goals');
+  optionalText(goals.use_case, pageBytesLimit, 'simulation use case');
+  optionalText(goals.expected_outcome, pageBytesLimit, 'simulation expected outcome');
+  if (!Array.isArray(goals.sub_goals) || goals.sub_goals.length > 100) throw new Error('Invalid simulation sub-goals');
+  for (const goal of goals.sub_goals) requiredText(goal, 256, 'simulation sub-goal');
+}
+
 function validateCall(call) {
-  exactKeys(call, callKeys, 'simulation call');
+  exactKeys(call, [...callKeys, ...optionalCallKeys.filter(key => Object.hasOwn(call ?? {}, key))],
+    'simulation call');
+  if (Object.hasOwn(call, 'evaluations')) validateEvaluations(call.evaluations);
+  if (Object.hasOwn(call, 'goals')) validateGoals(call.goals);
   if (!uuid.test(call.call_execution_id ?? '')) throw new Error('Invalid simulation call identity');
   requiredText(call.status, 64, 'simulation call status');
   requiredText(call.simulation_call_type, 128, 'simulation call type');

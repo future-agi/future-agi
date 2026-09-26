@@ -78,3 +78,56 @@ test('simulation evidence rejects inconsistent pagination, duplicate rows and by
     await rm(dir, {recursive: true, force: true});
   }
 });
+
+test('simulation evidence carries the run eval verdicts when the platform sends them', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'omega-simulation-evidence-test-'));
+  try {
+    const job = claim();
+    const graded = {...call('graded'), evaluations: [
+      {name: 'answers_in_callers_language', value: 'Passed', passed: true, reason: 'Replied in Spanish.'},
+      {name: 'csat', value: '3', passed: null, reason: null},
+    ]};
+    const legacy = call('legacy');
+    const control = async () => ({calls: [graded, legacy], next_cursor: 2, total_calls: 2});
+    const store = await downloadSimulationEvidence(job, join(dir, 'calls.jsonl'), {control});
+    const reader = createSimulationEvidenceReader(store, {maxResultBytes: 4096, maxTotalBytes: 16384});
+
+    const read = JSON.parse((await reader.read(graded.call_execution_id, 0, 4096)).text);
+    assert.deepEqual(read.evaluations, graded.evaluations);
+    assert.equal(Object.hasOwn(JSON.parse((await reader.read(legacy.call_execution_id, 0, 4096)).text), 'evaluations'), false);
+
+    for (const evaluations of [[{name: 'x', value: 'Passed', passed: 'yes', reason: null}],
+      [{name: 'x', value: 'Passed', passed: true}], 'not-a-list']) {
+      await assert.rejects(downloadSimulationEvidence(claim(), join(dir, `bad-${randomUUID()}.jsonl`),
+        {control: async () => ({calls: [{...call(), evaluations}], next_cursor: 1, total_calls: 1})}),
+      /Invalid simulation evaluation/);
+    }
+  } finally {
+    await rm(dir, {recursive: true, force: true});
+  }
+});
+
+test('simulation evidence carries the goals a call was authored to test', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'omega-simulation-evidence-test-'));
+  try {
+    const goals = {use_case: 'Book a guest ride', sub_goals: ['exact_greeting', 'spoken_pin_guidance'],
+      expected_outcome: 'the agent books the ride after a spoken PIN'};
+    const authored = {...call('authored'), goals};
+    const unmatched = {...call('unmatched'), goals: null};
+    const control = async () => ({calls: [authored, unmatched], next_cursor: 2, total_calls: 2});
+    const store = await downloadSimulationEvidence(claim(), join(dir, 'calls.jsonl'), {control});
+    const reader = createSimulationEvidenceReader(store, {maxResultBytes: 4096, maxTotalBytes: 16384});
+
+    assert.deepEqual(JSON.parse((await reader.read(authored.call_execution_id, 0, 4096)).text).goals, goals);
+    assert.equal(JSON.parse((await reader.read(unmatched.call_execution_id, 0, 4096)).text).goals, null);
+
+    for (const bad of [{...goals, sub_goals: 'exact_greeting'}, {...goals, sub_goals: ['']},
+      {use_case: 'x', sub_goals: []}]) {
+      await assert.rejects(downloadSimulationEvidence(claim(), join(dir, `bad-${randomUUID()}.jsonl`),
+        {control: async () => ({calls: [{...call(), goals: bad}], next_cursor: 1, total_calls: 1})}),
+      /Invalid simulation (sub-goal|goals)/);
+    }
+  } finally {
+    await rm(dir, {recursive: true, force: true});
+  }
+});
