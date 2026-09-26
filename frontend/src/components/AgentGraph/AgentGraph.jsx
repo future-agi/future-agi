@@ -13,6 +13,7 @@ import ExecutionNode from "./ExecutionNode";
 import StartEndNode from "./StartEndNode";
 import SubgraphGroupNode from "./SubgraphGroupNode";
 import { buildExecutionGraph } from "./layoutUtils";
+import { isSkippedStatus } from "src/sections/agent-playground/utils/workflowExecution";
 import "./agent-graph-animations.css";
 
 const nodeTypes = {
@@ -31,14 +32,26 @@ function AgentGraphInner({ executionData, onNodeClick, selectedNodeId }) {
     () =>
       nodes.map((n) => ({
         ...n,
-        data: { ...n.data, selected: n.id === selectedNodeId },
+        selectable: !isSkippedStatus(n.data?.nodeExecution?.status),
+        focusable: !isSkippedStatus(n.data?.nodeExecution?.status),
+        data: {
+          ...n.data,
+          selected:
+            n.id === selectedNodeId &&
+            !isSkippedStatus(n.data?.nodeExecution?.status),
+        },
       })),
     [nodes, selectedNodeId],
   );
 
   const handleNodeClick = useCallback(
     (event, node) => {
-      if (!node.data?.nodeExecution) return;
+      if (
+        !node.data?.nodeExecution ||
+        isSkippedStatus(node.data.nodeExecution.status)
+      ) {
+        return;
+      }
       onNodeClick?.(event, node);
     },
     [onNodeClick],

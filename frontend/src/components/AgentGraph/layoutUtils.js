@@ -1,5 +1,8 @@
 import Dagre from "@dagrejs/dagre";
-import { EXECUTION_STATUS } from "src/sections/agent-playground/utils/workflowExecution";
+import {
+  EXECUTION_STATUS,
+  isSkippedStatus,
+} from "src/sections/agent-playground/utils/workflowExecution";
 
 const NODE_WIDTH = 220;
 const NODE_HEIGHT = 50;
@@ -181,6 +184,8 @@ function layoutSubgraph(subGraphData, parentNodeId) {
         nodeExecution: exec,
         hasSubGraph: !!node.subGraph || !!node.sub_graph,
       },
+      selectable: !isSkippedStatus(exec?.status),
+      focusable: !isSkippedStatus(exec?.status),
     };
   });
 
@@ -295,6 +300,8 @@ function assembleRFGraph(executionData, g, allMainEdges, subgraphLayouts) {
           nodeExecution: exec,
         },
         style: { width: groupWidth, height: groupHeight },
+        selectable: !isSkippedStatus(exec?.status),
+        focusable: !isSkippedStatus(exec?.status),
       });
 
       rfNodes.push(...layout.innerNodes);
@@ -311,6 +318,8 @@ function assembleRFGraph(executionData, g, allMainEdges, subgraphLayouts) {
           nodeExecution: exec,
           hasSubGraph: false,
         },
+        selectable: !isSkippedStatus(exec?.status),
+        focusable: !isSkippedStatus(exec?.status),
       });
     }
   }

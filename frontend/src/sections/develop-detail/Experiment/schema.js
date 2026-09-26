@@ -311,6 +311,10 @@ export const getNewExperimentValidationSchema = (
                 .object({
                   toolChoice: z.string().default("auto"),
                   tools: z.array(z.any()),
+                  template_format: z
+                    .enum(["mustache", "jinja"])
+                    .optional()
+                    .default("mustache"),
                 })
                 .optional(),
               outputFormat: z.enum(["string", "json"]).optional(),

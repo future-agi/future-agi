@@ -423,7 +423,7 @@ def convert_uuids_to_column_names(messages: list, dataset_id: str) -> list:
 TEMPLATE_FORMAT_FSTRING = "f-string"
 TEMPLATE_FORMAT_MUSTACHE = "mustache"
 TEMPLATE_FORMAT_JINJA2 = "jinja2"
-DEFAULT_TEMPLATE_FORMAT = TEMPLATE_FORMAT_JINJA2
+DEFAULT_TEMPLATE_FORMAT = TEMPLATE_FORMAT_MUSTACHE
 
 # Jinja2 environment (reusable, sandboxed for security)
 _jinja2_env = SandboxedEnvironment()
@@ -439,7 +439,7 @@ def render_template(
     Args:
         template_str: The template string
         context: Dictionary of variables to substitute
-        template_format: One of 'f-string', 'mustache', 'jinja2' (default: jinja2)
+        template_format: One of 'f-string', 'mustache', 'jinja2' (default: mustache)
 
     Returns:
         Rendered string
