@@ -1,0 +1,117 @@
+{{- if eq .Values.redis.mode "bundled" }}
+{{- /* Evaluation only: one replica, no replication. */ -}}
+{{- $r := .Values.redis -}}
+{{- $bundled := $r.bundled -}}
+{{- $ctx := dict "root" . "component" "redis" -}}
+{{- $name := include "futureagi.component" $ctx -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "futureagi.selectorLabels" $ctx | nindent 4 }}
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  replicas: 1
+  serviceName: {{ $name }}
+  selector:
+    matchLabels:
+      {{- include "futureagi.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "futureagi.datastorePodLabels" $ctx | nindent 8 }}
+      annotations:
+        # Only this datastore's own credentials: an LLM key does not restart it.
+        checksum/secrets: {{ toJson (pick $r "password" "existingSecret" "existingSecretPasswordKey") | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 6) }}
+      # The image's redis user.
+      securityContext:
+        {{- include "futureagi.podSecurityContext" (dict "uid" 999) | nindent 8 }}
+      {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $bundled)) "indent" 6) }}
+      containers:
+        - name: redis
+          image: {{ include "futureagi.image" (dict "root" . "image" $bundled.image) }}
+          imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" . "image" $bundled.image) }}
+          # The password goes into a config file, never onto the command line.
+          command: ["sh", "-c"]
+          args:
+            - |
+              umask 077
+              printf 'requirepass %s\n' "$REDIS_PASSWORD" > /tmp/redis.conf
+              exec redis-server /tmp/redis.conf --dir /data \
+                --appendonly {{ ternary "yes" "no" $bundled.persistence.enabled }} \
+                --maxmemory {{ $bundled.maxmemory }} \
+                --maxmemory-policy {{ $bundled.maxmemoryPolicy }}
+          ports:
+            - name: redis
+              containerPort: 6379
+              protocol: TCP
+          env:
+            {{- include "futureagi.redis.passwordEnv" (dict "root" . "name" "REDIS_PASSWORD") | nindent 12 }}
+            # redis-cli reads the password from here (probes).
+            - name: REDISCLI_AUTH
+              value: $(REDIS_PASSWORD)
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "-h", "127.0.0.1", "ping"]
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            tcpSocket:
+              port: redis
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml $bundled.resources | nindent 12 }}
+          securityContext:
+            {{- include "futureagi.containerSecurityContext" (dict) | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        {{- if not $bundled.persistence.enabled }}
+        - name: data
+          emptyDir: {}
+        {{- end }}
+  {{- if $bundled.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "futureagi.selectorLabels" $ctx | nindent 10 }}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- include "futureagi.storageClass" (dict "root" . "storageClass" $bundled.persistence.storageClass) | nindent 8 }}
+        resources:
+          requests:
+            storage: {{ $bundled.persistence.size }}
+  {{- end }}
+{{- end }}

@@ -1,0 +1,111 @@
+{{- if eq .Values.objectStorage.mode "bundled" }}
+{{- /* Evaluation only: one MinIO server on one volume, no erasure coding. */ -}}
+{{- $o := .Values.objectStorage -}}
+{{- $bundled := $o.bundled -}}
+{{- $ctx := dict "root" . "component" "minio" -}}
+{{- $name := include "futureagi.component" $ctx -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "futureagi.selectorLabels" $ctx | nindent 4 }}
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: s3
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  replicas: 1
+  serviceName: {{ $name }}
+  selector:
+    matchLabels:
+      {{- include "futureagi.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "futureagi.datastorePodLabels" $ctx | nindent 8 }}
+      annotations:
+        # Only this datastore's own credentials: an LLM key does not restart it.
+        checksum/secrets: {{ toJson (pick $o "accessKey" "secretKey" "existingSecret" "existingSecretAccessKeyKey" "existingSecretSecretKeyKey") | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 6) }}
+      securityContext:
+        {{- include "futureagi.podSecurityContext" (dict "uid" 1000) | nindent 8 }}
+      {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $bundled)) "indent" 6) }}
+      containers:
+        - name: minio
+          image: {{ include "futureagi.image" (dict "root" . "image" $bundled.image) }}
+          imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" . "image" $bundled.image) }}
+          command: ["minio"]
+          args: ["server", "/data", "--address", ":9000", "--console-address", "127.0.0.1:9001", "--certs-dir", "/tmp/certs", "--quiet"]
+          env:
+            {{- include "futureagi.objectStorage.keyEnv" (dict "root" . "name" "MINIO_ROOT_USER" "kind" "access") | nindent 12 }}
+            {{- include "futureagi.objectStorage.keyEnv" (dict "root" . "name" "MINIO_ROOT_PASSWORD" "kind" "secret") | nindent 12 }}
+            - name: MINIO_BROWSER
+              value: "off"
+            - name: GOMEMLIMIT
+              value: {{ $bundled.goMemLimit | quote }}
+          ports:
+            - name: s3
+              containerPort: 9000
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /minio/health/live
+              port: s3
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: s3
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /minio/health/live
+              port: s3
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml $bundled.resources | nindent 12 }}
+          securityContext:
+            {{- include "futureagi.containerSecurityContext" (dict) | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "futureagi.selectorLabels" $ctx | nindent 10 }}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- include "futureagi.storageClass" (dict "root" . "storageClass" $bundled.persistence.storageClass) | nindent 8 }}
+        resources:
+          requests:
+            storage: {{ $bundled.persistence.size }}
+{{- end }}

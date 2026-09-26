@@ -1,0 +1,145 @@
+{{- if eq .Values.temporal.mode "bundled" }}
+{{- /* Evaluation only: the single-binary Temporal dev server with SQLite on a
+volume, as in the Standalone install. Not highly available. */ -}}
+{{- $t := .Values.temporal -}}
+{{- $bundled := $t.bundled -}}
+{{- $ctx := dict "root" . "component" "temporal" -}}
+{{- $name := include "futureagi.component" $ctx -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "futureagi.selectorLabels" $ctx | nindent 4 }}
+  ports:
+    - name: grpc
+      port: 7233
+      targetPort: grpc
+      protocol: TCP
+      appProtocol: grpc
+    {{- if $bundled.ui }}
+    - name: ui
+      port: 8233
+      targetPort: ui
+      protocol: TCP
+    {{- end }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  replicas: 1
+  serviceName: {{ $name }}
+  selector:
+    matchLabels:
+      {{- include "futureagi.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "futureagi.datastorePodLabels" $ctx | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 6) }}
+      securityContext:
+        {{- include "futureagi.podSecurityContext" (dict "uid" 1000) | nindent 8 }}
+      {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $bundled)) "indent" 6) }}
+      containers:
+        - name: temporal
+          image: {{ include "futureagi.image" (dict "root" . "image" $bundled.image) }}
+          imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" . "image" $bundled.image) }}
+          command: ["temporal"]
+          args:
+            - server
+            - start-dev
+            {{- if not $bundled.ui }}
+            - --headless
+            {{- else }}
+            - --ui-ip
+            - 0.0.0.0
+            - --ui-port
+            - "8233"
+            {{- end }}
+            - --ip
+            - 0.0.0.0
+            - --port
+            - "7233"
+            - --db-filename
+            - /data/temporal.db
+            - --log-level
+            - warn
+            {{- if ne $t.namespace "default" }}
+            - --namespace
+            - {{ $t.namespace | quote }}
+            {{- end }}
+            # The eval-task search attributes (the bootstrap job also registers them).
+            - --search-attribute
+            - EvalTaskOrgId=Keyword
+            - --search-attribute
+            - EvalTaskProjectId=Keyword
+            - --search-attribute
+            - EvalTaskRunType=Keyword
+            - --search-attribute
+            - EvalTaskStatus=Keyword
+          env:
+            - name: GOMEMLIMIT
+              value: {{ $bundled.goMemLimit | quote }}
+          ports:
+            - name: grpc
+              containerPort: 7233
+              protocol: TCP
+            {{- if $bundled.ui }}
+            - name: ui
+              containerPort: 8233
+              protocol: TCP
+            {{- end }}
+          startupProbe:
+            tcpSocket:
+              port: grpc
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml $bundled.resources | nindent 12 }}
+          securityContext:
+            {{- include "futureagi.containerSecurityContext" (dict) | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "futureagi.selectorLabels" $ctx | nindent 10 }}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- include "futureagi.storageClass" (dict "root" . "storageClass" $bundled.persistence.storageClass) | nindent 8 }}
+        resources:
+          requests:
+            storage: {{ $bundled.persistence.size }}
+{{- end }}

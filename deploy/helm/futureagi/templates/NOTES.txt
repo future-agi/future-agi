@@ -1,0 +1,110 @@
+{{- $ns := .Release.Namespace -}}
+{{- $v := .Values -}}
+{{- $backend := include "futureagi.component" (dict "root" . "component" "backend") -}}
+{{- $frontend := include "futureagi.component" (dict "root" . "component" "frontend") -}}
+{{- $collector := include "futureagi.component" (dict "root" . "component" "fi-collector") -}}
+{{- $appUrl := include "futureagi.url.app" . -}}
+{{- $apiUrl := include "futureagi.url.api" . -}}
+{{- $otlpUrl := include "futureagi.url.otlp" . -}}
+{{- $tag := $v.backend.image.tag | default $v.image.tag | default .Chart.AppVersion | toString -}}
+{{- $bundled := list -}}
+{{- $labels := dict "postgres" "PostgreSQL" "clickhouse" "ClickHouse" "redis" "Redis" "temporal" "Temporal" "objectStorage" "object storage" -}}
+{{- range $store := list "postgres" "clickhouse" "redis" "temporal" "objectStorage" -}}
+{{- if eq (index $v $store).mode "bundled" }}{{ $bundled = append $bundled (get $labels $store) }}{{ end -}}
+{{- end -}}
+Future AGI {{ $tag }} is installed: release {{ .Release.Name }} in namespace {{ $ns }} (Distributed setup).
+The bootstrap job has prepared the databases (log: kubectl -n {{ $ns }} logs job/{{ include "futureagi.component" (dict "root" . "component" "bootstrap") }}).
+{{- if and (regexMatch "^v?[0-9]+\\.[0-9]+\\.[0-9]+$" $tag) (semverCompare "<=1.41.1" $tag) }}
+
+WARNING  The bootstrap job runs `manage.py bootstrap_install`, which no published
+         image up to v1.41.1 contains, and this install uses {{ $tag }}: the job
+         fails with "Unknown command". Until a release ships it, set image.tag
+         (and image.registry) to images built from the same checkout as this chart.
+{{- end }}
+{{- if $bundled }}
+
+WARNING  Bundled datastores run as single replicas with no backups, for evaluation
+         only: {{ join ", " $bundled }}.
+         Point them at your own services for anything you would mind losing
+         (examples/external.yaml).
+{{- end }}
+
+1. Check that every pod is ready
+
+   kubectl -n {{ $ns }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+2. Open the UI
+{{- if $appUrl }}
+
+   {{ $appUrl }}
+{{- if not $apiUrl }}
+   (urls.api is not set: the UI calls http://localhost:8000. Set urls.api or ingress.api.host.)
+{{- end }}
+{{- else }}
+
+   kubectl -n {{ $ns }} port-forward svc/{{ $frontend }} 3000:{{ $v.frontend.service.port }}
+   kubectl -n {{ $ns }} port-forward svc/{{ $backend }} 8000:{{ $v.backend.service.port }}
+{{- if not $otlpUrl }}
+   kubectl -n {{ $ns }} port-forward svc/{{ $collector }} 4318:{{ $v.fiCollector.service.httpPort }}   # traces
+{{- end }}
+{{- if and (eq $v.objectStorage.mode "bundled") (eq (include "futureagi.url.objects" .) "http://localhost:9005") }}
+   kubectl -n {{ $ns }} port-forward svc/{{ include "futureagi.component" (dict "root" . "component" "minio") }} 9005:9000   # file downloads
+{{- end }}
+
+   then open http://localhost:3000 (the UI calls the API on localhost:8000).
+   For access from other machines set urls.app and urls.api, or ingress.*.
+{{- end }}
+
+3. Create the first account
+
+   kubectl -n {{ $ns }} exec -it deploy/{{ $backend }} -c backend -- python manage.py create_user
+
+   Non-interactive: add --email you@example.com --name "Your Name" --password '<8+ characters>'
+
+4. Send traces (OpenTelemetry, with an API key created in the UI)
+{{ if $otlpUrl }}
+   Future AGI SDKs: FI_BASE_URL={{ $otlpUrl }}
+   Public:          OTLP/HTTP {{ $otlpUrl }}/v1/traces
+{{- else if $appUrl }}
+   Future AGI SDKs: FI_BASE_URL=http://localhost:4318, through
+                    kubectl -n {{ $ns }} port-forward svc/{{ $collector }} 4318:{{ $v.fiCollector.service.httpPort }}
+                    (set urls.otlp once fi-collector is exposed: the app shows it to SDK users)
+{{- else }}
+   Future AGI SDKs: FI_BASE_URL=http://localhost:4318 (the fi-collector port-forward above)
+{{- end }}
+   In the cluster:  OTLP/gRPC {{ $collector }}.{{ $ns }}.svc:{{ $v.fiCollector.service.grpcPort }}
+                    OTLP/HTTP http://{{ $collector }}.{{ $ns }}.svc:{{ $v.fiCollector.service.httpPort }}/v1/traces
+{{- $llm := $v.secrets.llm -}}
+{{- if not (or $llm.existingSecret $llm.openaiApiKey $llm.anthropicApiKey $llm.googleApiKey $llm.awsAccessKeyId) }}
+
+NOTE     No LLM provider key is set (secrets.llm): built-in evals need one. Workspaces
+         can also add their own keys in the UI.
+{{- end }}
+{{- if $v.codeExecutor.enabled }}
+
+NOTE     The code sandbox (codeExecutor) runs privileged: nsjail needs Linux namespaces.
+         Restricted Pod Security namespaces and some managed clusters refuse it.
+{{- else if not $v.codeExecutor.localFallback }}
+
+NOTE     Custom code evals are refused: the code sandbox is off. Turn it on with
+         codeExecutor.enabled=true (needs privileged pods), or run them inside the
+         worker pods with codeExecutor.localFallback=true (trusted users only).
+{{- end }}
+{{- if not $v.serving.enabled }}
+
+NOTE     Embedding-based evals, knowledge bases and Error Feed clustering are off
+         (serving.enabled=false).
+{{- end }}
+{{- if $v.config.telemetry }}
+
+NOTE     Deployment telemetry is on: an instance id, the version, the emails of
+         owners, admins and staff/superuser accounts, and usage counts every
+         6 hours; never traces, prompts or other content.
+         Opt out with config.telemetry=false.
+{{- end }}
+{{- if not $v.secrets.existingSecret }}
+
+NOTE     The generated keys are in the Secret {{ include "futureagi.secretName" . }}. Back it up:
+         INTEGRATION_ENCRYPTION_KEY decrypts stored integration credentials. It is kept
+         on `helm uninstall` so a reinstall can still read your data.
+{{- end }}

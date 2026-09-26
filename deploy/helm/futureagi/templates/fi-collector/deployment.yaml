@@ -1,0 +1,91 @@
+{{- $c := .Values.fiCollector -}}
+{{- $ctx := dict "root" . "component" "fi-collector" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "futureagi.component" $ctx }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  {{- if not $c.autoscaling.enabled }}
+  replicas: {{ $c.replicas }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "futureagi.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "futureagi.componentLabels" $ctx | nindent 8 }}
+        {{- with $c.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/secrets: {{ include "futureagi.secretsChecksum" . }}
+        {{- with $c.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "futureagi.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 6) }}
+      # Lets the collector flush its batches to ClickHouse before it exits.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        {{- include "futureagi.podSecurityContext" (dict "uid" 65532 "overrides" $c.podSecurityContext) | nindent 8 }}
+      {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $c "spread" true)) "indent" 6) }}
+      containers:
+        - name: fi-collector
+          image: {{ include "futureagi.image" (dict "root" . "image" $c.image) }}
+          imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" . "image" $c.image) }}
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317
+              protocol: TCP
+            - name: otlp-http
+              containerPort: 4318
+              protocol: TCP
+            - name: admin
+              containerPort: 9464
+              protocol: TCP
+          env:
+            {{- include "futureagi.env.collector" (dict "root" .) | trim | nindent 12 }}
+          # /healthz turns 503 while most ClickHouse writes fail: stop routing
+          # spans to the pod, but do not restart it (spans are dead-lettered).
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: admin
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            tcpSocket:
+              port: otlp-grpc
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml $c.resources | nindent 12 }}
+          securityContext:
+            {{- include "futureagi.containerSecurityContext" (dict "overrides" $c.containerSecurityContext) | nindent 12 }}
+          volumeMounts:
+            # Dead-letter file: spans ClickHouse refused, kept for replay.
+            - name: data
+              mountPath: /var/lib/fi-collector
+            {{- with $c.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: data
+          emptyDir:
+            sizeLimit: 1Gi
+        {{- with $c.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}

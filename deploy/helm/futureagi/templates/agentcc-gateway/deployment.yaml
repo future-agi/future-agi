@@ -1,0 +1,107 @@
+{{- $g := .Values.agentccGateway -}}
+{{- $ctx := dict "root" . "component" "agentcc-gateway" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "futureagi.component" $ctx }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  {{- if not $g.autoscaling.enabled }}
+  replicas: {{ $g.replicas }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "futureagi.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "futureagi.componentLabels" $ctx | nindent 8 }}
+        {{- with $g.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/secrets: {{ include "futureagi.secretsChecksum" . }}
+        {{- if not $g.existingConfigMap }}
+        checksum/config: {{ toYaml $g.config | sha256sum }}
+        {{- end }}
+        {{- with $g.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "futureagi.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 6) }}
+      # server.shutdown_timeout (30 s) plus a margin for in-flight streams.
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        {{- include "futureagi.podSecurityContext" (dict "uid" 65532 "overrides" $g.podSecurityContext) | nindent 8 }}
+      {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $g "spread" true)) "indent" 6) }}
+      containers:
+        - name: agentcc-gateway
+          image: {{ include "futureagi.image" (dict "root" . "image" $g.image) }}
+          imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" . "image" $g.image) }}
+          args: ["--config", "/etc/agentcc/config.yaml"]
+          ports:
+            - name: http
+              containerPort: {{ include "futureagi.gateway.port" . }}
+              protocol: TCP
+          env:
+            {{- include "futureagi.env.gateway" (dict "root" .) | trim | nindent 12 }}
+          {{- with $g.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml $g.resources | nindent 12 }}
+          securityContext:
+            {{- include "futureagi.containerSecurityContext" (dict "overrides" $g.containerSecurityContext) | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/agentcc
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+            {{- if $g.gcpCredentials.existingSecret }}
+            - name: gcp-credentials
+              mountPath: /var/run/secrets/futureagi/gcp
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $g.existingConfigMap | default (include "futureagi.component" $ctx) }}
+            items:
+              - key: config.yaml
+                path: config.yaml
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+        {{- if $g.gcpCredentials.existingSecret }}
+        - name: gcp-credentials
+          secret:
+            secretName: {{ $g.gcpCredentials.existingSecret }}
+            items:
+              - key: {{ $g.gcpCredentials.key }}
+                path: credentials.json
+        {{- end }}

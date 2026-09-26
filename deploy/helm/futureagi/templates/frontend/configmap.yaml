@@ -1,0 +1,92 @@
+{{- $ctx := dict "root" . "component" "frontend" -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "futureagi.component" $ctx }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+data:
+  # frontend/nginx.conf for an unprivileged, read-only container: port 8080,
+  # runtime files under /tmp, and /config.js (written from the VITE_* variables
+  # by the image's entrypoint on every start) served from /tmp.
+  nginx.conf: |
+    worker_processes 1;
+    pid /tmp/nginx.pid;
+    error_log /dev/stderr warn;
+    events { worker_connections 1024; }
+
+    http {
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+        access_log off;
+        sendfile on;
+        keepalive_timeout 65;
+        client_body_temp_path /tmp/client_body;
+        proxy_temp_path /tmp/proxy;
+        fastcgi_temp_path /tmp/fastcgi;
+        uwsgi_temp_path /tmp/uwsgi;
+        scgi_temp_path /tmp/scgi;
+
+        server {
+            listen 8080;
+            server_name _;
+            server_tokens off;
+            client_max_body_size 1G;
+            root /usr/share/nginx/html;
+
+            # nginx drops server-level add_header in a location that sets its
+            # own, so every such location includes the headers again.
+            include /etc/nginx/futureagi/security-headers.conf;
+
+            gzip on;
+            gzip_vary on;
+            gzip_min_length 1024;
+            gzip_proxied any;
+            gzip_comp_level 6;
+            gzip_types text/plain text/css text/xml text/javascript application/javascript application/xml+rss application/json image/svg+xml;
+
+            location = /config.js {
+                alias /tmp/config.js;
+                expires -1;
+                add_header Cache-Control "no-cache, no-store, must-revalidate";
+                add_header Pragma "no-cache";
+                include /etc/nginx/futureagi/security-headers.conf;
+                default_type application/javascript;
+            }
+
+            # Vite build assets carry content hashes.
+            location /assets/ {
+                expires 1y;
+                add_header Cache-Control "public, immutable";
+                include /etc/nginx/futureagi/security-headers.conf;
+            }
+
+            location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+                expires 1y;
+                add_header Cache-Control "public, immutable";
+                include /etc/nginx/futureagi/security-headers.conf;
+            }
+
+            location ~* \.html$ {
+                expires -1;
+                add_header Cache-Control "no-cache, no-store, must-revalidate";
+                add_header Pragma "no-cache";
+                include /etc/nginx/futureagi/security-headers.conf;
+            }
+
+            # SPA fallback: the client-side router handles unknown paths.
+            location / {
+                try_files $uri $uri/ /index.html;
+                expires 5m;
+                add_header Cache-Control "public, must-revalidate";
+                include /etc/nginx/futureagi/security-headers.conf;
+            }
+        }
+    }
+  # Same headers as frontend/nginx.conf and deploy/platform/security-headers.conf.
+  security-headers.conf: |
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "same-origin" always;
+    add_header Permissions-Policy "geolocation=(), microphone=(self), camera=()" always;

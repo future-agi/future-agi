@@ -1,0 +1,236 @@
+# Helm chart CI (deploy/helm/futureagi: the Distributed setup on Kubernetes).
+#
+#   static  deploy/helm/futureagi/hack/check.sh: the chart's defaults and
+#           inconsistent values refuse to render with guidance; helm lint
+#           --strict and helm template for the bundled, external, ingress,
+#           all-components and overrides value sets; kubeconform -strict against
+#           the oldest and newest supported Kubernetes; the rendered manifests'
+#           invariants (hack/rendered_checks.py); values.yaml,
+#           values.schema.json and the README table agree; the ClickHouse
+#           config matches the Standalone install's. Then the chart's version
+#           must follow the platform release (release-please moves it).
+#   kind    builds the backend, frontend, fi-collector and agentcc-gateway
+#           images from this checkout, installs the chart on kind with every
+#           datastore bundled, and runs deploy/helm/futureagi/hack/kind-smoke.sh:
+#           rollout, /health/, helm test, the bootstrap job's schema, CDC and
+#           schedules, a first account, a refused volume resize, an in-place
+#           upgrade that must keep the generated keys, and a rollback that
+#           must put the previous Secret back.
+name: Helm chart CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - "deploy/helm/**"
+      - "deploy/platform/clickhouse/**"
+      - "futureagi/.ci/clickhouse-storage-policy.xml"
+      - "futureagi/tfc/management/commands/bootstrap_install.py"
+      - "futureagi/model_hub/apps.py"
+      - ".github/workflows/helm-ci.yml"
+      - "release-please-config.json"
+      - ".release-please-manifest.json"
+      - ".prettierignore"
+  push:
+    branches: [dev, main]
+    paths:
+      - "deploy/helm/**"
+      - "deploy/platform/clickhouse/**"
+      - "futureagi/.ci/clickhouse-storage-policy.xml"
+      - "futureagi/tfc/management/commands/bootstrap_install.py"
+      - "futureagi/model_hub/apps.py"
+      - ".github/workflows/helm-ci.yml"
+      - "release-please-config.json"
+      - ".release-please-manifest.json"
+      - ".prettierignore"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: helm-ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Same Helm as the release workflow's chart checks.
+  HELM_VERSION: v3.17.3
+  KUBECONFORM_VERSION: v0.6.7
+  # Oldest and newest Kubernetes the chart supports (Chart.yaml kubeVersion).
+  KUBE_VERSIONS: "1.27.0 1.33.0"
+
+jobs:
+  static:
+    name: lint, template, kubeconform
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Install kubeconform
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin kubeconform
+          kubeconform -v
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML
+        run: python -m pip install PyYAML==6.0.3
+
+      - name: Chart checks
+        env:
+          OUT_DIR: ${{ runner.temp }}/helm-rendered
+        run: deploy/helm/futureagi/hack/check.sh
+
+      - name: The chart's version follows the platform release
+        # release-please rewrites the chart's version and appVersion (the lines
+        # marked x-release-please-version) in every release PR, so on main, where
+        # it runs, they equal .release-please-manifest.json. dev receives the
+        # manifest only when main is merged back: there the chart may be ahead
+        # of it, never behind.
+        env:
+          BRANCH: ${{ github.base_ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          chart_file=deploy/helm/futureagi/Chart.yaml
+          failed=0
+          error() {
+            echo "::error file=$chart_file::$*"
+            failed=1
+          }
+          jq -e '.packages["."]["extra-files"][]? | objects | select(.type == "generic" and .path == "deploy/helm/futureagi/Chart.yaml")' \
+            release-please-config.json >/dev/null ||
+            error "release-please-config.json must list $chart_file in extra-files ({type: generic}), or releases never move its version"
+          for key in version appVersion; do
+            grep -qE "^$key: .*# x-release-please-version$" "$chart_file" ||
+              error "the $key line must end with # x-release-please-version"
+          done
+          version=$(sed -nE 's/^version: *"?([^" #]+)"?.*/\1/p' "$chart_file")
+          app=$(sed -nE 's/^appVersion: *"?([^" #]+)"?.*/\1/p' "$chart_file")
+          release=$(jq -r '."."' .release-please-manifest.json)
+          [ "$app" = "v$version" ] || error "appVersion $app must be v$version (the chart's version)"
+          if [ "$BRANCH" = main ]; then
+            [ "$version" = "$release" ] ||
+              error "version $version must be the platform release $release: set version: $release and appVersion: \"v$release\""
+          elif [ "$(printf '%s\n%s\n' "$version" "$release" | sort -V | head -n1)" != "$release" ]; then
+            error "version $version is older than the platform release $release"
+          fi
+          [ "$failed" = 0 ] && echo "chart $version (appVersion $app), platform release $release on $BRANCH"
+          exit "$failed"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: helm-rendered-manifests
+          path: ${{ runner.temp }}/helm-rendered
+          retention-days: 7
+
+  kind:
+    name: install on kind (bundled datastores)
+    needs: static
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: read # ghcr layer caches
+    env:
+      # Layer caches, read only (see platform-ci.yml).
+      CACHE_REPO: ghcr.io/future-agi/future-agi/e2e-cache
+      BUILD_CACHE: ghcr.io/future-agi/future-agi/build-cache
+      TAG: ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reclaim runner disk
+        # Four image builds plus a kind node holding them and the datastores.
+        run: |
+          df -h / /mnt
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          sudo systemctl stop docker docker.socket
+          sudo mv /var/lib/docker /mnt/docker
+          sudo ln -s /mnt/docker /var/lib/docker
+          sudo systemctl start docker
+          timeout 60 bash -c 'until docker info >/dev/null 2>&1; do sleep 2; done'
+          df -h / /mnt
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: ghcr login (layer cache reads)
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: futureagi
+          file: futureagi/Dockerfile.oss
+          load: true
+          provenance: false
+          tags: futureagi/future-agi:${{ env.TAG }}
+          cache-from: |
+            type=registry,ref=${{ env.BUILD_CACHE }}:backend-amd64
+            type=registry,ref=${{ env.CACHE_REPO }}:backend
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: frontend
+          file: frontend/Dockerfile
+          load: true
+          provenance: false
+          tags: futureagi/frontend:${{ env.TAG }}
+          cache-from: |
+            type=registry,ref=${{ env.BUILD_CACHE }}:frontend-amd64
+            type=registry,ref=${{ env.CACHE_REPO }}:frontend
+
+      - name: Build fi-collector image
+        uses: docker/build-push-action@v5
+        with:
+          context: fi-collector
+          file: fi-collector/Dockerfile
+          load: true
+          provenance: false
+          tags: futureagi/fi-collector:${{ env.TAG }}
+          cache-from: |
+            type=registry,ref=${{ env.BUILD_CACHE }}:fi-collector-amd64
+            type=registry,ref=${{ env.CACHE_REPO }}:fi-collector
+
+      - name: Build agentcc-gateway image
+        uses: docker/build-push-action@v5
+        with:
+          context: agentcc-gateway
+          file: agentcc-gateway/Dockerfile
+          load: true
+          provenance: false
+          tags: futureagi/agentcc-gateway:${{ env.TAG }}
+          cache-from: |
+            type=registry,ref=${{ env.BUILD_CACHE }}:agentcc-gateway-amd64
+            type=registry,ref=${{ env.CACHE_REPO }}:gateway
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Install kind
+        uses: helm/kind-action@v1
+        with:
+          install_only: true
+
+      - name: Install, check and upgrade on kind
+        env:
+          KIND_CLUSTER: futureagi
+          NAMESPACE: futureagi
+        run: deploy/helm/futureagi/hack/kind-smoke.sh

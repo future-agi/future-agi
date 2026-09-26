@@ -1,0 +1,34 @@
+# Public UI, API and OTLP/HTTP endpoints behind an ingress controller, with
+# TLS from cert-manager. Layer it over external.yaml (or bundled.yaml):
+#
+#   helm install futureagi deploy/helm/futureagi \
+#     -f deploy/helm/futureagi/examples/external.yaml \
+#     -f deploy/helm/futureagi/examples/ingress.yaml --timeout 20m
+#
+# urls.* are derived from these hosts (https, because they are in tls).
+urls:
+  app: ""
+  api: ""
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+    # Dataset uploads and long LLM calls.
+    nginx.ingress.kubernetes.io/proxy-body-size: 1g
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+  tls:
+    - secretName: futureagi-tls
+      hosts:
+        - futureagi.example.com
+        - api.futureagi.example.com
+  app:
+    host: futureagi.example.com
+  api:
+    host: api.futureagi.example.com
+  otlp:
+    enabled: true
+config:
+  allowedHosts: api.futureagi.example.com
+  corsAllowedOrigins: https://futureagi.example.com
