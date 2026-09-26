@@ -9,6 +9,7 @@ import os
 import pytest
 from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
+from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APIClient
 from unittest.mock import patch
@@ -2000,6 +2001,107 @@ class TestCloudPasswordResetUnchanged:
         assert set(known["result"]) == set(unknown["result"]) == {"message"}
 
 
+CONSOLE_EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+
+@pytest.mark.unit
+class TestOssResetUnavailableMessage:
+    @pytest.mark.parametrize(
+        "setup, command",
+        [
+            ("standalone", "docker compose exec app python manage.py"),
+            ("distributed", "docker compose exec backend python manage.py"),
+            (
+                "helm",
+                "kubectl -n <namespace> exec -it deploy/<release>-futureagi-backend "
+                "-c backend -- python manage.py",
+            ),
+        ],
+    )
+    def test_names_the_recovery_command_of_the_setup(self, setup, command):
+        """There is no container called futureagi-backend-1 in any setup."""
+        from accounts.views.signup import oss_reset_unavailable_message
+
+        with patch("tfc.utils.install_setup.current_setup", return_value=setup):
+            message = oss_reset_unavailable_message()
+
+        assert f"`{command} reset_password --email <address>`" in message
+        assert "MAILGUN_API_KEY" in message
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestOssPasswordResetByEmail:
+    """A self-hosted install with email delivery configured mails the reset
+    link like Cloud does; without it, the answer names the recovery command."""
+
+    @pytest.fixture(autouse=True)
+    def _link_withheld(self):
+        with patch.dict(
+            os.environ,
+            {"OSS_RETURN_PASSWORD_RESET_LINK": "false", "MAILGUN_API_KEY": "key-test"},
+        ):
+            yield
+
+    def test_the_link_is_mailed_once_email_is_configured(
+        self, api_client, user, no_outbound_email
+    ):
+        # The test settings' locmem backend stands in for Mailgun.
+        with _oss():
+            response = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": user.email},
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert "reset_link" not in response.json()["result"]
+        no_outbound_email.assert_called_once()
+        assert no_outbound_email.call_args.args[1] == "reset_password.html"
+        assert no_outbound_email.call_args.args[3] == [user.email]
+
+    def test_unknown_address_gets_the_same_answer(
+        self, api_client, user, db, no_outbound_email
+    ):
+        """With the link mailed, naming the address would make the endpoint
+        an account-existence oracle, as it would on Cloud."""
+        with _oss():
+            known = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": user.email},
+                format="json",
+            ).json()
+            unknown = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": "nobody-oss@futureagi.com"},
+                format="json",
+            ).json()
+
+        assert set(known["result"]) == set(unknown["result"]) == {"message"}
+        no_outbound_email.assert_called_once()
+
+    @override_settings(EMAIL_BACKEND=CONSOLE_EMAIL_BACKEND)
+    def test_without_delivery_the_answer_names_the_recovery_command(
+        self, api_client, user, no_outbound_email, monkeypatch
+    ):
+        monkeypatch.setenv("FI_EMBEDDED_TEMPORAL_WORKER", "true")
+        monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
+        with _oss():
+            response = api_client.post(
+                "/accounts/password-reset-initiate/",
+                {"email": user.email},
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        message = response.json()["result"]["message"]
+        assert (
+            "docker compose exec app python manage.py reset_password "
+            "--email <address>" in message
+        )
+        no_outbound_email.assert_not_called()
+
+
 def _oss_gate(enabled=True):
     return patch("tfc.ee_gating.is_oss", return_value=enabled)
 
@@ -2193,6 +2295,22 @@ class TestAuthLinkBuilders:
 
         assert "/auth/jwt/invitation/accept/" in build_invite_accept_link(user)
         assert "/auth/jwt/verify/" in build_password_reset_link("u", "t")
+
+    @override_settings(APP_URL="localhost:3000", APP_BASE_URL="http://localhost:3000")
+    def test_links_carry_a_scheme(self):
+        """APP_URL is a bare host; a link built from it alone
+        (``localhost:3000/auth/...``) does not open from a copied invite."""
+        from accounts.models import User
+        from accounts.utils import build_invite_accept_link, build_password_reset_link
+
+        invitee = User(email="invitee-oss@futureagi.com")
+
+        assert build_invite_accept_link(invitee).startswith(
+            "http://localhost:3000/auth/jwt/invitation/accept/"
+        )
+        assert build_password_reset_link("UID123", "TOKEN456") == (
+            "http://localhost:3000/auth/jwt/verify/UID123/TOKEN456"
+        )
 
 
 @pytest.fixture

@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 import structlog
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db.models import Count, Min, Q
 from django.utils import timezone
@@ -179,11 +180,15 @@ def _verify_unsubscribe_token(token: str) -> Optional[str]:
 
 
 def _frontend_url() -> str:
-    return os.environ.get("FRONTEND_URL", "https://app.futureagi.com").rstrip("/")
+    """This install's UI. Future AGI Cloud's APP_URL names app.futureagi.com;
+    a self-hosted install's names its own."""
+    return (os.environ.get("FRONTEND_URL") or settings.APP_BASE_URL).rstrip("/")
 
 
 def _backend_url() -> str:
-    return os.environ.get("BACKEND_URL", "https://api.futureagi.com").rstrip("/")
+    """This install's API. BASE_URL defaults to api.futureagi.com on Cloud
+    only, so a self-hosted unsubscribe link never leaves the install."""
+    return (os.environ.get("BACKEND_URL") or settings.BASE_URL).rstrip("/")
 
 
 # ---------------------------------------------------------------------------

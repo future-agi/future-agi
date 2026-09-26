@@ -28,6 +28,14 @@ def send_critical_slack_notification(message: str) -> bool:
             )
             return True
 
+        # Unset on a self-hosted install: nothing to post to, so no client, no
+        # request and nothing logged above debug.
+        if not str(getattr(settings, "ERROR_LOGS_WEBHOOK", "") or "").strip():
+            logger.debug(
+                "Skipping critical Slack notification: ERROR_LOGS_WEBHOOK is not set"
+            )
+            return False
+
         formatted_message = f"{message}\n\n*Environment:* {env_type}"
         webhook = WebhookClient(settings.ERROR_LOGS_WEBHOOK)
         response = webhook.send(text=formatted_message)

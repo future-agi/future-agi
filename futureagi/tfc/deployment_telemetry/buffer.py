@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -23,9 +24,39 @@ def _window_filename(window_start: datetime, window_end: datetime) -> str:
     return f"{start}_{end}.json"
 
 
+def _trusted(buffer_dir: Path) -> bool:
+    """Whether ``buffer_dir`` is a real directory owned by this process's user.
+
+    The default location is under the shared temp directory, where another
+    local user (the standalone install's code-eval sandbox, for one) can create
+    it first, then read the windows or plant its own for the sender to sign
+    and send. A missing directory is fine: it is created with mode 0700.
+    """
+    try:
+        info = os.lstat(buffer_dir)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    geteuid = getattr(os, "geteuid", None)
+    return stat.S_ISDIR(info.st_mode) and (geteuid is None or info.st_uid == geteuid())
+
+
+def _refuse(buffer_dir: Path) -> None:
+    logger.warning(
+        "deployment_telemetry_buffer_untrusted",
+        path=str(buffer_dir),
+        hint="not a directory owned by this user; set "
+        "FUTURE_AGI_TELEMETRY_BUFFER_DIR to a private directory",
+    )
+
+
 def _ensure_buffer_dir() -> Path:
     buffer_dir = get_telemetry_buffer_dir()
     buffer_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not _trusted(buffer_dir):
+        _refuse(buffer_dir)
+        raise PermissionError("deployment telemetry buffer directory is not private")
     try:
         buffer_dir.chmod(0o700)
     except OSError:
@@ -61,8 +92,12 @@ def store_window(
 
 
 def pending_windows(limit: int = BUFFER_FLUSH_BATCH_SIZE) -> list[Path]:
+    buffer_dir = get_telemetry_buffer_dir()
+    if not _trusted(buffer_dir):
+        _refuse(buffer_dir)
+        return []
     try:
-        return sorted(get_telemetry_buffer_dir().glob("*.json"))[:limit]
+        return sorted(buffer_dir.glob("*.json"))[:limit]
     except OSError:
         logger.warning("deployment_telemetry_buffer_list_failed")
         return []
@@ -95,8 +130,12 @@ def clear_buffer() -> int:
 def prune_expired_windows(now: datetime | None = None) -> int:
     cutoff = (now or datetime.now(UTC)) - timedelta(days=BUFFER_RETENTION_DAYS)
     removed = 0
+    buffer_dir = get_telemetry_buffer_dir()
+    if not _trusted(buffer_dir):
+        _refuse(buffer_dir)
+        return removed
     try:
-        paths = get_telemetry_buffer_dir().glob("*.json")
+        paths = buffer_dir.glob("*.json")
         for path in paths:
             try:
                 modified_at = datetime.fromtimestamp(path.stat().st_mtime, UTC)

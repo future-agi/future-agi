@@ -1,7 +1,7 @@
 import os
 
 import structlog
-from mixpanel import Mixpanel
+from mixpanel import Consumer, Mixpanel
 
 from accounts.models import User
 from tfc.middleware.workspace_context import get_current_organization
@@ -12,25 +12,43 @@ try:
 except ImportError:
     OrganizationSubscription = None
 
-# Track if we've already warned about missing token
+# Track if we've already noted the missing token
 _token_warning_logged = False
+
+# Mixpanel's client waits forever by default, and it runs inline on signup and
+# login; bound each request so a slow Mixpanel can't hold an auth request open.
+# No retries either: its default of 4 turns one unreachable call into ~25s, and
+# login makes three of them.
+MIXPANEL_REQUEST_TIMEOUT_SECONDS = 5
+MIXPANEL_RETRY_LIMIT = 0
 
 
 class MixpanelTracker:
+    """Server-side Mixpanel events. Off, with no network call, unless
+    MIX_PANEL_TOKEN is set — self-hosted installs leave it empty."""
+
     def __init__(self):
-        self.token = os.getenv("MIX_PANEL_TOKEN")
-        self.mp = Mixpanel(self.token) if self.token else None
+        self.token = (os.getenv("MIX_PANEL_TOKEN") or "").strip() or None
+        self.mp = (
+            Mixpanel(
+                self.token,
+                consumer=Consumer(
+                    request_timeout=MIXPANEL_REQUEST_TIMEOUT_SECONDS,
+                    retry_limit=MIXPANEL_RETRY_LIMIT,
+                ),
+            )
+            if self.token
+            else None
+        )
         self._check_token()
 
     def _check_token(self) -> bool:
-        """Check if Mixpanel token is configured. Warns once if missing."""
+        """Check if Mixpanel token is configured. Notes it once, at debug:
+        running without Mixpanel is the normal self-hosted setup."""
         global _token_warning_logged
         if not self.token:
             if not _token_warning_logged:
-                logger.warning(
-                    "MIX_PANEL_TOKEN environment variable is not set. "
-                    "Mixpanel tracking will be disabled."
-                )
+                logger.debug("mixpanel_disabled", reason="MIX_PANEL_TOKEN not set")
                 _token_warning_logged = True
             return False
         return True
@@ -56,8 +74,16 @@ class MixpanelTracker:
             logger.exception(f"Error updating organization details in Mixpanel: {e}")
 
     def set_details(self, user: User):
+        """Set the user's Mixpanel profile and org group. Never raises: this
+        runs inline on signup, which must not fail because Mixpanel did."""
         if not self._is_enabled():
             return
+        try:
+            self._set_details(user)
+        except Exception:
+            logger.exception("mixpanel_set_details_failed", user_id=str(user.id))
+
+    def _set_details(self, user: User):
         from accounts.utils import get_user_organization
 
         _org = get_current_organization() or get_user_organization(user)

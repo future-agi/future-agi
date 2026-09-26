@@ -201,3 +201,24 @@ class TestMCPOAuthCodeModel:
         )
         code.refresh_from_db()
         assert code.is_expired
+
+
+@pytest.mark.unit
+class TestConsentRedirectBase:
+    """Without FRONTEND_URL the consent page lives at the UI's own URL."""
+
+    def test_uses_the_app_base_url(self, monkeypatch, settings):
+        from mcp_server.oauth_provider import FutureAGIOAuthProvider
+
+        monkeypatch.delenv("FRONTEND_URL", raising=False)
+        settings.APP_BASE_URL = "https://app.example.com"
+
+        assert FutureAGIOAuthProvider().frontend_url == "https://app.example.com"
+
+    def test_frontend_url_wins(self, monkeypatch, settings):
+        from mcp_server.oauth_provider import FutureAGIOAuthProvider
+
+        monkeypatch.setenv("FRONTEND_URL", "https://ui.example.com/")
+        settings.APP_BASE_URL = "https://app.example.com"
+
+        assert FutureAGIOAuthProvider().frontend_url == "https://ui.example.com"

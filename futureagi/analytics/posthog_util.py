@@ -9,9 +9,12 @@ _token_warning_logged = False
 
 
 class PostHogTracker:
+    """Server-side PostHog events. Off, with no network call, unless
+    POSTHOG_API_KEY is set — self-hosted installs leave it empty."""
+
     def __init__(self):
-        self.api_key = os.getenv("POSTHOG_API_KEY")
-        self.host = os.getenv("POSTHOG_HOST", "https://us.i.posthog.com")
+        self.api_key = (os.getenv("POSTHOG_API_KEY") or "").strip() or None
+        self.host = os.getenv("POSTHOG_HOST") or "https://us.i.posthog.com"
         self.client = None
         self._init_client()
 
@@ -19,7 +22,8 @@ class PostHogTracker:
         global _token_warning_logged
         if not self.api_key:
             if not _token_warning_logged:
-                logger.warning("POSTHOG_API_KEY not set. PostHog tracking disabled.")
+                # Running without PostHog is the normal self-hosted setup.
+                logger.debug("posthog_disabled", reason="POSTHOG_API_KEY not set")
                 _token_warning_logged = True
             return
         self.client = Posthog(self.api_key, host=self.host)
