@@ -500,6 +500,8 @@ const EvalPickerList = ({ onSelectEval }) => {
     setSorting,
     filters,
     setFilters,
+    filterCombinator,
+    setFilterCombinator,
   } = useEvalPickerData({
     sourceId: useScopedEvals ? sourceId : null,
     enabled: true,
@@ -949,8 +951,16 @@ const EvalPickerList = ({ onSelectEval }) => {
         onClose={() => setFilterAnchorEl(null)}
         currentFilters={filters}
         lockedFilters={lockedFilters}
-        onApply={(newFilters) => {
+        // Dataset/experiment streams hit the old scoped endpoint, whose
+        // client-side filtering is AND-only — show no AND/OR control there
+        // or it would lie (picked OR, results stay AND).
+        showQueryCombinator={!useScopedEvals}
+        currentCombinator={filterCombinator}
+        onApply={(newFilters, combinator) => {
           setFilters(newFilters);
+          setFilterCombinator(
+            !useScopedEvals && combinator === "or" ? "or" : "and",
+          );
           setPage(0);
           setExpandedEvalId(null);
         }}

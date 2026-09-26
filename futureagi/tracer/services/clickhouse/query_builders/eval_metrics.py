@@ -103,6 +103,7 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         choices: list[str] | None = None,
         use_preaggregated: bool = True,
         filters: list[dict] | None = None,
+        filter_combinator: str = "and",
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id, **kwargs)
@@ -120,6 +121,7 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         self.eval_name = eval_name or "Unknown"
         self.choices = choices or []
         self.filters = filters or []
+        self.filter_combinator = filter_combinator
         # Pre-aggregated eval rows do not carry arbitrary trace/span filter
         # dimensions. If filters are present, force the raw logger path so the
         # graph reflects the filtered result set.
@@ -153,7 +155,9 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         )
 
         fb = ClickHouseFilterBuilder(project_id=self.project_id)
-        extra_where, extra_params = fb.translate(self.filters)
+        extra_where, extra_params = fb.translate(
+            self.filters, filter_combinator=self.filter_combinator
+        )
         if extra_where:
             self.params.update(extra_params)
             return (
