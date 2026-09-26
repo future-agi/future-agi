@@ -445,6 +445,74 @@ def _run_filter_value_pg_statements(deadline, read):
             return read(fetch)
 
 
+# Dataset widget dimensions whose vocabulary PostgreSQL answers from the
+# dataset and column tables. The ClickHouse mirror is ordered by cell id, so a
+# workspace's column names read the whole cell table, and it trails every
+# write (on dev it also misses whole columns and datasets).
+_DATASET_WORKSPACE_ROWS = (
+    "FROM model_hub_dataset AS d "
+    "WHERE d.workspace_id = %(workspace_id)s "
+    "AND d.organization_id = %(organization_id)s "
+    "AND d.deleted = false "
+)
+# The widgets read cells, so a column is suggested only while it is live and
+# holds a live cell, as when the names came from the cells. The probe stops at
+# the column's first live cell on the column index; adding the cell's dataset
+# makes the planner intersect the dataset index (dev: 3.5 s instead of 25 ms).
+_DATASET_LIVE_COLUMN_ROWS = (
+    "FROM model_hub_column AS col "
+    f"WHERE col.dataset_id = ANY(ARRAY(SELECT d.id {_DATASET_WORKSPACE_ROWS})) "
+    "AND col.deleted = false "
+    "AND EXISTS (SELECT 1 FROM model_hub_cell AS c "
+    "WHERE c.column_id = col.id AND c.deleted = false) "
+)
+_DATASET_METADATA_FILTER_VALUES = {
+    "dataset": ("d.name", _DATASET_WORKSPACE_ROWS),
+    "eval_template": ("col.name", _DATASET_LIVE_COLUMN_ROWS),
+    "column_name": ("col.name", _DATASET_LIVE_COLUMN_ROWS),
+    "column_source": ("col.source", _DATASET_LIVE_COLUMN_ROWS),
+}
+
+
+def _read_dataset_metadata_filter_values(
+    workspace, metric_name, *, search, result_limit, deadline
+):
+    """Return a dataset dimension's distinct values in byte order.
+
+    Reads at most ``result_limit`` values in one bounded snapshot. PostgreSQL
+    has no result-size cap, so the statement stops one value past the byte
+    budget and an oversized answer is refused without being transferred.
+    """
+    expression, rows = _DATASET_METADATA_FILTER_VALUES[metric_name]
+    inventory = (
+        f'SELECT DISTINCT {expression} COLLATE "C" AS val {rows}'
+        f"AND {expression} <> '' "
+        f"AND (%(search)s = '' OR strpos(lower({expression}), lower(%(search)s)) > 0) "
+        "ORDER BY val LIMIT %(result_limit)s"
+    )
+    params = {
+        "workspace_id": workspace.id,
+        "organization_id": workspace.organization_id,
+        "search": search,
+        "result_limit": result_limit,
+        "max_result_bytes": _FINITE_NATIVE_FILTER_VALUE_MAX_RESULT_BYTES,
+    }
+    values = _run_filter_value_pg_statements(
+        deadline,
+        lambda fetch: fetch(
+            "SELECT val, result_bytes FROM ("
+            "SELECT val, sum(octet_length(val)) OVER (ORDER BY val) AS result_bytes "
+            f"FROM ({inventory}) AS inventory"
+            ") AS bounded WHERE result_bytes - octet_length(val) "
+            "<= %(max_result_bytes)s ORDER BY val",
+            params,
+        ),
+    )
+    if any(row["result_bytes"] > params["max_result_bytes"] for row in values):
+        raise DashboardBoundedReadError("result_bytes")
+    return [{"value": row["val"], "label": row["val"]} for row in values]
+
+
 def _session_overlay_filter_value_ids(
     *,
     project_ids,
@@ -5438,15 +5506,15 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
     ):
         """Return an exact finite value page for a dataset system property."""
         try:
-            if not is_clickhouse_enabled():
-                return self._gm.custom_error_response(
-                    status.HTTP_503_SERVICE_UNAVAILABLE,
-                    "Filter values are temporarily unavailable. Please retry.",
-                    code="service_unavailable",
+            col_expr = (
+                DATASET_FILTER_COLUMNS.get(metric_name)
+                if metric_type == "system_metric"
+                else None
+            )
+            if not col_expr:
+                return self._gm.bad_request(
+                    "Unsupported dataset filter-value property."
                 )
-
-            analytics = AnalyticsQueryService()
-            workspace_id = str(request.workspace.id)
             search = query_params.get("search", "")
             result_limit = (
                 _FINITE_NATIVE_FILTER_VALUE_MAX
@@ -5454,49 +5522,44 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 else _LEGACY_NATIVE_FILTER_VALUE_MAX
             ) + 1
 
-            if metric_type == "system_metric":
-                col_expr = DATASET_FILTER_COLUMNS.get(metric_name)
-                if not col_expr:
-                    return self._gm.bad_request(
-                        "Unsupported dataset filter-value property."
+            if metric_name in _DATASET_METADATA_FILTER_VALUES:
+                values = _read_dataset_metadata_filter_values(
+                    request.workspace,
+                    metric_name,
+                    search=search,
+                    result_limit=result_limit,
+                    deadline=deadline,
+                )
+            else:
+                # Cell status is per-cell data that no PostgreSQL index
+                # answers for a whole workspace; it still reads the mirror.
+                if not is_clickhouse_enabled():
+                    return self._gm.custom_error_response(
+                        status.HTTP_503_SERVICE_UNAVAILABLE,
+                        "Filter values are temporarily unavailable. Please retry.",
+                        code="service_unavailable",
                     )
-
-                if metric_name == "dataset":
-                    sql = (
-                        "SELECT DISTINCT name AS val "
-                        "FROM model_hub_dataset FINAL "
-                        "WHERE _peerdb_is_deleted = 0 "
-                        "AND deleted = 0 "
-                        "AND workspace_id = toUUID(%(workspace_id)s) "
-                        "AND name != '' "
-                        "AND (%(search)s = '' OR "
-                        "positionCaseInsensitiveUTF8(toString(name), %(search)s) > 0) "
-                        "ORDER BY val "
-                        "LIMIT %(result_limit)s"
-                    )
-                else:
-                    sql = (
-                        f"SELECT DISTINCT {col_expr} AS val "
-                        f"FROM model_hub_cell AS c FINAL "
-                        f"WHERE c._peerdb_is_deleted = 0 "
-                        f"AND c.dataset_id IN ("
-                        f"SELECT id FROM model_hub_dataset FINAL "
-                        f"WHERE _peerdb_is_deleted = 0 "
-                        f"AND deleted = 0 "
-                        f"AND workspace_id = toUUID(%(workspace_id)s)"
-                        f") "
-                        f"AND {col_expr} != '' "
-                        f"AND (%(search)s = '' OR "
-                        f"positionCaseInsensitiveUTF8(toString({col_expr}), "
-                        f"%(search)s) > 0) "
-                        f"ORDER BY val "
-                        f"LIMIT %(result_limit)s"
-                    )
-
-                result = analytics.execute_ch_query(
+                sql = (
+                    f"SELECT DISTINCT {col_expr} AS val "
+                    f"FROM model_hub_cell AS c FINAL "
+                    f"WHERE c._peerdb_is_deleted = 0 "
+                    f"AND c.dataset_id IN ("
+                    f"SELECT id FROM model_hub_dataset FINAL "
+                    f"WHERE _peerdb_is_deleted = 0 "
+                    f"AND deleted = 0 "
+                    f"AND workspace_id = toUUID(%(workspace_id)s)"
+                    f") "
+                    f"AND {col_expr} != '' "
+                    f"AND (%(search)s = '' OR "
+                    f"positionCaseInsensitiveUTF8(toString({col_expr}), "
+                    f"%(search)s) > 0) "
+                    f"ORDER BY val "
+                    f"LIMIT %(result_limit)s"
+                )
+                result = AnalyticsQueryService().execute_ch_query(
                     sql,
                     {
-                        "workspace_id": workspace_id,
+                        "workspace_id": str(request.workspace.id),
                         "search": search,
                         "result_limit": result_limit,
                     },
@@ -5515,10 +5578,6 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     {"value": row["val"], "label": str(row["val"])}
                     for row in result.data
                 ]
-            else:
-                return self._gm.bad_request(
-                    "Unsupported dataset filter-value property."
-                )
 
             return self._finite_native_filter_values_response(
                 request,
@@ -5529,6 +5588,16 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "metric_name": metric_name,
                     "metric_type": metric_type,
                 },
+            )
+        except (ReadDeadlineExceeded, DatabaseError, DashboardBoundedReadError) as exc:
+            logger.warning(
+                "fetch_dataset_filter_values_unavailable",
+                error_type=type(exc).__name__,
+            )
+            return self._gm.custom_error_response(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Filter values are temporarily unavailable. Please retry.",
+                code="service_unavailable",
             )
         except Exception as exc:
             if is_clickhouse_api_read_unavailable_error(exc):
