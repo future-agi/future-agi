@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1037,
+  endpointCount: 1038,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -1028,6 +1028,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/tracer/dashboard/{dashboard_pk}/widgets/{id}/duplicate/": ["post"],
       "/tracer/dashboard/{dashboard_pk}/widgets/{id}/query/": ["post"],
       "/tracer/dashboard/{id}/": ["delete", "get", "patch", "put"],
+      "/tracer/dashboard/{id}/resolve-workspace/": ["get"],
       "/tracer/dataset/": ["get", "post"],
       "/tracer/dataset/add_to_existing_dataset/": ["post"],
       "/tracer/dataset/add_to_new_dataset/": ["post"],
@@ -2264,6 +2265,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/dashboard/{dashboard_pk}/widgets/{id}/duplicate/": ["post"],
   "/tracer/dashboard/{dashboard_pk}/widgets/{id}/query/": ["post"],
   "/tracer/dashboard/{id}/": ["delete", "get", "patch", "put"],
+  "/tracer/dashboard/{id}/resolve-workspace/": ["get"],
   "/tracer/dataset/": ["get", "post"],
   "/tracer/dataset/add_to_existing_dataset/": ["post"],
   "/tracer/dataset/add_to_new_dataset/": ["post"],

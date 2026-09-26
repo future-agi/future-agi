@@ -48580,6 +48580,23 @@ export const TracerDashboardDeleteParams = zod.object({
   id: zod.string(),
 });
 
+/**
+ * Return the workspace that owns this dashboard if the user has access.
+ */
+export const TracerDashboardResolveWorkspaceParams = zod.object({
+  id: zod.string(),
+});
+
+export const TracerDashboardResolveWorkspaceResponse = zod.object({
+  status: zod.boolean().optional(),
+  result: zod
+    .object({
+      workspace_id: zod.string().optional(),
+      workspace_name: zod.string().optional(),
+    })
+    .optional(),
+});
+
 export const TracerDatasetListQueryParams = zod.object({
   page: zod
     .number()

@@ -1239,6 +1239,7 @@ import type {
   TracerDashboardFilterValuesParams,
   TracerDashboardMetricsParams,
   TracerDashboardQueryParams,
+  TracerDashboardResolveWorkspace200,
   TracerDashboardWidgetsExecuteQueryParams,
   TracerDashboardWidgetsList200,
   TracerDashboardWidgetsListParams,
@@ -67967,6 +67968,49 @@ export const tracerDashboardDelete = async (
     {
       ...options,
       method: "DELETE",
+    },
+  );
+};
+
+export type tracerDashboardResolveWorkspaceResponse200 = {
+  data: TracerDashboardResolveWorkspace200;
+  status: 200;
+};
+
+export type tracerDashboardResolveWorkspaceResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerDashboardResolveWorkspaceResponseSuccess =
+  tracerDashboardResolveWorkspaceResponse200 & {
+    headers: Headers;
+  };
+export type tracerDashboardResolveWorkspaceResponseError =
+  tracerDashboardResolveWorkspaceResponseDefault & {
+    headers: Headers;
+  };
+
+export type tracerDashboardResolveWorkspaceResponse =
+  | tracerDashboardResolveWorkspaceResponseSuccess
+  | tracerDashboardResolveWorkspaceResponseError;
+
+export const getTracerDashboardResolveWorkspaceUrl = (id: string) => {
+  return `/tracer/dashboard/${id}/resolve-workspace/`;
+};
+
+/**
+ * Return the workspace that owns this dashboard if the user has access.
+ */
+export const tracerDashboardResolveWorkspace = async (
+  id: string,
+  options?: RequestInit,
+): Promise<tracerDashboardResolveWorkspaceResponse> => {
+  return apiMutator<tracerDashboardResolveWorkspaceResponse>(
+    getTracerDashboardResolveWorkspaceUrl(id),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };

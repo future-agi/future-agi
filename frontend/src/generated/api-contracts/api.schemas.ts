@@ -32563,6 +32563,16 @@ export type TracerDashboardWidgetsExecuteQueryParams = {
   refresh?: boolean;
 };
 
+export type TracerDashboardResolveWorkspace200Result = {
+  workspace_id?: string;
+  workspace_name?: string;
+};
+
+export type TracerDashboardResolveWorkspace200 = {
+  status?: boolean;
+  result?: TracerDashboardResolveWorkspace200Result;
+};
+
 export type TracerDatasetListParams = {
   /**
    * A page number within the paginated result set.
