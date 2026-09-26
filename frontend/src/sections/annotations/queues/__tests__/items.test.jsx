@@ -31,6 +31,7 @@ vi.mock("src/styles/clean-data-table.css", () => ({}));
 function MockAgGridReact({
   rowData,
   columnDefs,
+  defaultColDef,
   context,
   onCellClicked,
   noRowsOverlayComponent: NoRowsOverlay,
@@ -43,6 +44,17 @@ function MockAgGridReact({
   }
   return (
     <div data-testid="ag-grid">
+      <div
+        data-testid="ag-grid-default-col-def"
+        data-resizable={String(defaultColDef?.resizable)}
+      />
+      {columnDefs.map((col) => (
+        <div
+          key={`definition-${col.field}`}
+          data-testid={`column-def-${col.field}`}
+          data-resizable={String(col.resizable ?? defaultColDef?.resizable)}
+        />
+      ))}
       {rowSelection && selectionColumnDef && (
         <div
           data-testid="selection-column-def"
@@ -103,6 +115,7 @@ function MockAgGridReact({
 MockAgGridReact.propTypes = {
   rowData: PropTypes.array,
   columnDefs: PropTypes.array.isRequired,
+  defaultColDef: PropTypes.object,
   context: PropTypes.object,
   onCellClicked: PropTypes.func,
   noRowsOverlayComponent: PropTypes.elementType,
@@ -250,6 +263,33 @@ describe("QueueItemsTable", () => {
     expect(screen.queryByText("Latency")).not.toBeInTheDocument();
     expect(screen.queryByText("Response Time")).not.toBeInTheDocument();
     expect(screen.queryByText("Duration")).not.toBeInTheDocument();
+  });
+
+  it("allows data columns to resize while keeping actions fixed", () => {
+    render(<QueueItemsTable {...tableProps} />);
+
+    expect(screen.getByTestId("ag-grid-default-col-def")).toHaveAttribute(
+      "data-resizable",
+      "true",
+    );
+    for (const field of [
+      "source_type",
+      "preview",
+      "status",
+      "assignedTo",
+      "review_status",
+      "comment_count",
+      "created_at",
+    ]) {
+      expect(screen.getByTestId(`column-def-${field}`)).toHaveAttribute(
+        "data-resizable",
+        "true",
+      );
+    }
+    expect(screen.getByTestId("column-def-actions")).toHaveAttribute(
+      "data-resizable",
+      "false",
+    );
   });
 
   it("renders item rows with source badges and previews", () => {
