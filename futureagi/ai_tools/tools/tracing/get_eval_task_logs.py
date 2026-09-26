@@ -32,7 +32,8 @@ class GetEvalTaskLogsTool(BaseTool):
     def execute(self, params: GetEvalTaskLogsInput, context: ToolContext) -> ToolResult:
 
         from django.contrib.postgres.aggregates import ArrayAgg
-        from django.db.models import Count, Q
+        from django.db.models import Count, Q, TextField, Value
+        from django.db.models.functions import Coalesce, NullIf
 
         from tracer.models.eval_task import EvalTask
         from tracer.models.observation_span import EvalLogger
@@ -53,7 +54,17 @@ class GetEvalTaskLogsTool(BaseTool):
                 "id", filter=Q(error=False, skipped_reason__isnull=True)
             ),
             skipped_count=Count("id", filter=Q(skipped_reason__isnull=False)),
-            errors_message=ArrayAgg("eval_explanation", filter=Q(error=True)),
+            # Engine failures write the text to error_message and leave
+            # eval_explanation empty; inline evals do the reverse.
+            errors_message=ArrayAgg(
+                Coalesce(
+                    NullIf("eval_explanation", Value("")),
+                    "error_message",
+                    Value("", output_field=TextField()),
+                    output_field=TextField(),
+                ),
+                filter=Q(error=True),
+            ),
         )
 
         total_count = (
