@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import uuid
 from collections.abc import Iterator
 from itertools import islice
 from typing import Any
@@ -84,7 +85,7 @@ class RunCallFiltersSerializer(serializers.Serializer):
     )
 
     def validate_filters(self, value):
-        allowed = {"goal", "sub_goal", "status"}
+        allowed = {"goal", "sub_goal", "status", "call_execution_id"}
         unknown = set(value) - allowed
         if unknown:
             raise serializers.ValidationError(
@@ -107,6 +108,13 @@ class RunCallFiltersSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 f"Unsupported statuses: {', '.join(sorted(invalid_statuses))}."
             )
+        for call_id in value.get("call_execution_id", []):
+            try:
+                uuid.UUID(call_id)
+            except ValueError as exc:
+                raise serializers.ValidationError(
+                    f"Invalid call_execution_id: {call_id}."
+                ) from exc
         return value
 
 
@@ -490,7 +498,14 @@ class RunCallsV3View(APIView):
             else filtered_summary
         )
         facets_cache_key = None
-        if execution.status == TestExecution.ExecutionStatus.COMPLETED:
+        # Facets span the whole run so filter options never vanish, except under
+        # a hand-off of specific calls, which scopes the counts too.
+        facet_queryset = base_queryset
+        if call_ids := (query.get("filters") or {}).get("call_execution_id"):
+            facet_queryset = apply_run_call_query(
+                base_queryset, {"filters": {"call_execution_id": call_ids}}
+            )
+        elif execution.status == TestExecution.ExecutionStatus.COMPLETED:
             version = execution.completed_at or execution.updated_at
             facets_cache_key = (
                 f"simulate:v3:facets:{execution.id}:{version.timestamp()}"
@@ -506,7 +521,7 @@ class RunCallsV3View(APIView):
             "groups": group_run_calls(
                 filtered_queryset, query.get("group_by"), page_rows, columns
             ),
-            "facets": run_call_facets(base_queryset, facets_cache_key),
+            "facets": run_call_facets(facet_queryset, facets_cache_key),
             "evaluation_columns": columns,
         }
         return Response(response)

@@ -236,6 +236,43 @@ describe("RunTraceTable", () => {
     );
   });
 
+  it("scopes to handed-over calls until the affected-calls chip is dismissed", async () => {
+    const user = userEvent.setup();
+    const { container } = renderTable({
+      initialFilters: { callExecutionId: ["t1", "t2"] },
+    });
+
+    expect(useRunCalls).toHaveBeenLastCalledWith(
+      "ex1",
+      expect.objectContaining({ filters: { call_execution_id: ["t1", "t2"] } }),
+    );
+    expect(screen.getByText("2 affected calls")).toBeInTheDocument();
+    // The Filter button counts only the panel's own filters.
+    expect(screen.getByRole("button", { name: "Filter" })).toBeInTheDocument();
+
+    await user.click(container.querySelector(".MuiChip-deleteIcon"));
+
+    expect(screen.queryByText("2 affected calls")).toBeNull();
+    expect(useRunCalls).toHaveBeenLastCalledWith(
+      "ex1",
+      expect.objectContaining({ filters: {} }),
+    );
+  });
+
+  it("keeps the affected-calls scope while a status chip narrows within it", async () => {
+    const user = userEvent.setup();
+    renderTable({ initialFilters: { callExecutionId: ["t1", "t2"] } });
+
+    await user.click(screen.getByRole("button", { name: "Failing" }));
+
+    expect(useRunCalls).toHaveBeenLastCalledWith(
+      "ex1",
+      expect.objectContaining({
+        filters: { call_execution_id: ["t1", "t2"], status: ["failed"] },
+      }),
+    );
+  });
+
   it("exposes later server pages for runs with more than 100 trials", async () => {
     const user = userEvent.setup();
     const finalTrial = {

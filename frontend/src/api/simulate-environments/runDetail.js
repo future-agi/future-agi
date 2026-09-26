@@ -288,16 +288,16 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
 // keep importing the run-detail data hooks from one module.
 export { useRunCalls, mapCallRow, buildTraceColumns } from "./runCalls";
 
-// The fix-my-agent (Debug-failures) data source (Phase 4): the run diagnosis and
-// the past-optimization runs list, both over REAL product endpoints. Re-exported
-// so callers import every run-detail data hook from one module.
+// The Debug-failures data sources: Omega's execution-scoped diagnosis and the
+// past-optimization runs list. Re-exported so callers import every run-detail
+// data hook from one module.
 export {
-  useOptimizerAnalysis,
-  mapOptimizerAnalysis,
-  useOptimizationRuns,
-  mapOptimizationRuns,
-  ANALYSIS_WORKING_STATES,
-} from "./optimizer";
+  useDebugAnalysis,
+  mapDebugAnalysis,
+  withCallContext,
+  DEBUG_ANALYSIS_WORKING_STATES,
+} from "./debugAnalysis";
+export { useOptimizationRuns, mapOptimizationRuns } from "./optimizer";
 
 /**
  * @typedef {Object} CallDetail

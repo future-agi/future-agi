@@ -31516,7 +31516,7 @@ export const simulateAgentDefinitionsCreateCreateBodyObservabilityEnabledDefault
   false;
 export const simulateAgentDefinitionsCreateCreateBodyLivekitUrlMax = 500;
 
-export const simulateAgentDefinitionsCreateCreateBodyLivekitMaxConcurrencyMax = 25;
+export const simulateAgentDefinitionsCreateCreateBodyLivekitMaxConcurrencyMax = 5;
 
 export const SimulateAgentDefinitionsCreateCreateBody = zod.object({
   agent_name: zod
@@ -31735,7 +31735,7 @@ export const simulateAgentDefinitionsEditUpdateBodyAgentNameMax = 255;
 
 export const simulateAgentDefinitionsEditUpdateBodyLivekitUrlMax = 500;
 
-export const simulateAgentDefinitionsEditUpdateBodyLivekitMaxConcurrencyMax = 25;
+export const simulateAgentDefinitionsEditUpdateBodyLivekitMaxConcurrencyMax = 5;
 
 export const SimulateAgentDefinitionsEditUpdateBody = zod.object({
   agent_name: zod
@@ -31991,7 +31991,7 @@ export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitApiSecretMax
 
 export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitAgentNameMax = 255;
 
-export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitMaxConcurrencyMax = 25;
+export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitMaxConcurrencyMax = 5;
 
 export const simulateAgentDefinitionsVersionsCreateCreateBodyCommitMessageDefault = ``;
 export const simulateAgentDefinitionsVersionsCreateCreateBodyObservabilityEnabledDefault =
@@ -45879,6 +45879,109 @@ export const SimulateTestExecutionsColumnOrderUpdateResponse = zod.object({
 });
 
 /**
+ * @summary Get Test Execution debug analysis
+ */
+export const SimulateTestExecutionDebugAnalysisRetrieveParams = zod.object({
+  test_execution_id: zod.string(),
+});
+
+export const SimulateTestExecutionDebugAnalysisRetrieveResponse = zod.object({
+  test_execution_id: zod.string().uuid(),
+  status: zod.enum([
+    "not_requested",
+    "pending",
+    "running",
+    "completed",
+    "failed",
+  ]),
+  generation: zod.number(),
+  job_id: zod.string().uuid(),
+  error_message: zod.string().min(1),
+  report: zod.object({
+    id: zod.string().uuid(),
+    execution_status: zod.string().min(1),
+    outcome: zod.string().min(1),
+    coverage: zod.object({
+      scope: zod.string().min(1),
+      observed_call_count: zod.number(),
+      read_complete: zod.boolean(),
+    }),
+    error_message: zod.string().min(1),
+    grouping_status: zod.string().min(1),
+    recorded_at: zod.string().datetime({ offset: true }),
+  }),
+  findings: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      kind: zod.string().min(1),
+      statement: zod.string().min(1),
+      recovery: zod.string().min(1),
+      category: zod.string().min(1),
+      group_label: zod.string().min(1),
+      fix_layer: zod.string().min(1),
+      confidence: zod.string().min(1),
+      goal: zod.string().min(1),
+      cluster: zod.object({
+        id: zod.string().uuid(),
+        cluster_id: zod.string().min(1),
+        title: zod.string().min(1),
+        error_type: zod.string().min(1),
+      }),
+      evidence: zod.array(
+        zod.object({
+          evidence_id: zod.string().min(1),
+          call_execution_id: zod.string().uuid(),
+          excerpt: zod.string().min(1),
+        }),
+      ),
+    }),
+  ),
+  summary: zod.object({
+    measured_call_count: zod.number(),
+    broken_goal_count: zod.number(),
+    broken_call_count: zod.number(),
+    one_off_count: zod.number(),
+    excluded_call_ids: zod.array(zod.string().uuid()),
+    unanalyzed_call_ids: zod.array(zod.string().uuid()),
+  }),
+  goals: zod.array(
+    zod.object({
+      goal: zod.string().min(1),
+      label: zod.string().min(1),
+      criteria: zod.string().min(1),
+      broken_call_ids: zod.array(zod.string().uuid()),
+      tested_call_count: zod.number(),
+      ways: zod.array(
+        zod.object({
+          id: zod.string().min(1),
+          title: zod.string().min(1),
+          phrase: zod.string().min(1),
+          call_ids: zod.array(zod.string().uuid()),
+        }),
+      ),
+      unexplained_call_ids: zod.array(zod.string().uuid()),
+    }),
+  ),
+  one_offs: zod.array(
+    zod.object({
+      id: zod.string().min(1),
+      title: zod.string().min(1),
+      phrase: zod.string().min(1),
+      call_ids: zod.array(zod.string().uuid()),
+    }),
+  ),
+});
+
+/**
+ * @summary Request Test Execution debug analysis
+ */
+export const SimulateTestExecutionDebugAnalysisCreateParams = zod.object({
+  test_execution_id: zod.string(),
+});
+
+export const SimulateTestExecutionDebugAnalysisCreateBody = zod.object({});
+
+/**
  * Delete a specific test execution
  */
 export const SimulateTestExecutionsDeleteDeleteParams = zod.object({
@@ -47177,7 +47280,7 @@ export const SimulateV3TestExecutionCallsQueryParams = zod.object({
     .max(simulateV3TestExecutionCallsQueryPageSizeMax)
     .default(simulateV3TestExecutionCallsQueryPageSizeDefault),
   group_by: zod
-    .enum(["goal", "status"])
+    .enum(["goal", "sub_goal", "accent", "age", "attack", "task", "status"])
     .default(simulateV3TestExecutionCallsQueryGroupByDefault),
   group_key: zod.string().optional(),
 });
@@ -54656,6 +54759,30 @@ export const TracerInternalErrorFeedV2AttemptsPartialUpdateResponse =
     job_state: zod.string().min(1),
   });
 
+export const TracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateParams =
+  zod.object({
+    attempt_id: zod.string(),
+  });
+
+export const tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateBodyLeaseTokenMax = 255;
+
+export const tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateBodyCursorMin = 0;
+
+export const TracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateBody =
+  zod.object({
+    lease_token: zod
+      .string()
+      .min(1)
+      .max(
+        tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateBodyLeaseTokenMax,
+      ),
+    cursor: zod
+      .number()
+      .min(
+        tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateBodyCursorMin,
+      ),
+  });
+
 export const tracerInternalErrorFeedV2ClaimsCreateBodyWorkerIdMax = 255;
 
 export const tracerInternalErrorFeedV2ClaimsCreateBodyEngineVersionMax = 20;
@@ -54700,7 +54827,11 @@ export const TracerInternalErrorFeedV2ClaimsCreateResponse = zod.object({
       workspace_id: zod.string().uuid(),
       project_id: zod.string().uuid(),
       job_id: zod.string().uuid(),
-      trace_id: zod.string().uuid(),
+      workload_type: zod
+        .enum(["trace", "simulation_test_execution"])
+        .optional(),
+      trace_id: zod.string().uuid().optional(),
+      test_execution_id: zod.string().uuid().optional(),
       generation: zod.number().min(1),
       attempt_id: zod.string().uuid(),
       lease_token: zod.string().min(1),
@@ -55523,6 +55654,7 @@ export const tracerInternalErrorFeedV2ReportsCreateBodyIdempotencyKeyMax = 255;
 
 export const tracerInternalErrorFeedV2ReportsCreateBodyLeaseTokenMax = 255;
 
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultWorkloadTypeDefault = `trace`;
 export const tracerInternalErrorFeedV2ReportsCreateBodyResultEngineVersionMax = 20;
 
 export const tracerInternalErrorFeedV2ReportsCreateBodyResultMemorySnapshotIdMax = 128;
@@ -55544,6 +55676,14 @@ export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemEvidenc
 export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemEvidenceIdsMax = 100;
 
 export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRecoveryMax = 64;
+
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemCategoryMax = 100;
+
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemGroupLabelMax = 100;
+
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemFixLayerMax = 50;
+
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemConfidenceMax = 2;
 
 export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemAttributionOriginSpanIdMax = 64;
 
@@ -55593,6 +55733,8 @@ export const tracerInternalErrorFeedV2ReportsCreateBodyResultCoverageScopeMax = 
 
 export const tracerInternalErrorFeedV2ReportsCreateBodyResultCoverageObservedSpanCountMin = 0;
 
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultCoverageObservedCallCountMin = 0;
+
 export const tracerInternalErrorFeedV2ReportsCreateBodyResultUsageModelCallsMin = 0;
 
 export const tracerInternalErrorFeedV2ReportsCreateBodyResultUsageInputTokensMin = 0;
@@ -55626,14 +55768,23 @@ export const TracerInternalErrorFeedV2ReportsCreateBody = zod.object({
     .min(1)
     .max(tracerInternalErrorFeedV2ReportsCreateBodyLeaseTokenMax),
   result: zod.object({
-    contract_version: zod.enum(["omega-investigation/v1"]),
+    contract_version: zod.enum([
+      "omega-investigation/v1",
+      "omega-simulation/v1",
+    ]),
+    workload_type: zod
+      .enum(["trace", "simulation_test_execution"])
+      .default(
+        tracerInternalErrorFeedV2ReportsCreateBodyResultWorkloadTypeDefault,
+      ),
     organization_id: zod.string().uuid(),
     workspace_id: zod.string().uuid(),
     project_id: zod.string().uuid(),
     job_id: zod.string().uuid(),
     generation: zod.number().min(1),
     attempt_id: zod.string().uuid(),
-    trace_id: zod.string().uuid(),
+    trace_id: zod.string().uuid().optional(),
+    test_execution_id: zod.string().uuid().optional(),
     engine_version: zod
       .string()
       .min(1)
@@ -55655,6 +55806,7 @@ export const TracerInternalErrorFeedV2ReportsCreateBody = zod.object({
       ),
     execution_status: zod.enum(["completed", "failed"]),
     outcome: zod.enum(["success", "failure", "unknown"]),
+    error_message: zod.string().optional(),
     findings: zod.array(
       zod.object({
         finding_id: zod
@@ -55700,6 +55852,34 @@ export const TracerInternalErrorFeedV2ReportsCreateBody = zod.object({
           .max(
             tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRecoveryMax,
           ),
+        category: zod
+          .string()
+          .min(1)
+          .max(
+            tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemCategoryMax,
+          )
+          .optional(),
+        group_label: zod
+          .string()
+          .min(1)
+          .max(
+            tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemGroupLabelMax,
+          )
+          .optional(),
+        fix_layer: zod
+          .string()
+          .min(1)
+          .max(
+            tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemFixLayerMax,
+          )
+          .optional(),
+        confidence: zod
+          .string()
+          .min(1)
+          .max(
+            tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemConfidenceMax,
+          )
+          .optional(),
         attribution: zod.object({
           origin: zod.object({
             status: zod.enum(["supported", "unsupported", "unknown"]),
@@ -55710,6 +55890,7 @@ export const TracerInternalErrorFeedV2ReportsCreateBody = zod.object({
                 tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemAttributionOriginSpanIdMax,
               )
               .optional(),
+            call_execution_id: zod.string().uuid().optional(),
             evidence_ids: zod
               .array(
                 zod
@@ -55738,6 +55919,7 @@ export const TracerInternalErrorFeedV2ReportsCreateBody = zod.object({
                 tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemAttributionDecisiveSpanIdMax,
               )
               .optional(),
+            call_execution_id: zod.string().uuid().optional(),
             evidence_ids: zod
               .array(
                 zod
@@ -55766,6 +55948,7 @@ export const TracerInternalErrorFeedV2ReportsCreateBody = zod.object({
                 tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemAttributionSymptomSpanIdMax,
               )
               .optional(),
+            call_execution_id: zod.string().uuid().optional(),
             evidence_ids: zod
               .array(
                 zod
@@ -55835,7 +56018,9 @@ export const TracerInternalErrorFeedV2ReportsCreateBody = zod.object({
           .min(1)
           .max(
             tracerInternalErrorFeedV2ReportsCreateBodyResultEvidenceReceiptsItemSpanIdMax,
-          ),
+          )
+          .optional(),
+        call_execution_id: zod.string().uuid().optional(),
         parent_span_id: zod
           .string()
           .min(1)
@@ -55867,14 +56052,22 @@ export const TracerInternalErrorFeedV2ReportsCreateBody = zod.object({
       scope: zod
         .string()
         .min(1)
-        .max(tracerInternalErrorFeedV2ReportsCreateBodyResultCoverageScopeMax),
+        .max(tracerInternalErrorFeedV2ReportsCreateBodyResultCoverageScopeMax)
+        .optional(),
       observed_span_count: zod
         .number()
         .min(
           tracerInternalErrorFeedV2ReportsCreateBodyResultCoverageObservedSpanCountMin,
-        ),
+        )
+        .optional(),
+      observed_call_count: zod
+        .number()
+        .min(
+          tracerInternalErrorFeedV2ReportsCreateBodyResultCoverageObservedCallCountMin,
+        )
+        .optional(),
       read_complete: zod.boolean(),
-      future_arrivals_known: zod.boolean(),
+      future_arrivals_known: zod.boolean().optional(),
     }),
     usage: zod.object({
       model_calls: zod

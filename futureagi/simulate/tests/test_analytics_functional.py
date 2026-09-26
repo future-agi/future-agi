@@ -666,6 +666,32 @@ class TestRunResultsV3Views:
         assert response.status_code == status.HTTP_200_OK
         assert [row["id"] for row in response.json()["results"]] == [str(call.id)]
 
+    def test_calls_filter_by_call_execution_ids(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        wanted = sorted(str(call.id) for call in analytics_call_executions[:2])
+
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/",
+            {"filters": json.dumps({"call_execution_id": wanted})},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert sorted(row["id"] for row in response.json()["results"]) == wanted
+        assert response.json()["count"] == 2
+        # The status chips count the handed-off calls, not the whole run.
+        assert sum(item["count"] for item in response.json()["facets"]["status"]) == 2
+
+    def test_calls_filter_rejects_malformed_call_execution_id(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/",
+            {"filters": json.dumps({"call_execution_id": ["not-a-uuid"]})},
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
     def test_dataset_goal_is_used_consistently_for_rows_groups_facets_and_filters(
         self,
         auth_client,

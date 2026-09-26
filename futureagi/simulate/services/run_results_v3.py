@@ -172,7 +172,7 @@ def _row_dimensions(calls: list[CallExecution]) -> dict[str, dict[str, Any]]:
     return dimensions
 
 
-def _eval_rows(call: CallExecution, live_eval_ids: set[str]) -> list[dict[str, Any]]:
+def eval_rows(call: CallExecution, live_eval_ids: set[str]) -> list[dict[str, Any]]:
     rows = []
     for eval_id, data in iter_live_eval_outputs(call.eval_outputs, live_eval_ids):
         if not isinstance(data, dict):
@@ -318,7 +318,7 @@ def build_call_rows(
         turn_count = _number(metrics.get("turn_count"))
         if turn_count is None:
             turn_count = _number(metrics.get("bot_message_count"))
-        evaluations = _eval_rows(call, live_eval_ids)
+        evaluations = eval_rows(call, live_eval_ids)
         for evaluation in evaluations:
             harness_columns[evaluation["id"]] = evaluation["name"]
         rows.append(

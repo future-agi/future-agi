@@ -15403,7 +15403,7 @@ export interface AgentDefinitionCreateRequestApi {
   livekit_config_json?: AgentDefinitionCreateRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 25
+   * @maximum 5
    */
   livekit_max_concurrency?: number;
 }
@@ -15644,7 +15644,7 @@ export interface AgentDefinitionEditRequestApi {
   livekit_config_json?: AgentDefinitionEditRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 25
+   * @maximum 5
    */
   livekit_max_concurrency?: number;
 }
@@ -15757,7 +15757,7 @@ export interface AgentVersionCreateRequestApi {
   livekit_config_json?: AgentVersionCreateRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 25
+   * @maximum 5
    */
   livekit_max_concurrency?: number;
   commit_message?: string;
@@ -21709,6 +21709,136 @@ export interface TestExecutionColumnOrderResponseApi {
   readonly column_order?: readonly ColumnOrderApi[];
 }
 
+export type TestExecutionDebugAnalysisResponseApiStatus =
+  (typeof TestExecutionDebugAnalysisResponseApiStatus)[keyof typeof TestExecutionDebugAnalysisResponseApiStatus];
+
+export const TestExecutionDebugAnalysisResponseApiStatus = {
+  not_requested: "not_requested",
+  pending: "pending",
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export interface DebugAnalysisCoverageApi {
+  /** @minLength 1 */
+  scope: string;
+  observed_call_count: number;
+  read_complete: boolean;
+}
+
+export interface DebugAnalysisReportApi {
+  id: string;
+  /** @minLength 1 */
+  execution_status: string;
+  /** @minLength 1 */
+  outcome: string;
+  coverage: DebugAnalysisCoverageApi;
+  /** @minLength 1 */
+  error_message: string;
+  /** @minLength 1 */
+  grouping_status: string;
+  recorded_at: string;
+}
+
+export interface DebugAnalysisClusterApi {
+  id: string;
+  /** @minLength 1 */
+  cluster_id: string;
+  /** @minLength 1 */
+  title: string;
+  /** @minLength 1 */
+  error_type: string;
+}
+
+export interface DebugAnalysisEvidenceApi {
+  /** @minLength 1 */
+  evidence_id: string;
+  call_execution_id: string;
+  /** @minLength 1 */
+  excerpt: string;
+}
+
+export interface DebugAnalysisFindingApi {
+  id: string;
+  /** @minLength 1 */
+  kind: string;
+  /** @minLength 1 */
+  statement: string;
+  /** @minLength 1 */
+  recovery: string;
+  /** @minLength 1 */
+  category: string;
+  /** @minLength 1 */
+  group_label: string;
+  /** @minLength 1 */
+  fix_layer: string;
+  /** @minLength 1 */
+  confidence: string;
+  /** @minLength 1 */
+  goal: string;
+  cluster: DebugAnalysisClusterApi;
+  evidence: DebugAnalysisEvidenceApi[];
+}
+
+export interface DebugAnalysisSummaryApi {
+  measured_call_count: number;
+  broken_goal_count: number;
+  broken_call_count: number;
+  one_off_count: number;
+  excluded_call_ids: string[];
+  unanalyzed_call_ids: string[];
+}
+
+export interface DebugAnalysisWayApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  title: string;
+  /** @minLength 1 */
+  phrase: string;
+  call_ids: string[];
+}
+
+export interface DebugAnalysisGoalApi {
+  /** @minLength 1 */
+  goal: string;
+  /** @minLength 1 */
+  label: string;
+  /** @minLength 1 */
+  criteria: string;
+  broken_call_ids: string[];
+  tested_call_count: number;
+  ways: DebugAnalysisWayApi[];
+  unexplained_call_ids: string[];
+}
+
+export interface TestExecutionDebugAnalysisResponseApi {
+  test_execution_id: string;
+  status: TestExecutionDebugAnalysisResponseApiStatus;
+  generation: number;
+  job_id: string;
+  /** @minLength 1 */
+  error_message: string;
+  report: DebugAnalysisReportApi;
+  findings: DebugAnalysisFindingApi[];
+  summary: DebugAnalysisSummaryApi;
+  goals: DebugAnalysisGoalApi[];
+  one_offs: DebugAnalysisWayApi[];
+}
+
+export interface TestExecutionDebugAnalysisNotFoundApi {
+  /** @minLength 1 */
+  detail: string;
+}
+
+export interface TestExecutionDebugAnalysisErrorApi {
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  detail: string;
+}
+
 export interface EvalExplanationClusterApi {
   /** @minLength 1 */
   readonly kind?: string;
@@ -25183,6 +25313,16 @@ export interface InvestigationControlErrorApi {
   details?: InvestigationControlErrorApiDetails;
 }
 
+export interface SimulationEvidenceRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+  /** @minimum 0 */
+  cursor: number;
+}
+
 export interface ClaimInvestigationsRequestApi {
   /**
    * @minLength 1
@@ -25200,6 +25340,14 @@ export interface ClaimInvestigationsRequestApi {
    */
   limit: number;
 }
+
+export type InvestigationClaimApiWorkloadType =
+  (typeof InvestigationClaimApiWorkloadType)[keyof typeof InvestigationClaimApiWorkloadType];
+
+export const InvestigationClaimApiWorkloadType = {
+  trace: "trace",
+  simulation_test_execution: "simulation_test_execution",
+} as const;
 
 export interface InvestigationMemoryEntryApi {
   /**
@@ -25257,7 +25405,9 @@ export interface InvestigationClaimApi {
   workspace_id: string;
   project_id: string;
   job_id: string;
-  trace_id: string;
+  workload_type?: InvestigationClaimApiWorkloadType;
+  trace_id?: string;
+  test_execution_id?: string;
   /** @minimum 1 */
   generation: number;
   attempt_id: string;
@@ -25625,6 +25775,15 @@ export type InvestigationResultApiContractVersion =
 
 export const InvestigationResultApiContractVersion = {
   "omega-investigation/v1": "omega-investigation/v1",
+  "omega-simulation/v1": "omega-simulation/v1",
+} as const;
+
+export type InvestigationResultApiWorkloadType =
+  (typeof InvestigationResultApiWorkloadType)[keyof typeof InvestigationResultApiWorkloadType];
+
+export const InvestigationResultApiWorkloadType = {
+  trace: "trace",
+  simulation_test_execution: "simulation_test_execution",
 } as const;
 
 export type InvestigationResultApiExecutionStatus =
@@ -25660,6 +25819,7 @@ export interface FindingAttributionRoleApi {
    * @maxLength 64
    */
   span_id?: string;
+  call_execution_id?: string;
   /** @maxItems 100 */
   evidence_ids: string[];
   /** @maxLength 600 */
@@ -25700,6 +25860,26 @@ export interface InvestigationFindingApi {
    * @maxLength 64
    */
   recovery: string;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  category?: string;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  group_label?: string;
+  /**
+   * @minLength 1
+   * @maxLength 50
+   */
+  fix_layer?: string;
+  /**
+   * @minLength 1
+   * @maxLength 2
+   */
+  confidence?: string;
   attribution: FindingAttributionApi;
 }
 
@@ -25733,7 +25913,8 @@ export interface InvestigationEvidenceReceiptApi {
    * @minLength 1
    * @maxLength 64
    */
-  span_id: string;
+  span_id?: string;
+  call_execution_id?: string;
   /**
    * @minLength 1
    * @maxLength 64
@@ -25761,11 +25942,13 @@ export interface InvestigationCoverageApi {
    * @minLength 1
    * @maxLength 255
    */
-  scope: string;
+  scope?: string;
   /** @minimum 0 */
-  observed_span_count: number;
+  observed_span_count?: number;
+  /** @minimum 0 */
+  observed_call_count?: number;
   read_complete: boolean;
-  future_arrivals_known: boolean;
+  future_arrivals_known?: boolean;
 }
 
 export interface InvestigationUsageApi {
@@ -25808,6 +25991,7 @@ export interface GatewayAccountingApi {
 
 export interface InvestigationResultApi {
   contract_version: InvestigationResultApiContractVersion;
+  workload_type?: InvestigationResultApiWorkloadType;
   organization_id: string;
   workspace_id: string;
   project_id: string;
@@ -25815,7 +25999,8 @@ export interface InvestigationResultApi {
   /** @minimum 1 */
   generation: number;
   attempt_id: string;
-  trace_id: string;
+  trace_id?: string;
+  test_execution_id?: string;
   /**
    * @minLength 1
    * @maxLength 20
@@ -25839,6 +26024,7 @@ export interface InvestigationResultApi {
   evidence_digest: string;
   execution_status: InvestigationResultApiExecutionStatus;
   outcome: InvestigationResultApiOutcome;
+  error_message?: string;
   findings: InvestigationFindingApi[];
   requirement_checks: InvestigationRequirementCheckApi[];
   evidence_receipts: InvestigationEvidenceReceiptApi[];
@@ -33726,6 +33912,11 @@ export type SimulateV3TestExecutionCallsGroupBy =
 
 export const SimulateV3TestExecutionCallsGroupBy = {
   goal: "goal",
+  sub_goal: "sub_goal",
+  accent: "accent",
+  age: "age",
+  attack: "attack",
+  task: "task",
   status: "status",
 } as const;
 

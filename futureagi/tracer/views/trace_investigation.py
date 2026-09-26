@@ -122,18 +122,15 @@ class PublishInvestigationView(InternalInvestigationView):
 
 
 class SimulationEvidenceView(InternalInvestigationView):
+    @validated_request(
+        SimulationEvidenceRequestSerializer,
+        responses={409: InvestigationControlErrorSerializer},
+        reject_unknown_fields=True,
+    )
     def post(self, request: Request, attempt_id):
-        serializer = SimulationEvidenceRequestSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(
-                {"code": "invalid_request", "detail": serializer.errors},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
         try:
             payload = simulation_evidence_page(
-                attempt_id=attempt_id,
-                lease_token=serializer.validated_data["lease_token"],
-                cursor=serializer.validated_data["cursor"],
+                attempt_id=attempt_id, **request.validated_data
             )
         except SimulationInvestigationConflict as error:
             return Response(

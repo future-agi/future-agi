@@ -441,6 +441,22 @@ def _catalogue_index(catalogue: Any) -> dict[str, dict[str, Any]]:
     return index
 
 
+def sub_goal_catalogue(run_test_id) -> dict[str, dict[str, Any]]:
+    """What each sub-goal of a run's environment checks, by name, for reading results."""
+    environment_ids = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            run_test_id=run_test_id, environment_id__isnull=False
+        )
+        .order_by("-created_at")
+        .values_list("environment_id", flat=True)
+    )
+    for environment in HostedHarnessJob.no_workspace_objects.filter(
+        id__in=list(environment_ids)[:1]
+    ):
+        return _catalogue_index(_stage_output(environment, "sub_goals"))
+    return {}
+
+
 def _status_of(reg, receipt: HostedHarnessReceipt | None) -> str:
     if not reg.call_execution_id:
         return "registered"
@@ -498,9 +514,9 @@ def _scenarios(
                 "situation": cells.get("situation") or None,
                 "outcome": cells.get("outcome") or None,
                 "status": _status_of(reg, receipts.get(str(reg.id))),
-                "call_execution_id": str(reg.call_execution_id)
-                if reg.call_execution_id
-                else None,
+                "call_execution_id": (
+                    str(reg.call_execution_id) if reg.call_execution_id else None
+                ),
             }
         )
     return scenarios
@@ -794,9 +810,7 @@ def _agent(job: HostedHarnessJob) -> dict[str, Any] | None:
 
 def _run_link(job: HostedHarnessJob) -> dict[str, Any]:
     latest_run = (
-        job.simulation_runs.filter(deleted=False)
-        .order_by("-created_at", "-id")
-        .first()
+        job.simulation_runs.filter(deleted=False).order_by("-created_at", "-id").first()
     )
     run_test_id = str(job.run_test_id) if job.run_test_id else None
     test_execution_id = (

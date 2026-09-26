@@ -25,6 +25,8 @@ import CallDrawer from "./CallDrawer";
 import FixMyAgentDrawer from "./fixmyagent/FixMyAgentDrawer";
 import OptimizationRunsList from "./fixmyagent/OptimizationRunsList";
 import LaunchOptimizationDrawer from "./fixmyagent/LaunchOptimizationDrawer";
+import BetaChip from "./fixmyagent/BetaChip";
+import { useSelfImprovementOpen } from "./fixmyagent/selfImprovement";
 import RunAnalytics from "./RunAnalytics";
 
 // Terminal execution failures/cancellations outrank call-level outcomes.
@@ -60,7 +62,14 @@ export default function RunDetail({
 }) {
   const navigate = useNavigate();
   const [tab, setTab] = useState("tasks");
-  const [analyticsFilters, setAnalyticsFilters] = useState({});
+  // Filters handed to the calls table from elsewhere on the page (an analytics
+  // tile, a diagnosis issue). `seq` remounts the table so a repeat hand-off
+  // re-applies even after the table's own filters were changed.
+  const [tableHandoff, setTableHandoff] = useState({ filters: {}, seq: 0 });
+  const openCallsWith = (filters) => {
+    setTableHandoff((current) => ({ filters, seq: current.seq + 1 }));
+    setTab("tasks");
+  };
   const [addingEvals, setAddingEvals] = useState(false);
   const [openCall, setOpenCall] = useState(null);
   const [debugging, setDebugging] = useState(false);
@@ -76,6 +85,7 @@ export default function RunDetail({
   const { runs: optimizationRuns, isLoading: optimizationsLoading } =
     useOptimizationRuns(executionId);
   const hasTrials = optimizationRuns.length > 0;
+  const selfImprovementOpen = useSelfImprovementOpen();
   // Keep the client bound: `useQueryClient().invalidateQueries` detached from
   // the client throws on `this.#queryCache` in react-query v5.
   const queryClient = useQueryClient();
@@ -266,7 +276,13 @@ export default function RunDetail({
             {hasTrials && (
               <Tab
                 value="trials"
-                label={`Trials (${optimizationRuns.length})`}
+                disabled={!selfImprovementOpen}
+                label={
+                  <>
+                    Trials ({optimizationRuns.length})
+                    {!selfImprovementOpen && <BetaChip />}
+                  </>
+                }
                 sx={{ minHeight: 38 }}
               />
             )}
@@ -275,9 +291,10 @@ export default function RunDetail({
 
           {tab === "tasks" && (
             <RunTraceTable
+              key={tableHandoff.seq}
               executionId={executionId}
               onOpenCall={setOpenCall}
-              initialFilters={analyticsFilters}
+              initialFilters={tableHandoff.filters}
             />
           )}
 
@@ -317,10 +334,7 @@ export default function RunDetail({
             <RunAnalytics
               executionId={executionId}
               onOpenCall={setOpenCall}
-              onOpenCalls={(filters) => {
-                setAnalyticsFilters(filters);
-                setTab("tasks");
-              }}
+              onOpenCalls={openCallsWith}
             />
           )}
         </Box>
@@ -347,7 +361,13 @@ export default function RunDetail({
           onClose={() => setAddingEvals(false)}
           env={env}
           envState={envState}
-          existingIds={new Set((envState?.evals || []).map((e) => (typeof e === "string" ? e : e?.id)))}
+          existingIds={
+            new Set(
+              (envState?.evals || []).map((e) =>
+                typeof e === "string" ? e : e?.id,
+              ),
+            )
+          }
           onAdd={() => setAddingEvals(false)}
         />
       )}
@@ -366,6 +386,10 @@ export default function RunDetail({
         onLaunch={() => {
           setDebugging(false);
           setLaunching(true);
+        }}
+        onViewCalls={(callExecutionIds) => {
+          setDebugging(false);
+          openCallsWith({ callExecutionId: callExecutionIds });
         }}
       />
 

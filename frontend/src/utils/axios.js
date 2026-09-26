@@ -1687,6 +1687,10 @@ export const endpoints = {
         "/simulate/test-executions/{test_execution_id}/optimiser-analysis/refresh/",
         { test_execution_id: id },
       ),
+    debugAnalysis: (id) =>
+      apiPath("/simulate/test-executions/{test_execution_id}/debug-analysis/", {
+        test_execution_id: id,
+      }),
     compareExecutions: (id) =>
       apiPath(
         "/simulate/call-executions/{call_execution_id}/session-comparison/",

@@ -12,6 +12,8 @@ from simulate.serializers.test_execution import (
     TestExecutionDebugAnalysisResponseSerializer,
 )
 from simulate.views.scoping import run_test_workspace_filter
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import EmptyRequestSerializer
 from tracer.services.simulation_investigation import (
     SimulationInvestigationConflict,
     debug_analysis_state,
@@ -47,7 +49,8 @@ class TestExecutionDebugAnalysisView(APIView):
         execution = self._execution(request, test_execution_id)
         return Response(debug_analysis_state(execution), status=status.HTTP_200_OK)
 
-    @swagger_auto_schema(
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
         operation_id="simulate_test_execution_debug_analysis_create",
         operation_summary="Request Test Execution debug analysis",
         responses={
@@ -55,6 +58,7 @@ class TestExecutionDebugAnalysisView(APIView):
             404: TestExecutionDebugAnalysisNotFoundSerializer,
             409: TestExecutionDebugAnalysisErrorSerializer,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, test_execution_id):
         execution = self._execution(request, test_execution_id)

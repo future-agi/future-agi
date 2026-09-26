@@ -49,10 +49,16 @@ def enqueue_grouping_features(
             return None
         now = timezone.now()
         # A replacement with no findings still invalidates the old feature work.
+        replaced = (
+            # A simulation run has one report per call; siblings are not replacements.
+            {"report__job_id": current.job_id}
+            if current.workload_type == "simulation_test_execution"
+            else {"report__trace_id": current.trace_id}
+        )
         TraceGroupingFeatureJob.no_workspace_objects.filter(
             report__project_id=current.project_id,
-            report__trace_id=current.trace_id,
             report__is_current=False,
+            **replaced,
         ).exclude(state=GroupingFeatureState.SUPERSEDED).update(
             state=GroupingFeatureState.SUPERSEDED, updated_at=now
         )

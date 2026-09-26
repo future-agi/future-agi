@@ -13,17 +13,37 @@ from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenar
 FIELDS: tuple[dict[str, Any], ...] = (
     {"value": "name", "label": "Scenario", "type": "string", "category": "scenario"},
     {"value": "use_case", "label": "Use case", "type": "enum", "category": "scenario"},
-    {"value": "instruction", "label": "Situation", "type": "string", "category": "scenario"},
+    {
+        "value": "instruction",
+        "label": "Situation",
+        "type": "string",
+        "category": "scenario",
+    },
     {"value": "persona.name", "label": "Name", "type": "enum", "category": "persona"},
-    {"value": "persona.accent", "label": "Accent", "type": "enum", "category": "persona"},
+    {
+        "value": "persona.accent",
+        "label": "Accent",
+        "type": "enum",
+        "category": "persona",
+    },
     {
         "value": "persona.languages",
         "label": "Language",
         "type": "enum",
         "category": "persona",
     },
-    {"value": "persona.age_group", "label": "Age", "type": "enum", "category": "persona"},
-    {"value": "persona.gender", "label": "Gender", "type": "enum", "category": "persona"},
+    {
+        "value": "persona.age_group",
+        "label": "Age",
+        "type": "enum",
+        "category": "persona",
+    },
+    {
+        "value": "persona.gender",
+        "label": "Gender",
+        "type": "enum",
+        "category": "persona",
+    },
     {
         "value": "persona.location",
         "label": "Location",
@@ -42,7 +62,6 @@ FIELDS: tuple[dict[str, Any], ...] = (
         "type": "enum",
         "category": "persona",
     },
-
     {
         "value": "background_noise",
         "label": "Background",
@@ -138,7 +157,9 @@ def axis_label(axis: str, spoken: bool = True) -> str:
     """The reader-facing name for one axis."""
     if not spoken and axis in CHAT_AXIS_LABELS:
         return CHAT_AXIS_LABELS[axis]
-    return AXIS_LABELS.get(axis) or str(axis or "").replace("_", " ").strip().capitalize()
+    return (
+        AXIS_LABELS.get(axis) or str(axis or "").replace("_", " ").strip().capitalize()
+    )
 
 
 # Only levels whose key reads badly; the rest fall back to the key with underscores removed.
@@ -184,6 +205,42 @@ def level_label(level: str) -> str:
 
 # Properties that are not columns on the row.
 _ALIASES = {"status": "call_execution__status"}
+
+
+def authored_scenarios(run_test_id, *, call_execution_id, scenario_key) -> QuerySet:
+    """A call's authored scenario, newest first: linked to the call on a direct
+    run, or found by the call's scenario key on the run's own job or its parent
+    environment. Arguments may be ``OuterRef``s for a per-call subquery."""
+    run_jobs = HostedHarnessJob.no_workspace_objects.filter(run_test_id=run_test_id)
+    return HostedHarnessScenario.no_workspace_objects.filter(
+        Q(call_execution_id=call_execution_id)
+        | Q(
+            Q(job_id__in=run_jobs.values("id"))
+            | Q(job_id__in=run_jobs.values("environment_id")),
+            scenario_key=scenario_key,
+        )
+    ).order_by("-created_at")
+
+
+def authored_scenarios_for_calls(run_test_id, calls) -> dict:
+    """Each call's authored scenario, found with one query for the whole run."""
+    run_jobs = HostedHarnessJob.no_workspace_objects.filter(run_test_id=run_test_id)
+    call_ids = [call.id for call in calls]
+    rows = HostedHarnessScenario.no_workspace_objects.filter(
+        Q(call_execution_id__in=call_ids)
+        | Q(job_id__in=run_jobs.values("id"))
+        | Q(job_id__in=run_jobs.values("environment_id"))
+    ).order_by("created_at")
+    linked, by_key = {}, {}
+    for row in rows:
+        if row.call_execution_id:
+            linked[row.call_execution_id] = row
+        by_key[row.scenario_key] = row  # newest wins, as in authored_scenarios
+    return {
+        call.id: linked.get(call.id)
+        or by_key.get((call.call_metadata or {}).get("harness_scenario_key"))
+        for call in calls
+    }
 
 
 def _orm_path(field: str) -> str:
@@ -237,10 +294,16 @@ def index_scenarios(
             "sub_goals": doc.get("sub_goals") or None,
             # Older suites carry keywords on the persona.
             "keywords": (
-                doc.get("keywords") or (doc.get("persona") or {}).get("keywords") or None
+                doc.get("keywords")
+                or (doc.get("persona") or {}).get("keywords")
+                or None
             ),
             "background_noise": (
-                noise if isinstance(noise, str) else "present" if noise else "quiet line"
+                noise
+                if isinstance(noise, str)
+                else "present"
+                if noise
+                else "quiet line"
             )[:64],
             "max_turns": doc.get("max_turns") or None,
         }
@@ -273,10 +336,16 @@ def apply_filters(queryset: QuerySet, params) -> QuerySet:
         if not values:
             continue
         path = _orm_path(field)
-        lookup = f"{path}__contains" if _BY_VALUE[field]["value"] in _LIST_FIELDS else f"{path}__in"
+        lookup = (
+            f"{path}__contains"
+            if _BY_VALUE[field]["value"] in _LIST_FIELDS
+            else f"{path}__in"
+        )
         matches = Q()
         for value in values:
-            matches |= Q(**{lookup: [value] if lookup.endswith("contains") else [value]})
+            matches |= Q(
+                **{lookup: [value] if lookup.endswith("contains") else [value]}
+            )
         queryset = queryset.exclude(matches) if negated else queryset.filter(matches)
     return queryset
 
@@ -317,7 +386,7 @@ def field_catalogue(queryset: QuerySet, spoken: bool = True) -> list[dict[str, A
     for field in FIELDS:
         if not spoken and field["value"] in VOICE_ONLY_FIELDS:
             continue
-        entry = {key: value for key, value in field.items()}
+        entry = dict(field)
         if field["type"] != "enum":
             catalogue.append(entry)
             continue
@@ -325,7 +394,8 @@ def field_catalogue(queryset: QuerySet, spoken: bool = True) -> list[dict[str, A
         if not counts:
             continue
         entry["choices"] = [
-            name for name, _ in sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))
+            name
+            for name, _ in sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))
         ]
         entry["counts"] = counts
         catalogue.append(entry)
@@ -362,7 +432,9 @@ def coverage_grid(
                 "label": axis_label(axis, spoken),
                 "levels": len(held),
                 "scenarios": sum(held.values()),
-                "counts": dict(sorted(held.items(), key=lambda pair: (-pair[1], pair[0]))),
+                "counts": dict(
+                    sorted(held.items(), key=lambda pair: (-pair[1], pair[0]))
+                ),
             }
             for axis, held in levels.items()
             if held
@@ -385,9 +457,7 @@ def coverage_grid(
         "axes": list(AXES),
         "axis_labels": {axis: axis_label(axis, spoken) for axis in AXES},
         "level_labels": {
-            level: level_label(level)
-            for axis in levels
-            for level in levels[axis]
+            level: level_label(level) for axis in levels for level in levels[axis]
         },
     }
 

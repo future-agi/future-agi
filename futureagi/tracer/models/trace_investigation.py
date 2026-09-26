@@ -82,6 +82,15 @@ class TraceInvestigationJob(BaseModel):
         blank=True,
         related_name="debug_analysis_jobs",
     )
+    # A run is investigated one call at a time, like a trace per call; grouping
+    # then clusters the run's per-call findings.
+    call_execution = models.ForeignKey(
+        "simulate.CallExecution",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="debug_analysis_jobs",
+    )
     trace_id = models.UUIDField(null=True, blank=True)
     root_span_id = models.CharField(max_length=64, null=True, blank=True)
     root_end_time = models.DateTimeField(null=True, blank=True)
@@ -109,9 +118,9 @@ class TraceInvestigationJob(BaseModel):
                 name="unique_trace_investigation_job",
             ),
             models.UniqueConstraint(
-                fields=["project", "test_execution"],
-                condition=models.Q(test_execution__isnull=False),
-                name="unique_simulation_investigation_job",
+                fields=["project", "call_execution"],
+                condition=models.Q(call_execution__isnull=False),
+                name="unique_simulation_call_investigation_job",
             ),
             models.CheckConstraint(
                 condition=(
@@ -119,11 +128,13 @@ class TraceInvestigationJob(BaseModel):
                         workload_type=InvestigationWorkload.TRACE,
                         trace_id__isnull=False,
                         test_execution__isnull=True,
+                        call_execution__isnull=True,
                     )
                     | models.Q(
                         workload_type=InvestigationWorkload.SIMULATION_TEST_EXECUTION,
                         trace_id__isnull=True,
                         test_execution__isnull=False,
+                        call_execution__isnull=False,
                     )
                 ),
                 name="valid_trace_investigation_workload",
@@ -266,8 +277,9 @@ class TraceInvestigationReport(BaseModel):
                 condition=models.Q(is_current=True, deleted=False),
                 name="unique_current_trace_investigation",
             ),
+            # One current report per call: a run's calls are separate jobs.
             models.UniqueConstraint(
-                fields=["project", "test_execution"],
+                fields=["project", "job"],
                 condition=models.Q(
                     is_current=True,
                     deleted=False,

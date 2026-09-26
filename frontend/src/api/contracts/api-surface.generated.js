@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1033,
+  endpointCount: 1055,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -995,6 +995,10 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/test-executions/{test_execution_id}/chat/call-executions/batch/":
         ["post"],
       "/simulate/test-executions/{test_execution_id}/column-order/": ["put"],
+      "/simulate/test-executions/{test_execution_id}/debug-analysis/": [
+        "get",
+        "post",
+      ],
       "/simulate/test-executions/{test_execution_id}/delete/": ["delete"],
       "/simulate/test-executions/{test_execution_id}/eval-explanation-summary/":
         ["get"],
@@ -1075,6 +1079,44 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/tracer/feed/issues/{cluster_id}/trends/": ["get"],
       "/tracer/get-annotation-labels/": ["get"],
       "/tracer/imagine-analysis/": ["get", "post"],
+      "/tracer/internal/error-feed-v2/attempts/{attempt_id}/": ["patch"],
+      "/tracer/internal/error-feed-v2/attempts/{attempt_id}/simulation-evidence/":
+        ["post"],
+      "/tracer/internal/error-feed-v2/claims/": ["post"],
+      "/tracer/internal/error-feed-v2/grouping/attempts/{attempt_id}/": [
+        "patch",
+      ],
+      "/tracer/internal/error-feed-v2/grouping/attempts/{attempt_id}/checkpoint/":
+        ["put"],
+      "/tracer/internal/error-feed-v2/grouping/attempts/{attempt_id}/publish/":
+        ["post"],
+      "/tracer/internal/error-feed-v2/grouping/attempts/{attempt_id}/reserve/":
+        ["post"],
+      "/tracer/internal/error-feed-v2/grouping/attempts/{attempt_id}/settle/": [
+        "post",
+      ],
+      "/tracer/internal/error-feed-v2/grouping/claims/": ["post"],
+      "/tracer/internal/error-feed-v2/grouping/feature-attempts/{feature_job_id}/":
+        ["patch"],
+      "/tracer/internal/error-feed-v2/grouping/feature-attempts/{feature_job_id}/complete/":
+        ["post"],
+      "/tracer/internal/error-feed-v2/grouping/feature-claims/": ["post"],
+      "/tracer/internal/error-feed-v2/grouping/outbox/": ["post"],
+      "/tracer/internal/error-feed-v2/grouping/outbox/{event_id}/ack/": [
+        "post",
+      ],
+      "/tracer/internal/error-feed-v2/grouping/severity/attempts/{job_id}/": [
+        "patch",
+      ],
+      "/tracer/internal/error-feed-v2/grouping/severity/attempts/{job_id}/publish/":
+        ["post"],
+      "/tracer/internal/error-feed-v2/grouping/severity/attempts/{job_id}/reserve/":
+        ["post"],
+      "/tracer/internal/error-feed-v2/grouping/severity/attempts/{job_id}/settle/":
+        ["post"],
+      "/tracer/internal/error-feed-v2/grouping/severity/claims/": ["post"],
+      "/tracer/internal/error-feed-v2/notifications/": ["post"],
+      "/tracer/internal/error-feed-v2/reports/": ["post"],
       "/tracer/observability-provider/": ["get", "post"],
       "/tracer/observability-provider/verify_api_key/": ["post"],
       "/tracer/observability-provider/verify_assistant_id/": ["post"],
@@ -2221,6 +2263,10 @@ export const API_SURFACE_PATHS = Object.freeze({
     "post",
   ],
   "/simulate/test-executions/{test_execution_id}/column-order/": ["put"],
+  "/simulate/test-executions/{test_execution_id}/debug-analysis/": [
+    "get",
+    "post",
+  ],
   "/simulate/test-executions/{test_execution_id}/delete/": ["delete"],
   "/simulate/test-executions/{test_execution_id}/eval-explanation-summary/": [
     "get",
@@ -2295,6 +2341,44 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/feed/issues/{cluster_id}/trends/": ["get"],
   "/tracer/get-annotation-labels/": ["get"],
   "/tracer/imagine-analysis/": ["get", "post"],
+  "/tracer/internal/error-feed-v2/attempts/{attempt_id}/": ["patch"],
+  "/tracer/internal/error-feed-v2/attempts/{attempt_id}/simulation-evidence/": [
+    "post",
+  ],
+  "/tracer/internal/error-feed-v2/claims/": ["post"],
+  "/tracer/internal/error-feed-v2/grouping/attempts/{attempt_id}/": ["patch"],
+  "/tracer/internal/error-feed-v2/grouping/attempts/{attempt_id}/checkpoint/": [
+    "put",
+  ],
+  "/tracer/internal/error-feed-v2/grouping/attempts/{attempt_id}/publish/": [
+    "post",
+  ],
+  "/tracer/internal/error-feed-v2/grouping/attempts/{attempt_id}/reserve/": [
+    "post",
+  ],
+  "/tracer/internal/error-feed-v2/grouping/attempts/{attempt_id}/settle/": [
+    "post",
+  ],
+  "/tracer/internal/error-feed-v2/grouping/claims/": ["post"],
+  "/tracer/internal/error-feed-v2/grouping/feature-attempts/{feature_job_id}/":
+    ["patch"],
+  "/tracer/internal/error-feed-v2/grouping/feature-attempts/{feature_job_id}/complete/":
+    ["post"],
+  "/tracer/internal/error-feed-v2/grouping/feature-claims/": ["post"],
+  "/tracer/internal/error-feed-v2/grouping/outbox/": ["post"],
+  "/tracer/internal/error-feed-v2/grouping/outbox/{event_id}/ack/": ["post"],
+  "/tracer/internal/error-feed-v2/grouping/severity/attempts/{job_id}/": [
+    "patch",
+  ],
+  "/tracer/internal/error-feed-v2/grouping/severity/attempts/{job_id}/publish/":
+    ["post"],
+  "/tracer/internal/error-feed-v2/grouping/severity/attempts/{job_id}/reserve/":
+    ["post"],
+  "/tracer/internal/error-feed-v2/grouping/severity/attempts/{job_id}/settle/":
+    ["post"],
+  "/tracer/internal/error-feed-v2/grouping/severity/claims/": ["post"],
+  "/tracer/internal/error-feed-v2/notifications/": ["post"],
+  "/tracer/internal/error-feed-v2/reports/": ["post"],
   "/tracer/observability-provider/": ["get", "post"],
   "/tracer/observability-provider/verify_api_key/": ["post"],
   "/tracer/observability-provider/verify_assistant_id/": ["post"],

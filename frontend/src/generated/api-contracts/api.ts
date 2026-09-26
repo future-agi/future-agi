@@ -1147,6 +1147,7 @@ import type {
   SimulateTestExecutionsPreviewCallsListParams,
   SimulateTestExecutionsReadParams,
   SimulateV3TestExecutionCallsParams,
+  SimulationEvidenceRequestApi,
   SimulationPreviewErrorApi,
   SimulationPreviewPageApi,
   SimulatorAgentApi,
@@ -1207,6 +1208,9 @@ import type {
   TestExecutionChatBatchResponseApi,
   TestExecutionColumnOrderApi,
   TestExecutionColumnOrderResponseApi,
+  TestExecutionDebugAnalysisErrorApi,
+  TestExecutionDebugAnalysisNotFoundApi,
+  TestExecutionDebugAnalysisResponseApi,
   TestExecutionDetailResponseApi,
   TestExecutionRerunApi,
   TestExecutionRerunResponseApi,
@@ -66129,6 +66133,119 @@ export const simulateTestExecutionsColumnOrderUpdate = async (
   );
 };
 
+export type simulateTestExecutionDebugAnalysisRetrieveResponse200 = {
+  data: TestExecutionDebugAnalysisResponseApi;
+  status: 200;
+};
+
+export type simulateTestExecutionDebugAnalysisRetrieveResponse404 = {
+  data: TestExecutionDebugAnalysisNotFoundApi;
+  status: 404;
+};
+
+export type simulateTestExecutionDebugAnalysisRetrieveResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404>;
+};
+
+export type simulateTestExecutionDebugAnalysisRetrieveResponseSuccess =
+  simulateTestExecutionDebugAnalysisRetrieveResponse200 & {
+    headers: Headers;
+  };
+export type simulateTestExecutionDebugAnalysisRetrieveResponseError = (
+  | simulateTestExecutionDebugAnalysisRetrieveResponse404
+  | simulateTestExecutionDebugAnalysisRetrieveResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateTestExecutionDebugAnalysisRetrieveResponse =
+  | simulateTestExecutionDebugAnalysisRetrieveResponseSuccess
+  | simulateTestExecutionDebugAnalysisRetrieveResponseError;
+
+export const getSimulateTestExecutionDebugAnalysisRetrieveUrl = (
+  testExecutionId: string,
+) => {
+  return `/simulate/test-executions/${testExecutionId}/debug-analysis/`;
+};
+
+/**
+ * @summary Get Test Execution debug analysis
+ */
+export const simulateTestExecutionDebugAnalysisRetrieve = async (
+  testExecutionId: string,
+  options?: RequestInit,
+): Promise<simulateTestExecutionDebugAnalysisRetrieveResponse> => {
+  return apiMutator<simulateTestExecutionDebugAnalysisRetrieveResponse>(
+    getSimulateTestExecutionDebugAnalysisRetrieveUrl(testExecutionId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateTestExecutionDebugAnalysisCreateResponse202 = {
+  data: TestExecutionDebugAnalysisResponseApi;
+  status: 202;
+};
+
+export type simulateTestExecutionDebugAnalysisCreateResponse404 = {
+  data: TestExecutionDebugAnalysisNotFoundApi;
+  status: 404;
+};
+
+export type simulateTestExecutionDebugAnalysisCreateResponse409 = {
+  data: TestExecutionDebugAnalysisErrorApi;
+  status: 409;
+};
+
+export type simulateTestExecutionDebugAnalysisCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202 | 404 | 409>;
+};
+
+export type simulateTestExecutionDebugAnalysisCreateResponseSuccess =
+  simulateTestExecutionDebugAnalysisCreateResponse202 & {
+    headers: Headers;
+  };
+export type simulateTestExecutionDebugAnalysisCreateResponseError = (
+  | simulateTestExecutionDebugAnalysisCreateResponse404
+  | simulateTestExecutionDebugAnalysisCreateResponse409
+  | simulateTestExecutionDebugAnalysisCreateResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateTestExecutionDebugAnalysisCreateResponse =
+  | simulateTestExecutionDebugAnalysisCreateResponseSuccess
+  | simulateTestExecutionDebugAnalysisCreateResponseError;
+
+export const getSimulateTestExecutionDebugAnalysisCreateUrl = (
+  testExecutionId: string,
+) => {
+  return `/simulate/test-executions/${testExecutionId}/debug-analysis/`;
+};
+
+/**
+ * @summary Request Test Execution debug analysis
+ */
+export const simulateTestExecutionDebugAnalysisCreate = async (
+  testExecutionId: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateTestExecutionDebugAnalysisCreateResponse> => {
+  return apiMutator<simulateTestExecutionDebugAnalysisCreateResponse>(
+    getSimulateTestExecutionDebugAnalysisCreateUrl(testExecutionId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
 export type simulateTestExecutionsDeleteDeleteResponse204 = {
   data: void;
   status: 204;
@@ -71378,6 +71495,62 @@ export const tracerInternalErrorFeedV2AttemptsPartialUpdate = async (
       method: "PATCH",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(updateInvestigationAttemptRequestApi),
+    },
+  );
+};
+
+export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse201 =
+  {
+    data: SimulationEvidenceRequestApi;
+    status: 201;
+  };
+
+export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse409 =
+  {
+    data: InvestigationControlErrorApi;
+    status: 409;
+  };
+
+export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 201 | 409>;
+  };
+
+export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseSuccess =
+  tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse201 & {
+    headers: Headers;
+  };
+export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseError =
+  (
+    | tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse409
+    | tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseDefault
+  ) & {
+    headers: Headers;
+  };
+
+export type tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse =
+  | tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseSuccess
+  | tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponseError;
+
+export const getTracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateUrl = (
+  attemptId: string,
+) => {
+  return `/tracer/internal/error-feed-v2/attempts/${attemptId}/simulation-evidence/`;
+};
+
+export const tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreate = async (
+  attemptId: string,
+  simulationEvidenceRequestApi: SimulationEvidenceRequestApi,
+  options?: RequestInit,
+): Promise<tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse> => {
+  return apiMutator<tracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateResponse>(
+    getTracerInternalErrorFeedV2AttemptsSimulationEvidenceCreateUrl(attemptId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(simulationEvidenceRequestApi),
     },
   );
 };

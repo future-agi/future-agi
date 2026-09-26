@@ -30,10 +30,9 @@ from django.db.models.lookups import Exact, GreaterThan, In
 
 from model_hub.models.develop_dataset import Cell
 from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
-from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
 from simulate.semantics import SupportedProviders
 from simulate.services.harness_scenarios import GROUP_BY as SCENARIO_GROUP_BY
-from simulate.services.harness_scenarios import level_label
+from simulate.services.harness_scenarios import authored_scenarios, level_label
 from simulate.services.run_results_v3 import build_evaluation_catalog
 from simulate.services.run_results_v3_expressions import (
     PercentileCont,
@@ -162,20 +161,11 @@ def run_calls_queryset(
         ),
         "created_at",
     )
-    # A hosted call's use case, sub-goals, persona and coverage live on its
-    # authored scenario: linked to the call on a direct run, or found by the
-    # call's scenario key on the run's own job or its parent environment.
-    run_jobs = HostedHarnessJob.no_workspace_objects.filter(
-        run_test_id=execution.run_test_id
+    authored = authored_scenarios(
+        execution.run_test_id,
+        call_execution_id=OuterRef("pk"),
+        scenario_key=OuterRef("result_scenario_key"),
     )
-    authored = HostedHarnessScenario.no_workspace_objects.filter(
-        Q(call_execution_id=OuterRef("pk"))
-        | Q(
-            Q(job_id__in=run_jobs.values("id"))
-            | Q(job_id__in=run_jobs.values("environment_id")),
-            scenario_key=OuterRef("result_scenario_key"),
-        )
-    ).order_by("-created_at")
     queryset = CallExecution.objects.filter(execution_filter).annotate(
         result_scenario_key=_json_text("call_metadata", "harness_scenario_key")
     )
@@ -289,6 +279,8 @@ def apply_run_call_query(queryset: QuerySet, query: dict[str, Any]) -> QuerySet:
             | Q(error_message__icontains=search)
         )
 
+    if values := filters.get("call_execution_id"):
+        queryset = queryset.filter(id__in=values)
     if values := filters.get("goal"):
         queryset = queryset.filter(result_goal__in=values)
     if values := filters.get("status"):

@@ -23,7 +23,12 @@ from tracer.models.trace_grouping import (
     TraceGroupingScope,
     TraceGroupingWork,
 )
-from tracer.models.trace_investigation import TraceInvestigationReport
+from tracer.models.trace_investigation import (
+    InvestigationWorkload,
+    TraceInvestigationJob,
+    TraceInvestigationJobState,
+    TraceInvestigationReport,
+)
 from tracer.queries.grouping import (
     GroupingSnapshotError,
     canonical_snapshot_digest,
@@ -33,6 +38,9 @@ from tracer.queries.grouping import (
 FEATURE_LEASE_SECONDS = 120
 GROUPING_LEASE_SECONDS = 180
 MAX_ATTEMPTS = 5
+# How long a simulation run's grouping waits before checking again that the run
+# has finished; it also keeps waiting works out of the claim window's head.
+SIMULATION_SETTLE_SECONDS = 15
 # The grouping control client permits 8 MiB payloads. Keep 1 MiB for the
 # request envelope while allowing lossless multi-cohort receipts and Registry
 # history to remain durable across worker restarts.
@@ -317,6 +325,30 @@ def mark_feature_ready(
     }
 
 
+def _simulation_run_settling(report) -> bool:
+    """A simulation run is a closed batch: group it once every call is read.
+
+    Grouping a report the moment it lands shows discovery one call at a time,
+    so a failure shared across calls never meets its peers and is deferred for
+    good. Waiting for the run lets one cohort hold all of it.
+    """
+    return (
+        TraceInvestigationJob.no_workspace_objects.filter(
+            test_execution_id=report.test_execution_id,
+            workload_type=InvestigationWorkload.SIMULATION_TEST_EXECUTION,
+            state__in=[
+                TraceInvestigationJobState.WAITING,
+                TraceInvestigationJobState.RUNNING,
+            ],
+        ).exists()
+        or TraceGroupingFeatureJob.no_workspace_objects.filter(
+            report__test_execution_id=report.test_execution_id,
+            report__is_current=True,
+            state__in=[GroupingFeatureState.PENDING, GroupingFeatureState.RUNNING],
+        ).exists()
+    )
+
+
 def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
     if not worker_id or not 1 <= limit <= 10:
         raise GroupingControlError("invalid grouping claim request")
@@ -361,6 +393,19 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
                 work.state = GroupingWorkState.SUPERSEDED
                 work.save(update_fields=["state", "updated_at"])
                 continue
+            if (
+                work.report.workload_type
+                == InvestigationWorkload.SIMULATION_TEST_EXECUTION
+            ):
+                if _simulation_run_settling(work.report):
+                    work.not_before = now + timedelta(seconds=SIMULATION_SETTLE_SECONDS)
+                    work.save(update_fields=["not_before", "updated_at"])
+                    continue
+                # The run has settled, so all of its works are due: this claim
+                # takes them as one cohort, not whichever came due first.
+                TraceGroupingWork.no_workspace_objects.filter(
+                    scope=scope, state=GroupingWorkState.PENDING, not_before__gt=now
+                ).update(not_before=now)
             if TraceGroupingAttempt.no_workspace_objects.filter(
                 work__scope=scope,
                 state=GroupingAttemptState.CLAIMED,

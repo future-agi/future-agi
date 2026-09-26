@@ -1022,7 +1022,9 @@ def publish_investigation(
                     "simulation execution is no longer complete"
                 )
             if result["coverage"]["read_complete"]:
+                # A simulation job investigates exactly its own call.
                 total_calls = CallExecution.no_workspace_objects.filter(
+                    id=job.call_execution_id,
                     test_execution_id=execution.id,
                     status__in=(
                         CallExecution.CallStatus.COMPLETED,
@@ -1088,9 +1090,8 @@ def publish_investigation(
                 is_current=True,
             )
             if simulation:
-                superseded_reports = superseded_reports.filter(
-                    test_execution_id=job.test_execution_id
-                )
+                # A run's reports are per call: only this call's earlier report goes.
+                superseded_reports = superseded_reports.filter(job_id=job.id)
             else:
                 superseded_reports = superseded_reports.filter(trace_id=job.trace_id)
             superseded_reports.update(is_current=False)

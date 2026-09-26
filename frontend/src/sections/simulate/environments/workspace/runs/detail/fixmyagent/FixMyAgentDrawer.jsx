@@ -1,23 +1,32 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { alpha } from "@mui/material/styles";
-import { Box, Stack, Typography, IconButton, Tooltip, Button } from "@mui/material";
+import { Box, Stack, Typography, Button } from "@mui/material";
 
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import SideDrawer from "../../../../components/SideDrawer";
 import { BUILD_TONES } from "../../../../buildEnvironment/buildTones";
-import { useOptimizerAnalysis } from "src/api/simulate-environments/runDetail";
+import {
+  useDebugAnalysis,
+  useRunCalls,
+  withCallContext,
+} from "src/api/simulate-environments/runDetail";
 import DiagnosisPane from "./DiagnosisPane";
 import ImaginePane from "./ImaginePane";
+import BetaChip from "./BetaChip";
+import {
+  SELF_IMPROVEMENT_BETA_HINT,
+  useSelfImprovementOpen,
+} from "./selfImprovement";
 
 /**
  * Fix my agent — the Debug-failures drawer.
  *
- * Opened by the run header's "Debug failures" button. Its primary content is the
- * DiagnosisPane, sourced from the REAL `optimiser-analysis` endpoint via
- * `useOptimizerAnalysis`. A second "Imagine" tab is present but gated (no
- * backend), matching the designer's two-tab shape without fabricating its
- * exploratory analytics.
+ * Opened by the run header's "Debug failures" button. Opening it requests the
+ * run's Omega diagnosis once (`debug-analysis`); the DiagnosisPane shows the
+ * issues it found and hands their calls back to the table. A second "Imagine"
+ * tab is present but gated (no backend).
  *
  * The drawer uses the shared `SideDrawer`, which already paints the single
  * close-X — so this content deliberately does NOT add its own, or the two would
@@ -40,7 +49,9 @@ function TabButton({ active, onClick, icon, children }) {
       }}
     >
       <Iconify icon={icon} width={14} />
-      <Typography sx={{ typography: "s2", fontWeight: active ? 700 : 500 }}>{children}</Typography>
+      <Typography sx={{ typography: "s2", fontWeight: active ? 700 : 500 }}>
+        {children}
+      </Typography>
     </Box>
   );
 }
@@ -51,20 +62,75 @@ TabButton.propTypes = {
   children: PropTypes.node,
 };
 
-export default function FixMyAgentDrawer({ open, onClose, executionId, stats, onLaunch }) {
+// The API refuses a run whose calls are still in flight; anything else is a
+// generic failure — raw backend text is not user copy.
+function refusalMessage(error) {
+  return error?.code === "execution_not_completed"
+    ? "Diagnosis is available once every call in this run finishes."
+    : null;
+}
+
+export default function FixMyAgentDrawer({
+  open,
+  onClose,
+  executionId,
+  stats,
+  onLaunch,
+  onViewCalls,
+}) {
   const [tab, setTab] = useState("diagnosis");
-  const { analysis, isLoading, refresh, isRefreshing } = useOptimizerAnalysis(
-    open ? executionId : null,
+  const { analysis, isLoading, request, isRequesting, requestError } =
+    useDebugAnalysis(open ? executionId : null);
+
+  // The first open of a finished run queues its diagnosis; later opens read it.
+  const requested = useRef(null);
+  useEffect(() => {
+    if (!open || isLoading || analysis.status !== "not_requested") return;
+    if (requested.current === executionId) return;
+    requested.current = executionId;
+    request();
+  }, [open, isLoading, analysis.status, executionId, request]);
+
+  // One-offs carry Omega's own prose; their calls give its call ids readable labels.
+  const citedIds = useMemo(
+    () => [...new Set(analysis.oneOffs.flatMap((way) => way.callIds))],
+    [analysis.oneOffs],
+  );
+  const { tasks: citedCalls } = useRunCalls(
+    citedIds.length ? executionId : null,
+    {
+      limit: 500,
+      filters: { call_execution_id: citedIds },
+    },
   );
 
-  const failing = stats?.failed ?? 0;
-  const measured = stats?.measured ?? stats?.total ?? 0;
+  // A refused request (e.g. calls still running) must read as an error, never an
+  // endless loader.
+  const view = useMemo(() => {
+    const base =
+      requestError && analysis.status === "not_requested"
+        ? {
+            ...analysis,
+            status: "failed",
+            errorMessage: refusalMessage(requestError),
+          }
+        : analysis;
+    return withCallContext(base, citedCalls);
+  }, [analysis, requestError, citedCalls]);
 
-  // The primary path out of the diagnosis: launch a real optimization over the
-  // findings. Shown once a diagnosis exists so the very first optimization is
-  // reachable here (the Trials tab, where past runs live, is hidden until one
-  // exists — this button is what creates the first).
-  const canLaunch = tab === "diagnosis" && !isLoading && analysis.hasResponse && !analysis.isWorking;
+  // Once diagnosed, the header counts what the diagnosis counts, so they agree.
+  const failing = view.summary?.brokenCalls ?? stats?.failed ?? 0;
+  const measured =
+    view.summary?.measuredCalls ?? stats?.measured ?? stats?.total ?? 0;
+
+  // The primary path out of the diagnosis: launch a real optimization. Shown once
+  // the diagnosis has finished so the very first optimization is reachable here
+  // (the Trials tab, where past runs live, is hidden until one exists).
+  const selfImprovementOpen = useSelfImprovementOpen();
+  const canLaunch =
+    tab === "diagnosis" &&
+    view.status === "completed" &&
+    view.goals.length + view.oneOffs.length > 0;
 
   return (
     <SideDrawer open={open} onClose={onClose} width={{ xs: "100%", sm: 570 }}>
@@ -74,7 +140,14 @@ export default function FixMyAgentDrawer({ open, onClose, executionId, stats, on
           direction="row"
           alignItems="center"
           spacing={1.25}
-          sx={{ px: 2.5, py: 2, pr: 5, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+          sx={{
+            px: 2.5,
+            py: 2,
+            pr: 5,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
         >
           <Box
             sx={{
@@ -85,58 +158,98 @@ export default function FixMyAgentDrawer({ open, onClose, executionId, stats, on
               placeItems: "center",
               flexShrink: 0,
               color: BUILD_TONES.accent,
-              bgcolor: (t) => alpha(BUILD_TONES.accent, t.palette.mode === "dark" ? 0.16 : 0.1),
+              bgcolor: (t) =>
+                alpha(
+                  BUILD_TONES.accent,
+                  t.palette.mode === "dark" ? 0.16 : 0.1,
+                ),
             }}
           >
             <Iconify icon="solar:magic-stick-3-linear" width={16} />
           </Box>
           <Box flex={1} minWidth={0}>
-            <Typography sx={{ typography: "s1", fontWeight: 700 }}>Debug failures</Typography>
+            <Typography sx={{ typography: "s1", fontWeight: 700 }}>
+              Debug failures
+            </Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
               {failing} failing of {measured} measured
             </Typography>
           </Box>
-          <Tooltip arrow title="Read the run again">
-            <span>
-              <IconButton size="small" onClick={() => refresh()} disabled={isRefreshing}>
-                <Iconify icon="solar:refresh-linear" width={16} sx={{ color: "text.subtitle" }} />
-              </IconButton>
-            </span>
-          </Tooltip>
         </Stack>
 
         {/* Tab bar — Diagnosis (real) and Imagine (gated). */}
         <Stack
           direction="row"
           spacing={2}
-          sx={{ px: 2.5, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+          sx={{
+            px: 2.5,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
         >
-          <TabButton active={tab === "diagnosis"} onClick={() => setTab("diagnosis")} icon="solar:document-medicine-linear">
+          <TabButton
+            active={tab === "diagnosis"}
+            onClick={() => setTab("diagnosis")}
+            icon="solar:document-medicine-linear"
+          >
             Diagnosis
           </TabButton>
-          <TabButton active={tab === "imagine"} onClick={() => setTab("imagine")} icon="solar:magic-stick-3-linear">
+          <TabButton
+            active={tab === "imagine"}
+            onClick={() => setTab("imagine")}
+            icon="solar:magic-stick-3-linear"
+          >
             Imagine
           </TabButton>
         </Stack>
 
         {tab === "diagnosis" ? (
-          <DiagnosisPane analysis={analysis} isLoading={isLoading} />
+          <DiagnosisPane
+            analysis={view}
+            isLoading={isLoading}
+            isRequesting={isRequesting}
+            onRetry={() => request()}
+            onViewCalls={onViewCalls}
+          />
         ) : (
           <ImaginePane />
         )}
 
         {canLaunch && (
-          <Box sx={{ px: 2.5, py: 2, borderTop: "1px solid", borderColor: "divider", flexShrink: 0 }}>
-            <Button
-              fullWidth
-              variant="contained"
-              color="primary"
-              onClick={onLaunch}
-              startIcon={<Iconify icon="solar:magic-stick-3-bold" width={16} />}
-              sx={{ typography: "s2", fontWeight: 700 }}
+          <Box
+            sx={{
+              px: 2.5,
+              py: 2,
+              borderTop: "1px solid",
+              borderColor: "divider",
+              flexShrink: 0,
+            }}
+          >
+            <CustomTooltip
+              show={!selfImprovementOpen}
+              title={SELF_IMPROVEMENT_BETA_HINT}
+              size="small"
+              arrow
             >
-              Run Self Improvement
-            </Button>
+              {/* A disabled button fires no hover events; the box carries the tooltip. */}
+              <Box>
+                <Button
+                  fullWidth
+                  variant="contained"
+                  color="primary"
+                  disabled={!selfImprovementOpen}
+                  onClick={onLaunch}
+                  startIcon={
+                    <Iconify icon="solar:magic-stick-3-bold" width={16} />
+                  }
+                  sx={{ typography: "s2", fontWeight: 700 }}
+                >
+                  Run Self Improvement
+                  {!selfImprovementOpen && <BetaChip />}
+                </Button>
+              </Box>
+            </CustomTooltip>
           </Box>
         )}
       </Stack>
@@ -154,4 +267,5 @@ FixMyAgentDrawer.propTypes = {
     total: PropTypes.number,
   }),
   onLaunch: PropTypes.func,
+  onViewCalls: PropTypes.func,
 };

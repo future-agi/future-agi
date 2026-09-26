@@ -1804,6 +1804,8 @@ class DebugAnalysisFindingSerializer(serializers.Serializer):
     group_label = serializers.CharField(allow_null=True)
     fix_layer = serializers.CharField(allow_null=True)
     confidence = serializers.CharField(allow_null=True)
+    # The authored sub-goal this finding breaks, when it breaks one.
+    goal = serializers.CharField(allow_null=True)
     cluster = DebugAnalysisClusterSerializer(allow_null=True)
     evidence = DebugAnalysisEvidenceSerializer(many=True)
 
@@ -1824,6 +1826,38 @@ class DebugAnalysisReportSerializer(serializers.Serializer):
     recorded_at = serializers.DateTimeField()
 
 
+class DebugAnalysisWaySerializer(serializers.Serializer):
+    """One way a goal broke (a grouping cluster), or one one-off agent issue."""
+
+    id = serializers.CharField()
+    title = serializers.CharField()
+    phrase = serializers.CharField()
+    call_ids = serializers.ListField(child=serializers.UUIDField())
+
+
+class DebugAnalysisGoalSerializer(serializers.Serializer):
+    """A goal the run's evals say broke, and how it broke."""
+
+    goal = serializers.CharField()
+    label = serializers.CharField()
+    criteria = serializers.CharField(allow_null=True)
+    broken_call_ids = serializers.ListField(child=serializers.UUIDField())
+    tested_call_count = serializers.IntegerField()
+    ways = DebugAnalysisWaySerializer(many=True)
+    unexplained_call_ids = serializers.ListField(child=serializers.UUIDField())
+
+
+class DebugAnalysisSummarySerializer(serializers.Serializer):
+    measured_call_count = serializers.IntegerField()
+    broken_goal_count = serializers.IntegerField()
+    broken_call_count = serializers.IntegerField()
+    one_off_count = serializers.IntegerField()
+    # Calls our own test caller or platform broke; never counted against the agent.
+    excluded_call_ids = serializers.ListField(child=serializers.UUIDField())
+    # Calls whose own analysis failed: unread, not issue-free.
+    unanalyzed_call_ids = serializers.ListField(child=serializers.UUIDField())
+
+
 class TestExecutionDebugAnalysisResponseSerializer(serializers.Serializer):
     test_execution_id = serializers.UUIDField()
     status = serializers.ChoiceField(
@@ -1834,6 +1868,9 @@ class TestExecutionDebugAnalysisResponseSerializer(serializers.Serializer):
     error_message = serializers.CharField(allow_null=True)
     report = DebugAnalysisReportSerializer(allow_null=True)
     findings = DebugAnalysisFindingSerializer(many=True)
+    summary = DebugAnalysisSummarySerializer(allow_null=True)
+    goals = DebugAnalysisGoalSerializer(many=True)
+    one_offs = DebugAnalysisWaySerializer(many=True)
 
 
 class TestExecutionDebugAnalysisErrorSerializer(serializers.Serializer):
