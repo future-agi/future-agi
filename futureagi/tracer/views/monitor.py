@@ -357,7 +357,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 updated_instance = serializer.save()
                 updated_instance.logs.append(
                     {
-                        "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                        "timestamp": timezone.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
                         "message": f"Monitor {updated_instance.name} has been updated",
                         "type": "INFO",
                     }
@@ -562,7 +562,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 user_alert = serializer.save(
                     logs=[
                         {
-                            "timestamp": datetime.now().strftime(
+                            "timestamp": timezone.now().strftime(
                                 "%Y-%m-%dT%H:%M:%S.%fZ"
                             ),
                             "message": f"Monitor {data.get('name')} has been created",
@@ -650,7 +650,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             filters=monitor.filters,
             logs=[
                 {
-                    "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                    "timestamp": timezone.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
                     "message": f"Monitor {new_name} has been duplicated from {monitor.name}",
                     "type": "INFO",
                 }
@@ -1050,7 +1050,7 @@ class UserAlertMonitorLogView(BaseModelViewSetMixin, ModelViewSet):
                 )
 
             updated_count = log_entries.update(
-                resolved=True, resolved_at=datetime.now(), resolved_by=request.user
+                resolved=True, resolved_at=timezone.now(), resolved_by=request.user
             )
 
             return self._gm.success_response(
