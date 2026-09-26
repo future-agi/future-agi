@@ -449,6 +449,50 @@ def test_call_summary_absent_everywhere_still_skips(
     assert exc_info.value.skipped_reason == "missing_required_attribute: call_summary"
 
 
+def _retell_list_item(**overrides):
+    from tracer.tests.fixtures.retell_calls import list_item
+
+    return list_item("call-1", 1_000, 61_000, **overrides)
+
+
+@pytest.mark.parametrize(
+    "raw_log,provider,attribute",
+    [
+        # Dev: vapi calls that ended ``call-deleted`` store ``summary: ""``.
+        ({**_VAPI_RAW_LOG, "summary": ""}, "vapi", "call_summary"),
+        # Retell's builder defaults ``call_metadata`` to {}.
+        (_retell_list_item(), "retell", "call_metadata"),
+        # No recording: the builder emits {"mono": None, "stereo_url": None}.
+        (_VAPI_RAW_LOG, "vapi", "recording"),
+    ],
+)
+def test_call_log_empty_default_skips_like_a_miss(
+    ch_voice_span, missing_eval_template_id, raw_log, provider, attribute
+):
+    # The builder fills fields the call has no data for with empty
+    # defaults; resolving those turns a skipped call into an eval error
+    # ("No input received"), so an empty call-log value is a miss.
+    span = ch_voice_span(raw_log, provider=provider)
+    with pytest.raises(EvalSkippedMissingAttribute) as exc_info:
+        _process_mapping(
+            {"text": attribute},
+            span,
+            eval_template_id=missing_eval_template_id,
+        )
+    assert exc_info.value.skipped_reason == f"missing_required_attribute: {attribute}"
+
+
+def test_call_log_falsy_value_still_resolves(ch_voice_span, missing_eval_template_id):
+    # Empty, not falsy: a zero count is a value the eval can use.
+    span = ch_voice_span({**_VAPI_RAW_LOG, "messages": []})
+    out = _process_mapping(
+        {"n": "message_count"},
+        span,
+        eval_template_id=missing_eval_template_id,
+    )
+    assert out == {"n": "0"}
+
+
 # ───────────────────────────────────────────────────────────────────────────
 # Non-string mapping values
 #

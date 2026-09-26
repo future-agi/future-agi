@@ -21,6 +21,7 @@ from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from common.utils.data_injection import normalize as _di_normalize
 from model_hub.models.choices import StatusType
 from model_hub.models.evals_metric import EvalTemplate
+from model_hub.utils.eval_input_validation import is_empty_value
 from model_hub.utils.eval_mapping import require_mapping_paths
 from sdk.utils.helpers import _get_api_call_type
 from tfc.constants.api_calls import APICallStatusChoices
@@ -796,7 +797,9 @@ def _process_mapping(
         # so non-voice spans are unaffected. See _walk_raw_log. Fields the
         # call list derives rather than copies (``call_summary`` is vapi's
         # ``summary``, retell's ``call_analysis.call_summary``) come from the
-        # list's own builder; it emits every field, absent ones as None.
+        # list's own builder. It emits every field, filling ones the call has
+        # no data for with None or an empty default ("", {}, ...); those are a
+        # miss, so the call skips instead of failing "No input received".
         if (
             resolved_value is _MISSING
             and attribute
@@ -809,7 +812,7 @@ def _process_mapping(
                 if voice_call_log is None:
                     voice_call_log = _voice_call_log(span, voice_raw_log, span_attrs)
                 walked = _walk_raw_log(voice_call_log, attribute)
-                if walked is None:
+                if is_empty_value(walked):
                     walked = _MISSING
             if walked is not _MISSING:
                 resolved_value = walked
