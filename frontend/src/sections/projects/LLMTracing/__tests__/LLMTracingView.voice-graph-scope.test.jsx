@@ -1,7 +1,8 @@
 import React from "react";
-import { render, waitFor } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import axios from "src/utils/axios";
 import LLMTracingView from "../LLMTracingView";
 
 // The Voice screen's chart and grid must count one population. The grid reads
@@ -18,6 +19,7 @@ const harness = vi.hoisted(() => ({
   },
   callLogsGridProps: [],
   primaryGraphProps: [],
+  toolbarProps: [],
   projectDetail: { source: "observe" },
   removeSimulationCalls: undefined,
   replayState: {
@@ -131,7 +133,12 @@ vi.mock("src/sections/agents/CallLogs/CallLogsGrid", async () => {
   };
 });
 
-vi.mock("../ObserveToolbar", () => ({ default: () => null }));
+vi.mock("../ObserveToolbar", () => ({
+  default: (props) => {
+    harness.toolbarProps.push(props);
+    return null;
+  },
+}));
 
 vi.mock("src/api/annotation-queues/annotation-queues", () => ({
   useAnnotationQueuesList: () => ({ data: { results: [] }, isLoading: false }),
@@ -314,5 +321,45 @@ describe("LLMTracingView graph population", () => {
     const props = await lastPrimaryGraphProps();
     expect(props.observeType).toBe("voice");
     expect(props.removeSimulationCalls).toBe(false);
+  });
+});
+
+// A voice call's trace id can exist in several projects (a provider account
+// shared by several voice projects). Bulk "Add tags" reads each selected
+// call's current tags; that read must come from this project's copy.
+describe("LLMTracingView voice bulk tags", () => {
+  beforeEach(() => {
+    harness.callLogsGridProps = [];
+    harness.toolbarProps = [];
+    harness.selectedTab = "trace";
+    harness.projectDetail = { source: "simulator" };
+    axios.get.mockReset();
+    axios.get.mockResolvedValue({ data: { result: { tags: ["vip"] } } });
+  });
+
+  it("reads each selected call's current tags from this project's copy", async () => {
+    renderView();
+    await waitFor(() =>
+      expect(harness.callLogsGridProps.some((props) => props.enabled)).toBe(
+        true,
+      ),
+    );
+
+    await act(async () => {
+      harness.callLogsGridProps
+        .findLast((props) => props.enabled)
+        .onSelectionChanged(["trace-a", "trace-b"]);
+    });
+    await act(async () => {
+      harness.toolbarProps
+        .at(-1)
+        .onBulkAction("tags", { currentTarget: document.body });
+    });
+
+    await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(2));
+    for (const [url, config] of axios.get.mock.calls) {
+      expect(url).toBe("/traces/detail/");
+      expect(config?.params).toEqual({ project_id: "project-1" });
+    }
   });
 });

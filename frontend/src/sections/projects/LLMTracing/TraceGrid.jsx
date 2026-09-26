@@ -937,7 +937,10 @@ const TraceGrid = React.forwardRef(
           onPageChange={goToPage}
           onPageSizeChange={changePageSize}
         />
-        <LLMTracingTraceDetailDrawer refreshGrid={refreshGrid} />
+        <LLMTracingTraceDetailDrawer
+          refreshGrid={refreshGrid}
+          projectId={projectId}
+        />
         <NumberQuickFilterPopover
           open={Boolean(openQuickFilter)}
           filterData={openQuickFilter}

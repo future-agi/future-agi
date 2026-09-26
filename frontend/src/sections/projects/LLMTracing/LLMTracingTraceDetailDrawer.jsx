@@ -4,8 +4,12 @@ import TraceDetailDrawerV2 from "src/components/traceDetail/TraceDetailDrawerV2"
 import { useLLMTracingStoreShallow } from "./states";
 import { useParams } from "react-router";
 
-const LLMTracingTraceDetailDrawer = ({ refreshGrid }) => {
+const LLMTracingTraceDetailDrawer = ({ refreshGrid, projectId }) => {
   const { observeId } = useParams();
+  // The grid's project: on /dashboard/users/:userId the route has no
+  // observeId, but the grid is scoped to the selected project, and the same
+  // trace id can exist in several projects.
+  const traceProjectId = projectId || observeId;
   const { traceDetailDrawerOpen, setTraceDetailDrawerOpen, visibleTraceIds } =
     useLLMTracingStoreShallow((state) => ({
       traceDetailDrawerOpen: state.traceDetailDrawerOpen,
@@ -44,7 +48,7 @@ const LLMTracingTraceDetailDrawer = ({ refreshGrid }) => {
       traceId={traceId}
       open={Boolean(traceDetailDrawerOpen)}
       onClose={() => setTraceDetailDrawerOpen(null)}
-      projectId={observeId}
+      projectId={traceProjectId}
       onPrev={onPrev}
       onNext={onNext}
       hasPrev={hasPrev}
@@ -56,6 +60,7 @@ const LLMTracingTraceDetailDrawer = ({ refreshGrid }) => {
 
 LLMTracingTraceDetailDrawer.propTypes = {
   refreshGrid: PropTypes.func,
+  projectId: PropTypes.string,
 };
 
 export default LLMTracingTraceDetailDrawer;

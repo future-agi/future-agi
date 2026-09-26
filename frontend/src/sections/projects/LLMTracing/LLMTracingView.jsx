@@ -4308,6 +4308,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     // Call rows don't carry tags — fetch current tags per
                     // trace so the popover can merge correctly. Guard
                     // against concurrent clicks triggering duplicate fetches.
+                    // A call's trace id can exist in several projects, so
+                    // read this project's copy.
                     if (tagsFetching) return;
                     const ids = (selectedCallIds || []).filter(Boolean);
                     if (ids.length === 0) return;
@@ -4315,7 +4317,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     Promise.all(
                       ids.map((id) =>
                         axios
-                          .get(endpoints.project.getTrace(id))
+                          .get(endpoints.project.getTrace(id), {
+                            params: { project_id: observeId },
+                          })
                           .then((res) => ({
                             id,
                             type: "trace",

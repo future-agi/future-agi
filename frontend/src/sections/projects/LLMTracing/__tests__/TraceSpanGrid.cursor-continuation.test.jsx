@@ -10,6 +10,7 @@ const {
   themeParamReferences,
   traceGridSetState,
   spanGridSetState,
+  traceDetailDrawerProps,
 } = vi.hoisted(() => ({
   getMock: vi.fn(),
   gridState: { api: null, props: null },
@@ -17,6 +18,7 @@ const {
   themeParamReferences: [],
   traceGridSetState: vi.fn(),
   spanGridSetState: vi.fn(),
+  traceDetailDrawerProps: vi.fn(),
 }));
 
 vi.mock("ag-grid-react", async () => {
@@ -151,7 +153,12 @@ vi.mock("../Renderers/IPOPTooltipComponent", () => ({
   default: () => null,
 }));
 vi.mock("../Renderers/IPOPCell", () => ({ default: () => null }));
-vi.mock("../LLMTracingTraceDetailDrawer", () => ({ default: () => null }));
+vi.mock("../LLMTracingTraceDetailDrawer", () => ({
+  default: (props) => {
+    traceDetailDrawerProps(props);
+    return null;
+  },
+}));
 vi.mock("../LLMTracingSpanDetailDrawer", () => ({ default: () => null }));
 
 import SpanGrid from "../SpanGrid";
@@ -300,6 +307,21 @@ const renderGridSubject = ({ kind, ref, props, filters }) =>
   ) : (
     <SpanGrid ref={ref} {...props} filters={filters} compareType="primary" />
   );
+
+describe("trace grid detail drawer", () => {
+  it("opens trace detail pinned to the grid's project, not only the route's", () => {
+    // /dashboard/users/:userId scopes the grid with a selected project while
+    // the route has no observeId; the drawer must still read that project.
+    traceDetailDrawerProps.mockClear();
+
+    render(<TraceGrid {...baseProps()} projectId="project-selected" />);
+
+    expect(traceDetailDrawerProps).toHaveBeenCalled();
+    expect(traceDetailDrawerProps.mock.lastCall[0].projectId).toBe(
+      "project-selected",
+    );
+  });
+});
 
 describe.each(["trace", "span"])("%s grid theme retention", (kind) => {
   beforeEach(() => {

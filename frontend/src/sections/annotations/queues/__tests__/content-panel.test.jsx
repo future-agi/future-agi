@@ -474,6 +474,64 @@ describe("Annotation queue ContentPanel", () => {
     );
   });
 
+  // The same trace id can live in several projects; the queue item's content
+  // was read from one project's copy, so the detail read must pin to it.
+  it.each(["trace", "observation_span"])(
+    "pins the inline %s read to the queue item's project",
+    (sourceType) => {
+      renderWithQuery(
+        <ContentPanel
+          item={{
+            source_type: sourceType,
+            source_content: {
+              trace_id: "trace-1",
+              span_id: "span-1",
+              project_id: "proj-item",
+              observation_type: "llm",
+            },
+          }}
+        />,
+      );
+
+      expect(mockUseGetTraceDetail).toHaveBeenCalled();
+      for (const [traceId, projectId] of mockUseGetTraceDetail.mock.calls) {
+        expect([traceId, projectId]).toEqual(["trace-1", "proj-item"]);
+      }
+    },
+  );
+
+  it("pins the voice call read and its inline fallback to the queue item's project", async () => {
+    axios.get.mockResolvedValue({ data: {} });
+
+    renderWithQuery(
+      <ContentPanel
+        item={{
+          source_type: "trace",
+          source_content: {
+            trace_id: "trace-voice-3",
+            observation_type: "conversation",
+            project_source: "simulator",
+            project_id: "proj-item",
+          },
+        }}
+      />,
+    );
+
+    await screen.findByTestId("trace-display-panel");
+    const voiceReads = axios.get.mock.calls.filter(
+      ([, config]) => config?.params?.trace_id === "trace-voice-3",
+    );
+    expect(voiceReads).toHaveLength(1);
+    expect(voiceReads[0][1].params).toEqual({
+      trace_id: "trace-voice-3",
+      project_id: "proj-item",
+    });
+    expect(mockUseGetTraceDetail).toHaveBeenCalledWith(
+      "trace-voice-3",
+      "proj-item",
+    );
+  });
+
   describe("View session for trace / span items", () => {
     it("shows View session when the loaded trace has a parent session", () => {
       mockUseGetTraceDetail.mockReturnValue({
