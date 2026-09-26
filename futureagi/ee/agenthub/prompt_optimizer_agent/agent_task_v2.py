@@ -20,11 +20,11 @@ from agentic_eval.core_evals.fi_evals import *
 from model_hub.models.develop_dataset import Column
 from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.views.eval_runner import EvaluationRunner
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
-    from ee.usage.utils.usage_entries import APICallStatusChoices, APICallTypeChoices, log_api_call
+    from ee.usage.utils.usage_entries import log_api_call
 except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
     log_api_call = None
 
 from .prompts import (
@@ -273,32 +273,35 @@ class PromptOptimizer:
                     config={}, eval_class=eval_class
                 )
 
-                cols = Column.objects.filter(
-                    id__in=user_eval_metric_config["mapping"].values()
-                ).values("id", "data_type")
-                col_map = {col["id"]: col["data_type"] for col in cols}
-                input_types = {
-                    key: col_map.get(str(value))
-                    if col_map.get(str(value)) in ["image", "audio"]
-                    else "text"
-                    for key, value in user_eval_metric_config["mapping"].items()
-                }
-                config = {"mappings": run_params, "input_data_types": input_types}
-                api_call_log_row = log_api_call(
-                    organization=eval_metric.organization,
-                    api_call_type=APICallTypeChoices.OPTIMISATION_EVALUATION.value,
-                    source="optimization",
-                    source_id=eval_metric.template.id,
-                    config=config,
-                    workspace=eval_metric.workspace,
-                )
+                # Usage logging is EE-only; skip it when the service isn't available.
+                api_call_log_row = None
+                if log_api_call is not None:
+                    cols = Column.objects.filter(
+                        id__in=user_eval_metric_config["mapping"].values()
+                    ).values("id", "data_type")
+                    col_map = {col["id"]: col["data_type"] for col in cols}
+                    input_types = {
+                        key: col_map.get(str(value))
+                        if col_map.get(str(value)) in ["image", "audio"]
+                        else "text"
+                        for key, value in user_eval_metric_config["mapping"].items()
+                    }
+                    config = {"mappings": run_params, "input_data_types": input_types}
+                    api_call_log_row = log_api_call(
+                        organization=eval_metric.organization,
+                        api_call_type=APICallTypeChoices.OPTIMISATION_EVALUATION.value,
+                        source="optimization",
+                        source_id=eval_metric.template.id,
+                        config=config,
+                        workspace=eval_metric.workspace,
+                    )
 
-                if not api_call_log_row:
-                    api_call_log_row.status = APICallStatusChoices.ERROR.value
-                    api_call_log_row.save(update_fields=["status"])
+                    if not api_call_log_row:
+                        api_call_log_row.status = APICallStatusChoices.ERROR.value
+                        api_call_log_row.save(update_fields=["status"])
 
-                if api_call_log_row.status != APICallStatusChoices.PROCESSING:
-                    raise Exception("API call not allowed.")
+                    if api_call_log_row.status != APICallStatusChoices.PROCESSING:
+                        raise Exception("API call not allowed.")
 
                 eval_result = eval_instance.run(**run_params)
 
@@ -306,16 +309,17 @@ class PromptOptimizer:
                 output_type = eval_config.get("output", "score")
                 score, reason = self._process_eval_result(eval_result, output_type)
 
-                config_dict = json.loads(api_call_log_row.config)
-                config_dict.update(
-                    {
-                        "input": eval_result.eval_results[0].get("data"),
-                        "output": {"output": score, "reason": reason},
-                    }
-                )
-                api_call_log_row.config = json.dumps(config_dict)
-                api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-                api_call_log_row.save(update_fields=["config", "status"])
+                if api_call_log_row is not None:
+                    config_dict = json.loads(api_call_log_row.config)
+                    config_dict.update(
+                        {
+                            "input": eval_result.eval_results[0].get("data"),
+                            "output": {"output": score, "reason": reason},
+                        }
+                    )
+                    api_call_log_row.config = json.dumps(config_dict)
+                    api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+                    api_call_log_row.save(update_fields=["config", "status"])
 
                 # # Normalize score
                 # normalized_score = self._normalize_score(score, output_type)
