@@ -6,42 +6,49 @@ import { useLLMTracingStoreShallow } from "./states";
 
 const LLMTracingSpanDetailDrawer = ({ refreshGrid }) => {
   const { observeId } = useParams();
-  const { spanDetailDrawerOpen, setSpanDetailDrawerOpen, visibleTraceIds } =
+  const { spanDetailDrawerOpen, setSpanDetailDrawerOpen, visibleTraces } =
     useLLMTracingStoreShallow((state) => ({
       spanDetailDrawerOpen: state.spanDetailDrawerOpen,
       setSpanDetailDrawerOpen: state.setSpanDetailDrawerOpen,
-      visibleTraceIds: state.visibleTraceIds,
+      visibleTraces: state.visibleTraces,
     }));
 
   const traceId = spanDetailDrawerOpen?.trace_id || null;
   const spanId = spanDetailDrawerOpen?.span_id || null;
+  // The clicked span's project, for routes without one (see
+  // LLMTracingTraceDetailDrawer).
+  const pinnedProjectId = spanDetailDrawerOpen?.project_id || undefined;
 
   const currentIdx = useMemo(
-    () => (traceId ? visibleTraceIds.indexOf(traceId) : -1),
-    [traceId, visibleTraceIds],
+    () =>
+      traceId
+        ? visibleTraces.findIndex(
+            (row) =>
+              row.traceId === traceId &&
+              (!pinnedProjectId || row.projectId === pinnedProjectId),
+          )
+        : -1,
+    [traceId, pinnedProjectId, visibleTraces],
   );
   const hasPrev = currentIdx > 0;
-  const hasNext = currentIdx >= 0 && currentIdx < visibleTraceIds.length - 1;
+  const hasNext = currentIdx >= 0 && currentIdx < visibleTraces.length - 1;
 
   const navigateToTrace = useCallback(
     (direction) => {
       if (currentIdx === -1) return;
       const nextIdx = currentIdx + direction;
-      if (nextIdx < 0 || nextIdx >= visibleTraceIds.length) return;
+      if (nextIdx < 0 || nextIdx >= visibleTraces.length) return;
+      const next = visibleTraces[nextIdx];
       setSpanDetailDrawerOpen({
         ...spanDetailDrawerOpen,
-        trace_id: visibleTraceIds[nextIdx],
+        trace_id: next.traceId,
+        project_id: next.projectId || undefined,
         // Drop pinned span when navigating to adjacent trace — no way to
         // know what the equivalent span would be in the next trace.
         span_id: null,
       });
     },
-    [
-      currentIdx,
-      visibleTraceIds,
-      spanDetailDrawerOpen,
-      setSpanDetailDrawerOpen,
-    ],
+    [currentIdx, visibleTraces, spanDetailDrawerOpen, setSpanDetailDrawerOpen],
   );
 
   const onPrev = useCallback(() => navigateToTrace(-1), [navigateToTrace]);
@@ -52,7 +59,7 @@ const LLMTracingSpanDetailDrawer = ({ refreshGrid }) => {
       traceId={traceId}
       open={Boolean(spanDetailDrawerOpen)}
       onClose={() => setSpanDetailDrawerOpen(null)}
-      projectId={observeId}
+      projectId={observeId || pinnedProjectId}
       initialSpanId={spanId}
       onPrev={onPrev}
       onNext={onNext}

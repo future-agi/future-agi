@@ -1,7 +1,7 @@
 import React from "react";
 import { act, render, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import axios from "src/utils/axios";
 import LLMTracingView from "../LLMTracingView";
 
@@ -18,7 +18,11 @@ const harness = vi.hoisted(() => ({
     setHeaderConfig: vi.fn(),
   },
   callLogsGridProps: [],
+  llmTracingState: {},
+  params: { observeId: "project-1" },
   primaryGraphProps: [],
+  traceDetailDrawerProps: [],
+  traceGridProps: [],
   toolbarProps: [],
   projectDetail: { source: "observe" },
   removeSimulationCalls: undefined,
@@ -42,7 +46,7 @@ vi.mock("react-helmet-async", () => ({ Helmet: () => null }));
 vi.mock("react-router", async (importOriginal) => ({
   ...(await importOriginal()),
   useNavigate: () => vi.fn(),
-  useParams: () => ({ observeId: "project-1" }),
+  useParams: () => harness.params,
 }));
 
 vi.mock("src/routes/hooks/use-url-state", async () => {
@@ -107,16 +111,33 @@ vi.mock("../states", async () => {
   return {
     resetSpanGridStore: vi.fn(),
     resetTraceGridStore: vi.fn(),
-    useLLMTracingStoreShallow: (selector) => selector(llmState),
+    useLLMTracingStoreShallow: (selector) =>
+      selector({ ...llmState, ...harness.llmTracingState }),
     useTraceGridStoreShallow: useGrid,
     useSpanGridStoreShallow: useGrid,
   };
 });
 
+// Mount the real detail drawer the way TraceGrid does.
 vi.mock("../TraceGrid", async () => {
   const ReactModule = await import("react");
-  return { default: ReactModule.forwardRef((_props, _ref) => null) };
+  const { default: LLMTracingTraceDetailDrawer } = await import(
+    "../LLMTracingTraceDetailDrawer"
+  );
+  return {
+    default: ReactModule.forwardRef((props, _ref) => {
+      harness.traceGridProps.push(props);
+      return <LLMTracingTraceDetailDrawer />;
+    }),
+  };
 });
+
+vi.mock("src/components/traceDetail/TraceDetailDrawerV2", () => ({
+  default: (props) => {
+    harness.traceDetailDrawerProps.push(props);
+    return null;
+  },
+}));
 
 vi.mock("../SpanGrid", async () => {
   const ReactModule = await import("react");
@@ -241,14 +262,14 @@ vi.mock(
   () => ({ default: () => null }),
 );
 
-const renderView = () => {
+const renderView = (viewProps = {}) => {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
       <React.Suspense fallback={null}>
-        <LLMTracingView />
+        <LLMTracingView {...viewProps} />
       </React.Suspense>
     </QueryClientProvider>,
   );
@@ -361,5 +382,51 @@ describe("LLMTracingView voice bulk tags", () => {
       expect(url).toBe("/traces/detail/");
       expect(config?.params).toEqual({ project_id: "project-1" });
     }
+  });
+});
+
+// /dashboard/users/:userId renders CrossProjectUserDetailPage ->
+// <LLMTracingView mode="user">: no observeId in the route, and the trace grid
+// is mounted with projectId=null, listing every project's rows. On dev the
+// same trace id is one user's row in two projects of one workspace, so the
+// detail read must carry the clicked row's project.
+describe("LLMTracingView user mode trace detail", () => {
+  beforeEach(() => {
+    harness.params = { userId: "user-1" };
+    harness.projectDetail = { source: "observe" };
+    harness.selectedTab = "trace";
+    harness.traceDetailDrawerProps = [];
+    harness.traceGridProps = [];
+    harness.llmTracingState = {
+      traceDetailDrawerOpen: {
+        traceId: "trace-1",
+        projectId: "project-b",
+        filters: [],
+      },
+      setTraceDetailDrawerOpen: vi.fn(),
+      visibleTraces: [
+        { traceId: "trace-1", projectId: "project-a" },
+        { traceId: "trace-1", projectId: "project-b" },
+      ],
+    };
+  });
+
+  afterEach(() => {
+    harness.params = { observeId: "project-1" };
+    harness.llmTracingState = {};
+  });
+
+  it("opens the clicked row's copy, not whichever project is newest", async () => {
+    renderView({ mode: "user", userIdForUserMode: "user-1" });
+
+    await waitFor(() =>
+      expect(harness.traceDetailDrawerProps.length).toBeGreaterThan(0),
+    );
+    expect(harness.traceGridProps.at(-1).projectId).toBeNull();
+    expect(harness.traceDetailDrawerProps.at(-1)).toMatchObject({
+      traceId: "trace-1",
+      open: true,
+      projectId: "project-b",
+    });
   });
 });

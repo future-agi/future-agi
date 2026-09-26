@@ -10,7 +10,7 @@ const {
   themeParamReferences,
   traceGridSetState,
   spanGridSetState,
-  traceDetailDrawerProps,
+  drawerStore,
 } = vi.hoisted(() => ({
   getMock: vi.fn(),
   gridState: { api: null, props: null },
@@ -18,7 +18,11 @@ const {
   themeParamReferences: [],
   traceGridSetState: vi.fn(),
   spanGridSetState: vi.fn(),
-  traceDetailDrawerProps: vi.fn(),
+  drawerStore: {
+    setTraceDetailDrawerOpen: vi.fn(),
+    setSpanDetailDrawerOpen: vi.fn(),
+    setVisibleTraces: vi.fn(),
+  },
 }));
 
 vi.mock("ag-grid-react", async () => {
@@ -117,9 +121,7 @@ vi.mock("../../../agents/store", () => ({
 vi.mock("../states", () => {
   const traceState = {
     traceDetailDrawerOpen: null,
-    setTraceDetailDrawerOpen: vi.fn(),
-    setVisibleTraceIds: vi.fn(),
-    setSpanDetailDrawerOpen: vi.fn(),
+    ...drawerStore,
   };
   return {
     useLLMTracingStoreShallow: (selector) => selector(traceState),
@@ -153,12 +155,7 @@ vi.mock("../Renderers/IPOPTooltipComponent", () => ({
   default: () => null,
 }));
 vi.mock("../Renderers/IPOPCell", () => ({ default: () => null }));
-vi.mock("../LLMTracingTraceDetailDrawer", () => ({
-  default: (props) => {
-    traceDetailDrawerProps(props);
-    return null;
-  },
-}));
+vi.mock("../LLMTracingTraceDetailDrawer", () => ({ default: () => null }));
 vi.mock("../LLMTracingSpanDetailDrawer", () => ({ default: () => null }));
 
 import SpanGrid from "../SpanGrid";
@@ -308,17 +305,82 @@ const renderGridSubject = ({ kind, ref, props, filters }) =>
     <SpanGrid ref={ref} {...props} filters={filters} compareType="primary" />
   );
 
-describe("trace grid detail drawer", () => {
-  it("opens trace detail pinned to the grid's project, not only the route's", () => {
-    // /dashboard/users/:userId scopes the grid with a selected project while
-    // the route has no observeId; the drawer must still read that project.
-    traceDetailDrawerProps.mockClear();
+// /dashboard/users/:userId renders LLMTracingView mode="user", which mounts
+// these grids with no project (org scope): rows from every project, and the
+// same trace id can be listed once per project. The drawers read detail by
+// trace id, so the row's project must travel with the click.
+const cellClick = (data) => ({
+  node: { id: `${data.project_id}:${data.trace_id}` },
+  column: { colId: "input", getColId: () => "input" },
+  data,
+});
 
-    render(<TraceGrid {...baseProps()} projectId="project-selected" />);
+describe("row click detail pin", () => {
+  beforeEach(() => {
+    drawerStore.setTraceDetailDrawerOpen.mockClear();
+    drawerStore.setSpanDetailDrawerOpen.mockClear();
+    drawerStore.setVisibleTraces.mockClear();
+  });
 
-    expect(traceDetailDrawerProps).toHaveBeenCalled();
-    expect(traceDetailDrawerProps.mock.lastCall[0].projectId).toBe(
-      "project-selected",
+  it("opens trace detail pinned to the clicked row's project", () => {
+    const props = baseProps();
+    render(<TraceGrid {...props} projectId={null} />);
+
+    act(() => {
+      gridState.props.onCellClicked(
+        cellClick({ trace_id: "trace-1", project_id: "project-b" }),
+      );
+    });
+
+    expect(drawerStore.setTraceDetailDrawerOpen).toHaveBeenCalledWith({
+      traceId: "trace-1",
+      projectId: "project-b",
+      filters: props.filters,
+    });
+  });
+
+  it("publishes each visible trace row with its project for prev/next", async () => {
+    render(<TraceGrid {...baseProps()} projectId={null} />);
+    const rows = [
+      { trace_id: "trace-1", project_id: "project-a" },
+      { trace_id: "trace-1", project_id: "project-b" },
+    ];
+    getMock.mockResolvedValueOnce(listResponse({ rows }));
+    const params = makeParams();
+    params.api.forEachNode.mockImplementation((visit) =>
+      rows.forEach((data) => visit({ data })),
+    );
+
+    await getRows(params);
+
+    await waitFor(() =>
+      expect(drawerStore.setVisibleTraces).toHaveBeenCalledWith([
+        { traceId: "trace-1", projectId: "project-a" },
+        { traceId: "trace-1", projectId: "project-b" },
+      ]),
+    );
+  });
+
+  it("opens span detail pinned to the clicked span's project", () => {
+    const props = baseProps();
+    render(<SpanGrid {...props} />);
+
+    act(() => {
+      gridState.props.onCellClicked(
+        cellClick({
+          trace_id: "trace-1",
+          span_id: "span-1",
+          project_id: "project-b",
+        }),
+      );
+    });
+
+    expect(drawerStore.setSpanDetailDrawerOpen).toHaveBeenCalledWith(
+      expect.objectContaining({
+        trace_id: "trace-1",
+        span_id: "span-1",
+        project_id: "project-b",
+      }),
     );
   });
 });

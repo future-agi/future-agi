@@ -142,11 +142,11 @@ const TraceGrid = React.forwardRef(
     const {
       traceDetailDrawerOpen,
       setTraceDetailDrawerOpen,
-      setVisibleTraceIds,
+      setVisibleTraces,
     } = useLLMTracingStoreShallow((state) => ({
       traceDetailDrawerOpen: state.traceDetailDrawerOpen,
       setTraceDetailDrawerOpen: state.setTraceDetailDrawerOpen,
-      setVisibleTraceIds: state.setVisibleTraceIds,
+      setVisibleTraces: state.setVisibleTraces,
     }));
     const activeTraceId = traceDetailDrawerOpen?.traceId || null;
     const [openQuickFilter, setOpenQuickFilter] = useState(null);
@@ -555,14 +555,19 @@ const TraceGrid = React.forwardRef(
               pageLoadRowCount = rows.length;
               setContinuationNotice(null);
 
-              // Collect all loaded trace IDs for prev/next navigation
+              // Collect all loaded trace rows for prev/next navigation
               setTimeout(() => {
                 if (!isGridApiLive(params.api)) return;
-                const ids = [];
+                const traces = [];
                 params.api.forEachNode((node) => {
-                  if (node.data?.trace_id) ids.push(node.data.trace_id);
+                  if (node.data?.trace_id) {
+                    traces.push({
+                      traceId: node.data.trace_id,
+                      projectId: node.data.project_id || null,
+                    });
+                  }
                 });
-                if (ids.length > 0) setVisibleTraceIds(ids);
+                if (traces.length > 0) setVisibleTraces(traces);
               }, 0);
             } catch (error) {
               if (isExpectedRequestCancellation(error)) {
@@ -798,7 +803,15 @@ const TraceGrid = React.forwardRef(
         if (!traceId) {
           return;
         }
-        setTraceDetailDrawerOpen({ traceId: traceId, filters: filters });
+        // Pin detail to the row's project: without a route project (the
+        // cross-project user page) an unpinned read serves the newest copy
+        // of this trace id in any project.
+        const rowProjectId = event.data.project_id;
+        setTraceDetailDrawerOpen({
+          traceId: traceId,
+          ...(rowProjectId ? { projectId: rowProjectId } : {}),
+          filters: filters,
+        });
 
         // trackEvent(Events.observeTraceidClicked);
       },
@@ -937,10 +950,7 @@ const TraceGrid = React.forwardRef(
           onPageChange={goToPage}
           onPageSizeChange={changePageSize}
         />
-        <LLMTracingTraceDetailDrawer
-          refreshGrid={refreshGrid}
-          projectId={projectId}
-        />
+        <LLMTracingTraceDetailDrawer refreshGrid={refreshGrid} />
         <NumberQuickFilterPopover
           open={Boolean(openQuickFilter)}
           filterData={openQuickFilter}
