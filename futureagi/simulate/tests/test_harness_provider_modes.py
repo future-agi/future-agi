@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from simulate.serializers.harness_job import (
@@ -285,3 +287,271 @@ def test_provider_import_rejects_route_traversal():
     )
     assert not serializer.is_valid()
     assert "config" in serializer.errors
+
+
+@pytest.mark.parametrize("connector", ["livekit", "vapi", "retell", "auto"])
+@pytest.mark.parametrize("direction", ["inbound", "outbound"])
+def test_call_direction_is_accepted_for_voice_connectors(connector, direction):
+    config = {"agent_id": "agent-1"} if connector == "retell" else {}
+    serializer = HarnessAgentSerializer(
+        data={
+            "connector": connector,
+            "call_direction": direction,
+            "config": config,
+            "secret_refs": {},
+        }
+    )
+    assert serializer.is_valid(), serializer.errors
+    assert serializer.validated_data["call_direction"] == direction
+
+
+def test_call_direction_is_refused_for_a_chat_connector():
+    serializer = HarnessAgentSerializer(
+        data={
+            "connector": "retell_chat",
+            "call_direction": "outbound",
+            "config": {"agent_id": "agent-1"},
+            "secret_refs": {},
+        }
+    )
+    assert not serializer.is_valid()
+    assert "call_direction" in serializer.errors
+    assert "retell_chat is chat" in str(serializer.errors["call_direction"])
+
+
+def test_call_direction_accepts_only_the_two_directions():
+    serializer = HarnessAgentSerializer(
+        data={"connector": "livekit", "call_direction": "sideways", "config": {}}
+    )
+    assert not serializer.is_valid()
+    assert "call_direction" in serializer.errors
+
+
+def test_call_direction_may_be_null():
+    serializer = HarnessAgentSerializer(
+        data={"connector": "retell_chat", "call_direction": None, "config": {}}
+    )
+    assert serializer.is_valid(), serializer.errors
+
+
+@pytest.mark.parametrize(
+    "number,valid",
+    [
+        ("+123456", False),
+        ("+1234567", True),
+        ("+14155551234", True),
+        ("+123456789012345", True),
+        ("+1234567890123456", False),
+        ("+0123456789", False),
+        ("14155551234", False),
+        ("+1 415 555 1234", False),
+        (" +14155551234 ", True),
+        ("", False),
+    ],
+)
+def test_phone_target_numbers_must_be_e164(number, valid):
+    serializer = HarnessAgentSerializer(
+        data={
+            "connector": "phone",
+            "mode": "connect_only",
+            "config": {"phone_number": number, "target_system_prompt": "You help."},
+            "secret_refs": {},
+        }
+    )
+    assert serializer.is_valid() is valid, serializer.errors
+    if not valid:
+        assert "E.164" in str(serializer.errors["config"])
+
+
+@pytest.mark.parametrize(
+    "connector,target_key", [("vapi", "assistant_id"), ("retell", "agent_id")]
+)
+@pytest.mark.parametrize("number,valid", [("+123456", False), ("+1234567", True)])
+def test_connect_only_provider_numbers_use_the_same_rule(
+    connector, target_key, number, valid
+):
+    serializer = HarnessAgentSerializer(
+        data={
+            "connector": connector,
+            "mode": "connect_only",
+            "config": {"phone_number": number, target_key: "agent-1"},
+            "secret_refs": {
+                ("VAPI_API_KEY" if connector == "vapi" else "RETELL_API_KEY"): {
+                    "manager": "platform-vault",
+                    "key": "test-ref",
+                    "purpose": "target_provider",
+                }
+            },
+        }
+    )
+    assert serializer.is_valid() is valid, serializer.errors
+
+
+def test_phone_target_prompt_is_bounded():
+    def build(prompt):
+        return HarnessAgentSerializer(
+            data={
+                "connector": "phone",
+                "mode": "connect_only",
+                "config": {
+                    "phone_number": "+14155551234",
+                    "target_system_prompt": prompt,
+                },
+                "secret_refs": {},
+            }
+        )
+
+    assert build("x" * 65_536).is_valid()
+    assert not build("x" * 65_537).is_valid()
+    assert not build("   ").is_valid()
+
+
+@pytest.mark.parametrize("name", ["inbound", "target_speaks_first"])
+@pytest.mark.parametrize(
+    "value,valid",
+    [(True, True), (False, True), ("yes", False), (1, False), (None, False)],
+)
+def test_call_behaviour_flags_must_be_booleans(name, value, valid):
+    serializer = HarnessAgentSerializer(
+        data={"connector": "livekit", "config": {name: value}, "secret_refs": {}}
+    )
+    assert serializer.is_valid() is valid, serializer.errors
+    if not valid:
+        assert f"{name} must be a boolean" in str(serializer.errors["config"])
+
+
+def test_config_must_be_an_object():
+    serializer = HarnessAgentSerializer(
+        data={"connector": "livekit", "config": ["not", "an", "object"]}
+    )
+    assert not serializer.is_valid()
+    assert "config" in serializer.errors
+
+
+def test_phone_target_needs_no_provider_credential():
+    from simulate.serializers.harness_job import missing_provider_credentials
+
+    assert (
+        missing_provider_credentials(
+            {"connector": "phone", "mode": "connect_only", "secret_refs": {}}
+        )
+        == []
+    )
+
+
+def test_phone_target_without_a_source_is_a_valid_job():
+    serializer = HarnessJobCreateSerializer(
+        data={
+            "schema_version": "futureagi.harness-job.v1",
+            "agent": {
+                "connector": "phone",
+                "mode": "connect_only",
+                "call_direction": "outbound",
+                "config": {
+                    "phone_number": "+14155551234",
+                    "target_system_prompt": "You book rides.",
+                },
+                "secret_refs": {},
+            },
+            "scenario_count": 1,
+            "artifacts": {"level": "full"},
+        }
+    )
+    assert serializer.is_valid(), serializer.errors
+    assert serializer.validated_data["source"] == {
+        "kind": "provider",
+        "visibility": "public",
+    }
+    assert serializer.validated_data["agent"]["call_direction"] == "outbound"
+
+
+@pytest.mark.django_db
+class TestDeclaredDirectionWinsOverTheAuthoredGuess:
+    def _job(self, organization, key, agent, authored):
+        from simulate.services.hosted_harness import create_hosted_job
+
+        from .test_hosted_harness_channels import _payload
+
+        job, _ = create_hosted_job(
+            organization, _payload(agent=agent), idempotency_key=key
+        )
+        job.stage_outputs = [{"kind": "contract", "data": authored}]
+        job.save(update_fields=["stage_outputs", "updated_at"])
+        return job
+
+    def _definition(self, **fields):
+        saved = []
+        attributes = {
+            "description": "",
+            "provider": "",
+            "agent_name": "alk-sdk-agent",
+            "inbound": True,
+            "target_speaks_first": False,
+            "latest_version": object(),
+            "save": lambda update_fields: saved.append(list(update_fields)),
+            **fields,
+        }
+        return SimpleNamespace(**attributes), saved
+
+    def test_submitted_direction_overrides_the_contract(self, organization):
+        from simulate.services.hosted_harness import _record_target_agent_facts
+
+        job = self._job(
+            organization,
+            "direction-declared",
+            {"connector": "vapi", "call_direction": "outbound", "config": {}},
+            {"call_direction": "inbound"},
+        )
+        definition, saved = self._definition()
+
+        _record_target_agent_facts(job, definition, {})
+
+        assert definition.inbound is False
+        assert "inbound" in saved[0]
+
+    def test_contract_direction_applies_when_none_was_submitted(self, organization):
+        from simulate.services.hosted_harness import _record_target_agent_facts
+
+        job = self._job(
+            organization,
+            "direction-authored",
+            {"connector": "vapi", "config": {}},
+            {"call_direction": "outbound"},
+        )
+        definition, saved = self._definition()
+
+        _record_target_agent_facts(job, definition, {})
+
+        assert definition.inbound is False
+
+    def test_an_explicit_inbound_flag_beats_both(self, organization):
+        from simulate.services.hosted_harness import _record_target_agent_facts
+
+        job = self._job(
+            organization,
+            "direction-flag",
+            {
+                "connector": "vapi",
+                "call_direction": "outbound",
+                "config": {"inbound": True},
+            },
+            {"call_direction": "outbound"},
+        )
+        definition, _ = self._definition()
+
+        _record_target_agent_facts(job, definition, {})
+
+        assert definition.inbound is True
+
+    def test_nothing_declared_leaves_the_definition_alone(self, organization):
+        from simulate.services.hosted_harness import _record_target_agent_facts
+
+        job = self._job(
+            organization, "direction-none", {"connector": "livekit", "config": {}}, {}
+        )
+        definition, saved = self._definition(provider="livekit")
+
+        _record_target_agent_facts(job, definition, {})
+
+        assert definition.inbound is True
+        assert saved == []
