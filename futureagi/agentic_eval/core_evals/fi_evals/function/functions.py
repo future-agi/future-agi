@@ -10,9 +10,6 @@ import Levenshtein
 import numpy as np
 import requests
 from jinja2 import Environment
-from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu
-from rouge_score import rouge_scorer
-from scipy.spatial.distance import cityblock, cosine, euclidean
 
 from agentic_eval.core_evals.fi_evals.grounded.similarity import CosineSimilarity
 from agentic_eval.core_evals.fi_utils.exceptions import NoOpenAiApiKeyException
@@ -155,6 +152,7 @@ def calculate_bleu(reference, hypothesis, **kwargs):
     Returns:
         float: BLEU score (0 to 1).
     """
+    from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu  # lazy
     reference_tokens = [reference.split()]
     hypothesis_tokens = hypothesis.split()
     smoothie = SmoothingFunction().method4
@@ -174,6 +172,7 @@ def calculate_rouge(reference, hypothesis):
         dict: ROUGE scores (precision, recall, fmeasure for each metric).
     """
 
+    from rouge_score import rouge_scorer  # lazy
     scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
     scores = scorer.score(reference, hypothesis)
 
@@ -377,6 +376,7 @@ def calculate_clip_score(
 
     import numpy as np
     from PIL import Image
+    from scipy.spatial.distance import cosine  # lazy
 
     from agentic_eval.core.embeddings.embedding_manager import model_manager
 
@@ -1053,6 +1053,8 @@ def calculate_embedding_similarity(output:str, expected: str, similarity_method=
     and provides a descriptive reason string. If embedding or similarity computation fails,
     raises an exception.
     """
+    from scipy.spatial.distance import cityblock, cosine, euclidean  # lazy
+
     from agentic_eval.core.embeddings.embedding_manager import model_manager
     model = model_manager.text_model
     emb1, emb2 = model([str(output)]), model([str(expected)])
@@ -1081,6 +1083,7 @@ def calculate_semantic_list_contains(output:str, expected:str, case_insensitive=
     and provides a descriptive reason string. If embedding or similarity computation fails,
     raises an exception.
     """
+    from scipy.spatial.distance import cosine  # lazy
     def _preprocess(text):
         if not isinstance(text, str):
             text = str(text)

@@ -75,6 +75,25 @@ class SandboxProviderConfigurationError(SandboxProviderError):
         super().__init__(message, status_code=422)
 
 
+class SandboxProviderUnavailableError(SandboxProviderConfigurationError):
+    """The selected provider's SDK is not installed in this backend image.
+
+    The SDKs are the optional ``sandbox`` extra (pyproject.toml), which the
+    default image does not ship. Unlike a configuration error this cannot be
+    fixed by retrying or by setting environment variables: the image has to be
+    rebuilt with ``--build-arg EXTRAS=sandbox``.
+    """
+
+    def __init__(self, provider: str, module: str) -> None:
+        super().__init__(
+            f"the {provider} SDK (`{module}`) is not installed in this backend "
+            "image; rebuild it with --build-arg EXTRAS=sandbox (futureagi/"
+            "Dockerfile.oss) or install the `sandbox` extra"
+        )
+        self.provider = provider
+        self.module = module
+
+
 class SandboxRuntimeProvider(ABC):
     name: str
     runtime_name: str

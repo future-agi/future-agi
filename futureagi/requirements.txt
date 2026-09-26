@@ -2,25 +2,10 @@
 #    uv export --frozen --no-dev --no-hashes --no-emit-project -o requirements.txt
 absl-py==2.3.1
     # via rouge-score
-aiofiles==25.1.0
-    # via daytona
 aiohappyeyeballs==2.6.1
     # via aiohttp
 aiohttp==3.14.3
-    # via
-    #   aiohttp-retry
-    #   daytona
-    #   daytona-analytics-api-client-async
-    #   daytona-api-client-async
-    #   daytona-toolbox-api-client-async
-    #   langchain-community
-    #   litellm
-    #   python-socketio
-aiohttp-retry==2.9.1
-    # via
-    #   daytona-analytics-api-client-async
-    #   daytona-api-client-async
-    #   daytona-toolbox-api-client-async
+    # via litellm
 aiosignal==1.4.0
     # via aiohttp
 amqp==5.3.1
@@ -36,7 +21,6 @@ anyio==4.12.1
     #   anthropic
     #   google-genai
     #   httpx
-    #   httpx-ws
     #   mcp
     #   openai
     #   sse-starlette
@@ -49,6 +33,7 @@ argon2-cffi-bindings==25.1.0
 asgiref==3.11.0
     # via
     #   channels
+    #   channels-redis
     #   django
     #   django-cors-headers
     #   django-structlog
@@ -61,7 +46,6 @@ async-timeout==5.0.1 ; python_full_version < '3.11.3'
 attrs==25.4.0
     # via
     #   aiohttp
-    #   e2b
     #   jsonschema
     #   referencing
 backoff==2.2.1
@@ -70,8 +54,6 @@ backoff==2.2.1
     #   posthog
 beautifulsoup4==4.14.3
     # via core-backend
-bidict==0.24.1
-    # via python-socketio
 billiard==4.2.4
     # via celery
 boto3==1.42.28
@@ -83,10 +65,6 @@ botocore==1.42.28
     #   boto3
     #   s3transfer
     #   traceai-bedrock
-bracex==3.0.1
-    # via wcmatch
-carehare==1.0.2
-    # via channels-rabbitmq
 cbor2==5.8.0
     # via webauthn
 celery==5.6.2
@@ -94,7 +72,6 @@ celery==5.6.2
     #   core-backend
     #   django-celery-beat
     #   django-celery-results
-    #   flower
 certifi==2026.1.4
     # via
     #   clickhouse-connect
@@ -109,9 +86,9 @@ cffi==2.0.0
     #   cryptography
 channels==4.3.2
     # via
-    #   channels-rabbitmq
+    #   channels-redis
     #   core-backend
-channels-rabbitmq==4.0.1
+channels-redis==4.3.0
     # via core-backend
 charset-normalizer==3.4.4
     # via
@@ -146,8 +123,6 @@ colorama==0.4.6 ; sys_platform == 'win32'
     #   click
     #   qrcode
     #   tqdm
-connectrpc==0.11.1
-    # via e2b
 cron-descriptor==2.0.6
     # via django-celery-beat
 cryptography==46.0.5
@@ -159,26 +134,8 @@ cryptography==46.0.5
     #   webauthn
 dacite==1.9.2
     # via traceai-bedrock
-dataclasses-json==0.6.7
-    # via langchain-community
-daytona==0.207.0
-    # via core-backend
-daytona-analytics-api-client==0.207.0
-    # via daytona
-daytona-analytics-api-client-async==0.207.0
-    # via daytona
-daytona-api-client==0.207.0
-    # via daytona
-daytona-api-client-async==0.207.0
-    # via daytona
-daytona-toolbox-api-client==0.207.0
-    # via daytona
-daytona-toolbox-api-client-async==0.207.0
-    # via daytona
 defusedxml==0.7.1
     # via pysaml2
-deprecated==1.3.1
-    # via daytona
 distro==1.9.0
     # via
     #   anthropic
@@ -193,13 +150,10 @@ django==5.1.8
     #   django-celery-beat
     #   django-celery-results
     #   django-cors-headers
-    #   django-debug-toolbar
     #   django-filter
     #   django-redis
     #   django-socio-grpc
     #   django-structlog
-    #   django-stubs
-    #   django-stubs-ext
     #   django-timezone-field
     #   djangorestframework
     #   djangorestframework-simplejwt
@@ -212,8 +166,6 @@ django-celery-results==2.6.0
     # via core-backend
 django-cors-headers==4.9.0
     # via core-backend
-django-debug-toolbar==6.1.0
-    # via core-backend
 django-filter==25.1
     # via core-backend
 django-ipware==7.0.1
@@ -224,12 +176,6 @@ django-socio-grpc==0.25.0
     # via core-backend
 django-structlog==10.0.0
     # via core-backend
-django-stubs==5.2.8
-    # via
-    #   core-backend
-    #   djangorestframework-stubs
-django-stubs-ext==5.2.8
-    # via django-stubs
 django-timezone-field==7.2.1
     # via django-celery-beat
 djangorestframework==3.16.1
@@ -240,17 +186,9 @@ djangorestframework==3.16.1
     #   drf-yasg
 djangorestframework-simplejwt==5.5.1
     # via core-backend
-djangorestframework-stubs==3.16.7
-    # via core-backend
-dockerfile-parse==2.0.1
-    # via e2b
 docstring-parser==0.17.0
-    # via
-    #   anthropic
-    #   google-cloud-aiplatform
+    # via anthropic
 drf-yasg==1.21.14
-    # via core-backend
-e2b==2.37.1
     # via core-backend
 ecdsa==0.19.1
     # via python-jose
@@ -267,12 +205,9 @@ fi-instrumentation-otel==0.1.16
     #   traceai-google-genai
     #   traceai-litellm
     #   traceai-openai
-    #   traceai-vertexai
 filelock==3.20.3
     # via huggingface-hub
 filetype==1.2.0
-    # via core-backend
-flower==2.0.1
     # via core-backend
 frozenlist==1.8.0
     # via
@@ -283,11 +218,8 @@ fsspec==2025.10.0
 google-api-core==2.29.0
     # via
     #   google-api-python-client
-    #   google-cloud-aiplatform
-    #   google-cloud-bigquery
     #   google-cloud-core
     #   google-cloud-pubsub
-    #   google-cloud-resource-manager
     #   google-cloud-storage
 google-api-python-client==2.200.0
     # via core-backend
@@ -298,31 +230,18 @@ google-auth==2.47.0
     #   google-api-core
     #   google-api-python-client
     #   google-auth-httplib2
-    #   google-cloud-aiplatform
-    #   google-cloud-bigquery
     #   google-cloud-core
     #   google-cloud-pubsub
-    #   google-cloud-resource-manager
     #   google-cloud-storage
     #   google-genai
 google-auth-httplib2==0.4.2
     # via google-api-python-client
-google-cloud-aiplatform==1.133.0
-    # via
-    #   core-backend
-    #   traceai-vertexai
-google-cloud-bigquery==3.40.0
-    # via google-cloud-aiplatform
 google-cloud-core==2.5.0
-    # via
-    #   google-cloud-bigquery
-    #   google-cloud-storage
+    # via google-cloud-storage
 google-cloud-pubsub==2.39.2
     # via core-backend
-google-cloud-resource-manager==1.15.0
-    # via google-cloud-aiplatform
 google-cloud-storage==3.8.0
-    # via google-cloud-aiplatform
+    # via core-backend
 google-crc32c==1.8.0
     # via
     #   google-cloud-storage
@@ -330,12 +249,9 @@ google-crc32c==1.8.0
 google-genai==1.58.0
     # via
     #   core-backend
-    #   google-cloud-aiplatform
     #   traceai-google-genai
 google-resumable-media==2.8.0
-    # via
-    #   google-cloud-bigquery
-    #   google-cloud-storage
+    # via google-cloud-storage
 googleapis-common-protos==1.72.0
     # via
     #   google-api-core
@@ -343,19 +259,14 @@ googleapis-common-protos==1.72.0
     #   grpcio-status
     #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-exporter-otlp-proto-http
-granian==2.6.1
+granian==2.8.3
     # via core-backend
-greenlet==3.3.0 ; platform_machine == 'AMD64' or platform_machine == 'WIN32' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'ppc64le' or platform_machine == 'win32' or platform_machine == 'x86_64'
-    # via sqlalchemy
 grpc-google-iam-v1==0.14.3
-    # via
-    #   google-cloud-pubsub
-    #   google-cloud-resource-manager
+    # via google-cloud-pubsub
 grpcio==1.76.0
     # via
     #   google-api-core
     #   google-cloud-pubsub
-    #   google-cloud-resource-manager
     #   googleapis-common-protos
     #   grpc-google-iam-v1
     #   grpcio-health-checking
@@ -374,17 +285,10 @@ h11==0.16.0
     # via
     #   httpcore
     #   uvicorn
-    #   wsproto
-h2==4.3.0
-    # via e2b
 hf-xet==1.2.0 ; platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64'
     # via huggingface-hub
-hpack==4.1.0
-    # via h2
 httpcore==1.0.9
-    # via
-    #   httpx
-    #   httpx-ws
+    # via httpx
 httplib2==0.32.0
     # via
     #   google-api-python-client
@@ -392,10 +296,7 @@ httplib2==0.32.0
 httpx==0.28.1
     # via
     #   anthropic
-    #   daytona
-    #   e2b
     #   google-genai
-    #   httpx-ws
     #   langfuse
     #   langsmith
     #   litellm
@@ -403,19 +304,11 @@ httpx==0.28.1
     #   mixpanel
     #   openai
 httpx-sse==0.4.3
-    # via
-    #   langchain-community
-    #   mcp
-httpx-ws==0.7.2
-    # via
-    #   core-backend
-    #   daytona
+    # via mcp
 huggingface-hub==0.36.0
     # via tokenizers
 humanize==4.15.0
-    # via flower
-hyperframe==6.1.0
-    # via h2
+    # via core-backend
 idna==3.11
     # via
     #   anyio
@@ -462,28 +355,14 @@ jsonschema-specifications==2025.9.1
     # via jsonschema
 kombu==5.6.2
     # via celery
-langchain==0.3.27
-    # via
-    #   core-backend
-    #   langchain-community
-langchain-community==0.3.31
-    # via core-backend
 langchain-core==0.3.83
-    # via
-    #   langchain
-    #   langchain-community
-    #   langchain-text-splitters
+    # via langchain-text-splitters
 langchain-text-splitters==0.3.11
-    # via
-    #   core-backend
-    #   langchain
+    # via core-backend
 langfuse==3.1.3
     # via core-backend
 langsmith==0.6.3
-    # via
-    #   langchain
-    #   langchain-community
-    #   langchain-core
+    # via langchain-core
 lark==1.3.1
     # via django-socio-grpc
 levenshtein==0.27.3
@@ -500,29 +379,21 @@ lz4==4.4.5
     # via
     #   clickhouse-connect
     #   core-backend
-markdown-it-py==4.0.0
-    # via rich
 markupsafe==3.0.3
     # via jinja2
-marshmallow==3.26.2
-    # via dataclasses-json
 mcp==1.26.0
     # via core-backend
-mdurl==0.1.2
-    # via markdown-it-py
 minio==7.2.20
     # via core-backend
 mixpanel==5.0.0
     # via core-backend
 msgpack==1.1.2
-    # via channels-rabbitmq
+    # via channels-redis
 multidict==6.7.0
     # via
     #   aiohttp
     #   core-backend
     #   yarl
-mypy-extensions==1.1.0
-    # via typing-inspect
 nexus-rpc==1.3.0
     # via temporalio
 nltk==3.9.2
@@ -532,13 +403,10 @@ nltk==3.9.2
 numpy==2.3.5
     # via
     #   core-backend
-    #   langchain-community
     #   pandas
     #   rouge-score
     #   scikit-learn
     #   scipy
-obstore==0.11.1
-    # via daytona
 openai==2.15.0
     # via
     #   core-backend
@@ -549,7 +417,6 @@ openpyxl==3.1.5
 opentelemetry-api==1.39.1
     # via
     #   core-backend
-    #   daytona
     #   fi-instrumentation-otel
     #   google-cloud-pubsub
     #   langfuse
@@ -577,7 +444,6 @@ opentelemetry-api==1.39.1
     #   opentelemetry-propagator-b3
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
-    #   pyqwest
     #   temporalio
 opentelemetry-exporter-otlp==1.39.1
     # via
@@ -595,7 +461,6 @@ opentelemetry-exporter-otlp-proto-grpc==1.39.1
 opentelemetry-exporter-otlp-proto-http==1.39.1
     # via
     #   core-backend
-    #   daytona
     #   fi-instrumentation-otel
     #   opentelemetry-exporter-otlp
 opentelemetry-instrumentation==0.60b1
@@ -620,9 +485,7 @@ opentelemetry-instrumentation==0.60b1
     #   opentelemetry-instrumentation-urllib3
     #   opentelemetry-instrumentation-wsgi
 opentelemetry-instrumentation-aiohttp-client==0.60b1
-    # via
-    #   core-backend
-    #   daytona
+    # via core-backend
 opentelemetry-instrumentation-asgi==0.60b1
     # via core-backend
 opentelemetry-instrumentation-asyncio==0.60b1
@@ -668,7 +531,6 @@ opentelemetry-proto==1.39.1
 opentelemetry-sdk==1.39.1
     # via
     #   core-backend
-    #   daytona
     #   fi-instrumentation-otel
     #   google-cloud-pubsub
     #   langfuse
@@ -708,19 +570,13 @@ orjson==3.11.5 ; platform_python_implementation != 'PyPy'
 packaging==24.2
     # via
     #   drf-yasg
-    #   e2b
-    #   google-cloud-aiplatform
-    #   google-cloud-bigquery
     #   huggingface-hub
     #   kombu
     #   langchain-core
     #   langfuse
     #   langsmith
-    #   marshmallow
     #   opentelemetry-instrumentation
     #   opentelemetry-instrumentation-pika
-pamqp==3.3.0
-    # via carehare
 pandas==2.3.3
     # via core-backend
 partial-json-parser==0.2.1.1.post7
@@ -740,8 +596,6 @@ ply==3.11
     # via jsonpath-ng
 posthog==7.9.12
     # via core-backend
-prometheus-client==0.24.1
-    # via flower
 prompt-toolkit==3.0.52
     # via click-repl
 propcache==0.4.1
@@ -751,16 +605,12 @@ propcache==0.4.1
 proto-plus==1.27.0
     # via
     #   google-api-core
-    #   google-cloud-aiplatform
     #   google-cloud-pubsub
-    #   google-cloud-resource-manager
 protobuf==6.33.6
     # via
     #   core-backend
     #   google-api-core
-    #   google-cloud-aiplatform
     #   google-cloud-pubsub
-    #   google-cloud-resource-manager
     #   googleapis-common-protos
     #   grpc-google-iam-v1
     #   grpcio-health-checking
@@ -769,12 +619,6 @@ protobuf==6.33.6
     #   opentelemetry-proto
     #   proto-plus
     #   temporalio
-protobuf-py==0.1.1
-    # via
-    #   connectrpc
-    #   e2b
-protobuf-py-ext==0.1.1 ; (platform_machine == 'arm64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'ARM64' and platform_python_implementation == 'CPython' and sys_platform == 'win32')
-    # via protobuf-py
 psycopg==3.3.2
     # via core-backend
 psycopg-binary==3.3.2 ; implementation_name != 'pypy'
@@ -796,17 +640,8 @@ pydantic==2.13.5
     # via
     #   anthropic
     #   core-backend
-    #   daytona
-    #   daytona-analytics-api-client
-    #   daytona-analytics-api-client-async
-    #   daytona-api-client
-    #   daytona-api-client-async
-    #   daytona-toolbox-api-client
-    #   daytona-toolbox-api-client-async
     #   fi-instrumentation-otel
-    #   google-cloud-aiplatform
     #   google-genai
-    #   langchain
     #   langchain-core
     #   langfuse
     #   langsmith
@@ -818,13 +653,9 @@ pydantic==2.13.5
 pydantic-core==2.46.5
     # via pydantic
 pydantic-settings==2.12.0
-    # via
-    #   langchain-community
-    #   mcp
+    # via mcp
 pydub==0.25.1
     # via core-backend
-pygments==2.19.2
-    # via rich
 pyjwt==2.10.1
     # via
     #   core-backend
@@ -842,10 +673,6 @@ pypdf==6.6.0
     # via core-backend
 pypdfium2==5.6.0
     # via pdfplumber
-pyqwest==0.7.0
-    # via
-    #   connectrpc
-    #   e2b
 pysaml2==7.5.0
     # via core-backend
 python-crontab==3.3.0
@@ -854,14 +681,6 @@ python-dateutil==2.9.0.post0
     # via
     #   botocore
     #   celery
-    #   daytona-analytics-api-client
-    #   daytona-analytics-api-client-async
-    #   daytona-api-client
-    #   daytona-api-client-async
-    #   daytona-toolbox-api-client
-    #   daytona-toolbox-api-client-async
-    #   e2b
-    #   google-cloud-bigquery
     #   pandas
     #   posthog
     #   pysaml2
@@ -869,11 +688,8 @@ python-docx==1.2.0
     # via core-backend
 python-dotenv==1.2.1
     # via
-    #   daytona
     #   litellm
     #   pydantic-settings
-python-engineio==4.14.0
-    # via python-socketio
 python-ipware==3.0.0
     # via django-ipware
 python-jose==3.5.0
@@ -881,16 +697,11 @@ python-jose==3.5.0
 python-levenshtein==0.27.3
     # via core-backend
 python-multipart==0.0.32
-    # via
-    #   daytona
-    #   mcp
-python-socketio==5.16.4
-    # via daytona
+    # via mcp
 pytz==2025.2
     # via
     #   clickhouse-driver
     #   drf-yasg
-    #   flower
     #   pandas
     #   pysaml2
 pywin32==311 ; sys_platform == 'win32'
@@ -899,8 +710,6 @@ pyyaml==6.0.3
     # via
     #   drf-yasg
     #   huggingface-hub
-    #   langchain
-    #   langchain-community
     #   langchain-core
 qrcode==8.2
     # via core-backend
@@ -908,6 +717,7 @@ rapidfuzz==3.14.3
     # via levenshtein
 redis==7.1.0
     # via
+    #   channels-redis
     #   core-backend
     #   django-redis
 referencing==0.37.0
@@ -924,21 +734,16 @@ requests==2.32.5
     #   fi-instrumentation-otel
     #   google-api-core
     #   google-auth
-    #   google-cloud-bigquery
     #   google-cloud-storage
     #   google-genai
     #   huggingface-hub
-    #   langchain
-    #   langchain-community
     #   langfuse
     #   langsmith
     #   mixpanel
     #   opentelemetry-exporter-otlp-proto-http
     #   posthog
     #   pysaml2
-    #   python-socketio
     #   requests-toolbelt
-    #   stripe
     #   tiktoken
 requests-toolbelt==1.0.0
     # via langsmith
@@ -946,8 +751,6 @@ restrictedpython==8.5
     # via core-backend
 retrying==1.4.2
     # via core-backend
-rich==14.2.0
-    # via e2b
 rouge-score==0.1.2
     # via core-backend
 rpds-py==0.30.0
@@ -970,8 +773,6 @@ sentry-sdk==2.49.0
     # via core-backend
 setuptools==80.9.0
     # via grpcio-tools
-simple-websocket==1.1.0
-    # via python-engineio
 six==1.17.0
     # via
     #   ecdsa
@@ -987,22 +788,14 @@ sniffio==1.3.1
     #   openai
 soupsieve==2.8.3
     # via beautifulsoup4
-sqlalchemy==2.0.45
-    # via
-    #   langchain
-    #   langchain-community
 sqlparse==0.5.5
-    # via
-    #   django
-    #   django-debug-toolbar
+    # via django
 sse-starlette==3.3.3
     # via mcp
 starlette==1.0.0
     # via
     #   mcp
     #   sse-starlette
-stripe==14.1.0
-    # via core-backend
 striprtf==0.0.29
     # via core-backend
 structlog==25.5.0
@@ -1015,7 +808,6 @@ tenacity==9.1.2
     # via
     #   core-backend
     #   google-genai
-    #   langchain-community
     #   langchain-core
 threadpoolctl==3.6.0
     # via scikit-learn
@@ -1023,10 +815,6 @@ tiktoken==0.12.0
     # via litellm
 tokenizers==0.22.2
     # via litellm
-toml==0.10.2
-    # via daytona
-tornado==6.5.4
-    # via flower
 tqdm==4.67.1
     # via
     #   huggingface-hub
@@ -1042,16 +830,8 @@ traceai-litellm==0.1.9
     # via core-backend
 traceai-openai==0.1.9
     # via core-backend
-traceai-vertexai==0.1.9
-    # via core-backend
 types-protobuf==6.32.1.20251210
     # via temporalio
-types-pyyaml==6.0.12.20250915
-    # via
-    #   django-stubs
-    #   djangorestframework-stubs
-types-requests==2.32.4.20260107
-    # via djangorestframework-stubs
 typing-extensions==4.16.0
     # via
     #   aiohttp
@@ -1059,21 +839,8 @@ typing-extensions==4.16.0
     #   anthropic
     #   anyio
     #   beautifulsoup4
-    #   bidict
     #   cron-descriptor
-    #   daytona
-    #   daytona-analytics-api-client
-    #   daytona-analytics-api-client-async
-    #   daytona-api-client
-    #   daytona-api-client-async
-    #   daytona-toolbox-api-client
-    #   daytona-toolbox-api-client-async
-    #   django-stubs
-    #   django-stubs-ext
-    #   djangorestframework-stubs
-    #   e2b
     #   fi-instrumentation-otel
-    #   google-cloud-aiplatform
     #   google-genai
     #   grpcio
     #   huggingface-hub
@@ -1081,7 +848,6 @@ typing-extensions==4.16.0
     #   mcp
     #   minio
     #   nexus-rpc
-    #   obstore
     #   openai
     #   opentelemetry-api
     #   opentelemetry-exporter-otlp-proto-grpc
@@ -1097,14 +863,9 @@ typing-extensions==4.16.0
     #   pyopenssl
     #   python-docx
     #   referencing
-    #   sqlalchemy
     #   starlette
-    #   stripe
     #   temporalio
-    #   typing-inspect
     #   typing-inspection
-typing-inspect==0.9.0
-    # via dataclasses-json
 typing-inspection==0.4.2
     # via
     #   mcp
@@ -1132,15 +893,10 @@ urllib3==2.7.0
     #   botocore
     #   clickhouse-connect
     #   core-backend
-    #   daytona
-    #   daytona-analytics-api-client
-    #   daytona-api-client
-    #   daytona-toolbox-api-client
     #   django-anymail
     #   minio
     #   requests
     #   sentry-sdk
-    #   types-requests
 uuid-utils==0.13.0
     # via
     #   langchain-core
@@ -1160,23 +916,18 @@ watchfiles==1.1.1
     # via
     #   core-backend
     #   granian
-wcmatch==11.0.1
-    # via e2b
 wcwidth==0.2.14
     # via prompt-toolkit
 webauthn==2.5.1
     # via core-backend
 websocket-client==1.9.0
-    # via
-    #   core-backend
-    #   python-socketio
+    # via core-backend
 websockets==15.0.1
     # via google-genai
 whitenoise==6.11.0
     # via core-backend
 wrapt==1.17.3
     # via
-    #   deprecated
     #   fi-instrumentation-otel
     #   langfuse
     #   opentelemetry-instrumentation
@@ -1189,11 +940,6 @@ wrapt==1.17.3
     #   opentelemetry-instrumentation-pika
     #   opentelemetry-instrumentation-redis
     #   opentelemetry-instrumentation-urllib3
-wsproto==1.3.2
-    # via
-    #   daytona
-    #   httpx-ws
-    #   simple-websocket
 xmlschema==2.5.1
     # via pysaml2
 xmlsec==1.3.17

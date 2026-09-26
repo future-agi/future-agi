@@ -4,6 +4,7 @@ Uses a centralized django-structlog configuration.
 """
 
 import os
+import sys
 
 import structlog
 
@@ -23,6 +24,17 @@ def get_env() -> str:
 def is_production() -> bool:
     """Check if running in production environment."""
     return get_env() in ("staging", "prod", "production")
+
+
+def _merge_temporal_context(logger, method_name: str, event_dict: dict) -> dict:
+    """Workflow/activity ids for log lines of the embedded Temporal worker, as
+    configure_temporal_logging() adds them in a standalone worker. A no-op
+    until temporalio has been imported."""
+    if "temporalio.activity" not in sys.modules:
+        return event_dict
+    from .temporal.logger import merge_temporal_context
+
+    return merge_temporal_context(logger, method_name, event_dict)
 
 
 def get_processors():
@@ -46,6 +58,10 @@ def get_processors():
         structlog.processors.UnicodeDecoder(),
         add_otel_context,  # FutureAGI addition: OpenTelemetry context
     ]
+    embedded_worker = os.getenv("FI_EMBEDDED_TEMPORAL_WORKER", "").strip().lower()
+    if embedded_worker in ("1", "true", "yes", "on"):
+        # The API process also runs the Temporal worker (standalone install).
+        shared_processors.insert(1, _merge_temporal_context)
     return shared_processors
 
 

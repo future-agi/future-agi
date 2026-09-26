@@ -957,6 +957,33 @@ def _structlog_capturable():
 
 
 @pytest.fixture(autouse=True)
+def _model_serving_reachable(monkeypatch):
+    """Report model serving as reachable unless a test asks otherwise.
+
+    No test run has a ``serving`` container, so every path gated on
+    ``serving_available()`` would take its fail-open branch and skip the
+    embedding mocks the test installed. Tests of that branch request
+    ``model_serving_down``. The probe cache is per-process, so it is cleared
+    both ways to keep one test's verdict out of the next.
+    """
+    from agentic_eval.core.embeddings import serving_client
+
+    monkeypatch.setattr(serving_client, "_probe", lambda base_url: True)
+    serving_client._probe_cache.clear()
+    yield
+    serving_client._probe_cache.clear()
+
+
+@pytest.fixture
+def model_serving_down(monkeypatch):
+    """Model serving is not running, as in the standalone install without ``ml``."""
+    from agentic_eval.core.embeddings import serving_client
+
+    monkeypatch.setattr(serving_client, "_probe", lambda base_url: False)
+    serving_client._probe_cache.clear()
+
+
+@pytest.fixture(autouse=True)
 def _teardown_workspace_aware_clients():
     """Stop any APIView.initial patches left behind by leaked clients.
 

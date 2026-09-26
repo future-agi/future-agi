@@ -1352,3 +1352,40 @@ class TestAddVectorDBColumnView(DynamicColumnsBaseTestCase):
         assert response.status_code == status.HTTP_200_OK
         assert "new_column_id" in response.json()["result"]
         mock_task.assert_called_once()
+
+    @patch("agentic_eval.core.embeddings.serving_client._probe", return_value=False)
+    @patch("model_hub.views.dynamic_columns.add_vector_db_column_async.delay")
+    def test_vector_db_refused_without_model_serving(self, mock_task, _probe):
+        """Every embedding type goes through model serving, so without it the
+        column could only fill with errors: refused up front with the reason."""
+        dataset, columns, _ = self.create_test_dataset()
+        secret = SecretModel.objects.create(
+            name="Test Pinecone Key",
+            key="test-pinecone-api-key",
+            organization=self.organization,
+        )
+        url = reverse("add_vector_db_column", kwargs={"dataset_id": str(dataset.id)})
+
+        response = self.client.post(
+            url,
+            data={
+                "column_id": str(columns[0].id),
+                "new_column_name": "Vector Result",
+                "sub_type": "pinecone",
+                "api_key": str(secret.id),
+                "index_name": "test-index",
+                "top_k": 5,
+                "embedding_config": {
+                    "type": "openai",
+                    "model": "text-embedding-3-small",
+                },
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "--profile ml" in json.dumps(response.json())
+        mock_task.assert_not_called()
+        assert not Column.objects.filter(
+            dataset=dataset, name="Vector Result", deleted=False
+        ).exists()

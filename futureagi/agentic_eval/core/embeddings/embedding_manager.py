@@ -16,7 +16,10 @@ from PIL import Image
 from tfc.telemetry import wrap_for_thread
 
 from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
-from agentic_eval.core.embeddings.serving_client import get_serving_client
+from agentic_eval.core.embeddings.serving_client import (
+    get_serving_client,
+    serving_available,
+)
 from agentic_eval.core.utils.functions import detect_input_type
 import structlog
 
@@ -106,7 +109,8 @@ class ModelManager:
 
     def _initialize(self):
         logger.info("Initializing ModelManager components")
-        # Initialize serving client
+        # Created on first use, not here: this singleton is built at import
+        # time and serving is optional, so importing must not touch the network.
         self._serving_client = None
         self._use_serving = True  # Flag to control whether to use serving or local models
 
@@ -117,7 +121,6 @@ class ModelManager:
         self._text_model = None
         self._image_processor = None
         self._syn_data_model = None
-        self._serving_client = self.serving_client
 
         logger.info("ModelManager initialization complete")
 
@@ -129,11 +132,9 @@ class ModelManager:
             try:
                 logger.info("Initializing serving client")
                 self._serving_client = get_serving_client()
-                # Test if serving is available
-                if not self._serving_client.health_check():
+                # Cached probe shared with every serving-gated call site.
+                if not serving_available():
                     mixpanel_slack_notfy("ALERT: Serving service not available.")
-                    logger.exception("Serving service not available, falling back to local models")
-                    # self._use_serving = False
             except Exception as e:
                 traceback.print_exc()
                 mixpanel_slack_notfy(f"Failed to initialize serving client: {e}, falling back to local models")
@@ -1001,6 +1002,15 @@ class EmbeddingManager:
                     eval_id=str(eval_id),
                 )
                 return []
+
+        # Every input is embedded before the vector search, so without model
+        # serving this can only fail — once per input, each after a timeout.
+        if not serving_available():
+            logger.info(
+                "retrieve_avg_rag_based_examples skipped: model serving unavailable",
+                table_name=table_name,
+            )
+            return []
 
         self.input_types = self.inputs_type_list(inputs)
 

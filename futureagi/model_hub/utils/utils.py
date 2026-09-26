@@ -6,16 +6,14 @@ from collections import Counter
 from typing import Literal
 
 import litellm
-import nltk
 import requests
 import structlog
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.core.cache import cache
+from django.utils.functional import SimpleLazyObject
 from huggingface_hub.errors import HfHubHTTPError
 from litellm.llms.custom_llm import CustomLLM, ModelResponse
-from nltk.corpus import stopwords, wordnet
-from nltk.stem import WordNetLemmatizer
 
 logger = structlog.get_logger(__name__)
 
@@ -926,23 +924,24 @@ def track_running_eval_count(
 
 class AnnotationCorpusBuilder:
     def __init__(self):
-        # Download necessary resources once
-        # Catch FileExistsError in case NLTK data directory already exists
-        try:
-            nltk.download("punkt", quiet=True)
-            nltk.download("averaged_perceptron_tagger", quiet=True)
-            nltk.download("wordnet", quiet=True)
-            nltk.download("omw-1.4", quiet=True)
-            nltk.download("stopwords", quiet=True)
-        except FileExistsError:
-            # Directory already exists, downloads can proceed
-            pass
+        # nltk is imported lazily: it drags scipy + scikit-learn in.
+        from nltk.corpus import stopwords
+        from nltk.stem import WordNetLemmatizer
 
+        from tfc.utils.nltk_data import ensure_nltk_data
+
+        # The images bake these into NLTK_DATA (bin/install_nltk_data.py) and
+        # turn run-time downloads off; a dev/CI checkout downloads them here,
+        # on first use, instead of on every process start.
+        ensure_nltk_data(
+            "stopwords", "wordnet", "punkt_tab", "averaged_perceptron_tagger_eng"
+        )
         self.lemmatizer = WordNetLemmatizer()
         self.stop_words = set(stopwords.words("english"))
 
     def get_wordnet_pos(self, tag):
         """Map POS tag to WordNet POS tag for lemmatization."""
+        from nltk.corpus import wordnet  # lazy
         if tag.startswith("J"):
             return wordnet.ADJ
         elif tag.startswith("V"):
@@ -955,6 +954,7 @@ class AnnotationCorpusBuilder:
             return wordnet.NOUN  # default to noun
 
     def build_annotation_corpus(self, sentences):
+        import nltk  # lazy: keep heavy import off the startup path
         lemmatized_words = []
         sentence_words = []
 
@@ -986,7 +986,10 @@ class AnnotationCorpusBuilder:
         return vocab, top_20, min_sen_len, max_sen_len, avg_len
 
 
-corpus_builder = AnnotationCorpusBuilder()
+# Lazy: constructing AnnotationCorpusBuilder imports nltk (which drags in
+# scipy + scikit-learn, ~80 MB RSS) and loads its corpora. Only the
+# annotation-summary views use it.
+corpus_builder = SimpleLazyObject(AnnotationCorpusBuilder)
 
 
 def get_model_mode(model_name: str) -> str:

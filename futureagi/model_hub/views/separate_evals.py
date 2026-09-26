@@ -27,6 +27,10 @@ from rest_framework.views import APIView
 
 from accounts.authentication import workspace_read_only
 from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
+from agentic_eval.core.embeddings.serving_client import (
+    SERVING_UNAVAILABLE_MESSAGE,
+    serving_available,
+)
 from model_hub.constants import (
     EVAL_PLAYGROUND_CURL_CODE,
     EVAL_PLAYGROUND_JS_CODE,
@@ -5732,6 +5736,9 @@ class GroundTruthTriggerEmbeddingView(APIView):
                     "Variable mapping is empty. Map at least one eval "
                     "variable to a ground truth column before embedding."
                 )
+
+            if not serving_available():
+                return self._gm.bad_request(SERVING_UNAVAILABLE_MESSAGE)
 
             # Reset status
             gt.embedding_status = EvalGroundTruth.EmbeddingStatus.PENDING

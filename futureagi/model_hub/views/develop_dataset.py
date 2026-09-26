@@ -45,11 +45,8 @@ from django.forms import model_to_dict
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from docx import Document
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
-from pypdf import PdfReader
-from pypdf.errors import PdfReadError
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.generics import CreateAPIView
@@ -15681,6 +15678,9 @@ class CreateKnowledgeBaseView(APIView):
 
     # Check if file is valid
     def is_file_readable(self, file_obj):
+        from docx import Document  # lazy
+        from pypdf import PdfReader  # lazy
+        from pypdf.errors import PdfReadError  # lazy
         try:
             file_name = file_obj.name
             extension = file_name.split(".")[-1].lower()
