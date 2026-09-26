@@ -376,6 +376,66 @@ func TestIntegration_StreamingChatCompletion(t *testing.T) {
 	}
 }
 
+func TestIntegration_StreamingErrorEventAfterContent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+
+		// Anthropic reports an overload that happens mid-response as an error
+		// event on the open stream, then closes it without message_stop.
+		events := []string{
+			"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_err\",\"model\":\"claude-3-sonnet-20240229\",\"usage\":{\"input_tokens\":15}}}\n\n",
+			"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Partial\"}}\n\n",
+			"event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n",
+		}
+		for _, event := range events {
+			fmt.Fprint(w, event)
+		}
+	}))
+	defer server.Close()
+
+	p := newTestProvider(t, server.URL)
+	defer p.Close()
+
+	req := &models.ChatCompletionRequest{
+		Model:  "claude-3-sonnet-20240229",
+		Stream: true,
+		Messages: []models.Message{
+			{Role: "user", Content: json.RawMessage(`"Hi"`)},
+		},
+	}
+
+	chunks, errs := p.StreamChatCompletion(context.Background(), req)
+
+	var received []models.StreamChunk
+	for chunk := range chunks {
+		received = append(received, chunk)
+	}
+	var streamErr error
+	for e := range errs {
+		streamErr = e
+	}
+
+	// The content sent before the failure is still delivered.
+	if len(received) != 2 {
+		t.Fatalf("received %d chunks, want 2 (role + partial text)", len(received))
+	}
+	if streamErr == nil {
+		t.Fatal("expected the mid-stream error event to surface as a stream error, got nil")
+	}
+	apiErr, ok := streamErr.(*models.APIError)
+	if !ok {
+		t.Fatalf("expected *models.APIError, got %T: %v", streamErr, streamErr)
+	}
+	if apiErr.Status != http.StatusBadGateway {
+		t.Errorf("status = %d, want %d", apiErr.Status, http.StatusBadGateway)
+	}
+	if apiErr.Code != "provider_overloaded_error" {
+		t.Errorf("code = %q, want %q", apiErr.Code, "provider_overloaded_error")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Integration: Error handling - 429 rate limit
 // ---------------------------------------------------------------------------
