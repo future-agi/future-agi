@@ -1146,9 +1146,32 @@ class LitellmAPIView(CreateAPIView):
         return self._gm.success_response("success")
 
 
+PENDING_CELL_MESSAGE = "Run prompt was interrupted before this cell completed. Please rerun this cell."
+
+
+class OwnershipLostError(Exception):
+    """The run's lock/lease lapsed mid-flight; raised so the Temporal attempt fails and a retry reclaims the prompt."""
+
+
+def fail_pending_run_prompt_cells(run_prompt_ids, message=PENDING_CELL_MESSAGE) -> int:
+    """Flip still-running cells of these prompts to ERROR; legacy "Running" matched because older reruns wrote the wrong enum."""
+    return Cell.objects.filter(
+        column__source=SourceChoices.RUN_PROMPT.value,
+        column__source_id__in=[str(p) for p in run_prompt_ids],
+        status__in=[CellStatus.RUNNING.value, StatusType.RUNNING.value],
+        deleted=False,
+    ).update(
+        status=CellStatus.ERROR.value,
+        value=message,
+        value_infos=json.dumps({"reason": message}),
+    )
+
+
 class RunPrompts:
-    def __init__(self, run_prompt_id):
+    def __init__(self, run_prompt_id, run_token=None, fence=None):
         self.run_prompt_id = run_prompt_id
+        self.run_token = run_token  # identifies this run to owner-scoped cancel flags
+        self._fence = fence  # threading.Event set by OwnershipLease when the lock is lost
         self.run_prompt_model = None
         self.tools_config = []
         logger.info(
@@ -1242,6 +1265,10 @@ class RunPrompts:
                 for future in as_completed(futures):
                     future.result()  # This will raise exceptions if any occurred in a thread
 
+            if self._fenced():
+                # Ownership lapsed: whoever reclaimed owns the status; fail this attempt so Temporal retries if nobody did.
+                raise OwnershipLostError(str(self.run_prompt_id))
+
             # Check if prompt was edited during processing by comparing updated_at
             # This prevents this workflow from overwriting status when a new workflow was started
             current_prompt = (
@@ -1266,9 +1293,16 @@ class RunPrompts:
                 current_status == StatusType.RUNNING.value
                 and current_updated_at == start_updated_at
             ):
-                RunPrompter.objects.filter(id=self.run_prompt_id).update(
-                    status=StatusType.COMPLETED.value
-                )
+                if self._should_stop():
+                    # Cancelled with no successor run (updated_at unchanged): FAILED, and pending cells must not spin forever.
+                    RunPrompter.objects.filter(id=self.run_prompt_id).update(
+                        status=StatusType.FAILED.value
+                    )
+                    fail_pending_run_prompt_cells([self.run_prompt_id])
+                else:
+                    RunPrompter.objects.filter(id=self.run_prompt_id).update(
+                        status=StatusType.COMPLETED.value
+                    )
             else:
                 # Either status changed or prompt was edited during processing
                 # Don't overwrite - let the new workflow handle final status
@@ -1278,7 +1312,12 @@ class RunPrompts:
                     "Not setting to COMPLETED."
                 )
 
+        except OwnershipLostError:
+            raise
         except Exception as e:
+            if self._fenced():
+                # A row failed while ownership lapsed; the status is the reclaiming run's to write, not ours.
+                raise OwnershipLostError(str(self.run_prompt_id)) from e
             # Set status to FAILED so it doesn't get stuck in RUNNING
             logger.exception(f"run_prompt failed for {self.run_prompt_id}: {e}")
             try:
@@ -1317,8 +1356,34 @@ class RunPrompts:
                 pass
             raise
 
+    def _fenced(self) -> bool:
+        """True once OwnershipLease reports the lock is gone."""
+        return self._fence is not None and self._fence.is_set()
+
+    def _should_stop(self) -> bool:
+        """True if ownership was lost (local fence) or a cancel aimed at this run exists; Redis errors count as no."""
+        if self._fenced():
+            return True
+        # Local import: tasks.run_prompt imports this module.
+        from model_hub.tasks.run_prompt import run_prompt_tracker
+
+        try:
+            return run_prompt_tracker.should_cancel(
+                self.run_prompt_id, run_token=self.run_token
+            )
+        except Exception:
+            return False
+
     def process_row(self, row, column, edit_mode=False):
         row_id = str(row.id)
+        if self._should_stop():
+            # Skip the LLM call; the run that requested the cancel will redo this cell.
+            logger.info(
+                "RunPrompts_process_row_skipped_cancelled",
+                run_prompt_id=str(self.run_prompt_id),
+                row_id=row_id,
+            )
+            return
         logger.info(
             "RunPrompts_process_row_started",
             run_prompt_id=str(self.run_prompt_id),
@@ -1525,6 +1590,15 @@ class RunPrompts:
             #             )
             #     except Exception as e:
             #         print(f"Error updating api call status to processed: {str(e)}")
+
+            if self._should_stop():
+                # Ownership lost or cancelled during the LLM call: another run owns this cell now, don't write it.
+                logger.warning(
+                    "RunPrompts_process_row_cell_write_fenced",
+                    run_prompt_id=str(self.run_prompt_id),
+                    row_id=row_id,
+                )
+                return
 
             if self.is_editing:
                 logger.info(
@@ -2823,7 +2897,7 @@ class RunPromptForRowsView(APIView):
             return self._gm.internal_server_error_response(error_message)
 
 
-@temporal_activity(time_limit=3600, queue="tasks_l")
+@temporal_activity(time_limit=4 * 3600, queue="tasks_l")
 def run_all_prompts_task(run_prompt_ids, row_ids):
     try:
         for run_prompt_id in run_prompt_ids:
@@ -2839,7 +2913,7 @@ def run_all_prompts_task(run_prompt_ids, row_ids):
             Cell.objects.filter(
                 row_id__in=row_ids, column__source_id=run_prompt_id, deleted=False
             ).update(
-                status=StatusType.RUNNING.value, value=None, value_infos=json.dumps({})
+                status=CellStatus.RUNNING.value, value=None, value_infos=json.dumps({})
             )
 
             # Run the prompt for each row ID

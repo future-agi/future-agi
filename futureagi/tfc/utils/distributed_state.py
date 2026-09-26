@@ -334,12 +334,14 @@ class DistributedEvaluationTracker(DistributedStateManager):
             )
             return False
 
-    def mark_completed(self, eval_id: int) -> bool:
+    def mark_completed(self, eval_id: int, run_token: str | None = None) -> bool:
         """
         Mark an evaluation as completed and remove from tracking.
 
         Args:
             eval_id: The evaluation ID.
+            run_token: When set, delete only if the entry still carries this
+                token, so a run that lost ownership cannot remove its successor.
 
         Returns:
             True if successfully removed.
@@ -348,6 +350,8 @@ class DistributedEvaluationTracker(DistributedStateManager):
         self._local_running.discard(key)
 
         try:
+            if run_token is not None:
+                return self._delete_if_token(key, run_token)
             result = self.delete(key)
             if result:
                 logger.info(
@@ -365,6 +369,71 @@ class DistributedEvaluationTracker(DistributedStateManager):
                 f"Error marking evaluation {eval_id} as completed: {e}",
                 extra={"eval_id": str(eval_id), "error": str(e)},
             )
+            return False
+
+    def _delete_if_token(self, key: str, run_token: str) -> bool:
+        """Owner-only delete: WATCH/MULTI so a successor's freshly published entry is never removed."""
+        if not self._redis_available:
+            return False
+        full_key = self._get_key(key)
+
+        def _release(pipe: redis.client.Pipeline) -> bool:
+            raw = pipe.get(full_key)
+            if raw is None:
+                return False
+            info = RunningTaskInfo.from_dict(json.loads(raw))
+            if (info.metadata or {}).get("run_token") != run_token:
+                logger.info(
+                    f"Not releasing {key}: entry now belongs to another run",
+                    extra={"key": key},
+                )
+                return False
+            pipe.multi()
+            pipe.delete(full_key)
+            return True
+
+        return bool(
+            self._redis_client.transaction(_release, full_key, value_from_callable=True)
+        )
+
+    def is_reachable(self) -> bool:
+        """True if Redis answers right now (is_available() is only the boot-time flag)."""
+        if not self._redis_available:
+            return False
+        try:
+            return bool(self._redis_client.ping())
+        except Exception:
+            return False
+
+    def refresh_running(self, eval_id: int, ttl: int | None = None) -> bool:
+        """Owner-only lease renewal: re-sets the entry with a fresh TTL and stamps metadata["renewed_at"]."""
+        if not self._redis_available:
+            return False
+        full_key = self._get_key(str(eval_id))
+        ttl = ttl or self.default_ttl
+
+        def _renew(pipe: redis.client.Pipeline) -> bool:
+            raw = pipe.get(full_key)
+            if raw is None:
+                return False
+            info = RunningTaskInfo.from_dict(json.loads(raw))
+            if info.instance_id != self._instance_id:
+                return False
+            info.metadata = dict(info.metadata or {})
+            info.metadata["renewed_at"] = datetime.utcnow().isoformat()
+            pipe.multi()
+            pipe.set(full_key, json.dumps(info.to_dict()), ex=ttl)
+            return True
+
+        try:
+            # WATCH aborts the write if the entry changed (e.g. mark_completed deleted it) between GET and SET.
+            return bool(
+                self._redis_client.transaction(
+                    _renew, full_key, value_from_callable=True
+                )
+            )
+        except Exception as e:
+            logger.warning(f"Failed to refresh running entry {eval_id}: {e}")
             return False
 
     def is_running(self, eval_id: int) -> bool:
@@ -406,7 +475,9 @@ class DistributedEvaluationTracker(DistributedStateManager):
             return RunningTaskInfo.from_dict(data)
         return None
 
-    def request_cancel(self, eval_id: int, reason: str = "") -> bool:
+    def request_cancel(
+        self, eval_id: int, reason: str = "", target: str | None = None
+    ) -> bool:
         """
         Request cancellation of an evaluation.
 
@@ -415,6 +486,7 @@ class DistributedEvaluationTracker(DistributedStateManager):
         Args:
             eval_id: The evaluation ID to cancel.
             reason: Optional reason for cancellation.
+            target: Optional run token; when set only that run honours the flag.
 
         Returns:
             True if cancel request was sent.
@@ -430,6 +502,8 @@ class DistributedEvaluationTracker(DistributedStateManager):
                 "requested_by": self._instance_id,
                 "reason": reason,
             }
+            if target:
+                cancel_info["target"] = target
             self.set(cancel_key, cancel_info, ttl=3600)
 
             # Update the running info to mark cancel requested
@@ -463,7 +537,7 @@ class DistributedEvaluationTracker(DistributedStateManager):
             )
             return False
 
-    def should_cancel(self, eval_id: int) -> bool:
+    def should_cancel(self, eval_id: int, run_token: str | None = None) -> bool:
         """
         Check if an evaluation should be cancelled.
 
@@ -471,12 +545,19 @@ class DistributedEvaluationTracker(DistributedStateManager):
 
         Args:
             eval_id: The evaluation ID.
+            run_token: This run's token; a flag targeted at another run is ignored.
 
         Returns:
             True if cancellation was requested.
         """
         cancel_key = f"cancel:{str(eval_id)}"
-        return self.exists(cancel_key)
+        if run_token is None:
+            return self.exists(cancel_key)
+        info = self.get(cancel_key)
+        if not info:
+            return False
+        target = info.get("target") if isinstance(info, dict) else None
+        return not target or target == run_token
 
     def clear_cancel_flag(self, eval_id: int) -> bool:
         """Clear the cancel flag after handling cancellation."""

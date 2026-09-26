@@ -133,6 +133,7 @@ class DistributedLockManager:
         timeout: Optional[int] = None,
         blocking_timeout: Optional[int] = None,
         blocking: bool = True,
+        thread_local: bool | None = None,
     ):
         """
         Acquire a distributed lock as a context manager.
@@ -142,12 +143,14 @@ class DistributedLockManager:
             timeout: Lock auto-expiration in seconds. Defaults to config.default_timeout.
             blocking_timeout: Max time to wait for lock. Defaults to config.default_blocking_timeout.
             blocking: If False, raise immediately if lock is not available.
+            thread_local: Override config.thread_local; False lets another thread extend()/release().
 
         Yields:
             The lock object (can be used to extend the lock if needed).
 
         Raises:
-            LockAcquisitionError: If the lock cannot be acquired within the timeout.
+            LockContendedError: Held by another owner past blocking_timeout.
+            LockAcquisitionError: Redis failure; lock state unknown.
 
         Example:
             with lock_manager.lock("my_resource"):
@@ -168,7 +171,9 @@ class DistributedLockManager:
                 lock_key,
                 timeout=timeout,
                 blocking_timeout=blocking_timeout,
-                thread_local=self.config.thread_local,
+                thread_local=(
+                    self.config.thread_local if thread_local is None else thread_local
+                ),
             )
 
             acquired = False
@@ -179,7 +184,7 @@ class DistributedLockManager:
                         f"Could not acquire distributed lock: {name} "
                         f"(blocking={blocking}, timeout={blocking_timeout}s)"
                     )
-                    raise LockAcquisitionError(
+                    raise LockContendedError(
                         f"Could not acquire distributed lock: {name}"
                     )
                 logger.debug(f"Acquired distributed lock: {name} (timeout={timeout}s)")
@@ -231,7 +236,7 @@ class DistributedLockManager:
             acquired = local_lock.acquire(blocking=False)
 
         if not acquired:
-            raise LockAcquisitionError(f"Could not acquire local lock: {name}")
+            raise LockContendedError(f"Could not acquire local lock: {name}")
 
         try:
             logger.debug(f"Acquired local lock (fallback): {name}")
@@ -440,6 +445,12 @@ class AcquiredLock:
 
 class LockAcquisitionError(Exception):
     """Raised when a lock cannot be acquired."""
+
+    pass
+
+
+class LockContendedError(LockAcquisitionError):
+    """Held by another owner (not a Redis failure); subclass so existing callers are unaffected."""
 
     pass
 
