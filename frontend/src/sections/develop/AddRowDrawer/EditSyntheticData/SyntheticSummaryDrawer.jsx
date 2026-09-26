@@ -15,7 +15,10 @@ import { useEditSyntheticDataStore } from "./state";
 import SvgColor from "../../../../components/svg-color";
 import PropTypes from "prop-types";
 import EachColumnSummary from "../CreateSyntheticData/Summary/EachColumnSummary";
-import { transformColumnPayload } from "../CreateSyntheticData/common";
+import {
+  buildSyntheticDatasetPayload,
+  transformColumnPayload,
+} from "../CreateSyntheticData/common";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { useNavigate, useParams } from "react-router";
@@ -26,6 +29,7 @@ import { useKnowledgeBaseList } from "src/api/knowledge-base/files";
 import { useDatasetOriginStore } from "../../../develop-detail/states";
 import CustomDialog from "../../../develop-detail/Common/CustomDialog/CustomDialog";
 import { getDatasetQueryOptions } from "src/api/develop/develop-detail";
+import { getRequestErrorMessage } from "src/utils/errorUtils";
 
 const titleProps = {
   variant: "s1",
@@ -286,11 +290,27 @@ export default function SyntheticSummaryDrawer() {
         );
       }, 0);
     },
+    onError: (error) => {
+      enqueueSnackbar(
+        getRequestErrorMessage(
+          error,
+          "We couldn't regenerate the synthetic dataset. Please try again.",
+          {
+            retryAction: "regenerating this synthetic dataset",
+            sanitizeTechnicalFieldErrors: true,
+          },
+        ),
+        { variant: "error" },
+      );
+    },
   });
 
   const handleRegenerate = useCallback(() => {
     if (!dataset) return;
-    updateSyntheticData({ ...data, regenerate: true });
+    updateSyntheticData({
+      ...buildSyntheticDatasetPayload(data),
+      regenerate: true,
+    });
   }, [data, dataset, updateSyntheticData]);
 
   const _onEditSuccessCallback = useCallback(() => {

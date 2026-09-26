@@ -27,6 +27,7 @@ import { FormSelectField } from "src/components/FormSelectField";
 import { useKnowledgeBaseList } from "src/api/knowledge-base/files";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
+import { buildSyntheticColumnPayload } from "./CreateSyntheticData/common";
 
 const createValidationSchema = (datasetId, openDescription) =>
   z.object({
@@ -177,9 +178,14 @@ const SyntheticDataDrawer = ({
     },
     onError: (error) => {
       enqueueSnackbar(
-        getRequestErrorMessage(error, "Failed to create synthetic dataset", {
-          retryAction: "creating this synthetic dataset",
-        }),
+        getRequestErrorMessage(
+          error,
+          "We couldn't create the synthetic dataset. Please review the form and try again.",
+          {
+            retryAction: "creating this synthetic dataset",
+            sanitizeTechnicalFieldErrors: true,
+          },
+        ),
         { variant: "error" },
       );
     },
@@ -233,17 +239,14 @@ const SyntheticDataDrawer = ({
       num_rows: Number(formData.rowNumber),
       kb_id: formData?.kb_id,
       columns: formData.columns.map((item, index) => {
-        const property = {};
-        item.property.forEach((dummy) => {
-          property[dummy.type] = dummy.value;
-        });
         if (index === 0) {
           cols[item.name] = item.description;
         }
         const newItem = {
-          ...item,
-          description: replaceColumn(item.description, item.name),
-          property,
+          ...buildSyntheticColumnPayload(
+            item,
+            replaceColumn(item.description, item.name),
+          ),
           ...(datasetId && { is_new: true, skip: true }),
         };
         return newItem;
