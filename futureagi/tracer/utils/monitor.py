@@ -414,21 +414,23 @@ def _check_percentage_change_threshold(
         )
         return
 
+    if historical_mean == 0:
+        logger.warning(
+            f"Historical mean is zero for monitor {monitor.id} "
+            f"({monitor.metric_type}). Percentage change is undefined; skipping check."
+        )
+        return
+
     op = monitor.threshold_operator
     sign = 1 if op == ComparisonOperatorChoices.GREATER_THAN else -1
 
-    critical_dev = historical_stddev * (
-        1 + (monitor.critical_threshold_value or 0) / 100
-    )
-    warning_dev = historical_stddev * (1 + (monitor.warning_threshold_value or 0) / 100)
-
     critical_threshold = (
-        (historical_mean + sign * critical_dev)
+        historical_mean * (1 + sign * (monitor.critical_threshold_value or 0) / 100)
         if monitor.critical_threshold_value is not None
         else None
     )
     warning_threshold = (
-        (historical_mean + sign * warning_dev)
+        historical_mean * (1 + sign * (monitor.warning_threshold_value or 0) / 100)
         if monitor.warning_threshold_value is not None
         else None
     )
@@ -452,7 +454,7 @@ def _check_percentage_change_threshold(
             f"Metric '{monitor.name}' for project '{monitor.project.name}' "
             f"({current_value:.2f}) breached the {alert_type} threshold "
             f"({monitor.threshold_operator} {threshold_val:.2f}) based on historical data "
-            f"(mean: {historical_mean:.2f}, stddev: {historical_stddev:.2f})."
+            f"(historical mean: {historical_mean:.2f})."
         )
         _handle_alert_trigger(monitor, message, alert_type, time_window_start, now)
 
