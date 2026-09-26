@@ -182,7 +182,7 @@ Adds:
 
 - **Hot reload** — `./futureagi` is volume-mounted into the backend and workers, so Python changes reload without a rebuild.
 - **Per-queue workers** — six Temporal workers (`default`, `tasks_s`, `tasks_l`, `tasks_xl`, `trace_ingestion`, `agent_compass`) instead of one all-queue worker, mirroring production topology.
-- **Public DB ports** — Postgres `5432`, ClickHouse `8123/9000`, Redis `6379`, MinIO `9000/9001`, Temporal `7233` all bind on `0.0.0.0` so DBeaver / DataGrip / `psql` on the host can connect.
+- **Public DB ports** — Postgres `5432`, ClickHouse `8123/9000`, Redis `6379`, MinIO `9005/9006` on the host (→ container `9000/9001`), Temporal `7233` all bind on `0.0.0.0` so DBeaver / DataGrip / `psql` on the host can connect.
 - **Temporal UI + admin tools** — workflow inspection at <http://localhost:8085>.
 - **`FAST_STARTUP=true`** — skips migrations on every restart (run them manually with `docker compose exec backend python manage.py migrate`).
 
@@ -205,14 +205,14 @@ Or set `VITE_HOST_API` in `.env` and run without the inline variable. Restart th
 
 The published backend image is a **slim build**: heavy ML, audio, and voice dependencies are not installed, which keeps the image around 2 GB instead of 14 GB. Most features work out of the box. The ones below need an optional dependency group ("extra") baked into the image:
 
-| Feature                                                        | Extra        |
-| -------------------------------------------------------------- | ------------ |
+| Feature                                                            | Extra        |
+| ------------------------------------------------------------------ | ------------ |
 | Audio evals — TTS/STT via ElevenLabs, audio decoding (av, librosa) | `audio`      |
-| ML-based evals — torch models, HuggingFace datasets/transformers | `ml`         |
-| Voice simulation — LiveKit calls, Retell agents                | `voice`      |
-| PII detection/scrubbing (Presidio, spaCy)                       | `pii`        |
-| Prompt optimization (Optuna, GEPA)                              | `prompt-opt` |
-| Vector-DB dataset columns (Pinecone, Qdrant, Weaviate, Chroma)  | `vectordb`   |
+| ML-based evals — torch models, HuggingFace datasets/transformers   | `ml`         |
+| Voice simulation — LiveKit calls, Retell agents                    | `voice`      |
+| PII detection/scrubbing (Presidio, spaCy)                          | `pii`        |
+| Prompt optimization (Optuna, GEPA)                                 | `prompt-opt` |
+| Vector-DB dataset columns (Pinecone, Qdrant, Weaviate, Chroma)     | `vectordb`   |
 
 **What happens without the extra:** most optional features fail with an `ImportError` that names the missing extra and points here; some evaluation and clustering paths degrade gracefully and log that the capability is unavailable. Voice simulation is gated up front and returns a clear "not available in this build" API error. If PII redaction is enabled for a project, ingestion fails closed until the `pii` extra is installed so unredacted data is never stored silently.
 
@@ -293,21 +293,21 @@ new values and keeps their data volumes.
 
 All ports are configurable via `.env`. Defaults:
 
-| Service                    | Port   | URL                                    |
-| -------------------------- | ------ | -------------------------------------- |
-| Frontend                   | `3000` | <http://localhost:3000>                |
-| Backend API                | `8000` | <http://localhost:8000>                |
-| Gateway (LLM proxy)        | `8090` | internal only by default               |
-| Model serving (embeddings) | `8080` | internal only by default               |
-| Code executor              | `8060` | internal only by default               |
-| Postgres                   | `5432` | `127.0.0.1` — dev mode only: `0.0.0.0` |
-| ClickHouse HTTP            | `8123` | same                                   |
-| ClickHouse TCP             | `9000` | same                                   |
-| Redis                      | `6379` | same                                   |
-| MinIO S3 API               | `9000` | same                                   |
-| MinIO console              | `9001` | same                                   |
-| Temporal gRPC              | `7233` | same                                   |
-| Temporal UI                | `8085` | dev mode only                          |
+| Service                    | Port                                             | URL                                    |
+| -------------------------- | ------------------------------------------------ | -------------------------------------- |
+| Frontend                   | `3000`                                           | <http://localhost:3000>                |
+| Backend API                | `8000`                                           | <http://localhost:8000>                |
+| Gateway (LLM proxy)        | `8090`                                           | internal only by default               |
+| Model serving (embeddings) | `8080`                                           | internal only by default               |
+| Code executor              | `8060`                                           | internal only by default               |
+| Postgres                   | `5432`                                           | `127.0.0.1` — dev mode only: `0.0.0.0` |
+| ClickHouse HTTP            | `8123`                                           | same                                   |
+| ClickHouse TCP             | `9000`                                           | same                                   |
+| Redis                      | `6379`                                           | same                                   |
+| MinIO S3 API               | `9005` (`MINIO_API_PORT` → container `9000`)     | same                                   |
+| MinIO console              | `9006` (`MINIO_CONSOLE_PORT` → container `9001`) | same                                   |
+| Temporal gRPC              | `7233`                                           | same                                   |
+| Temporal UI                | `8085`                                           | dev mode only                          |
 
 To run two stacks side-by-side, copy `.env` to `.env.stackB`, change every port, and `docker compose --env-file .env.stackB -p stackb up`.
 
@@ -332,7 +332,7 @@ To run two stacks side-by-side, copy `.env` to `.env.stackB`, change every port,
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `postgres`   | Primary transactional store (users, traces, datasets, evals, prompts, annotations).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `clickhouse` | Analytics store for traces, spans, dashboards, and evaluation queries.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `redis`      | Cache, rate limits, Celery/Django cache, WebSocket pub/sub. Also the invalidation bus between backend and fi-collector: the backend (`REDIS_URL`) and fi-collector (`FI_AUTH_REDIS_ADDR`) must point at the **same** Redis. A mismatch is a silent failure — key revocation and project-delete cache invalidation stop working and the collector's auth cache only expires via TTL.                                                                                                                                                                                          |
+| `redis`      | Cache, rate limits, Celery/Django cache, WebSocket pub/sub. Also the invalidation bus between backend and fi-collector: the backend (`REDIS_URL`) and fi-collector (`FI_AUTH_REDIS_ADDR`) must point at the **same** Redis. A mismatch is a silent failure — key revocation and project-delete cache invalidation stop working and the collector's auth cache only expires via TTL.                                                                                                                                                                                       |
 | `minio`      | S3-compatible object storage (uploaded files, eval artifacts). In production, swap for real S3 by setting `S3_ENDPOINT_URL` to an AWS endpoint. **Note:** the backend uses `S3_ENDPOINT_URL` (internal Docker hostname) to talk to MinIO, but URLs returned to the browser use `MINIO_URL` (defaults to `http://localhost:9005`). If you access the UI from anywhere other than the host machine — e.g. another machine on your LAN, a remote VM, or a domain name — set `MINIO_URL` in `.env` to a URL the browser can reach (e.g. `http://your-host.example.com:9005`). |
 
 ### Workflow engine
