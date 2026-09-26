@@ -192,3 +192,178 @@ def rewrite_for_replicated(stmt: str, *, table_name: str, cluster: str,
             )
         # For non-CREATE (i.e., ALTER) statements, missing engine is normal.
     return new_stmt
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Dictionary source credentials
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# A dictionary declared with `SOURCE(CLICKHOUSE(TABLE '...'))` and no USER reads
+# its local source as user `default` with an EMPTY password. When the server's
+# users have passwords, every dictGet then fails with AUTHENTICATION_FAILED;
+# spans.trace_name evaluates dictGetOrDefault('trace_dict', ...) on insert, so
+# every span insert fails. The packaged DDL stays credential-free (its text is
+# hashed for drift detection and compared against live metadata); every path
+# that executes it injects the credentials it connects with, at apply time.
+#
+# The functions below read our packaged grammar: quoted strings, comments and
+# balanced parentheses are respected, nothing else is interpreted.
+_CREDENTIAL_KEYS = frozenset({"user", "password"})
+_SOURCE_TOKEN = re.compile(
+    r"'(?:\\.|''|[^'\\])*'|`(?:``|[^`])*`|\"(?:\\.|\"\"|[^\"\\])*\"|"
+    r"--[^\n]*|/\*[\s\S]*?\*/|"
+    r"[-+]?[0-9]+(?:\.[0-9]+)?|[A-Za-z_][A-Za-z_0-9]*|\S"
+)
+
+
+def _code_tokens(sql: str) -> list[re.Match]:
+    return [m for m in _SOURCE_TOKEN.finditer(sql) if not m[0].startswith(("--", "/*"))]
+
+
+def _clickhouse_sources(sql: str) -> list[tuple[int, int, list[re.Match]]]:
+    """(start, end, argument tokens) of every ``SOURCE(CLICKHOUSE(...))``.
+
+    ``sql[start:end]`` is the text between ``CLICKHOUSE(`` and its matching
+    ``)``. Unterminated clauses are left alone (the server rejects them).
+    """
+    tokens = _code_tokens(sql)
+    found = []
+    i = 0
+    while i + 3 < len(tokens):
+        if (
+            tokens[i][0].upper() == "SOURCE"
+            and tokens[i + 1][0] == "("
+            and tokens[i + 2][0].upper() == "CLICKHOUSE"
+            and tokens[i + 3][0] == "("
+        ):
+            depth, j = 1, i + 4
+            while j < len(tokens):
+                if tokens[j][0] == "(":
+                    depth += 1
+                elif tokens[j][0] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            if depth:
+                break
+            found.append((tokens[i + 3].end(), tokens[j].start(), tokens[i + 4 : j]))
+            i = j + 1
+        else:
+            i += 1
+    return found
+
+
+def _source_pairs(arguments: list[re.Match]) -> list[tuple[str, int, int, str]]:
+    """(lowercased key, start, end, first value token) of each ``KEY value`` pair.
+
+    A value is one literal/identifier, optionally followed by a balanced
+    ``(...)`` (function form), or a bare balanced ``(...)`` pair list.
+    """
+    pairs, i = [], 0
+    while i < len(arguments):
+        key = arguments[i]
+        j = i + 1
+        if j < len(arguments) and arguments[j][0] != "(":
+            j += 1
+        if j < len(arguments) and arguments[j][0] == "(":
+            depth = 0
+            while j < len(arguments):
+                depth += (arguments[j][0] == "(") - (arguments[j][0] == ")")
+                j += 1
+                if depth == 0:
+                    break
+        end = arguments[j - 1].end() if j > i + 1 else key.end()
+        value = arguments[i + 1][0] if j > i + 1 else ""
+        pairs.append((key[0].lower(), key.start(), end, value))
+        i = j
+    return pairs
+
+
+def _literal(token: str) -> str:
+    """The value of a string literal token; identifiers/numbers as written."""
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in "'\"":
+        return re.sub(r"\\(.)|(['\"])\2", lambda m: m[1] or m[2], token[1:-1])
+    return token
+
+
+def _sql_string(value: str) -> str:
+    """A ClickHouse string literal: backslashes first, then single quotes."""
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
+def with_dictionary_credentials(sql: str, user: str, password: str) -> str:
+    """Add ``USER '<user>' PASSWORD '<password>'`` to every CLICKHOUSE source.
+
+    Only ``SOURCE(CLICKHOUSE(...))`` clauses without a USER are changed. With an
+    empty password the statement is returned unchanged, so passwordless installs
+    execute exactly the packaged text. Idempotent. Never log the result.
+    """
+    if not password or "SOURCE" not in sql.upper():
+        return sql
+    credentials = (
+        f"USER {_sql_string(user or 'default')} PASSWORD {_sql_string(password)}"
+    )
+    result, last = [], 0
+    for start, end, arguments in _clickhouse_sources(sql):
+        if any(pair[0] == "user" for pair in _source_pairs(arguments)):
+            continue
+        body = sql[start:end]
+        stripped = body.rstrip()
+        separator = " " if stripped and not stripped.endswith("(") else ""
+        result.append(sql[last:start])
+        result.append(stripped + separator + credentials + body[len(stripped) :])
+        last = end
+    result.append(sql[last:])
+    return "".join(result)
+
+
+def without_dictionary_credentials(sql: str) -> str:
+    """Drop USER/PASSWORD pairs from every CLICKHOUSE source, for comparisons.
+
+    ClickHouse shows a dictionary's source password as ``'[HIDDEN]'`` in
+    ``system.tables``/``SHOW CREATE`` (or omits it); credentials are deployment
+    configuration, never part of the packaged dictionary contract.
+    """
+    if "SOURCE" not in sql.upper():
+        return sql
+    result, last = [], 0
+    for start, end, arguments in _clickhouse_sources(sql):
+        pairs = _source_pairs(arguments)
+        if not any(pair[0] in _CREDENTIAL_KEYS for pair in pairs):
+            continue
+        kept = " ".join(
+            sql[s:e] for key, s, e, _ in pairs if key not in _CREDENTIAL_KEYS
+        )
+        result.append(sql[last:start])
+        result.append(kept)
+        last = end
+    result.append(sql[last:])
+    return "".join(result)
+
+
+def dictionary_credentials_outdated(sql: str, user: str) -> bool:
+    """True when any ``SOURCE(CLICKHOUSE(...))`` in ``sql`` (e.g. a live
+    ``create_table_query``) names no USER or a user other than ``user``.
+
+    The password itself is unreadable (``'[HIDDEN]'``), so it is not compared.
+    """
+    wanted = user or "default"
+    for _, _, arguments in _clickhouse_sources(sql):
+        users = [
+            _literal(value)
+            for key, _, _, value in _source_pairs(arguments)
+            if key == "user"
+        ]
+        if users != [wanted]:
+            return True
+    return False
+
+
+def redact_secret(text: str, secret: str) -> str:
+    """Replace a secret (raw or SQL-escaped) in text bound for a log."""
+    if not secret:
+        return text
+    for form in (_sql_string(secret)[1:-1], secret):
+        text = text.replace(form, "[HIDDEN]")
+    return text
