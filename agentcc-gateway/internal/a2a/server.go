@@ -44,8 +44,15 @@ func newSyncTaskStore() *syncTaskStore {
 
 func (s *syncTaskStore) Store(task *Task) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Cancellation is terminal. A worker can finish concurrently with a
+	// tasks/cancel request, but its stale result must not revive the task.
+	if current, ok := s.store.Get(task.ID); ok &&
+		current.Status.State == TaskStatusCanceled && task.Status.State != TaskStatusCanceled {
+		return
+	}
 	s.store.Store(task)
-	s.mu.Unlock()
 }
 
 func (s *syncTaskStore) Get(id string) (*Task, bool) {
@@ -207,13 +214,13 @@ func (s *Server) handleMessageSend(w http.ResponseWriter, r *http.Request, msg *
 		return
 	}
 
-	// If pipeline is wired, route through the full plugin pipeline.
-	if s.engine != nil && s.providerRegistry != nil {
+	// Route through the configured execution backend when one is available.
+	if s.chatExecutor != nil || (s.engine != nil && s.providerRegistry != nil) {
 		if params.Configuration != nil && params.Configuration.ReturnImmediately {
 			s.tasks.Store(task)
 			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 			s.taskCancels.Store(task.ID, cancel)
-			go s.runMessageSendWithPipeline(ctx, r.Header.Get("Authorization"), task, inputText, params)
+			go s.runMessageSendWithPipeline(ctx, r.Header.Get("Authorization"), cloneTask(task), inputText, params)
 			writeA2AResult(w, msg.ID, task)
 			return
 		}
@@ -286,6 +293,9 @@ func (s *Server) runMessageSendWithPipeline(ctx context.Context, authHeader stri
 			s.tasks.Store(task)
 			return
 		}
+		if s.storeTaskContextError(ctx, task) {
+			return
+		}
 		s.finishTaskFromResponse(task, resp)
 		s.tasks.Store(task)
 		return
@@ -342,11 +352,31 @@ func (s *Server) runMessageSendWithPipeline(ctx context.Context, authHeader stri
 		slog.Warn("a2a: pipeline error", "task_id", task.ID, "error", err)
 		return
 	}
+	if s.storeTaskContextError(ctx, task) {
+		return
+	}
 
 	s.finishTaskFromResponse(task, rc.Response)
 
 	s.tasks.Store(task)
 	slog.Info("a2a task completed (pipeline)", "task_id", task.ID, "model", model, "provider", rc.Provider)
+}
+
+func (s *Server) storeTaskContextError(ctx context.Context, task *Task) bool {
+	err := ctx.Err()
+	if err == nil {
+		return false
+	}
+
+	if errors.Is(err, context.Canceled) {
+		task.Status.State = TaskStatusCanceled
+		task.Status.Message = []MessagePart{{Type: "text", Text: "Task canceled"}}
+	} else {
+		task.Status.State = TaskStatusFailed
+		task.Status.Message = []MessagePart{{Type: "text", Text: fmt.Sprintf("Pipeline error: %s", err.Error())}}
+	}
+	s.tasks.Store(task)
+	return true
 }
 
 func (s *Server) finishTaskFromResponse(task *Task, resp *models.ChatCompletionResponse) {
