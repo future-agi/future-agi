@@ -203,14 +203,12 @@ class RunPromptTool(BaseTool):
             )
 
         # Extract tools from config (same as run_template_async)
-        from model_hub.models.openai_tools import openai_tool_envelope
+        from model_hub.models.openai_tools import ensure_openai_tool_envelope
 
         tools_to_send = [
-            openai_tool_envelope(
-                tool.get("name"), tool.get("description"), tool.get("config")
-            )
+            ensure_openai_tool_envelope(tool)
             for tool in configuration.get("tools", [])
-            if tool.get("config")
+            if tool
         ]
 
         # Extract output_format from config
