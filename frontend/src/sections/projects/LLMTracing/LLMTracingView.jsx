@@ -193,6 +193,7 @@ import { buildAddEvalsDraft } from "./buildAddEvalsDraft";
 import SelectAllBanner from "./SelectAllBanner";
 import { getSelectionCountState } from "./listTotalMetadata";
 import { spanSourceIdsFromPhysicalRowIds } from "./spanPhysicalIdentity";
+import { traceIdsFromGridRowIds } from "./traceGridRowId";
 import { normalizeVoiceCallSavedFilters } from "./voiceCallFilterFields";
 import { serializeTraceFiltersForPersistence } from "./filter_persistence";
 import useProjectFilterField from "../UsersView/useProjectFilterField";
@@ -1007,6 +1008,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       return { ids: [], error };
     }
   }, [selectedSpans]);
+  // On the user page the trace grid's row ids carry each row's project.
+  const selectedTraceIds = useMemo(
+    () => traceIdsFromGridRowIds(selectedTraces),
+    [selectedTraces],
+  );
 
   const {
     openReplaySessionDrawer,
@@ -4725,10 +4731,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       // Simulator calls are traces under the hood
                       return (selectedCallIds || []).filter(Boolean);
                     }
-                    return (
-                      selectedTraces?.filter((id) => id != null && id !== "") ||
-                      []
-                    );
+                    return selectedTraceIds;
                   })()}
                   selectedSpans={spanSourceSelection.ids}
                   currentTab={
@@ -4814,7 +4817,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   // deselection after opt-in is a follow-up (client-side
                   // CallLogsGrid has no inverted-selection model).
                   if (filterSelectionMode && selectedTab === "trace") {
-                    return selectedTraces || [];
+                    return selectedTraceIds;
                   }
                   if (spanFilterSelectionMode && selectedTab === "spans") {
                     return spanSourceSelection.ids;
@@ -4828,7 +4831,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   if (projectSource === PROJECT_SOURCE.SIMULATOR)
                     return (selectedCallIds || []).filter(Boolean);
                   return selectedTab === "trace"
-                    ? (selectedTraces || []).filter(Boolean)
+                    ? selectedTraceIds
                     : spanSourceSelection.ids;
                 })()}
                 itemName={(() => {

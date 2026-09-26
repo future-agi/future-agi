@@ -71,6 +71,7 @@ import { isExpectedRequestCancellation } from "src/utils/cacheUtils";
 import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
 import CursorGridPagination from "./CursorGridPagination";
 import useCursorGridPagination from "./useCursorGridPagination";
+import { getTraceGridRowId } from "./traceGridRowId";
 import useImmediateGridQueryTransition from "./useImmediateGridQueryTransition";
 import {
   dispatchObservePageChanged,
@@ -149,6 +150,7 @@ const TraceGrid = React.forwardRef(
       setVisibleTraces: state.setVisibleTraces,
     }));
     const activeTraceId = traceDetailDrawerOpen?.traceId || null;
+    const activeTraceProjectId = traceDetailDrawerOpen?.projectId || null;
     const [openQuickFilter, setOpenQuickFilter] = useState(null);
     const [selectedAll, setSelectedAll] = useState(false);
     const [readMessage, setReadMessage] = useState(null);
@@ -923,13 +925,17 @@ const TraceGrid = React.forwardRef(
           }}
           statusBar={statusBar}
           blockLoadDebounceMillis={300}
-          getRowId={(d) => {
-            return d?.data?.trace_id;
-          }}
+          // Without a route project (the user page) rows span projects and
+          // one trace id can be listed once per project.
+          getRowId={(d) =>
+            getTraceGridRowId(d?.data, { crossProject: !projectId })
+          }
           getRowStyle={(params) => {
             if (
               params.data?.trace_id &&
-              params.data.trace_id === activeTraceId
+              params.data.trace_id === activeTraceId &&
+              (!activeTraceProjectId ||
+                params.data.project_id === activeTraceProjectId)
             ) {
               return { backgroundColor: "rgba(120, 87, 252, 0.08)" };
             }

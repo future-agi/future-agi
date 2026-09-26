@@ -1,6 +1,6 @@
 import React from "react";
 import { createTheme, ThemeProvider } from "@mui/material/styles";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, userEvent, waitFor } from "src/utils/test-utils";
 
 const {
@@ -19,6 +19,7 @@ const {
   traceGridSetState: vi.fn(),
   spanGridSetState: vi.fn(),
   drawerStore: {
+    traceDetailDrawerOpen: null,
     setTraceDetailDrawerOpen: vi.fn(),
     setSpanDetailDrawerOpen: vi.fn(),
     setVisibleTraces: vi.fn(),
@@ -118,17 +119,11 @@ vi.mock("../../../agents/store", () => ({
   useShallowToggleAnnotationsStore: (selector) =>
     selector({ showMetricsIds: [], reset: resetMetricIds }),
 }));
-vi.mock("../states", () => {
-  const traceState = {
-    traceDetailDrawerOpen: null,
-    ...drawerStore,
-  };
-  return {
-    useLLMTracingStoreShallow: (selector) => selector(traceState),
-    useTraceGridStore: { setState: traceGridSetState },
-    useSpanGridStore: { setState: spanGridSetState },
-  };
-});
+vi.mock("../states", () => ({
+  useLLMTracingStoreShallow: (selector) => selector(drawerStore),
+  useTraceGridStore: { setState: traceGridSetState },
+  useSpanGridStore: { setState: spanGridSetState },
+}));
 vi.mock("../common", () => ({
   AllowedGroups: [],
   FILTER_FOR_HAS_EVAL: {},
@@ -382,6 +377,170 @@ describe("row click detail pin", () => {
         project_id: "project-b",
       }),
     );
+  });
+});
+
+// QA F5-dup: on /dashboard/users/:userId the same trace id came back once per
+// project (list 200, copies B and A); the trace grid showed one "ERR" row and
+// AG Grid warning #205 (duplicate row ids). Drive each grid's own datasource,
+// row-id and selection callbacks through a real server-side AG Grid.
+describe("user page lists one id held by two projects (real AG Grid)", () => {
+  const TRACE = "c3c582b0-627a-427d-832d-1f49655803fd";
+  const traceCopies = [
+    { trace_id: TRACE, project_id: "project-b", trace_name: "root-B" },
+    { trace_id: TRACE, project_id: "project-a", trace_name: "root-A" },
+  ];
+  let mounted;
+  let warn;
+
+  beforeEach(() => {
+    getMock.mockReset();
+    traceGridSetState.mockClear();
+    spanGridSetState.mockClear();
+    drawerStore.setVisibleTraces.mockClear();
+    drawerStore.traceDetailDrawerOpen = null;
+    warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    if (mounted) {
+      act(() => mounted.api.destroy());
+      mounted.host.remove();
+      mounted = null;
+    }
+    warn.mockRestore();
+    drawerStore.traceDetailDrawerOpen = null;
+  });
+
+  const mountRealGrid = async (subject, rows) => {
+    const { createGrid, ModuleRegistry } = await import("ag-grid-community");
+    const { AllEnterpriseModule } = await import("ag-grid-enterprise");
+    ModuleRegistry.registerModules([AllEnterpriseModule]);
+    getMock.mockResolvedValueOnce(listResponse({ rows }));
+    render(subject);
+    const { props } = gridState;
+    const { setLoading } = subject.props;
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    act(() => {
+      const api = createGrid(host, {
+        theme: "legacy",
+        domLayout: "autoHeight",
+        columnDefs: [{ field: "trace_name" }, { field: "span_name" }],
+        rowModelType: "serverSide",
+        cacheBlockSize: 25,
+        maxConcurrentDatasourceRequests: 1,
+        suppressServerSideFullWidthLoadingRow: true,
+        rowSelection: props.rowSelection,
+        getRowId: props.getRowId,
+        onSelectionChanged: props.onSelectionChanged,
+        serverSideDatasource: props.serverSideDatasource,
+      });
+      gridState.api = api;
+      mounted = { api, host };
+    });
+    // The page read has settled (success or rejection) once loading drops.
+    await waitFor(() => expect(getMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(setLoading).toHaveBeenLastCalledWith(false));
+    return mounted.api;
+  };
+  const displayedRows = (api) =>
+    Array.from(
+      { length: api.getDisplayedRowCount() },
+      (_, index) => api.getDisplayedRowAtIndex(index)?.data,
+    );
+  const duplicateRowIdWarnings = () =>
+    warn.mock.calls
+      .map((args) => args.join(" "))
+      .filter((text) => /#205|duplicate row id/i.test(text));
+  const lastToggledTraces = () =>
+    traceGridSetState.mock.calls
+      .map(([state]) => state)
+      .filter((state) => "toggledNodes" in state)
+      .at(-1);
+
+  it("shows both project copies of a trace id and keeps each selectable", async () => {
+    const api = await mountRealGrid(
+      <TraceGrid {...baseProps()} projectId={null} />,
+      traceCopies,
+    );
+
+    expect(duplicateRowIdWarnings()).toEqual([]);
+    expect(displayedRows(api)).toEqual(traceCopies);
+    expect(mounted.host.textContent).not.toContain("ERR");
+    // Prev/next walks every copy with its own project.
+    await waitFor(() =>
+      expect(drawerStore.setVisibleTraces).toHaveBeenLastCalledWith([
+        { traceId: TRACE, projectId: "project-b" },
+        { traceId: TRACE, projectId: "project-a" },
+      ]),
+    );
+
+    act(() => api.getDisplayedRowAtIndex(1).setSelected(true));
+    await waitFor(() =>
+      expect(lastToggledTraces()?.toggledNodes).toHaveLength(1),
+    );
+    expect(api.getDisplayedRowAtIndex(0).isSelected()).toBe(false);
+
+    act(() => api.getDisplayedRowAtIndex(0).setSelected(true));
+    await waitFor(() =>
+      expect(lastToggledTraces()?.toggledNodes).toHaveLength(2),
+    );
+    const { toggledNodes } = lastToggledTraces();
+    expect(new Set(toggledNodes).size).toBe(2);
+  });
+
+  it("keeps bare trace-id row ids on a project-pinned grid", async () => {
+    const rows = [
+      { trace_id: "trace-1", project_id: "project-1", trace_name: "one" },
+      { trace_id: "trace-2", project_id: "project-1", trace_name: "two" },
+    ];
+    const api = await mountRealGrid(
+      <TraceGrid {...baseProps()} projectId="project-1" />,
+      rows,
+    );
+
+    expect(displayedRows(api)).toEqual(rows);
+    act(() => {
+      api.getDisplayedRowAtIndex(0).setSelected(true);
+      api.getDisplayedRowAtIndex(1).setSelected(true);
+    });
+    await waitFor(() =>
+      expect(lastToggledTraces()).toEqual({
+        toggledNodes: ["trace-1", "trace-2"],
+        selectAll: false,
+      }),
+    );
+  });
+
+  it("highlights only the copy whose project the open drawer is pinned to", () => {
+    drawerStore.traceDetailDrawerOpen = {
+      traceId: TRACE,
+      projectId: "project-a",
+    };
+    render(<TraceGrid {...baseProps()} projectId={null} />);
+    const style = (data) => gridState.props.getRowStyle({ data });
+
+    expect(style(traceCopies[0])).toBeNull();
+    expect(style(traceCopies[1])).toEqual({
+      backgroundColor: "rgba(120, 87, 252, 0.08)",
+    });
+  });
+
+  it("shows both project copies of a span (its row id already carries the project)", async () => {
+    const span = {
+      trace_id: TRACE,
+      span_id: "864c01fe652964dd",
+      start_time: "2026-09-25T07:00:00.000000Z",
+    };
+    const spanCopies = [
+      { ...span, project_id: "project-b", span_name: "child-B" },
+      { ...span, project_id: "project-a", span_name: "child-A" },
+    ];
+    const api = await mountRealGrid(<SpanGrid {...baseProps()} />, spanCopies);
+
+    expect(displayedRows(api)).toEqual(spanCopies);
+    expect(duplicateRowIdWarnings()).toEqual([]);
   });
 });
 
