@@ -48,12 +48,13 @@ This feature does not perform automatic destructive source or catalog cleanup.
 From the repository root:
 
 ```sh
-docker compose up -d --build
+docker compose -f docker-compose.distributed.yml up -d --build
 ```
 
-The installer (`bin/install` or `bin/install.ps1`) uses the same topology.
-For development, layer `docker-compose.dev.yml` over the root file after the
-normal application bootstrap. The dev overlay skips application migrations;
+The installer's distributed stack (`bin/install --distributed` or `bin/install.ps1 -Distributed`)
+uses the same topology. The standalone install (`docker-compose.yml`) does not run
+the observation catalog. For development, layer `docker-compose.distributed.dev.yml` over
+`docker-compose.distributed.yml` after the normal application bootstrap. The dev overlay skips application migrations;
 use the standard E2E harness for a fresh installation test.
 
 Kafka, topic creation and the two-index bootstrap have explicit startup

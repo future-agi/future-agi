@@ -32,10 +32,11 @@ storage preservation and bounded historical backfill.
 
 ### 1. Bundled with the FutureAGI backend (single docker compose up)
 
-The main `docker-compose.yml` at `future-agi/` adds `fi-collector` as a
-service alongside Django, Postgres, ClickHouse, etc. One `docker compose up`
-brings everything live; SDKs point at the collector instead of Django's
-`/v1/traces` endpoint.
+Both root Compose files at `future-agi/` run `fi-collector` next to Django,
+Postgres and ClickHouse: the default `docker-compose.yml` runs it inside the
+`app` container, and `docker-compose.distributed.yml` runs it as its own service. One
+`docker compose up` brings everything live; SDKs point at the collector
+instead of Django's `/v1/traces` endpoint.
 
 ### 2. Standalone (just collector + ClickHouse)
 
@@ -221,5 +222,5 @@ This is the scaffolding + adapter + writer + exporter component, with
 tests. Production readiness needs:
 
 - Real load test (10K+ spans/sec sustained against a real CH cluster)
-- Integration with the main `docker-compose.yml`
+- Integration with the root Compose files
 - Monitoring/metrics exporter for ops visibility
