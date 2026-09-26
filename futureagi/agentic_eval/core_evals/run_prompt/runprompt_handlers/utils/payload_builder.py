@@ -29,6 +29,7 @@ from agentic_eval.core_evals.run_prompt.runprompt_handlers.base_handler import (
 from agentic_eval.core_evals.run_prompt.runprompt_handlers.utils.parameter_validator import (
     ParametersValidator,
 )
+from model_hub.models.openai_tools import ensure_openai_tool_envelope
 from model_hub.utils.azure_endpoints import normalize_azure_custom_model_config
 
 logger = structlog.get_logger(__name__)
@@ -113,7 +114,11 @@ class PayloadBuilder:
             else None,
             "top_p": float(context.top_p) if context.top_p is not None else None,
             "response_format": response_format,
-            "tools": context.tools or [],
+            "tools": (
+                [ensure_openai_tool_envelope(t) for t in context.tools]
+                if context.tools
+                else []
+            ),
             "tool_choice": context.tool_choice if context.tools else None,
         }
 
