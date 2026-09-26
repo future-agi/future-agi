@@ -1386,32 +1386,17 @@ def _span_notes_target_for_queue_item(item, *, ch_cache=None):
 
     ``ch_cache`` (opt-in :class:`CollectorSourceCache`): reads the already-resolved
     source off the page/item cache — same root-pick rule, so the same span — instead
-    of its own unscoped CH point-read. Callers that resolve the item's source anyway
-    should pass it; the bare read stays for callers that don't.
+    of its own CH read. Callers that resolve the item's source anyway should pass
+    it; without one, a one-item cache reads the item's own copy (a trace / span id
+    can exist in several tenants' projects, and the notes land on this span).
     """
-    if ch_cache is not None:
-        if item.source_type == "observation_span":
-            return ch_cache.span(item.observation_span_id)
-        if item.source_type == "trace":
-            return ch_cache.trace_root(item.trace_id)
+    if item.source_type not in ("observation_span", "trace"):
         return None
-
-    from tracer.services.clickhouse.v2 import get_reader
-
-    if item.source_type == "observation_span" and item.observation_span_id:
-        with get_reader() as reader:
-            return reader.get(str(item.observation_span_id))
-    if item.source_type != "trace" or not item.trace_id:
-        return None
-
-    with get_reader() as reader:
-        roots = reader.roots_by_trace_ids([str(item.trace_id)], include_heavy=False)
-    if not roots:
-        return None
-    for s in roots:
-        if s.observation_type == "conversation":
-            return s
-    return roots[0]
+    if ch_cache is None:
+        ch_cache = CollectorSourceCache.for_items([item])
+    if item.source_type == "observation_span":
+        return ch_cache.span(item.observation_span_id)
+    return ch_cache.trace_root(item.trace_id)
 
 
 def _serialize_queue_item_note(note):

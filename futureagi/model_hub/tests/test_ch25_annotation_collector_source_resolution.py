@@ -829,6 +829,7 @@ class _CountingReaderCM:
 
     def __init__(self, spans):
         self._by_id = {str(s.id): s for s in spans}
+        self.newest_span_projects_calls = []
         self.list_by_ids_calls = []
         self.get_calls = []
 
@@ -838,10 +839,24 @@ class _CountingReaderCM:
     def __exit__(self, *exc):
         return False
 
+    def newest_span_projects(self, span_ids, project_ids):
+        ids = [str(s) for s in span_ids]
+        self.newest_span_projects_calls.append(ids)
+        return {
+            i: self._by_id[i].project_id
+            for i in ids
+            if i in self._by_id and self._by_id[i].project_id in project_ids
+        }
+
     def list_by_ids(self, span_ids, *, project_id=None, include_heavy=True, **_):
         ids = [str(s) for s in span_ids]
         self.list_by_ids_calls.append(ids)
-        return [self._by_id[i] for i in ids if i in self._by_id]
+        return [
+            self._by_id[i]
+            for i in ids
+            if i in self._by_id
+            and (project_id is None or self._by_id[i].project_id == project_id)
+        ]
 
     def get(self, span_id):  # the per-item path — must NOT be hit when batched
         self.get_calls.append(str(span_id))
@@ -904,10 +919,14 @@ def test_list_serializer_batches_collector_ch_reads(organization, workspace, use
     ):
         data = QueueItemSerializer(items, many=True).data
 
-    # one batch span read, carrying every collector span id — never a per-item point read
+    # The items predate QueueItem.project: one lean read resolves every span id's
+    # project in the items' tenant, then one batch span read carries them all —
+    # never a per-item point read.
+    assert len(reader_cm.newest_span_projects_calls) == 1
+    assert set(reader_cm.newest_span_projects_calls[0]) == {str(s.id) for s in spans}
     assert len(reader_cm.list_by_ids_calls) == 1, reader_cm.list_by_ids_calls
     assert reader_cm.get_calls == [], reader_cm.get_calls
-    assert get_reader.call_count == 1
+    assert get_reader.call_count == 2
     assert set(reader_cm.list_by_ids_calls[0]) == {str(s.id) for s in spans}
     # one batch session read, carrying every collector session id
     assert resolve_sessions.call_count == 1
@@ -1101,6 +1120,14 @@ class _MultiSpanReaderCM:
     def __exit__(self, *exc):
         return False
 
+    def newest_trace_projects(self, trace_ids, project_ids):
+        ids = {str(t) for t in trace_ids}
+        return {
+            str(s.trace_id): str(s.project_id)
+            for s in self._spans
+            if str(s.trace_id) in ids and str(s.project_id) in project_ids
+        }
+
     def roots_by_trace_ids(
         self, trace_ids, *, include_heavy=False, project_id=None, org_id=None, **_
     ):
@@ -1163,17 +1190,29 @@ def test_for_items_scopes_read_to_item_project():
     assert reader.roots_calls == [((tid,), proj)]
 
 
-def test_for_items_null_project_falls_back_unscoped():
-    """A pre-denormalization item (project_id NULL) is read UNSCOPED (project_id
-    None) and still resolves — the migration degrades gracefully, never wrong."""
+@pytest.mark.django_db
+def test_for_items_null_project_reads_the_copy_in_the_items_tenant(
+    organization, workspace
+):
+    """A pre-denormalization item (project_id NULL) still resolves, from the copy
+    in its own organization: the trace id is resolved to a project of the item's
+    tenant, then read scoped to it. Another organization's copy of the same id is
+    never read (an unscoped read rendered whichever copy it met first)."""
+    project = _make_project(organization=organization, workspace=workspace)
     tid = str(uuid.uuid4())
     reader = _MultiSpanReaderCM(
-        [_make_chspan(project_id=str(uuid.uuid4()), trace_id=tid, parent_span_id="")]
+        [
+            _make_chspan(project_id=str(uuid.uuid4()), trace_id=tid, parent_span_id=""),
+            _make_chspan(project_id=str(project.id), trace_id=tid, parent_span_id=""),
+        ]
     )
+    item = _trace_item(tid, None)
+    item.organization = organization
+    item.workspace = workspace
     with mock.patch(CH_READER_PATH, return_value=reader):
-        cache = helpers.CollectorSourceCache.for_items([_trace_item(tid, None)])
-    assert cache.trace_root(tid) is not None
-    assert reader.roots_calls == [((tid,), None)]
+        cache = helpers.CollectorSourceCache.for_items([item])
+    assert cache.trace_root(tid).project_id == str(project.id)
+    assert reader.roots_calls == [((tid,), str(project.id))]
 
 
 def test_for_items_read_count_is_bounded_by_projects_not_items():

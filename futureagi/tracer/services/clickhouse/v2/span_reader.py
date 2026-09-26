@@ -658,22 +658,60 @@ class CHSpanReader:
         broken by project id. ``None`` when no project in ``project_ids`` holds
         a live span of the trace.
         """
+        return self.newest_trace_projects([trace_id], project_ids).get(str(trace_id))
+
+    def newest_trace_projects(
+        self, trace_ids: Iterable[str], project_ids: Iterable[str]
+    ) -> dict[str, str]:
+        """``{trace_id: project_id}``: :meth:`newest_trace_project` for many
+        traces in one read. A trace no project in ``project_ids`` holds live
+        is absent."""
+        tids = tuple(dict.fromkeys(str(tid) for tid in trace_ids))
         pids = tuple(dict.fromkeys(str(pid) for pid in project_ids))
-        if not pids:
-            return None
+        if not tids or not pids:
+            return {}
         rows = self._client.query(
-            "SELECT toString(project_id) FROM ("
-            " SELECT project_id,"
+            "SELECT toString(trace_id), toString(project_id) FROM ("
+            " SELECT project_id, trace_id,"
             " argMax(is_deleted, _version) AS latest_is_deleted,"
             " max(_version) AS latest_version"
             " FROM spans"
-            " PREWHERE project_id IN %(pids)s AND trace_id = %(tid)s"
+            " PREWHERE project_id IN %(pids)s AND trace_id IN %(tids)s"
             " GROUP BY project_id, trace_id, id, start_time"
             ") WHERE latest_is_deleted = 0"
-            " ORDER BY latest_version DESC, toString(project_id) DESC LIMIT 1",
-            parameters={"pids": pids, "tid": str(trace_id)},
+            " ORDER BY trace_id, latest_version DESC, toString(project_id) DESC"
+            " LIMIT 1 BY trace_id",
+            parameters={"pids": pids, "tids": tids},
         ).result_rows
-        return str(rows[0][0]) if rows else None
+        return {str(tid): str(pid) for tid, pid in rows}
+
+    def newest_span_projects(
+        self, span_ids: Iterable[str], project_ids: Iterable[str]
+    ) -> dict[str, str]:
+        """``{span_id: project_id}``: the project whose copy
+        ``get(span_id, project_ids=project_ids)`` returns, for many spans in one
+        read — the newest live version wins, ties broken as ``get`` breaks
+        them. Reads only the key columns, so a fat span cannot blow the memory
+        limit. A span no project in ``project_ids`` holds live is absent."""
+        ids = tuple(dict.fromkeys(str(sid) for sid in span_ids))
+        pids = tuple(dict.fromkeys(str(pid) for pid in project_ids))
+        if not ids or not pids:
+            return {}
+        rows = self._client.query(
+            "SELECT id, toString(project_id) FROM ("
+            " SELECT project_id, trace_id, id, start_time,"
+            " argMax(is_deleted, _version) AS latest_is_deleted,"
+            " max(_version) AS latest_version"
+            " FROM spans"
+            " PREWHERE project_id IN %(pids)s AND id IN %(ids)s"
+            " GROUP BY project_id, trace_id, id, start_time"
+            ") WHERE latest_is_deleted = 0"
+            " ORDER BY id, latest_version DESC, toString(project_id) DESC,"
+            " trace_id DESC, start_time DESC"
+            " LIMIT 1 BY id",
+            parameters={"pids": pids, "ids": ids},
+        ).result_rows
+        return {str(sid): str(pid) for sid, pid in rows}
 
     # ─── One trace's curated fields (the `traces` store the list endpoints read)
     def get_trace_row(

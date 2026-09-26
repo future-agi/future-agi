@@ -788,17 +788,33 @@ def _resolve_ch_trace_session(source_id, *, organization=None, workspace=None):
     )
 
 
-def _ch_span_for_item(span_id):
+def _queue_item_source_project_ids(item):
+    """Projects a queue item's CH trace / span may render from: the item's own
+    project when it was recorded at add time, else every project of the item's
+    org / workspace (the add path's scope), where the newest copy wins. A trace /
+    span id can exist in several projects and organizations, so a render read by
+    bare id would show an arbitrary tenant's copy. FAIL CLOSED: ``[]`` renders
+    the ``deleted`` sentinel."""
+    if item.project_id:
+        return [str(item.project_id)]
+    return _tenant_scoped_project_ids(
+        organization=item.organization, workspace=item.workspace
+    )
+
+
+def _ch_span_for_item(span_id, *, project_ids=None):
     """Best-effort CH point-read for a render path (preview/content). Returns the
     :class:`CHSpan` or ``None`` (genuinely-gone span OR CH error). FAIL OPEN on the
-    render (None → ``deleted`` sentinel) but logs — never raises into the page."""
+    render (None → ``deleted`` sentinel) but logs — never raises into the page.
+
+    ``project_ids`` restricts the read to those projects; the newest copy wins."""
     if not span_id:
         return None
     from tracer.services.clickhouse.v2 import get_reader
 
     try:
         with get_reader() as reader:
-            return reader.get(str(span_id))
+            return reader.get(str(span_id), project_ids=project_ids)
     except Exception as exc:
         logger.warning("ch_span_render_error", span_id=str(span_id), error=str(exc))
         return None
@@ -1029,6 +1045,48 @@ def _batch_ch_session_fields(session_ids, *, project_id=None, caller="render"):
         return {}
 
 
+def _newest_ch_source_projects(span_ids, trace_ids, *, item, caller="render"):
+    """``({span_id: project_id}, {trace_id: project_id})`` for queue items added
+    before their project was recorded: the project holding each id's newest copy
+    among *item*'s tenant projects (:func:`_queue_item_source_project_ids`), read
+    LEAN and chunked like :func:`_batch_ch_trace_roots`. An id with no copy in
+    scope is absent. CH error → ``({}, {})`` (FAIL OPEN on the render: the items
+    show the ``deleted`` sentinel, never another tenant's copy)."""
+    if not span_ids and not trace_ids:
+        return {}, {}
+    project_ids = _queue_item_source_project_ids(item)
+    if not project_ids:
+        return {}, {}
+    from tracer.services.clickhouse.v2 import get_reader
+
+    span_projects, trace_projects = {}, {}
+    span_ids, trace_ids = list(span_ids), list(trace_ids)
+    try:
+        with get_reader() as reader:
+            for start in range(0, len(span_ids), _CH_TRACE_ID_BATCH):
+                span_projects.update(
+                    reader.newest_span_projects(
+                        span_ids[start : start + _CH_TRACE_ID_BATCH], project_ids
+                    )
+                )
+            for start in range(0, len(trace_ids), _CH_TRACE_ID_BATCH):
+                trace_projects.update(
+                    reader.newest_trace_projects(
+                        trace_ids[start : start + _CH_TRACE_ID_BATCH], project_ids
+                    )
+                )
+    except Exception as exc:
+        logger.warning(
+            "ch_bulk_resolve_failed",
+            source_type="project",
+            count=len(span_ids) + len(trace_ids),
+            error=str(exc),
+            caller=caller,
+        )
+        return {}, {}
+    return span_projects, trace_projects
+
+
 class CollectorSourceCache:
     """Page-scoped batch cache of CH-resolved sources (trace / span / session).
 
@@ -1058,18 +1116,35 @@ class CollectorSourceCache:
         the whole multi-tenant table. A page's items can legitimately span projects
         (add-items only tenant-scopes the source), so a single queue-wide scope would
         drop off-project items and render them ``deleted`` — hence per-item project.
-        Items whose ``project_id`` is NULL (pre-denormalization rows) fall into one
-        unscoped group: correct, just unpruned. A page spans few distinct projects, so
-        this is a handful of scoped reads, not one per item. Empty id-sets short-circuit."""
-        # project_id (str, or None for pre-denorm rows) -> per-kind soft-id sets
+        A trace / span item whose ``project_id`` is NULL (added before it was
+        recorded) joins the group of the project holding the newest copy of its id
+        in the item's org / workspace (one lean read per kind): a trace / span id can
+        exist in several organizations, and an unscoped read renders whichever copy
+        it meets. Session items keep the unscoped NULL group (a session id is derived
+        from its project). A page spans few distinct projects, so this is a handful
+        of scoped reads, not one per item. Empty id-sets short-circuit."""
+
+        def _buckets(groups, key):
+            return groups.setdefault(
+                key, {"spans": set(), "sessions": set(), "traces": set()}
+            )
+
+        # project_id (str, or None for pre-denorm sessions) -> per-kind soft-id sets
         by_project: dict[object, dict] = {}
+        # (organization_id, workspace_id) -> soft-id sets of pre-denorm trace / span
+        # items, plus one item of the group to read the org / workspace from
+        unattributed: dict[tuple, dict] = {}
         for item in items or []:
             source_type = getattr(item, "source_type", None)
             pid = getattr(item, "project_id", None)
-            buckets = by_project.setdefault(
-                str(pid) if pid else None,
-                {"spans": set(), "sessions": set(), "traces": set()},
-            )
+            if pid or source_type == QueueItemSourceType.TRACE_SESSION.value:
+                buckets = _buckets(by_project, str(pid) if pid else None)
+            else:
+                buckets = _buckets(
+                    unattributed,
+                    (item.organization_id, getattr(item, "workspace_id", None)),
+                )
+                buckets.setdefault("item", item)
             if (
                 source_type == QueueItemSourceType.OBSERVATION_SPAN.value
                 and item.observation_span_id
@@ -1083,8 +1158,17 @@ class CollectorSourceCache:
             elif source_type == QueueItemSourceType.TRACE.value and item.trace_id:
                 buckets["traces"].add(str(item.trace_id))
 
-        # A soft id belongs to exactly one project, so the per-group results never
-        # collide on merge. NULL-project group (project_id=None) is the prior read.
+        for buckets in unattributed.values():
+            span_projects, trace_projects = _newest_ch_source_projects(
+                buckets["spans"], buckets["traces"], item=buckets["item"]
+            )
+            for span_id, pid in span_projects.items():
+                _buckets(by_project, pid)["spans"].add(span_id)
+            for trace_id, pid in trace_projects.items():
+                _buckets(by_project, pid)["traces"].add(trace_id)
+
+        # One queue holds a source id once, so the per-group results never collide
+        # on merge. NULL-project group (project_id=None) holds sessions only.
         spans, sessions, trace_roots = {}, {}, {}
         for pid, buckets in by_project.items():
             spans.update(_batch_ch_spans(buckets["spans"], project_id=pid))
@@ -1505,7 +1589,9 @@ def resolve_source_preview(item, *, ch_cache=None):
             root_span = (
                 ch_cache.trace_root(item.trace_id)
                 if ch_cache is not None
-                else _ch_root_span_for_trace(item.trace_id)
+                else _ch_root_span_for_trace(
+                    item.trace_id, project_ids=_queue_item_source_project_ids(item)
+                )
             )
             if root_span is None:
                 return {"type": "trace", "deleted": True}
@@ -1516,7 +1602,10 @@ def resolve_source_preview(item, *, ch_cache=None):
             ch_span = (
                 ch_cache.span(item.observation_span_id)
                 if ch_cache is not None
-                else _ch_span_for_item(item.observation_span_id)
+                else _ch_span_for_item(
+                    item.observation_span_id,
+                    project_ids=_queue_item_source_project_ids(item),
+                )
             )
             if ch_span is None:
                 return {"type": "observation_span", "deleted": True}
@@ -1646,7 +1735,9 @@ def resolve_source_content(item, *, ch_cache=None, cell_cache=None):
             root_span = (
                 ch_cache.trace_root(item.trace_id)
                 if ch_cache is not None
-                else _ch_root_span_for_trace(item.trace_id)
+                else _ch_root_span_for_trace(
+                    item.trace_id, project_ids=_queue_item_source_project_ids(item)
+                )
             )
             if root_span is None:
                 return {"type": "trace", "deleted": True}
@@ -1672,7 +1763,10 @@ def resolve_source_content(item, *, ch_cache=None, cell_cache=None):
             ch_span = (
                 ch_cache.span(item.observation_span_id)
                 if ch_cache is not None
-                else _ch_span_for_item(item.observation_span_id)
+                else _ch_span_for_item(
+                    item.observation_span_id,
+                    project_ids=_queue_item_source_project_ids(item),
+                )
             )
             if ch_span is None:
                 return {"type": "observation_span", "deleted": True}
