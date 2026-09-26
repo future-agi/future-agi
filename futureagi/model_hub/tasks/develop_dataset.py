@@ -352,6 +352,7 @@ def create_synthetic_dataset(
     creating_synthetic_dataset,
     request_uuid=None,
 ):
+    task_manager = None
     try:
         organization = Organization.objects.get(id=organization_id)
 
@@ -380,6 +381,9 @@ def create_synthetic_dataset(
         agent = SyntheticDataAgent(dataset_id=dataset_id, request_uuid=request_uuid)
 
         dataset = Dataset.objects.get(id=dataset_id)
+        dataset.status = StatusType.RUNNING.value
+        dataset.failure_reason = None
+        dataset.save()
         payload = {
             "requirements": {
                 "Dataset Name": validated_data["dataset"]["name"],
@@ -496,6 +500,7 @@ def create_synthetic_dataset(
             else recommend_evals
         )
         dataset.dataset_config.update({"eval_recommendations": recommend_evals})
+        dataset.status = StatusType.COMPLETED.value
         dataset.save()
 
         if creating_synthetic_dataset:
@@ -572,9 +577,15 @@ def create_synthetic_dataset(
         try:
             dataset = Dataset.objects.get(id=dataset_id)
             dataset.status = StatusType.FAILED.value
+            dataset.failure_reason = str(e)[:10000]
             dataset.save()
         except Exception as inner_e:
             logger.error(f"Error updating dataset status: {str(inner_e)}")
+        try:
+            if task_manager is not None:
+                task_manager.clear_task_data(str(dataset_id))
+        except Exception:
+            pass
         raise e
 
 
