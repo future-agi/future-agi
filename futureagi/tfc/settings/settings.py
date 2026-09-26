@@ -791,6 +791,15 @@ EVAL_TASK_SWEEP_RECOVER_FAILED = os.getenv(
     "EVAL_TASK_SWEEP_RECOVER_FAILED", "false"
 ).lower() in ("true", "1", "yes")
 
+# Run code evals inside the worker when the code-executor service cannot be
+# reached (DNS failure, connection refused, no route). Default OFF: code evals
+# then fail with "Code executor unavailable". Only for self-hosted installs that
+# cannot run the privileged code-executor container and where every user who
+# can author code evals is trusted. Ignored when CLOUD_DEPLOYMENT is US, EU or DEV.
+CODE_EXECUTOR_LOCAL_FALLBACK = os.getenv(
+    "CODE_EXECUTOR_LOCAL_FALLBACK", "false"
+).lower() in ("true", "1", "yes")
+
 # Hosted simulation runner (plan §9): when enabled, eligible runs are dispatched
 # to the simulation-runner worker which executes the released SDK, instead of the
 # native in-backend simulation path. Default off — no regression.

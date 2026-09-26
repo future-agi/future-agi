@@ -459,6 +459,7 @@ topics, volumes and obsolete workloads until their explicit retirement is approv
 - [ ] `VITE_HOST_API` matches the public backend URL (or `/api` if route-split at the proxy)
 - [ ] Backend CORS allows the frontend origin (split-domain only)
 - [ ] Reverse proxy terminates TLS; frontend container is not exposed publicly on port 3000
+- [ ] `code-executor` is running and reachable from the backend and workers; `CODE_EXECUTOR_LOCAL_FALLBACK` is unset or `false`
 - [ ] Postgres, ClickHouse, MinIO data volumes are on persistent storage
 - [ ] Backup crons (Postgres + ClickHouse) scheduled and tested with restore dry-run
 - [ ] Docker daemon and host OS get security patches on a known cadence
