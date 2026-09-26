@@ -801,20 +801,34 @@ class CHSpanReader:
         ).result_rows
         return [_row_to_chspan(r) for r in rows]
 
-    def first_span_by_type(self, trace_id: str, observation_type: str) -> CHSpan | None:
+    def first_span_by_type(
+        self, trace_id: str, observation_type: str, *, project_id: str | None = None
+    ) -> CHSpan | None:
         """First span of a given type in a trace, ordered by start_time.
 
         Single-row CH read — replaces listing every span in a trace just to
         find the first LLM/TOOL/etc. span.
+
+        A trace id can be held by several projects (replays, re-imports).
+        Callers that know the trace's tenant must pass ``project_id``: it keeps
+        another project's copy out of the answer and prunes by the
+        primary-key prefix.
         """
         # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS. Prunes via
         # the ``idx_trace_id`` bloom (off under FINAL without the setting).
+        where = ["trace_id = %(trace_id)s", "lower(observation_type) = %(otype)s"]
+        params: dict[str, Any] = {
+            "trace_id": trace_id,
+            "otype": observation_type.lower(),
+        }
+        if project_id:
+            where.append("project_id = %(pid)s")
+            params["pid"] = str(project_id)
         rows = self._client.query(
             f"SELECT {_LEAN_SELECT_SQL} FROM spans FINAL "
-            "WHERE trace_id = %(trace_id)s "
-            "AND lower(observation_type) = %(otype)s "
+            f"WHERE {' AND '.join(where)} "
             "ORDER BY start_time, id LIMIT 1",
-            parameters={"trace_id": trace_id, "otype": observation_type.lower()},
+            parameters=params,
             settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         return _row_to_chspan(rows[0]) if rows else None

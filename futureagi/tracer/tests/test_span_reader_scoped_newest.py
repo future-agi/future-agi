@@ -4,7 +4,8 @@ A replay, re-import or shared provider account writes one trace / span id into
 several projects. ``CHSpanReader.get(project_ids=...)`` and
 ``newest_trace_project`` must stay inside the given projects, answer the most
 recently written copy, and never resurrect a copy whose newest write is a
-tombstone. Proven against a real ReplacingMergeTree copied from ``spans``.
+tombstone. ``first_span_by_type(project_id=...)`` must read only the given
+project's copy. Proven against a real ReplacingMergeTree copied from ``spans``.
 """
 
 import uuid
@@ -53,15 +54,24 @@ def copies():
     table = f"b01_scoped_newest_{uuid.uuid4().hex[:8]}"
     ch.command(f"CREATE TABLE {table} AS spans")
 
-    def insert(project_id, *, version, deleted=0, span_id="root", trace_id=TRACE):
+    def insert(
+        project_id,
+        *,
+        version,
+        deleted=0,
+        span_id="root",
+        trace_id=TRACE,
+        observation_type="conversation",
+        start_time="2026-09-22 16:27:36.543",
+    ):
         ch.insert(
             table,
             [
                 [
                     project_id,
-                    "conversation",
+                    observation_type,
                     "svc",
-                    "2026-09-22 16:27:36.543",
+                    start_time,
                     trace_id,
                     span_id,
                     "",
@@ -168,3 +178,27 @@ def test_batched_newest_projects_answer_the_single_reads(copies):
     insert(NEWER, version=40, deleted=1)
     assert reader.newest_trace_projects([TRACE], in_scope) == {TRACE: OLDER}
     assert reader.newest_span_projects(["root"], in_scope) == {"root": OLDER}
+
+
+@pytest.mark.django_db
+def test_first_span_by_type_reads_only_the_given_project(copies):
+    """The feed sidebar reads the model from the cluster project's first LLM
+    span. Unscoped, the read keeps whichever copy's LLM span starts first."""
+    reader, insert = copies
+    for project_id, start_time in (
+        (FOREIGN, "2026-09-22 16:27:10.000"),
+        (OLDER, "2026-09-22 16:27:20.000"),
+    ):
+        insert(
+            project_id,
+            version=10,
+            span_id="llm",
+            observation_type="llm",
+            start_time=start_time,
+        )
+
+    assert reader.first_span_by_type(TRACE, "llm").project_id == FOREIGN
+    assert reader.first_span_by_type(TRACE, "llm", project_id=OLDER).project_id == (
+        OLDER
+    )
+    assert reader.first_span_by_type(TRACE, "llm", project_id=NEWER) is None

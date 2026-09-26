@@ -3340,7 +3340,9 @@ def _fetch_sidebar_ai_metadata(
     model_version: str | None = None
     if focus_trace_id:
         with get_reader() as reader:
-            llm_span = reader.first_span_by_type(focus_trace_id, "llm")
+            llm_span = reader.first_span_by_type(
+                focus_trace_id, "llm", project_id=str(cluster.project_id)
+            )
         if llm_span:
             model = llm_span.model or None
             # CHSpan typed-Map string attrs live in attrs_string.

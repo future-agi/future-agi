@@ -5,10 +5,14 @@ re-import, a shared voice provider account). The issue detail's success and
 representative previews and the Overview's working-trace reel read the trace's
 root span by id; read unscoped they showed whichever copy started last — on
 dev, 568 of 1,146 feed (cluster, trace) pairs whose trace has several copies
-resolved to another project's copy. They now read the cluster's project.
+resolved to another project's copy. The sidebar's model / model version read
+the trace's first LLM span by id the same way and kept the copy whose LLM span
+started first — on dev, 518 of 1,062 such pairs. They now read the cluster's
+project.
 
-The ClickHouse reader is faked with per-project copies of each root, returned
-in the real read's ``(trace_id, start_time, id)`` order; Postgres runs for real.
+The ClickHouse reader is faked with per-project copies of each span, returned
+in the real reads' ``(trace_id, start_time, id)`` order; Postgres runs for
+real.
 """
 
 import uuid
@@ -29,6 +33,8 @@ pytestmark = pytest.mark.django_db
 
 SUCCESS_TRACE = str(uuid.uuid4())
 MEMBER_TRACE = str(uuid.uuid4())
+# Only the other projects' copies of this trace carry an LLM span.
+NO_OWN_LLM_TRACE = str(uuid.uuid4())
 
 
 def _project(organization, workspace, name):
@@ -42,11 +48,13 @@ def _project(organization, workspace, name):
 
 
 class _Roots:
-    """``get_reader()`` stand-in: roots of every copy, scoped by ``project_id``
-    and ordered by ``(trace_id, start_time, id)`` like the real read."""
+    """``get_reader()`` stand-in: roots and LLM spans of every copy, scoped by
+    ``project_id`` and ordered by ``(trace_id, start_time, id)`` like the real
+    reads."""
 
-    def __init__(self, roots):
+    def __init__(self, roots, llm_spans=()):
         self.roots = roots
+        self.llm_spans = llm_spans
 
     def __enter__(self):
         return self
@@ -63,12 +71,24 @@ class _Roots:
         ]
         return sorted(rows, key=lambda r: (r.trace_id, r.start_time, r.id))
 
+    def first_span_by_type(self, trace_id, observation_type, *, project_id=None):
+        rows = [
+            span
+            for span in self.llm_spans
+            if span.trace_id == trace_id
+            and span.observation_type == observation_type.lower()
+            and (not project_id or span.project_id == str(project_id))
+        ]
+        return min(rows, key=lambda r: (r.start_time, r.id), default=None)
+
 
 @pytest.fixture
 def cluster(organization, workspace, user):
     """A scanner cluster in ``own``. Its success and member traces are also
     held by ``other`` (same organization) and ``foreign`` (another
-    organization), whose copies start later, so an unscoped read keeps them."""
+    organization), whose roots start later, so an unscoped read keeps them.
+    Their LLM spans start earlier than ``own``'s, so an unscoped first-LLM-span
+    read keeps theirs too."""
     own = _project(organization, workspace, "own")
     other = _project(organization, workspace, "other")
     foreign_org = Organization.objects.create(name=f"Foreign {uuid.uuid4().hex[:8]}")
@@ -107,8 +127,24 @@ def cluster(organization, workspace, user):
         for trace_id in (SUCCESS_TRACE, MEMBER_TRACE)
         for project, second in ((own, 1), (other, 5), (foreign, 9))
     ]
+    llm_spans = [
+        SimpleNamespace(
+            id=f"llm-{project.name}",
+            project_id=str(project.id),
+            trace_id=trace_id,
+            observation_type="llm",
+            start_time=datetime(2026, 9, 22, 16, 27, second, tzinfo=UTC),
+            model=f"{project.name}-model",
+            attrs_string={"gen_ai.request.model_version": f"{project.name}-v1"},
+        )
+        for trace_id, copies in (
+            (MEMBER_TRACE, ((own, 30), (other, 20), (foreign, 10))),
+            (NO_OWN_LLM_TRACE, ((other, 20), (foreign, 10))),
+        )
+        for project, second in copies
+    ]
     with (
-        patch.object(feed, "get_reader", lambda: _Roots(roots)),
+        patch.object(feed, "get_reader", lambda: _Roots(roots, llm_spans)),
         patch.object(feed, "is_voice_project", return_value=False),
         patch.object(feed, "_fetch_trends_batch", return_value={}),
         patch.object(feed, "_fetch_users_affected_batch", return_value={}),
@@ -138,3 +174,27 @@ def test_working_trace_reel_shows_the_clusters_copy(cluster):
     )
 
     assert [step["text"] for step in reel] == ["own input", "own output"]
+
+
+def test_sidebar_model_comes_from_the_clusters_copy(cluster):
+    sidebar = feed.get_sidebar(cluster.cluster_id, [str(cluster.project_id)])
+
+    assert sidebar.ai_metadata.trace_id == MEMBER_TRACE
+    assert (sidebar.ai_metadata.model, sidebar.ai_metadata.model_version) == (
+        "own-model",
+        "own-v1",
+    )
+
+
+def test_sidebar_shows_no_model_when_only_other_copies_call_one(cluster):
+    ErrorClusterTraces.objects.create(cluster=cluster, trace_id=NO_OWN_LLM_TRACE)
+
+    sidebar = feed.get_sidebar(
+        cluster.cluster_id, [str(cluster.project_id)], trace_id=NO_OWN_LLM_TRACE
+    )
+
+    assert sidebar.ai_metadata.trace_id == NO_OWN_LLM_TRACE
+    assert (sidebar.ai_metadata.model, sidebar.ai_metadata.model_version) == (
+        None,
+        None,
+    )
