@@ -31,8 +31,6 @@ from django.db.models import (
 )
 from django.db.models.functions import Coalesce, TruncDate
 from django.utils import timezone
-from scipy.stats import ks_2samp
-from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 
 from tracer.models.observation_span import EvalLogger, EvalTargetType
 from tracer.models.trace_error_analysis import (
@@ -1145,6 +1143,7 @@ def _tfidf_distinctive_terms(
     up to ``top_k`` ``(term, score)`` pairs sorted by descending score.
     Empty list on degenerate inputs (corpus <2 docs, empty vocab, etc).
     """
+    from sklearn.feature_extraction.text import TfidfVectorizer  # lazy
     if not target_doc or len(corpus) < 2:
         return []
     try:
@@ -1312,6 +1311,7 @@ def _log_odds_distinctive(
         delta = log((y_f+a)/(n_f+a0-y_f-a)) - log((y_b+a)/(n_b+a0-y_b-a))
         z     = delta / sqrt(1/(y_f+a) + 1/(y_b+a))
     """
+    from sklearn.feature_extraction.text import CountVectorizer  # lazy
     if not fail_docs or not base_docs:
         return []
     try:
@@ -1553,6 +1553,7 @@ def _insight_distribution_shift(
 
     ``project_id`` (single tenant — both corpora belong to the cluster's
     project) pins the totals reads so they prune by primary-key prefix."""
+    from scipy.stats import ks_2samp  # lazy
     if not baseline_ids:
         return None
     fail_tot = _get_trace_totals_batch(trace_ids, project_id)

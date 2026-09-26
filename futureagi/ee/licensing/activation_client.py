@@ -81,13 +81,14 @@ def invalidate_token() -> None:
 
 def _activate() -> ServiceToken | None:
     try:
+        from tfc.deployment_telemetry.config import get_version
         from tfc.deployment_telemetry.state import get_or_create_telemetry_state
 
         state = get_or_create_telemetry_state()
 
         payload = {
             "instance_id": str(state.instance_id),
-            "version": os.getenv("FUTURE_AGI_VERSION", "unknown"),
+            "version": get_version(),
         }
 
         license_key = _get_configured_license_key()

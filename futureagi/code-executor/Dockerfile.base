@@ -1,31 +1,83 @@
-# Code-executor dependency base. System packages, the nsjail build, and the
-# sandbox Python libs — no app source. Rebuilt only when this file changes;
-# published as futureagi/code-executor-base:deps-<sha>.
-FROM python:3.11-slim-bookworm
+# Code-executor dependency base: system packages, the nsjail binary and the
+# sandbox Python libs, with no app source. Published by hand with
+# .github/workflows/base-image-publish.yml (image: code-executor-base) as
+# futureagi/code-executor-base:vX.Y.Z; Dockerfile in this directory builds
+# FROM it. Publish a new version whenever this file or
+# requirements.sandbox.txt changes, then bump CODE_EXECUTOR_BASE there.
+#
+# Size (futureagi/code-executor-base:v1.0.0 = 331 MB gzip on amd64, 319 on
+# arm64): that file purged the compiler toolchain in a *later* RUN, so its
+# 152 MB gzip apt layer still carried gcc/g++/protobuf-dev/perl (~118 MB gzip),
+# and pip shipped every package's tests (~29 MB gzip). Here nsjail is compiled
+# in its own stage and only the stripped binary is copied; the Python libs are
+# installed in another stage without tests or type stubs. Expected ~185 MB
+# gzip on amd64.
+#
+# Same digest-pinned Python base as futureagi/Dockerfile.oss and
+# model_serving/Dockerfile.oss, so a distributed install downloads it once.
 
+ARG PYTHON_IMAGE=python:3.11-slim-bookworm@sha256:a36c24f9cbdf4fd0f52d67f0823eeac19c2028c637cecc392d97f980d4fec56b
+
+# --------------- nsjail (build only) ---------------
+FROM ${PYTHON_IMAGE} AS nsjail
+ARG NSJAIL_REF=3.4
+# The commit the 3.4 tag points at; the build fails if the tag is moved.
+ARG NSJAIL_COMMIT=079d70dda4aa1edd9512cfd25ff1e47e316dc355
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    protobuf-compiler libprotobuf-dev libnl-3-dev libnl-route-3-dev \
-    pkg-config bison flex git make g++ \
-    nodejs \
-    libprotobuf32 libnl-3-200 libnl-route-3-200 \
+        protobuf-compiler libprotobuf-dev libnl-3-dev libnl-route-3-dev \
+        pkg-config bison flex git make g++ ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch "$NSJAIL_REF" https://github.com/google/nsjail.git /src/nsjail \
+    && test "$(git -C /src/nsjail rev-parse HEAD)" = "$NSJAIL_COMMIT" \
+    && make -C /src/nsjail -j"$(nproc)" \
+    && install -D -m 0755 /src/nsjail/nsjail /out/nsjail \
+    && strip /out/nsjail
 
-RUN cd /tmp \
-    && git clone --depth 1 --branch 3.4 https://github.com/google/nsjail.git \
-    && cd nsjail \
-    && make -j$(nproc) \
-    && cp nsjail /usr/local/bin/ \
-    && cd / && rm -rf /tmp/nsjail
+# --------------- sandbox Python libs (build only) ---------------
+FROM ${PYTHON_IMAGE} AS pydeps
+COPY requirements.sandbox.txt /tmp/requirements.sandbox.txt
+# pip compiles .pyc files as it installs, which matters here: the sandbox
+# root is read-only, so Python cannot write them at run time.
+RUN pip install --no-cache-dir --disable-pip-version-check --prefix=/install \
+        -r /tmp/requirements.sandbox.txt \
+    && find /install -mindepth 1 -type d -name tests -prune -exec rm -rf {} + \
+    && find /install -type f -name '*.pyi' -delete
 
-RUN apt-get purge -y protobuf-compiler libprotobuf-dev libnl-3-dev libnl-route-3-dev \
-    pkg-config bison flex git make g++ \
-    && apt-get autoremove -y \
+# --------------- runtime ---------------
+FROM ${PYTHON_IMAGE}
+# Runtime libraries only: nodejs runs JavaScript evals; libprotobuf32 and
+# libnl-* are what nsjail links against.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        nodejs \
+        libprotobuf32 libnl-3-200 libnl-route-3-200 \
     && rm -rf /var/lib/apt/lists/*
-
-RUN pip install --no-cache-dir \
-    numpy pandas pillow scipy scikit-learn requests httpx \
-    nltk rouge-score Levenshtein \
-    && pip install --no-cache-dir falcon gunicorn
-
-RUN mkdir -p /sandbox/tmp /sandbox/python-libs /sandbox/config \
+COPY --from=nsjail /out/nsjail /usr/local/bin/nsjail
+COPY --from=pydeps /install /usr/local
+# Fail the build, not the first eval, when a library is missing: every shared
+# library nsjail needs, node, and the modules the backend sandbox allows
+# (SAFE_MODULES) plus the executor's own server dependencies. No pipefail on
+# purpose: grep -q may close the pipe before ldd finishes writing.
+# hadolint ignore=DL4006
+RUN if ldd /usr/local/bin/nsjail | grep -q 'not found'; then \
+        ldd /usr/local/bin/nsjail; echo "nsjail: missing runtime library" >&2; exit 1; \
+    fi \
+    && node --version >/dev/null \
+    && PYTHONDONTWRITEBYTECODE=1 python -c "import numpy, pandas, PIL.Image, scipy.spatial.distance, sklearn.metrics, requests, httpx, nltk.translate.bleu_score, rouge_score.rouge_scorer, Levenshtein, jinja2, falcon, gunicorn" \
+    && mkdir -p /sandbox/tmp /sandbox/python-libs /sandbox/config \
     && chmod 755 /sandbox/tmp
+
+# Image metadata (docs/images.md); futureagi/code-executor replaces every
+# label. Declared last: a new value never invalidates a cached layer.
+ARG VERSION=dev
+ARG REVISION=unknown
+ARG CREATED=""
+LABEL org.opencontainers.image.title="Future AGI code-executor base" \
+      org.opencontainers.image.description="Dependency base of futureagi/code-executor: nsjail, Node.js and the sandbox Python libraries, no application code." \
+      org.opencontainers.image.source="https://github.com/future-agi/future-agi" \
+      org.opencontainers.image.url="https://futureagi.com" \
+      org.opencontainers.image.documentation="https://github.com/future-agi/future-agi/blob/main/docs/images.md" \
+      org.opencontainers.image.vendor="Future AGI" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.created="${CREATED}"

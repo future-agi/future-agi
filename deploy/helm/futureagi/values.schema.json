@@ -1,0 +1,2426 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "Future AGI Helm chart values",
+  "description": "Generated from values.yaml by hack/values_docs.py; edit values.yaml or the rules there.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "nameOverride": {
+      "type": "string",
+      "description": "Override the chart name used in resource names."
+    },
+    "fullnameOverride": {
+      "type": "string",
+      "description": "Override the resource name prefix. Default: the release name, plus \"-futureagi\" unless the release name already contains it."
+    },
+    "global": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "imageRegistry": {
+          "type": "string",
+          "description": "Registry prepended to every image, Future AGI and third-party, e.g. a pull-through mirror (`registry.example.com/dockerhub`). Empty keeps each image's own registry."
+        },
+        "imagePullSecrets": {
+          "type": "array",
+          "description": "Pull secrets added to every pod, e.g. `[{name: regcred}]`."
+        },
+        "storageClass": {
+          "type": "string",
+          "description": "StorageClass of every PersistentVolumeClaim the chart creates. Empty uses the cluster default. Install-time only for the bundled datastores (see \"Install-time settings\" in README.md)."
+        }
+      }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "registry": {
+          "type": "string",
+          "description": "Registry of the Future AGI images."
+        },
+        "tag": {
+          "type": [
+            "string",
+            "number"
+          ],
+          "description": "Tag of every Future AGI image (backend, workers, frontend, fi-collector, agentcc-gateway, serving, code-executor). Empty uses the chart's appVersion. A component's own `image.tag` wins."
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": [
+            "",
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ],
+          "description": "Pull policy of every image unless a component sets its own."
+        }
+      }
+    },
+    "urls": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "app": {
+          "type": "string",
+          "description": "Public URL of the UI, e.g. `https://futureagi.example.com` [FRONTEND_URL, APP_URL, EXTRA_CSRF_ORIGINS]. Invite and password-reset links and app emails point here, with its scheme. Empty: derived from `ingress.app.host`, else `http://localhost:3000`."
+        },
+        "api": {
+          "type": "string",
+          "description": "Public URL of the API, e.g. `https://api.futureagi.example.com` [BASE_URL, and the UI's VITE_HOST_API]. Empty: derived from `ingress.api.host`, else `http://localhost:8000`."
+        },
+        "otlp": {
+          "type": "string",
+          "description": "[FI_COLLECTOR_PUBLIC_URL] Public OTLP/HTTP base URL of fi-collector, e.g. `https://otlp.example.com`: what SDKs outside the cluster set as FI_BASE_URL, shown in the install notes, the in-app SDK snippet and the setup screen. Set it when the collector is exposed another way (e.g. `fiCollector.service.type=LoadBalancer`). Empty: derived from `ingress.otlp`, else `http://localhost:4318` (the port-forward in the install notes)."
+        },
+        "objects": {
+          "type": "string",
+          "description": "Public URL browsers download stored files from [MINIO_URL]; used when `objectStorage.backend` is `minio`. Empty: derived from `ingress.objects.host`, else the external endpoint, else `http://localhost:9005`."
+        }
+      }
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "envType": {
+          "type": "string",
+          "enum": [
+            "production",
+            "local"
+          ],
+          "description": "[ENV_TYPE] `production`: JSON logs, DEBUG off, refuses published default secrets. `local`: colored console logs."
+        },
+        "logLevel": {
+          "type": "string",
+          "enum": [
+            "DEBUG",
+            "INFO",
+            "WARNING",
+            "ERROR",
+            "CRITICAL"
+          ],
+          "description": "[LOG_LEVEL] of the backend, workers and bootstrap job."
+        },
+        "allowedHosts": {
+          "type": "string",
+          "description": "[ALLOWED_HOSTS], comma-separated. `*` accepts any Host header. A restricted list also gets localhost and the in-cluster service names, which the probes and the workers use."
+        },
+        "corsAllowedOrigins": {
+          "type": "string",
+          "description": "[CORS_ALLOWED_ORIGINS], comma-separated. Empty allows every origin."
+        },
+        "extraCsrfOrigins": {
+          "type": "string",
+          "description": "[EXTRA_CSRF_ORIGINS] in addition to the UI URL, comma-separated."
+        },
+        "telemetry": {
+          "type": "boolean",
+          "description": "Deployment telemetry: an instance id, the version, admin emails and usage counts every 6 hours, never traces, prompts or other content. `false` sets FUTURE_AGI_TELEMETRY_DISABLED=true (one minimal ping remains)."
+        },
+        "recaptcha": {
+          "type": "boolean",
+          "description": "[RECAPTCHA_ENABLED] reCAPTCHA on sign-up, login and token refresh, for every Host but localhost. Needs `secrets.extra.RECAPTCHA_SECRET_KEY` (without it every such login is refused) and a frontend image built with VITE_GOOGLE_SITE_KEY (a build-time setting: the published image has none, so its logins fail)."
+        },
+        "otel": {
+          "type": "boolean",
+          "description": "[OTEL_ENABLED] export the platform's own traces over OpenTelemetry (configure OTEL_* in `config.extraEnv`)."
+        },
+        "cdcMode": {
+          "type": "string",
+          "enum": [
+            "outbox",
+            "off"
+          ],
+          "description": "[FI_CDC_MODE] Postgres to ClickHouse change data capture. `outbox`: triggers plus a drain in the Temporal workers (no PeerDB). `off` removes it (Observe views then miss relational data)."
+        },
+        "email": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mailgunSenderDomain": {
+              "type": "string",
+              "description": "[MAILGUN_SENDER_DOMAIN]. Email stays off until `secrets.mailgunApiKey` is set too; invites then return a link to share yourself."
+            },
+            "fromEmail": {
+              "type": "string",
+              "description": "[DEFAULT_FROM_EMAIL] sender of every app email (invites, password resets). Empty: `Future AGI <noreply@<mailgunSenderDomain>>`."
+            },
+            "replyTo": {
+              "type": "string",
+              "description": "[DEFAULT_REPLY_TO_EMAIL] Reply-To of app emails. Empty: no Reply-To header, so replies go to the sender."
+            },
+            "serverEmail": {
+              "type": "string",
+              "description": "[SERVER_EMAIL] sender of error emails."
+            }
+          }
+        },
+        "extraEnv": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "description": "Extra environment variables for the backend, workers and bootstrap job, as `NAME: value`. Every supported key is in docs/configuration.md."
+        },
+        "extraEnvFrom": {
+          "type": "array",
+          "description": "Extra `envFrom` sources for the backend, workers and bootstrap job, e.g. `[{secretRef: {name: my-env}}]`."
+        }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingSecret": {
+          "type": "string",
+          "description": "Existing Secret with the application keys: SECRET_KEY, INTEGRATION_ENCRYPTION_KEY, AGENTCC_INTERNAL_API_KEY, AGENTCC_ADMIN_TOKEN, PROPERTY_CATALOG_API_PASSWORD and PROPERTY_CATALOG_CONSUMER_PASSWORD. Empty: generated. Required with Argo CD or Flux, which cannot `lookup` the generated Secret."
+        },
+        "llm": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "existingSecret": {
+              "type": "string",
+              "description": "Existing Secret with any of OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (missing keys are fine). Overrides the values below."
+            },
+            "openaiApiKey": {
+              "type": "string",
+              "description": "[OPENAI_API_KEY] server-wide key for built-in evals and the gateway. Workspaces can also add their own in the UI."
+            },
+            "anthropicApiKey": {
+              "type": "string",
+              "description": "[ANTHROPIC_API_KEY]"
+            },
+            "googleApiKey": {
+              "type": "string",
+              "description": "[GOOGLE_API_KEY] Gemini (Google AI Studio); the gateway gets it as GEMINI_API_KEY."
+            },
+            "awsAccessKeyId": {
+              "type": "string",
+              "description": "[AWS_ACCESS_KEY_ID] AWS Bedrock."
+            },
+            "awsSecretAccessKey": {
+              "type": "string",
+              "description": "[AWS_SECRET_ACCESS_KEY] AWS Bedrock."
+            },
+            "awsRegion": {
+              "type": "string",
+              "description": "[AWS_REGION] AWS Bedrock region (not secret)."
+            }
+          }
+        },
+        "eeLicenseKey": {
+          "type": "string",
+          "description": "[EE_LICENSE_KEY] Enterprise Edition license."
+        },
+        "mailgunApiKey": {
+          "type": "string",
+          "description": "[MAILGUN_API_KEY] turns email on, with `config.email`."
+        },
+        "agentccWebhookSecret": {
+          "type": "string",
+          "description": "[AGENTCC_WEBHOOK_SECRET] shared secret the gateway sends to the backend's webhooks."
+        },
+        "extra": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "description": "Any other secret environment variables for the backend, workers and bootstrap job, as `NAME: value` (e.g. SENTRY_DSN, DAYTONA_API_KEY). Stored in <fullname>-secrets."
+        }
+      }
+    },
+    "postgres": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "external",
+            "bundled"
+          ],
+          "description": "`external` or `bundled`."
+        },
+        "database": {
+          "type": "string",
+          "description": "[PG_DB] database name."
+        },
+        "user": {
+          "type": "string",
+          "description": "[PG_USER]"
+        },
+        "password": {
+          "type": "string",
+          "description": "[PG_PASSWORD]. External: required unless `existingSecret`. Bundled: empty generates one."
+        },
+        "existingSecret": {
+          "type": "string",
+          "description": "Existing Secret holding the password."
+        },
+        "existingSecretPasswordKey": {
+          "type": "string",
+          "description": "Key of the password in `existingSecret`."
+        },
+        "external": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "host": {
+              "type": "string",
+              "description": "[PG_HOST] PostgreSQL 16 server (11 or newer works). Connect directly: a transaction-mode pooler breaks the CDC advisory lock."
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "[PG_PORT]"
+            },
+            "sslMode": {
+              "type": "string",
+              "enum": [
+                "disable",
+                "allow",
+                "prefer",
+                "require",
+                "verify-ca",
+                "verify-full"
+              ],
+              "description": "[PGSSLMODE] disable, allow, prefer, require, verify-ca or verify-full. verify-ca and verify-full need the server's CA: mount it with `backend`, `worker`, `bootstrap` and `fiCollector` `extraVolumes`/`extraVolumeMounts`, and point PGSSLROOTCERT at it in `config.extraEnv` and `fiCollector.extraEnv`."
+            }
+          }
+        },
+        "bundled": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "image": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "registry": {
+                  "type": "string",
+                  "description": "Registry of the bundled PostgreSQL image."
+                },
+                "repository": {
+                  "type": "string",
+                  "description": "Repository of the bundled PostgreSQL image. Debian-based, like the compose setups, so data directories are interchangeable."
+                },
+                "tag": {
+                  "type": [
+                    "string",
+                    "number"
+                  ],
+                  "description": "Tag of the bundled PostgreSQL image."
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^(sha256:[a-f0-9]{64})?$",
+                  "description": "Optional digest (`sha256:...`) pinned after the tag."
+                }
+              }
+            },
+            "parameters": {
+              "type": "object",
+              "description": "Server settings passed as `-c name=value`."
+            },
+            "persistence": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "size": {
+                  "type": "string",
+                  "description": "Size of the data volume. Install-time only (see \"Install-time settings\" in README.md)."
+                },
+                "storageClass": {
+                  "type": "string",
+                  "description": "StorageClass of the data volume. Empty: `global.storageClass`, else the cluster default. Install-time only."
+                }
+              }
+            },
+            "resources": {
+              "type": "object",
+              "description": "Resources of the bundled PostgreSQL."
+            },
+            "nodeSelector": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Node selector of the bundled PostgreSQL. Empty: the top-level `nodeSelector`."
+            },
+            "tolerations": {
+              "type": "array",
+              "description": "Tolerations of the bundled PostgreSQL. Empty: the top-level `tolerations`."
+            },
+            "affinity": {
+              "type": "object",
+              "description": "Affinity of the bundled PostgreSQL. Empty: the top-level `affinity`."
+            }
+          }
+        }
+      }
+    },
+    "clickhouse": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "external",
+            "bundled"
+          ],
+          "description": "`external` or `bundled`. ClickHouse 25.3 or newer."
+        },
+        "database": {
+          "type": "string",
+          "description": "[CH_DATABASE, CH25_DATABASE] database of traces and analytics."
+        },
+        "user": {
+          "type": "string",
+          "description": "[CH_USERNAME] needs CREATE on the database; the bootstrap also creates the observed-attribute index (CREATE DATABASE, CREATE USER, GRANT) unless `bootstrap.propertyCatalog` is false."
+        },
+        "password": {
+          "type": "string",
+          "description": "[CH_PASSWORD]. External: may be empty. Bundled: empty generates one."
+        },
+        "existingSecret": {
+          "type": "string",
+          "description": "Existing Secret holding the password."
+        },
+        "existingSecretPasswordKey": {
+          "type": "string",
+          "description": "Key of the password in `existingSecret`."
+        },
+        "propertyCatalogDatabase": {
+          "type": "string",
+          "description": "[PROPERTY_CATALOG_DATABASE] database of the observed-attribute index; must differ from `database`."
+        },
+        "external": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "host": {
+              "type": "string",
+              "description": "[CH_HOST] ClickHouse host. Plain HTTP and native protocol: the schema installer and fi-collector do not speak TLS to ClickHouse."
+            },
+            "httpPort": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "[CH_HTTP_PORT]"
+            },
+            "nativePort": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "[CH_PORT] native protocol port."
+            }
+          }
+        },
+        "bundled": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "image": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "registry": {
+                  "type": "string",
+                  "description": "Registry of the bundled ClickHouse image."
+                },
+                "repository": {
+                  "type": "string",
+                  "description": "Repository of the bundled ClickHouse image."
+                },
+                "tag": {
+                  "type": [
+                    "string",
+                    "number"
+                  ],
+                  "description": "Tag of the bundled ClickHouse image. 25.3 is the floor for the v2 spans schema."
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^(sha256:[a-f0-9]{64})?$",
+                  "description": "Optional digest (`sha256:...`) pinned after the tag."
+                }
+              }
+            },
+            "lowMemory": {
+              "type": "boolean",
+              "description": "Small caches and merge pools and no system log tables (deploy/platform/clickhouse), as in the Standalone install. Turn off on nodes with 8 GiB or more for ClickHouse."
+            },
+            "persistence": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "size": {
+                  "type": "string",
+                  "description": "Size of the data volume. Install-time only (see \"Install-time settings\" in README.md)."
+                },
+                "storageClass": {
+                  "type": "string",
+                  "description": "StorageClass of the data volume. Empty: `global.storageClass`, else the cluster default. Install-time only."
+                }
+              }
+            },
+            "resources": {
+              "type": "object",
+              "description": "Resources of the bundled ClickHouse."
+            },
+            "nodeSelector": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Node selector of the bundled ClickHouse. Empty: the top-level `nodeSelector`."
+            },
+            "tolerations": {
+              "type": "array",
+              "description": "Tolerations of the bundled ClickHouse. Empty: the top-level `tolerations`."
+            },
+            "affinity": {
+              "type": "object",
+              "description": "Affinity of the bundled ClickHouse. Empty: the top-level `affinity`."
+            }
+          }
+        }
+      }
+    },
+    "redis": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "external",
+            "bundled"
+          ],
+          "description": "`external` or `bundled`. Cache, locks and the live-update channel layer."
+        },
+        "password": {
+          "type": "string",
+          "description": "[REDIS_PASSWORD] Must be URL-safe (letters, digits, `-._~`): it is part of the Redis URLs. External: empty means no AUTH. Bundled: empty generates one."
+        },
+        "existingSecret": {
+          "type": "string",
+          "description": "Existing Secret holding the password."
+        },
+        "existingSecretPasswordKey": {
+          "type": "string",
+          "description": "Key of the password in `existingSecret`."
+        },
+        "external": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "host": {
+              "type": "string",
+              "description": "[REDIS_HOST] Redis 6 or newer with databases 0-3 (the app uses 0 to 3)."
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "[REDIS_PORT]"
+            },
+            "tls": {
+              "type": "boolean",
+              "description": "Connect the app over TLS (`rediss://`). fi-collector has no Redis TLS: with TLS on it runs without Redis (key revocation then reaches it through its 5-minute auth cache)."
+            }
+          }
+        },
+        "bundled": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "image": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "registry": {
+                  "type": "string",
+                  "description": "Registry of the bundled Redis image."
+                },
+                "repository": {
+                  "type": "string",
+                  "description": "Repository of the bundled Redis image."
+                },
+                "tag": {
+                  "type": [
+                    "string",
+                    "number"
+                  ],
+                  "description": "Tag of the bundled Redis image."
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^(sha256:[a-f0-9]{64})?$",
+                  "description": "Optional digest (`sha256:...`) pinned after the tag."
+                }
+              }
+            },
+            "maxmemory": {
+              "type": "string",
+              "description": "Redis `maxmemory`; keep it below the memory limit."
+            },
+            "maxmemoryPolicy": {
+              "type": "string",
+              "description": "Redis `maxmemory-policy`. volatile-lru evicts only keys with a TTL (cache entries), never locks or state."
+            },
+            "persistence": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Keep an append-only file on a volume. Without it a restart drops cache, locks and in-flight state (the app recovers). Install-time only."
+                },
+                "size": {
+                  "type": "string",
+                  "description": "Size of the data volume. Install-time only (see \"Install-time settings\" in README.md)."
+                },
+                "storageClass": {
+                  "type": "string",
+                  "description": "StorageClass of the data volume. Empty: `global.storageClass`, else the cluster default. Install-time only."
+                }
+              }
+            },
+            "resources": {
+              "type": "object",
+              "description": "Resources of the bundled Redis."
+            },
+            "nodeSelector": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Node selector of the bundled Redis. Empty: the top-level `nodeSelector`."
+            },
+            "tolerations": {
+              "type": "array",
+              "description": "Tolerations of the bundled Redis. Empty: the top-level `tolerations`."
+            },
+            "affinity": {
+              "type": "object",
+              "description": "Affinity of the bundled Redis. Empty: the top-level `affinity`."
+            }
+          }
+        }
+      }
+    },
+    "temporal": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "external",
+            "bundled"
+          ],
+          "description": "`external` (a Temporal cluster, e.g. the temporalio/temporal Helm chart) or `bundled` (the single-binary dev server with SQLite on a volume)."
+        },
+        "namespace": {
+          "type": "string",
+          "description": "[TEMPORAL_NAMESPACE] must exist on an external server (the bundled one creates it)."
+        },
+        "external": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "address": {
+              "type": "string",
+              "description": "[TEMPORAL_HOST] frontend `host:port`, e.g. `temporal-frontend.temporal.svc:7233`. Plain gRPC: TLS and Temporal Cloud API keys are not supported yet."
+            }
+          }
+        },
+        "bundled": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "image": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "registry": {
+                  "type": "string",
+                  "description": "Registry of the bundled Temporal image (the Temporal CLI, `temporal server start-dev`)."
+                },
+                "repository": {
+                  "type": "string",
+                  "description": "Repository of the bundled Temporal image."
+                },
+                "tag": {
+                  "type": [
+                    "string",
+                    "number"
+                  ],
+                  "description": "Tag of the bundled Temporal image; the version the Standalone install ships."
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^(sha256:[a-f0-9]{64})?$",
+                  "description": "Optional digest (`sha256:...`) pinned after the tag."
+                }
+              }
+            },
+            "ui": {
+              "type": "boolean",
+              "description": "Serve the Temporal Web UI on port 8233 of the temporal Service (`kubectl port-forward`)."
+            },
+            "persistence": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "size": {
+                  "type": "string",
+                  "description": "Size of the SQLite volume (schedules and workflow history). Install-time only (see \"Install-time settings\" in README.md)."
+                },
+                "storageClass": {
+                  "type": "string",
+                  "description": "StorageClass of the volume. Empty: `global.storageClass`, else the cluster default. Install-time only."
+                }
+              }
+            },
+            "goMemLimit": {
+              "type": "string",
+              "description": "[GOMEMLIMIT] soft memory limit of the server; keep it below the memory limit."
+            },
+            "resources": {
+              "type": "object",
+              "description": "Resources of the bundled Temporal server."
+            },
+            "nodeSelector": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Node selector of the bundled Temporal. Empty: the top-level `nodeSelector`."
+            },
+            "tolerations": {
+              "type": "array",
+              "description": "Tolerations of the bundled Temporal. Empty: the top-level `tolerations`."
+            },
+            "affinity": {
+              "type": "object",
+              "description": "Affinity of the bundled Temporal. Empty: the top-level `affinity`."
+            }
+          }
+        }
+      }
+    },
+    "objectStorage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "external",
+            "bundled"
+          ],
+          "description": "`external` (AWS S3, GCS or any S3-compatible service) or `bundled` (one MinIO, for evaluation)."
+        },
+        "backend": {
+          "type": "string",
+          "enum": [
+            "s3",
+            "gcs",
+            "minio"
+          ],
+          "description": "[STORAGE_BACKEND] `s3` (AWS), `gcs` (Google Cloud Storage with HMAC keys) or `minio` (any other S3-compatible endpoint). Bundled always uses `minio`."
+        },
+        "bucket": {
+          "type": "string",
+          "description": "[UPLOAD_BUCKET_NAME] bucket for uploads, datasets and exports. Created on the first upload (not on GCS) with a public-read policy."
+        },
+        "region": {
+          "type": "string",
+          "description": "[S3_REGION, AWS_DEFAULT_REGION] bucket region."
+        },
+        "accessKey": {
+          "type": "string",
+          "description": "[S3_ACCESS_KEY, or GCS_HMAC_ACCESS_KEY for gcs]. External: required unless `existingSecret`. Bundled: empty generates one."
+        },
+        "secretKey": {
+          "type": "string",
+          "description": "[S3_SECRET_KEY, or GCS_HMAC_SECRET_KEY for gcs]. External: required unless `existingSecret`. Bundled: empty generates one."
+        },
+        "existingSecret": {
+          "type": "string",
+          "description": "Existing Secret holding the access and secret keys."
+        },
+        "existingSecretAccessKeyKey": {
+          "type": "string",
+          "description": "Key of the access key in `existingSecret`."
+        },
+        "existingSecretSecretKeyKey": {
+          "type": "string",
+          "description": "Key of the secret key in `existingSecret`."
+        },
+        "external": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "endpoint": {
+              "type": "string",
+              "description": "[S3_ENDPOINT_URL] e.g. `https://s3.us-east-1.amazonaws.com` or `http://minio.storage:9000`. Empty with `s3` uses s3.amazonaws.com."
+            }
+          }
+        },
+        "bundled": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "image": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "registry": {
+                  "type": "string",
+                  "description": "Registry of the bundled object storage image."
+                },
+                "repository": {
+                  "type": "string",
+                  "description": "Repository of the bundled object storage image: the last community MinIO release, as in the compose setups."
+                },
+                "tag": {
+                  "type": [
+                    "string",
+                    "number"
+                  ],
+                  "description": "Tag of the bundled object storage image."
+                },
+                "digest": {
+                  "type": "string",
+                  "pattern": "^(sha256:[a-f0-9]{64})?$",
+                  "description": "Digest pinned after the tag."
+                }
+              }
+            },
+            "persistence": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "size": {
+                  "type": "string",
+                  "description": "Size of the data volume. Install-time only (see \"Install-time settings\" in README.md)."
+                },
+                "storageClass": {
+                  "type": "string",
+                  "description": "StorageClass of the data volume. Empty: `global.storageClass`, else the cluster default. Install-time only."
+                }
+              }
+            },
+            "goMemLimit": {
+              "type": "string",
+              "description": "[GOMEMLIMIT] soft memory limit; keep it below the memory limit."
+            },
+            "resources": {
+              "type": "object",
+              "description": "Resources of the bundled object storage."
+            },
+            "nodeSelector": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Node selector of the bundled object storage. Empty: the top-level `nodeSelector`."
+            },
+            "tolerations": {
+              "type": "array",
+              "description": "Tolerations of the bundled object storage. Empty: the top-level `tolerations`."
+            },
+            "affinity": {
+              "type": "object",
+              "description": "Affinity of the bundled object storage. Empty: the top-level `affinity`."
+            }
+          }
+        }
+      }
+    },
+    "backend": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "registry": {
+              "type": "string",
+              "description": "Registry. Empty: `image.registry`."
+            },
+            "repository": {
+              "type": "string",
+              "description": "Repository of the backend image (also the workers' and the bootstrap job's)."
+            },
+            "tag": {
+              "type": [
+                "string",
+                "number"
+              ],
+              "description": "Tag. Empty: `image.tag`, else the chart's appVersion."
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^(sha256:[a-f0-9]{64})?$",
+              "description": "Optional digest (`sha256:...`) pinned after the tag."
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "",
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ],
+              "description": "Pull policy. Empty: `image.pullPolicy`."
+            }
+          }
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Replicas when autoscaling is off. More than one needs the Redis channel layer, which this chart always configures."
+        },
+        "granian": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "workers": {
+              "type": "integer",
+              "description": "Granian worker processes per pod."
+            },
+            "threads": {
+              "type": "integer",
+              "description": "Runtime threads per Granian worker."
+            },
+            "accessLog": {
+              "type": "boolean",
+              "description": "Log every request."
+            }
+          }
+        },
+        "collectStatic": {
+          "type": "boolean",
+          "description": "Run collectstatic into an emptyDir before the API starts (static files of /admin and /docs)."
+        },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "ClusterIP",
+                "NodePort",
+                "LoadBalancer"
+              ],
+              "description": "Service type of the API."
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "Service port of the API."
+            },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Service annotations."
+            }
+          }
+        },
+        "resources": {
+          "type": "object",
+          "description": "Resources of each API pod."
+        },
+        "autoscaling": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "HorizontalPodAutoscaler for the API."
+            },
+            "minReplicas": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Minimum replicas."
+            },
+            "maxReplicas": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Maximum replicas."
+            },
+            "targetCPUUtilizationPercentage": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "maxLength": 0
+                }
+              ],
+              "description": "Target average CPU utilization (percent of requests)."
+            },
+            "targetMemoryUtilizationPercentage": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "maxLength": 0
+                }
+              ],
+              "description": "Target average memory utilization (percent of requests). Empty: not used."
+            }
+          }
+        },
+        "pdb": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "PodDisruptionBudget for the API."
+            },
+            "maxUnavailable": {
+              "type": [
+                "integer",
+                "string"
+              ],
+              "description": "At most this many API pods down during voluntary disruptions."
+            }
+          }
+        },
+        "extraEnv": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "description": "Extra environment variables for the API only, as `NAME: value`."
+        },
+        "podAnnotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Pod annotations."
+        },
+        "podLabels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Extra pod labels."
+        },
+        "podSecurityContext": {
+          "type": "object",
+          "description": "Merged over the chart's pod security context (non-root uid 1000, fsGroup 1000, RuntimeDefault seccomp)."
+        },
+        "containerSecurityContext": {
+          "type": "object",
+          "description": "Merged over the chart's container security context (read-only root filesystem, no privilege escalation, all capabilities dropped)."
+        },
+        "extraVolumes": {
+          "type": "array",
+          "description": "Extra volumes."
+        },
+        "extraVolumeMounts": {
+          "type": "array",
+          "description": "Extra volume mounts."
+        },
+        "nodeSelector": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Node selector. Empty: the top-level `nodeSelector`."
+        },
+        "tolerations": {
+          "type": "array",
+          "description": "Tolerations. Empty: the top-level `tolerations`."
+        },
+        "affinity": {
+          "type": "object",
+          "description": "Affinity. Empty: the top-level `affinity`."
+        },
+        "topologySpreadConstraints": {
+          "type": "array",
+          "description": "Topology spread constraints. Empty: the top-level `topologySpreadConstraints`."
+        }
+      }
+    },
+    "worker": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "registry": {
+              "type": "string",
+              "description": "Registry. Empty: `backend.image.registry`, else `image.registry`."
+            },
+            "repository": {
+              "type": "string",
+              "description": "Repository. Empty: `backend.image.repository` (workers run the backend image)."
+            },
+            "tag": {
+              "type": [
+                "string",
+                "number"
+              ],
+              "description": "Tag. Empty: `backend.image.tag`, else `image.tag`, else the chart's appVersion."
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^(sha256:[a-f0-9]{64})?$",
+              "description": "Optional digest. Empty: `backend.image.digest`."
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "",
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ],
+              "description": "Pull policy. Empty: `backend.image.pullPolicy`, else `image.pullPolicy`."
+            }
+          }
+        },
+        "gracefulShutdownSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "[TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT] seconds a stopping worker lets running activities finish. The pod's grace period is 30 s longer."
+        },
+        "allQueues": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "One Deployment polling every generic queue (default, tasks_s, tasks_l, tasks_xl, trace_ingestion, agent_compass). This worker also drains the outbox CDC."
+            },
+            "replicas": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Replicas when autoscaling is off."
+            },
+            "excludedQueues": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "[TEMPORAL_EXCLUDED_QUEUES] queues it does not poll. simulation_runner needs the separate simulation-runner image (a `queues` entry with its own image)."
+            },
+            "maxConcurrentActivities": {
+              "type": "integer",
+              "description": "[TEMPORAL_MAX_CONCURRENT_ACTIVITIES] activity slots per queue."
+            },
+            "maxConcurrentWorkflowTasks": {
+              "type": "integer",
+              "description": "[TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS] workflow-task slots per queue."
+            },
+            "resources": {
+              "type": "object",
+              "description": "Resources of each all-queues worker pod."
+            },
+            "autoscaling": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "HorizontalPodAutoscaler for the all-queues worker."
+                },
+                "minReplicas": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Minimum replicas."
+                },
+                "maxReplicas": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Maximum replicas."
+                },
+                "targetCPUUtilizationPercentage": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    {
+                      "type": "string",
+                      "maxLength": 0
+                    }
+                  ],
+                  "description": "Target average CPU utilization (percent of requests)."
+                }
+              }
+            }
+          }
+        },
+        "exactAggregation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "A single-slot worker for the exact_aggregation queue, the admission boundary for expensive exact analytics [EXACT_AGGREGATION_TASK_QUEUE=exact_aggregation]. Off: that work runs on tasks_xl."
+            },
+            "resources": {
+              "type": "object",
+              "description": "Resources of the exact-aggregation worker."
+            }
+          }
+        },
+        "queues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9_]+$"
+              },
+              "replicas": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "maxConcurrentActivities": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "maxConcurrentWorkflowTasks": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "resources": {
+                "type": "object"
+              },
+              "image": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "registry": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  },
+                  "repository": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  },
+                  "tag": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  },
+                  "digest": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  },
+                  "pullPolicy": {
+                    "type": [
+                      "string",
+                      "number"
+                    ]
+                  }
+                }
+              },
+              "extraEnv": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean"
+                  ]
+                }
+              }
+            }
+          },
+          "description": "Dedicated per-queue Deployments, added to (not replacing) the all-queues worker, e.g. `[{name: tasks_s, replicas: 2, maxConcurrentActivities: 200}]`. Each entry: name (required), replicas, maxConcurrentActivities, maxConcurrentWorkflowTasks, resources, image, extraEnv (wins over `worker.extraEnv` and the chart's own values)."
+        },
+        "pdb": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "PodDisruptionBudget for every worker Deployment."
+            },
+            "maxUnavailable": {
+              "type": [
+                "integer",
+                "string"
+              ],
+              "description": "At most this many pods of each worker Deployment down during voluntary disruptions."
+            }
+          }
+        },
+        "extraEnv": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "description": "Extra environment variables for the workers only, as `NAME: value`."
+        },
+        "podAnnotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Pod annotations."
+        },
+        "podLabels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Extra pod labels."
+        },
+        "podSecurityContext": {
+          "type": "object",
+          "description": "Merged over the chart's pod security context (as for the backend)."
+        },
+        "containerSecurityContext": {
+          "type": "object",
+          "description": "Merged over the chart's container security context (as for the backend)."
+        },
+        "extraVolumes": {
+          "type": "array",
+          "description": "Extra volumes."
+        },
+        "extraVolumeMounts": {
+          "type": "array",
+          "description": "Extra volume mounts."
+        },
+        "nodeSelector": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Node selector. Empty: the top-level `nodeSelector`."
+        },
+        "tolerations": {
+          "type": "array",
+          "description": "Tolerations. Empty: the top-level `tolerations`."
+        },
+        "affinity": {
+          "type": "object",
+          "description": "Affinity. Empty: the top-level `affinity`."
+        },
+        "topologySpreadConstraints": {
+          "type": "array",
+          "description": "Topology spread constraints. Empty: the top-level `topologySpreadConstraints`."
+        }
+      }
+    },
+    "frontend": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "registry": {
+              "type": "string",
+              "description": "Registry. Empty: `image.registry`."
+            },
+            "repository": {
+              "type": "string",
+              "description": "Repository of the UI image."
+            },
+            "tag": {
+              "type": [
+                "string",
+                "number"
+              ],
+              "description": "Tag. Empty: `image.tag`, else the chart's appVersion."
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^(sha256:[a-f0-9]{64})?$",
+              "description": "Optional digest (`sha256:...`) pinned after the tag."
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "",
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ],
+              "description": "Pull policy. Empty: `image.pullPolicy`."
+            }
+          }
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Replicas when autoscaling is off."
+        },
+        "helpLink": {
+          "type": "string",
+          "description": "[VITE_HELP_LINK] where the sidebar Help entry points. Empty: the community Discord."
+        },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "ClusterIP",
+                "NodePort",
+                "LoadBalancer"
+              ],
+              "description": "Service type of the UI."
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "Service port of the UI."
+            },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Service annotations."
+            }
+          }
+        },
+        "resources": {
+          "type": "object",
+          "description": "Resources of each UI pod."
+        },
+        "autoscaling": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "HorizontalPodAutoscaler for the UI."
+            },
+            "minReplicas": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Minimum replicas."
+            },
+            "maxReplicas": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Maximum replicas."
+            },
+            "targetCPUUtilizationPercentage": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "maxLength": 0
+                }
+              ],
+              "description": "Target average CPU utilization (percent of requests)."
+            }
+          }
+        },
+        "pdb": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "PodDisruptionBudget for the UI."
+            },
+            "maxUnavailable": {
+              "type": [
+                "integer",
+                "string"
+              ],
+              "description": "At most this many UI pods down during voluntary disruptions."
+            }
+          }
+        },
+        "extraEnv": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "description": "Extra environment variables for the UI (runtime VITE_* settings), as `NAME: value`."
+        },
+        "podAnnotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Pod annotations."
+        },
+        "podLabels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Extra pod labels."
+        },
+        "podSecurityContext": {
+          "type": "object",
+          "description": "Merged over the chart's pod security context (non-root uid 101, the image's nginx user)."
+        },
+        "containerSecurityContext": {
+          "type": "object",
+          "description": "Merged over the chart's container security context (read-only root filesystem)."
+        },
+        "nodeSelector": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Node selector. Empty: the top-level `nodeSelector`."
+        },
+        "tolerations": {
+          "type": "array",
+          "description": "Tolerations. Empty: the top-level `tolerations`."
+        },
+        "affinity": {
+          "type": "object",
+          "description": "Affinity. Empty: the top-level `affinity`."
+        },
+        "topologySpreadConstraints": {
+          "type": "array",
+          "description": "Topology spread constraints. Empty: the top-level `topologySpreadConstraints`."
+        }
+      }
+    },
+    "fiCollector": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "registry": {
+              "type": "string",
+              "description": "Registry. Empty: `image.registry`."
+            },
+            "repository": {
+              "type": "string",
+              "description": "Repository of the OTLP collector image."
+            },
+            "tag": {
+              "type": [
+                "string",
+                "number"
+              ],
+              "description": "Tag. Empty: `image.tag`, else the chart's appVersion."
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^(sha256:[a-f0-9]{64})?$",
+              "description": "Optional digest (`sha256:...`) pinned after the tag."
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "",
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ],
+              "description": "Pull policy. Empty: `image.pullPolicy`."
+            }
+          }
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Replicas when autoscaling is off."
+        },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "ClusterIP",
+                "NodePort",
+                "LoadBalancer"
+              ],
+              "description": "Service type. `LoadBalancer` exposes OTLP/gRPC (4317) outside the cluster; OTLP/HTTP can go through the ingress instead."
+            },
+            "grpcPort": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "OTLP/gRPC port."
+            },
+            "httpPort": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "OTLP/HTTP port (POST /v1/traces)."
+            },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Service annotations (e.g. for a cloud load balancer)."
+            }
+          }
+        },
+        "goMemLimit": {
+          "type": "string",
+          "description": "[GOMEMLIMIT] soft memory limit; keep it below the memory limit."
+        },
+        "resources": {
+          "type": "object",
+          "description": "Resources of each collector pod."
+        },
+        "autoscaling": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "HorizontalPodAutoscaler for the collector."
+            },
+            "minReplicas": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Minimum replicas."
+            },
+            "maxReplicas": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Maximum replicas."
+            },
+            "targetCPUUtilizationPercentage": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "maxLength": 0
+                }
+              ],
+              "description": "Target average CPU utilization (percent of requests)."
+            }
+          }
+        },
+        "pdb": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "PodDisruptionBudget for the collector."
+            },
+            "maxUnavailable": {
+              "type": [
+                "integer",
+                "string"
+              ],
+              "description": "At most this many collector pods down during voluntary disruptions."
+            }
+          }
+        },
+        "extraEnv": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "description": "Extra environment variables (FI_* overrides, see fi-collector/README.md), as `NAME: value`."
+        },
+        "podAnnotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Pod annotations."
+        },
+        "podLabels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Extra pod labels."
+        },
+        "podSecurityContext": {
+          "type": "object",
+          "description": "Merged over the chart's pod security context (non-root uid 65532, distroless)."
+        },
+        "containerSecurityContext": {
+          "type": "object",
+          "description": "Merged over the chart's container security context (read-only root filesystem)."
+        },
+        "extraVolumes": {
+          "type": "array",
+          "description": "Extra volumes, e.g. the CA of `postgres.external.sslMode=verify-full`."
+        },
+        "extraVolumeMounts": {
+          "type": "array",
+          "description": "Extra volume mounts."
+        },
+        "nodeSelector": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Node selector. Empty: the top-level `nodeSelector`."
+        },
+        "tolerations": {
+          "type": "array",
+          "description": "Tolerations. Empty: the top-level `tolerations`."
+        },
+        "affinity": {
+          "type": "object",
+          "description": "Affinity. Empty: the top-level `affinity`."
+        },
+        "topologySpreadConstraints": {
+          "type": "array",
+          "description": "Topology spread constraints. Empty: the top-level `topologySpreadConstraints`."
+        }
+      }
+    },
+    "agentccGateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "registry": {
+              "type": "string",
+              "description": "Registry. Empty: `image.registry`."
+            },
+            "repository": {
+              "type": "string",
+              "description": "Repository of the LLM gateway image."
+            },
+            "tag": {
+              "type": [
+                "string",
+                "number"
+              ],
+              "description": "Tag. Empty: `image.tag`, else the chart's appVersion."
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^(sha256:[a-f0-9]{64})?$",
+              "description": "Optional digest (`sha256:...`) pinned after the tag."
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "",
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ],
+              "description": "Pull policy. Empty: `image.pullPolicy`."
+            }
+          }
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Replicas when autoscaling is off."
+        },
+        "existingConfigMap": {
+          "type": "string",
+          "description": "Existing ConfigMap with the gateway configuration under the key `config.yaml`. Empty: rendered from `config`."
+        },
+        "config": {
+          "type": "object",
+          "description": "Gateway configuration (agentcc-gateway/config.example.yaml documents every field). `${VAR}` expands from the environment: provider keys come from `secrets.llm`. `server.port` is also the container port: the chart pins it with the AGENTCC_PORT variable, which wins over an `existingConfigMap` too."
+        },
+        "controlPlaneSync": {
+          "type": "boolean",
+          "description": "Pull keys and org settings from the backend on start [AGENTCC_CONTROL_PLANE_URL, AGENTCC_SYNC_ON_STARTUP], so every replica and a restarted pod serve the same keys."
+        },
+        "gcpCredentials": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "existingSecret": {
+              "type": "string",
+              "description": "Existing Secret with a GCP service-account JSON for Vertex AI, mounted read-only [GOOGLE_APPLICATION_CREDENTIALS]."
+            },
+            "key": {
+              "type": "string",
+              "description": "Key of the JSON in `existingSecret`."
+            }
+          }
+        },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "ClusterIP",
+                "NodePort",
+                "LoadBalancer"
+              ],
+              "description": "Service type of the gateway. Keep it internal unless your apps call the gateway directly."
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "Service port of the gateway."
+            },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Service annotations."
+            }
+          }
+        },
+        "goMemLimit": {
+          "type": "string",
+          "description": "[GOMEMLIMIT] soft memory limit; keep it below the memory limit."
+        },
+        "resources": {
+          "type": "object",
+          "description": "Resources of each gateway pod."
+        },
+        "autoscaling": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "HorizontalPodAutoscaler for the gateway."
+            },
+            "minReplicas": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Minimum replicas."
+            },
+            "maxReplicas": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Maximum replicas."
+            },
+            "targetCPUUtilizationPercentage": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "string",
+                  "maxLength": 0
+                }
+              ],
+              "description": "Target average CPU utilization (percent of requests)."
+            }
+          }
+        },
+        "pdb": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "PodDisruptionBudget for the gateway."
+            },
+            "maxUnavailable": {
+              "type": [
+                "integer",
+                "string"
+              ],
+              "description": "At most this many gateway pods down during voluntary disruptions."
+            }
+          }
+        },
+        "extraEnv": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "description": "Extra environment variables (AGENTCC_* and provider keys referenced by `config`), as `NAME: value`."
+        },
+        "extraEnvFrom": {
+          "type": "array",
+          "description": "Extra `envFrom` sources, e.g. a Secret with more provider keys."
+        },
+        "podAnnotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Pod annotations."
+        },
+        "podLabels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Extra pod labels."
+        },
+        "podSecurityContext": {
+          "type": "object",
+          "description": "Merged over the chart's pod security context (non-root uid 65532; the image is a static binary)."
+        },
+        "containerSecurityContext": {
+          "type": "object",
+          "description": "Merged over the chart's container security context (read-only root filesystem)."
+        },
+        "nodeSelector": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Node selector. Empty: the top-level `nodeSelector`."
+        },
+        "tolerations": {
+          "type": "array",
+          "description": "Tolerations. Empty: the top-level `tolerations`."
+        },
+        "affinity": {
+          "type": "object",
+          "description": "Affinity. Empty: the top-level `affinity`."
+        },
+        "topologySpreadConstraints": {
+          "type": "array",
+          "description": "Topology spread constraints. Empty: the top-level `topologySpreadConstraints`."
+        }
+      }
+    },
+    "serving": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Embedding model server for embedding-based evals, knowledge bases, Vector DB columns and Error Feed clustering [MODEL_SERVING_URL]. Off: those features are unavailable and the setup screen marks them off."
+        },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "registry": {
+              "type": "string",
+              "description": "Registry. Empty: `image.registry`."
+            },
+            "repository": {
+              "type": "string",
+              "description": "Repository of the model server image."
+            },
+            "tag": {
+              "type": [
+                "string",
+                "number"
+              ],
+              "description": "Tag. Empty: `image.tag`, else the chart's appVersion. Append `-gpu` for the CUDA image (linux/amd64)."
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^(sha256:[a-f0-9]{64})?$",
+              "description": "Optional digest (`sha256:...`) pinned after the tag."
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "",
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ],
+              "description": "Pull policy. Empty: `image.pullPolicy`."
+            }
+          }
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Replicas."
+        },
+        "resources": {
+          "type": "object",
+          "description": "Resources of each model server pod (add `nvidia.com/gpu` for the GPU image)."
+        },
+        "persistence": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Keep downloaded models on a volume (ReadWriteOnce: one replica). Off: an emptyDir, downloaded again after each restart."
+            },
+            "size": {
+              "type": "string",
+              "description": "Size of the model cache."
+            },
+            "storageClass": {
+              "type": "string",
+              "description": "StorageClass of the model cache. Empty: `global.storageClass`, else the cluster default."
+            }
+          }
+        },
+        "extraEnv": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "description": "Extra environment variables (e.g. TEXT_EMBEDDING_MODEL), as `NAME: value`."
+        },
+        "podAnnotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Pod annotations."
+        },
+        "podLabels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Extra pod labels."
+        },
+        "podSecurityContext": {
+          "type": "object",
+          "description": "Merged over the chart's pod security context (non-root uid 1000)."
+        },
+        "containerSecurityContext": {
+          "type": "object",
+          "description": "Merged over the chart's container security context."
+        },
+        "nodeSelector": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Node selector. Empty: the top-level `nodeSelector`."
+        },
+        "tolerations": {
+          "type": "array",
+          "description": "Tolerations. Empty: the top-level `tolerations`."
+        },
+        "affinity": {
+          "type": "object",
+          "description": "Affinity. Empty: the top-level `affinity`."
+        }
+      }
+    },
+    "codeExecutor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "nsjail sandbox for custom code evals. It needs `privileged: true` (Linux namespaces): Pod Security Admission `restricted`/`baseline` namespaces and some managed clusters (GKE Autopilot, Fargate) refuse it."
+        },
+        "localFallback": {
+          "type": "boolean",
+          "description": "[CODE_EXECUTOR_LOCAL_FALLBACK] with the sandbox off (or unreachable), run custom code evals inside the worker pods, next to the platform's secrets (RestrictedPython in a subprocess). `false` (default) refuses them with \"Code executor unavailable\". Enable only when everyone who can create evals is trusted."
+        },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "registry": {
+              "type": "string",
+              "description": "Registry. Empty: `image.registry`."
+            },
+            "repository": {
+              "type": "string",
+              "description": "Repository of the code sandbox image."
+            },
+            "tag": {
+              "type": [
+                "string",
+                "number"
+              ],
+              "description": "Tag. Empty: `image.tag`, else the chart's appVersion."
+            },
+            "digest": {
+              "type": "string",
+              "pattern": "^(sha256:[a-f0-9]{64})?$",
+              "description": "Optional digest (`sha256:...`) pinned after the tag."
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": [
+                "",
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ],
+              "description": "Pull policy. Empty: `image.pullPolicy`."
+            }
+          }
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Replicas."
+        },
+        "resources": {
+          "type": "object",
+          "description": "Resources of each sandbox pod."
+        },
+        "allowInternetEgress": {
+          "type": "boolean",
+          "description": "With `networkPolicy.enabled`: let eval code reach the internet (every private, link-local and metadata range stays blocked). `false` blocks all egress but DNS."
+        },
+        "extraEnv": {
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "description": "Extra environment variables, as `NAME: value`."
+        },
+        "podAnnotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Pod annotations."
+        },
+        "podLabels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Extra pod labels."
+        },
+        "nodeSelector": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Node selector. Empty: the top-level `nodeSelector`."
+        },
+        "tolerations": {
+          "type": "array",
+          "description": "Tolerations. Empty: the top-level `tolerations`."
+        },
+        "affinity": {
+          "type": "object",
+          "description": "Affinity. Empty: the top-level `affinity`."
+        }
+      }
+    },
+    "bootstrap": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "installHook": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "pre-install",
+            "post-install"
+          ],
+          "description": "When the job runs on install. `auto`: pre-install when every datastore is external (the app starts on a ready schema), post-install when any is bundled (they must exist first). It always runs pre-upgrade."
+        },
+        "propertyCatalog": {
+          "type": "boolean",
+          "description": "Create the observed-attribute index database and its two ClickHouse users (needs CREATE USER and GRANT). `false`: create them yourself."
+        },
+        "waitTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Seconds to wait for each datastore to accept connections."
+        },
+        "clickhouseTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Deadline of the ClickHouse schema step, in seconds."
+        },
+        "backoffLimit": {
+          "type": "integer",
+          "description": "Retries of a failed job."
+        },
+        "activeDeadlineSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Deadline of the whole job, in seconds. Keep it below `helm install/upgrade --timeout` (20m in every documented command), so Helm reports how the job ended; raise both together for a long migration."
+        },
+        "ttlSecondsAfterFinished": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "description": "Seconds a finished job (and its logs) is kept."
+        },
+        "resources": {
+          "type": "object",
+          "description": "Resources of the bootstrap job."
+        },
+        "serviceAccount": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "create": {
+              "type": "boolean",
+              "description": "Create a dedicated ServiceAccount for the job (it exists before any other resource on install)."
+            },
+            "name": {
+              "type": "string",
+              "description": "Name of the job's ServiceAccount. Empty: <fullname>-bootstrap when created, else the namespace default."
+            },
+            "annotations": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Annotations, e.g. for cloud IAM database authentication."
+            }
+          }
+        },
+        "podAnnotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Pod annotations."
+        },
+        "extraVolumes": {
+          "type": "array",
+          "description": "Extra volumes, e.g. the CA of `postgres.external.sslMode=verify-full`. Empty: `backend.extraVolumes`."
+        },
+        "extraVolumeMounts": {
+          "type": "array",
+          "description": "Extra volume mounts. Empty: `backend.extraVolumeMounts`."
+        }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "One Ingress for the UI, the API and OTLP/HTTP."
+        },
+        "className": {
+          "type": "string",
+          "description": "IngressClass, e.g. `nginx`."
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Ingress annotations (e.g. cert-manager, proxy body size and timeouts for uploads and WebSockets)."
+        },
+        "tls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "secretName": {
+                "type": "string"
+              },
+              "hosts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "description": "TLS entries, e.g. `[{secretName: futureagi-tls, hosts: [futureagi.example.com, api.futureagi.example.com]}]`. Hosts listed here get https URLs."
+        },
+        "app": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "host": {
+              "type": "string",
+              "description": "Host of the UI."
+            }
+          }
+        },
+        "api": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "host": {
+              "type": "string",
+              "description": "Host of the API. It must differ from the UI host: the API serves many top-level paths."
+            }
+          }
+        },
+        "otlp": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Route OTLP/HTTP (`/v1/traces`, `/tracer/v1/traces`) to fi-collector."
+            },
+            "host": {
+              "type": "string",
+              "description": "Host for OTLP/HTTP. Empty: the API host."
+            }
+          }
+        },
+        "objects": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "host": {
+              "type": "string",
+              "description": "Host of the bundled object storage (`objectStorage.mode=bundled`), for browser downloads [MINIO_URL]. Empty: not exposed."
+            }
+          }
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "NetworkPolicies: the datastores, the gateway, serving and the code sandbox accept traffic only from this release's pods; the UI, API and collector also from `ingressFrom`. A component whose Service is a LoadBalancer or NodePort accepts any source on its Service ports. Egress is open, except for the code sandbox."
+        },
+        "ingressFrom": {
+          "type": "array",
+          "description": "Peers (NetworkPolicy `from` entries) that may reach the UI, API and collector, e.g. your ingress controller's namespace: `[{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ingress-nginx}}}]`. Empty: any source."
+        }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": {
+          "type": "boolean",
+          "description": "Create a ServiceAccount for the application pods."
+        },
+        "name": {
+          "type": "string",
+          "description": "Name. Empty: <fullname> when created, else the namespace default."
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Annotations of the application pods' ServiceAccount. Object storage does not use them: it always authenticates with `objectStorage` keys."
+        },
+        "automountServiceAccountToken": {
+          "type": "boolean",
+          "description": "Mount the service account token (the application does not call the Kubernetes API)."
+        }
+      }
+    },
+    "nodeSelector": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Default node selector."
+    },
+    "tolerations": {
+      "type": "array",
+      "description": "Default tolerations."
+    },
+    "affinity": {
+      "type": "object",
+      "description": "Default affinity."
+    },
+    "topologySpreadConstraints": {
+      "type": "array",
+      "description": "Default topology spread constraints of the application Deployments."
+    },
+    "priorityClassName": {
+      "type": "string",
+      "description": "PriorityClass of every pod."
+    },
+    "commonLabels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Extra labels on every resource."
+    }
+  }
+}

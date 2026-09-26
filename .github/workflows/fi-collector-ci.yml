@@ -7,6 +7,7 @@ on:
       - "fi-collector/**"
       - "docker-compose*.yml"
       - "bin/install*"
+      - "bin/uninstall"
       - "bin/e2e"
       - "deploy/**"
       - "e2e/stack/**"
@@ -14,13 +15,25 @@ on:
       - "futureagi/tracer/services/clickhouse/oss_*.py"
       - "futureagi/tracer/services/clickhouse/tests/test_oss_*.py"
       - "futureagi/tracer/services/clickhouse/v2/observed_catalog/**"
+      - "scripts/image_size_budget.*"
+      - ".github/workflows/release-images.yml"
       - ".github/workflows/fi-collector-ci.yml"
+      # Image conventions (deploy/tests/test_image_standards.py)
+      - "**/Dockerfile*"
+      - "futureagi/docker/**"
+      - "scripts/verify-image-contents.sh"
+      - "docs/images.md"
+      - ".hadolint.yaml"
+      - ".github/workflows/build-image*.yml"
+      - ".github/workflows/base-image-publish.yml"
+      - ".github/workflows/platform-ci.yml"
   push:
     branches: [dev, main]
     paths:
       - "fi-collector/**"
       - "docker-compose*.yml"
       - "bin/install*"
+      - "bin/uninstall"
       - "bin/e2e"
       - "deploy/**"
       - "e2e/stack/**"
@@ -28,7 +41,18 @@ on:
       - "futureagi/tracer/services/clickhouse/oss_*.py"
       - "futureagi/tracer/services/clickhouse/tests/test_oss_*.py"
       - "futureagi/tracer/services/clickhouse/v2/observed_catalog/**"
+      - "scripts/image_size_budget.*"
+      - ".github/workflows/release-images.yml"
       - ".github/workflows/fi-collector-ci.yml"
+      # Image conventions (deploy/tests/test_image_standards.py)
+      - "**/Dockerfile*"
+      - "futureagi/docker/**"
+      - "scripts/verify-image-contents.sh"
+      - "docs/images.md"
+      - ".hadolint.yaml"
+      - ".github/workflows/build-image*.yml"
+      - ".github/workflows/base-image-publish.yml"
+      - ".github/workflows/platform-ci.yml"
   merge_group:
   workflow_dispatch:
 
@@ -191,9 +215,20 @@ jobs:
           python-version: "3.11"
       - name: Compose and bootstrap contracts without running services
         run: python -m unittest discover -s deploy/tests -p 'test_observed_catalog_*.py' -v
+      - name: Image size budget script and budgets
+        # scripts/image_size_budget.py against a fake registry, and the budget
+        # file against the compose files and release-images.yml.
+        run: python -m unittest discover -s deploy/tests -p 'test_image_size_budget.py' -v
+      - name: Image conventions
+        # Labels, users, probes and base pins of every Dockerfile, the backend
+        # variants (the default tags stay feature-complete; -slim is the
+        # platform's base), the release and CI workflows and docs/images.md.
+        run: |
+          python -m pip install --quiet PyYAML==6.0.3
+          python -m unittest discover -s deploy/tests -p 'test_image_standards.py' -v
       - name: Shell syntax
         run: |
-          bash -n bin/install bin/e2e
+          bash -n bin/install bin/uninstall bin/e2e deploy/platform/bin/start deploy/platform/bin/after-bootstrap
           sh -n futureagi/scripts/property_catalog_oss/bootstrap_clickhouse.sh
       - name: PowerShell installer syntax
         shell: pwsh

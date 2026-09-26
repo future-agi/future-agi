@@ -1,0 +1,84 @@
+{{- if .Values.codeExecutor.enabled }}
+{{- $e := .Values.codeExecutor -}}
+{{- $ctx := dict "root" . "component" "code-executor" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "futureagi.component" $ctx }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  replicas: {{ $e.replicas }}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      {{- include "futureagi.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "futureagi.componentLabels" $ctx | nindent 8 }}
+        {{- with $e.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with $e.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      # No service account token and no platform secrets: eval code runs here.
+      serviceAccountName: {{ include "futureagi.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 6) }}
+      {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $e)) "indent" 6) }}
+      containers:
+        - name: code-executor
+          image: {{ include "futureagi.image" (dict "root" . "image" $e.image) }}
+          imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" . "image" $e.image) }}
+          ports:
+            - name: http
+              containerPort: 8060
+              protocol: TCP
+          {{- with $e.extraEnv }}
+          env:
+            {{- include "futureagi.envMap" . | nindent 12 }}
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml $e.resources | nindent 12 }}
+          # nsjail creates Linux namespaces for each run, which needs a
+          # privileged container. Each run is then confined by nsjail (PID,
+          # mount and user namespaces, seccomp, rlimits, read-only root).
+          securityContext:
+            privileged: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "futureagi.component" $ctx }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "futureagi.selectorLabels" $ctx | nindent 4 }}
+  ports:
+    - name: http
+      port: 8060
+      targetPort: http
+      protocol: TCP
+{{- end }}

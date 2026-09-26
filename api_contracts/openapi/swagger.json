@@ -15560,7 +15560,7 @@
             "get": {
                 "operationId": "api_setup-checks_list",
                 "summary": "Public infrastructure probe for the OSS first-run setup screen.",
-                "description": "Returns ``{\"status\": \"ok\"|\"issues\", \"mode\": ..., \"checks\": [...]}``. No auth —\nit runs before any account exists. Self-hosted only: on cloud and EE the\nroute answers 404, so neither the internal service topology nor the outbound\nprobes it triggers are reachable by an anonymous caller.",
+                "description": "Returns ``{\"status\": \"ok\"|\"issues\", \"mode\": ..., \"setup\":\n\"standalone\"|\"distributed\"|\"helm\", \"collector_http_url\": ..., \"checks\":\n[...]}``. No auth — it runs before any account exists. Self-hosted only:\non cloud and EE the route answers 404, so neither the internal service\ntopology nor the outbound probes it triggers are reachable by an\nanonymous caller.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -89453,6 +89453,8 @@
             "required": [
                 "status",
                 "mode",
+                "setup",
+                "collector_http_url",
                 "checks"
             ],
             "type": "object",
@@ -89472,6 +89474,20 @@
                         "live",
                         "experiment"
                     ]
+                },
+                "setup": {
+                    "title": "Setup",
+                    "type": "string",
+                    "enum": [
+                        "standalone",
+                        "distributed",
+                        "helm"
+                    ]
+                },
+                "collector_http_url": {
+                    "title": "Collector http url",
+                    "type": "string",
+                    "minLength": 1
                 },
                 "checks": {
                     "type": "array",

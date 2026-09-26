@@ -1,0 +1,122 @@
+{{- if eq .Values.postgres.mode "bundled" }}
+{{- /* Evaluation only: one replica, no replication, no backups. */ -}}
+{{- $p := .Values.postgres -}}
+{{- $bundled := $p.bundled -}}
+{{- $ctx := dict "root" . "component" "postgres" -}}
+{{- $name := include "futureagi.component" $ctx -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "futureagi.selectorLabels" $ctx | nindent 4 }}
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  replicas: 1
+  serviceName: {{ $name }}
+  selector:
+    matchLabels:
+      {{- include "futureagi.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "futureagi.datastorePodLabels" $ctx | nindent 8 }}
+      annotations:
+        # Only this datastore's own credentials: an LLM key does not restart it.
+        checksum/secrets: {{ toJson (pick $p "password" "existingSecret" "existingSecretPasswordKey") | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 6) }}
+      # The image's postgres user.
+      securityContext:
+        {{- include "futureagi.podSecurityContext" (dict "uid" 999) | nindent 8 }}
+      {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $bundled)) "indent" 6) }}
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: postgres
+          image: {{ include "futureagi.image" (dict "root" . "image" $bundled.image) }}
+          imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" . "image" $bundled.image) }}
+          args:
+            - postgres
+            {{- range $key, $value := $bundled.parameters }}
+            - -c
+            - {{ printf "%s=%v" $key $value | quote }}
+            {{- end }}
+          ports:
+            - name: postgres
+              containerPort: 5432
+              protocol: TCP
+          env:
+            - name: POSTGRES_USER
+              value: {{ $p.user | quote }}
+            - name: POSTGRES_DB
+              value: {{ $p.database | quote }}
+            {{- include "futureagi.postgres.passwordEnv" (dict "root" . "name" "POSTGRES_PASSWORD") | nindent 12 }}
+            # A subdirectory: the volume's root may hold lost+found.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          startupProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -h 127.0.0.1 -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -h 127.0.0.1 -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -h 127.0.0.1 -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml $bundled.resources | nindent 12 }}
+          securityContext:
+            {{- include "futureagi.containerSecurityContext" (dict "readOnly" false) | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: run
+              mountPath: /var/run/postgresql
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: run
+          emptyDir: {}
+        # Parallel queries allocate shared memory beyond the runtime's 64 MiB default.
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 256Mi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "futureagi.selectorLabels" $ctx | nindent 10 }}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- include "futureagi.storageClass" (dict "root" . "storageClass" $bundled.persistence.storageClass) | nindent 8 }}
+        resources:
+          requests:
+            storage: {{ $bundled.persistence.size }}
+{{- end }}

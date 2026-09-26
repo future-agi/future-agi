@@ -227,6 +227,8 @@ class SetupCheckSerializer(serializers.Serializer):
 class SetupChecksResultSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=("ok", "issues"))
     mode = serializers.ChoiceField(choices=("live", "experiment"))
+    setup = serializers.ChoiceField(choices=("standalone", "distributed", "helm"))
+    collector_http_url = serializers.CharField()
     checks = SetupCheckSerializer(many=True)
 
 

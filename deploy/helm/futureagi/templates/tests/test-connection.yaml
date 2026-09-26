@@ -1,0 +1,56 @@
+{{- /* `helm test <release>`: every HTTP service of the release answers. Runs
+in the backend image (already on the nodes) with the standard library. */ -}}
+{{- $b := .Values.backend -}}
+{{- $ctx := dict "root" . "component" "test" -}}
+{{- $urls := list
+      (printf "http://%s:%v/health/" (include "futureagi.component" (dict "root" . "component" "backend")) $b.service.port)
+      (printf "http://%s:%v/" (include "futureagi.component" (dict "root" . "component" "frontend")) .Values.frontend.service.port)
+      (printf "http://%s:9464/healthz" (include "futureagi.component" (dict "root" . "component" "fi-collector")))
+      (printf "http://%s:%v/healthz" (include "futureagi.component" (dict "root" . "component" "agentcc-gateway")) .Values.agentccGateway.service.port) -}}
+{{- if .Values.serving.enabled -}}
+{{- $urls = append $urls (printf "http://%s:8080/health" (include "futureagi.component" (dict "root" . "component" "serving"))) -}}
+{{- end -}}
+{{- if .Values.codeExecutor.enabled -}}
+{{- $urls = append $urls (printf "http://%s:8060/health" (include "futureagi.component" (dict "root" . "component" "code-executor"))) -}}
+{{- end -}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "futureagi.component" $ctx }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 2) }}
+  securityContext:
+    {{- include "futureagi.podSecurityContext" (dict "uid" 1000) | nindent 4 }}
+  containers:
+    - name: test
+      image: {{ include "futureagi.image" (dict "root" . "image" $b.image) }}
+      imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" . "image" $b.image) }}
+      command: ["python", "-c"]
+      args:
+        - |
+          import sys, urllib.request
+          failed = 0
+          for url in sys.argv[1:]:
+              try:
+                  with urllib.request.urlopen(url, timeout=10) as response:
+                      print(f"ok    {response.status} {url}")
+              except Exception as exc:
+                  failed += 1
+                  print(f"FAIL  {url}: {exc}")
+          sys.exit(1 if failed else 0)
+        {{- range $urls }}
+        - {{ . | quote }}
+        {{- end }}
+      resources:
+        requests: {cpu: 10m, memory: 64Mi}
+        limits: {cpu: 200m, memory: 256Mi}
+      securityContext:
+        {{- include "futureagi.containerSecurityContext" (dict) | nindent 8 }}

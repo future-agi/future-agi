@@ -44,6 +44,7 @@ with `API_JOURNEY_MUTATIONS=1`.
 ```bash
 cd futureagi
 
+uv sync --frozen         # once, and after dependency changes (CI adds --all-extras)
 make test                # All tests
 make test-unit           # Unit tests
 make test-integration    # Integration tests
@@ -68,6 +69,7 @@ do not give test execution external network access.
 (cd fi-collector && go test -race -count=1 ./...)
 (cd fi-collector && go build ./cmd/fi-collector ./cmd/fi-property-catalog-consumer ./cmd/fi-observed-catalog-backfill)
 python3 -m unittest discover -s deploy/tests -p 'test_observed_catalog_*.py' -v
+python3 -m unittest discover -s deploy/tests -p 'test_image_size_budget.py' -v
 ```
 
 Report environment-gated integration skips separately from executed unit tests;
@@ -76,7 +78,78 @@ run is not race qualification. Targeted in-memory/transport-only tests may run
 directly under deny-all networking. Tests using `miniredis` or `httptest` need
 only their own loopback listeners, never borrowed host services.
 
-The deployment suite renders root/dev/E2E/production Compose, checks the startup dependency graph and mutation guards, and exercises index bootstrap with a fake ClickHouse client. It does not start containers or create databases. Passing configuration tests is not a fresh/retained startup proof. Runtime observation validation uses the existing E2E harness; see [`fi-collector/PROPERTY_CATALOG_OSS.md`](fi-collector/PROPERTY_CATALOG_OSS.md) for source-built images and the bounded backfill command.
+The deployment suite renders the Standalone, Distributed, development, E2E and production Compose files, checks the startup dependency graph and mutation guards, and exercises index bootstrap with a fake ClickHouse client. It does not start containers or create databases. Passing configuration tests is not a fresh/retained startup proof. Runtime observation validation uses the existing E2E harness; see [`fi-collector/PROPERTY_CATALOG_OSS.md`](fi-collector/PROPERTY_CATALOG_OSS.md) for source-built images and the bounded backfill command.
+
+The installer suite, `futureagi/tests/test_oss_install_hardening.py` and `futureagi/tests/test_oss_install_env.py`, runs `bin/install` and `bin/uninstall` against stub `docker`, `curl` and `date` commands, so it needs no Docker daemon. It covers setup selection (Standalone, Distributed, an older Distributed install), the refusals that keep an install on its setup, fresh-install secrets, the preflight checks, the readiness loop and `--purge` scoping. It does not prove that either setup boots; `./bin/install --from-source` on a branch does.
+
+The installers' bring-up block is also executed on its own, against a Compose double, in `deploy/tests/test_observed_catalog_startup.py` (bash, and PowerShell when `pwsh` is installed): each setup makes exactly one `compose up` call (Distributed a bounded `up --build --wait`, Standalone a plain `up -d`), never retries or cleans up, and an upgraded Distributed install names its retired RabbitMQ container without removing it.
+
+### Image sizes
+
+Every image has a compressed-size budget in [`scripts/image_size_budget.json`](scripts/image_size_budget.json), per architecture, and so does what a fresh Standalone install downloads (the app image plus Postgres and ClickHouse, each layer counted once). Per-image budgets and measured sizes are summarized in [`docs/images.md`](docs/images.md#images-at-a-glance). `scripts/image_size_budget.py` reads the sizes from registry manifests, so it needs no Docker daemon:
+
+```bash
+# Every image of a release, both architectures:
+python3 scripts/image_size_budget.py report --tag v1.42.0
+# One image you pushed to a registry (sizes are compressed layers, which a
+# local `docker build` does not have until it is pushed; CI pushes to a
+# throwaway localhost:5000 registry):
+python3 scripts/image_size_budget.py check --image futureagi/platform --arch amd64 \
+  --ref localhost:5000/futureagi/platform:ci --baseline futureagi/platform:latest --default-install
+```
+
+CI runs `check` on pull requests (`platform-ci.yml`, for the images it builds) and on every release build before any tag moves (`build-image-multiarch.yml`). It also prints the upgrade delta: the bytes an existing install downloads to move from `:latest` to the new image, which stays small only while the release build cache hits. A change that needs a bigger image raises its budget in the same pull request, with the reason. `deploy/tests/test_image_size_budget.py` tests the script against a fake registry and checks that every image the compose files and `release-images.yml` use has a budget.
+
+### Images, docs and the Helm chart
+
+These suites read files and need no Docker daemon and no services:
+
+```bash
+# Every deployment suite: Compose contracts, installer bring-up, production setup,
+# image conventions (docs/images.md), Standalone's first-run page and boot summary.
+python3 -m unittest discover -s deploy/tests -v
+
+# Docs that must match the code, from futureagi/ in its virtualenv (uv sync --frozen):
+#   docs/configuration.md documents every ${VAR} of the compose files and every .env.example key;
+#   docs/telemetry.md lists every field telemetry sends and every FUTURE_AGI_TELEMETRY_* setting;
+#   every setup-check link points at a heading of INSTALLATION.md.
+cd futureagi && .venv/bin/python -m pytest -q tests/test_env_reference.py \
+  tfc/deployment_telemetry/tests/test_docs_contract.py \
+  "tfc/tests/test_setup_checks.py::TestCheckInventory"
+```
+
+So renaming a heading of `INSTALLATION.md` under **Troubleshooting**, adding
+a compose variable without a row in `docs/configuration.md`, or sending a new
+telemetry field without documenting it fails a test.
+`python3 scripts/env_reference.py` lists the compose variables
+`docs/configuration.md` does not document yet.
+
+`deploy/tests/test_image_standards.py` checks every Dockerfile's conventions
+and the release workflows (both backend variants, the size budgets); CI runs it
+in `fi-collector-ci.yml`. Its two workflow tests need PyYAML and are skipped
+without it. To check a built backend image's contents,
+`scripts/verify-image-contents.sh` takes `OSS_VARIANT=standard|slim` (a tag
+ending in `-slim` means slim). Standalone builds by `./bin/install --from-source`
+and `./bin/dev` are slim, so pass `OSS_VARIANT=slim` for them.
+
+The Helm chart has its own checks (they need `helm`, `kubeconform` and Python
+with PyYAML; the kind smoke test also needs `kind`, `kubectl` and images built
+from this checkout):
+
+```bash
+deploy/helm/futureagi/hack/check.sh                  # lint, template, kubeconform, invariants, values docs and schema
+TAG=local deploy/helm/futureagi/hack/kind-smoke.sh   # install, check, upgrade and roll back on kind
+```
+
+`check.sh` renders every value set, `ci/overrides.yaml` included, checks that
+inconsistent values (reCAPTCHA without its key) refuse to render, and runs
+`hack/rendered_checks.py` over the manifests: no duplicate or forward-referenced
+env variables, the public URLs per value set, worker migration gating, open
+ports for exposed Services, and the gateway's port. It also checks that
+`.prettierignore` keeps the pre-commit formatter off the templates and the
+files `values_docs.py` writes. `kind-smoke.sh` also checks
+that a resize of a bundled datastore's volume is refused and that
+`helm rollback` restores the chart's Secret.
 
 ### Observed catalog integration (isolated dependencies)
 
@@ -117,7 +190,7 @@ is a synthetic trusted result, not live PostgreSQL API-key authentication.
 Three-replica qualification remains optional via `replicated.yml` and
 `OBS_TEST_REPLICA_URLS`, outside the default CI job.
 
-### End-to-end (browser + full stack, Playwright)
+### End-to-end (browser + Distributed setup, Playwright)
 
 ```bash
 bin/e2e up      # boot the isolated futureagi-e2e stack (side by side with your dev stack)
@@ -126,7 +199,7 @@ bin/e2e ui      # Playwright UI mode
 bin/e2e down    # stop it (add -v to wipe volumes)
 ```
 
-Full-stack flows that drive a real browser against the production frontend image and assert both what the user sees **and** the backend state behind it (Postgres, ClickHouse, the CDC mirrors). The stack is the root `docker-compose.yml`, trimmed and moved onto its own ports (app 3100, API 8100, everything else 2xxxx), with separate default ports from dev and `futureagi-test`. The project name is fixed to `futureagi-e2e`; check ownership and ports before startup. The only mocked component is the LLM provider, behind the real gateway.
+End-to-end flows that drive a real browser against the production frontend image and assert both what the user sees **and** the backend state behind it (Postgres, ClickHouse, the CDC mirrors). The stack is the Distributed setup, `docker-compose.distributed.yml`, trimmed and moved onto its own ports (app 3100, API 8100, everything else 2xxxx), with separate default ports from dev and `futureagi-test`. The project name is fixed to `futureagi-e2e`; check ownership and ports before startup. The only mocked component is the LLM provider, behind the real gateway.
 
 A cold first boot takes about 8–9 minutes — most of it the backend's first-run migrations — and warm boots are far quicker. Covered flows are cataloged in [`e2e/FLOWS.md`](e2e/FLOWS.md), which is generated from the specs (`cd e2e && yarn catalog`). The authoring guide, the attach and local-code workflows, and the quarantine rules are in [`e2e/README.md`](e2e/README.md). Two agent skills ship with the repo: `writing-e2e-flows` authors a flow from the feature's ticket and design doc, and `reviewing-prs` reviews a PR against the coding standards with an E2E-coverage gate (`cd e2e && yarn coverage`).
 
@@ -171,8 +244,12 @@ CI covers frontend, sharded backend pytest, Go collector tests/builds, deploymen
 | `frontend-deploy-*.yaml`           | manual or on main                                                                | Environment-specific deploys (EU, GCP, prod, dev CDN)                                              |
 | `frontend-auto-approve-hotfix.yml` | hotfix PRs                                                                       | Auto-approval routing for verified hotfix branches                                                 |
 | `backend-ci.yml`                  | Backend/deployment PR changes, pushes to `dev`/`main`, merge queue               | Sharded pytest using the standard test dependency stack                                          |
-| `fi-collector-ci.yml`             | Collector/deployment PR changes, pushes to `dev`/`main`, merge queue, manual      | Go race tests/builds, real observation integration, Compose/bootstrap contracts and installer syntax       |
+| `fi-collector-ci.yml`             | Collector/deployment PR changes (and Dockerfiles), pushes to `dev`/`main`, merge queue, manual | Go race tests/builds, real observation integration, Compose/bootstrap contracts, image conventions (`test_image_standards.py`) and installer syntax |
 | `e2e-ci.yml`                       | PRs into and pushes on `dev`/`main`, merge queue                                 | Builds the changed images from PR code, boots the `futureagi-e2e` stack, runs the Playwright flows |
+| `platform-ci.yml`                  | PRs into and pushes on `dev`/`main` that touch the Standalone setup or the backend | Builds the five Standalone images, the backend as its slim variant (amd64; arm64 when dependencies or Dockerfiles change), checks their size budgets, runs `./bin/install` and smoke-tests the Standalone stack |
+| `helm-ci.yml`                      | PRs into and pushes on `dev`/`main` that touch `deploy/helm/**`, the bootstrap command or the release-please files | `hack/check.sh` (lint, template, kubeconform, rendered invariants, values docs and schema); fails when the chart's `version` or `appVersion` drifts from the release manifest; then installs the chart on kind with bundled datastores and runs `hack/kind-smoke.sh`, including an in-place upgrade and a rollback |
+| `release-images.yml`               | a `vX.Y.Z` tag                                                                   | Builds every image natively for amd64 and arm64 (the backend in both variants: the default tags and `-slim`), checks each against its size budget, then tags it; publishes the pinned code-executor base when it is new |
+| `base-digest-check.yml`            | weekly, manual                                                                   | Fails when a digest-pinned base image (e.g. `python:3.11-slim-bookworm`) has moved, listing the new digest |
 
 A push to a feature branch runs only `frontend-feature.yml`, not the main or develop pipelines. This keeps GitHub Actions minutes targeted — no overlapping workflows.
 

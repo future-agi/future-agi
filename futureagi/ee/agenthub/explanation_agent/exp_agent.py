@@ -3,7 +3,6 @@ import traceback
 
 import numpy as np
 import pandas as pd
-from sklearn.cluster import HDBSCAN
 import traceback
 
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -16,7 +15,7 @@ from ee.agenthub.explanation_agent.prompts import (
     CRITIC_PROMPT,
 )
 from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
-from agentic_eval.core.embeddings.embeddings_v2 import get_embedding_model
+from agentic_eval.core.embeddings.serving_client import serving_available
 from agentic_eval.core.llm.llm import LLM
 from agentic_eval.core.utils.model_config import ModelConfigs
 import structlog
@@ -66,24 +65,41 @@ class ExplanationAgent:
         return response
 
     def _embed(self, texts):
-        model = self.embedding_model
-        if texts:  # batch-encode only the unknown ones
-            if get_embedding_model(input_type="check_serving"):
-                # For serving client function
-                # get vectors from the model in batches of 10
-                try:
-                    vecs = []
-                    for i in range(0, len(texts), 10):
-                        batch = texts[i : i + 10]
-                        vecs.extend(model(batch))
-                except Exception:
-                    traceback.print_exc()
+        """Embed ``texts`` in batches of 10, or return None without embeddings.
 
-            else:
-                # For local model
-                # vecs = self.embed_texts(texts)
-                raise NotImplementedError("Local embedding not implemented")
+        None covers model serving being absent (the standalone install runs it
+        only with the ``ml`` profile) and any failed batch. Partial results
+        are dropped too: cluster labels are positional, so a short matrix
+        would attach clusters to the wrong explanations.
+        """
+        if not texts or not serving_available():
+            return None
+        model = self.embedding_model
+        vecs = []
+        try:
+            for i in range(0, len(texts), 10):
+                batch = texts[i : i + 10]
+                vecs.extend(model(batch))
+        except Exception:
+            logger.exception("explanation_embedding_failed", texts=len(texts))
+            return None
+        if len(vecs) != len(texts):
+            logger.warning(
+                "explanation_embedding_count_mismatch",
+                texts=len(texts),
+                embeddings=len(vecs),
+            )
+            return None
         return np.stack(list(vecs))
+
+    @staticmethod
+    def evenly_spaced_indices(n: int, k: int) -> list[int]:
+        """Up to ``k`` indices spread evenly across ``range(n)``."""
+        if n <= k:
+            return list(range(n))
+        if k < 2:
+            return list(range(k))
+        return sorted({round(i * (n - 1) / (k - 1)) for i in range(k)})
 
     # --------------------------
     # Simple HDBSCAN (bigger clusters, no tuning)
@@ -126,6 +142,7 @@ class ExplanationAgent:
         - min_cluster_size based on % of n
         - optional pruning of tiny clusters
         """
+        from sklearn.cluster import HDBSCAN  # lazy
         n = len(X)
         mcs = self.choose_min_cluster_size(n, pct=pct, floor=floor)
         clusterer = HDBSCAN(
@@ -428,23 +445,32 @@ class ExplanationAgent:
 
         print(f"[1/5] Embedding {len(texts)} explanations...")
         X = self._embed(texts)
-        print("[2/5] Clustering (HDBSCAN)...")
-        labels, model, meta = self.simple_hdbscan(
-            X,
-            pct=pct,
-            floor=floor,
-            min_samples=min_samples,
-            min_final_size=min_final_size,
-        )
-        print(f"Chosen: mcs={meta['min_cluster_size']}, ms={meta['min_samples']}")
-        print("Cluster label counts (noise=-1 included):")
-        print(pd.Series(labels).value_counts().sort_index())
+        if X is None:
+            # No embeddings, so no clustering: summarise every explanation as
+            # one group from an evenly spread sample, rather than failing.
+            logger.info("explanation_summary_without_clustering", texts=len(texts))
+            labels = np.zeros(len(texts), dtype=int)
+            reps_idx = {
+                0: self.evenly_spaced_indices(len(texts), per_cluster_samples)
+            }
+        else:
+            print("[2/5] Clustering (HDBSCAN)...")
+            labels, model, meta = self.simple_hdbscan(
+                X,
+                pct=pct,
+                floor=floor,
+                min_samples=min_samples,
+                min_final_size=min_final_size,
+            )
+            print(f"Chosen: mcs={meta['min_cluster_size']}, ms={meta['min_samples']}")
+            print("Cluster label counts (noise=-1 included):")
+            print(pd.Series(labels).value_counts().sort_index())
 
-        print("[3/5] Selecting representative explanations per cluster...")
-        reps_idx = self.representative_indices(
-            X, labels, per_cluster=per_cluster_samples
-        )
-        print(f"Found {len(reps_idx)} non-noise clusters with representatives.")
+            print("[3/5] Selecting representative explanations per cluster...")
+            reps_idx = self.representative_indices(
+                X, labels, per_cluster=per_cluster_samples
+            )
+            print(f"Found {len(reps_idx)} non-noise clusters with representatives.")
 
         # Map cluster_id -> all member explanation IDs (non-noise only)
         cluster_member_ids: dict[int, list[str]] = {}

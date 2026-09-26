@@ -43,7 +43,7 @@ def test_other_workers_keep_temporal_default_workflow_cache():
 
 @pytest.mark.unit
 def test_always_on_exact_worker_disables_startup_database_mutations():
-    compose_path = Path(__file__).resolve().parents[3] / "docker-compose.yml"
+    compose_path = Path(__file__).resolve().parents[3] / "docker-compose.distributed.yml"
     compose = compose_path.read_text(encoding="utf-8")
     start = compose.index("\n  worker-exact-aggregation:")
     end = compose.index("\n  worker-trace-ingestion:", start)

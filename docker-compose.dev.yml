@@ -1,283 +1,73 @@
-x-dev-worker: &dev-worker
-  image: futureagi/future-agi:dev
-  working_dir: /app/backend
-  pull_policy: never
-  volumes:
-    - ./futureagi:/app/backend
-  environment:
-    FAST_STARTUP: "true"
-    NO_STARTUP_DB_MUTATIONS: "true"
-    CH25_DROP_LEGACY_CDC_CHAIN: "false"
-    CH25_TRACE_DUAL_WRITE: "false"
-    CH_DUAL_WRITE: "false"
-
+# ============================================================================
+# Hot-reload development on the Standalone stack: the everyday loop.
+#
+#   ./bin/dev
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# Reloads on save:
+#   futureagi/**   the API and the Temporal worker embedded in it restart
+#                  (granian --reload)
+#   frontend/**    Vite hot module replacement on http://localhost:3000
+# Needs `./bin/dev rebuild`: Python or Node dependency changes, fi-collector
+# and agentcc-gateway (Go) code, deploy/platform/**.
+#
+# Docker Desktop and Colima bind mounts deliver no inotify events for edits
+# made on the host, so both reloaders poll.
+#
+# For changes that need the Distributed topology (PeerDB, per-queue workers,
+# Kafka catalog) use ./bin/dev --distributed (docker-compose.distributed.dev.yml).
+# ============================================================================
 services:
-  # Developer restarts must not run migrations or modify retained mirrors.
-  # Fresh installations use the root Compose bootstrap before this overlay.
-  postgres-schema-bootstrap:
-    <<: *dev-worker
-    entrypoint: ["python"]
-    command: ["manage.py", "migrate", "--check", "--noinput"]
-
-  clickhouse-native-bootstrap:
-    <<: *dev-worker
-    command: ["--phase", "native"]
-
-  peerdb-init:
-    <<: *dev-worker
-    command: ["--wait-for-mirrors", "--timeout", "900"]
+  app:
+    # Built from this checkout by ./bin/dev (./bin/install --from-source).
+    image: futureagi/platform:local
+    pull_policy: never
+    # Port 3000 belongs to the Vite dev server below; the built UI inside the
+    # app container stays up for the healthcheck only.
+    ports: !override
+      - "${BACKEND_PORT:-8000}:8000"
+      - "127.0.0.1:${FI_COLLECTOR_OTLP_PORT:-4317}:4317"
+      - "127.0.0.1:${FI_COLLECTOR_OTLP_HTTP_PORT:-4318}:4318"
+      - "${AGENTCC_GATEWAY_PORT:-8090}:8080"
+      - "127.0.0.1:${MINIO_API_PORT:-9005}:9005"
+    volumes:
+      - ./futureagi:/app/backend
+      # Hide a host virtualenv: the image's interpreter and packages are used,
+      # and the polling reloader does not have to scan it.
+      - /app/backend/.venv
     environment:
-      FAST_STARTUP: "true"
-      NO_STARTUP_DB_MUTATIONS: "true"
-
-  peerdb-temporal-init:
-    <<: *dev-worker
-    command: []
-
-  clickhouse-cdc-bootstrap:
-    <<: *dev-worker
-    command: ["--phase", "cdc", "--wait-for-mirrors", "--timeout", "900"]
+      DEBUG: "true"
+      # bin/start turns this into granian --reload with one --reload-paths
+      # per top-level code directory (granian reads a single value per
+      # option from the environment, and a polling watcher must not walk
+      # dependency caches such as .venv or .uv-cache in the checkout).
+      FI_DEV_RELOAD: "true"
+      WATCHFILES_FORCE_POLLING: "true"
+      # A reload restarts the embedded Temporal worker; don't wait 30 s for
+      # in-flight activities to drain.
+      TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT: "3"
 
   frontend:
     build:
       context: ./frontend
       target: dev
     image: futureagi/frontend:dev
+    pull_policy: never
     volumes:
       - ./frontend:/app
-      - /app/node_modules
-    ports: !override
+      # Seeded from the image on first start; ./bin/dev rebuild frontend
+      # drops it after a dependency change.
+      - frontend-node-modules:/app/node_modules
+    ports:
       - "${FRONTEND_PORT:-3000}:3000"
     environment:
       VITE_USE_POLLING: "true"
-      VITE_HOST_API: ${VITE_HOST_API:-http://localhost:8000}
-      VITE_ENVIRONMENT: ${VITE_ENVIRONMENT:-development}
-      VITE_GOOGLE_SITE_KEY: ${VITE_GOOGLE_SITE_KEY:-}
+      VITE_HOST_API: ${VITE_HOST_API:-http://localhost:${BACKEND_PORT:-8000}}
+      VITE_ENVIRONMENT: development
       VITE_HELP_LINK: ${VITE_HELP_LINK:-}
-
-  backend:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: futureagi/future-agi:dev
-    # The DEV API proxy owns the public HTTP port so OTLP/HTTP can be routed
-    # directly to fi-collector without exposing the collector itself.
-    ports: !override
-      - "${BACKEND_GRPC_PORT:-50051}:50051"
-      - "${FLOWER_PORT:-5555}:5555"
-    volumes:
-      - ./futureagi:/app/backend
-    environment:
-      FAST_STARTUP: "true"
-      NO_STARTUP_DB_MUTATIONS: "true"
-      CH25_DROP_LEGACY_CDC_CHAIN: "false"
-      CH25_TRACE_DUAL_WRITE: "false"
-      CH_DUAL_WRITE: "false"
-
-  # Local implementation of the hosted ALK sandbox contract. It is reachable by the
-  # backend over the private Compose network; its host port is loopback-only.
-  alk-harness-sandbox:
-    profiles:
-      - local-sandbox
-    build:
-      context: ${ALK_REPOSITORY_PATH:-../alk-pr58}
-      dockerfile: Dockerfile.sandbox
-    image: futureagi/alk-harness-sandbox:dev
-    pull_policy: never
-    env_file:
-      - path: ${ALK_HARNESS_ENV_FILE:-../alk-pr58/.env.acceptance}
-        required: false
-    environment:
-      ALK_SANDBOX_HOST: 0.0.0.0
-      ALK_SANDBOX_PORT: 8788
-      ALK_SANDBOX_ROOT: /var/lib/alk-sandbox
-      # The Docker daemon is on the host. Mount the workspace at the same
-      # absolute path inside the runner so Compose bind mounts resolve to a
-      # path both the client and daemon can see. A hosted provider uses the
-      # equivalent shared bundle/workspace mount.
-      ALK_SANDBOX_SOURCE_ROOTS: ${ALK_HOST_WORKSPACE_ROOT:?set ALK_HOST_WORKSPACE_ROOT to the directory containing agent repositories}
-      ALK_SANDBOX_PATH_MAP: ${ALK_HOST_WORKSPACE_ROOT}=${ALK_HOST_WORKSPACE_ROOT}
-      ALK_SANDBOX_UPLOAD_ROOT: ${ALK_HOST_WORKSPACE_ROOT}/.alk-harness-uploads
-      # Job-scoped credential files must be visible at the same absolute path to both the
-      # containerized runner and the host Docker daemon. Contents are mode 0400 and deleted at
-      # the terminal job boundary; they never enter source uploads or harness artifacts.
-      ALK_SANDBOX_SECRET_FILE_ROOT: ${ALK_HOST_WORKSPACE_ROOT}/.alk-harness-secret-files
-      # A local developer laptop runs the full platform and Docker workloads together. Keep
-      # hosted-validation jobs sequential by default so two simultaneous voice/model stacks do
-      # not starve the sandbox status API or Docker daemon. Hosted deployments override this
-      # according to their per-sandbox resource envelope.
-      ALK_SANDBOX_MAX_CONCURRENCY: ${ALK_SANDBOX_MAX_CONCURRENCY:-1}
-      ALK_HARNESS_MODEL: ${ALK_HARNESS_MODEL:-claude-sonnet-4-6}
-      CLOUD_ML_REGION: ${CLOUD_ML_REGION:-global}
-      # The sandbox reports canonical run events/results to the platform. Keep
-      # these separate from model-provider settings loaded above: in hosted
-      # execution they are short-lived job credentials supplied by the control
-      # plane rather than values baked into the runner image.
-      HARNESS_PLATFORM_URL: http://backend:80
-      HARNESS_PLATFORM_API_KEY: ${FI_API_KEY:?FI_API_KEY is required for harness result ingestion}
-      HARNESS_PLATFORM_SECRET_KEY: ${FI_SECRET_KEY:?FI_SECRET_KEY is required for harness result ingestion}
-      # ALK's reusable eval client uses the public SDK variable names. Point both
-      # reporting paths at the same local control/data plane for deployment parity.
-      FI_BASE_URL: http://backend:80
-      FI_API_KEY: ${FI_API_KEY:?FI_API_KEY is required for harness evaluation}
-      FI_SECRET_KEY: ${FI_SECRET_KEY:?FI_SECRET_KEY is required for harness evaluation}
-      GOOGLE_APPLICATION_CREDENTIALS: ${ALK_HOST_WORKSPACE_ROOT}/future-agi/Vertex_AI_Creds.json
-      DOCKER_HOST: tcp://docker-proxy:2375
-      ALK_DOCKER_PUBLISHED_HOST: host.docker.internal
-      ALK_RUNNER_CONTAINER: self
-      HARNESS_WEBHOOK_HOST: 0.0.0.0
-    volumes:
-      - ${ALK_HOST_WORKSPACE_ROOT}:${ALK_HOST_WORKSPACE_ROOT}:ro
-      - ${ALK_HOST_WORKSPACE_ROOT}/.alk-harness-uploads:${ALK_HOST_WORKSPACE_ROOT}/.alk-harness-uploads:rw
-      - ${ALK_HOST_WORKSPACE_ROOT}/.alk-harness-secret-files:${ALK_HOST_WORKSPACE_ROOT}/.alk-harness-secret-files:rw
-      - alk_harness_artifacts:/var/lib/alk-sandbox
-    ports:
-      - "127.0.0.1:${ALK_SANDBOX_PORT:-8788}:8788"
     depends_on:
-      docker-proxy:
-        condition: service_started
-    restart: unless-stopped
-
-  dev-api-proxy:
-    image: nginx:1.27-alpine
-    ports:
-      - "${BACKEND_PORT:-8000}:8000"
-    environment:
-      # Restrict envsubst to these settings so native nginx variables such as
-      # $host and $remote_addr remain intact in the rendered configuration.
-      NGINX_ENVSUBST_FILTER: "^DEV_API_PROXY_"
-      DEV_API_PROXY_OTLP_MAX_BODY_SIZE: "${DEV_API_PROXY_OTLP_MAX_BODY_SIZE:-16m}"
-      DEV_API_PROXY_CONNECT_TIMEOUT: "${DEV_API_PROXY_CONNECT_TIMEOUT:-5s}"
-      DEV_API_PROXY_READ_TIMEOUT: "${DEV_API_PROXY_READ_TIMEOUT:-30s}"
-      DEV_API_PROXY_SEND_TIMEOUT: "${DEV_API_PROXY_SEND_TIMEOUT:-30s}"
-    volumes:
-      - ./deploy/dev-api-proxy/default.conf.template:/etc/nginx/templates/default.conf.template:ro
-    depends_on:
-      backend:
-        condition: service_started
-      fi-collector:
-        condition: service_started
-    restart: unless-stopped
-
-  # agentcc-gateway, serving, and code-executor are separate services we
-  # don't modify in local dev, so they are NOT built from source here —
-  # they inherit the pulled images from docker-compose.yml
-  # (futureagi/<svc>:${VERSION:-latest}). Only backend and frontend build
-  # from source. This also avoids pulling serving's private ECR base image.
-
-  worker:
-    <<: *dev-worker
-    deploy:
-      replicas: 0
-
-  worker-default:
-    <<: *dev-worker
-    profiles: !reset []
-  worker-tasks-s:
-    <<: *dev-worker
-    profiles: !reset []
-  worker-tasks-l:
-    <<: *dev-worker
-    profiles: !reset []
-  worker-tasks-xl:
-    <<: *dev-worker
-    profiles: !reset []
-  worker-exact-aggregation:
-    <<: *dev-worker
-    profiles: !reset []
-  worker-trace-ingestion:
-    <<: *dev-worker
-    profiles: !reset []
-  worker-agent-compass:
-    <<: *dev-worker
-    profiles: !reset []
-
-  # SDK-bearing image (can't reuse *dev-worker); built from the local wheel via
-  # Dockerfile.simulation-runner.dev FROM futureagi/future-agi:dev (backend first).
-  worker-simulation-runner:
-    build:
-      context: .
-      dockerfile: Dockerfile.simulation-runner.dev
-      args:
-        BACKEND_IMAGE: futureagi/future-agi:dev
-    image: futureagi/future-agi-simulation-runner:dev
-    pull_policy: never
-    working_dir: /app/backend
-    volumes:
-      - ./futureagi:/app/backend
-    environment:
-      FAST_STARTUP: "true"
-      PYTHONUNBUFFERED: "1"
-    profiles: !reset []
-
-  postgres:
-    ports: !override
-      - "${PG_PORT:-5432}:5432"
-
-  clickhouse:
-    ports: !override
-      - "${CH_HTTP_PORT:-8123}:8123"
-      - "${CH_PORT:-9000}:9000"
-
-  redis:
-    ports: !override
-      - "${REDIS_PORT:-6379}:6379"
-
-  minio:
-    ports: !override
-      - "${MINIO_API_PORT:-9005}:9000"
-      - "${MINIO_CONSOLE_PORT:-9006}:9001"
-
-  temporal:
-    ports: !override
-      - "${TEMPORAL_PORT:-7233}:7233"
-
-  rabbitmq:
-    ports:
-      - "${RABBITMQ_PORT:-5672}:5672"
-      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
-
-  temporal-ui:
-    profiles: !reset []
-
-  temporal-admin-tools:
-    profiles: !reset []
-
-  peerdb-catalog:
-    profiles: !reset []
-  peerdb-temporal:
-    profiles: !reset []
-  peerdb-minio:
-    profiles: !reset []
-  peerdb-flow-api:
-    profiles: !reset []
-  peerdb-flow-worker:
-    profiles: !reset []
-  peerdb-flow-snapshot-worker:
-    profiles: !reset []
-  peerdb-server:
-    profiles: !reset []
-  peerdb-ui:
-    profiles: !reset []
-  pgbouncer:
-    image: edoburu/pgbouncer:1.18.0
-    ports:
-      - "${PGBOUNCER_PORT:-6432}:6432"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    volumes:
-      - ./futureagi/config/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini
-      - ./futureagi/config/userlist.txt:/etc/pgbouncer/userlist.txt
-    restart: unless-stopped
-
-  docker-proxy:
-    image: alpine/socat
-    command: -t 900 TCP-LISTEN:2375,fork,reuseaddr UNIX-CONNECT:/var/run/docker.sock
-    user: root
-    volumes:
-      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+      - app
     restart: unless-stopped
 
 volumes:
-  alk_harness_artifacts:
+  frontend-node-modules:

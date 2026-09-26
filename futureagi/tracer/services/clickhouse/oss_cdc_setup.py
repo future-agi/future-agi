@@ -52,6 +52,37 @@ class SetupError(ValueError):
     """Safe error without driver payloads, SQL, or credentials."""
 
 
+# What the standalone install's in-app change capture (oss_outbox_cdc: OUTBOX,
+# STATE and TRIGGERS) leaves in the application database. Spelled out so this
+# module keeps its import graph; a test pins them to oss_outbox_cdc.
+_OUTBOX_TABLES = ("public.fi_cdc_outbox", "public.fi_cdc_state")
+_OUTBOX_TRIGGERS = ("fi_cdc_ins", "fi_cdc_upd", "fi_cdc_del", "fi_cdc_trunc")
+OUTBOX_DATA_MESSAGE = (
+    "this database was set up by the standalone install (in-app change capture), "
+    "and the distributed stack cannot take over its data. Switching an existing "
+    "install between the default and the distributed stack is not supported: back up, "
+    "run ./bin/uninstall --wipe-data, then ./bin/install --distributed"
+)
+
+
+def _outbox_capture_present(pg_query) -> bool:
+    """Its landing tables have no mirror, so PeerDB would refuse them further
+    on with a less useful error, and its capture triggers would keep filling
+    an outbox that nothing in the distributed stack drains."""
+    rows = pg_query(
+        "SELECT to_regclass(%(outbox)s) IS NOT NULL "
+        "OR to_regclass(%(state)s) IS NOT NULL "
+        "OR EXISTS (SELECT 1 FROM pg_catalog.pg_trigger "
+        "WHERE NOT tgisinternal AND tgname = ANY(%(triggers)s))",
+        {
+            "outbox": _OUTBOX_TABLES[0],
+            "state": _OUTBOX_TABLES[1],
+            "triggers": list(_OUTBOX_TRIGGERS),
+        },
+    )
+    return bool(rows and rows[0][0])
+
+
 def _inspect_peers(request, config):
     """Inspect identities globally; reuse effective mapping checks per writer.
 
@@ -475,6 +506,8 @@ def _run(config, *, apply, wait_for_mirrors, timeout, pg_connect, ch_connect, re
             deadline.remaining()
             return pg.execute(statement, parameters).fetchall()
 
+        if _outbox_capture_present(pg_query):
+            raise SetupError(OUTBOX_DATA_MESSAGE)
         landing = core.landing_tables(include_usage_schema=config.include_usage_schema)
         source = inspect_source(pg_query, source=config.source, tables=landing)
         definitions = core._source_definitions(

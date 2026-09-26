@@ -26,6 +26,8 @@ import {
   CHECK_REVEAL_STAGGER_MS,
   CONNECTION_STATE,
   LAUNCH_MODE,
+  getSetupMeta,
+  nextSteps,
 } from "./constants";
 
 const { PENDING, PASSED, WARNING, FAILED, SKIPPED } = CHECK_STATUS;
@@ -50,9 +52,9 @@ const PANEL_MAX_WIDTH = 460;
 
 const SUPPORT_EMAIL = "support@futureagi.com";
 
-// A `fix` string carries inline code spans and nothing else, so a markdown
-// dependency would be overkill.
-function renderFix(text) {
+// A `fix` string (and a next step) carries inline code spans and nothing else,
+// so a markdown dependency would be overkill.
+function renderInlineCode(text) {
   return String(text)
     .split("`")
     .map((part, i) =>
@@ -115,6 +117,7 @@ export default function ValidationStep({
   onSwitchMode,
   onContinue,
   onProgress,
+  authenticated = false,
 }) {
   const theme = useTheme();
   const [expanded, setExpanded] = useState(true);
@@ -133,6 +136,12 @@ export default function ValidationStep({
   });
 
   const checks = useMemo(() => data?.checks ?? [], [data]);
+  const setupMeta = getSetupMeta(data?.setup);
+  const collectorUrl = data?.collector_http_url;
+  const steps = useMemo(
+    () => nextSteps({ authenticated, collectorUrl }),
+    [authenticated, collectorUrl],
+  );
 
   let connectionState = CONNECTION_STATE.CONNECTING;
   if (isError) connectionState = CONNECTION_STATE.UNREACHABLE;
@@ -271,7 +280,10 @@ export default function ValidationStep({
   // the operator needs the same remedy. The row itself already says what
   // breaks, so this stays a single sentence.
   const needsFix = useMemo(
-    () => checks.filter((c) => (c.status === FAILED || c.status === WARNING) && c.fix),
+    () =>
+      checks.filter(
+        (c) => (c.status === FAILED || c.status === WARNING) && c.fix,
+      ),
     [checks],
   );
 
@@ -365,6 +377,30 @@ export default function ValidationStep({
         </Link>{" "}
         are your co-pilot if a check needs a hand.
       </Typography>
+      {setupMeta && (
+        <Stack
+          direction="row"
+          spacing={1}
+          alignItems="flex-start"
+          sx={{ mt: 1.5, maxWidth: PANEL_MAX_WIDTH }}
+          data-testid="oss-setup-kind"
+        >
+          <Iconify
+            icon={setupMeta.icon}
+            width={18}
+            sx={{ color: "primary.main", flexShrink: 0, mt: "1px" }}
+          />
+          <Typography variant="s2_1" sx={{ color: "text.secondary" }}>
+            <Box
+              component="span"
+              sx={{ color: "text.primary", fontWeight: "fontWeightSemiBold" }}
+            >
+              {setupMeta.title}.
+            </Box>{" "}
+            {setupMeta.description}
+          </Typography>
+        </Stack>
+      )}
     </Stack>
   );
 
@@ -572,10 +608,73 @@ export default function ValidationStep({
             {check.label}
           </Link>
           <Typography variant="s2_1" sx={{ color: "text.secondary" }}>
-            {renderFix(check.fix)}
+            {renderInlineCode(check.fix)}
           </Typography>
         </Stack>
       ))}
+    </Box>
+  );
+
+  // Plain-language next moves, once nothing stands between the operator and
+  // Continue.
+  const renderNextSteps = !blocked && (
+    <Box
+      sx={{
+        maxWidth: PANEL_MAX_WIDTH,
+        mt: 1.25,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+        px: 2,
+        py: 1.5,
+      }}
+    >
+      <Typography
+        variant="s2_1"
+        fontWeight="fontWeightSemiBold"
+        sx={{
+          display: "block",
+          color: "text.disabled",
+          textTransform: "uppercase",
+          letterSpacing: "0.09em",
+        }}
+      >
+        Next up
+      </Typography>
+      <Stack component="ol" spacing={1} sx={{ m: 0, mt: 1, p: 0 }}>
+        {steps.map((next) => (
+          <Stack
+            key={next.id}
+            component="li"
+            direction="row"
+            spacing={1.25}
+            alignItems="flex-start"
+            sx={{ listStyle: "none" }}
+          >
+            <Iconify
+              icon={next.icon}
+              width={16}
+              sx={{ color: "text.secondary", flexShrink: 0, mt: "2px" }}
+            />
+            <Typography variant="s2_1" sx={{ color: "text.secondary" }}>
+              {renderInlineCode(next.text)}
+              {next.link && (
+                <>
+                  {" "}
+                  <Link
+                    href={next.link.href}
+                    target="_blank"
+                    rel="noopener"
+                    underline="always"
+                  >
+                    {next.link.label}
+                  </Link>
+                </>
+              )}
+            </Typography>
+          </Stack>
+        ))}
+      </Stack>
     </Box>
   );
 
@@ -584,6 +683,7 @@ export default function ValidationStep({
       {renderHead}
       {renderChecks}
       {renderDetails}
+      {renderNextSteps}
 
       <Stack spacing={0.5} sx={{ maxWidth: PANEL_MAX_WIDTH, mt: 2 }}>
         <LoadingButton
@@ -648,4 +748,5 @@ ValidationStep.propTypes = {
   onSwitchMode: PropTypes.func.isRequired,
   onContinue: PropTypes.func.isRequired,
   onProgress: PropTypes.func,
+  authenticated: PropTypes.bool,
 };

@@ -1,0 +1,142 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $v := .Values -}}
+{{- $releasePods := dict "podSelector" (dict "matchLabels" (dict "app.kubernetes.io/name" (include "futureagi.name" .) "app.kubernetes.io/instance" .Release.Name)) -}}
+{{- /* Reached by browsers, SDKs and the ingress controller. */ -}}
+{{- $public := list "backend" "frontend" "fi-collector" -}}
+{{- /* Reached only by this release's pods. */ -}}
+{{- $internal := list "serving" -}}
+{{- if eq $v.agentccGateway.service.type "ClusterIP" -}}
+{{- $internal = append $internal "agentcc-gateway" -}}
+{{- else -}}
+{{- $public = append $public "agentcc-gateway" -}}
+{{- end -}}
+{{- range $store := list "postgres" "clickhouse" "redis" "temporal" -}}
+{{- if eq (index $v $store).mode "bundled" -}}
+{{- $internal = append $internal $store -}}
+{{- end -}}
+{{- end -}}
+{{- if eq $v.objectStorage.mode "bundled" -}}
+{{- if and $v.ingress.enabled $v.ingress.objects.host -}}
+{{- $public = append $public "minio" -}}
+{{- else -}}
+{{- $internal = append $internal "minio" -}}
+{{- end -}}
+{{- end -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "futureagi.component" (dict "root" . "component" "public") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: {{ toJson $public }}
+  policyTypes: ["Ingress"]
+  ingress:
+    {{- if $v.networkPolicy.ingressFrom }}
+    - from:
+        - {{ toJson $releasePods }}
+        {{- toYaml $v.networkPolicy.ingressFrom | nindent 8 }}
+    {{- else }}
+    # Any source.
+    - {}
+    {{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "futureagi.component" (dict "root" . "component" "internal") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: {{ toJson $internal }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - {{ toJson $releasePods }}
+{{- /* A LoadBalancer or NodePort Service is reached from addresses outside
+the cluster, which no `from` peer names: its ports admit any source (the
+collector's admin port stays internal). */ -}}
+{{- $exposed := dict -}}
+{{- if ne $v.backend.service.type "ClusterIP" }}{{ $_ := set $exposed "backend" (list "http") }}{{ end -}}
+{{- if ne $v.frontend.service.type "ClusterIP" }}{{ $_ := set $exposed "frontend" (list "http") }}{{ end -}}
+{{- if ne $v.fiCollector.service.type "ClusterIP" }}{{ $_ := set $exposed "fi-collector" (list "otlp-grpc" "otlp-http") }}{{ end -}}
+{{- if ne $v.agentccGateway.service.type "ClusterIP" }}{{ $_ := set $exposed "agentcc-gateway" (list "http") }}{{ end -}}
+{{- range $component, $ports := $exposed }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "futureagi.component" (dict "root" $ "component" (printf "%s-exposed" $component)) }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "futureagi.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "futureagi.selectorLabels" (dict "root" $ "component" $component) | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    # Any source, on the Service's ports.
+    - ports:
+        {{- range $ports }}
+        - port: {{ . }}
+          protocol: TCP
+        {{- end }}
+{{- end }}
+{{- if $v.codeExecutor.enabled }}
+---
+# Eval code runs here: only the backend and the workers may call it, and it
+# may reach DNS and, optionally, the internet, never the cluster's networks
+# or the cloud metadata endpoint.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "futureagi.component" (dict "root" . "component" "code-executor") }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "futureagi.selectorLabels" (dict "root" . "component" "code-executor") | nindent 6 }}
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - {{ toJson $releasePods }}
+      ports:
+        - port: 8060
+          protocol: TCP
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    {{- if $v.codeExecutor.allowInternetEgress }}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+              - 127.0.0.0/8
+{{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,178 @@
+{{- if eq .Values.clickhouse.mode "bundled" }}
+{{- /* Evaluation only: one replica, no replication, no backups. */ -}}
+{{- $c := .Values.clickhouse -}}
+{{- $bundled := $c.bundled -}}
+{{- $ctx := dict "root" . "component" "clickhouse" -}}
+{{- $name := include "futureagi.component" $ctx -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+data:
+  # The `tiered` storage policy the v2 spans schema requires (futureagi/.ci).
+  storage-policy.xml: |
+    {{- .Files.Get "files/clickhouse/config.d/storage-policy.xml" | nindent 4 }}
+  {{- if $bundled.lowMemory }}
+  # deploy/platform/clickhouse: small caches and merge pools, no system logs.
+  zz-small-host.xml: |
+    {{- .Files.Get "files/clickhouse/config.d/zz-small-host.xml" | nindent 4 }}
+  users-zz-small-host.xml: |
+    {{- .Files.Get "files/clickhouse/users.d/zz-small-host.xml" | nindent 4 }}
+  {{- end }}
+  # The default user: password from the Secret (CLICKHOUSE_DEFAULT_PASSWORD),
+  # reachable from the pod network, and allowed to create the observed-attribute
+  # index's users (access management).
+  users-zz-futureagi.xml: |
+    <clickhouse>
+        <users>
+            <default>
+                <password from_env="CLICKHOUSE_DEFAULT_PASSWORD"/>
+                <networks>
+                    <ip>::/0</ip>
+                </networks>
+                <access_management>1</access_management>
+            </default>
+        </users>
+    </clickhouse>
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "futureagi.selectorLabels" $ctx | nindent 4 }}
+  ports:
+    - name: http
+      port: 8123
+      targetPort: http
+      protocol: TCP
+    - name: native
+      port: 9000
+      targetPort: native
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  replicas: 1
+  serviceName: {{ $name }}
+  selector:
+    matchLabels:
+      {{- include "futureagi.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "futureagi.datastorePodLabels" $ctx | nindent 8 }}
+      annotations:
+        checksum/config: {{ toJson (list $bundled.lowMemory (.Files.Get "files/clickhouse/config.d/zz-small-host.xml") (.Files.Get "files/clickhouse/users.d/zz-small-host.xml")) | sha256sum }}
+        # Only this datastore's own credentials: an LLM key does not restart it.
+        checksum/secrets: {{ toJson (pick $c "password" "existingSecret" "existingSecretPasswordKey") | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 6) }}
+      # The image's clickhouse user.
+      securityContext:
+        {{- include "futureagi.podSecurityContext" (dict "uid" 101) | nindent 8 }}
+      {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $bundled)) "indent" 6) }}
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: clickhouse
+          image: {{ include "futureagi.image" (dict "root" . "image" $bundled.image) }}
+          imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" . "image" $bundled.image) }}
+          ports:
+            - name: http
+              containerPort: 8123
+              protocol: TCP
+            - name: native
+              containerPort: 9000
+              protocol: TCP
+          env:
+            # Users come from the mounted users.d files, not the entrypoint.
+            - name: CLICKHOUSE_SKIP_USER_SETUP
+              value: "1"
+            {{- include "futureagi.clickhouse.passwordEnv" (dict "root" . "name" "CLICKHOUSE_DEFAULT_PASSWORD") | nindent 12 }}
+            {{- if ne $c.database "default" }}
+            # The entrypoint creates this database on first start, logging in as default.
+            - name: CLICKHOUSE_DB
+              value: {{ $c.database | quote }}
+            {{- include "futureagi.clickhouse.passwordEnv" (dict "root" . "name" "CLICKHOUSE_PASSWORD") | nindent 12 }}
+            {{- end }}
+          startupProbe:
+            httpGet:
+              path: /ping
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml $bundled.resources | nindent 12 }}
+          securityContext:
+            {{- include "futureagi.containerSecurityContext" (dict "readOnly" false) | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/clickhouse
+            - name: config
+              mountPath: /etc/clickhouse-server/config.d/storage-policy.xml
+              subPath: storage-policy.xml
+              readOnly: true
+            {{- if $bundled.lowMemory }}
+            - name: config
+              mountPath: /etc/clickhouse-server/config.d/zz-small-host.xml
+              subPath: zz-small-host.xml
+              readOnly: true
+            - name: config
+              mountPath: /etc/clickhouse-server/users.d/zz-small-host.xml
+              subPath: users-zz-small-host.xml
+              readOnly: true
+            {{- end }}
+            - name: config
+              mountPath: /etc/clickhouse-server/users.d/zz-futureagi.xml
+              subPath: users-zz-futureagi.xml
+              readOnly: true
+            - name: logs
+              mountPath: /var/log/clickhouse-server
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $name }}
+        - name: logs
+          emptyDir:
+            sizeLimit: 512Mi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "futureagi.selectorLabels" $ctx | nindent 10 }}
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- include "futureagi.storageClass" (dict "root" . "storageClass" $bundled.persistence.storageClass) | nindent 8 }}
+        resources:
+          requests:
+            storage: {{ $bundled.persistence.size }}
+{{- end }}

@@ -51,9 +51,12 @@ jobs:
               - 'e2e/**'
               - 'bin/e2e'
               - 'docker-compose.yml'
+              - 'docker-compose.distributed.yml'
               - 'docker-compose.dev.yml'
+              - 'docker-compose.distributed.dev.yml'
               - 'deploy/**'
               - 'bin/install*'
+              - 'bin/uninstall'
               - '.github/workflows/e2e-ci.yml'
       - id: always
         if: github.event_name != 'pull_request'
@@ -204,7 +207,7 @@ jobs:
         # that image); `up` resolves whatever is left.
         run: |
           nohup bin/e2e compose pull --quiet \
-            postgres clickhouse redis rabbitmq minio temporal mock-llm \
+            postgres clickhouse redis minio temporal mock-llm \
             peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker \
             peerdb-flow-api peerdb-catalog peerdb-temporal peerdb-temporal-init \
             peerdb-minio \

@@ -1,0 +1,26 @@
+# Evaluation install: every datastore runs in the release as a single-replica
+# StatefulSet (PostgreSQL, ClickHouse, Redis, Temporal dev server, MinIO).
+# Not highly available and not backed up: use examples/external.yaml for
+# anything you would mind losing.
+#
+#   helm install futureagi deploy/helm/futureagi -n futureagi --create-namespace \
+#     -f deploy/helm/futureagi/examples/bundled.yaml --timeout 20m
+#
+# Until a published release contains `manage.py bootstrap_install` (none up to
+# v1.41.1 does), add --set image.registry=... --set image.tag=... for images
+# built from the same checkout as the chart.
+#
+# Then open the UI through port-forwards (see the notes Helm prints):
+#   kubectl -n futureagi port-forward svc/futureagi-frontend 3000:80
+#   kubectl -n futureagi port-forward svc/futureagi-backend 8000:8000
+#   kubectl -n futureagi port-forward svc/futureagi-fi-collector 4318:4318   # FI_BASE_URL=http://localhost:4318
+postgres:
+  mode: bundled
+clickhouse:
+  mode: bundled
+redis:
+  mode: bundled
+temporal:
+  mode: bundled
+objectStorage:
+  mode: bundled

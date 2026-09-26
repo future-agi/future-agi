@@ -10,6 +10,16 @@
 #
 # Dispatch from the branch whose Dockerfile.base / requirements you want baked in
 # — the ref picker in the "Run workflow" dropdown controls what gets checked out.
+#
+# release-images.yml also calls it, with if-missing, for the code-executor base
+# that futureagi/code-executor/Dockerfile pins: a release publishes that tag
+# from the release commit when it does not exist yet, and leaves it alone
+# when it does.
+#
+# Base images take exactly one tag, the version input (never vX.Y or latest):
+# the images built on them pin that tag. Every build gets the VERSION,
+# REVISION and CREATED build args of the image labels (docs/images.md); a
+# Dockerfile.base without those ARGs just ignores them.
 name: Publish base image
 
 run-name: Publish ${{ inputs.image }}:${{ inputs.version }}
@@ -29,6 +39,23 @@ on:
         description: "New version tag (e.g. v1.1.0) — existing tags are never overwritten"
         required: true
         type: string
+  workflow_call:
+    inputs:
+      image:
+        description: future-agi-base, serving-base or code-executor-base
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+      if-missing:
+        description: An already published tag is success (nothing to do) instead of an error
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      DOCKERHUB_USERNAME: { required: true }
+      DOCKERHUB_TOKEN: { required: true }
 
 permissions:
   contents: read
@@ -45,7 +72,12 @@ jobs:
     outputs:
       dockerfile: ${{ steps.map.outputs.dockerfile }}
       context: ${{ steps.map.outputs.context }}
+      skip: ${{ steps.probe.outputs.skip }}
+      created: ${{ steps.created.outputs.created }}
     steps:
+      - name: Build time (one for both architectures' labels)
+        id: created
+        run: echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
       - name: Validate version format
         env:
           VERSION: ${{ inputs.version }}
@@ -89,10 +121,12 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Refuse to overwrite a published tag
+        id: probe
         env:
           DOCKER_CLI_EXPERIMENTAL: enabled
           IMAGE: docker.io/futureagi/${{ inputs.image }}
           TAG: ${{ inputs.version }}
+          IF_MISSING: ${{ inputs.if-missing == true }}
         run: |
           # The probe has THREE outcomes and only one lets the build proceed:
           #   rc=0                     -> tag already published; refuse, never republish
@@ -107,7 +141,10 @@ jobs:
           out="$(docker manifest inspect "${IMAGE}:${TAG}" 2>&1)"
           rc=$?
           set -e
-          if [ "$rc" -eq 0 ]; then
+          if [ "$rc" -eq 0 ] && [ "$IF_MISSING" = "true" ]; then
+            echo "::notice::${IMAGE}:${TAG} is already published; nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif [ "$rc" -eq 0 ]; then
             echo "::error::${IMAGE}:${TAG} is already published — tags are immutable, dispatch again with a new version"
             exit 1
           elif printf '%s' "$out" | grep -Eqi 'manifest unknown|no such manifest|MANIFEST_UNKNOWN'; then
@@ -120,6 +157,7 @@ jobs:
 
   build:
     needs: resolve
+    if: needs.resolve.outputs.skip != 'true'
     strategy:
       matrix:
         include:
@@ -148,6 +186,17 @@ jobs:
           docker-images: false
           swap-storage: false
       - uses: actions/checkout@v4
+      - name: Source revision (image labels)
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision=$(git rev-parse HEAD)
+          if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::unexpected revision '$revision'"
+            exit 1
+          fi
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -164,6 +213,10 @@ jobs:
           file: ${{ needs.resolve.outputs.dockerfile }}
           platforms: ${{ matrix.platform }}
           provenance: false
+          build-args: |
+            VERSION=${{ inputs.version }}
+            REVISION=${{ steps.source.outputs.revision }}
+            CREATED=${{ needs.resolve.outputs.created }}
           outputs: type=image,name=docker.io/futureagi/${{ inputs.image }},push-by-digest=true,name-canonical=true,push=true
       - name: Export digest
         env:
@@ -173,20 +226,23 @@ jobs:
           touch "${RUNNER_TEMP}/digests/${DIGEST#sha256:}"
       - uses: actions/upload-artifact@v4
         with:
-          name: digests-${{ matrix.arch }}
+          # Scoped by image: release-images.yml runs this inside a run that
+          # uploads other images' digests too.
+          name: digests-${{ inputs.image }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
 
   merge:
     needs: [resolve, build]
+    if: needs.resolve.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: ${{ runner.temp }}/digests
-          pattern: digests-*
+          pattern: digests-${{ inputs.image }}-*
           merge-multiple: true
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3

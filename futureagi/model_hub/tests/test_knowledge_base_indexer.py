@@ -25,6 +25,9 @@ from model_hub.utils.kb_indexer import (
 )
 
 MODULE = "model_hub.utils.kb_indexer"
+# kb_indexer imports the PDF reader inside load_pdf() to keep pypdf off the
+# startup path, so patch it where that import resolves it.
+PDF_READER = "pypdf.PdfReader"
 
 
 @pytest.fixture
@@ -108,11 +111,13 @@ class TestFileReaders:
         assert "hello from rtf" in indexer.process_rtf(path)
 
     def test_process_pdf_cleans_extracted_pages(self, indexer, mocker):
-        page_one = mocker.MagicMock(page_content="page  one\x00")
-        page_two = mocker.MagicMock(page_content="page two(cid:7)")
+        page_one = mocker.MagicMock()
+        page_one.extract_text.return_value = "page  one\x00"
+        page_two = mocker.MagicMock()
+        page_two.extract_text.return_value = "page two(cid:7)"
         mocker.patch(
-            f"{MODULE}.PyPDFLoader",
-            return_value=mocker.MagicMock(load=lambda: [page_one, page_two]),
+            PDF_READER,
+            return_value=mocker.MagicMock(pages=[page_one, page_two]),
         )
 
         text = indexer.process_pdf("/tmp/whatever.pdf")
@@ -120,7 +125,7 @@ class TestFileReaders:
         assert text == "page one page two"
 
     def test_process_pdf_propagates_loader_failure(self, indexer, mocker):
-        mocker.patch(f"{MODULE}.PyPDFLoader", side_effect=RuntimeError("corrupt"))
+        mocker.patch(PDF_READER, side_effect=RuntimeError("corrupt"))
 
         with pytest.raises(RuntimeError):
             indexer.process_pdf("/tmp/broken.pdf")

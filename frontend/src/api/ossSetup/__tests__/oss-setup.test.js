@@ -56,6 +56,46 @@ describe("fetchSetupChecks", () => {
     expect(checks[0].docs_url).toBe(SERVED.docs_url);
   });
 
+  it("passes the running setup through", async () => {
+    h.get.mockResolvedValue({
+      data: {
+        result: { status: "ok", mode: "live", setup: "standalone", checks: [] },
+      },
+    });
+
+    expect((await fetchSetupChecks("live")).setup).toBe("standalone");
+  });
+
+  it("reports no setup for a server that predates the field", async () => {
+    respond([SERVED]);
+
+    expect((await fetchSetupChecks("live")).setup).toBeNull();
+  });
+
+  it("passes the collector URL through", async () => {
+    h.get.mockResolvedValue({
+      data: {
+        result: {
+          status: "ok",
+          mode: "live",
+          setup: "standalone",
+          collector_http_url: "http://localhost:4320",
+          checks: [],
+        },
+      },
+    });
+
+    expect((await fetchSetupChecks("live")).collector_http_url).toBe(
+      "http://localhost:4320",
+    );
+  });
+
+  it("reports no collector URL for a server that predates the field", async () => {
+    respond([SERVED]);
+
+    expect((await fetchSetupChecks("live")).collector_http_url).toBeNull();
+  });
+
   it("returns a blank remedy rather than undefined when the check passed", async () => {
     respond([{ ...SERVED, status: "passed", fix: "", docs_url: "" }]);
 

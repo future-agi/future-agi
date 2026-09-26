@@ -1,0 +1,90 @@
+{{- /*
+`python manage.py bootstrap_install`: migrations, seeds, ClickHouse schema,
+observed-attribute index, change data capture and Temporal schedules. The
+same steps as the Standalone install's deploy/platform/bin/bootstrap.py; all
+idempotent, so the job runs on every install and upgrade.
+
+On upgrade it runs before the new pods roll out (pre-upgrade). On install it
+runs before any other resource exists (pre-install) when every datastore is
+external, and after the release's resources (post-install) when a datastore
+is bundled, since the job must reach it. Helm waits for the job either way:
+give `helm install/upgrade` a --timeout above bootstrap.activeDeadlineSeconds,
+so Helm sees how the job ended instead of leaving it running.
+*/ -}}
+{{- $bs := .Values.bootstrap -}}
+{{- $b := .Values.backend -}}
+{{- $ctx := dict "root" . "component" "bootstrap" -}}
+{{- $installHook := include "futureagi.bootstrap.installHook" . -}}
+{{- $extraVolumes := $bs.extraVolumes | default $b.extraVolumes -}}
+{{- $extraVolumeMounts := $bs.extraVolumeMounts | default $b.extraVolumeMounts -}}
+{{- $args := list "--wait-timeout" (toString $bs.waitTimeoutSeconds) "--clickhouse-timeout" (toString $bs.clickhouseTimeoutSeconds) -}}
+{{- if not $bs.propertyCatalog -}}
+{{- $args = append $args "--skip-property-catalog" -}}
+{{- end -}}
+{{- /* Database changes are authorized for this job only: the explicit local
+mode, plus the operator pair a hosted ENV_TYPE (production) requires. */ -}}
+{{- $component := dict
+      "SERVICE_TYPE" "bootstrap"
+      "STARTUP_DB_MUTATION_MODE" "operator"
+      "NO_STARTUP_DB_MUTATIONS" "false"
+      "REGISTER_TEMPORAL_SCHEDULES" "true" -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "futureagi.component" $ctx }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+  annotations:
+    helm.sh/hook: {{ $installHook }},pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: {{ $bs.backoffLimit }}
+  activeDeadlineSeconds: {{ $bs.activeDeadlineSeconds }}
+  {{- if $bs.ttlSecondsAfterFinished }}
+  ttlSecondsAfterFinished: {{ $bs.ttlSecondsAfterFinished }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "futureagi.componentLabels" $ctx | nindent 8 }}
+      {{- with $bs.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "futureagi.bootstrapServiceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 6) }}
+      securityContext:
+        {{- include "futureagi.podSecurityContext" (dict "uid" 1000 "overrides" $b.podSecurityContext) | nindent 8 }}
+      {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $b)) "indent" 6) }}
+      containers:
+        - name: bootstrap
+          image: {{ include "futureagi.image" (dict "root" . "image" $b.image) }}
+          imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" . "image" $b.image) }}
+          command: ["python", "manage.py", "bootstrap_install"]
+          args:
+            {{- toYaml $args | nindent 12 }}
+          env:
+            {{- include "futureagi.env.python" (dict "root" . "component" $component "catalogWriter" true) | trim | nindent 12 }}
+          {{- with .Values.config.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml $bs.resources | nindent 12 }}
+          securityContext:
+            {{- include "futureagi.containerSecurityContext" (dict "overrides" $b.containerSecurityContext) | nindent 12 }}
+          volumeMounts:
+            {{- include "futureagi.python.volumeMounts" . | trim | nindent 12 }}
+            {{- with $extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        {{- include "futureagi.python.volumes" . | trim | nindent 8 }}
+        {{- with $extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}

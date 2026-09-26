@@ -1065,6 +1065,24 @@ class TestProjectSDKCodeAPI:
         assert "a" * 32 not in payload_text
         assert "b" * 32 not in payload_text
 
+    def test_self_hosted_keys_point_at_the_install_collector(
+        self, auth_client, settings
+    ):
+        """The SDKs default FI_BASE_URL to Future AGI Cloud."""
+        settings.CLOUD_DEPLOYMENT = ""
+        settings.FI_COLLECTOR_PUBLIC_URL = "http://localhost:4318"
+
+        response = auth_client.get(
+            "/tracer/project/project_sdk_code/", {"project_type": "observe"}
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        keys = get_result(response)["keys"]
+        assert 'os.environ["FI_BASE_URL"] = "http://localhost:4318"' in keys["Python"]
+        assert (
+            'process.env.FI_BASE_URL = "http://localhost:4318";' in keys["TypeScript"]
+        )
+
     def test_get_sdk_code_observe(self, auth_client):
         """Get SDK code for observe project type."""
         response = auth_client.get(

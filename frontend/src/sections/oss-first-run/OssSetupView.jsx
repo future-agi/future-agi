@@ -63,6 +63,7 @@ export default function OssSetupView() {
           onSwitchMode={setMode}
           onContinue={handleValidationContinue}
           onProgress={setValidationProgress}
+          authenticated={Boolean(authenticated)}
         />
       )}
     </OssSetupShell>

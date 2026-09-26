@@ -8,13 +8,8 @@ import traceback
 from dataclasses import dataclass
 from typing import Any
 
-import docx
 import structlog
 from django.db import close_old_connections
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-
-# LangChain imports
-from langchain_community.document_loaders import PyPDFLoader
 from striprtf.striprtf import rtf_to_text
 
 from agentic_eval.core.embeddings.embedding_manager import (
@@ -62,10 +57,16 @@ class KBIndexer:
 
     def load_pdf(self, pdf_path: str) -> str:
         """Load and extract text from a PDF file."""
+        from pypdf import PdfReader  # lazy: keep pypdf off the startup path
+
         try:
-            loader = PyPDFLoader(pdf_path)
-            pages = loader.load()
-            text = "\n\n".join(page.page_content for page in pages)
+            # The same extraction langchain-community's PyPDFLoader did (pypdf
+            # extract_text() per page, stripped, pages joined by a blank line),
+            # without shipping langchain-community + SQLAlchemy in the image.
+            reader = PdfReader(pdf_path)
+            text = "\n\n".join(
+                (page.extract_text() or "").strip() for page in reader.pages
+            )
 
             cleaned_text = self._clean_text(text)
 
@@ -136,6 +137,7 @@ class KBIndexer:
         Args:
             docx_path: Path to the docx file
         """
+        import docx  # lazy: keep heavy import off the startup path
         with open(docx_path, "rb") as file:
             doc = docx.Document(file)
             text = "\n\n".join([paragraph.text for paragraph in doc.paragraphs])
@@ -163,6 +165,7 @@ class KBIndexer:
         self, text: str, file_id: str, kb_id: str, organization_id: str
     ):
         # Optimize chunk size based on text length
+        from langchain_text_splitters import RecursiveCharacterTextSplitter  # lazy
         chunk_size = 800
         chunk_overlap = 150
 

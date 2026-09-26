@@ -1,0 +1,10 @@
+# hadolint settings for every Dockerfile in this repository (docs/images.md).
+#   hadolint <Dockerfile>   (hadolint >= 2.12; or docker run --rm -i hadolint/hadolint < <Dockerfile>)
+# Findings a Dockerfile accepts on purpose are ignored inline, next to the
+# instruction, with the reason.
+ignored:
+  # Base images are pinned by digest; apt/apk package versions float within
+  # that Debian/Alpine release so a rebuild picks up its security updates.
+  # Pinning them breaks the build as soon as the archive drops a version.
+  - DL3008
+  - DL3018

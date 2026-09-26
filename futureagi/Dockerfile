@@ -4,8 +4,18 @@ ENV NLTK_DATA=/usr/local/share/nltk_data
 
 COPY . .
 
+# Mirrors the root Dockerfile until future-agi-base is rebuilt from
+# requirements.txt: granian>=2.7.1 (granian#798), channels-redis and the
+# asgiref it needs.
+RUN pip install --no-cache-dir \
+    "granian[uvloop,reload]==2.8.3" \
+    "channels-redis==4.3.0" \
+    "asgiref==3.11.0"
+
 # The gRPC import path loads the EE trace scanner, which requires these corpora.
 # Pin both the nltk_data revision and archive checksums for reproducible images.
+# A layer of its own, so the pip layer above can go once the base is rebuilt.
+# hadolint ignore=DL3059
 RUN python bin/install_nltk_data.py
 
 # Install Node.js for sandboxed JavaScript eval execution

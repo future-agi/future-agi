@@ -6,6 +6,7 @@ import structlog
 from django.conf import settings
 from django.core.cache import cache
 from django.utils import timezone
+from django.utils.functional import SimpleLazyObject
 
 from accounts.authentication import generate_encrypted_message
 from accounts.models.auth_token import AuthToken, AuthTokenType
@@ -28,7 +29,9 @@ try:
 except ImportError:
     create_organization_subscription_if_not_exists = None
 
-aws_marketplace_service = AWSMarketplaceService()
+# Lazy: building boto3 clients at import costs ~8 MB RSS in every process
+# and only AWS Marketplace deployments use them.
+aws_marketplace_service = SimpleLazyObject(AWSMarketplaceService)
 
 
 def get_aws_customer_defaults(

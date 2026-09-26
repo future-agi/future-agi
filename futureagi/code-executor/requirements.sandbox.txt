@@ -1,0 +1,59 @@
+# Python libraries of the nsjail code-executor (futureagi/code-executor-base):
+# what sandboxed user code can import, plus the executor's HTTP server.
+#
+# Every version below comes from futureagi/uv.lock, the resolution the backend
+# image ships. Standalone runs code evals in the platform image, on the
+# backend's site-packages, so pinning to the same versions makes a code eval
+# return the same result there and in this nsjail executor (Standalone's
+# `sandbox` profile, Distributed and Helm). (The old
+# Dockerfile.base installed these unpinned: the last published base had
+# pandas 3, numpy 2.4 and scikit-learn 1.9, while the backend had pandas 2.3,
+# numpy 2.3 and scikit-learn 1.8.) jinja2 is on the backend sandbox's
+# SAFE_MODULES list (agentic_eval/core_evals/fi_utils/sandbox.py), so it is
+# importable here too. falcon and gunicorn run the executor's HTTP server
+# (server.py) and are not in uv.lock; they stay at the versions the last
+# published futureagi/code-executor image shipped (falcon 4.3.1's wheel is
+# 0.9 MB, 4.0.2's Cython build 11.7 MB).
+#
+# Regenerate after a backend re-lock, from futureagi/ (so uv.toml applies):
+#   uv export --frozen --no-hashes --all-extras --no-emit-project -o /tmp/lock.txt
+#   uv pip compile /tmp/sandbox.in -c /tmp/lock.txt --python-version 3.11 \
+#     --python-platform x86_64-manylinux_2_28 --no-header --annotation-style line
+# where /tmp/sandbox.in lists: numpy pandas pillow scipy scikit-learn requests
+# httpx nltk rouge-score levenshtein jinja2 falcon==4.3.1 gunicorn==26.0.0.
+# The resolution is the same for aarch64-manylinux_2_28, and every pin except
+# rouge-score (pure Python, sdist only) has cp311 wheels for both.
+absl-py==2.3.1            # via rouge-score
+anyio==4.12.1             # via httpx
+certifi==2026.1.4         # via httpcore, httpx, requests
+charset-normalizer==3.4.4  # via requests
+click==8.3.1              # via nltk
+falcon==4.3.1
+gunicorn==26.0.0
+h11==0.16.0               # via httpcore
+httpcore==1.0.9           # via httpx
+httpx==0.28.1
+idna==3.11                # via anyio, httpx, requests
+jinja2==3.1.6
+joblib==1.5.3             # via nltk, scikit-learn
+levenshtein==0.27.3
+markupsafe==3.0.3         # via jinja2
+nltk==3.9.2
+numpy==2.3.5
+packaging==24.2           # via gunicorn
+pandas==2.3.3
+pillow==12.1.0
+python-dateutil==2.9.0.post0  # via pandas
+pytz==2025.2              # via pandas
+rapidfuzz==3.14.3         # via levenshtein
+regex==2026.1.15          # via nltk
+requests==2.32.5
+rouge-score==0.1.2
+scikit-learn==1.8.0
+scipy==1.17.0
+six==1.17.0               # via python-dateutil, rouge-score
+threadpoolctl==3.6.0      # via scikit-learn
+tqdm==4.67.1              # via nltk
+typing-extensions==4.16.0  # via anyio
+tzdata==2025.3            # via pandas
+urllib3==2.7.0            # via requests

@@ -1,0 +1,10 @@
+# CI only: bundled datastores behind the ingress, object downloads included.
+ingress:
+  objects:
+    host: files.futureagi.example.com
+  tls:
+    - secretName: futureagi-tls
+      hosts:
+        - futureagi.example.com
+        - api.futureagi.example.com
+        - files.futureagi.example.com

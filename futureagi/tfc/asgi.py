@@ -7,6 +7,8 @@ For more information on this file, see
 https://docs.djangoproject.com/en/4.2/howto/deployment/asgi/
 """
 
+import asyncio
+import json
 import os
 
 # Must set DJANGO_SETTINGS_MODULE before any Django or telemetry imports
@@ -37,6 +39,8 @@ from django.core.asgi import get_asgi_application  # noqa: E402
 from sockets.routing import websocket_urlpatterns  # noqa: E402
 from tfc.asgi_startup import warm_http_urlconf  # noqa: E402
 from tfc.middleware.jwt_auth import JWTAuthMiddleware  # noqa: E402
+from tfc.temporal.embedded import get_embedded_worker  # noqa: E402
+from tfc.utils.api_errors import build_error_envelope  # noqa: E402
 
 # Django ASGI app for standard HTTP requests
 _django_app = get_asgi_application()
@@ -108,17 +112,57 @@ def _get_oauth_app():
     return _oauth_app
 
 
+async def _send_unhealthy_embedded_worker(send) -> bool:
+    """Answer /health/ with 503 when this process's embedded Temporal worker
+    is fatal or has been down too long (see EmbeddedTemporalWorker.health).
+
+    The API process also runs the worker in the standalone install, so the
+    container is not healthy while evals, trace ingestion and schedules have
+    stopped. Returns False (Django answers) when embedded mode is off or the
+    worker is healthy.
+    """
+    embedded_worker = get_embedded_worker()
+    if embedded_worker is None:
+        return False
+    state = embedded_worker.health()
+    if state["healthy"]:
+        return False
+    body = json.dumps(
+        build_error_envelope(
+            "Temporal worker is not running",
+            status_code=503,
+            extra={"temporal_worker": state},
+        )
+    ).encode()
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 503,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+            ],
+        }
+    )
+    await send({"type": "http.response.body", "body": body})
+    return True
+
+
 async def http_router(scope, receive, send):
     """Route HTTP requests to the appropriate ASGI app.
 
     - OAuth discovery/registration paths -> MCP OAuth Starlette app
     - /mcp -> MCP Streamable HTTP app (with auth middleware)
+    - /health/ -> 503 while the embedded Temporal worker is down, else Django
     - Everything else -> Django ASGI app
     """
     path = scope.get("path", "")
     # Some clients may request endpoints with a trailing slash.
     # Normalize for exact-path comparisons only (keep original for prefix checks).
     normalized_path = path.rstrip("/") or "/"
+
+    if normalized_path == "/health" and await _send_unhealthy_embedded_worker(send):
+        return
 
     # OAuth routes -> MCP OAuth Starlette app
     # Note: MCP clients use RFC 8414 path-aware discovery, e.g.
@@ -158,7 +202,25 @@ async def lifespan_handler(scope, receive, send):
     Forwards lifespan startup/shutdown to the MCP Starlette app so its
     StreamableHTTP session manager gets properly initialized. This prevents
     the 'Task group is not initialized' error.
+
+    With FI_EMBEDDED_TEMPORAL_WORKER=true (the standalone install) the Temporal
+    worker is started on its own thread/loop at startup and drained at
+    shutdown; see tfc/temporal/embedded.py.
     """
+    embedded_worker = get_embedded_worker()
+    if embedded_worker is not None:
+        inner_receive = receive
+
+        async def receive():
+            message = await inner_receive()
+            if message["type"] == "lifespan.startup":
+                embedded_worker.start()
+            elif message["type"] == "lifespan.shutdown":
+                # Usually draining since SIGTERM already; stop() blocks until
+                # in-flight activities finish.
+                await asyncio.to_thread(embedded_worker.stop)
+            return message
+
     mcp_app = _get_mcp_starlette_app()
     if mcp_app is not None:
         # Forward lifespan to MCP Starlette app

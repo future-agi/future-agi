@@ -1,4 +1,4 @@
-# Overlay on the root docker-compose.yml for the futureagi-e2e stack.
+# Overlay on docker-compose.distributed.yml (the distributed topology) for the futureagi-e2e stack.
 services:
   clickhouse:
     # Seatbelt on 16GB CI runners: CH is the first OOM-kill victim otherwise.

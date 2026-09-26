@@ -1,7 +1,6 @@
 # views.py
 from datetime import datetime, timedelta
 
-import requests
 import structlog
 from django.contrib.auth.hashers import check_password
 from django.core.cache import cache
@@ -45,6 +44,7 @@ from accounts.serializers.contracts import (
 from accounts.serializers.user import UserOnboardingSerializer
 
 # from accounts.user_onboard import upload_demo_dataset
+from accounts.utils import record_hubspot_login
 from accounts.views.signup import verify_recaptcha
 from analytics.utils import (
     MixpanelEvents,
@@ -185,9 +185,9 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                         }
                     )
                 else:
-                    logger.info("recaptcha verification passed")
+                    logger.debug("recaptcha verification passed")
             else:
-                logger.info(
+                logger.debug(
                     "recaptcha verification bypassed for localhost or special email"
                 )
 
@@ -399,34 +399,13 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 if new_org:
                     if _first_active_membership.role != OrganizationRoles.OWNER.value:
                         new_org = False
-
-                headers = {
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {settings.HUBSPOT_API_TOKEN}",
-                }
-
-                contact = {
-                    "properties": {
-                        "lead_type": user.organization_role,
-                        "logged_in": "Yes",
-                    }
-                }
-
-                try:
-                    resp = requests.patch(
-                        settings.HUBSPOT_UPDATE_URL.format(user.email),
-                        json=contact,
-                        headers=headers,
-                        timeout=10,
-                    )
-                    resp.raise_for_status()
-                    logger.info("Contact Created Successfully in HubSpot")
-                except requests.exceptions.RequestException as e:
-                    logger.error(f"Failed to Create Contact in HubSpot: {str(e)}")
-
                 response.data["new_org"] = new_org  # Add the extra key
-            except Exception as e:
-                logger.error(f"Failed to Create Contact in HubSpot: {str(e)}")
+            except Exception:
+                logger.exception("login_new_org_flag_failed", user_id=str(user.id))
+
+            # No-op without HUBSPOT_API_TOKEN; otherwise runs off the request
+            # path, so HubSpot can never slow down or fail a login.
+            record_hubspot_login(user)
             cache.delete(block_key)
             cache.delete(attempts_key)
 
@@ -512,9 +491,9 @@ class CustomTokenRefreshView(APIView):
                     logger.error("Refresh recaptcha verification failed")
                     return self._gm.bad_request("Verification failed.")
                 else:
-                    logger.info("Refresh recaptcha verification passed")
+                    logger.debug("Refresh recaptcha verification passed")
             else:
-                logger.info(
+                logger.debug(
                     "Refresh recaptcha verification bypassed for localhost or special email"
                 )
 

@@ -1,0 +1,565 @@
+# Standalone install CI. Builds futureagi/platform from this checkout (the
+# slim backend variant, frontend, fi-collector and agentcc-gateway images
+# first, then deploy/platform/Dockerfile on top of them, as a release does),
+# checks the compressed size of all five and of the whole standalone install
+# against scripts/image_size_budget.json (the same check a release runs), then
+# runs ./bin/install on a fresh runner and drives the standalone stack end to
+# end: health, UI, first-run setup checks, supervised programs, sign-in, API
+# keys, an OTLP/HTTP trace through fi-collector on :4318 read back through the
+# Observe API, and a workflow completed by the in-process Temporal worker.
+#
+# linux/amd64 runs whenever the standalone install can change. linux/arm64
+# (native runner: build, binary check and size budget, no install) runs when
+# what gets compiled or bundled changes: backend dependencies, the backend
+# Dockerfile, or deploy/platform.
+#
+# Size budget: every image must fit its budget in
+# scripts/image_size_budget.json, and so must what a fresh standalone install
+# downloads (platform + postgres + clickhouse, distinct layers); a PR that
+# needs more changes that file, where review sees it. On top of that,
+# futureagi/platform may grow at most PLATFORM_SIZE_BUDGET_PERCENT
+# (repository variable, default 10; 0 turns it off) over :latest; a PR that
+# grows it on purpose takes the `image-size-approved` label (re-run the failed
+# job after adding it).
+#
+# Labels: all five images get the VERSION/REVISION/CREATED build args a
+# release passes (docs/images.md), and the job checks that each one carries
+# the org.opencontainers.image.* labels, as build-image-multiarch.yml does.
+#
+# The default (standard) backend variant is not built here: e2e-ci.yml builds
+# it for every backend change (the Distributed stack it tests), its build-time
+# smoke test (futureagi/docker/runtime_smoke.py) checks the extras, git, uv,
+# ffmpeg and NLTK data it promises, and a release checks its size budget and
+# contents again before any tag moves.
+name: Standalone install CI
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev, main]
+    paths:
+      - "docker-compose.yml"
+      - "deploy/platform/**"
+      - "bin/install*"
+      - ".env.example"
+      - "futureagi/**"
+      - "frontend/Dockerfile"
+      - "frontend/.dockerignore"
+      - "fi-collector/Dockerfile"
+      - "agentcc-gateway/Dockerfile"
+      - "scripts/image_size_budget.*"
+      - ".github/workflows/platform-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read # dorny/paths-filter and the size-budget label read the PR
+
+concurrency:
+  group: platform-ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Layer caches, read only: e2e-ci.yml's (amd64, written on every push to
+  # dev and main) and the release builds' (per architecture).
+  CACHE_REPO: ghcr.io/future-agi/future-agi/e2e-cache
+  BUILD_CACHE: ghcr.io/future-agi/future-agi/build-cache
+  # Registry on the runner: buildx pushes the component images here so the
+  # platform build can use them as bases, and the size check reads the
+  # compressed layer sizes from the manifest it stores.
+  REGISTRY: localhost:5000
+  SIZE_BUDGET_PERCENT: ${{ vars.PLATFORM_SIZE_BUDGET_PERCENT || '10' }}
+  SIZE_WAIVER_LABEL: image-size-approved
+  # Every bundled binary must be this architecture's and must start: a
+  # single-arch source image would otherwise put an x86 binary in the arm64
+  # image. Keep in sync with verify-command in release-images.yml.
+  VERIFY_PLATFORM: |
+    python - <<'PY'
+    import os, platform, shutil, subprocess, sys
+    machine = {"x86_64": 0x3E, "aarch64": 0xB7}[platform.machine()]
+    failed = []
+    for argv in (["fi-collector", "--help"], ["agentcc-gateway", "--help"],
+                 ["temporal", "--version"], ["minio", "--version"],
+                 ["redis-server", "--version"], ["nginx", "-v"],
+                 ["supervisord", "--version"]):
+        path = shutil.which(argv[0])
+        if path is None:
+            failed.append(f"{argv[0]}: not on PATH")
+            continue
+        with open(os.path.realpath(path), "rb") as binary:
+            head = binary.read(20)
+        if head[:4] == b"\x7fELF" and int.from_bytes(head[18:20], "little") != machine:
+            failed.append(f"{argv[0]}: built for another architecture")
+            continue
+        try:
+            subprocess.run(argv, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=10)
+        except subprocess.TimeoutExpired:
+            pass  # it started and kept running
+        except OSError as exc:
+            failed.append(f"{argv[0]}: {exc}")
+            continue
+        print(f"ok  {path}")
+    import channels_redis, falcon, gunicorn  # noqa: F401
+    sys.exit("\n".join(failed) or None)
+    PY
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      install: ${{ steps.filter.outputs.install || steps.always.outputs.install }}
+      arches: ${{ steps.arches.outputs.arches }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: filter
+        if: github.event_name != 'workflow_dispatch'
+        uses: dorny/paths-filter@v3
+        with:
+          # Pushes compare with the branch before the push; PRs with their base.
+          base: ${{ github.event_name == 'push' && github.ref_name || '' }}
+          filters: |
+            install:
+              - 'docker-compose.yml'
+              - 'deploy/platform/**'
+              - 'bin/install*'
+              - '.env.example'
+              - 'futureagi/**'
+              - 'frontend/Dockerfile'
+              - 'frontend/.dockerignore'
+              - 'fi-collector/Dockerfile'
+              - 'agentcc-gateway/Dockerfile'
+              - 'scripts/image_size_budget.*'
+              - '.github/workflows/platform-ci.yml'
+            arm64:
+              - 'deploy/platform/**'
+              - 'futureagi/Dockerfile.oss'
+              - 'futureagi/.dockerignore'
+              - 'futureagi/docker/**'
+              - 'futureagi/bin/install_nltk_data.py'
+              - 'futureagi/requirements.txt'
+              - 'futureagi/pyproject.toml'
+              - 'futureagi/uv.lock'
+              - 'frontend/Dockerfile'
+              - 'fi-collector/Dockerfile'
+              - 'agentcc-gateway/Dockerfile'
+              - 'scripts/image_size_budget.*'
+              - '.github/workflows/platform-ci.yml'
+      - id: always
+        if: github.event_name == 'workflow_dispatch'
+        run: echo "install=true" >> "$GITHUB_OUTPUT"
+      - id: arches
+        env:
+          ARM64: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.arm64 == 'true' }}
+        run: |
+          if [ "$ARM64" = "true" ]; then
+            echo 'arches=["amd64","arm64"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'arches=["amd64"]' >> "$GITHUB_OUTPUT"
+          fi
+
+  default-install:
+    name: standalone install (${{ matrix.arch }})
+    needs: changes
+    if: needs.changes.outputs.install == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ fromJSON(needs.changes.outputs.arches) }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: read # ghcr layer caches
+      pull-requests: read
+    env:
+      # Same build args as release-images.yml, pointed at this run's images.
+      PLATFORM_BUILD_ARGS: |
+        BACKEND_IMAGE=localhost:5000/futureagi/future-agi:ci
+        FRONTEND_IMAGE=localhost:5000/futureagi/frontend:ci
+        FI_COLLECTOR_IMAGE=localhost:5000/futureagi/fi-collector:ci
+        AGENTCC_GATEWAY_IMAGE=localhost:5000/futureagi/agentcc-gateway:ci
+      # ./bin/install then uses the image this job built (docker compose
+      # resolves futureagi/platform:local) instead of pulling a release.
+      FUTURE_AGI_VERSION: local
+      FAGI_ADMIN_EMAIL: ci-admin@example.com
+      FAGI_ADMIN_NAME: CI Admin
+      FAGI_ADMIN_PASSWORD: Ci-Smoke-2026!x
+      SMOKE_PROJECT: ci-smoke
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reclaim runner disk
+        # Same move as e2e-ci.yml: docker's data goes to /mnt, which has room
+        # for the build cache, the local registry and the running stack.
+        # Before setup-buildx, whose builder container lives under the root.
+        if: matrix.arch == 'amd64'
+        run: |
+          df -h / /mnt
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          sudo systemctl stop docker docker.socket
+          sudo mv /var/lib/docker /mnt/docker
+          sudo ln -s /mnt/docker /var/lib/docker
+          sudo systemctl start docker
+          timeout 60 bash -c 'until docker info >/dev/null 2>&1; do sleep 2; done'
+          df -h / /mnt
+
+      - name: Start the local registry
+        # Published on every address family: `localhost` resolves to ::1
+        # first on some hosts.
+        run: |
+          docker run -d --name ci-registry -p 5000:5000 registry:2.8.3
+          timeout 60 bash -c 'until curl -fsS http://127.0.0.1:5000/v2/ >/dev/null; do sleep 1; done'
+
+      - uses: docker/setup-buildx-action@v3
+        with:
+          # The builder container reaches the registry on the runner's loopback.
+          driver-opts: network=host
+
+      - name: ghcr login (layer cache reads)
+        # Fork PRs get no token and build cold until the cache packages are
+        # public.
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build args match the Dockerfiles
+        # docker only warns about an unused --build-arg, so a renamed ARG
+        # would quietly build from the Dockerfile's default: the :latest
+        # images, or the default backend variant instead of -slim. Covers this
+        # workflow and both installers' --from-source builds: the platform
+        # build's args against deploy/platform/Dockerfile, every other
+        # installer build arg (the backend's IMAGE_VARIANT) against
+        # futureagi/Dockerfile.oss.
+        run: |
+          set -euo pipefail
+          declared() { sed -nE 's/^[[:space:]]*ARG[[:space:]]+([A-Za-z_][A-Za-z0-9_]*).*/\1/p' "$1" | sort -u; }
+          names() { { grep -ohE -- "--build-arg['\", ]+[A-Za-z_][A-Za-z0-9_]*=" || true; } \
+            | sed -E "s/.*['\", ]([A-Za-z_][A-Za-z0-9_]*)=$/\1/" | sort -u; }
+          platform=$({
+            printf '%s\n' "$PLATFORM_BUILD_ARGS" | sed -nE 's/^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p'
+            { sed -n '/build_image futureagi\/platform:local/,/[^\\]$/p' bin/install
+              sed -n "/Build-Image 'futureagi\/platform:local'/,/)/p" bin/install.ps1; } | names
+          } | sort -u)
+          backend=$(cat bin/install bin/install.ps1 | names | comm -23 - <(printf '%s\n' "$platform"))
+          failed=0
+          unknown=$(comm -13 <(declared deploy/platform/Dockerfile) <(printf '%s\n' "$platform"))
+          if [ -n "$unknown" ]; then
+            echo "::error::build args not declared in deploy/platform/Dockerfile: $(paste -sd' ' - <<<"$unknown")"
+            failed=1
+          fi
+          unknown=$(comm -13 <(declared futureagi/Dockerfile.oss) <(printf '%s\n' "$backend" | sed '/^$/d'))
+          if [ -n "$unknown" ]; then
+            echo "::error::build args not declared in futureagi/Dockerfile.oss: $(paste -sd' ' - <<<"$unknown")"
+            failed=1
+          fi
+          echo "platform: $(paste -sd' ' - <<<"$platform"); backend: $(paste -sd' ' - <<<"$backend")"
+          exit "$failed"
+
+      - name: Image label build args
+        id: labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision=$(git rev-parse HEAD)
+          {
+            echo "revision=$revision"
+            echo 'args<<EOF'
+            echo "VERSION=ci"
+            echo "REVISION=$revision"
+            echo "CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build backend image (slim variant)
+        # The base of futureagi/platform, as in a release (-slim). Its
+        # dependency layers are the default variant's, so it reads those
+        # caches too.
+        uses: docker/build-push-action@v5
+        with:
+          context: futureagi
+          file: futureagi/Dockerfile.oss
+          push: true
+          provenance: false
+          build-args: |
+            IMAGE_VARIANT=slim
+            ${{ steps.labels.outputs.args }}
+          tags: ${{ env.REGISTRY }}/futureagi/future-agi:ci
+          cache-from: |
+            type=registry,ref=${{ env.BUILD_CACHE }}:backend-slim-${{ matrix.arch }}
+            type=registry,ref=${{ env.BUILD_CACHE }}:backend-${{ matrix.arch }}
+            ${{ matrix.arch == 'amd64' && format('type=registry,ref={0}:backend', env.CACHE_REPO) || '' }}
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: frontend
+          file: frontend/Dockerfile
+          push: true
+          provenance: false
+          build-args: ${{ steps.labels.outputs.args }}
+          tags: ${{ env.REGISTRY }}/futureagi/frontend:ci
+          cache-from: |
+            type=registry,ref=${{ env.BUILD_CACHE }}:frontend-${{ matrix.arch }}
+            ${{ matrix.arch == 'amd64' && format('type=registry,ref={0}:frontend', env.CACHE_REPO) || '' }}
+
+      - name: Build fi-collector image
+        uses: docker/build-push-action@v5
+        with:
+          context: fi-collector
+          file: fi-collector/Dockerfile
+          push: true
+          provenance: false
+          build-args: ${{ steps.labels.outputs.args }}
+          tags: ${{ env.REGISTRY }}/futureagi/fi-collector:ci
+          cache-from: |
+            type=registry,ref=${{ env.BUILD_CACHE }}:fi-collector-${{ matrix.arch }}
+            ${{ matrix.arch == 'amd64' && format('type=registry,ref={0}:fi-collector', env.CACHE_REPO) || '' }}
+
+      - name: Build agentcc-gateway image
+        uses: docker/build-push-action@v5
+        with:
+          context: agentcc-gateway
+          file: agentcc-gateway/Dockerfile
+          push: true
+          provenance: false
+          build-args: ${{ steps.labels.outputs.args }}
+          tags: ${{ env.REGISTRY }}/futureagi/agentcc-gateway:ci
+          cache-from: |
+            type=registry,ref=${{ env.BUILD_CACHE }}:agentcc-gateway-${{ matrix.arch }}
+            ${{ matrix.arch == 'amd64' && format('type=registry,ref={0}:gateway', env.CACHE_REPO) || '' }}
+
+      - name: Build futureagi/platform from those images
+        uses: docker/build-push-action@v5
+        with:
+          context: deploy/platform
+          file: deploy/platform/Dockerfile
+          push: true
+          provenance: false
+          tags: ${{ env.REGISTRY }}/futureagi/platform:ci
+          build-args: |
+            ${{ env.PLATFORM_BUILD_ARGS }}
+            ${{ steps.labels.outputs.args }}
+
+      - name: OCI labels on every image
+        # The same check build-image-multiarch.yml runs before a release
+        # tags anything (docs/images.md).
+        shell: bash
+        env:
+          REVISION: ${{ steps.labels.outputs.revision }}
+        run: |
+          set -euo pipefail
+          failed=0
+          for image in future-agi frontend fi-collector agentcc-gateway platform; do
+            labels=$(docker buildx imagetools inspect "$REGISTRY/futureagi/$image:ci" --format '{{json .Image}}' \
+              | jq -c 'if has("config") then .config.Labels else (to_entries[0].value.config.Labels) end')
+            for key in title description source url documentation vendor licenses version revision created; do
+              if ! jq -e --arg k "org.opencontainers.image.$key" '.[$k] // "" | length > 0' <<<"$labels" >/dev/null; then
+                echo "::error::futureagi/$image: label org.opencontainers.image.$key is missing"
+                failed=1
+              fi
+            done
+            got=$(jq -r '.["org.opencontainers.image.revision"] // ""' <<<"$labels")
+            if [ "$got" != "$REVISION" ]; then
+              echo "::error::futureagi/$image: revision label is '$got', expected '$REVISION'"
+              failed=1
+            fi
+            echo "futureagi/$image: $(jq -r '[.["org.opencontainers.image.title"], .["org.opencontainers.image.licenses"]] | join(" | ")' <<<"$labels")"
+          done
+          exit "$failed"
+
+      - name: Verify the bundled binaries on linux/${{ matrix.arch }}
+        run: |
+          docker pull --quiet "$REGISTRY/futureagi/platform:ci"
+          docker run --rm --entrypoint sh "$REGISTRY/futureagi/platform:ci" -ec "$VERIFY_PLATFORM"
+
+      - name: Size budget (linux/${{ matrix.arch }})
+        env:
+          ARCH: ${{ matrix.arch }}
+          PLATFORM_GROWTH_PERCENT: ${{ env.SIZE_BUDGET_PERCENT }}
+          WAIVER_LABEL: ${{ env.SIZE_WAIVER_LABEL }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ github.token }}
+        # The same check build-image-multiarch.yml runs before a release tags
+        # anything, against this run's images.
+        run: |
+          set -uo pipefail
+          check() { # image, tag suffix of its budget and baseline, extra args...
+            local image=$1 suffix=$2
+            shift 2
+            python3 scripts/image_size_budget.py check --image "$image" "--tag-suffix=$suffix" \
+              --arch "$ARCH" --ref "$REGISTRY/$image:ci" --baseline "docker.io/$image:latest$suffix" "$@"
+          }
+          failed=0
+          check futureagi/future-agi -slim || failed=1
+          check futureagi/frontend "" || failed=1
+          check futureagi/fi-collector "" || failed=1
+          check futureagi/agentcc-gateway "" || failed=1
+          check futureagi/platform "" --default-install \
+            --max-growth-percent "$PLATFORM_GROWTH_PERCENT" || failed=1
+          exit "$failed"
+
+      # ---- linux/amd64 only: install and drive the standalone stack ----------
+
+      - name: Tag the image for the installer and drop the build cache
+        # The install needs the disk more than a finished build does.
+        if: matrix.arch == 'amd64'
+        run: |
+          docker tag "$REGISTRY/futureagi/platform:ci" futureagi/platform:local
+          docker buildx prune -af || true
+          df -h / /mnt
+
+      - name: ./bin/install (standalone stack, fresh runner)
+        if: matrix.arch == 'amd64'
+        timeout-minutes: 30
+        # CI=true makes the installer non-interactive; FAGI_ADMIN_* above has
+        # it create the first account.
+        run: ./bin/install -y
+
+      - name: Smoke-test the running stack
+        if: matrix.arch == 'amd64'
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          api=http://127.0.0.1:8000
+          pass() { echo "PASS  $*"; echo "- PASS: $*" >> "$GITHUB_STEP_SUMMARY"; }
+          fail() { echo "::error::$*"; echo "- FAIL: $*" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          eventually() { # seconds, command...: rerun the command until it succeeds
+            local deadline=$((SECONDS + $1))
+            shift
+            until "$@"; do
+              (( SECONDS < deadline )) || return 1
+              sleep 5
+            done
+          }
+          echo "### Standalone install smoke test (linux/amd64)" >> "$GITHUB_STEP_SUMMARY"
+
+          curl -fsS --max-time 10 -o /dev/null "$api/health/" || fail "API /health/ on :8000"
+          pass "API /health/ on :8000"
+          curl -fsS --max-time 10 -o /dev/null http://127.0.0.1:3000/ || fail "UI on :3000"
+          pass "UI on :3000"
+
+          # The first-run screen blocks sign-up while a required check fails.
+          setup_ok() {
+            curl -fsS --max-time 30 "$api/api/setup-checks/?mode=experiment" > "$RUNNER_TEMP/setup-checks.json" &&
+              jq -e '.result.status == "ok"' "$RUNNER_TEMP/setup-checks.json" >/dev/null
+          }
+          if ! eventually 120 setup_ok; then
+            jq -r '.result.checks[]? | select(.status != "passed") | "\(.id): \(.status)"' \
+              "$RUNNER_TEMP/setup-checks.json" || true
+            fail "first-run setup checks report issues (GET /api/setup-checks/)"
+          fi
+          pass "setup checks: $(jq -r '[.result.checks[] | "\(.id)=\(.status)"] | join(", ")' "$RUNNER_TEMP/setup-checks.json")"
+
+          # A program that went FATAL leaves /health/ green; only one-shot
+          # programs (the bootstrap) may have exited.
+          programs=$(docker compose exec -T app supervisorctl -c /etc/futureagi/supervisord.conf status || true)
+          printf '%s\n' "$programs"
+          down=$(awk '$2 != "RUNNING" && $2 != "EXITED"' <<<"$programs")
+          if [ -z "$programs" ] || [ -n "$down" ]; then
+            fail "supervised programs not running: ${down:-no status}"
+          fi
+          pass "every supervised program is running"
+
+          token=$(curl -fsS --max-time 30 -X POST "$api/accounts/token/" \
+              -H 'Content-Type: application/json' \
+              -d "$(jq -n --arg email "$FAGI_ADMIN_EMAIL" --arg password "$FAGI_ADMIN_PASSWORD" '{$email, $password}')" \
+            | jq -er '.access') || fail "sign-in as $FAGI_ADMIN_EMAIL (POST /accounts/token/)"
+          pass "sign-in with the account ./bin/install created"
+
+          keys=$(curl -fsS --max-time 30 "$api/accounts/keys/" -H "Authorization: Bearer $token") \
+            || fail "GET /accounts/keys/"
+          api_key=$(jq -er '.data.api_key' <<<"$keys") || fail "no api_key in /accounts/keys/"
+          secret_key=$(jq -er '.data.secret_key' <<<"$keys") || fail "no secret_key in /accounts/keys/"
+          echo "::add-mask::$secret_key"
+          pass "API key pair issued"
+
+          start=$(date +%s%N)
+          jq -n --arg trace "$(openssl rand -hex 16)" --arg root "$(openssl rand -hex 8)" \
+            --arg child "$(openssl rand -hex 8)" --arg project "$SMOKE_PROJECT" \
+            --arg t0 "$start" --arg t1 "$((start + 500000000))" \
+            --arg t2 "$((start + 1500000000))" --arg t3 "$((start + 2000000000))" '
+            def attr($k; $v): {key: $k, value: {stringValue: $v}};
+            {resourceSpans: [{
+              resource: {attributes: [attr("service.name"; $project),
+                attr("project_name"; $project), attr("project_type"; "observe")]},
+              scopeSpans: [{scope: {name: "ci-smoke"}, spans: [
+                {traceId: $trace, spanId: $root, name: "agent.run", kind: 1,
+                 startTimeUnixNano: $t0, endTimeUnixNano: $t3, status: {code: 1},
+                 attributes: [attr("fi.span.kind"; "AGENT"),
+                   attr("input.value"; "What is the capital of France?"),
+                   attr("output.value"; "Paris")]},
+                {traceId: $trace, spanId: $child, parentSpanId: $root, name: "llm.call",
+                 kind: 3, startTimeUnixNano: $t1, endTimeUnixNano: $t2, status: {code: 1},
+                 attributes: [attr("fi.span.kind"; "LLM"), attr("llm.model_name"; "gpt-4o-mini"),
+                   attr("input.value"; "capital of France?"), attr("output.value"; "Paris"),
+                   {key: "llm.token_count.prompt", value: {intValue: "12"}},
+                   {key: "llm.token_count.completion", value: {intValue: "3"}}]}
+              ]}]
+            }]}' > "$RUNNER_TEMP/otlp.json"
+          code=$(curl -sS --max-time 30 -o "$RUNNER_TEMP/otlp-response.txt" -w '%{http_code}' \
+            -X POST http://127.0.0.1:4318/v1/traces -H 'Content-Type: application/json' \
+            -H "X-Api-Key: $api_key" -H "X-Secret-Key: $secret_key" \
+            --data @"$RUNNER_TEMP/otlp.json") || true
+          [ "$code" = 200 ] || fail "OTLP/HTTP ingest on :4318 answered ${code:-nothing}: $(head -c 300 "$RUNNER_TEMP/otlp-response.txt" || true)"
+          pass "OTLP/HTTP trace accepted by fi-collector on :4318"
+
+          trace_readable() {
+            local project_id
+            project_id=$(curl -fsS --max-time 30 -G "$api/tracer/project/" \
+                -H "Authorization: Bearer $token" --data-urlencode "name=$SMOKE_PROJECT" \
+              | jq -er --arg name "$SMOKE_PROJECT" '[.result.projects[] | select(.name == $name)][0].id') \
+              || return 1
+            curl -fsS --max-time 30 -G "$api/tracer/observation-span/list_spans_observe/" \
+                -H "Authorization: Bearer $token" --data-urlencode "project_id=$project_id" \
+                --data-urlencode page_number=0 --data-urlencode page_size=10 \
+              > "$RUNNER_TEMP/spans.json" || return 1
+            grep -q '"llm.call"' "$RUNNER_TEMP/spans.json" && grep -q 'Paris' "$RUNNER_TEMP/spans.json"
+          }
+          eventually 180 trace_readable \
+            || fail "the trace never showed up in the Observe API: $(head -c 300 "$RUNNER_TEMP/spans.json" 2>/dev/null || true)"
+          pass "trace read back through the Observe API (project $SMOKE_PROJECT)"
+
+          workflow_completed() {
+            docker compose exec -T app temporal workflow count --address 127.0.0.1:7233 \
+              --query 'ExecutionStatus="Completed"' 2>/dev/null | grep -Eq 'Total: [1-9]'
+          }
+          eventually 180 workflow_completed || fail "no Temporal workflow completed; is the in-process worker polling?"
+          pass "Temporal workflows completed by the worker in the API process"
+
+      - name: Footprint
+        if: matrix.arch == 'amd64'
+        run: |
+          sleep 30
+          {
+            echo "### Standalone install footprint (docker stats)"
+            echo '```'
+            docker stats --no-stream --format 'table {{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Collect diagnostics
+        if: failure() && matrix.arch == 'amd64'
+        run: |
+          out="$RUNNER_TEMP/diagnostics"
+          mkdir -p "$out"
+          cp install-*.log "$RUNNER_TEMP"/*.json "$RUNNER_TEMP"/*.txt "$out/" 2>/dev/null || true
+          docker compose ps -a > "$out/ps.txt" 2>&1 || true
+          docker compose exec -T app supervisorctl -c /etc/futureagi/supervisord.conf status \
+            > "$out/supervisorctl.txt" 2>&1 || true
+          docker compose logs --no-color --tail 3000 app postgres clickhouse > "$out/compose.log" 2>&1 || true
+          tail -n 150 "$out/compose.log"
+
+      - uses: actions/upload-artifact@v4
+        if: failure() && matrix.arch == 'amd64'
+        with:
+          name: default-install-diagnostics
+          path: ${{ runner.temp }}/diagnostics
+          if-no-files-found: ignore
+          retention-days: 7

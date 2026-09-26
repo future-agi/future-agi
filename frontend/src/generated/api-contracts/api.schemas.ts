@@ -4072,6 +4072,15 @@ export const SetupChecksResultApiMode = {
   experiment: "experiment",
 } as const;
 
+export type SetupChecksResultApiSetup =
+  (typeof SetupChecksResultApiSetup)[keyof typeof SetupChecksResultApiSetup];
+
+export const SetupChecksResultApiSetup = {
+  standalone: "standalone",
+  distributed: "distributed",
+  helm: "helm",
+} as const;
+
 export type SetupCheckApiStatus =
   (typeof SetupCheckApiStatus)[keyof typeof SetupCheckApiStatus];
 
@@ -4097,6 +4106,9 @@ export interface SetupCheckApi {
 export interface SetupChecksResultApi {
   status: SetupChecksResultApiStatus;
   mode: SetupChecksResultApiMode;
+  setup: SetupChecksResultApiSetup;
+  /** @minLength 1 */
+  collector_http_url: string;
   checks: SetupCheckApi[];
 }
 

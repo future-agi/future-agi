@@ -1,0 +1,185 @@
+<!doctype html>
+<!--
+  Starting page of the standalone install (futureagi/platform). nginx serves
+  it, with a 503, for every page request until this boot's API answers
+  (nginx.conf; bin/bootstrap.py writes the switch). Self-contained on
+  purpose: the app's own bundle is not in play yet. It polls
+  /starting-status.json for the boot phase and reloads into the app once the
+  UI answers 200. Without JavaScript it refreshes every 10 s.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="light dark">
+<title>Future AGI is starting</title>
+<noscript><meta http-equiv="refresh" content="10"></noscript>
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon/favicon-32x32.png">
+<style>
+  :root {
+    --bg: #0c0b12;
+    --panel: #15131f;
+    --fg: #f3f1fb;
+    --muted: #a19db6;
+    --line: #2a2640;
+    --brand: #7857fc;
+    --brand-soft: rgba(120, 87, 252, 0.18);
+    --warn: #f5b83d;
+    --warn-soft: rgba(245, 184, 61, 0.14);
+    --code-bg: rgba(255, 255, 255, 0.07);
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f8f7fc;
+      --panel: #ffffff;
+      --fg: #17151f;
+      --muted: #5f5a75;
+      --line: #e3dff2;
+      --brand-soft: rgba(120, 87, 252, 0.12);
+      --warn: #a16207;
+      --warn-soft: rgba(202, 138, 4, 0.12);
+      --code-bg: rgba(23, 21, 31, 0.06);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 32px 16px;
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { width: 100%; max-width: 460px; }
+  .brand { display: flex; align-items: center; gap: 9px; margin-bottom: 36px; }
+  .brand .mark { width: 30px; height: 30px; }
+  .brand .word { height: 14px; width: auto; }
+  h1 { margin: 0 0 8px; font-size: 24px; line-height: 1.25; font-weight: 600; letter-spacing: -0.01em; }
+  p { margin: 0; color: var(--muted); }
+  .status {
+    margin-top: 28px;
+    padding: 16px 18px;
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+  }
+  .spinner {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    margin-top: 2px;
+    border-radius: 50%;
+    border: 2px solid var(--brand-soft);
+    border-top-color: var(--brand);
+    animation: spin 0.9s linear infinite;
+  }
+  .phase { color: var(--fg); font-weight: 500; overflow-wrap: anywhere; }
+  .meta { margin-top: 2px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .status.retrying { border-color: var(--warn); background: var(--warn-soft); }
+  .status.retrying .spinner { border-color: var(--warn-soft); border-top-color: var(--warn); }
+  .bar { position: relative; height: 2px; margin-top: 22px; overflow: hidden; border-radius: 2px; background: var(--line); }
+  .bar::after {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 35%;
+    background: var(--brand);
+    border-radius: 2px;
+    animation: slide 1.6s ease-in-out infinite;
+  }
+  .hint { margin-top: 22px; font-size: 13px; }
+  code {
+    font: 12.5px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--fg);
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 5px;
+    white-space: nowrap;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner, .bar::after { animation: none; }
+    .bar::after { width: 100%; opacity: 0.5; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <div class="brand">
+    <img class="mark" src="/favicon/logo.svg" alt="" width="30" height="30">
+    <img class="word" src="/logo/future_agi_text.svg" alt="Future AGI" height="14">
+  </div>
+
+  <h1>Future AGI is starting</h1>
+  <p>This page opens the app by itself as soon as it is ready. The first boot sets up the database and takes a few minutes; later starts take seconds.</p>
+
+  <div class="status" id="status" role="status" aria-live="polite">
+    <span class="spinner" aria-hidden="true"></span>
+    <div>
+      <div class="phase" id="phase">Starting services</div>
+      <div class="meta" id="meta">Checking again every few seconds</div>
+    </div>
+  </div>
+  <div class="bar" aria-hidden="true"></div>
+
+  <p class="hint">Follow along in a terminal: <code>docker compose logs -f app</code></p>
+</main>
+<script>
+  (function () {
+    var POLL_MS = 3000;
+    var statusBox = document.getElementById("status");
+    var phaseEl = document.getElementById("phase");
+    var metaEl = document.getElementById("meta");
+    var openedAt = Date.now();
+
+    function elapsed() {
+      var s = Math.floor((Date.now() - openedAt) / 1000);
+      var m = Math.floor(s / 60);
+      s = s % 60;
+      return m ? m + "m " + (s < 10 ? "0" : "") + s + "s" : s + "s";
+    }
+
+    function show(status) {
+      if (!status || typeof status.message !== "string") return;
+      // Backticks in the message mark a command; keep them as plain text.
+      phaseEl.textContent = status.message.replace(/`/g, "");
+      statusBox.className = "status" + (status.phase === "retrying" ? " retrying" : "");
+    }
+
+    // The app is up once the page itself stops answering 503.
+    function reloadWhenUp() {
+      return fetch(window.location.href, { method: "HEAD", cache: "no-store" })
+        .then(function (response) {
+          if (response.ok) window.location.reload();
+        });
+    }
+
+    function poll() {
+      fetch("/starting-status.json", { cache: "no-store" })
+        .then(function (response) { return response.ok ? response.json() : null; })
+        .then(function (status) {
+          show(status);
+          if (!status || status.phase === "ready" || status.phase === "api") {
+            return reloadWhenUp();
+          }
+        })
+        .catch(function () { /* the container may be restarting; keep trying */ })
+        .then(function () {
+          metaEl.textContent = "Waiting for " + elapsed() + " · checking every few seconds";
+          window.setTimeout(poll, POLL_MS);
+        });
+    }
+
+    poll();
+  })();
+</script>
+</body>
+</html>

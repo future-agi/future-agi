@@ -237,8 +237,8 @@ def _log_disclosure() -> None:
         logger.info(
             "deployment_telemetry_disclosure",
             mode="opt_out",
-            sends="one minimal registration ping (instance id + version); "
-            "no emails, no heartbeats",
+            sends="one minimal registration ping (instance id, version, "
+            "deployment type, timestamp); no emails, no heartbeats",
             opt_out_env="FUTURE_AGI_TELEMETRY_DISABLED=true (already set)",
         )
     else:

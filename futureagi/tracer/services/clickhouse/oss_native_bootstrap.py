@@ -9,7 +9,10 @@ CH_DATABASE/CH25_DATABASE/FI_CH_DATABASE alignment is a caller prerequisite.
 Complete compatible retained layouts are inspect-only. An incomplete selected
 layout must have no physical rows in ANY selected existing table: creating empty
 rollups/remaps cannot reconstruct history. Partial CREATEs survive failure; there
-is no retry, rollback, POPULATE, receipt insertion, or existing-object mutation.
+is no retry, rollback, POPULATE, receipt insertion, or existing-object mutation,
+with one exception: with a ClickHouse password, a compatible existing dictionary
+whose CLICKHOUSE source lacks the connecting user is re-created (CREATE OR
+REPLACE; dictionaries hold no rows) so it stops reading as passwordless default.
 
 Existing table compatibility reuses the CDC functional column/engine/key/TTL
 contract, NOT performance equivalence of codecs/indexes/projections/settings.
@@ -23,9 +26,16 @@ import re
 from pathlib import Path
 
 from tracer.services.clickhouse import oss_cdc_bootstrap as core
+from tracer.services.clickhouse.v2.apply_schema_rewriter import (
+    with_dictionary_credentials,
+)
 
 _ROOT = Path(__file__).with_name("v2") / "schema"
 _READ = {"readonly": 1, "max_threads": 1, "max_execution_time": 5}
+_TABLES_SQL = (
+    "SELECT name, engine, engine_full, partition_key, sorting_key, primary_key, create_table_query "
+    "FROM system.tables WHERE database = %(database)s AND name IN %(names)s"
+)
 # (filename, exact statement count, selected index).
 # No glob, operator SQL/path, generic ALTER interpreter, or legacy file receipts.
 _TABLES = {
@@ -338,13 +348,7 @@ def _inspect(client, database, definitions):
     ) != [("tiered",)]:
         raise NativeBootstrapError("native tiered storage policy required")
     params = {"database": database, "names": tuple(definitions)}
-    rows = _rows(
-        client,
-        "SELECT name, engine, engine_full, partition_key, sorting_key, primary_key, create_table_query "
-        "FROM system.tables WHERE database = %(database)s AND name IN %(names)s",
-        params,
-        7,
-    )
+    rows = _rows(client, _TABLES_SQL, params, 7)
     tables = {}
     for name, *row in rows:
         if (
@@ -490,13 +494,68 @@ def inspect_native(
         ) from None
 
 
+def _stale_dictionaries(client, database, definitions, ch_user):
+    rows = _rows(
+        client, _TABLES_SQL, {"database": database, "names": tuple(definitions)}, 7
+    )
+    names = tuple(name for name in definitions if name.endswith("_dict"))
+    return core.stale_dictionary_credentials(rows, names, ch_user=ch_user)
+
+
+def _update_dictionary_credentials(client, database, definitions, ch_user, ch_password):
+    """Re-create existing dictionaries whose CLICKHOUSE source lacks ``ch_user``.
+
+    Runs only with a password and only after the full layout passed inspection:
+    a dictionary created before credentials were injected reads its source as
+    ``default`` with an empty password and fails every dictGet (and every span
+    insert, through spans.trace_name). Dictionaries hold no rows; ``CREATE OR
+    REPLACE`` swaps the packaged definition atomically. No other object changes.
+    """
+    if not ch_password:
+        return ()
+    stale = _stale_dictionaries(client, database, definitions, ch_user)
+    for name in stale:
+        try:
+            client.command(
+                with_dictionary_credentials(
+                    core.replace_dictionary_ddl(definitions[name]),
+                    ch_user,
+                    ch_password,
+                )
+            )
+        except Exception:
+            raise NativeBootstrapError(
+                f"dictionary credential update failed at {name}; partial state "
+                "retained, no retry"
+            ) from None
+    if stale and (
+        _inspect(client, database, definitions)
+        or _stale_dictionaries(client, database, definitions, ch_user)
+    ):
+        raise NativeBootstrapError(
+            "dictionary source credentials not visible after re-create"
+        )
+    return stale
+
+
 def bootstrap_native(
-    client, *, database, include_backfill=False, include_dashboard_rollup=False
+    client,
+    *,
+    database,
+    include_backfill=False,
+    include_dashboard_rollup=False,
+    ch_user="default",
+    ch_password="",
 ):
     """Preflight, CREATE absent objects once, postflight; return created names.
 
     Failure is terminal for this invocation. A caller must inspect partial state
     before an explicitly requested later invocation, not retry uncertain writes.
+
+    ``ch_user``/``ch_password`` are the credentials the caller's client connects
+    with. With a password, dictionaries are created with them in their
+    CLICKHOUSE source, and existing ones without them are re-created (these
+    count as created).
     """
     try:
         definitions = native_definitions(
@@ -507,7 +566,9 @@ def bootstrap_native(
         missing = _inspect(client, database, definitions)
         for name in missing:
             try:
-                client.command(definitions[name])
+                client.command(
+                    with_dictionary_credentials(definitions[name], ch_user, ch_password)
+                )
             except Exception:
                 raise NativeBootstrapError(
                     f"native CREATE failed at {name}; partial state retained, no retry"
@@ -523,7 +584,9 @@ def bootstrap_native(
             raise NativeBootstrapError(
                 "native postflight incomplete; partial state retained"
             )
-        return missing
+        return missing + _update_dictionary_credentials(
+            client, database, definitions, ch_user, ch_password
+        )
     except NativeBootstrapError:
         raise
     except Exception:

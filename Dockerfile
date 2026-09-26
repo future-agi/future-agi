@@ -11,7 +11,14 @@ RUN pip install --no-cache-dir \
     "daytona==0.207.0" \
     "httpx-ws==0.7.2" \
     "urllib3>=2.1" \
-    "e2b==2.37.1"
+    "e2b==2.37.1" \
+    "granian[uvloop,reload]==2.8.3" \
+    "channels-redis==4.3.0" \
+    "asgiref==3.11.0"
+# granian, channels-redis and asgiref mirror futureagi/requirements.txt until
+# future-agi-base is rebuilt from it. granian>=2.7.1 fixes granian#798.
+# channels-redis (CHANNEL_LAYER_BACKEND=redis) needs asgiref>=3.9.1; pinning it
+# stops pip from replacing the base's 3.8.1 with whatever is latest.
 
 # The gRPC import path loads the EE trace scanner, which requires these corpora.
 # Pin both the nltk_data revision and archive checksums for reproducible images.

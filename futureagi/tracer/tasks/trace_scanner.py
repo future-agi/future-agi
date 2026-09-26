@@ -13,6 +13,7 @@ from datetime import timedelta
 import structlog
 from django.db.models import F
 
+from agentic_eval.core.embeddings.serving_client import serving_available
 from tfc.temporal.drop_in import temporal_activity
 from tracer.models.trace_error_analysis import TraceErrorGroup
 from tracer.models.trace_scan import TraceScanConfig
@@ -122,6 +123,17 @@ def embed_trace_inputs_task(
     Runs for ALL traces (success and failure) so KNN has both sides.
     Chains to clustering if new issues were found.
     """
+    if not serving_available():
+        # Embedding and the clustering chained after it both need model
+        # serving. The scan results are already written; their issues stay
+        # unclustered until a clustering pass runs with serving up.
+        logger.info(
+            "embed_trace_inputs_task_skipped_serving_unavailable",
+            trace_count=len(trace_ids),
+            project_id=project_id,
+        )
+        return
+
     logger.info(
         "embed_trace_inputs_task_started",
         trace_count=len(trace_ids),

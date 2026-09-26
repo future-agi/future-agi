@@ -1,0 +1,131 @@
+# CI only: every optional component and switch on, over examples/external.yaml,
+# so helm template and kubeconform see every template path.
+global:
+  imagePullSecrets:
+    - name: regcred
+  storageClass: fast
+image:
+  tag: v0.0.0-ci
+secrets:
+  existingSecret: futureagi-app
+  llm:
+    existingSecret: futureagi-llm
+  eeLicenseKey: ee-ci
+  mailgunApiKey: key-ci
+  agentccWebhookSecret: webhook-ci
+  extra:
+    SENTRY_DSN: https://public@sentry.example.com/1
+config:
+  allowedHosts: api.futureagi.example.com
+  corsAllowedOrigins: https://futureagi.example.com
+  extraCsrfOrigins: https://admin.example.com
+  telemetry: false
+  email:
+    mailgunSenderDomain: mg.example.com
+    fromEmail: noreply@mg.example.com
+    serverEmail: errors@mg.example.com
+  extraEnv:
+    OSS_RETURN_PASSWORD_RESET_LINK: "false"
+  extraEnvFrom:
+    - secretRef:
+        name: futureagi-extra-env
+postgres:
+  existingSecret: ""
+  password: ci-password
+clickhouse:
+  existingSecret: futureagi-clickhouse
+redis:
+  existingSecret: futureagi-redis
+  external:
+    tls: true
+objectStorage:
+  backend: minio
+  existingSecret: ""
+  accessKey: ci-access
+  secretKey: ci-secret
+  external:
+    endpoint: http://minio.storage.svc:9000
+urls:
+  objects: https://files.futureagi.example.com
+backend:
+  autoscaling:
+    enabled: true
+    targetMemoryUtilizationPercentage: 80
+  granian:
+    workers: 2
+    accessLog: true
+  extraEnv:
+    GRANIAN_BACKPRESSURE: "64"
+  extraVolumes:
+    - name: extra
+      emptyDir: {}
+  extraVolumeMounts:
+    - name: extra
+      mountPath: /extra
+worker:
+  allQueues:
+    autoscaling:
+      enabled: true
+  queues:
+    - name: tasks_s
+      replicas: 2
+      maxConcurrentActivities: 200
+    - name: simulation_runner
+      image:
+        repository: futureagi/future-agi-simulation-runner
+      resources:
+        requests: {cpu: 500m, memory: 1Gi}
+        limits: {cpu: "2", memory: 4Gi}
+      extraEnv:
+        ALK_RUNNER_MAX_CONCURRENCY: "4"
+frontend:
+  autoscaling:
+    enabled: true
+  helpLink: https://support.example.com
+fiCollector:
+  autoscaling:
+    enabled: true
+  service:
+    type: LoadBalancer
+agentccGateway:
+  autoscaling:
+    enabled: true
+  gcpCredentials:
+    existingSecret: futureagi-vertex
+  extraEnvFrom:
+    - secretRef:
+        name: futureagi-gateway-keys
+serving:
+  enabled: true
+  persistence:
+    enabled: true
+codeExecutor:
+  enabled: true
+bootstrap:
+  propertyCatalog: false
+  serviceAccount:
+    create: false
+    name: futureagi-migrator
+networkPolicy:
+  enabled: true
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx
+serviceAccount:
+  annotations:
+    example.com/owner: platform
+nodeSelector:
+  kubernetes.io/os: linux
+tolerations:
+  - key: dedicated
+    operator: Equal
+    value: futureagi
+    effect: NoSchedule
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+priorityClassName: futureagi
+commonLabels:
+  team: platform

@@ -1,0 +1,149 @@
+{{- $b := .Values.backend -}}
+{{- $ctx := dict "root" . "component" "backend" -}}
+{{- $image := include "futureagi.image" (dict "root" . "image" $b.image) -}}
+{{- $pullPolicy := include "futureagi.imagePullPolicy" (dict "root" . "image" $b.image) -}}
+{{- $env := include "futureagi.env.python" (dict "root" . "component" (dict "SERVICE_TYPE" "backend") "overrides" $b.extraEnv) -}}
+{{- $containerSecurity := include "futureagi.containerSecurityContext" (dict "overrides" $b.containerSecurityContext) -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "futureagi.component" $ctx }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  {{- if not $b.autoscaling.enabled }}
+  replicas: {{ $b.replicas }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "futureagi.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "futureagi.componentLabels" $ctx | nindent 8 }}
+        {{- with $b.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/secrets: {{ include "futureagi.secretsChecksum" . }}
+        {{- with $b.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "futureagi.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 6) }}
+      securityContext:
+        {{- include "futureagi.podSecurityContext" (dict "uid" 1000 "overrides" $b.podSecurityContext) | nindent 8 }}
+      {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $b "spread" true)) "indent" 6) }}
+      {{- if $b.collectStatic }}
+      initContainers:
+        # Static files of /admin and /docs (WhiteNoise serves them from STATIC_ROOT).
+        - name: collectstatic
+          image: {{ $image }}
+          imagePullPolicy: {{ $pullPolicy }}
+          command: ["python", "manage.py", "collectstatic", "--noinput", "--verbosity", "0"]
+          env:
+            {{- $env | trim | nindent 12 }}
+          {{- with .Values.config.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml $b.resources | nindent 12 }}
+          securityContext:
+            {{- $containerSecurity | nindent 12 }}
+          volumeMounts:
+            {{- include "futureagi.python.volumeMounts" . | trim | nindent 12 }}
+      {{- end }}
+      containers:
+        - name: backend
+          image: {{ $image }}
+          imagePullPolicy: {{ $pullPolicy }}
+          # The API server directly (the image's entrypoint.sh is for Compose).
+          command: ["granian"]
+          args:
+            - --interface
+            - asgi
+            - tfc.asgi:application
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+            - --workers
+            - {{ $b.granian.workers | quote }}
+            - --runtime-threads
+            - {{ $b.granian.threads | quote }}
+            - --runtime-mode
+            - mt
+            - --loop
+            - uvloop
+            - --log-level
+            - warning
+            - --respawn-failed-workers
+            {{- if $b.granian.accessLog }}
+            - --access-log
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            {{- $env | trim | nindent 12 }}
+          {{- with .Values.config.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          # /health/ answers without touching a datastore. Host is set because a
+          # restricted ALLOWED_HOSTS always includes localhost.
+          startupProbe:
+            httpGet:
+              path: /health/
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: localhost
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /health/
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: localhost
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health/
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: localhost
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml $b.resources | nindent 12 }}
+          securityContext:
+            {{- $containerSecurity | nindent 12 }}
+          volumeMounts:
+            {{- include "futureagi.python.volumeMounts" . | trim | nindent 12 }}
+            {{- with $b.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        {{- include "futureagi.python.volumes" . | trim | nindent 8 }}
+        {{- with $b.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}

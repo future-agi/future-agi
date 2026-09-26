@@ -62,6 +62,13 @@ class FutureAGIRefreshToken(RefreshToken):
     workspace_id: str | None = None
 
 
+def _app_base_url() -> str:
+    """The UI's URL when FRONTEND_URL is unset. settings.APP_BASE_URL keeps a
+    scheme written into APP_URL and uses http for a loopback host."""
+    from django.conf import settings
+
+    return getattr(settings, "APP_BASE_URL", "") or "http://localhost:3031"
+
 class FutureAGIOAuthProvider:
     """OAuth 2.0 provider backed by Django cache (Redis).
 
@@ -73,9 +80,8 @@ class FutureAGIOAuthProvider:
     def __init__(self, frontend_url: str | None = None):
         # Normalize to avoid double-slash redirect paths when FRONTEND_URL ends with "/".
         # Example: "https://dev.futureagi.com/" -> "https://dev.futureagi.com"
-        resolved_frontend_url = frontend_url or os.environ.get(
-            "FRONTEND_URL",
-            f"http://{os.environ.get('APP_URL', 'localhost:3031')}",
+        resolved_frontend_url = (
+            frontend_url or os.environ.get("FRONTEND_URL") or _app_base_url()
         )
         self.frontend_url = resolved_frontend_url.rstrip("/")
 

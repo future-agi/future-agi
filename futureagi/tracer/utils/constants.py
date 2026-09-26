@@ -72,6 +72,14 @@ process.env.FI_SECRET_KEY = "{}";
 """,
 }
 
+# Appended to ORG_KEYS off Future AGI Cloud (tracer.views.project): both SDKs
+# default FI_BASE_URL to Cloud, so a self-hosted snippet points them at the
+# install's own collector.
+ORG_BASE_URL = {
+    "Python": 'os.environ["FI_BASE_URL"] = "{}"\n',
+    "TypeScript": 'process.env.FI_BASE_URL = "{}";\n',
+}
+
 INSTRUMENTORS = {
     "langchain": {
         "name": "LangChain",

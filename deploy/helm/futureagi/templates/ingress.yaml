@@ -1,0 +1,89 @@
+{{- if .Values.ingress.enabled }}
+{{- $i := .Values.ingress -}}
+{{- $ctx := dict "root" . "component" "ingress" -}}
+{{- $collector := include "futureagi.component" (dict "root" . "component" "fi-collector") -}}
+{{- $otlpHost := $i.otlp.host | default $i.api.host -}}
+{{- /* fi-collector's OTLP/HTTP routes; the API does not serve them. */ -}}
+{{- $otlpPaths := list "/v1/traces" "/tracer/v1/traces" -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "futureagi.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+  {{- with $i.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $i.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with $i.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    # The UI.
+    - host: {{ $i.app.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "futureagi.component" (dict "root" . "component" "frontend") }}
+                port:
+                  name: http
+    # The API (REST, WebSockets, /docs), plus OTLP/HTTP when it shares the host.
+    - host: {{ $i.api.host | quote }}
+      http:
+        paths:
+          {{- if and $i.otlp.enabled (eq $otlpHost $i.api.host) }}
+          {{- range $otlpPaths }}
+          - path: {{ . }}
+            pathType: Exact
+            backend:
+              service:
+                name: {{ $collector }}
+                port:
+                  name: otlp-http
+          {{- end }}
+          {{- end }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "futureagi.component" (dict "root" . "component" "backend") }}
+                port:
+                  name: http
+    {{- if and $i.otlp.enabled (ne $otlpHost $i.api.host) }}
+    # OTLP/HTTP on its own host.
+    - host: {{ $otlpHost | quote }}
+      http:
+        paths:
+          {{- range $otlpPaths }}
+          - path: {{ . }}
+            pathType: Exact
+            backend:
+              service:
+                name: {{ $collector }}
+                port:
+                  name: otlp-http
+          {{- end }}
+    {{- end }}
+    {{- if $i.objects.host }}
+    # Object downloads (MINIO_URL) from the bundled object storage.
+    - host: {{ $i.objects.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "futureagi.component" (dict "root" . "component" "minio") }}
+                port:
+                  name: s3
+    {{- end }}
+{{- end }}

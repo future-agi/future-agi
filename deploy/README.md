@@ -1,6 +1,12 @@
 # Production deployment
 
-This directory holds the production overlay for self-hosted Future AGI. The base `docker-compose.yml` at the repo root is geared for local evaluation with safe defaults; this overlay re-binds required secrets with `${VAR:?error}` guards so compose refuses to boot on dev fallbacks.
+This directory holds the production overlay for self-hosted Future AGI on Docker Compose. It layers on the **Distributed** setup in `docker-compose.distributed.yml` at the repo root, which is geared for local evaluation with safe defaults; this overlay re-binds required secrets with `${VAR:?error}` guards so compose refuses to boot on dev fallbacks. The **Standalone** setup (`docker-compose.yml`) has no production overlay, and Kubernetes has its own path, the [Helm chart](helm/futureagi/README.md). See [Deployment modes](../INSTALLATION.md#deployment-modes).
+
+Before you start:
+
+- Every setting, its default and what breaks when it is wrong: [docs/configuration.md](../docs/configuration.md). Work through its [minimal production checklist](../docs/configuration.md#minimal-production-checklist).
+- What an install sends to Future AGI, and how to turn it off (`FUTURE_AGI_TELEMETRY_DISABLED=true` in `deploy/.env.production`): [docs/telemetry.md](../docs/telemetry.md).
+- The images, their tags and how to verify one: [docs/images.md](../docs/images.md).
 
 ## Quickstart
 
@@ -43,11 +49,11 @@ Manual flow (only after the same prerequisite; do not copy over an existing file
 cp deploy/.env.production.example deploy/.env.production
 # fill in REQUIRED values; use the installed credentials for retained data
 docker compose --env-file deploy/.env.production \
-  -f docker-compose.yml -f deploy/docker-compose.production.yml config --quiet
+  -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml config --quiet
 docker compose --env-file deploy/.env.production \
-  -f docker-compose.yml -f deploy/docker-compose.production.yml pull
+  -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml pull
 docker compose --env-file deploy/.env.production \
-  -f docker-compose.yml -f deploy/docker-compose.production.yml up -d --no-build --wait --wait-timeout 1200
+  -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml up -d --no-build --wait --wait-timeout 1200
 ```
 
 If any required value is empty, compose exits with `must be set for production` and names the missing var.
@@ -57,7 +63,7 @@ If any required value is empty, compose exits with `must be set for production` 
 - Docker Engine 24.0+ and Docker Compose v2.24+
 - A reverse proxy that terminates TLS in front of the frontend (Caddy / nginx / Traefik / ALB)
 - (Optional) Managed Postgres and S3-compatible object store if you don't want the bundled `postgres` / `minio` containers
-- 16 GB RAM minimum on the host (8 GB is OK for smoke tests; ClickHouse and the worker each hold ~1 GB)
+- 4+ vCPU and 12–16 GB RAM on the host (ClickHouse and the worker each hold ~1 GB); the stack boots in 6 GB, which is enough for a smoke test only
 
 ### Required initialization boundary
 
@@ -89,7 +95,7 @@ brings up the application.
 ```bash
 cd <repo root>
 COMPOSE="docker compose --env-file deploy/.env.production \
-  -f docker-compose.yml -f deploy/docker-compose.production.yml"
+  -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml"
 
 # 1. PostgreSQL schema, system evals and Temporal schedules.
 #    Run the image's own entrypoint with SERVICE_TYPE=bootstrap rather than a
@@ -158,7 +164,7 @@ Upgrades re-run the same jobs with the same commands. They are idempotent — ev
 one is a no-op against current state — so a stalled upgrade can be resumed from the
 job that failed rather than restarted from step 1.
 
-A retained legacy span mirror from an older `--full` install is inspected but
+A retained legacy span mirror from an older `--distributed` install is inspected but
 left untouched. Its source/destination identity, mapping and health must still
 pass validation; upgrading does not require deleting that mirror or its data.
 
@@ -201,7 +207,7 @@ writable mount that survives `--rm`.
 sudo install -d -o 65532 -g 65532 -m 0750 /var/lib/futureagi/backfill
 
 docker compose --env-file deploy/.env.production \
-  -f docker-compose.yml -f deploy/docker-compose.production.yml \
+  -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml \
   run --rm \
   -v /var/lib/futureagi/backfill:/backfill \
   -e FI_OBSERVED_BACKFILL_CH_URL=http://clickhouse:8123 \
@@ -247,10 +253,14 @@ AGENTCC_INTERNAL_API_KEY=$(openssl rand -hex 32)
 AGENTCC_ADMIN_TOKEN=$(openssl rand -hex 32)
 PG_PASSWORD=$(openssl rand -hex 16)
 MINIO_ROOT_PASSWORD=$(openssl rand -hex 16)
+# Fernet key for integration credentials stored in Postgres (optional until
+# you connect an integration; without it, connecting one fails).
+INTEGRATION_ENCRYPTION_KEY=$(python3 -c "import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())")
 ```
 
 For a new installation, paste each into `deploy/.env.production`. For retained
-installations, reuse the original values. Also supply
+installations, reuse the original values: a new `INTEGRATION_ENCRYPTION_KEY`
+cannot decrypt credentials stored with the old one. Also supply
 `PROPERTY_CATALOG_API_PASSWORD` and `PROPERTY_CATALOG_CONSUMER_PASSWORD` matching
 the separately provisioned `observed_catalog_reader`/`observed_catalog_writer`.
 Setup never generates or rotates catalog passwords; changing an env value does not
@@ -282,20 +292,32 @@ Each image is independently versioned. Include the collector release in `.env.pr
 | `FRONTEND_VERSION`          | `futureagi/frontend`                                                 |
 | `FI_COLLECTOR_VERSION`      | `futureagi/fi-collector` (collector, consumer and packaged backfill) |
 | `AGENTCC_GATEWAY_VERSION`   | `futureagi/agentcc-gateway`                                          |
-| `SERVING_VERSION`           | `futureagi/serving`                                                  |
+| `SERVING_VERSION`           | `futureagi/serving` (CPU; `<version>-gpu` is the CUDA build, amd64 only) |
 | `CODE_EXECUTOR_VERSION`     | `futureagi/code-executor`                                            |
 | `SIMULATION_RUNNER_VERSION` | `futureagi/future-agi-simulation-runner` (separate SDK worker image) |
 
 Use reviewed release tags and record their verified registry digests, source SHAs
 and CPU architecture manifests; a version-looking tag alone is not immutable proof.
+Releases publish every image for `linux/amd64` and `linux/arm64` (built natively)
+except the `-gpu` serving variant. The serving image runs PyTorch on the CPU; on
+GPU nodes pin `SERVING_VERSION=<version>-gpu` and reserve the GPU for the service.
+`FUTURE_AGI_VERSION` names the default, feature-complete backend
+(`futureagi/future-agi:<version>`: Debian's ffmpeg, git, the Vertex AI and
+hosted-sandbox SDKs); its `-slim` tags are the base of Standalone's app image,
+not for this overlay ([docs/images.md](../docs/images.md#backend-variants)).
+Features that need a further optional extra are listed in
+[INSTALLATION.md](../INSTALLATION.md#optional-feature-extras).
 None of these image variables has a production fallback; missing/empty pins fail
 configuration, including the simulation runner pin before its profile is enabled.
 The backend pin covers bootstrap and ordinary workers; the SDK worker retains its
 separate runner pin. Setup rejects collector `local`/`latest`, both
 collector services select the same image, and the production overlay removes their
 inherited build configuration. `up --no-build` additionally forbids source builds.
-An explicitly verified `tag@sha256:<digest>` version suffix can pin image content;
-no example tag or digest here is a qualified release. Backend, all applicable
+To pin image content, name the verified digest in the image reference through one
+more Compose file (`image: futureagi/future-agi:<tag>@sha256:<digest>` per service; see
+[docs/images.md](../docs/images.md#verifying-an-image)) rather than in the version
+variables, which are also reported as the version in telemetry and licence activation.
+No example tag or digest here is a qualified release. Backend, all applicable
 workers and frontend must match the reviewed source; unchanged dependencies need
 not be rebuilt. Keep these receipts for both fresh and retained-volume rehearsals.
 
@@ -309,10 +331,10 @@ for a repair run. These are extraction budgets, not tenant/activation settings.
 
 ```bash
 docker compose --env-file deploy/.env.production \
-  -f docker-compose.yml -f deploy/docker-compose.production.yml \
+  -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml \
   pull
 docker compose --env-file deploy/.env.production \
-  -f docker-compose.yml -f deploy/docker-compose.production.yml \
+  -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml \
   up -d --no-build --wait --wait-timeout 1200
 ```
 
@@ -321,7 +343,7 @@ Verify:
 ```bash
 docker compose ps
 curl -fsS http://localhost:3000/ > /dev/null && echo "frontend ok"
-curl -fsS http://localhost:8000/healthz > /dev/null && echo "backend ok"
+curl -fsS http://localhost:8000/health/ > /dev/null && echo "backend ok"
 ```
 
 ## Deployment topologies
@@ -349,7 +371,7 @@ TLS proxy (Caddy/nginx)
 
 Set `VITE_HOST_API=/api` and let the proxy do the routing. Backend doesn't need CORS for cross-origin since SPA calls same origin.
 
-Official Kubernetes manifests and Helm charts are coming soon. Until then, this production overlay is the supported self-hosting path.
+On Kubernetes, use the [Helm chart](helm/futureagi/README.md) instead: it covers ingress, TLS, external datastores and secrets.
 
 ## Reverse proxy + TLS
 
@@ -422,15 +444,28 @@ For internal MinIO, configure `mc mirror` to an off-host bucket, or replace the 
 # (FUTURE_AGI_VERSION / FRONTEND_VERSION / FI_COLLECTOR_VERSION / AGENTCC_GATEWAY_VERSION /
 #  SERVING_VERSION / CODE_EXECUTOR_VERSION / SIMULATION_RUNNER_VERSION)
 docker compose --env-file deploy/.env.production \
-  -f docker-compose.yml -f deploy/docker-compose.production.yml pull
+  -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml pull
 docker compose --env-file deploy/.env.production \
-  -f docker-compose.yml -f deploy/docker-compose.production.yml up -d --no-build --wait --wait-timeout 1200
+  -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml up -d --no-build --wait --wait-timeout 1200
 ```
 
 Only use a separately rehearsed, compatible predecessor for rollback; restore its
 exact image/configuration receipt after approval. Changing tags alone does not
 undo schema/mirror changes or establish a healthy recovery. Preserve old data,
 topics, volumes and obsolete workloads until their explicit retirement is approved.
+
+**Retiring RabbitMQ.** The stack no longer runs RabbitMQ: Redis carries live
+updates (the channel layer), and `RABBITMQ_USER`/`RABBITMQ_PASSWORD` are no
+longer read. `up` leaves the old `rabbitmq` container running, because it
+never removes containers of services the files no longer define. Once the upgraded
+stack is healthy and its retirement is approved, remove it and, when you no longer
+need its data, its volume (the prefix is your Compose project name):
+
+```bash
+docker compose --env-file deploy/.env.production \
+  -f docker-compose.distributed.yml -f deploy/docker-compose.production.yml up -d --no-build --remove-orphans
+docker volume rm futureagi_rabbitmq-data
+```
 
 ## Resource sizing
 
@@ -451,11 +486,11 @@ topics, volumes and obsolete workloads until their explicit retirement is approv
 ## Pre-flight checklist
 
 - [ ] `SECRET_KEY`, `AGENTCC_INTERNAL_API_KEY`, `AGENTCC_ADMIN_TOKEN` are 32+ random bytes
-- [ ] `PG_PASSWORD`, `MINIO_ROOT_PASSWORD`, `RABBITMQ_PASSWORD` set to non-default values
+- [ ] `PG_PASSWORD`, `MINIO_ROOT_PASSWORD` set to non-default values; `INTEGRATION_ENCRYPTION_KEY` set before connecting integrations
 - [ ] Both catalog passwords match the provisioned identities; retained credentials were not rotated
 - [ ] Check-only initialization prerequisite independently verified; no implicit production migrations or mirror repair
 - [ ] Backend/workers/frontend and collector/consumer/backfill have matching source, registry digest and architecture receipts; `FI_COLLECTOR_VERSION` is explicit (not `local`/`latest`); remaining image versions are pinned
-- [ ] `FRONTEND_URL` matches the public URL behind your reverse proxy
+- [ ] `FRONTEND_URL` matches the public URL behind your reverse proxy, and `APP_URL` is the same URL (invite and password-reset links; unset, they point at `localhost:3000`)
 - [ ] `VITE_HOST_API` matches the public backend URL (or `/api` if route-split at the proxy)
 - [ ] Backend CORS allows the frontend origin (split-domain only)
 - [ ] Reverse proxy terminates TLS; frontend container is not exposed publicly on port 3000
@@ -463,3 +498,6 @@ topics, volumes and obsolete workloads until their explicit retirement is approv
 - [ ] Postgres, ClickHouse, MinIO data volumes are on persistent storage
 - [ ] Backup crons (Postgres + ClickHouse) scheduled and tested with restore dry-run
 - [ ] Docker daemon and host OS get security patches on a known cadence
+- [ ] The rest of the [minimal production checklist](../docs/configuration.md#minimal-production-checklist) holds: `ENV_TYPE=production`, public URLs, locked-down origins, email or share-by-link invites
+- [ ] `OSS_RETURN_PASSWORD_RESET_LINK` is unset or `false`
+- [ ] Telemetry decided: left on, or `FUTURE_AGI_TELEMETRY_DISABLED=true` ([what is sent](../docs/telemetry.md))

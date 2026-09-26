@@ -3503,9 +3503,8 @@ def send_rule_completion_email(
 
     queue = rule.queue
     queue_id = str(queue.id)
-    frontend_url = os.environ.get("FRONTEND_URL", "https://app.futureagi.com").rstrip(
-        "/"
-    )
+    # This install's UI: a self-hosted APP_URL never names app.futureagi.com.
+    frontend_url = (os.environ.get("FRONTEND_URL") or settings.APP_BASE_URL).rstrip("/")
     queue_url = f"{frontend_url}/annotation-queues/{queue_id}"
 
     triggered_by_name = "the rule schedule"

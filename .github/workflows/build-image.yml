@@ -1,6 +1,10 @@
-# Reusable image build. Called by release-images.yml (tag releases) and by the
-# per-image workflow_dispatch wrappers (ad-hoc/-dev builds). Pushes
-# <image>:<version>, :<minor>, and optionally :latest.
+# Reusable single-job image build: pushes <image>:<version>, :<minor>, and
+# optionally :latest straight from the build (arm64 under QEMU). Only the
+# amd64-only simulation runner in release-images.yml still uses it. Every
+# other image builds through build-image-multiarch.yml, which builds each
+# architecture natively and checks the size budget before any tag moves.
+# Same tag scheme, and the same VERSION/REVISION/CREATED build args for the
+# image labels (docs/images.md).
 name: build-image
 
 on:
@@ -62,6 +66,17 @@ jobs:
           fi
           base="${v%%-*}"
           { echo "version=$v"; echo "minor=${base%.*}"; } >> "$GITHUB_OUTPUT"
+      - name: Source revision and build time (image labels)
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision=$(git rev-parse HEAD)
+          if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::unexpected revision '$revision'"
+            exit 1
+          fi
+          { echo "revision=$revision"; echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"; } >> "$GITHUB_OUTPUT"
       - name: Compose tag list
         id: tags
         env:
@@ -100,7 +115,12 @@ jobs:
           platforms: ${{ inputs.platforms }}
           push: true
           provenance: false
-          build-args: ${{ inputs.build-args }}
+          # The standard label args first; the caller's own follow.
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            REVISION=${{ steps.source.outputs.revision }}
+            CREATED=${{ steps.source.outputs.created }}
+            ${{ inputs.build-args }}
           tags: ${{ steps.tags.outputs.tags }}
           cache-from: type=gha,scope=${{ inputs.cache-scope }}
           cache-to: type=gha,scope=${{ inputs.cache-scope }},mode=max

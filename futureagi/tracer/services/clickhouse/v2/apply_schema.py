@@ -51,8 +51,10 @@ from tracer.services.clickhouse.v2.apply_schema_rewriter import (
     extract_table_name as _extract_table_name,
 )
 from tracer.services.clickhouse.v2.apply_schema_rewriter import (
+    redact_secret,
     rewrite_for_replicated,
     split_statements,
+    with_dictionary_credentials,
 )
 from tracer.services.clickhouse.v2.schema_topology import (
     CATALOG_TOPOLOGY_GUARD_TABLES,
@@ -318,6 +320,8 @@ def apply_file(
     cluster: str = "default",
     zk_prefix: str = "/clickhouse/tables",
     topology: SchemaTopology | None = None,
+    ch_user: str = "default",
+    ch_password: str = "",
 ) -> int:
     """Apply one file. Returns the number of statements executed.
 
@@ -328,6 +332,11 @@ def apply_file(
     the same validated topology continues to be a no-op via the existing
     drift-detection path. Local and replicated histories never share an
     identity.
+
+    Dictionaries with a local `SOURCE(CLICKHOUSE(...))` get `ch_user` /
+    `ch_password` (the credentials this run connects with) at execution time
+    only, when a password is set; the file, its sha256 and every log line keep
+    the packaged, credential-free text.
     """
     expected_topology = SchemaTopology.from_options(
         replicated=replicated,
@@ -367,14 +376,14 @@ def apply_file(
             preview=first_line,
         )
         try:
-            client.command(stmt)
+            client.command(with_dictionary_credentials(stmt, ch_user, ch_password))
         except Exception as e:
             log.error(
                 "statement_failed",
                 file=sf.path.name,
                 n=i,
                 statement_preview=stmt[:500],
-                err=str(e),
+                err=redact_secret(str(e), ch_password),
             )
             raise
     # Record successful apply
@@ -543,9 +552,15 @@ def main(argv: list[str] | None = None) -> int:
                 cluster=str(topology.cluster or "default"),
                 zk_prefix=str(topology.zk_table_path_prefix or "/clickhouse/tables"),
                 topology=topology,
+                ch_user=args.ch_user,
+                ch_password=args.ch_password,
             )
         except Exception as e:
-            log.error("apply_aborted", file=sf.path.name, err=str(e))
+            log.error(
+                "apply_aborted",
+                file=sf.path.name,
+                err=redact_secret(str(e), args.ch_password),
+            )
             return 3
     log.info(
         "apply_complete",

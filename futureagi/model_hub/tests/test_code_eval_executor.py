@@ -277,3 +277,35 @@ def test_unset_opt_in_means_no_local_run(
 
     local_run.assert_not_called()
     assert result == {"status": "error", "data": sandbox.EXECUTOR_UNAVAILABLE_MESSAGE}
+
+
+@pytest.mark.parametrize("execute,code", LANGUAGES)
+class TestNoExecutorConfigured:
+    """An empty CODE_EXECUTOR_URL (Helm with the sandbox off) is unreachable."""
+
+    def test_without_opt_in_returns_unavailable(
+        self, execute, code, urlopen, local_run, self_hosted, monkeypatch
+    ):
+        monkeypatch.setattr(sandbox, "CODE_EXECUTOR_URL", "")
+
+        result, logs = _run(execute, code)
+
+        urlopen.assert_not_called()
+        local_run.assert_not_called()
+        assert result == {
+            "status": "error",
+            "data": sandbox.EXECUTOR_UNAVAILABLE_MESSAGE,
+        }
+        assert "code_executor_service_unavailable" in _events(logs, "warning")
+
+    def test_with_opt_in_runs_locally(
+        self, execute, code, urlopen, local_run, self_hosted, monkeypatch
+    ):
+        monkeypatch.setattr(sandbox, "CODE_EXECUTOR_URL", "")
+        self_hosted.CODE_EXECUTOR_LOCAL_FALLBACK = True
+
+        result, _ = _run(execute, code)
+
+        urlopen.assert_not_called()
+        local_run.assert_called_once()
+        assert result == LOCAL_RESULT

@@ -3,12 +3,16 @@
 # Future AGI — uninstaller / cleanup
 #
 #   ./bin/uninstall                    # stop containers, keep data + .env
-#   ./bin/uninstall --wipe-data        # also remove all futureagi_* volumes
+#   ./bin/uninstall --wipe-data        # also remove all <project>_* volumes
 #                                      # (PERMANENTLY DELETES YOUR DATA)
 #   ./bin/uninstall --purge            # also remove .env, install-*.log,
-#                                      # and built/pulled project images
-#   ./bin/uninstall -y                 # skip per-step confirms (unattended)
+#                                      # built images and the futureagi/*
+#                                      # images this project uses
+#   ./bin/uninstall -y                 # skip per-step confirms (unattended);
+#                                      # keeps shared --from-source builds
 #
+# Works for the standalone install and the distributed stack alike: Compose reads the
+# stack (COMPOSE_FILE) and project name (COMPOSE_PROJECT_NAME) from .env.
 # Each destructive step confirms separately, so you can stop after the
 # "stop containers" phase if you change your mind. A timestamped log is
 # written to uninstall-*.log.
@@ -46,7 +50,7 @@ while [[ $# -gt 0 ]]; do
     --purge) PURGE=1; WIPE_DATA=1 ;;       # purge implies wipe
     -y|--yes|--non-interactive) YES=1 ;;
     -h|--help)
-      sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) die "unknown flag: $1 (try --help)" ;;
   esac
@@ -58,7 +62,20 @@ done
 
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
-PROJECT_NAME="futureagi"  # pinned in docker-compose.yml `name:`
+
+# Same precedence as Compose: the environment, then .env, then the compose
+# files' `name:`. bin/install --new-instance writes futureagi-2, -3, … here.
+env_value() {
+  [[ -f .env ]] || return 0
+  grep -E "^$1=" .env | tail -1 | cut -d= -f2- || true
+}
+PROJECT_NAME="${COMPOSE_PROJECT_NAME:-$(env_value COMPOSE_PROJECT_NAME)}"
+PROJECT_NAME="${PROJECT_NAME:-futureagi}"
+if [[ "${COMPOSE_FILE:-$(env_value COMPOSE_FILE)}" == *docker-compose.distributed.yml* ]]; then
+  STACK="distributed stack (docker-compose.distributed.yml)"
+else
+  STACK="standalone install (docker-compose.yml)"
+fi
 
 # ---------------- log ----------------
 LOG_FILE="$ROOT/uninstall-$(date +%Y%m%d-%H%M%S).log"
@@ -71,6 +88,7 @@ if [[ -t 1 ]]; then
   printf "  ${BOLD}${YELLOW}│${RESET}   ${BOLD}Future AGI${RESET} ${DIM}·${RESET} ${DIM}uninstall / cleanup${RESET}        ${BOLD}${YELLOW}│${RESET}\n"
   printf "  ${BOLD}${YELLOW}╰───────────────────────────────────────────╯${RESET}\n"
   printf "\n"
+  printf "  ${DIM}project:${RESET} ${PROJECT_NAME} · ${STACK}\n"
   printf "  ${DIM}plan:${RESET}\n"
   printf "    ${GREEN}✓${RESET} stop and remove containers\n"
   if (( WIPE_DATA == 1 )); then
@@ -79,7 +97,7 @@ if [[ -t 1 ]]; then
     printf "    ${DIM}—${RESET} ${DIM}volumes preserved (data intact)${RESET}\n"
   fi
   if (( PURGE == 1 )); then
-    printf "    ${RED}✗${RESET} ${BOLD}remove .env, install-*.log, and project images${RESET}\n"
+    printf "    ${RED}✗${RESET} ${BOLD}remove .env, install-*.log, and Future AGI images${RESET}\n"
   else
     printf "    ${DIM}—${RESET} ${DIM}.env, logs, and images preserved${RESET}\n"
   fi
@@ -118,10 +136,12 @@ confirm() {
 # ---------------- 1. stop containers ----------------
 step "Stop and remove containers"
 
+# --remove-orphans also removes this project's containers that the current
+# compose file does not define, e.g. those of the other stack.
 if [[ -z "$DC" ]]; then
   warn "Compose unavailable; skipping."
-elif confirm "Run '$DC down --remove-orphans'?" "yes-default"; then
-  $DC down --remove-orphans 2>&1 | sed 's|^|  |'
+elif confirm "Run '$DC down --remove-orphans' for project ${PROJECT_NAME}?" "yes-default"; then
+  $DC -p "$PROJECT_NAME" down --remove-orphans 2>&1 | sed 's|^|  |'
   ok "Containers removed"
 else
   warn "Skipped — containers left running."
@@ -143,7 +163,7 @@ if (( WIPE_DATA == 1 )); then
     say "  Will remove ${#PROJECT_VOLS[@]} volume(s):"
     for v in "${PROJECT_VOLS[@]}"; do say "    • $v"; done
     say ""
-    say "  ${RED}${BOLD}This deletes Postgres / ClickHouse / MinIO / Redis data permanently.${RESET}"
+    say "  ${RED}${BOLD}This permanently deletes the Postgres and ClickHouse data and every stored file.${RESET}"
     if confirm "Type-confirm by answering yes" ""; then
       docker volume rm "${PROJECT_VOLS[@]}" 2>&1 | sed 's|^|  |' || true
       ok "Volumes removed"
@@ -155,6 +175,13 @@ fi
 
 # ---------------- 3. purge files + images ----------------
 if (( PURGE == 1 )); then
+  # The images this project's stack uses, resolved while .env still selects
+  # the stack, its profiles and its image tags.
+  CONFIG_IMAGES=""
+  if [[ -n "$DC" ]]; then
+    CONFIG_IMAGES=$($DC -p "$PROJECT_NAME" config --images 2>/dev/null | awk 'NF' | sort -u || true)
+  fi
+
   step "Remove .env and install-*.log"
   declare -a FILES_TO_RM=()
   [[ -f .env ]] && FILES_TO_RM+=(".env")
@@ -175,7 +202,7 @@ if (( PURGE == 1 )); then
   fi
 
   step "Remove project-built images"
-  # Compose-built images carry the label `com.docker.compose.project=futureagi`.
+  # Compose-built images carry the label `com.docker.compose.project=<project>`.
   PROJECT_IMAGES=()
   while IFS= read -r line; do
     [[ -n "$line" ]] && PROJECT_IMAGES+=("$line")
@@ -198,6 +225,54 @@ if (( PURGE == 1 )); then
       warn "Skipped — images preserved."
     fi
   fi
+
+  step "Remove this project's Future AGI images"
+  # Only the released futureagi/* images this project's stack references.
+  # Removed by name without -f, so an image another project's container
+  # still uses stays in place.
+  FAGI_IMAGES=()
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && FAGI_IMAGES+=("$line")
+  done < <(awk -F: '/^futureagi\// && $NF != "local" && $NF != "dev"' <<<"$CONFIG_IMAGES")
+  if [[ -z "$CONFIG_IMAGES" ]]; then
+    warn "Could not resolve this project's images (docker compose config --images); none removed."
+  elif (( ${#FAGI_IMAGES[@]} == 0 )); then
+    ok "This project uses no released futureagi/* images — nothing to remove."
+  else
+    say "  Will remove ${#FAGI_IMAGES[@]} image(s):"
+    for img in "${FAGI_IMAGES[@]}"; do say "    • $img"; done
+    if confirm "Proceed?" ""; then
+      docker rmi "${FAGI_IMAGES[@]}" 2>&1 | sed 's|^|  |' || true
+      ok "Images removed (any still used by another project's containers were kept)"
+    else
+      warn "Skipped — images preserved."
+    fi
+  fi
+
+  # --from-source builds share their `local` tags with every checkout on this
+  # machine that builds from source, so they go only on their own explicit
+  # yes, never under -y.
+  if grep -q '^futureagi/.*:local$' <<<"$CONFIG_IMAGES"; then
+    LOCAL_IMAGES=()
+    while IFS= read -r line; do
+      [[ -n "$line" ]] && LOCAL_IMAGES+=("$line")
+    done < <(docker images --filter 'reference=futureagi/*' \
+               --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
+              | awk -F: '$NF == "local"' | sort -u)
+    if (( ${#LOCAL_IMAGES[@]} > 0 )); then
+      step "Images built by --from-source"
+      say "  Shared by every checkout on this machine that builds from source:"
+      for img in "${LOCAL_IMAGES[@]}"; do say "    • $img"; done
+      if (( YES == 1 )); then
+        warn "Kept (-y never removes them). Remove them yourself with: docker rmi ${LOCAL_IMAGES[*]}"
+      elif confirm "Remove them too?" ""; then
+        docker rmi "${LOCAL_IMAGES[@]}" 2>&1 | sed 's|^|  |' || true
+        ok "Images removed (any still used by another project's containers were kept)"
+      else
+        warn "Skipped — images preserved."
+      fi
+    fi
+  fi
 fi
 
 # ---------------- done ----------------
@@ -209,14 +284,17 @@ if [[ -t 1 ]]; then
 fi
 say ""
 if (( WIPE_DATA == 0 )); then
-  say "  ${DIM}Data is still in volumes. Bring the stack back up with:${RESET}"
+  say "  ${DIM}Data is still in volumes. Bring the ${STACK} back up with:${RESET}"
   say "    ${BOLD}./bin/install${RESET}     ${DIM}(or 'docker compose up -d')${RESET}"
 elif (( PURGE == 0 )); then
-  say "  ${DIM}.env preserved. Re-install with the same secrets:${RESET}"
+  say "  ${DIM}.env preserved. Re-install the ${STACK} with the same secrets:${RESET}"
   say "    ${BOLD}./bin/install${RESET}"
+  say "  ${DIM}Or install the other stack: ./bin/install --distributed, or delete the${RESET}"
+  say "  ${DIM}COMPOSE_FILE line from .env for the standalone install.${RESET}"
 else
   say "  ${DIM}Fully purged. Re-install from scratch:${RESET}"
-  say "    ${BOLD}./bin/install${RESET}"
+  say "    ${BOLD}./bin/install${RESET}          ${DIM}(standalone install)${RESET}"
+  say "    ${BOLD}./bin/install --distributed${RESET}   ${DIM}(distributed stack)${RESET}"
 fi
 say ""
 say "  ${DIM}Uninstall log: $LOG_FILE${RESET}"

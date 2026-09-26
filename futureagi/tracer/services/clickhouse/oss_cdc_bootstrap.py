@@ -30,6 +30,11 @@ from tracer.services.clickhouse import schema
 from tracer.services.clickhouse.oss_cdc_inventory import PeerTarget, inspect_mappings
 from tracer.services.clickhouse.oss_cdc_source import SourceInventory, SourceTable
 from tracer.services.clickhouse.v2 import apply_schema
+from tracer.services.clickhouse.v2.apply_schema_rewriter import (
+    dictionary_credentials_outdated,
+    with_dictionary_credentials,
+    without_dictionary_credentials,
+)
 
 # Supported CDC destinations; never use get_all_schema_ddl or POST_DDL_ALTERS.
 LANDING = {
@@ -181,6 +186,7 @@ class Inspection:
 
 @dataclass(frozen=True)
 class BootstrapResult:
+    # CREATEd objects, including dictionaries re-created with source credentials.
     created: tuple[str, ...]
     upgrade_applied: bool
 
@@ -503,6 +509,10 @@ def _check_dependent(name, row, ddl, *, client=None):
     if "DICTIONARY" in expected[:4]:
         if row[0] != "Dictionary":
             raise BootstrapError(f"{name}: expected Dictionary")
+        # Source USER/PASSWORD are deployment credentials injected at CREATE
+        # (the server shows PASSWORD '[HIDDEN]'), not the packaged contract.
+        actual = _tokens(without_dictionary_credentials(row[-1]))
+        expected = _tokens(without_dictionary_credentials(ddl))
         actual_body, actual_tail = _body(actual)
         body, tail = _body(expected)
         if _groups(actual_body) != _groups(body) or _clauses(actual_tail) != _clauses(
@@ -557,6 +567,64 @@ def _view_select(name: str, ddl: str) -> str:
     if match is None or ";" in _TOKEN.findall(match[1]):
         raise BootstrapError(f"{name}: expected packaged view SELECT")
     return match[1].strip()
+
+
+_DICTIONARY_PREFIX = "CREATE DICTIONARY IF NOT EXISTS "
+
+
+def replace_dictionary_ddl(ddl: str) -> str:
+    """``CREATE OR REPLACE`` form of one packaged additive dictionary CREATE."""
+    statement = ddl.lstrip()
+    if not statement.startswith(_DICTIONARY_PREFIX):
+        raise BootstrapError("expected one packaged additive dictionary CREATE")
+    return "CREATE OR REPLACE DICTIONARY " + statement[len(_DICTIONARY_PREFIX) :]
+
+
+def stale_dictionary_credentials(rows, names, *, ch_user: str) -> tuple[str, ...]:
+    """Existing dictionaries (in ``names`` order) whose CLICKHOUSE source does not
+    name ``ch_user``. ``rows`` are system.tables rows ``(name, engine, ...,
+    create_table_query)``. A dictionary created before credentials were injected
+    reads its source as ``default`` with an empty password."""
+    live = {
+        row[0]: row[-1]
+        for row in rows
+        if row[0] in names
+        and row[1] == "Dictionary"
+        and isinstance(row[-1], str)
+        and dictionary_credentials_outdated(row[-1], ch_user)
+    }
+    return tuple(name for name in names if name in live)
+
+
+def _stale_dependent_dictionaries(client, create, *, ch_user):
+    names = tuple(
+        name for name in DEPENDENT if name not in _VIEW_PREREQUISITES and name in create
+    )
+    rows = client.query(
+        """SELECT name, engine, engine_full, partition_key, sorting_key, primary_key, create_table_query
+        FROM system.tables WHERE database = currentDatabase() AND name IN %(names)s""",
+        parameters={"names": names},
+        settings={"readonly": 1},
+    ).result_rows
+    return stale_dictionary_credentials(rows, names, ch_user=ch_user)
+
+
+def _update_dictionary_credentials(client, create, *, ch_user, ch_password):
+    """Re-create packaged dependent dictionaries lacking the source credentials.
+
+    Only with a password: without one the packaged, credential-free DDL is the
+    correct definition. Dictionaries hold no data (a cache over their source);
+    ``CREATE OR REPLACE`` swaps the definition atomically. Returns their names."""
+    if not ch_password:
+        return ()
+    stale = _stale_dependent_dictionaries(client, create, ch_user=ch_user)
+    for name in stale:
+        client.command(
+            with_dictionary_credentials(
+                replace_dictionary_ddl(create[name]), ch_user, ch_password
+            )
+        )
+    return stale
 
 
 def _require_view_prerequisites(name, missing):
@@ -786,6 +854,8 @@ def bootstrap_cdc(
     applied_by: str,
     inspect_source: Callable[[], SourceInventory] | None = None,
     include_usage_schema: bool = True,
+    ch_user: str = "default",
+    ch_password: str = "",
 ) -> BootstrapResult:
     """One serialized apply, no retries/cleanup. Any failure stops subsequent DDL.
 
@@ -793,6 +863,12 @@ def bootstrap_cdc(
     ALTER targets except for the four derived eval columns when usage is selected.
     No cdc001 is applied or recorded. Without inspect_source the separately
     qualified canonical path is retained.
+
+    ``ch_user``/``ch_password`` are the credentials the caller's client connects
+    with. With a password, dependent dictionaries are created with them in their
+    CLICKHOUSE source, and existing ones without them are re-created (only
+    after the full contract passed), so dictGet does not authenticate as
+    ``default`` with an empty password.
     """
     create, _ = _definitions(database, include_usage_schema=include_usage_schema)
     landing = landing_tables(include_usage_schema=include_usage_schema)
@@ -829,7 +905,13 @@ def bootstrap_cdc(
         apply_schema.ensure_versions_table(client)
     for state in states:
         if not state.recorded:
-            apply_schema.apply_file(client, state.migration, applied_by)
+            apply_schema.apply_file(
+                client,
+                state.migration,
+                applied_by,
+                ch_user=ch_user,
+                ch_password=ch_password,
+            )
         if not upgrade.inspect_upgrade(
             client, migration_name=state.migration.path.name, require_complete=True
         ).recorded:
@@ -848,7 +930,9 @@ def bootstrap_cdc(
                 )
                 _require_view_prerequisites(name, ready.missing)
                 _infer_view_header(client, name, create[name])
-            client.command(create[name])
+            client.command(
+                with_dictionary_credentials(create[name], ch_user, ch_password)
+            )
             created.append(name)
             if name in _VIEW_PREREQUISITES:
                 # Fresh inference + actual physical comparison, before proceeding
@@ -872,4 +956,22 @@ def bootstrap_cdc(
         inspect_source=inspect_source,
         include_usage_schema=include_usage_schema,
     )
-    return BootstrapResult(tuple(created), any(not state.recorded for state in states))
+    repaired = _update_dictionary_credentials(
+        client, create, ch_user=ch_user, ch_password=ch_password
+    )
+    if repaired:
+        inspect_bootstrap(
+            client,
+            database=database,
+            inspect_mirrors=inspect_mirrors,
+            require_complete=True,
+            inspect_source=inspect_source,
+            include_usage_schema=include_usage_schema,
+        )
+        if _stale_dependent_dictionaries(client, create, ch_user=ch_user):
+            raise BootstrapError(
+                "dictionary source credentials not visible after re-create"
+            )
+    return BootstrapResult(
+        tuple(created) + repaired, any(not state.recorded for state in states)
+    )

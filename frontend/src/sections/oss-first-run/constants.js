@@ -28,7 +28,7 @@ export const DEFAULT_LAUNCH_MODE = LAUNCH_MODE.LIVE;
 
 export const MODE_NOTE = {
   [LAUNCH_MODE.LIVE]:
-    "Every system has to pass pre-flight before you're cleared for launch.",
+    "Every system this install runs has to pass pre-flight before you're cleared for launch.",
   [LAUNCH_MODE.EXPERIMENT]:
     "Cautions won't hold you on the ground during a test flight.",
 };
@@ -50,3 +50,66 @@ export const CONNECTION_STATE = {
 };
 
 export const CHECK_REVEAL_STAGGER_MS = 350;
+
+// Mirrors the server's `setup` field: which install answered.
+export const SETUP = {
+  STANDALONE: "standalone",
+  DISTRIBUTED: "distributed",
+  HELM: "helm",
+};
+
+export const SETUP_META = {
+  [SETUP.STANDALONE]: {
+    title: "Standalone setup",
+    description:
+      "Everything runs in one app container, next to Postgres and ClickHouse.",
+    icon: "solar:server-square-linear",
+  },
+  [SETUP.DISTRIBUTED]: {
+    title: "Distributed setup",
+    description:
+      "Every service runs in its own container, so each one scales on its own.",
+    icon: "solar:widget-5-bold-duotone",
+  },
+  [SETUP.HELM]: {
+    title: "Helm setup",
+    description:
+      "The Distributed setup on Kubernetes: every service runs in its own pods, so each one scales on its own.",
+    icon: "solar:server-square-cloud-linear",
+  },
+};
+
+// Null for a value this build does not know, so a newer server never breaks
+// the screen.
+export const getSetupMeta = (setup) =>
+  Object.prototype.hasOwnProperty.call(SETUP_META, setup)
+    ? SETUP_META[setup]
+    : null;
+
+// Where OTLP/HTTP lands when the server does not say (it predates
+// `collector_http_url`): the default FI_COLLECTOR_OTLP_HTTP_PORT.
+export const LOCAL_COLLECTOR_URL = "http://localhost:4318";
+
+export const TRACING_DOCS_URL = "https://docs.futureagi.com/docs/observe";
+
+// Shown once pre-flight clears. Backticks render as inline code.
+export const nextSteps = ({ authenticated, collectorUrl }) => [
+  {
+    id: "account",
+    icon: "solar:user-id-bold",
+    text: authenticated
+      ? "Continue to your workspace."
+      : "Create your account on the next screen. You become the owner of a new workspace.",
+  },
+  {
+    id: "keys",
+    icon: "solar:key-bold",
+    text: "Open Keys in the sidebar to copy your API key and secret key.",
+  },
+  {
+    id: "trace",
+    icon: "solar:code-square-linear",
+    text: `Send your first trace from this machine: \`pip install fi-instrumentation-otel\`, set \`FI_API_KEY\`, \`FI_SECRET_KEY\` and \`FI_BASE_URL=${collectorUrl || LOCAL_COLLECTOR_URL}\`, then call \`register()\`.`,
+    link: { href: TRACING_DOCS_URL, label: "Tracing guide" },
+  },
+];

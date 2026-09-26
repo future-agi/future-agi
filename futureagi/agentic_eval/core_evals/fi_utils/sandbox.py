@@ -485,9 +485,19 @@ def _call_executor_service(code: str, input_data: dict, language: str, timeout: 
     """Call the nsjail code-executor service via HTTP.
 
     Returns None only when the executor cannot be reached (DNS failure,
-    connection refused, no route). Any answer from it, including an HTTP error,
-    a timeout or an unusable body, is returned as a result.
+    connection refused, no route) or none is configured (empty
+    CODE_EXECUTOR_URL). Any answer from it, including an HTTP error, a timeout
+    or an unusable body, is returned as a result.
     """
+    if not CODE_EXECUTOR_URL.strip():
+        # Not deployed (the Helm chart with codeExecutor.enabled=false): the
+        # same as an executor that cannot be reached.
+        logger.warning(
+            "code_executor_service_unavailable",
+            language=language,
+            error="CODE_EXECUTOR_URL is empty",
+        )
+        return None
     try:
         # default=str so non-JSON-native types coming through trace/span column
         # mapping (Decimal from clickhouse-driver, datetime, UUID) serialize

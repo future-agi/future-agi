@@ -2,6 +2,8 @@ import os
 import re
 import secrets
 import string
+import threading
+import urllib.parse
 
 import requests
 import structlog
@@ -399,7 +401,7 @@ def build_invite_accept_link(user):
     """
     uid = urlsafe_base64_encode(force_bytes(user.pk))
     token = default_token_generator.make_token(user)
-    return f"{settings.APP_URL}/auth/jwt/invitation/accept/{uid}/{token}"
+    return f"{settings.APP_BASE_URL}/auth/jwt/invitation/accept/{uid}/{token}"
 
 
 def build_invite_links(emails):
@@ -430,7 +432,7 @@ def build_password_reset_link(uidb64, token):
     than derived here because the caller has already minted the AuthToken that
     the token encodes — building a second one would leave a stray active token.
     """
-    return f"{settings.APP_URL}/auth/jwt/verify/{uidb64}/{token}"
+    return f"{settings.APP_BASE_URL}/auth/jwt/verify/{uidb64}/{token}"
 
 
 def send_invite_email(email, organization, inviter):
@@ -481,7 +483,40 @@ def send_signup_email(generated_password, user_email, user_name):
     )
 
 
+def hubspot_is_configured(url_setting="HUBSPOT_URL"):
+    """Whether HubSpot lead sync may run on this deployment.
+
+    Lead sync (a contact on signup, ``logged_in`` on login) is a Future AGI
+    Cloud integration. It runs only when the operator sets HUBSPOT_API_TOKEN;
+    self-hosted installs leave it empty, so signup and login never contact
+    HubSpot, log nothing above debug and add no latency. ``url_setting`` names
+    the endpoint setting the caller is about to use; an empty one also turns
+    the call off.
+    """
+    token = str(getattr(settings, "HUBSPOT_API_TOKEN", "") or "").strip()
+    url = str(getattr(settings, url_setting, "") or "").strip()
+    return bool(token and url)
+
+
+def hubspot_contact_url(email):
+    """HUBSPOT_UPDATE_URL for one contact. The address goes into the URL path,
+    and a valid one may hold ``?``, ``#`` or ``/``, which would otherwise end
+    the path and point the PATCH at another contact."""
+    return settings.HUBSPOT_UPDATE_URL.format(urllib.parse.quote(email, safe="@"))
+
+
+def slack_signup_webhook_is_configured():
+    """Whether new-signup Slack notifications have a webhook to post to."""
+    return bool(str(getattr(settings, "SLACK_WEBHOOK_CHANNEL", "") or "").strip())
+
+
 def send_slack_notification(user, updated=False, err=None):
+    if not slack_signup_webhook_is_configured():
+        logger.debug(
+            "signup_slack_notification_skipped",
+            reason="SLACK_WEBHOOK_CHANNEL not set",
+        )
+        return
     try:
         org = get_user_organization(user)
         org_name = (org.display_name or org.name) if org else "Unknown"
@@ -490,7 +525,7 @@ def send_slack_notification(user, updated=False, err=None):
             data += "\n✅ Contact Updated in HubSpot"
         if err:
             data += f"\n❌ Error (HUBSPOT): {err}"
-        webhook = WebhookClient(settings.SLACK_WEBHOOK_CHANNEL)
+        webhook = WebhookClient(settings.SLACK_WEBHOOK_CHANNEL, timeout=10)
         webhook.send(text=data)
         logger.info("Slack notification sent successfully")
     except Exception as e:
@@ -498,8 +533,17 @@ def send_slack_notification(user, updated=False, err=None):
 
 
 def send_hubspot_notification(user):
+    """Create the new user's HubSpot contact, or update it if it already exists.
+
+    Returns ``(updated, err)``. Without HubSpot configured it returns
+    ``(False, None)`` and makes no network call.
+    """
     updated = False
     err = None
+
+    if not hubspot_is_configured():
+        logger.debug("hubspot_contact_sync_skipped", reason="HUBSPOT_API_TOKEN not set")
+        return updated, err
 
     headers = {
         "Authorization": f"Bearer {settings.HUBSPOT_API_TOKEN}",
@@ -543,7 +587,7 @@ def send_hubspot_notification(user):
         }
     }
 
-    logger.info(f"CONTACT: {contact}")
+    logger.debug("hubspot_contact_create", lead_type=contact["properties"]["lead_type"])
     response_text = "No Response"
     response = (
         None  # Initialize before try block to avoid NameError in exception handler
@@ -574,6 +618,10 @@ def send_hubspot_notification(user):
             err = f"Create failed: {str(e)}, Response: {response_text}"
             return updated, err
 
+        if not hubspot_is_configured("HUBSPOT_UPDATE_URL"):
+            err = f"Create failed: {str(e)}, and HUBSPOT_UPDATE_URL is not set"
+            return updated, err
+
         update_contact = {
             "properties": {
                 "email": user.email,
@@ -595,7 +643,7 @@ def send_hubspot_notification(user):
         # Get response text before checking status
         try:
             response = requests.patch(
-                settings.HUBSPOT_UPDATE_URL.format(user.email),
+                hubspot_contact_url(user.email),
                 json=update_contact,
                 headers=headers,
                 timeout=10,
@@ -620,12 +668,62 @@ def send_hubspot_notification(user):
     return updated, err
 
 
+def _send_hubspot_login_update(email, lead_type):
+    """PATCH the contact's ``logged_in`` flag. Runs on a background thread."""
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {settings.HUBSPOT_API_TOKEN}",
+    }
+    contact = {"properties": {"lead_type": lead_type, "logged_in": "Yes"}}
+    try:
+        response = requests.patch(
+            hubspot_contact_url(email),
+            json=contact,
+            headers=headers,
+            timeout=10,
+        )
+        response.raise_for_status()
+        logger.info("hubspot_login_recorded")
+    except requests.exceptions.RequestException as e:
+        logger.error("hubspot_login_update_failed", error=str(e))
+
+
+def record_hubspot_login(user):
+    """Mark the user's HubSpot contact as logged in, off the request path.
+
+    Without HubSpot configured this returns None straight away: no thread, no
+    network call, nothing logged above debug. Otherwise the PATCH runs on a
+    daemon thread so a slow or unreachable HubSpot never delays the login, and
+    the started thread is returned. Never raises.
+    """
+    try:
+        if not hubspot_is_configured("HUBSPOT_UPDATE_URL"):
+            logger.debug(
+                "hubspot_login_update_skipped", reason="HUBSPOT_API_TOKEN not set"
+            )
+            return None
+        thread = threading.Thread(
+            target=_send_hubspot_login_update,
+            args=(user.email, getattr(user, "organization_role", None)),
+            name="hubspot-login-update",
+            daemon=True,
+        )
+        thread.start()
+        return thread
+    except Exception:
+        logger.warning("hubspot_login_update_not_started", exc_info=True)
+        return None
+
+
 def _run_post_registration(user_id, generated_password):
     """Process post-registration steps in a separate thread"""
     user = User.objects.get(id=user_id)
     if user:
         send_signup_email(generated_password, user.email, user.name)
 
+        # Each of these returns without a network call unless its key is set
+        # (HUBSPOT_API_TOKEN, SLACK_WEBHOOK_CHANNEL), so a self-hosted install
+        # with ENV_TYPE=production still never contacts HubSpot or Slack.
         if os.getenv("ENV_TYPE") not in ["local"]:
             updated, err = send_hubspot_notification(user)
             send_slack_notification(user, updated=updated, err=err)

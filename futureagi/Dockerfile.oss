@@ -2,33 +2,154 @@
 # Future AGI — OSS backend image (multi-stage)
 # Builds from a public Python base. No private registry required.
 # Build context: ./futureagi (see docker-compose.yml).
+#
+# The same image runs every backend role (SERVICE_TYPE in entrypoint.sh).
+# Two variants, chosen by ONE build arg (docker/image-variant.sh):
+#   IMAGE_VARIANT=standard (default)  feature-complete, what every release
+#       before the variants shipped: futureagi/future-agi:<version>, run by
+#       docker-compose.distributed.yml, Helm and the simulation runner, and
+#       the base of the EE and cloud images, which `uv pip install` on top.
+#   IMAGE_VARIANT=slim  the lean build: futureagi/future-agi:<version>-slim,
+#       the base of the Standalone install's futureagi/platform image
+#       (deploy/platform/Dockerfile). Every byte removed there is removed
+#       from what a Standalone install downloads.
+#
+# Per-feature build args. Empty (the default) takes the variant's value; a
+# value passed explicitly wins, e.g. `--build-arg IMAGE_VARIANT=slim
+# --build-arg EXTRAS=sandbox --build-arg WITH_GIT=true`.
+#                         standard     slim
+#   EXTRAS                sandbox,billing,ops,gcp,langchain,rabbitmq | none
+#                         (optional dependency groups, comma-separated;
+#                         `none` installs no group)
+#   FFMPEG_FLAVOR         debian       minimal   (minimal: LGPL source build,
+#                         ~9 MB; debian: Debian's ffmpeg package, ~+145 MB
+#                         gzip; none: audio upload/convert, video thumbnails
+#                         and Deepgram STT fail)
+#   WITH_GIT              true         false     (git for hosted-harness
+#                         GitHub sources, + perl, ~29 MB gzip; without it they
+#                         answer 501)
+#   WITH_UV               true         false     (uv and uvx in /usr/local/bin,
+#                         for images that `uv pip install` on top of this one)
+#   SLIM_SITE_PACKAGES    0            1         (1 trims site-packages: test
+#                         suites, .pyi stubs, the googleapiclient discovery
+#                         documents the app does not call)
+#   STRIP_SO              0            1         (1 strips debug sections of
+#                         extension modules when SLIM_SITE_PACKAGES=1)
+#   NLTK_DATA_PROFILE     full         minimal   (full: every NLTK package,
+#                         incl. omw-1.4, legacy punkt/tagger and the archives)
+#
+# Size rules for the slim variant (futureagi/future-agi:v1.41 amd64 was
+# 770.5 MB gzip / 2,377 MB of files):
+#   * Trim in a build stage. A file deleted in a later layer still ships in
+#     the layer that created it.
+#   * uv comes from the pinned astral image (/bin/uv) in the builder; the
+#     runtime gets it only with WITH_UV=true.
+#   * ffmpeg/ffprobe come from a minimal LGPL source build (docker/ffmpeg/,
+#     ~9 MB) instead of Debian's `ffmpeg` (189 extra packages, ~406 MB
+#     unpacked / ~150 MB gzip incl. libllvm15 via mesa).
+#   * NLTK data is installed in the builder, before `COPY . .`, so a
+#     source-only change never rebuilds (or re-publishes) that layer.
+#   * Every stage starts from ONE digest-pinned base, shared with serving and
+#     code-executor, so a fresh distributed install downloads it once.
+#
+# Image conventions shared by every futureagi/* image (docs/images.md):
+#   * OCI labels from VERSION, REVISION and CREATED, declared last so a new
+#     value never invalidates a cached layer.
+#   * HEALTHCHECK: docker/healthcheck.py, which probes only the roles that
+#     listen (backend: GET /health/ on :80).
+#   * Runs as root by default: the published cloud deployment binds :80 and
+#     mounts root-owned volumes into this image. /app/backend and the
+#     directories the app writes to are owned by appuser (uid 1000), so
+#     `--user 1000:1000` (compose `user:`, Helm runAsUser) works; Docker lets
+#     that uid bind :80 (Docker >= 20.10).
 # ============================================================================
 
-# --------------- builder stage ---------------
-FROM python:3.11-slim-bookworm AS builder
+# python:3.11-slim-bookworm (multi-arch index). Bump the digest to pick up
+# Debian security updates in the base layers.
+ARG PYTHON_IMAGE=python:3.11-slim-bookworm@sha256:a36c24f9cbdf4fd0f52d67f0823eeac19c2028c637cecc392d97f980d4fec56b
+# Same uv as backend-ci.yml (astral-sh/setup-uv version "0.11.16") and
+# model_serving/Dockerfile.oss. Shipped only with WITH_UV=true.
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.11.16@sha256:440fd6477af86a2f1b38080c539f1672cd22acb1b1a47e321dba5158ab08864d
+# standard | slim; see the header and docker/image-variant.sh.
+ARG IMAGE_VARIANT=standard
+# Empty: the variant's flavor (the ffmpeg-standard/ffmpeg-slim stages below).
+ARG FFMPEG_FLAVOR=""
 
-# Optional extras groups to bake into the image, comma-separated, e.g.
-#   docker build --build-arg EXTRAS=audio,pii -f Dockerfile.oss .
-# Available groups (see [project.optional-dependencies] in pyproject.toml):
-#   audio, ml, voice, pii, prompt-opt, vectordb
-# Versions come from uv.lock via `uv export`, so an extras build installs the
-# exact resolution CI tests — never a fresh re-resolve against PyPI.
-ARG EXTRAS=""
+FROM ${UV_IMAGE} AS uv
+
+# --------------- ffmpeg: minimal LGPL source build ---------------
+FROM ${PYTHON_IMAGE} AS ffmpeg-minimal
+ARG FFMPEG_VERSION=7.1.5
+ARG FFMPEG_SHA256=de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential pkg-config nasm libmp3lame-dev zlib1g-dev \
+        curl ca-certificates xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src/ffmpeg
+# The pipe only feeds sha256sum a checksum line; sha256sum -c fails the RUN.
+# hadolint ignore=DL4006
+RUN curl -fsSLo /tmp/ffmpeg.tar.xz "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" \
+    && echo "${FFMPEG_SHA256}  /tmp/ffmpeg.tar.xz" | sha256sum -c - \
+    && tar -xJf /tmp/ffmpeg.tar.xz --strip-components=1 \
+    && rm /tmp/ffmpeg.tar.xz
+COPY docker/ffmpeg/configure-minimal.sh /src/ffmpeg-tools/
+# configure-minimal.sh fails the build on any component name FFmpeg does not
+# know. The LGPL text, source URL, checksum and configuration ship with the
+# binaries (/usr/local/share/doc/ffmpeg in the runtime image).
+RUN sh /src/ffmpeg-tools/configure-minimal.sh /opt/ffmpeg \
+    && make -j"$(nproc)" \
+    && make install \
+    && rm -rf /opt/ffmpeg/include /opt/ffmpeg/lib /opt/ffmpeg/share \
+    && mkdir -p /opt/ffmpeg/doc \
+    && cp COPYING.LGPLv2.1 /opt/ffmpeg/doc/ \
+    && { \
+        echo "FFmpeg ${FFMPEG_VERSION}, built from unmodified source for this image."; \
+        echo "License: LGPL-2.1-or-later (COPYING.LGPLv2.1); no GPL or nonfree parts."; \
+        echo "Source: https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"; \
+        echo "SHA-256: ${FFMPEG_SHA256}"; \
+        echo "Build script: futureagi/docker/ffmpeg/configure-minimal.sh"; \
+        echo "Links libmp3lame dynamically (Debian libmp3lame0, LGPL; /usr/share/doc/libmp3lame0/copyright)."; \
+        echo; \
+        /opt/ffmpeg/bin/ffmpeg -hide_banner -buildconf; \
+    } > /opt/ffmpeg/doc/SOURCE
+# selftest.py replays every ffmpeg/ffprobe command line the backend runs on a
+# sample of every audio format storage.py handles, plus video thumbnails.
+COPY docker/ffmpeg/selftest.py /src/ffmpeg-tools/
+COPY docker/ffmpeg/samples/ /src/ffmpeg-tools/samples/
+RUN PATH="/opt/ffmpeg/bin:$PATH" python3 /src/ffmpeg-tools/selftest.py /src/ffmpeg-tools/samples
+
+FROM ${PYTHON_IMAGE} AS ffmpeg-debian
+RUN mkdir -p /opt/ffmpeg/bin /opt/ffmpeg/doc
+FROM ffmpeg-debian AS ffmpeg-none
+# Each variant's default flavor; keep in sync with docker/image-variant.sh.
+FROM ffmpeg-debian AS ffmpeg-standard
+FROM ffmpeg-minimal AS ffmpeg-slim
+# A stage of this file, selected by FFMPEG_FLAVOR, else by IMAGE_VARIANT; not
+# a registry image. Only the selected ffmpeg stage is built.
+# hadolint ignore=DL3006
+FROM ffmpeg-${FFMPEG_FLAVOR:-${IMAGE_VARIANT}} AS ffmpeg
+
+# --------------- builder stage ---------------
+FROM ${PYTHON_IMAGE} AS builder
 
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    UV_TIMEOUT=900
+    UV_TIMEOUT=900 \
+    UV_LINK_MODE=copy \
+    NLTK_DATA=/usr/local/share/nltk_data
 
+# No git: requirements.txt has no VCS requirements.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
-        git \
         pkg-config \
         libxml2-dev \
         libxmlsec1-dev \
         libxmlsec1-openssl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install uv
+# uv lives in /bin of the builder; the runtime copies /usr/local/bin, which
+# gets uv and uvx only with WITH_UV=true (last step of this stage).
+COPY --from=uv /uv /uvx /bin/
 
 WORKDIR /build
 # Separate COPY layers: lockfile churn must not invalidate the expensive
@@ -36,7 +157,26 @@ WORKDIR /build
 COPY requirements.txt ./
 RUN uv pip install --system -r requirements.txt --compile-bytecode --no-cache
 COPY pyproject.toml uv.lock ./
-RUN if [ -n "$EXTRAS" ]; then \
+# The layers above are the same for both variants. From here on each step
+# declares only the build args it reads, and docker/image-variant.sh fills
+# the ones left empty from IMAGE_VARIANT.
+COPY docker/image-variant.sh docker/
+
+# Optional extras groups to bake into the image, comma-separated, e.g.
+#   docker build --build-arg EXTRAS=audio,pii -f Dockerfile.oss .
+# Available groups (see [project.optional-dependencies] in pyproject.toml):
+#   audio, ml, voice, pii, prompt-opt, vectordb, rabbitmq,
+#   gcp (Vertex AI SDK: partner models/Model Garden/Gemma/PaLM on Vertex),
+#   sandbox (Daytona/E2B hosted-harness SDKs), billing (stripe),
+#   ops (flower), langchain
+# Versions come from uv.lock via `uv export`, so an extras build installs the
+# exact resolution CI tests — never a fresh re-resolve against PyPI.
+ARG IMAGE_VARIANT
+ARG EXTRAS=""
+# $(...) splits into one `--extra NAME` pair per group on purpose.
+# hadolint ignore=SC1091,SC2046,DL4006
+RUN . docker/image-variant.sh \
+    && if [ -n "$EXTRAS" ]; then \
         uv export --frozen --no-dev --no-hashes --no-emit-project \
             $(echo "$EXTRAS" | tr ',' '\n' | grep -v '^$' | sed 's/^/--extra /' | tr '\n' ' ') \
             -o /tmp/extras-requirements.txt \
@@ -44,9 +184,35 @@ RUN if [ -n "$EXTRAS" ]; then \
             --compile-bytecode --no-cache; \
     fi
 
-# --------------- runtime stage ---------------
-FROM python:3.11-slim-bookworm
+# Trim site-packages here, before the runtime stage copies it (measured on
+# v1.41: -301 MB unpacked, ~-63 MB gzip; see docker/slim-site-packages.sh).
+COPY docker/slim-site-packages.sh docker/prune_test_dirs.py docker/strip_so.py docker/
+ARG SLIM_SITE_PACKAGES=""
+ARG STRIP_SO=""
+# hadolint ignore=SC1091
+RUN . docker/image-variant.sh \
+    && if [ "$SLIM_SITE_PACKAGES" = 1 ]; then \
+        STRIP_SO="$STRIP_SO" sh docker/slim-site-packages.sh /usr/local/lib/python3.11/site-packages; \
+    fi
 
+# NLTK data (pinned archives, checksum-verified by the script itself; it
+# reads the NLTK_DATA_PROFILE the variant resolved).
+COPY bin/install_nltk_data.py bin/
+ARG NLTK_DATA_PROFILE=""
+# hadolint ignore=SC1091
+RUN . docker/image-variant.sh \
+    && python bin/install_nltk_data.py
+
+ARG WITH_UV=""
+# hadolint ignore=SC1091
+RUN . docker/image-variant.sh \
+    && if [ "$WITH_UV" = true ]; then cp /bin/uv /bin/uvx /usr/local/bin/; fi
+
+# --------------- runtime stage ---------------
+FROM ${PYTHON_IMAGE}
+
+# NLTK_DOWNLOAD_MISSING=false: the data is baked in; never fetch it from
+# GitHub at run time (tfc/utils/nltk_data.py).
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -54,38 +220,110 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_DEFAULT_TIMEOUT=300 \
     UV_TIMEOUT=900 \
     NLTK_DATA=/usr/local/share/nltk_data \
+    NLTK_DOWNLOAD_MISSING=false \
     PROJECT_ROOT=/app/backend
 
 RUN groupadd --gid 1000 appuser && \
     useradd --uid 1000 --gid appuser --shell /bin/bash --create-home appuser
 
-# Runtime-only system packages (build-essential, libav*-dev, nginx,
-# supervisor, nodejs all dropped — see PR description for rationale).
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ffmpeg \
-        git \
-        libxml2 \
-        libxmlsec1 \
-        libxmlsec1-openssl \
-        xmlsec1 \
-        libcom-err2 \
-        libkrb5-3 \
-        libgssapi-krb5-2 \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+# The same resolution as the builder's, for the two steps below that depend
+# on the build args.
+COPY docker/image-variant.sh /usr/local/lib/futureagi/image-variant.sh
+ARG IMAGE_VARIANT
+ARG FFMPEG_FLAVOR
+# git is only used by the hosted-harness GitHub checkout
+# (simulate/services/hosted_harness_gateway.py; needs a Daytona/E2B sandbox and
+# a GitHub App). It pulls perl: 81 MB unpacked / 29 MB gzip. Without it that
+# code path answers `git_unavailable` (HTTP 501).
+ARG WITH_GIT=""
 
+# Runtime-only system packages. xmlsec1 (CLI) is what pysaml2 shells out to.
+# With Debian ffmpeg + git (the standard variant) this layer was 200.6 MB
+# gzip / 538 MB unpacked on v1.41.
+# $pkgs is a word list on purpose.
+# hadolint ignore=SC1091,SC2086
+RUN set -eux; \
+    . /usr/local/lib/futureagi/image-variant.sh; \
+    pkgs="libxml2 libxmlsec1 libxmlsec1-openssl xmlsec1 libcom-err2 libkrb5-3 libgssapi-krb5-2"; \
+    case "$FFMPEG_FLAVOR" in \
+        minimal) pkgs="$pkgs libmp3lame0" ;; \
+        debian)  pkgs="$pkgs ffmpeg" ;; \
+        none)    ;; \
+    esac; \
+    if [ "$WITH_GIT" = true ]; then pkgs="$pkgs git"; fi; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends $pkgs; \
+    rm -rf /var/lib/apt/lists/*; \
+    apt-get clean
+
+COPY --from=ffmpeg /opt/ffmpeg/bin/ /usr/local/bin/
+COPY --from=ffmpeg /opt/ffmpeg/doc/ /usr/local/share/doc/ffmpeg/
+COPY --from=builder /usr/local/share/nltk_data /usr/local/share/nltk_data
 # Copy installed Python packages from builder
 COPY --from=builder /usr/local/lib/python3.11/site-packages \
                     /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
+# Import smoke test of the trimmed/stripped tree against the RUNTIME system
+# libraries, plus the extras, ffmpeg, NLTK data, discovery documents, git and
+# uv as the variant and build args promise. Runs before `COPY . .`, so it is
+# cached across source-only changes.
+COPY docker/runtime_smoke.py /usr/local/lib/futureagi/runtime_smoke.py
+ARG EXTRAS
+ARG WITH_UV
+ARG SLIM_SITE_PACKAGES
+ARG NLTK_DATA_PROFILE
+# hadolint ignore=SC1091
+RUN . /usr/local/lib/futureagi/image-variant.sh \
+    && python /usr/local/lib/futureagi/runtime_smoke.py
+# The HEALTHCHECK below; images built FROM this one (simulation runner)
+# inherit it.
+COPY docker/healthcheck.py /usr/local/lib/futureagi/healthcheck.py
+
 WORKDIR $PROJECT_ROOT
 RUN mkdir -p media logs static && chown -R appuser:appuser /app
 
 COPY . .
-RUN python bin/install_nltk_data.py
-RUN chmod +x entrypoint.sh
+# The source stays root-owned; the directories the app writes to belong to
+# appuser, so the image also runs as `--user 1000:1000`: logs, media and
+# collected static files under the project root, and under tfc/ (Django's
+# BASE_DIR) the log directory the settings create on import, SAML metadata
+# and logs, and dataset-compare scratch files. Helm mounts an emptyDir on
+# each (deploy/helm/futureagi/templates/_env.tpl, futureagi.python.writablePaths).
+RUN chmod +x entrypoint.sh \
+    && mkdir -p tfc/logs tfc/saml_logs tfc/metadata tfc/compare \
+    && chown appuser:appuser . logs media static \
+        tfc/logs tfc/saml_logs tfc/metadata tfc/compare
 
 EXPOSE 80 5555 50051
 
-ENTRYPOINT ["bash", "./entrypoint.sh"]
+# Root by default; see the header and docs/images.md.
+# hadolint ignore=DL3002
+USER root
+STOPSIGNAL SIGTERM
+# Roles without a listener report healthy (docker/healthcheck.py). The start
+# period covers a first boot that runs migrations and collectstatic.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=600s --retries=3 \
+    CMD ["python", "-I", "-S", "/usr/local/lib/futureagi/healthcheck.py"]
+ENTRYPOINT ["bash", "/app/backend/entrypoint.sh"]
+
+# Image metadata (docs/images.md). Declared last: a new version, commit or
+# build time changes the image config only, never a cached layer.
+ARG VERSION=dev
+ARG REVISION=unknown
+ARG CREATED=""
+# Deployment telemetry reports it when FUTURE_AGI_VERSION names no release
+# (tfc/deployment_telemetry/config.py). Images built FROM this one inherit
+# it: the simulation runner (same release) and futureagi/platform, which sets
+# its own.
+ENV SERVICE_VERSION=${VERSION}
+LABEL org.opencontainers.image.title="Future AGI backend" \
+      org.opencontainers.image.description="Future AGI API, Temporal and Celery workers and bootstrap jobs; SERVICE_TYPE selects the role." \
+      org.opencontainers.image.source="https://github.com/future-agi/future-agi" \
+      org.opencontainers.image.url="https://futureagi.com" \
+      org.opencontainers.image.documentation="https://github.com/future-agi/future-agi/blob/main/docs/images.md" \
+      org.opencontainers.image.vendor="Future AGI" \
+      org.opencontainers.image.licenses="Apache-2.0 AND LicenseRef-FutureAGI-Enterprise-1.0" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.created="${CREATED}"

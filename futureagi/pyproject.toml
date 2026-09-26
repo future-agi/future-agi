@@ -8,7 +8,10 @@ dependencies = [
     "django==5.1.8",
     "djangorestframework",
     "djangorestframework-simplejwt",
-    "granian[uvloop,reload]",  # Rust ASGI server
+    # >=2.7.1 fixes granian#798: after a server-side websocket.close, the next
+    # receive() raised "ASGI flow error: Transport not initialized or closed"
+    # (the error blamed on channels-redis in the reverted 9917dd70a).
+    "granian[uvloop,reload]>=2.7.1,<3",  # Rust ASGI server
     "psycopg[binary,pool]",
     "django-anymail",
     "django-cors-headers",
@@ -29,9 +32,10 @@ dependencies = [
     "celery",
     "django-celery-results",
     "drf-yasg",
-    "django-debug-toolbar",
     "slack-sdk",
-    "flower",
+    # Imported by tracer/views/error_analysis.py; it used to arrive only via
+    # flower (now the `ops` extra).
+    "humanize",
     "pydantic>=2.11.10",  # Use latest with thread-safety fixes
     "jsonpath-ng",
     "nltk",
@@ -39,13 +43,8 @@ dependencies = [
     "litellm==1.81.11",  # Latest with pydantic compatibility fixes
     "django-filter",
     "pyjwt",
-    "stripe",
-    "daytona==0.207.0",
-    "e2b==2.37.1",
-    # Daytona transitively needs httpx-ws (which uses anyio.AsyncContextManagerMixin) and
-    # urllib3>=2.1 (PoolKey.key_ca_cert_data). Keep both constrained so the resolved image can
-    # import the synchronous provider adapter.
-    "httpx-ws==0.7.2",
+    # urllib3>=2.1 (PoolKey.key_ca_cert_data) is also what the Daytona SDK in
+    # the `sandbox` extra needs; keep it constrained in the base resolution.
     "urllib3>=2.1,<3",
     # OpenTelemetry core
     "opentelemetry-api>=1.20.0",
@@ -90,7 +89,6 @@ dependencies = [
     "traceai-anthropic",
     "traceai-bedrock",
     "traceai-google-genai",
-    "traceai-vertexai",
     "traceai-litellm",
     # OpenTelemetry instrumentation - messaging
     "opentelemetry-instrumentation-pika>=0.41b0",
@@ -105,7 +103,8 @@ dependencies = [
     "minio",
     "django-celery-beat",
     "channels",
-    "channels-rabbitmq",
+    # Channels layer for CHANNEL_LAYER_BACKEND=redis; see tfc/settings/settings.py.
+    "channels-redis>=4.3.0",
     "filetype",
     "google-genai",
     "json-repair",
@@ -120,7 +119,9 @@ dependencies = [
     "chevron",
     "jinja2",
     "pypdf",
-    "google-cloud-aiplatform",
+    # Imported by integrations/services/cloud_storage_service.py; it used to
+    # arrive only via google-cloud-aiplatform (now the `gcp` extra).
+    "google-cloud-storage",
     # GCP Marketplace: Pub/Sub for entitlement events,
     # api-python-client for the discovery-based Procurement and Service Control APIs.
     "google-cloud-pubsub",
@@ -137,9 +138,9 @@ dependencies = [
     "django-socio-grpc",
     "pillow",
     "pandas",
-    "langchain",
+    # RecursiveCharacterTextSplitter for knowledge-base chunking
+    # (model_hub/utils/kb_indexer.py); langchain itself is the `langchain` extra.
     "langchain_text_splitters",
-    "langchain_community",
     "langfuse==3.1.3",
     "whitenoise",
     "temporalio[opentelemetry]",  # opentelemetry extra enables TracingInterceptor
@@ -149,8 +150,6 @@ dependencies = [
     "pyotp>=2.9.0",  # TOTP generation and verification
     "qrcode[pil]>=7.4",  # QR code generation for TOTP provisioning URIs
     "webauthn>=2.2.0",  # WebAuthn server-side (py_webauthn by Duo Labs)
-    "django-stubs>=5.2.8",
-    "djangorestframework-stubs>=3.16.7",
     "mcp>=1.26.0",  # Model Context Protocol SDK (Anthropic)
     "restrictedpython>=8.0",
     # Explicit pins — previously transitive via packages now in extras:
@@ -162,6 +161,45 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Image-size split (futureagi/Dockerfile.oss installs only the base
+# dependencies unless --build-arg EXTRAS=... names these). Every first-party
+# import of them is lazy and fails with a clear error when the extra is absent:
+#   sandbox:   simulate/services/hosted_sandbox/{daytona,e2b}.py. Hosted harness
+#              jobs on managed sandboxes; without it the gateway answers 501
+#              `sandbox_sdk_missing` (not retryable).
+#   billing:   ee/usage/management/commands/switch_stripe_collection_method.py
+#   ops:       SERVICE_TYPE=flower (entrypoint.sh); no compose file runs it.
+#   gcp:       google-cloud-aiplatform (the `vertexai` SDK) + traceai-vertexai.
+#              litellm imports `vertexai` only for Vertex partner models
+#              (Claude/Llama/Mistral/Jamba/Codestral on Vertex), Model Garden,
+#              Gemma and legacy PaLM/Codey; the model picker hides those models
+#              without it (agentic_eval/core_evals/run_prompt/available_models.py).
+#              Gemini, Imagen and embeddings on Vertex do not need it.
+#              tfc/telemetry/instrumentation.py skips traceai_vertexai when absent.
+#   langchain: not imported by OSS code; kept installable so the EE/cloud export
+#              (ee/requirements.txt) keeps langchain + langchain-community.
+# ee/requirements.txt exports every extra except `dev` (see backend-ci.yml).
+sandbox = [
+    "daytona==0.207.0",
+    "e2b==2.37.1",
+    # Daytona transitively needs httpx-ws (which uses anyio.AsyncContextManagerMixin);
+    # keep it constrained so the resolved image can import the synchronous adapter.
+    "httpx-ws==0.7.2",
+]
+billing = [
+    "stripe",
+]
+ops = [
+    "flower",
+]
+gcp = [
+    "google-cloud-aiplatform",
+    "traceai-vertexai",
+]
+langchain = [
+    "langchain",
+    "langchain_community",
+]
 audio = [
     "av>=14.0.0,!=14.4.0,<15.0.0",
     "soundfile",
@@ -192,6 +230,10 @@ pii = [
     "spacy>=3.7.0",
     "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
 ]
+# Legacy AMQP Channels layer (CHANNEL_LAYER_BACKEND=rabbitmq). EE/cloud only.
+rabbitmq = [
+    "channels-rabbitmq",
+]
 prompt-opt = [
     "optuna>=4.6.0",
     "gepa==0.1.1",
@@ -207,8 +249,9 @@ dev = [
     "grpcio-tools",
     "pre-commit",
     "mypy>=1.8.0",
-    "django-stubs>=4.2.7",
-    "djangorestframework-stubs>=3.14.5",
+    "django-debug-toolbar",
+    "django-stubs>=5.2.8",
+    "djangorestframework-stubs>=3.16.7",
     "types-requests",
     "types-redis",
     "types-pyyaml",

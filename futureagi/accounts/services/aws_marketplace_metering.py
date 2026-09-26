@@ -2,6 +2,7 @@ import math
 from datetime import UTC, datetime
 
 import structlog
+from django.utils.functional import SimpleLazyObject
 
 from accounts.models.aws_marketplace import AWSMarketplaceCustomer
 from accounts.services.aws_marketplace import AWSMarketplaceService
@@ -75,4 +76,6 @@ class AWSMarketplaceUsageMetering:
             return False
 
 
-aws_marketplace_metering = AWSMarketplaceUsageMetering()
+# Lazy: building boto3 clients at import costs ~8 MB RSS in every process
+# and only AWS Marketplace deployments use them.
+aws_marketplace_metering = SimpleLazyObject(AWSMarketplaceUsageMetering)
