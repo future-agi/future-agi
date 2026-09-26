@@ -21,6 +21,7 @@ import {
   useGetOrCreateDefaultQueue,
   useAddLabelToQueue,
   useRemoveLabelFromQueue,
+  useAddQueueItems,
 } from "src/api/annotation-queues/annotation-queues";
 import { useQueryClient } from "@tanstack/react-query";
 import PropTypes from "prop-types";
@@ -32,6 +33,8 @@ const AddLabelDrawerContent = ({
   projectId,
   datasetId,
   agentDefinitionId,
+  sourceType,
+  sourceId,
   onClose,
   onLabelsChanged,
 }) => {
@@ -65,9 +68,11 @@ const AddLabelDrawerContent = ({
     });
   const addLabelMutation = useAddLabelToQueue();
   const removeLabelMutation = useRemoveLabelFromQueue();
+  const { mutate: addQueueItems } = useAddQueueItems();
 
   const scopeId = projectId || datasetId || agentDefinitionId;
   const hasFetchedRef = useRef(false);
+  const hasEnrolledRef = useRef(false);
 
   // Get or create default queue on mount — guarded to run only once
   useEffect(() => {
@@ -92,6 +97,17 @@ const AddLabelDrawerContent = ({
                   .map((label) => [label.id, label]),
               ),
             );
+            // Enroll the item as a queue item too, not just the label schema, so the Annotate tab finds it.
+            if (queue?.id && sourceType && sourceId && !hasEnrolledRef.current) {
+              hasEnrolledRef.current = true;
+              addQueueItems(
+                {
+                  queueId: queue.id,
+                  items: [{ source_type: sourceType, source_id: sourceId }],
+                },
+                { onSuccess: () => onLabelsChanged?.() },
+              );
+            }
           },
           onError: (error) => {
             setDefaultQueue(null);
@@ -111,6 +127,10 @@ const AddLabelDrawerContent = ({
     datasetId,
     agentDefinitionId,
     getOrCreateDefault,
+    sourceType,
+    sourceId,
+    addQueueItems,
+    onLabelsChanged,
   ]);
 
   const handleToggle = async (labelId) => {
@@ -395,6 +415,8 @@ AddLabelDrawerContent.propTypes = {
   projectId: PropTypes.string,
   datasetId: PropTypes.string,
   agentDefinitionId: PropTypes.string,
+  sourceType: PropTypes.string,
+  sourceId: PropTypes.string,
   onClose: PropTypes.func.isRequired,
   onLabelsChanged: PropTypes.func,
 };
@@ -405,6 +427,8 @@ const AddLabelDrawer = ({
   projectId,
   datasetId,
   agentDefinitionId,
+  sourceType,
+  sourceId,
   onLabelsChanged,
 }) => {
   return (
@@ -426,6 +450,8 @@ const AddLabelDrawer = ({
           projectId={projectId}
           datasetId={datasetId}
           agentDefinitionId={agentDefinitionId}
+          sourceType={sourceType}
+          sourceId={sourceId}
           onClose={onClose}
           onLabelsChanged={onLabelsChanged}
         />
@@ -437,6 +463,8 @@ const AddLabelDrawer = ({
 AddLabelDrawer.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
+  sourceType: PropTypes.string,
+  sourceId: PropTypes.string,
   projectId: PropTypes.string,
   datasetId: PropTypes.string,
   agentDefinitionId: PropTypes.string,
