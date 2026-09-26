@@ -238,6 +238,13 @@ def claim_severity(*, worker_id: str, limit: int) -> dict:
                         claims.append(
                             {
                                 "attempt_id": str(job.id),
+                                "organization_id": str(job.issue.scope.organization_id),
+                                "organization_name": (
+                                    job.issue.scope.organization.display_name
+                                    or job.issue.scope.organization.name
+                                ),
+                                "project_id": str(job.issue.scope.project_id),
+                                "project_name": job.issue.scope.project.name,
                                 "lease_token": token,
                                 "snapshot": snapshot,
                                 "snapshot_digest": digest,

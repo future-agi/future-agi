@@ -88,8 +88,10 @@ class InvestigationLimitsSerializer(serializers.Serializer):
 
 class InvestigationClaimSerializer(serializers.Serializer):
     organization_id = serializers.UUIDField()
+    organization_name = serializers.CharField(required=False)
     workspace_id = serializers.UUIDField(allow_null=True)
     project_id = serializers.UUIDField()
+    project_name = serializers.CharField(required=False)
     job_id = serializers.UUIDField()
     trace_id = serializers.UUIDField()
     generation = serializers.IntegerField(min_value=1)
@@ -137,7 +139,9 @@ class FindingAttributionRoleSerializer(StrictInputSerializer):
     evidence_ids = serializers.ListField(
         child=serializers.CharField(max_length=128), max_length=100
     )
-    explanation = serializers.CharField(max_length=600, required=False, allow_blank=True)
+    explanation = serializers.CharField(
+        max_length=600, required=False, allow_blank=True
+    )
 
     def validate(self, attrs):
         if attrs.get("explanation") and attrs["status"] != "supported":

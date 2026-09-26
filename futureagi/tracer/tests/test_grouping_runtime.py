@@ -34,8 +34,8 @@ from tracer.services.grouping import context
 from tracer.services.grouping.accounting import reserve_call, settle_call
 from tracer.services.grouping.control import (
     MAX_CHECKPOINT_BYTES,
-    GroupingControlError,
     GroupingConflict,
+    GroupingControlError,
     checkpoint_attempt,
     claim_feature_jobs,
     claim_grouping_work,
@@ -149,6 +149,10 @@ def _prepare_runtime(project, monkeypatch, *, identity=None):
     feature_claim = claim_feature_jobs(worker_id="test-feature-worker", limit=1)[
         "claims"
     ][0]
+    assert feature_claim["organization_name"] == (
+        project.organization.display_name or project.organization.name
+    )
+    assert feature_claim["project_name"] == project.name
     snapshot = feature_claim["snapshot"]
     prepared = complete_feature_job(
         feature_job_id=uuid.UUID(feature_claim["feature_job_id"]),
@@ -192,8 +196,7 @@ def test_reclaim_does_not_reopen_completed_cohort_peer(observe_project, monkeypa
     second_claim = claim_grouping_work(worker_id="test-f6-worker", limit=1)["claims"][0]
 
     assert [
-        snapshot["report"]["id"]
-        for snapshot in second_claim["pending_snapshots"]
+        snapshot["report"]["id"] for snapshot in second_claim["pending_snapshots"]
     ] == [str(first_report.id)]
     completed.refresh_from_db()
     assert completed.state == "completed"
@@ -237,6 +240,10 @@ def test_feature_claim_to_bounded_grouping_claim_and_defer(
     observe_project, monkeypatch
 ):
     report, claim = _claimed_runtime(observe_project, monkeypatch)
+    assert claim["organization_name"] == (
+        observe_project.organization.display_name or observe_project.organization.name
+    )
+    assert claim["project_name"] == observe_project.name
     occurrence_id = str(report.findings.get().id)
     assert claim["pending_ids"] == [occurrence_id]
     assert claim["candidate_window"] == {
