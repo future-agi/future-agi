@@ -21,12 +21,12 @@ from simulate.models import CallExecution, TestExecution
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.services.run_results_v3 import (
-    GROUP_FIELDS,
     build_call_rows,
     build_evaluation_catalog,
     function_calls,
 )
 from simulate.services.run_results_v3_queries import (
+    GROUP_FIELDS,
     apply_run_call_query,
     build_run_analytics,
     group_run_calls,

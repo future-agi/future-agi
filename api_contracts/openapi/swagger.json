@@ -57762,6 +57762,11 @@
                         "type": "string",
                         "enum": [
                             "goal",
+                            "sub_goal",
+                            "accent",
+                            "age",
+                            "attack",
+                            "task",
                             "status"
                         ],
                         "default": ""
@@ -118492,7 +118497,7 @@
                 "livekit_max_concurrency": {
                     "title": "Livekit max concurrency",
                     "type": "integer",
-                    "maximum": 25,
+                    "maximum": 5,
                     "minimum": 1,
                     "x-nullable": true
                 }
@@ -118911,7 +118916,7 @@
                 "livekit_max_concurrency": {
                     "title": "Livekit max concurrency",
                     "type": "integer",
-                    "maximum": 25,
+                    "maximum": 5,
                     "minimum": 1,
                     "x-nullable": true
                 }
@@ -119148,7 +119153,7 @@
                 "livekit_max_concurrency": {
                     "title": "Livekit max concurrency",
                     "type": "integer",
-                    "maximum": 25,
+                    "maximum": 5,
                     "minimum": 1
                 },
                 "commit_message": {

@@ -13,7 +13,6 @@ import { TraceGroupByPicker, TraceColumnsPicker } from "./TracePickers";
 import StatusFilterChips from "./StatusFilterChips";
 import { defaultTraceColumns } from "./traceTable.constants";
 
-const GROUP_BY_API = { useCase: "goal", status: "status" };
 const STATUS_CHIP_API = {
   failing: "failed",
   errored: "error",
@@ -53,7 +52,7 @@ export default function RunTraceTable({
   activeCallId = null,
   activePage = null,
 }) {
-  const [groupBy, setGroupBy] = useState("useCase");
+  const [groupBy, setGroupBy] = useState("goal");
   const [statusChip, setStatusChip] = useState("all");
   const [page, setPage] = useState(1);
   const [visibleColumns, setVisibleColumns] = useState(() =>
@@ -105,7 +104,7 @@ export default function RunTraceTable({
       limit: PAGE_SIZE,
       search: "",
       filters: serverFilters,
-      groupBy: GROUP_BY_API[groupBy],
+      groupBy,
     }),
     [page, serverFilters, groupBy],
   );
