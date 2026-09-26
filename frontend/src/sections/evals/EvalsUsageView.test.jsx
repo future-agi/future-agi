@@ -137,3 +137,24 @@ describe("Eval Usage grid search request contract", () => {
     },
   );
 });
+
+describe("Eval Usage grid 30 Days run column", () => {
+  afterEach(() => cleanup());
+
+  // get-eval-templates returns the 30-day count as `last30_run`
+  // (model_hub/serializers/contracts.py); the column read `last_30_run`, so
+  // every row rendered a blank cell.
+  it("shows the API's last30_run and still sorts by the backend's last_30_run key", () => {
+    mocks.grid = null;
+    render(<EvalsUsageView />, { wrapper: MemoryRouter });
+
+    const column = mocks.grid.columnDefs.find(
+      (def) => def.headerName === "30 Days run",
+    );
+    const row = { id: "eval-1", last30_run: 7 };
+
+    expect(row[column.field]).toBe(7);
+    expect(column.colId).toBe("last_30_run");
+  });
+});
+
