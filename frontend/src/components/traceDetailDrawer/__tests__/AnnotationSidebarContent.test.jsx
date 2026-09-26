@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
+import { useQueueItemsForSource } from "src/api/annotation-queues/annotation-queues";
 import AnnotationSidebarContent from "../AnnotationSidebarContent";
 
 const { mockBulkCreate, mockRefetch } = vi.hoisted(() => ({
@@ -146,5 +147,27 @@ describe("AnnotationSidebarContent", () => {
       expect.objectContaining({ sourceId: "trace-1", projectId: "project-1" }),
       expect.anything(),
     );
+  });
+
+  it("lists only the drawer project's queues", () => {
+    const sources = [
+      {
+        sourceType: "trace",
+        sourceId: "trace-1",
+        spanNotesSourceId: "span-1",
+        projectId: "project-1",
+      },
+      {
+        sourceType: "observation_span",
+        sourceId: "span-1",
+        projectId: "project-1",
+      },
+    ];
+
+    render(<AnnotationSidebarContent sources={sources} />);
+
+    expect(useQueueItemsForSource).toHaveBeenCalledWith(sources, {
+      projectId: "project-1",
+    });
   });
 });

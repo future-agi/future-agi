@@ -32,6 +32,7 @@ from accounts.models.workspace import Workspace
 from model_hub.models.ai_model import AIModel
 from model_hub.models.annotation_queues import (
     AnnotationQueue,
+    AnnotationQueueLabel,
     AnnotationQueueStatusChoices,
     QueueItem,
     QueueItemNote,
@@ -118,6 +119,15 @@ class _Copies:
                     row.id, SpanScope(project_id=row.project_id, trace_id=row.trace_id)
                 )
         return scopes
+
+    def root_ids_by_trace_ids(self, trace_ids, project_ids=None):
+        # The real read treats an empty project list as unscoped, as here.
+        wanted = {str(trace_id) for trace_id in trace_ids}
+        roots = {}
+        for row in self._scoped(project_ids=project_ids or None):
+            if row.trace_id in wanted:
+                roots.setdefault(row.trace_id, (row.id, row.project_id))
+        return roots
 
 
 @pytest.fixture
@@ -523,3 +533,342 @@ def test_pinned_span_read_hides_another_copys_queue_note(
         "legacy: escalated to billing",
         "newer copy: refund was issued",
     ]
+
+
+# ---------------------------------------------------------------------------
+# Queue sections and queue-item saves in a pinned drawer.
+#
+# The drawer's Annotate sidebar lists the queues holding the source through
+# ``/model-hub/annotation-queues/for-source/``, which keyed on the bare source
+# id: with the trace held by two projects, the older copy's drawer showed the
+# newer copy's default queue beside its own, prefilled with that copy's score.
+# Saving in that section sent the other copy's queue item under this drawer's
+# pin; the save found the other copy's score through its queue item and moved
+# it into this project (``tracer_project_id`` older <- newer), leaving the
+# older copy with two scores for the label and the newer copy with none.
+# ---------------------------------------------------------------------------
+
+QUEUE_FOR_SOURCE_URL = "/model-hub/annotation-queues/for-source/"
+SCORES_URL = "/model-hub/scores/"
+
+
+def _save(auth_client, replayed_span, source_type, project, rating, **extra):
+    """Save the label from ``project``'s drawer; returns the response."""
+    source_id = SPAN_ID if source_type == "observation_span" else replayed_span.trace_id
+    return auth_client.post(
+        BULK_URL,
+        {
+            "source_type": source_type,
+            "source_id": source_id,
+            "project_id": str(project.id),
+            "scores": [
+                {
+                    "label_id": str(replayed_span.label.id),
+                    "value": {"rating": rating},
+                }
+            ],
+            **extra,
+        },
+        format="json",
+    )
+
+
+def _default_item_on_each_copy(auth_client, replayed_span, source_type):
+    """Each copy's drawer scores the label (older 2, newer 5): each copy's
+    default queue gets an item and a score. Returns ``{project: item}``."""
+    items = {}
+    for project, rating in ((replayed_span.older, 2), (replayed_span.newer, 5)):
+        response = _save(auth_client, replayed_span, source_type, project, rating)
+        assert response.status_code == status.HTTP_200_OK, response.content
+        items[project] = QueueItem.objects.get(
+            queue__project=project, queue__is_default=True, deleted=False
+        )
+        # The save's on-commit hook attaches the label to the default queue;
+        # the test transaction never commits, so attach it here.
+        AnnotationQueueLabel.objects.create(
+            queue=items[project].queue, label=replayed_span.label
+        )
+    return items
+
+
+def _queues_for_drawer(auth_client, replayed_span, **extra):
+    """The sidebar request of a trace drawer: the trace and its root span."""
+    import json
+
+    sources = [
+        {"source_type": "trace", "source_id": replayed_span.trace_id},
+        {"source_type": "observation_span", "source_id": SPAN_ID},
+    ]
+    response = auth_client.get(
+        QUEUE_FOR_SOURCE_URL, {"sources": json.dumps(sources), **extra}
+    )
+    assert response.status_code == status.HTTP_200_OK, response.content
+    return response.data["result"]
+
+
+def _score_of(item):
+    return Score.objects.get(queue_item=item, deleted=False)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("source_type", SOURCE_TYPES)
+def test_unpinned_queue_read_lists_every_copys_queue(
+    auth_client, replayed_span, source_type
+):
+    # What the drawer asked before it sent its project: both copies' default
+    # queues, each prefilled with its own copy's score.
+    items = _default_item_on_each_copy(auth_client, replayed_span, source_type)
+
+    entries = _queues_for_drawer(auth_client, replayed_span)
+
+    label = str(replayed_span.label.id)
+    assert sorted(
+        (entry["item"]["id"], entry["existing_scores"][label]["rating"])
+        for entry in entries
+    ) == sorted(
+        [
+            (str(items[replayed_span.older].id), 2),
+            (str(items[replayed_span.newer].id), 5),
+        ]
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("source_type", SOURCE_TYPES)
+def test_pinned_queue_read_lists_only_the_pinned_copys_queue(
+    auth_client, replayed_span, source_type
+):
+    items = _default_item_on_each_copy(auth_client, replayed_span, source_type)
+    label = str(replayed_span.label.id)
+
+    for project, rating in ((replayed_span.older, 2), (replayed_span.newer, 5)):
+        entries = _queues_for_drawer(
+            auth_client, replayed_span, project_id=str(project.id)
+        )
+
+        assert [
+            (entry["item"]["id"], entry["existing_scores"][label]["rating"])
+            for entry in entries
+        ] == [(str(items[project].id), rating)]
+
+
+def _legacy_queue_item(user, replayed_span, source_type):
+    """An item of a queue with no project, added before ``QueueItem.project``
+    existed: never attributed to a copy."""
+    queue = AnnotationQueue.objects.create(
+        name="Legacy review",
+        status=AnnotationQueueStatusChoices.ACTIVE.value,
+        organization=user.organization,
+        workspace=replayed_span.older.workspace,
+        created_by=user,
+    )
+    source = (
+        {"observation_span_id": SPAN_ID}
+        if source_type == "observation_span"
+        else {"trace_id": replayed_span.trace_id}
+    )
+    return QueueItem.objects.create(
+        queue=queue,
+        source_type=source_type,
+        organization=user.organization,
+        workspace=replayed_span.older.workspace,
+        **source,
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("source_type", SOURCE_TYPES)
+def test_pinned_queue_read_keeps_legacy_items_without_a_project(
+    auth_client, user, replayed_span, source_type
+):
+    items = _default_item_on_each_copy(auth_client, replayed_span, source_type)
+    legacy = _legacy_queue_item(user, replayed_span, source_type)
+
+    for project in (replayed_span.older, replayed_span.newer):
+        entries = _queues_for_drawer(
+            auth_client, replayed_span, project_id=str(project.id)
+        )
+
+        assert sorted(entry["item"]["id"] for entry in entries) == sorted(
+            [str(items[project].id), str(legacy.id)]
+        )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("pin", ["foreign", "unknown"])
+def test_pinned_queue_read_outside_scope_lists_no_queue(
+    auth_client, user, replayed_span, pin
+):
+    _default_item_on_each_copy(auth_client, replayed_span, "trace")
+    _legacy_queue_item(user, replayed_span, "trace")
+    project_id = {
+        "foreign": str(replayed_span.foreign.id),
+        "unknown": str(uuid.uuid4()),
+    }[pin]
+
+    assert _queues_for_drawer(auth_client, replayed_span, project_id=project_id) == []
+
+
+@pytest.mark.django_db
+def test_pinned_queue_read_offers_the_pinned_copys_default_queue_without_an_item(
+    auth_client, user, replayed_span
+):
+    # Only the newer copy has been annotated; the older copy's default queue
+    # exists (it holds other traces) but has no item for this one yet. Its
+    # drawer offers its own default queue, never the newer copy's.
+    _save(auth_client, replayed_span, "trace", replayed_span.newer, 5)
+    older_default = AnnotationQueue.objects.create(
+        name="Default - older",
+        is_default=True,
+        project=replayed_span.older,
+        status=AnnotationQueueStatusChoices.ACTIVE.value,
+        organization=user.organization,
+        workspace=replayed_span.older.workspace,
+        created_by=user,
+    )
+
+    entries = _queues_for_drawer(
+        auth_client, replayed_span, project_id=str(replayed_span.older.id)
+    )
+
+    assert [(entry["queue"]["id"], entry["item"]) for entry in entries] == [
+        (str(older_default.id), None)
+    ]
+
+
+def _assert_untouched(score, *, rating, project):
+    score.refresh_from_db()
+    assert (score.value, str(score.tracer_project_id), score.deleted) == (
+        {"rating": rating},
+        str(project.id),
+        False,
+    )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("source_type", SOURCE_TYPES)
+def test_save_with_another_copys_queue_item_is_refused(
+    auth_client, replayed_span, source_type
+):
+    items = _default_item_on_each_copy(auth_client, replayed_span, source_type)
+    newer_score = _score_of(items[replayed_span.newer])
+
+    # The older copy's drawer saves in the newer copy's queue section.
+    response = _save(
+        auth_client,
+        replayed_span,
+        source_type,
+        replayed_span.older,
+        4,
+        queue_item_id=str(items[replayed_span.newer].id),
+    )
+
+    assert response.status_code == status.HTTP_409_CONFLICT, response.content
+    assert response.data["code"] == "score_project_mismatch"
+    _assert_untouched(newer_score, rating=5, project=replayed_span.newer)
+    assert Score.objects.filter(label=replayed_span.label, deleted=False).count() == 2
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("source_type", SOURCE_TYPES)
+def test_single_create_with_another_copys_queue_item_is_refused(
+    auth_client, replayed_span, source_type
+):
+    # POST /scores/ takes no pin: the source resolves to the newest copy in
+    # scope (the newer project), so the older copy's queue item is foreign.
+    items = _default_item_on_each_copy(auth_client, replayed_span, source_type)
+    older_score = _score_of(items[replayed_span.older])
+
+    response = auth_client.post(
+        SCORES_URL,
+        {
+            "source_type": source_type,
+            "source_id": SPAN_ID
+            if source_type == "observation_span"
+            else replayed_span.trace_id,
+            "label_id": str(replayed_span.label.id),
+            "value": {"rating": 4},
+            "queue_item_id": str(items[replayed_span.older].id),
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_409_CONFLICT, response.content
+    assert response.data["code"] == "score_project_mismatch"
+    _assert_untouched(older_score, rating=2, project=replayed_span.older)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("source_type", SOURCE_TYPES)
+def test_save_with_own_queue_item_updates_own_score(
+    auth_client, replayed_span, source_type
+):
+    items = _default_item_on_each_copy(auth_client, replayed_span, source_type)
+    older_score = _score_of(items[replayed_span.older])
+    newer_score = _score_of(items[replayed_span.newer])
+
+    response = _save(
+        auth_client,
+        replayed_span,
+        source_type,
+        replayed_span.older,
+        4,
+        queue_item_id=str(items[replayed_span.older].id),
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    _assert_untouched(older_score, rating=4, project=replayed_span.older)
+    _assert_untouched(newer_score, rating=5, project=replayed_span.newer)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("source_type", SOURCE_TYPES)
+def test_save_through_a_legacy_item_is_attributed_to_the_pin(
+    auth_client, user, replayed_span, source_type
+):
+    legacy = _legacy_queue_item(user, replayed_span, source_type)
+
+    response = _save(
+        auth_client,
+        replayed_span,
+        source_type,
+        replayed_span.older,
+        3,
+        queue_item_id=str(legacy.id),
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    _assert_untouched(_score_of(legacy), rating=3, project=replayed_span.older)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("source_type", SOURCE_TYPES)
+def test_save_through_a_legacy_item_never_moves_another_copys_score(
+    auth_client, user, replayed_span, source_type
+):
+    # A queue item with no project is shared by every copy, but its score was
+    # written from the newer copy's drawer and belongs to that copy.
+    legacy = _legacy_queue_item(user, replayed_span, source_type)
+    response = _save(
+        auth_client,
+        replayed_span,
+        source_type,
+        replayed_span.newer,
+        5,
+        queue_item_id=str(legacy.id),
+    )
+    assert response.status_code == status.HTTP_200_OK, response.content
+    newer_score = _score_of(legacy)
+
+    response = _save(
+        auth_client,
+        replayed_span,
+        source_type,
+        replayed_span.older,
+        2,
+        queue_item_id=str(legacy.id),
+    )
+
+    assert response.status_code == status.HTTP_409_CONFLICT, response.content
+    assert response.data["code"] == "score_project_mismatch"
+    _assert_untouched(newer_score, rating=5, project=replayed_span.newer)

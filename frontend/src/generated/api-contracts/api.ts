@@ -23147,6 +23147,7 @@ Includes queues where:
 Query params:
   - source_type, source_id  (single source)
   - OR sources (JSON array of {source_type, source_id} objects for multi-source lookup)
+  - project_id (optional): the project a trace / span drawer shows
  */
 export const modelHubAnnotationQueuesForSource = async (
   params?: ModelHubAnnotationQueuesForSourceParams,

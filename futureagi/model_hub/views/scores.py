@@ -5,7 +5,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
-from rest_framework import viewsets
+from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -103,6 +103,51 @@ def _resolve_queue_item(queue_item_id, source_type, source_obj, organization, us
     return resolve_default_queue_item_for_source(
         source_type, source_obj, organization, user
     )
+
+
+SCORE_PROJECT_MISMATCH = "score_project_mismatch"
+
+
+def _score_project_conflict(
+    queue_item, tracer_project_id, *, source_lookup, label_ids, annotator_id
+):
+    """Why saving on *queue_item* as *tracer_project_id* would move a score to
+    another project, or ``None``.
+
+    A trace / span id can exist in several projects, and each copy's default
+    queue holds its own item for it. The upsert keys on the queue item and
+    writes the resolved copy's project, so a save through another copy's item
+    found that copy's score and re-attributed it to this one. A queue item
+    belongs to ``QueueItem.project``, else to its project-scoped queue; an item
+    attributed to neither is shared, but each of its scores stays with the copy
+    that wrote it.
+    """
+    if not tracer_project_id:
+        return None
+    item_project_id = queue_item.project_id or queue_item.queue.project_id
+    if item_project_id and str(item_project_id) != str(tracer_project_id):
+        return (
+            "This queue item belongs to another project's copy of this source. "
+            "Annotate it from that project."
+        )
+    moved = (
+        Score.no_workspace_objects.filter(
+            **source_lookup,
+            label_id__in=label_ids,
+            annotator_id=annotator_id,
+            queue_item=queue_item,
+            tracer_project_id__isnull=False,
+            deleted=False,
+        )
+        .exclude(tracer_project_id=tracer_project_id)
+        .exists()
+    )
+    if moved:
+        return (
+            "A score on this queue item belongs to another project's copy of "
+            "this source. Annotate it from that project."
+        )
+    return None
 
 
 def _safe_auto_create_queue_items_for_default_queues(*args, **kwargs):
@@ -391,6 +436,18 @@ class ScoreViewSet(viewsets.ModelViewSet):
                 "Cannot resolve a default annotation queue for this source. "
                 "Pass an explicit queue_item_id or score from a queue flow."
             )
+        tracer_project_id = tracer_project_id_for_source(source_type, source_obj)
+        conflict = _score_project_conflict(
+            queue_item,
+            tracer_project_id,
+            source_lookup={f"{fk_field}_id": source_obj.pk},
+            label_ids=[label.pk],
+            annotator_id=request.user.pk,
+        )
+        if conflict:
+            return self._gm.custom_error_response(
+                status.HTTP_409_CONFLICT, conflict, code=SCORE_PROJECT_MISMATCH
+            )
 
         # Upsert: update if exists, create if not.
         #
@@ -405,7 +462,6 @@ class ScoreViewSet(viewsets.ModelViewSet):
         # (set_workspace_from_organization), so workspace-scoped reads
         # continue to work correctly.
         source_trace_id = _span_source_trace_id(source_type, source_obj)
-        tracer_project_id = tracer_project_id_for_source(source_type, source_obj)
         with transaction.atomic():
             score, created = Score.no_workspace_objects.update_or_create(
                 **{f"{fk_field}_id": source_obj.pk},
@@ -519,11 +575,22 @@ class ScoreViewSet(viewsets.ModelViewSet):
                 "Cannot resolve a default annotation queue for this source. "
                 "Pass an explicit queue_item_id or score from a queue flow."
             )
+        tracer_project_id = tracer_project_id_for_source(source_type, source_obj)
+        conflict = _score_project_conflict(
+            queue_item,
+            tracer_project_id,
+            source_lookup={f"{fk_field}_id": source_obj.pk},
+            label_ids=[score_data["label_id"] for score_data in data["scores"]],
+            annotator_id=request.user.pk,
+        )
+        if conflict:
+            return self._gm.custom_error_response(
+                status.HTTP_409_CONFLICT, conflict, code=SCORE_PROJECT_MISMATCH
+            )
 
         created_scores = []
         errors = []
         source_trace_id = _span_source_trace_id(source_type, source_obj)
-        tracer_project_id = tracer_project_id_for_source(source_type, source_obj)
         # SpanNotes.span (db_constraint=False FK) rejects a CHSpan object on assignment;
         # write the id form so collector-only spans work.
         span_notes_pk = (

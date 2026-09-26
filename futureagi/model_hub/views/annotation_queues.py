@@ -139,6 +139,7 @@ from model_hub.utils.annotation_queue_helpers import (
     filter_available_source_ids_for_annotation,
     get_fk_field_name,
     is_source_available_for_annotation,
+    pinned_source_project_ids,
     preview_payload_for_source,
     resolve_source_content,
     resolve_source_object,
@@ -4277,6 +4278,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         Query params:
           - source_type, source_id  (single source)
           - OR sources (JSON array of {source_type, source_id} objects for multi-source lookup)
+          - project_id (optional): the project a trace / span drawer shows
         """
         query_params = request.validated_query_data
         sources = query_params["sources"]
@@ -4334,14 +4336,43 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
 
         accessible_queue_ids = user_queue_ids | default_queue_ids | created_queue_ids
 
+        # project_id pins a trace / span to the copy the drawer shows, under the
+        # gate scores/for-source applies: another copy's queue items (and so its
+        # scores) stay out of this drawer. An item belongs to QueueItem.project,
+        # else to its project-scoped queue; one attributed to no project is
+        # shared by every in-scope copy. A pin outside the caller's scope lists
+        # nothing. Session and non-tracer ids never repeat across projects.
+        pinned_by_type = {
+            source_type: pinned_source_project_ids(
+                source_type,
+                query_params.get("project_id"),
+                organization=request.organization,
+                workspace=getattr(request, "workspace", None),
+            )
+            for source_type in {src["source_type"] for src in sources}
+        }
+
         # Find queue items across all sources
         item_q = Q()
         for src in sources:
             fk_field = SOURCE_TYPE_FK_MAP[src["source_type"]]
-            item_q |= Q(
+            source_q = Q(
                 **{f"{fk_field}_id": src["source_id"]},
                 source_type=src["source_type"],
             )
+            pinned = pinned_by_type[src["source_type"]]
+            if pinned is not None:
+                # Guarded: an empty IN beside an OR would leave the NULL arms.
+                source_q &= (
+                    (
+                        Q(project_id__in=pinned)
+                        | Q(project_id__isnull=True, queue__project_id__in=pinned)
+                        | Q(project_id__isnull=True, queue__project_id__isnull=True)
+                    )
+                    if pinned
+                    else Q(pk__in=[])
+                )
+            item_q |= source_q
 
         items = (
             QueueItem.objects.filter(item_q)
@@ -4548,20 +4579,27 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 for src in sources
                 if src["source_type"] == "trace"
             ]
+            # A pin reads only the drawer's copy, so the default queue offered
+            # is that copy's project's, not an arbitrary copy's.
+            _span_pin = pinned_by_type.get("observation_span")
+            _trace_pin = pinned_by_type.get("trace")
             if _span_source_ids or _trace_source_ids:
                 from tracer.services.clickhouse.v2 import get_reader as _gr_bulk
 
                 with _gr_bulk() as _reader_bulk:
                     if _span_source_ids:
-                        _ch_scope_by_span = _reader_bulk.scope_by_ids(_span_source_ids)
-                    if _trace_source_ids:
+                        _ch_scope_by_span = _reader_bulk.scope_by_ids(
+                            _span_source_ids, project_ids=_span_pin
+                        )
+                    # root_ids_by_trace_ids reads an empty project list unscoped.
+                    if _trace_source_ids and _trace_pin != []:
                         _ch_project_by_trace = {
                             tid: pid
                             for tid, (
                                 _root_id,
                                 pid,
                             ) in _reader_bulk.root_ids_by_trace_ids(
-                                _trace_source_ids
+                                _trace_source_ids, project_ids=_trace_pin
                             ).items()
                         }
 

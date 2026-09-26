@@ -18754,7 +18754,7 @@
         "/model-hub/annotation-queues/for-source/": {
             "get": {
                 "operationId": "model-hub_annotation-queues_for_source",
-                "description": "Find annotation queues for a given source that the current user can annotate.\nIncludes queues where:\n- The source is a queue item AND the user is an annotator in that queue\n  (regardless of whether the item is explicitly assigned to them)\n\nQuery params:\n  - source_type, source_id  (single source)\n  - OR sources (JSON array of {source_type, source_id} objects for multi-source lookup)",
+                "description": "Find annotation queues for a given source that the current user can annotate.\nIncludes queues where:\n- The source is a queue item AND the user is an annotator in that queue\n  (regardless of whether the item is explicitly assigned to them)\n\nQuery params:\n  - source_type, source_id  (single source)\n  - OR sources (JSON array of {source_type, source_id} objects for multi-source lookup)\n  - project_id (optional): the project a trace / span drawer shows",
                 "parameters": [
                     {
                         "name": "page",
@@ -18795,6 +18795,15 @@
                         "in": "query",
                         "required": false,
                         "type": "string"
+                    },
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "description": "Tracer project the trace / span was opened from. The same id can exist in several projects; when supplied, only that project's queue items are listed.",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid",
+                        "x-nullable": true
                     }
                 ],
                 "responses": {

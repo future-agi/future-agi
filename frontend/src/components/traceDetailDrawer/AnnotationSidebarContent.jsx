@@ -160,12 +160,15 @@ export default function AnnotationSidebarContent({
   hideEmpty = false,
 }) {
   const validSources = sources.filter((s) => s.sourceId);
+  // The drawer's sources all carry the project it shows; list only that copy's
+  // queue items, never another project's copy of the same trace / span.
+  const projectId = validSources.find((s) => s.projectId)?.projectId;
   const {
     data: queueItems,
     isLoading,
     isFetching,
     refetch,
-  } = useQueueItemsForSource(validSources);
+  } = useQueueItemsForSource(validSources, { projectId });
   const [showShortcuts, setShowShortcuts] = useState(false);
 
   if (validSources.length === 0) {

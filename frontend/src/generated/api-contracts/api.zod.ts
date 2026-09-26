@@ -12483,6 +12483,7 @@ Includes queues where:
 Query params:
   - source_type, source_id  (single source)
   - OR sources (JSON array of {source_type, source_id} objects for multi-source lookup)
+  - project_id (optional): the project a trace / span drawer shows
  */
 export const ModelHubAnnotationQueuesForSourceQueryParams = zod.object({
   page: zod
@@ -12505,6 +12506,13 @@ export const ModelHubAnnotationQueuesForSourceQueryParams = zod.object({
     .optional(),
   source_id: zod.string().optional(),
   sources: zod.string().optional(),
+  project_id: zod
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      "Tracer project the trace / span was opened from. The same id can exist in several projects; when supplied, only that project's queue items are listed.",
+    ),
 });
 
 export const modelHubAnnotationQueuesForSourceResponseStatusDefault = true;

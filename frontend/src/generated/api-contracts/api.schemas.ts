@@ -30615,6 +30615,10 @@ export type ModelHubAnnotationQueuesForSourceParams = {
   source_type?: ModelHubAnnotationQueuesForSourceSourceType;
   source_id?: string;
   sources?: string;
+  /**
+   * Tracer project the trace / span was opened from. The same id can exist in several projects; when supplied, only that project's queue items are listed.
+   */
+  project_id?: string;
 };
 
 export type ModelHubAnnotationQueuesForSourceSourceType =

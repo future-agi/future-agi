@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, userEvent } from "src/utils/test-utils";
 import { useScoresForSource, useSpanNotes } from "src/api/scores/scores";
+import { useQueueItemsForSource } from "src/api/annotation-queues/annotation-queues";
 import ScoresListSection from "../ScoresListSection";
 
 const mockState = vi.hoisted(() => ({
@@ -342,5 +343,21 @@ describe("ScoresListSection", () => {
     expect(useSpanNotes).toHaveBeenCalledWith("span-1", {
       projectId: "project-1",
     });
+  });
+
+  it("opens rows through the drawer project's queue items only", () => {
+    render(
+      <ScoresListSection
+        sourceType="trace"
+        sourceId="trace-1"
+        projectId="project-1"
+        openQueueItemOnRowClick
+      />,
+    );
+
+    expect(useQueueItemsForSource).toHaveBeenCalledWith(
+      [{ sourceType: "trace", sourceId: "trace-1" }],
+      { projectId: "project-1", enabled: true },
+    );
   });
 });

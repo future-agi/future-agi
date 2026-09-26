@@ -10706,6 +10706,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
               type: "string",
             },
           },
+          project_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
         },
         responses: {
           200: {

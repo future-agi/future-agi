@@ -99,6 +99,7 @@ export default function ScoresListSection({
   const { data: queueEntries = [] } = useQueueItemsForSource(
     queueTargetSources,
     {
+      projectId,
       enabled: openQueueItemOnRowClick && queueTargetSources.length > 0,
     },
   );

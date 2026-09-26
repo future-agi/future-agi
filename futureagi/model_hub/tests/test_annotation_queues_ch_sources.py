@@ -174,7 +174,7 @@ class _ReaderCM:
             str(self._span.trace_id): (str(self._span.id), str(self._span.project_id))
         }
 
-    def scope_by_ids(self, span_ids):
+    def scope_by_ids(self, span_ids, *, project_ids=None):
         """``{span_id: scope}`` where ``scope.project_id`` — for-source span match."""
         ids = {str(s) for s in span_ids}
         if self._span is None or str(self._span.id) not in ids:
