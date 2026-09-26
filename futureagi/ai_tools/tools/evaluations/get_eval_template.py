@@ -44,10 +44,7 @@ class GetEvalTemplateTool(BaseTool):
         if err:
             return ToolResult.error(err, error_code="NOT_FOUND")
 
-        try:
-            template = EvalTemplate.objects.get(id=template_obj.id)
-        except EvalTemplate.DoesNotExist:
-            return ToolResult.not_found("Eval Template", str(template_obj.id))
+        template = template_obj
 
         config = template.config or {}
         required_keys = (
