@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, render, screen, fireEvent } from "src/utils/test-utils";
 import DashboardDetailView from "../DashboardDetailView";
-import { DATE_PRESETS } from "../constants";
+import { DATE_FILTER_DEBOUNCE_MS, DATE_PRESETS } from "../constants";
 
 // Controlled stubs (hoisted so the vi.mock factory can see them). `widgets` is
 // per-test controllable so we can drive both the empty and populated dashboard.
@@ -65,7 +65,16 @@ vi.mock("../hooks/useCanEditDashboard", () => ({
 vi.mock("../WidgetChart", () => ({
   default: (props) => {
     h.widgetChartProps = props;
-    return <div data-testid="widget-chart" />;
+    return (
+      <div
+        data-testid="widget-chart"
+        data-date-range={
+          props.globalDateRange
+            ? JSON.stringify(props.globalDateRange)
+            : "default"
+        }
+      />
+    );
   },
 }));
 
@@ -257,6 +266,53 @@ describe("DashboardDetailView — exact aggregation refresh", () => {
       });
     });
     expect(screen.queryByText(/Last updated/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("DashboardDetailView — time filter debounce", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.canEdit = { ...WRITER };
+    h.widgets = [{ id: "w-1", name: "Tokens", position: 0, width: 12 }];
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-12T12:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("applies only the last rapidly selected preset after the debounce window", () => {
+    render(<DashboardDetailView />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Today" }));
+    fireEvent.click(screen.getByRole("button", { name: "7D" }));
+    fireEvent.click(screen.getByRole("button", { name: "30D" }));
+
+    // The widget keeps its previous range while the user is still choosing.
+    expect(screen.getByTestId("widget-chart")).toHaveAttribute(
+      "data-date-range",
+      "default",
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(DATE_FILTER_DEBOUNCE_MS - 1);
+    });
+    expect(screen.getByTestId("widget-chart")).toHaveAttribute(
+      "data-date-range",
+      "default",
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(screen.getByTestId("widget-chart")).toHaveAttribute(
+      "data-date-range",
+      JSON.stringify({
+        start: "2026-08-13T12:00:00.300Z",
+        end: "2026-09-12T12:00:00.300Z",
+      }),
+    );
   });
 });
 

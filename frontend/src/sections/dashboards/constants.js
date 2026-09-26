@@ -20,6 +20,7 @@ export const WIDTH_OPTIONS = [
 
 export const MIN_WIDGET_HEIGHT = 120;
 export const DEFAULT_WIDGET_HEIGHT = 320;
+export const DATE_FILTER_DEBOUNCE_MS = 300;
 
 export const AGGREGATION_OPTIONS = [
   { label: "Sum", value: "sum" },
