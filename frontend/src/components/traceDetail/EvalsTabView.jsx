@@ -118,6 +118,7 @@ const EvalTableRow = ({
   onSelectSpan,
   showSpanColumn,
   onFixWithFalcon,
+  showFixWithFalcon,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const isSkipped = ev?.skipped === true;
@@ -415,7 +416,7 @@ const EvalTableRow = ({
 
           {/* Fix with Falcon — hidden for passed evals (nothing to fix);
               shown for failed and unscored rows whenever expanded. */}
-          {!isPassedEval(ev) && (
+          {showFixWithFalcon && !isPassedEval(ev) && (
             <Box
               onClick={(e) => {
                 e.stopPropagation();
@@ -461,6 +462,7 @@ EvalTableRow.propTypes = {
   onSelectSpan: PropTypes.func,
   showSpanColumn: PropTypes.bool,
   onFixWithFalcon: PropTypes.func,
+  showFixWithFalcon: PropTypes.bool,
 };
 
 /**
@@ -475,6 +477,8 @@ const EvalsTabView = ({
   emptyMessage,
   showSpanColumn = true,
   onFixWithFalcon,
+  showFixWithFalcon = true,
+  showAddEvals = true,
 }) => {
   const [search, setSearch] = useState("");
   const list = useMemo(() => (Array.isArray(evals) ? evals : []), [evals]);
@@ -588,7 +592,7 @@ const EvalsTabView = ({
             label-based non-passes also keep the button visible (e.g. an
             eval with score=null and no Pass label still shows up as
             non-passing in the "X/N passed" text). */}
-        {list.some((e) => !isPassedEval(e)) && (
+        {showFixWithFalcon && list.some((e) => !isPassedEval(e)) && (
           <Box
             onClick={() => {
               if (onFixWithFalcon) {
@@ -674,7 +678,7 @@ const EvalsTabView = ({
             }}
           />
         </Box>
-        <Box
+        {showAddEvals && <Box
           sx={{
             display: "inline-flex",
             alignItems: "center",
@@ -715,7 +719,7 @@ const EvalsTabView = ({
           >
             Coming soon
           </Box>
-        </Box>
+        </Box>}
       </Box>
 
       {/* Table */}
@@ -780,6 +784,7 @@ const EvalsTabView = ({
             onSelectSpan={onSelectSpan}
             showSpanColumn={showSpanColumn}
             onFixWithFalcon={onFixWithFalcon}
+            showFixWithFalcon={showFixWithFalcon}
           />
         ))}
       </Box>
@@ -793,6 +798,8 @@ EvalsTabView.propTypes = {
   emptyMessage: PropTypes.string,
   showSpanColumn: PropTypes.bool,
   onFixWithFalcon: PropTypes.func,
+  showFixWithFalcon: PropTypes.bool,
+  showAddEvals: PropTypes.bool,
 };
 
 export default EvalsTabView;

@@ -567,6 +567,14 @@ export function useCallExecutionV3Detail(callExecId, enabled = true) {
         .then((response) => response.data),
     enabled: enabled && !!callExecId,
     staleTime: 1000 * 60 * 5,
+    refetchInterval: (query) => {
+      const evalMetrics = query.state.data?.eval_metrics;
+      if (!evalMetrics || typeof evalMetrics !== "object") return false;
+      const isLocalizing = Object.values(evalMetrics).some((metric) =>
+        ["pending", "running"].includes(metric?.error_localizer_status),
+      );
+      return isLocalizing ? 3000 : false;
+    },
   });
 }
 

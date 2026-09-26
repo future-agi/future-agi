@@ -148,6 +148,10 @@ describe("CallDrawer — chat branch", () => {
     // The reason shows once in the failed-eval banner already.
     expect(screen.getAllByText("wrong amount")).toHaveLength(1);
     await user.click(screen.getByRole("tab", { name: /Evals \(2\)/ }));
+    expect(screen.getAllByText("Failed")).toHaveLength(2);
+    expect(screen.queryByText("0%")).not.toBeInTheDocument();
+    expect(screen.queryByText("Fix with Falcon")).not.toBeInTheDocument();
+    expect(screen.queryByText("Add Evals")).not.toBeInTheDocument();
     await user.click(screen.getByText("Refund correctness"));
     // The expanded eval adds its explanation — banner + drawer = two.
     expect(screen.getAllByText("wrong amount")).toHaveLength(2);

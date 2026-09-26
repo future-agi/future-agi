@@ -25,6 +25,7 @@ const {
   mapCallDetail,
   callTranscript,
   useCallDetail,
+  useCallExecutionV3Detail,
 } = await import("../runDetail");
 const { RUN_COLORS } = await import(
   "src/sections/simulate/environments/workspace/runs/runs.constants"
@@ -642,6 +643,45 @@ describe("useCallDetail", () => {
     expect(result.current.callDetail).toBeNull();
     expect(result.current.isLoading).toBe(false);
     expect(axios.get).not.toHaveBeenCalled();
+  });
+
+  it("polls while error localization is active and stops after it completes", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    axios.get.mockResolvedValue({
+      data: {
+        ...callDetailPayload(),
+        eval_metrics: {
+          "eval-1": { error_localizer_status: "running" },
+        },
+      },
+    });
+
+    const { unmount } = renderHook(
+      () => useCallExecutionV3Detail("call-localizing"),
+      { wrapper: Wrapper },
+    );
+    const queryKey = ["simulation-call-detail-v3", "call-localizing"];
+    await waitFor(() =>
+      expect(queryClient.getQueryData(queryKey)?.eval_metrics?.["eval-1"])
+        .toMatchObject({ error_localizer_status: "running" }),
+    );
+    const query = queryClient.getQueryCache().find({ queryKey });
+
+    expect(query.options.refetchInterval(query)).toBe(3000);
+    queryClient.setQueryData(queryKey, {
+      ...callDetailPayload(),
+      eval_metrics: {
+        "eval-1": { error_localizer_status: "completed" },
+      },
+    });
+    expect(query.options.refetchInterval(query)).toBe(false);
+    unmount();
   });
 });
 

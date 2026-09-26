@@ -117,6 +117,12 @@ export default function ChatCallDrawer({
     ...result,
     eval_name: result.name,
     score: result.score == null ? null : Math.round(result.score * 100),
+    score_label:
+      result.output_type === "Pass/Fail" && result.passed != null
+        ? result.passed
+          ? "Passed"
+          : "Failed"
+        : undefined,
     explanation: result.reason,
   }));
   const durationMs = callDetail?.durationS != null ? callDetail.durationS * 1000 : task.durationMs;
@@ -256,6 +262,8 @@ export default function ChatCallDrawer({
                 evals={drawerEvals}
                 emptyMessage="No evaluations ran on this call."
                 showSpanColumn={false}
+                showFixWithFalcon={false}
+                showAddEvals={false}
               />
             )}
 
