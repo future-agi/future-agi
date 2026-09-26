@@ -1,11 +1,13 @@
 import { Box } from "@mui/material";
-import React, { useCallback, useRef, useState, useEffect } from "react";
+import React, { useCallback, useRef, useState, useEffect, useMemo } from "react";
 import PropTypes from "prop-types";
 import { AgentGraph } from "src/components/AgentGraph";
 import { START_ID, END_ID } from "src/components/AgentGraph/layoutUtils";
 import useResolvedExecution from "../../hooks/useResolvedExecution";
-import { useWorkflowRunStoreShallow } from "../../store";
+import { useWorkflowRunStoreShallow, useAgentPlaygroundStore } from "../../store";
 import NodeOutputDetail from "./NodeOutputDetail";
+import NodeOutputListView from "./NodeOutputListView";
+import { mapExecutionNodesToTree } from "./common";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import PanelErrorBoundary from "../../components/PanelErrorBoundary";
 
@@ -21,7 +23,13 @@ export default function RunAgentPanel({
   const resizeRef = useRef(null);
   const [isResizing, setIsResizing] = useState(false);
   const isRunning = useWorkflowRunStoreShallow((s) => s.isRunning);
+  const currentAgent = useAgentPlaygroundStore((s) => s.currentAgent);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
+
+  const treeNodes = useMemo(
+    () => mapExecutionNodesToTree(executionData),
+    [executionData],
+  );
 
   // Reset selected node when a new execution starts
   useEffect(() => {
@@ -148,15 +156,38 @@ export default function RunAgentPanel({
         }}
       />
       <ResizablePanels
-        initialLeftWidth={50}
-        minLeftWidth={15}
+        initialLeftWidth={60}
+        minLeftWidth={20}
         maxLeftWidth={80}
         leftPanel={
-          <AgentGraph
-            executionData={executionData}
-            onNodeClick={handleGraphNodeClick}
-            selectedNodeId={selectedNodeId}
-          />
+          <Box sx={{ display: "flex", height: "100%", width: "100%", overflow: "hidden" }}>
+            <PanelErrorBoundary
+              name="NodeOutputListView"
+              onRetry={() => setSelectedNodeId(null)}
+            >
+              <NodeOutputListView
+                currentAgent={currentAgent}
+                nodes={treeNodes}
+                selectedNodeId={selectedNodeId}
+                onNodeSelect={setSelectedNodeId}
+              />
+            </PanelErrorBoundary>
+            <Box
+              sx={{
+                flex: 1,
+                height: "100%",
+                minWidth: 0,
+                borderLeft: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              <AgentGraph
+                executionData={executionData}
+                onNodeClick={handleGraphNodeClick}
+                selectedNodeId={selectedNodeId}
+              />
+            </Box>
+          </Box>
         }
         rightPanel={
           <PanelErrorBoundary
