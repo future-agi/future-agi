@@ -81,7 +81,7 @@ func main() {
 
 	var rdb *redis.Client
 	if cfg.Auth.RedisAddr != "" {
-		rdb = redis.NewClient(&redis.Options{Addr: cfg.Auth.RedisAddr})
+		rdb = redis.NewClient(&redis.Options{Addr: cfg.Auth.RedisAddr, Password: cfg.Auth.RedisPass})
 		defer rdb.Close()
 	} else {
 		log.Warn("FI_AUTH_REDIS_ADDR not set — quota enforcement, usage metering, key-revocation and project-delete cache invalidation are disabled; auth cache entries only expire via TTL")
@@ -298,6 +298,9 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	}
 	if v := os.Getenv("FI_AUTH_REDIS_ADDR"); v != "" {
 		c.Auth.RedisAddr = v
+	}
+	if v := os.Getenv("FI_AUTH_REDIS_PASSWORD"); v != "" {
+		c.Auth.RedisPass = v
 	}
 	if (c.Catalog.Mode != "" && c.Catalog.Mode != "disabled") || (c.PropertyCatalog.Mode != "" && c.PropertyCatalog.Mode != "disabled") {
 		return fmt.Errorf("legacy catalog YAML mode is obsolete; configure observed_catalog")

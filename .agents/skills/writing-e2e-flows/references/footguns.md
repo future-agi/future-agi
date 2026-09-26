@@ -98,7 +98,7 @@ the way the design doc implies. Grouped, but each row stands alone: **symptom �
     published `:latest` images → `bin/e2e build backend|frontend|collector` and boot with the printed
     version variable. CI is not the same: it always builds the frontend from source, but a backend,
     collector or gateway your PR does not touch still runs as the released image — so an `e2e/`-only
-    PR exercises your frontend against a released backend. The `docker-compose.dev.yml` overlay is
+    PR exercises your frontend against a released backend. The `docker-compose.distributed.dev.yml` overlay is
     not a substitute — it hardcodes `FAST_STARTUP`, which skips migrations.
 27. **Annotation-score or simulate assertions never see a row** → inspect the active mirror
     schema and actual CDC state before assuming arrival. `harness/native-cdc.spec.ts` exercises

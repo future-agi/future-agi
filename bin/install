@@ -2,8 +2,17 @@
 # ============================================================================
 # Future AGI — self-hosted installer
 #
-#   ./bin/install                      # light mode, interactive
-#   ./bin/install --full               # full mode (adds PeerDB CDC)
+#   ./bin/install                      # Standalone (default), interactive:
+#                                      # app + postgres + clickhouse on one
+#                                      # machine (docker-compose.yml)
+#   ./bin/install --distributed        # Distributed: one container per
+#                                      # service, scaled independently
+#                                      # (docker-compose.distributed.yml)
+#   ./bin/install --from-source        # build the images from this checkout
+#                                      # instead of pulling them. Needed for
+#                                      # a dev branch: published images are
+#                                      # built from main
+#   ./bin/install --force              # continue past failed preflight checks
 #   ./bin/install --skip-user-creation # don't prompt for first user
 #   ./bin/install --no-up              # bootstrap .env only; don't start
 #   ./bin/install --wipe-volumes       # wipe stale project volumes and
@@ -16,9 +25,16 @@
 #                                      # Reads FAGI_ADMIN_EMAIL,
 #                                      # FAGI_ADMIN_NAME, FAGI_ADMIN_PASSWORD
 #                                      # from env if you want a user created.
+#   ./bin/install --no-telemetry       # turn deployment telemetry off
+#                                      # (FUTURE_AGI_TELEMETRY_DISABLED=true
+#                                      # in .env; docs/telemetry.md)
 #
-# Idempotent: re-running preserves your existing secrets and merges any new
-# vars from .env.example. A timestamped log is written to install-*.log.
+# Idempotent: a fresh install gets generated secrets in .env; re-running
+# never changes an existing value and merges any new vars from .env.example.
+# --distributed is recorded in .env (COMPOSE_FILE), so later runs and a plain
+# `docker compose` stay on the distributed stack. An existing install keeps its
+# stack: moving one between standalone and distributed is refused, because its data
+# does not carry over. A timestamped log is written to install-*.log.
 # ============================================================================
 
 set -eEuo pipefail
@@ -56,22 +72,28 @@ printf "# Future AGI install log — %s\n# host: %s, uname: %s\n\n" \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(hostname 2>/dev/null || echo ?)" "$(uname -a)" >&3
 
 # ---------------- args ----------------
-FULL=0
+DISTRIBUTED=0
+FROM_SOURCE=0
+FORCE=0
 SKIP_USER=${SKIP_USER_CREATION:-0}
 NO_UP=0
 NON_INTERACTIVE=0
 WIPE_VOLUMES_FLAG=0
 NEW_INSTANCE_FLAG=0
+NO_TELEMETRY=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --full) FULL=1 ;;
+    --distributed|--full) DISTRIBUTED=1 ;;
+    --from-source) FROM_SOURCE=1 ;;
+    --force) FORCE=1 ;;
     --skip-user-creation) SKIP_USER=1 ;;
     --no-up) NO_UP=1 ;;
     --wipe-volumes) WIPE_VOLUMES_FLAG=1 ;;
     --new-instance) NEW_INSTANCE_FLAG=1 ;;
+    --no-telemetry) NO_TELEMETRY=1 ;;
     -y|--non-interactive) NON_INTERACTIVE=1 ;;
     -h|--help)
-      sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,/^# =\{20,\}$/p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) die "unknown flag: $1 (try --help)" ;;
   esac
@@ -93,10 +115,10 @@ if [[ -t 1 ]]; then
   printf "${BOLD}${BLUE}  ╭───────────────────────────────────────────╮${RESET}\n"
   printf "${BOLD}${BLUE}  │${RESET}   ${BOLD}Future AGI${RESET} ${DIM}·${RESET} ${DIM}self-hosted installer${RESET}      ${BOLD}${BLUE}│${RESET}\n"
   printf "${BOLD}${BLUE}  ╰───────────────────────────────────────────╯${RESET}\n"
-  if [[ "$FULL" -eq 1 ]]; then
-    printf "  ${DIM}mode: full · adds PeerDB CDC stack${RESET}\n"
+  if [[ "$DISTRIBUTED" -eq 1 ]] || grep -Eqs '^COMPOSE_FILE=.*docker-compose\.distributed\.yml' .env; then
+    printf "  ${DIM}mode: Distributed · one container per service${RESET}\n"
   else
-    printf "  ${DIM}mode: light · pass --full to add PeerDB CDC${RESET}\n"
+    printf "  ${DIM}mode: Standalone · pass --distributed for one container per service${RESET}\n"
   fi
   printf "\n"
 fi
@@ -124,19 +146,14 @@ else
 fi
 ok "Compose: $($DC version --short 2>/dev/null || echo unknown)"
 
-# Soft RAM check. The full stack (~22 containers) is happiest with 8 GB free.
-ram_warn() {
-  local total_mb=""
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    total_mb=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1024 / 1024 ))
-  elif [[ -r /proc/meminfo ]]; then
-    total_mb=$(( $(awk '/MemTotal/ {print $2}' /proc/meminfo) / 1024 ))
-  fi
-  if [[ -n "$total_mb" && "$total_mb" -gt 0 && "$total_mb" -lt 8000 ]]; then
-    warn "Detected ${total_mb} MB RAM. The full stack likes ≥ 8 GB; light mode is fine on less."
+# A failed preflight check stops the install unless --force was given.
+preflight_fail() {
+  if (( FORCE == 1 )); then
+    warn "$* (continuing: --force)"
+  else
+    die "$* (re-run with --force to continue anyway)"
   fi
 }
-ram_warn
 
 # ---------------- .env ----------------
 step "Configuring .env"
@@ -178,6 +195,24 @@ sed_inplace() {
   fi
 }
 
+# Value of var in .env, or the default when unset/empty.
+env_value() {
+  local var="$1" default="$2"
+  local v
+  v=$(grep -E "^${var}=" .env | tail -1 | cut -d= -f2- || true)
+  printf '%s' "${v:-$default}"
+}
+
+# Set var=value in .env (replace if present, append otherwise).
+set_env_var() {
+  local var="$1" val="$2"
+  if grep -Eq "^${var}=" .env; then
+    sed_inplace -E "s|^${var}=.*|${var}=${val}|" .env
+  else
+    printf "%s=%s\n" "$var" "$val" >> .env
+  fi
+}
+
 gen_secret() {
   if command -v openssl >/dev/null 2>&1; then
     openssl rand -hex 32
@@ -187,6 +222,56 @@ gen_secret() {
     LC_ALL=C tr -dc 'a-f0-9' </dev/urandom | head -c 64
     echo
   fi
+}
+
+# Fernet key (32 random bytes, URL-safe base64) for INTEGRATION_ENCRYPTION_KEY.
+gen_fernet_key() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -base64 32 | tr '+/' '-_'
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'
+  else
+    head -c 32 /dev/urandom | base64 | tr '+/' '-_'
+  fi
+}
+
+# ---------------- telemetry and unsafe settings ----------------
+# Written before anything starts, so the first account's registration is
+# already the minimal opt-out one.
+if (( NO_TELEMETRY == 1 )); then
+  set_env_var FUTURE_AGI_TELEMETRY_DISABLED true
+  ok "FUTURE_AGI_TELEMETRY_DISABLED=true written to .env: telemetry is off"
+fi
+# .env files made from an older .env.example turned this on.
+if [[ "$(env_value OSS_RETURN_PASSWORD_RESET_LINK "" | tr '[:upper:]' '[:lower:]')" == true ]]; then
+  warn "OSS_RETURN_PASSWORD_RESET_LINK=true hands password-reset links to anyone who can reach the API, so anyone can take over any account. Delete it from .env unless every user of this host is trusted (INSTALLATION.md › Reset a password)."
+fi
+
+telemetry_is_off() {
+  local value="${FUTURE_AGI_TELEMETRY_DISABLED:-$(env_value FUTURE_AGI_TELEMETRY_DISABLED "")}"
+  [[ "$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')" =~ ^(1|true|yes|on)$ ]]
+}
+
+# What deployment telemetry sends, before any account (and so any admin
+# email) exists. Worded as docs/telemetry.md.
+telemetry_notice() {
+  local url host hours
+  url=$(env_value FUTURE_AGI_TELEMETRY_URL https://api.futureagi.com)
+  host="${url#*://}"
+  host="${host%%/*}"
+  hours=$(env_value FUTURE_AGI_TELEMETRY_INTERVAL_HOURS 6)
+  step "Telemetry"
+  if telemetry_is_off; then
+    ok "Off (FUTURE_AGI_TELEMETRY_DISABLED=true). One minimal registration still goes to ${host}: instance id, version, deployment type, timestamp."
+  else
+    say "  When the first account is created, this install registers with ${host}:"
+    say "  instance id, version, deployment type, and the emails and domains of owners,"
+    say "  admins and staff/superuser accounts. Then it"
+    say "  sends usage counts every ${hours} h; never traces, prompts or other content."
+    say "  Opt out: --no-telemetry, or FUTURE_AGI_TELEMETRY_DISABLED=true in .env. One minimal"
+    say "  registration remains: instance id, version, deployment type, timestamp."
+  fi
+  say "  ${DIM}Details: docs/telemetry.md${RESET}"
 }
 
 # Find the next free project name in the futureagi-N family by checking
@@ -201,7 +286,7 @@ next_free_project_name() {
 }
 
 # Set / replace COMPOSE_PROJECT_NAME in .env. Compose reads this and it
-# overrides the `name:` in docker-compose.yml, so volumes / containers /
+# overrides the `name:` in the compose file, so volumes / containers /
 # networks become ${name}_*, ${name}-N, ${name}_default.
 set_project_name_in_env() {
   local name="$1"
@@ -212,14 +297,14 @@ set_project_name_in_env() {
   fi
 }
 
-# Stale-volume guard. If a previous stack-up (in this dir or another with
-# the same compose project name) created persistent volumes, those volumes
-# are already initialized with the OLD password. Rotating CHANGEME-* now
-# would generate a new secret that postgres / minio won't accept, and the
-# stack will fail to come up with cryptic auth errors. Detect and ask.
+# ---------------- this project's existing state ----------------
+# Compose names volumes <project>_<volume> and labels containers with their
+# project and service, so both show whether this project already holds an
+# install, and of which stack.
 project_name=$(grep -E '^COMPOSE_PROJECT_NAME=' .env | tail -1 | cut -d= -f2- || true)
 project_name="${project_name:-futureagi}"
 declare -a PERSISTENT_VOLUME_SUFFIXES=(
+  app-data
   postgres-data
   clickhouse-data
   minio-data
@@ -230,6 +315,21 @@ declare -a PERSISTENT_VOLUME_SUFFIXES=(
   property-catalog-kafka-data
   fi-collector-data
 )
+# Volumes and services only the distributed stack has. rabbitmq-data and a rabbitmq
+# container come from releases before Redis carried live updates.
+declare -a DISTRIBUTED_ONLY_VOLUME_SUFFIXES=(
+  minio-data
+  redis-data
+  rabbitmq-data
+  peerdb-catalog-data
+  peerdb-minio-data
+  property-catalog-kafka-data
+  fi-collector-data
+)
+declare -a DISTRIBUTED_ONLY_SERVICES=(
+  backend worker frontend minio redis rabbitmq temporal fi-collector
+  agentcc-gateway peerdb-server
+)
 declare -a STALE_VOLS=()
 for vol in "${PERSISTENT_VOLUME_SUFFIXES[@]}"; do
   if docker volume inspect "${project_name}_${vol}" >/dev/null 2>&1; then
@@ -237,16 +337,20 @@ for vol in "${PERSISTENT_VOLUME_SUFFIXES[@]}"; do
   fi
 done
 
+# Stale-volume guard. Postgres and object storage keep the password they
+# were first started with in their volumes. CHANGEME-* placeholders in .env
+# next to existing volumes mean .env no longer holds those passwords, and the
+# stack will fail to come up with cryptic auth errors. Detect and ask.
 WIPE_VOLS=0
-ROTATE_OK=1
 if (( WIPE_VOLUMES_FLAG == 1 && ${#STALE_VOLS[@]} > 0 )); then
   WIPE_VOLS=1
 elif (( ${#STALE_VOLS[@]} > 0 )) && grep -Eq "^(PG_PASSWORD|MINIO_ROOT_PASSWORD)=CHANGEME-" .env; then
   warn "Detected ${#STALE_VOLS[@]} existing project volume(s) — likely from a prior install:"
   for v in "${STALE_VOLS[@]}"; do say "    • $v"; done
   say ""
-  say "  These volumes have data initialized with the OLD passwords. If I"
-  say "  generate fresh secrets now, the stack will fail to authenticate."
+  say "  These volumes hold data initialized with other passwords than the"
+  say "  CHANGEME-* placeholders in .env, so the stack cannot authenticate"
+  say "  against them until .env holds the original passwords."
   say ""
   if (( NEW_INSTANCE_FLAG == 1 )); then
     project_name="$(next_free_project_name)"
@@ -255,18 +359,17 @@ elif (( ${#STALE_VOLS[@]} > 0 )) && grep -Eq "^(PG_PASSWORD|MINIO_ROOT_PASSWORD)
     ok "Spinning up an isolated instance: ${BOLD}${project_name}${RESET}"
     say "  ${DIM}volumes / containers / network will all be prefixed with ${project_name}.${RESET}"
   elif [[ "$NON_INTERACTIVE" -eq 1 ]]; then
-    warn "  Non-interactive mode: leaving CHANGEME-* placeholders in .env."
+    warn "  Non-interactive mode: leaving .env as it is."
     warn "  Re-run with --wipe-volumes (deletes data) or --new-instance"
     warn "  (creates an isolated copy) — or set passwords in .env to match"
     warn "  what the existing volumes were initialized with."
-    ROTATE_OK=0
   else
     say "  Choose:"
     say "    [n] ${BOLD}new instance${RESET} — spin up an isolated copy alongside this one"
     say "        ${DIM}(volumes will be ${project_name}-2_*, ${project_name}-3_*, …)${RESET}"
     say "    [w] ${BOLD}wipe${RESET} the volumes and start fresh ${RED}(deletes all data)${RESET}"
-    say "    [k] ${BOLD}keep${RESET} the volumes — I'll leave .env passwords as CHANGEME-*"
-    say "        ${DIM}and you set them to match the existing data manually${RESET}"
+    say "    [k] ${BOLD}keep${RESET} the volumes — .env stays as it is, and you set its"
+    say "        ${DIM}passwords to match the existing data manually${RESET}"
     say "    [a] ${BOLD}abort${RESET}"
     while true; do
       printf "  ${BOLD}> ${RESET}"
@@ -280,7 +383,7 @@ elif (( ${#STALE_VOLS[@]} > 0 )) && grep -Eq "^(PG_PASSWORD|MINIO_ROOT_PASSWORD)
           say "  ${DIM}volumes / containers / network will all be prefixed with ${project_name}.${RESET}"
           break ;;
         w|W) WIPE_VOLS=1; break ;;
-        k|K) ROTATE_OK=0; break ;;
+        k|K) break ;;
         a|A|"") die "Aborted by user." ;;
         *) warn "Choose n / w / k / a" ;;
       esac
@@ -288,11 +391,150 @@ elif (( ${#STALE_VOLS[@]} > 0 )) && grep -Eq "^(PG_PASSWORD|MINIO_ROOT_PASSWORD)
   fi
 fi
 
+# ---------------- mode ----------------
+# The standalone install is docker-compose.yml. The distributed stack is recorded as
+# COMPOSE_FILE=docker-compose.distributed.yml in .env, which Compose reads by itself,
+# so re-runs and a plain `docker compose up -d` stay on it. An existing
+# install never changes stack: the two keep workflows, stored files and the
+# Postgres → ClickHouse sync in different places, so its data would not carry
+# over. A refused switch leaves .env unchanged.
+DISTRIBUTED_REQUESTED=$DISTRIBUTED
+DISTRIBUTED_DETECTED=0
+compose_file_setting=$(env_value COMPOSE_FILE "")
+
+# COMPOSE_FILE with its docker-compose.yml entry swapped for
+# docker-compose.distributed.yml, other entries (overrides) kept. Prints nothing
+# when the setting lists no docker-compose.yml.
+swap_to_full_compose() {
+  local entry out="" found=0 IFS=':'
+  for entry in $1; do
+    if [[ "${entry##*/}" == docker-compose.yml ]]; then
+      entry="${entry%docker-compose.yml}docker-compose.distributed.yml"
+      found=1
+    fi
+    out+="${out:+:}${entry}"
+  done
+  if (( found == 1 )); then printf '%s' "$out"; fi
+}
+
+# Services of this project's containers, running or not.
+PROJECT_SERVICES=$(docker ps -a --filter "label=com.docker.compose.project=${project_name}" \
+  --format '{{.Label "com.docker.compose.service"}}' 2>/dev/null | sort -u || true)
+project_has_service() { grep -qx -- "$1" <<<"$PROJECT_SERVICES"; }
+
+# What marks this project as a distributed install, if anything does.
+full_signal=""
+for vol in "${DISTRIBUTED_ONLY_VOLUME_SUFFIXES[@]}"; do
+  if docker volume inspect "${project_name}_${vol}" >/dev/null 2>&1; then
+    full_signal="volume ${project_name}_${vol}"
+    break
+  fi
+done
+if [[ -z "$full_signal" ]]; then
+  for svc in "${DISTRIBUTED_ONLY_SERVICES[@]}"; do
+    if project_has_service "$svc"; then
+      full_signal="its ${svc} container"
+      break
+    fi
+  done
+fi
+default_app_container=0
+if project_has_service app; then default_app_container=1; fi
+default_app_volume=0
+if docker volume inspect "${project_name}_app-data" >/dev/null 2>&1; then default_app_volume=1; fi
+
+if (( DISTRIBUTED == 0 )) && [[ "$compose_file_setting" == *docker-compose.distributed.yml* ]]; then
+  DISTRIBUTED=1
+elif (( DISTRIBUTED == 0 )) && [[ -n "$full_signal" ]]; then
+  # Installs made before the default became the single-app stack ran the
+  # distributed stack from docker-compose.yml. Keep them there.
+  DISTRIBUTED=1
+  DISTRIBUTED_DETECTED=1
+fi
+
+refuse_default_to_full() {
+  local hint=""
+  if (( DISTRIBUTED_REQUESTED == 0 )); then
+    hint=" If you did not ask for the distributed stack, delete the COMPOSE_FILE line from .env and re-run ./bin/install."
+  fi
+  die "Project ${project_name} already holds a standalone install. Moving an existing install to the distributed stack is not supported: its data would not carry over. Back up first (INSTALLATION.md › Backups), then run ./bin/uninstall --wipe-data and ./bin/install --distributed. To run the distributed stack next to this install, use a second checkout with another COMPOSE_PROJECT_NAME.${hint}"
+}
+
+# COMPOSE_FILE for the distributed stack is written by record_mode: at once for an
+# existing distributed install, otherwise only once the preflight checks pass, so
+# a refused --distributed leaves .env as it was.
+new_compose_setting=""
+record_mode() {
+  if [[ -n "$new_compose_setting" ]]; then
+    set_env_var COMPOSE_FILE "$new_compose_setting"
+    new_compose_setting=""
+  fi
+}
+full_setting=""
+if (( DISTRIBUTED == 1 )); then
+  full_setting="$compose_file_setting"
+  if [[ -z "$compose_file_setting" ]]; then
+    full_setting=docker-compose.distributed.yml
+    # An explicit COMPOSE_FILE switches off Compose's automatic loading of
+    # docker-compose.override.yml, so carry an existing override along.
+    if [[ -f docker-compose.override.yml ]]; then full_setting+=":docker-compose.override.yml"; fi
+    new_compose_setting="$full_setting"
+  elif [[ "$compose_file_setting" != *docker-compose.distributed.yml* ]]; then
+    full_setting=$(swap_to_full_compose "$compose_file_setting")
+    if [[ -z "$full_setting" ]]; then
+      die "COMPOSE_FILE=${compose_file_setting} in .env lists no docker-compose.yml, so the installer cannot point it at the distributed stack. Add docker-compose.distributed.yml to it yourself, then re-run ./bin/install."
+    fi
+    new_compose_setting="$full_setting"
+  fi
+fi
+
+# A wipe removes this project's containers and volumes first, so there is
+# nothing left to strand.
+if (( DISTRIBUTED == 1 && WIPE_VOLS == 0 )); then
+  if (( default_app_container == 1 )) && [[ -n "$full_signal" ]]; then
+    # The data is a distributed install's: keep plain `docker compose` on it.
+    record_mode
+    die "Project ${project_name} holds a distributed install (${full_signal}) and also a Standalone app container. That happens when a plain \`docker compose up -d\` starts the new docker-compose.yml against an older distributed install. Your data is in the distributed stack's volumes, and .env now records COMPOSE_FILE=${full_setting}. Remove the stray container, then re-run ./bin/install: docker compose -f docker-compose.yml -p ${project_name} rm -sf app"
+  elif (( default_app_container == 1 || default_app_volume == 1 )) && [[ -z "$full_signal" ]]; then
+    refuse_default_to_full
+  fi
+fi
+
+if (( DISTRIBUTED == 1 )); then
+  COMPOSE_PATH=docker-compose.distributed.yml
+  APP_SVC=backend
+  # An existing distributed install is recorded at once, so that a plain
+  # `docker compose up -d` can no longer start the default file against it.
+  if [[ -n "$full_signal" ]]; then record_mode; fi
+  if (( DISTRIBUTED_DETECTED == 1 )); then
+    warn "Existing distributed install detected (${full_signal}); staying on the distributed stack."
+    warn "  Recorded COMPOSE_FILE=${full_setting} in .env, so plain \`docker compose\` commands use it too."
+    warn "  Moving an existing install to the standalone stack is not supported: see INSTALLATION.md › Switching between Standalone and Distributed."
+    if (( WIPE_VOLS == 1 )); then
+      warn "  --wipe-volumes resets it as a distributed stack. For the standalone install instead, stop here, run ./bin/uninstall --wipe-data, delete the COMPOSE_FILE line from .env and run ./bin/install."
+    fi
+  fi
+  if (( default_app_volume == 1 && WIPE_VOLS == 0 )); then
+    warn "Volume ${project_name}_app-data belongs to a standalone install; the distributed stack does not use it."
+  fi
+  ok "Mode: Distributed (COMPOSE_FILE=${full_setting})"
+else
+  COMPOSE_PATH=docker-compose.yml
+  APP_SVC=app
+  if [[ -n "$compose_file_setting" ]]; then
+    ok "Mode: Standalone, with COMPOSE_FILE=${compose_file_setting} from .env"
+  else
+    ok "Mode: Standalone (docker-compose.yml) — pass --distributed for one container per service"
+  fi
+fi
+[[ -f "$COMPOSE_PATH" ]] || die "$COMPOSE_PATH missing — are you running this from a complete checkout?"
+
 if (( WIPE_VOLS == 1 )); then
   step "Wiping existing volumes"
   # The flag or interactive confirmation is the deletion boundary. Stop only
-  # this Compose project, then remove the exact inventoried volumes rather than
-  # using a broad `down -v` target.
+  # this Compose project (--remove-orphans also takes the other stack's
+  # containers), then remove the exact inventoried volumes rather than using
+  # a broad `down -v` target.
   if ! $DC down --remove-orphans; then
     die "Could not stop the existing Compose project before the requested volume wipe."
   fi
@@ -302,46 +544,71 @@ elif (( WIPE_VOLUMES_FLAG == 1 )); then
   ok "No existing project volumes found; nothing to wipe"
 fi
 
-# Replace CHANGEME-* placeholders idempotently. A var that has already been
-# rotated (no CHANGEME prefix) is left alone. Skipped entirely if the user
-# chose to keep stale volumes (ROTATE_OK=0) — they'll align passwords
-# manually.
-rotate_placeholder() {
-  local var="$1"
-  if (( ROTATE_OK == 0 )); then return 0; fi
-  if grep -Eq "^${var}=CHANGEME-" .env; then
-    local secret
-    secret=$(gen_secret)
-    sed_inplace -E "s|^${var}=CHANGEME-.*|${var}=${secret}|" .env
-    ok "Generated ${var}"
+# ---------------- secrets ----------------
+# A fresh install (no volumes of this project) gets its own secrets instead
+# of the defaults published in the compose files. An existing install keeps
+# every value it has: Postgres stores its password in its volume, and a new
+# SECRET_KEY or gateway key would sign everyone out. Only empty or CHANGEME-*
+# keys are filled, and only on a fresh install. Two keys hold no state and
+# are filled on any install: without INTEGRATION_ENCRYPTION_KEY every process
+# starts with a random key of its own, so nothing encrypted before survives a
+# restart anyway, and the standalone install's Redis keeps nothing across
+# restarts (the distributed stack's Redis takes no password).
+FRESH_INSTALL=1
+if (( ${#STALE_VOLS[@]} > 0 && WIPE_VOLS == 0 )); then FRESH_INSTALL=0; fi
+
+secret_is_unset() {
+  local value
+  value=$(env_value "$1" "")
+  [[ -z "$value" || "$value" == CHANGEME-* ]]
+}
+fill_secret() { # var, generator
+  if secret_is_unset "$1"; then
+    set_env_var "$1" "$($2)"
+    ok "Generated $1"
   fi
 }
-rotate_placeholder SECRET_KEY
-rotate_placeholder PG_PASSWORD
-rotate_placeholder MINIO_ROOT_PASSWORD
-rotate_placeholder AGENTCC_INTERNAL_API_KEY
-rotate_placeholder AGENTCC_ADMIN_TOKEN
 
-# S3_SECRET_KEY must match MINIO_ROOT_PASSWORD (S3 client speaks to MinIO).
-if (( ROTATE_OK == 1 )) && grep -Eq "^S3_SECRET_KEY=CHANGEME-" .env; then
-  minio_pwd=$(grep -E '^MINIO_ROOT_PASSWORD=' .env | head -1 | cut -d= -f2-)
-  sed_inplace -E "s|^S3_SECRET_KEY=CHANGEME-.*|S3_SECRET_KEY=${minio_pwd}|" .env
-  ok "Aligned S3_SECRET_KEY with MINIO_ROOT_PASSWORD"
-fi
-
-# Mode: --full flips COMPOSE_PROFILES on disk so subsequent `docker compose
-# up` (without our wrapper) keeps the same mode.
-if [[ "$FULL" -eq 1 ]]; then
-  if grep -Eq '^# *COMPOSE_PROFILES=' .env; then
-    sed_inplace -E 's|^# *COMPOSE_PROFILES=.*|COMPOSE_PROFILES=full|' .env
-  elif grep -Eq '^COMPOSE_PROFILES=' .env; then
-    sed_inplace -E 's|^COMPOSE_PROFILES=.*|COMPOSE_PROFILES=full|' .env
-  else
-    printf "\nCOMPOSE_PROFILES=full\n" >> .env
+declare -a INSTALL_SECRETS=(
+  SECRET_KEY
+  PG_PASSWORD
+  MINIO_ROOT_PASSWORD
+  AGENTCC_INTERNAL_API_KEY
+  AGENTCC_ADMIN_TOKEN
+)
+if (( FRESH_INSTALL == 1 )); then
+  for var in "${INSTALL_SECRETS[@]}"; do
+    fill_secret "$var" gen_secret
+  done
+  # S3_SECRET_KEY must match MINIO_ROOT_PASSWORD (S3 client speaks to MinIO).
+  if grep -Eq "^S3_SECRET_KEY=CHANGEME-" .env; then
+    minio_pwd=$(env_value MINIO_ROOT_PASSWORD "")
+    sed_inplace -E "s|^S3_SECRET_KEY=CHANGEME-.*|S3_SECRET_KEY=${minio_pwd}|" .env
+    ok "Aligned S3_SECRET_KEY with MINIO_ROOT_PASSWORD"
   fi
-  ok "Mode: full (adds PeerDB CDC stack)"
 else
-  ok "Mode: light (default — set --full to add the PeerDB stack)"
+  declare -a PUBLISHED_DEFAULTS=()
+  for var in "${INSTALL_SECRETS[@]}"; do
+    if secret_is_unset "$var"; then PUBLISHED_DEFAULTS+=("$var"); fi
+  done
+  if (( ${#PUBLISHED_DEFAULTS[@]} > 0 )); then
+    warn "Existing install: ${PUBLISHED_DEFAULTS[*]} still use the defaults published in this repository."
+    warn "  The installer never changes an existing install's secrets. See INSTALLATION.md › Secrets that must be changed."
+  fi
+fi
+fill_secret INTEGRATION_ENCRYPTION_KEY gen_fernet_key
+if (( DISTRIBUTED == 0 )); then fill_secret REDIS_PASSWORD gen_secret; fi
+
+# ---------------- sandbox profile ----------------
+# With COMPOSE_PROFILES=sandbox the app sends code evals to the nsjail
+# executor. It reads the setting from .env inside the container, so a value
+# given only in the shell starts the executor but leaves evals in the app.
+if (( DISTRIBUTED == 0 )); then
+  shell_profiles=",${COMPOSE_PROFILES:-},"
+  env_profiles=",$(env_value COMPOSE_PROFILES ""),"
+  if [[ "${shell_profiles// /}" == *,sandbox,* && "${env_profiles// /}" != *,sandbox,* ]]; then
+    warn "COMPOSE_PROFILES=sandbox is set in your shell but not in .env. Add it to .env: the app reads it there to send code evals to the nsjail executor."
+  fi
 fi
 
 # ---------------- port preflight ----------------
@@ -350,13 +617,6 @@ fi
 # Runs before the --no-up exit so port overrides land in .env even when
 # you're only bootstrapping.
 step "Checking host ports"
-
-env_port() {
-  local var="$1" default="$2"
-  local v
-  v=$(grep -E "^${var}=" .env | tail -1 | cut -d= -f2- || true)
-  printf '%s' "${v:-$default}"
-}
 
 port_holder() {
   # lsof / ss exit non-zero when nothing's bound. Disable both errexit and
@@ -403,43 +663,50 @@ find_free_port() {
   return 1
 }
 
-# Set var=value in .env (replace if present, append otherwise).
-set_env_var() {
-  local var="$1" val="$2"
-  if grep -Eq "^${var}=" .env; then
-    sed_inplace -E "s|^${var}=.*|${var}=${val}|" .env
-  else
-    printf "%s=%s\n" "$var" "$val" >> .env
-  fi
-}
-
-# All host-bound ports. Data-store ports bind 127.0.0.1 in compose, but
-# they still collide with anything else on that interface (other docker
-# stacks, SSH tunnels, host services). PeerDB ports only matter in --full.
-declare -a PORTS_TO_CHECK=(
-  "FRONTEND_PORT:3000"
-  "BACKEND_PORT:8000"
-  "AGENTCC_GATEWAY_PORT:8090"
-  "SERVING_PORT:8080"
-  "CODE_EXECUTOR_PORT:8060"
-  "PG_PORT:5432"
-  "CH_HTTP_PORT:8123"
-  "CH_PORT:9000"
-  "REDIS_PORT:6379"
-  "MINIO_API_PORT:9005"
-  "MINIO_CONSOLE_PORT:9006"
-  "TEMPORAL_PORT:7233"
-  "PROPERTY_CATALOG_KAFKA_PORT:29092"
-)
-if [[ "$FULL" -eq 1 ]]; then
-  PORTS_TO_CHECK+=("PEERDB_UI_PORT:3001" "PEERDB_PORT:9900")
+# All host-bound ports of the chosen stack. Data-store ports bind 127.0.0.1
+# in compose, but they still collide with anything else on that interface
+# (other docker stacks, SSH tunnels, host services). The standalone install
+# publishes no Postgres, ClickHouse, Redis or Temporal port.
+if (( DISTRIBUTED == 1 )); then
+  declare -a PORTS_TO_CHECK=(
+    "FRONTEND_PORT:3000"
+    "BACKEND_PORT:8000"
+    "AGENTCC_GATEWAY_PORT:8090"
+    "SERVING_PORT:8080"
+    "CODE_EXECUTOR_PORT:8060"
+    "PG_PORT:5432"
+    "CH_HTTP_PORT:8123"
+    "CH_PORT:9000"
+    "REDIS_PORT:6379"
+    "MINIO_API_PORT:9005"
+    "MINIO_CONSOLE_PORT:9006"
+    "TEMPORAL_PORT:7233"
+    "PROPERTY_CATALOG_KAFKA_PORT:29092"
+    "FI_COLLECTOR_OTLP_PORT:4317"
+    "FI_COLLECTOR_OTLP_HTTP_PORT:4318"
+    "FI_COLLECTOR_ADMIN_PORT:9464"
+    "PEERDB_PORT:9900"
+  )
+  # UIs that only run under a COMPOSE_PROFILES entry.
+  profiles=",$(env_value COMPOSE_PROFILES ""),"
+  [[ "$profiles" == *,all,* || "$profiles" == *,full,* || "$profiles" == *,peerdb,* ]] && PORTS_TO_CHECK+=("PEERDB_UI_PORT:3001")
+  [[ "$profiles" == *,all,* || "$profiles" == *,full,* || "$profiles" == *,observability,* ]] && PORTS_TO_CHECK+=("TEMPORAL_UI_PORT:8085")
+else
+  declare -a PORTS_TO_CHECK=(
+    "FRONTEND_PORT:3000"
+    "BACKEND_PORT:8000"
+    "FI_COLLECTOR_OTLP_PORT:4317"
+    "FI_COLLECTOR_OTLP_HTTP_PORT:4318"
+    "AGENTCC_GATEWAY_PORT:8090"
+    "MINIO_API_PORT:9005"
+  )
 fi
 
 declare -a UNRESOLVED=()
 for entry in "${PORTS_TO_CHECK[@]}"; do
   var="${entry%%:*}"
   default="${entry##*:}"
-  port=$(env_port "$var" "$default")
+  port=$(env_value "$var" "$default")
   holder=$(port_holder "$port" 2>/dev/null) || holder=""
 
   if [[ -z "$holder" ]]; then
@@ -449,15 +716,14 @@ for entry in "${PORTS_TO_CHECK[@]}"; do
 
   # Allow our own already-running container to "hold" the port — re-runs
   # of bin/install on the same project are fine. Anything else collides.
-  if echo "$holder" | grep -qiE "com\.docker|docker-proxy"; then
-    project_name="futureagi"  # pinned in docker-compose.yml `name:`
-    if docker ps --format '{{.Names}}\t{{.Ports}}' 2>/dev/null \
-         | awk -v p=":$port->" -v proj="^${project_name}-" \
-              '$0 ~ p && $1 ~ proj' \
-         | grep -q .; then
-      ok "  $var=$port  (held by this project's container — fine)"
-      continue
-    fi
+  # Ask Docker rather than trusting the holder's process name: Colima
+  # forwards published ports through `ssh`, not docker-proxy.
+  if docker ps --format '{{.Names}}\t{{.Ports}}' 2>/dev/null \
+       | awk -v p=":$port->" -v proj="^${project_name}-" \
+            '$0 ~ p && $1 ~ proj' \
+       | grep -q .; then
+    ok "  $var=$port  (held by this project's container — fine)"
+    continue
   fi
 
   # Find a suggested replacement.
@@ -489,14 +755,15 @@ for entry in "${PORTS_TO_CHECK[@]}"; do
   if (( apply == 1 )); then
     set_env_var "$var" "$suggestion"
     ok "  $var=$suggestion  written to .env"
-    # Keep VITE_HOST_API in sync when BACKEND_PORT moves. The frontend
-    # bundle bakes the URL at build time; if .env still has the old
-    # localhost:8000 default after we switch BACKEND_PORT, the bundle
-    # would call a port that's no longer ours.
-    if [[ "$var" == "BACKEND_PORT" ]] && \
-       grep -Eq '^VITE_HOST_API=https?://localhost:[0-9]+/?$' .env; then
-      sed_inplace -E "s|^VITE_HOST_API=.*|VITE_HOST_API=http://localhost:${suggestion}|" .env
-      ok "  VITE_HOST_API=http://localhost:${suggestion}  (kept in sync)"
+    # Keep VITE_HOST_API in sync when BACKEND_PORT moves: the UI calls the
+    # API there, http://localhost:8000 when it is unset. A URL naming another
+    # host is the user's own and stays.
+    if [[ "$var" == "BACKEND_PORT" ]]; then
+      host_api=$(env_value VITE_HOST_API "")
+      if [[ -z "$host_api" || "$host_api" =~ ^https?://localhost:[0-9]+/?$ ]]; then
+        set_env_var VITE_HOST_API "http://localhost:${suggestion}"
+        ok "  VITE_HOST_API=http://localhost:${suggestion}  (kept in sync)"
+      fi
     fi
   else
     UNRESOLVED+=("$var=$port  ←  $holder")
@@ -514,16 +781,111 @@ if (( ${#UNRESOLVED[@]} > 0 )); then
 fi
 
 if [[ "$NO_UP" -eq 1 ]]; then
+  record_mode
+  telemetry_notice
   step "Done (--no-up)"
+  (( FROM_SOURCE == 1 )) && warn "--from-source builds nothing with --no-up; re-run without --no-up to build."
   say "  .env is ready. Bring up the stack with:"
   say "    ${BOLD}$DC up -d${RESET}"
   exit 0
 fi
 
+# ---------------- Docker VM preflight ----------------
+# Measured from inside a throwaway container: on macOS and Windows, Docker
+# runs in a VM (Docker Desktop, Colima, OrbStack) and the stack gets the VM's
+# memory, not the host's. Colima's default VM has 2 GB.
+step "Checking the Docker VM"
+
+PROBE_IMAGE=busybox:1.37
+if (( DISTRIBUTED == 1 )); then
+  need_mb=5600; want_mb=11500; want_cpu=4; need_gb=6; want_gb=12; mode_label="The distributed stack"
+else
+  need_mb=2800; want_mb=3584; want_cpu=2; need_gb=3; want_gb=4; mode_label="The standalone install"
+fi
+# A VM reports a little less than its configured size (kernel reserve), so
+# the thresholds sit just under a 3 / 4 GB (default) and 6 / 12 GB (distributed) VM.
+
+vm_resize_hint() { # cpus gb
+  local runtime
+  runtime="$(docker context show 2>/dev/null || true) $(docker info --format '{{.OperatingSystem}}' 2>/dev/null || true)"
+  case "$runtime" in
+    *colima*) printf 'colima stop && colima start --cpu %s --memory %s' "$1" "$2" ;;
+    *"Docker Desktop"*) printf 'Docker Desktop → Settings → Resources: %s CPUs, %s GB memory' "$1" "$2" ;;
+    *OrbStack*) printf 'orb config set memory_mib %s' "$(( $2 * 1024 ))" ;;
+    *) printf 'give Docker at least %s CPUs and %s GB of memory' "$1" "$2" ;;
+  esac
+}
+
+VM_MEM_MB=""; VM_CPUS=""; VM_ARCH=""
+vm_probe=$(docker run --rm "$PROBE_IMAGE" sh -c 'free -m; echo nproc $(nproc); echo arch $(uname -m)' 2>/dev/null || true)
+if [[ -n "$vm_probe" ]]; then
+  VM_MEM_MB=$(awk '/^Mem:/ {print $2; exit}' <<<"$vm_probe")
+  VM_CPUS=$(awk '/^nproc / {print $2; exit}' <<<"$vm_probe")
+  VM_ARCH=$(awk '/^arch / {print $2; exit}' <<<"$vm_probe")
+  vm_probe_ran=1
+else
+  vm_probe_ran=0
+  warn "Could not run a $PROBE_IMAGE probe container (offline?); skipping the memory, CPU and path checks"
+fi
+
+case "$VM_ARCH" in
+  x86_64|amd64) VM_ARCH=amd64 ;;
+  aarch64|arm64) VM_ARCH=arm64 ;;
+  "") ;;
+  *) preflight_fail "Docker runs on ${VM_ARCH}; Future AGI runs on amd64 and arm64 only" ;;
+esac
+
+if (( vm_probe_ran == 1 )); then
+  if [[ ! "$VM_MEM_MB" =~ ^[0-9]+$ ]]; then
+    warn "Could not read the Docker VM's memory; skipping the memory check"
+  elif (( VM_MEM_MB < need_mb )); then
+    too_small="Docker has ${VM_MEM_MB} MB of memory. ${mode_label} needs at least ${need_gb} GB (${want_gb} GB recommended). Fix: $(vm_resize_hint "$want_cpu" "$want_gb")"
+    if (( DISTRIBUTED == 1 && FRESH_INSTALL == 0 )); then
+      # Never block an upgrade of an install that already runs here.
+      warn "${too_small}. Continuing, since this project already holds a distributed install; expect containers to be killed for lack of memory."
+    else
+      alt=""
+      if (( DISTRIBUTED_REQUESTED == 1 )); then
+        alt=", or run the standalone install (./bin/install without --distributed), which needs 3 GB"
+      elif (( DISTRIBUTED == 1 )); then
+        alt=", or install the standalone stack instead: delete the COMPOSE_FILE line from .env and re-run ./bin/install"
+      fi
+      preflight_fail "${too_small}${alt}"
+    fi
+  elif (( VM_MEM_MB < want_mb )); then
+    warn "Docker has ${VM_MEM_MB} MB of memory; ${want_gb} GB is recommended. $(vm_resize_hint "$want_cpu" "$want_gb")"
+  else
+    ok "Docker VM: ${VM_MEM_MB} MB memory, ${VM_CPUS:-?} CPU(s), ${VM_ARCH:-unknown arch}"
+  fi
+  if [[ "$VM_CPUS" =~ ^[0-9]+$ ]] && (( VM_CPUS < want_cpu )); then
+    warn "Docker has ${VM_CPUS} CPU(s); ${want_cpu}+ recommended. $(vm_resize_hint "$want_cpu" "$want_gb")"
+  fi
+  # The frontend build alone can take up to 8 GB of Node heap.
+  if (( FROM_SOURCE == 1 )) && [[ "$VM_MEM_MB" =~ ^[0-9]+$ ]] && (( VM_MEM_MB < 7600 )); then
+    warn "Building from source wants an 8 GB Docker VM (the frontend build is memory-hungry); ${VM_MEM_MB} MB may run out."
+  fi
+
+  # Bind mounts come from this checkout. VM runtimes share only some host
+  # paths (Colima: \$HOME; Docker Desktop: its file-sharing list); anything
+  # else mounts as an EMPTY directory, without an error.
+  if docker run --rm -v "$ROOT:/probe:ro" "$PROBE_IMAGE" test -f /probe/.env.example >/dev/null 2>&1; then
+    ok "Checkout is visible to Docker"
+  else
+    preflight_fail "Docker cannot see $ROOT, so the stack's bind mounts would be empty. Move the checkout under \$HOME, or share the path with the Docker VM (Colima: colima start --mount $ROOT; Docker Desktop: Settings → Resources → File sharing)"
+  fi
+fi
+
+# Every preflight check passed, so --distributed can be recorded now.
+record_mode
+
 # ---------------- collect first-user creds ----------------
 # Done up-front so the rest of the install can run unattended. Captured
 # values are used after the backend reports healthy. Press Enter on the
 # email prompt to skip; --skip-user-creation / CI=1 skip without asking.
+# The telemetry notice comes first: the first account's email is part of
+# the registration.
+telemetry_notice
+
 readonly ACCOUNT_SKIPPED="skipped"
 readonly ACCOUNT_CREATED="created"
 readonly ACCOUNT_EXISTS="exists"
@@ -544,7 +906,7 @@ strip_control_chars() { printf '%s' "${1//[[:cntrl:]]/}"; }
 prompt_user() {
   step "Create your first account"
   say "  ${DIM}You can press Enter on email to skip and create the user later via${RESET}"
-  say "  ${DIM}'docker exec -it futureagi-backend-1 python manage.py create_user'.${RESET}"
+  say "  ${DIM}'$DC exec ${APP_SVC} python manage.py create_user'.${RESET}"
   say ""
 
   while true; do
@@ -601,46 +963,158 @@ else
   prompt_user
 fi
 
+# ---------------- build from source (--from-source) ----------------
+# Published images are built from main, so a checkout of another branch
+# needs its own: build each Future AGI image from this checkout, tag it
+# `local`, and point the stack at that tag. The standalone install's app image
+# is assembled from the other four.
+build_image() { # tag, then `docker build` arguments
+  local tag="$1"
+  shift
+  say "  ${DIM}building ${tag}${RESET}"
+  log_only "running: docker build -t $tag $*"
+  docker build -t "$tag" "$@" || die "Building $tag failed; the build output above has the reason."
+  ok "Built $tag"
+}
+if (( FROM_SOURCE == 1 )); then
+  step "Building images from this checkout"
+  # Standalone's app image is assembled on the slim backend variant, as the
+  # published futureagi/platform is; Distributed runs the default one.
+  backend_variant=()
+  if (( DISTRIBUTED == 0 )); then
+    backend_variant=(--build-arg IMAGE_VARIANT=slim)
+  fi
+  build_image futureagi/future-agi:local -f futureagi/Dockerfile.oss \
+    ${backend_variant[@]+"${backend_variant[@]}"} futureagi
+  build_image futureagi/frontend:local frontend
+  build_image futureagi/fi-collector:local fi-collector
+  build_image futureagi/agentcc-gateway:local agentcc-gateway
+  if (( DISTRIBUTED == 0 )); then
+    build_image futureagi/platform:local -f deploy/platform/Dockerfile \
+      --build-arg BACKEND_IMAGE=futureagi/future-agi:local \
+      --build-arg FRONTEND_IMAGE=futureagi/frontend:local \
+      --build-arg FI_COLLECTOR_IMAGE=futureagi/fi-collector:local \
+      --build-arg AGENTCC_GATEWAY_IMAGE=futureagi/agentcc-gateway:local \
+      deploy/platform
+  fi
+  set_env_var FUTURE_AGI_VERSION local
+  if (( DISTRIBUTED == 1 )); then
+    # The distributed stack tags these images separately.
+    set_env_var FRONTEND_VERSION local
+    set_env_var AGENTCC_GATEWAY_VERSION local
+    set_env_var FI_COLLECTOR_VERSION local
+  fi
+  ok "FUTURE_AGI_VERSION=local written to .env"
+fi
+
 # ---------------- pull images ----------------
 step "Pulling images"
+
+# service<TAB>image for every service in the resolved compose file.
+compose_service_images() {
+  $DC config 2>/dev/null | awk '
+    /^services:/ { in_services = 1; next }
+    /^[^ ]/ { in_services = 0 }
+    in_services && /^  [^ ]/ { service = $1; sub(/:$/, "", service) }
+    in_services && /^    image: / { image = $2; gsub(/"/, "", image); print service "\t" image }
+  '
+}
+SERVICE_IMAGES=$(compose_service_images || true)
+app_image=$(awk -F'\t' -v s="$APP_SVC" '$1 == s {print $2; exit}' <<<"$SERVICE_IMAGES")
+
+# Images tagged `local` are built from this checkout (--from-source, or the
+# distributed stack's fi-collector) and are never pulled. The distributed stack also skips
+# anything it builds itself; the standalone install pulls every other image, so
+# a failed pull can never turn into a surprise source build.
 declare -a pull_command=(pull)
-if $DC pull --help 2>&1 | grep -q -- '--ignore-buildable'; then
+if (( DISTRIBUTED == 1 )) && $DC pull --help 2>&1 | grep -q -- '--ignore-buildable'; then
   pull_command+=(--ignore-buildable)
+fi
+declare -a pull_services=()
+while IFS=$'\t' read -r service image; do
+  [[ -z "$service" ]] && continue
+  if [[ "$image" != *:local ]]; then
+    pull_services+=("$service")
+  elif [[ "$image" != futureagi/fi-collector:local ]] && ! docker image inspect "$image" >/dev/null 2>&1; then
+    # fi-collector:local has a build: section in the distributed stack; anything
+    # else tagged `local` exists only after --from-source.
+    preflight_fail "$image is not built yet. Re-run with --from-source to build it from this checkout, or set its tag in .env (FUTURE_AGI_VERSION) back to a published release"
+  fi
+done <<<"$SERVICE_IMAGES"
+
+if [[ "$(env_value FUTURE_AGI_VERSION "")" == local ]] && (( FROM_SOURCE == 0 )); then
+  say "  ${DIM}FUTURE_AGI_VERSION=local: using the images last built by --from-source${RESET}"
+fi
+if (( ${#pull_services[@]} == 0 )); then
+  warn "Could not list the stack's images; docker compose up will pull any that are missing"
 else
-  # Legacy Compose has no --ignore-buildable. Pull every active service except
-  # the services that deliberately share the locally built collector image.
-  while IFS= read -r service; do
-    case "$service" in
-      fi-collector|fi-property-catalog-consumer) ;;
-      *) pull_command+=("$service") ;;
-    esac
-  done < <($DC config --services)
+  log_only "running: $DC ${pull_command[*]} ${pull_services[*]}"
+  if $DC "${pull_command[@]}" "${pull_services[@]}"; then
+    :
+  else
+    log_only "[fail] pull returned $?"
+    # A release that predates an image (futureagi/platform, say) has no tag
+    # for it on Docker Hub. Building from the checkout still works.
+    if [[ -n "$app_image" && "$app_image" != *:local ]] && \
+       ! docker manifest inspect "$app_image" >/dev/null 2>&1; then
+      from_source_cmd="./bin/install --from-source"
+      if (( DISTRIBUTED_REQUESTED == 1 )); then from_source_cmd+=" --distributed"; fi
+      die "docker compose pull failed: Docker Hub has no $app_image (not published for this release, or Docker Hub is unreachable). Build the images from this checkout instead: $from_source_cmd"
+    fi
+    die "docker compose pull failed; the output above names the image. Check the network, Docker Hub's pull rate limit and disk space (docker system df), then try again."
+  fi
+  log_only "[ok]   pull complete"
+  ok "Images pulled"
 fi
-log_only "running: $DC ${pull_command[*]}"
-if ! $DC "${pull_command[@]}"; then
-  log_only "[fail] pull returned $?"
-  die "docker compose pull failed. Check disk space (docker system df) and try again."
+
+# Published images may not match the Docker VM's CPU; Docker then emulates
+# them, which is much slower (first boot can take 20+ minutes).
+if [[ -n "$app_image" && -n "$VM_ARCH" ]]; then
+  image_arch=$(docker image inspect --format '{{.Architecture}}' "$app_image" 2>/dev/null || true)
+  if [[ -n "$image_arch" && "$image_arch" != "$VM_ARCH" ]]; then
+    warn "$app_image is built for $image_arch but Docker runs on $VM_ARCH, so it runs under emulation."
+    warn "  Expect a slower stack and a first boot of 20+ minutes. ./bin/install --from-source builds native images."
+  fi
 fi
-log_only "[ok]   pull complete"
-ok "Images pulled"
 
 # ---------------- bring up ----------------
 step "Starting the stack"
 
-# --build forces a rebuild of any service with `build:` set, so a stale
-# image tag from a previous worktree (or an outdated layer) doesn't carry
-# old source into a new install. Docker's layer cache makes this fast
-# when nothing has actually changed.
-# One attempt, as in bin/e2e: replaying compose up can rerun an exited schema
-# or mirror job after an uncertain write. Inspect retained state before resuming.
-# Preserve services omitted by an upgrade; legacy retirement is an explicit step.
-if ! $DC up -d --build --wait --wait-timeout 1200; then
-  die "docker compose startup failed or timed out; partial state retained, no automatic retry. Inspect 'docker compose ps -a' and 'docker compose logs' before explicitly resuming."
+if (( DISTRIBUTED == 1 )); then
+  # --build forces a rebuild of any service with `build:` set, so a stale
+  # image tag from a previous worktree (or an outdated layer) doesn't carry
+  # old source into a new install. Docker's layer cache makes this fast
+  # when nothing has actually changed.
+  # One attempt, as in bin/e2e: replaying compose up can rerun an exited schema
+  # or mirror job after an uncertain write. Inspect retained state before resuming.
+  # Preserve services omitted by an upgrade; legacy retirement is an explicit step.
+  if ! $DC up -d --build --wait --wait-timeout 1200; then
+    die "docker compose startup failed or timed out; partial state retained, no automatic retry. Inspect 'docker compose ps -a' and 'docker compose logs' before explicitly resuming."
+  fi
+else
+  # No --wait: the app's first boot runs the migrations, and the readiness
+  # loop below reports their progress and fails fast on a crash loop.
+  if ! $DC up -d; then
+    die "docker compose up failed; partial state retained. Inspect 'docker compose ps -a' and 'docker compose logs app'."
+  fi
 fi
 ok "Containers started"
 
+# Services an upgrade dropped keep running until removed (`up` runs without
+# --remove-orphans on purpose). RabbitMQ left the distributed stack when Redis took
+# over live updates.
+if (( DISTRIBUTED == 1 )) && project_has_service rabbitmq; then
+  warn "RabbitMQ is no longer part of the distributed stack (Redis carries live updates), but its container is still here."
+  warn "  Once the stack is healthy, remove it with: $DC up -d --remove-orphans"
+  warn "  Its data volume stays until you delete it: docker volume rm ${project_name}_rabbitmq-data"
+fi
+
 # ---------------- readiness wait ----------------
-step "Waiting for the application and property catalog to become ready"
+if (( DISTRIBUTED == 1 )); then
+  step "Waiting for the application and property catalog to become ready"
+else
+  step "Waiting for the application to become ready"
+fi
 
 bounded_env_int() {
   local var="$1" default="$2" min="$3" max="$4" value
@@ -670,7 +1144,21 @@ compose_service_snapshot() {
 }
 
 count_applied_migrations() {
-  $DC logs --tail 2000 backend 2>/dev/null | grep -ac 'Applying ' || true
+  $DC logs --tail 2000 "$APP_SVC" 2>/dev/null | grep -ac 'Applying ' || true
+}
+
+save_readiness_diagnostics() {
+  $DC ps -a >&3 2>&1 || true
+  if (( DISTRIBUTED == 1 )); then
+    $DC logs --tail 80 property-catalog-kafka property-catalog-kafka-volume-init \
+      property-catalog-runtime-volume-init property-catalog-topic-init \
+      property-catalog-clickhouse-bootstrap \
+      fi-collector fi-property-catalog-consumer \
+      backend \
+      >&3 2>&1 || true
+  else
+    $DC logs --tail 200 app postgres clickhouse >&3 2>&1 || true
+  fi
 }
 
 bounded_env_int INSTALL_READY_TIMEOUT_SECONDS 600 60 1800
@@ -680,15 +1168,16 @@ stability_seconds="$BOUNDED_ENV_INT"
 bounded_env_int INSTALL_READY_MAX_SECONDS 2400 300 7200
 ready_max="$BOUNDED_ENV_INT"
 
-# Source .env for BACKEND_PORT so we hit the right host port.
-backend_port=$(grep -E '^BACKEND_PORT=' .env | head -1 | cut -d= -f2- || true)
-backend_port="${backend_port:-8000}"
+# Source .env for BACKEND_PORT / FRONTEND_PORT so we hit the right host ports.
+backend_port=$(env_value BACKEND_PORT 8000)
+frontend_port=$(env_value FRONTEND_PORT 3000)
 deadline=$(( $(date +%s) + ready_timeout ))
 hard_deadline=$(( $(date +%s) + ready_max ))
 ready_since=0
 last_ready_signature=""
 last_migrations_applied=$(count_applied_migrations)
 pending_gate="$GATE_CONTAINERS"
+first_app_restarts=""
 declare -a catalog_jobs=(
   property-catalog-kafka-volume-init
   property-catalog-runtime-volume-init
@@ -707,42 +1196,61 @@ while true; do
   ready_signature=""
   pending_gate=""
 
-  for service in "${catalog_jobs[@]}"; do
-    snapshot=$(compose_service_snapshot "$service")
-    IFS='|' read -r container_id status exit_code restart_count health started_at <<<"$snapshot"
-    if [[ "$status" == "exited" && "$exit_code" == "0" ]]; then
-      continue
-    fi
-    all_ready=0
-    pending_gate="${pending_gate:-bootstrap job $service}"
-    if [[ "$status" == "dead" || ( "$status" == "exited" && "$exit_code" != "0" ) ]]; then
-      fatal_reason="$service failed with status=$status exit_code=$exit_code"
-      break
-    fi
-  done
-
-  if [[ -z "$fatal_reason" ]]; then
-    snapshot=$(compose_service_snapshot property-catalog-kafka)
-    IFS='|' read -r container_id status exit_code restart_count health started_at <<<"$snapshot"
-    ready_signature+="kafka:${container_id}:${restart_count}:${started_at};"
-    if [[ "$status" != "running" || "$health" != "healthy" ]]; then
-      all_ready=0
-      pending_gate="${pending_gate:-property-catalog-kafka to report healthy}"
-      [[ "$status" == "dead" ]] && fatal_reason="property-catalog-kafka entered dead state"
-    fi
-  fi
-
-  if [[ -z "$fatal_reason" ]]; then
-    for service in "${catalog_services[@]}"; do
+  if (( DISTRIBUTED == 1 )); then
+    for service in "${catalog_jobs[@]}"; do
       snapshot=$(compose_service_snapshot "$service")
       IFS='|' read -r container_id status exit_code restart_count health started_at <<<"$snapshot"
-      ready_signature+="${service}:${container_id}:${restart_count}:${started_at};"
-      if [[ "$status" != "running" ]]; then
-        all_ready=0
-        pending_gate="${pending_gate:-$service to report healthy}"
-        [[ "$status" == "dead" ]] && fatal_reason="$service entered dead state"
+      if [[ "$status" == "exited" && "$exit_code" == "0" ]]; then
+        continue
+      fi
+      all_ready=0
+      pending_gate="${pending_gate:-bootstrap job $service}"
+      if [[ "$status" == "dead" || ( "$status" == "exited" && "$exit_code" != "0" ) ]]; then
+        fatal_reason="$service failed with status=$status exit_code=$exit_code"
+        break
       fi
     done
+
+    if [[ -z "$fatal_reason" ]]; then
+      snapshot=$(compose_service_snapshot property-catalog-kafka)
+      IFS='|' read -r container_id status exit_code restart_count health started_at <<<"$snapshot"
+      ready_signature+="kafka:${container_id}:${restart_count}:${started_at};"
+      if [[ "$status" != "running" || "$health" != "healthy" ]]; then
+        all_ready=0
+        pending_gate="${pending_gate:-property-catalog-kafka to report healthy}"
+        [[ "$status" == "dead" ]] && fatal_reason="property-catalog-kafka entered dead state"
+      fi
+    fi
+
+    if [[ -z "$fatal_reason" ]]; then
+      for service in "${catalog_services[@]}"; do
+        snapshot=$(compose_service_snapshot "$service")
+        IFS='|' read -r container_id status exit_code restart_count health started_at <<<"$snapshot"
+        ready_signature+="${service}:${container_id}:${restart_count}:${started_at};"
+        if [[ "$status" != "running" ]]; then
+          all_ready=0
+          pending_gate="${pending_gate:-$service to report healthy}"
+          [[ "$status" == "dead" ]] && fatal_reason="$service entered dead state"
+        fi
+      done
+    fi
+  else
+    # One app container runs every process under a supervisor. It exiting,
+    # or restarting over and over (restart: unless-stopped), is fatal.
+    snapshot=$(compose_service_snapshot app)
+    IFS='|' read -r container_id status exit_code restart_count health started_at <<<"$snapshot"
+    ready_signature+="app:${container_id}:${restart_count}:${started_at};"
+    [[ -z "$first_app_restarts" && "$restart_count" =~ ^[0-9]+$ ]] && first_app_restarts="$restart_count"
+    if [[ "$status" != "running" ]]; then
+      all_ready=0
+      pending_gate="${pending_gate:-the app container to run}"
+    fi
+    if [[ "$status" == "dead" || "$status" == "exited" ]]; then
+      fatal_reason="The app container stopped (status=$status exit_code=$exit_code)"
+    elif [[ "$restart_count" =~ ^[0-9]+$ && -n "$first_app_restarts" ]] \
+         && (( restart_count - first_app_restarts >= 2 )); then
+      fatal_reason="The app container keeps restarting ($((restart_count - first_app_restarts)) restarts during this install)"
+    fi
   fi
 
   backend_healthy=1
@@ -750,6 +1258,14 @@ while true; do
     backend_healthy=0
     all_ready=0
     pending_gate="${pending_gate:-backend /health/ on port ${backend_port}}"
+  fi
+
+  # The distributed stack gates on the frontend container above; the default
+  # install's UI comes from the app container, so ask it directly.
+  if (( DISTRIBUTED == 0 )) && \
+     ! curl -fsS --max-time 3 -o /dev/null "http://localhost:${frontend_port}/" >/dev/null 2>&1; then
+    all_ready=0
+    pending_gate="${pending_gate:-the UI on port ${frontend_port}}"
   fi
 
   # A first install spends most of its readiness budget applying migrations.
@@ -766,13 +1282,7 @@ while true; do
   fi
 
   if [[ -n "$fatal_reason" ]]; then
-    $DC ps -a >&3 2>&1 || true
-    $DC logs --tail 80 property-catalog-kafka property-catalog-kafka-volume-init \
-      property-catalog-runtime-volume-init property-catalog-topic-init \
-      property-catalog-clickhouse-bootstrap \
-      fi-collector fi-property-catalog-consumer \
-      backend \
-      >&3 2>&1 || true
+    save_readiness_diagnostics
     die "$fatal_reason. Relevant service logs were appended to $LOG_FILE"
   fi
 
@@ -781,8 +1291,12 @@ while true; do
       last_ready_signature="$ready_signature"
       ready_since="$now"
     elif (( now - ready_since >= stability_seconds )); then
-      ok "Kafka healthy; observation topic and isolated catalog bootstrap completed"
-      ok "Collector and observation consumer stable for ${stability_seconds}s"
+      if (( DISTRIBUTED == 1 )); then
+        ok "Kafka healthy; observation topic and isolated catalog bootstrap completed"
+        ok "Collector and observation consumer stable for ${stability_seconds}s"
+      else
+        ok "App container stable for ${stability_seconds}s; UI answering on port ${frontend_port}"
+      fi
       ok "Backend healthy at http://localhost:${backend_port}"
       break
     fi
@@ -792,13 +1306,7 @@ while true; do
   fi
 
   if (( now >= deadline )); then
-    $DC ps -a >&3 2>&1 || true
-    $DC logs --tail 80 property-catalog-kafka property-catalog-kafka-volume-init \
-      property-catalog-runtime-volume-init property-catalog-topic-init \
-      property-catalog-clickhouse-bootstrap \
-      fi-collector fi-property-catalog-consumer \
-      backend \
-      >&3 2>&1 || true
+    save_readiness_diagnostics
     die "Stack did not become fully ready, still waiting on ${pending_gate:-$GATE_CONTAINERS}. Relevant service logs were appended to $LOG_FILE"
   fi
   sleep 5
@@ -813,7 +1321,13 @@ if [[ -n "$USER_EMAIL" ]]; then
   # "install failed" line before our own error handling runs).
   set +eE
   trap - ERR
-  if cu_out=$($DC exec -T backend python manage.py create_user \
+  # create_user exits only once the telemetry registration it starts is done
+  # (up to three requests). Unless a timeout is configured, cap each request
+  # at 2 s, so blocked egress costs seconds instead of half a minute; the
+  # scheduled telemetry job retries a registration that failed here.
+  telemetry_timeout="${FUTURE_AGI_TELEMETRY_TIMEOUT_SECONDS:-$(env_value FUTURE_AGI_TELEMETRY_TIMEOUT_SECONDS 2)}"
+  if cu_out=$($DC exec -T -e "FUTURE_AGI_TELEMETRY_TIMEOUT_SECONDS=${telemetry_timeout}" \
+                "$APP_SVC" python manage.py create_user \
                 --email "$USER_EMAIL" --name "$USER_NAME" --password "$USER_PASS" 2>&1); then
     cu_rc=0
   else
@@ -836,9 +1350,6 @@ if [[ -n "$USER_EMAIL" ]]; then
 fi
 
 # ---------------- done ----------------
-frontend_port=$(grep -E '^FRONTEND_PORT=' .env | head -1 | cut -d= -f2- || true)
-frontend_port="${frontend_port:-3000}"
-
 # Detect alt URLs so VPS / WSL / Docker-in-VM users can pick what works for
 # their network. Each detection is best-effort with a hard timeout — never
 # blocks the success banner on a slow network.
@@ -854,51 +1365,118 @@ detect_lan_ip() {
   fi
 }
 detect_public_ip() {
-  curl -fsS --max-time 3 https://ifconfig.io 2>/dev/null \
-    || curl -fsS --max-time 3 https://api.ipify.org 2>/dev/null \
+  # -4: an IPv6 answer would print as an invalid http://2601:…:3000 URL.
+  curl -4 -fsS --max-time 3 https://ifconfig.io 2>/dev/null \
+    || curl -4 -fsS --max-time 3 https://api.ipify.org 2>/dev/null \
     || true
 }
 LAN_IP=$(detect_lan_ip)
-PUB_IP=$(detect_public_ip)
+
+collector_http_port=$(env_value FI_COLLECTOR_OTLP_HTTP_PORT 4318)
+# The URL SDKs send traces to, as the compose files give it to the app.
+collector_url="${FI_COLLECTOR_PUBLIC_URL:-$(env_value FI_COLLECTOR_PUBLIC_URL "http://localhost:${collector_http_port}")}"
+gateway_port=$(env_value AGENTCC_GATEWAY_PORT 8090)
+ui_url="http://localhost:${frontend_port}"
+upgrade_cmd="git pull && ./bin/install"
+if (( FROM_SOURCE == 1 )) || [[ "$(env_value FUTURE_AGI_VERSION "")" == local ]]; then
+  upgrade_cmd+=" --from-source"
+fi
+if (( DISTRIBUTED == 1 )); then
+  setup_line="Distributed setup: one container per service"
+else
+  setup_line="Standalone setup: one app container, next to Postgres and ClickHouse"
+fi
 
 printf "\n"
 if [[ -t 1 ]]; then
   printf "  ${BOLD}${GREEN}╭───────────────────────────────────────────╮${RESET}\n"
   printf "  ${BOLD}${GREEN}│${RESET}   ${BOLD}🎉  Future AGI is up${RESET}                    ${BOLD}${GREEN}│${RESET}\n"
   printf "  ${BOLD}${GREEN}╰───────────────────────────────────────────╯${RESET}\n"
+else
+  say "Future AGI is up"
 fi
-say ""
-say "  ${BOLD}Open in browser${RESET}"
-say "    Local       →  http://localhost:${frontend_port}"
-[[ -n "$LAN_IP" && "$LAN_IP" != "127.0.0.1" ]] && \
-  say "    LAN         →  http://${LAN_IP}:${frontend_port}"
-[[ -n "$PUB_IP" && "$PUB_IP" != "$LAN_IP" ]] && \
-  say "    Public      →  http://${PUB_IP}:${frontend_port}  ${DIM}(only if firewall allows)${RESET}"
-say ""
-say "  ${BOLD}APIs${RESET}"
-say "    Backend     →  http://localhost:${backend_port}"
-[[ "$FULL" -eq 1 ]] && \
-  say "    PeerDB UI   →  http://localhost:3001  ${DIM}(peerdb / peerdb)${RESET}"
-say ""
-say "  ${BOLD}Existing-data catalog backfill${RESET}"
-say "    Restarts do not scan historical data automatically. After an upgrade:"
-say "    See fi-collector/PROPERTY_CATALOG_OSS.md for the bounded backfill command."
+say "  ${DIM}${setup_line}${RESET}"
 
-if [[ "$ACCOUNT_STATE" == "$ACCOUNT_CREATED" || "$ACCOUNT_STATE" == "$ACCOUNT_EXISTS" ]]; then
-  say ""
-  say "  ${BOLD}Sign in as${RESET} ${USER_EMAIL}"
-  say "    →  http://localhost:${frontend_port}/auth/jwt/login"
-elif [[ "$ACCOUNT_STATE" == "$ACCOUNT_FAILED" ]]; then
-  say ""
-  say "  ${BOLD}${YELLOW}ACTION REQUIRED: no account was created${RESET}"
-  say "    The stack is running, but you cannot sign in until you create one:"
-  say "    ${BOLD}docker exec -it futureagi-backend-1 python manage.py create_user${RESET}"
-fi
 say ""
-say "  ${DIM}Stop:${RESET}        $DC down"
-say "  ${DIM}Wipe data:${RESET}   $DC down -v"
-say "  ${DIM}Tail logs:${RESET}   $DC logs -f"
-say "  ${DIM}Install log:${RESET} $LOG_FILE"
+if [[ "$ACCOUNT_STATE" == "$ACCOUNT_CREATED" || "$ACCOUNT_STATE" == "$ACCOUNT_EXISTS" ]]; then
+  say "  ${BOLD}1. Sign in${RESET}"
+  say "     ${ui_url}/auth/jwt/login   as ${USER_EMAIL}"
+elif [[ "$ACCOUNT_STATE" == "$ACCOUNT_FAILED" ]]; then
+  say "  ${BOLD}${YELLOW}1. Create your account (ACTION REQUIRED)${RESET}"
+  say "     The stack is running, but no account was created. Create one with:"
+  say "     ${BOLD}$DC exec ${APP_SVC} python manage.py create_user${RESET}"
+  say "     or sign up at ${ui_url}"
+else
+  say "  ${BOLD}1. Create your account${RESET}"
+  say "     ${ui_url}   ${DIM}(a short setup check, then sign-up)${RESET}"
+fi
+# The UI calls the API at VITE_HOST_API, http://localhost:8000 when unset:
+# other devices reach a working UI only once it names this machine.
+host_api=$(env_value VITE_HOST_API "")
+if [[ -z "$host_api" || "$host_api" == *://localhost* || "$host_api" == *://127.0.0.1* ]]; then
+  [[ -n "$LAN_IP" && "$LAN_IP" != "127.0.0.1" ]] && \
+    say "     ${DIM}Other devices: set VITE_HOST_API=http://${LAN_IP}:${backend_port} in .env, then $DC up -d${RESET}"
+else
+  [[ -n "$LAN_IP" && "$LAN_IP" != "127.0.0.1" ]] && \
+    say "     ${DIM}Other devices on your network: http://${LAN_IP}:${frontend_port}${RESET}"
+  # Asks a third party for this host's address: only when it is printed.
+  PUB_IP=$(detect_public_ip)
+  [[ -n "$PUB_IP" && "$PUB_IP" != "$LAN_IP" ]] && \
+    say "     ${DIM}Public (only if your firewall allows it): http://${PUB_IP}:${frontend_port}${RESET}"
+fi
+
+say ""
+say "  ${BOLD}2. Get your API keys${RESET}"
+say "     In the app: Keys, in the left sidebar  →  ${ui_url}/dashboard/keys"
+say "     Copy the API key and the secret key."
+
+say ""
+say "  ${BOLD}3. Send your first trace${RESET} ${DIM}(on this machine; paste with your keys from step 2)${RESET}"
+say ""
+# Flush left, so the heredoc and the Python indentation survive a copy-paste.
+say "pip install fi-instrumentation-otel"
+say "export FI_API_KEY=\"<your API key>\" FI_SECRET_KEY=\"<your secret key>\" FI_BASE_URL=\"${collector_url}\""
+say "python3 - <<'PY'"
+say "from fi_instrumentation import register"
+say "from fi_instrumentation.fi_types import ProjectType"
+say "tracer_provider = register(project_name=\"my-first-project\", project_type=ProjectType.OBSERVE)"
+say "with tracer_provider.get_tracer(\"quickstart\").start_as_current_span(\"hello-future-agi\") as span:"
+say "    span.set_attribute(\"input.value\", \"Hello, Future AGI\")"
+say "tracer_provider.force_flush()"
+say "PY"
+say ""
+say "     Then open Tracing in the sidebar: ${BOLD}my-first-project${RESET} holds your first span."
+
+say ""
+say "  ${BOLD}Endpoints${RESET}"
+say "     UI           ${ui_url}"
+say "     API          http://localhost:${backend_port}"
+if [[ "$collector_url" == "http://localhost:${collector_http_port}" ]]; then
+  say "     Traces       ${collector_url}  ${DIM}(OTLP/HTTP; this machine only)${RESET}"
+else
+  say "     Traces       ${collector_url}  ${DIM}(OTLP/HTTP)${RESET}"
+fi
+say "     LLM gateway  http://localhost:${gateway_port}"
+if (( DISTRIBUTED == 1 )); then
+  profiles=",$(env_value COMPOSE_PROFILES ""),"
+  [[ "$profiles" == *,all,* || "$profiles" == *,full,* || "$profiles" == *,peerdb,* ]] && \
+    say "     PeerDB UI    http://localhost:$(env_value PEERDB_UI_PORT 3001)  ${DIM}(peerdb / peerdb)${RESET}"
+fi
+
+say ""
+say "  ${BOLD}Manage${RESET}"
+say "     Logs         $DC logs -f ${APP_SVC}"
+say "     Stop         $DC down  ${DIM}(keeps your data)${RESET}"
+say "     Start        $DC up -d"
+say "     Upgrade      ${upgrade_cmd}"
+say "     Uninstall    ./bin/uninstall  ${DIM}(keeps your data; --wipe-data deletes it)${RESET}"
+say "     Settings     .env  ${DIM}(every variable: docs/configuration.md)${RESET}"
+say "     Install log  $LOG_FILE"
+if (( DISTRIBUTED == 1 )); then
+  say ""
+  say "  ${DIM}Existing-data catalog backfill: restarts do not scan historical data."
+  say "  After an upgrade, see fi-collector/PROPERTY_CATALOG_OSS.md.${RESET}"
+fi
 say ""
 say "  ${DIM}★ Star us: https://github.com/future-agi/future-agi${RESET}"
 say ""

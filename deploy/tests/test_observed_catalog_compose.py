@@ -33,12 +33,12 @@ DEV_OVERLAY_ENV = {
 
 
 def compose(
-    *overlays: str, base_file: str = "docker-compose.yml", **overrides: str
+    *overlays: str, base_file: str = "docker-compose.distributed.yml", **overrides: str
 ) -> dict:
     # Do not inherit credentials, .env contents or another running project's
     # transport configuration. 'config' does not contact the Docker daemon.
     env = {key: value for key, value in os.environ.items() if key in ("PATH", "HOME")}
-    if "docker-compose.dev.yml" in overlays:
+    if "docker-compose.distributed.dev.yml" in overlays:
         env.update(DEV_OVERLAY_ENV)
     env.update(overrides)
     args = ["docker", "compose", "--env-file", os.devnull, "-f", base_file]
@@ -111,7 +111,7 @@ class ComposeContractTests(unittest.TestCase):
             "PGSSLCERT": "/run/certs/client.pem",
             "PGSSLKEY": "/run/certs/client.key",
         }
-        for overlays in ((), ("docker-compose.dev.yml",),
+        for overlays in ((), ("docker-compose.distributed.dev.yml",),
                          ("e2e/stack/docker-compose.e2e.yml",)):
             with self.subTest(overlays=overlays):
                 env = compose(*overlays, **tls)["services"]["fi-collector"]["environment"]
@@ -129,8 +129,6 @@ class ComposeContractTests(unittest.TestCase):
                 "AGENTCC_ADMIN_TOKEN",
                 "PG_PASSWORD",
                 "MINIO_ROOT_PASSWORD",
-                "RABBITMQ_USER",
-                "RABBITMQ_PASSWORD",
                 "PROPERTY_CATALOG_API_PASSWORD",
                 "PROPERTY_CATALOG_CONSUMER_PASSWORD",
             )
@@ -141,7 +139,7 @@ class ComposeContractTests(unittest.TestCase):
         )
         for overlays in (
             (),
-            ("docker-compose.dev.yml",),
+            ("docker-compose.distributed.dev.yml",),
             ("deploy/docker-compose.production.yml",),
             ("e2e/stack/docker-compose.e2e.yml",),
         ):
@@ -187,7 +185,7 @@ class ComposeContractTests(unittest.TestCase):
     def test_cdc_destination_matches_the_native_analytics_database(self):
         for overlays in (
             (),
-            ("docker-compose.dev.yml",),
+            ("docker-compose.distributed.dev.yml",),
             ("e2e/stack/docker-compose.e2e.yml",),
         ):
             for database in ("default", "analytics_custom"):
@@ -210,7 +208,7 @@ class ComposeContractTests(unittest.TestCase):
     def test_cdc_setup_uses_fixed_api_initializer_not_legacy_shell(self):
         for overlays in (
             (),
-            ("docker-compose.dev.yml",),
+            ("docker-compose.distributed.dev.yml",),
             ("e2e/stack/docker-compose.e2e.yml",),
         ):
             for overrides in (
@@ -226,7 +224,7 @@ class ComposeContractTests(unittest.TestCase):
                         services["peerdb-init"]["entrypoint"],
                         ["python", "-m", "tracer.services.clickhouse.oss_cdc_setup"],
                     )
-                    if "docker-compose.dev.yml" in overlays:
+                    if "docker-compose.distributed.dev.yml" in overlays:
                         self.assertEqual(
                             services["backend"]["environment"][
                                 "NO_STARTUP_DB_MUTATIONS"
@@ -243,7 +241,7 @@ class ComposeContractTests(unittest.TestCase):
     def test_new_cdc_mirrors_preserve_nulls_without_an_operator_setting(self):
         for overlays in (
             (),
-            ("docker-compose.dev.yml",),
+            ("docker-compose.distributed.dev.yml",),
             ("e2e/stack/docker-compose.e2e.yml",),
         ):
             with self.subTest(overlays=overlays):
@@ -261,7 +259,7 @@ class ComposeContractTests(unittest.TestCase):
                     )
 
     def test_default_and_dev_dependencies_are_complete(self):
-        for overlays in ((), ("docker-compose.dev.yml",)):
+        for overlays in ((), ("docker-compose.distributed.dev.yml",)):
             with self.subTest(overlays=overlays):
                 config = compose(*overlays)
                 services = config["services"]
@@ -399,7 +397,6 @@ class ComposeContractTests(unittest.TestCase):
                 "postgres",
                 "clickhouse",
                 "redis",
-                "rabbitmq",
                 "minio",
                 "temporal",
                 "agentcc-gateway",
@@ -455,7 +452,7 @@ class ComposeContractTests(unittest.TestCase):
                 "vertical_merge_algorithm_min_bytes_to_activate",
             ],
         )
-        for overlays in ((), ("docker-compose.dev.yml",)):
+        for overlays in ((), ("docker-compose.distributed.dev.yml",)):
             other = compose(*overlays)["services"]["clickhouse"]
             self.assertNotIn(target, [v["target"] for v in other["volumes"]])
 
@@ -484,8 +481,6 @@ class ProductionCatalogContractTests(unittest.TestCase):
                 "AGENTCC_ADMIN_TOKEN",
                 "PG_PASSWORD",
                 "MINIO_ROOT_PASSWORD",
-                "RABBITMQ_USER",
-                "RABBITMQ_PASSWORD",
             )
         }
         # Distinct synthetic inputs, including characters needing shell/SQL care.

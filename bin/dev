@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# ============================================================================
+# Future AGI — local development with hot reload.
+#
+#   ./bin/dev                   Standalone stack + Vite. Backend code reloads
+#                               on save, the UI hot-reloads on :3000.
+#   ./bin/dev --distributed     the Distributed topology instead (PeerDB,
+#                               per-queue workers, Kafka catalog)
+#   ./bin/dev logs [service]    follow logs (default: app, or backend)
+#   ./bin/dev shell             bash in the backend container
+#   ./bin/dev manage <args>     python manage.py <args>, allowed to change the
+#                               database (makemigrations, migrate, create_user…)
+#   ./bin/dev rebuild [what]    rebuild images after a dependency, Go or
+#                               deploy/platform change. what: all (default),
+#                               backend, frontend, collector, gateway
+#   ./bin/dev ps | down [-v]    status / stop (-v also deletes the data)
+#
+# The first run builds every image from this checkout and installs through
+# ./bin/install --from-source (secrets, migrations, first account). Later runs
+# only start the dev overlay. The mode is remembered in .dev-mode.
+# ============================================================================
+
+set -euo pipefail
+
+if [[ -t 1 ]]; then
+  BOLD=$'\033[1m'; DIM=$'\033[2m'; RED=$'\033[31m'; GREEN=$'\033[32m'
+  BLUE=$'\033[34m'; RESET=$'\033[0m'
+else
+  BOLD=""; DIM=""; RED=""; GREEN=""; BLUE=""; RESET=""
+fi
+step() { printf "\n${BOLD}${BLUE}==>${RESET} ${BOLD}%s${RESET}\n" "$*"; }
+ok()   { printf "  ${GREEN}✓${RESET} %s\n" "$*"; }
+say()  { printf "%s\n" "$*"; }
+die()  { printf "\n${RED}✗ %s${RESET}\n" "$*" >&2; exit 1; }
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+MODE_FILE=".dev-mode"
+MODE="$(cat "$MODE_FILE" 2>/dev/null || echo standalone)"
+ARGS=()
+for arg in "$@"; do
+  case "$arg" in
+    --distributed|--full) MODE=distributed ;;
+    --standalone) MODE=standalone ;;
+    -h|--help) sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) ARGS+=("$arg") ;;
+  esac
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
+CMD="${1:-up}"
+[[ $# -gt 0 ]] && shift
+
+docker info >/dev/null 2>&1 || die "Docker is not running. Start Docker Desktop or Colima and re-run."
+docker compose version >/dev/null 2>&1 || die "docker compose v2 is required."
+
+env_value() { [[ -f .env ]] && sed -n "s/^$1=//p" .env | tail -1 || true; }
+PROJECT="${COMPOSE_PROJECT_NAME:-$(env_value COMPOSE_PROJECT_NAME)}"
+PROJECT="${PROJECT:-futureagi}"
+
+if [[ "$MODE" == distributed ]]; then
+  FILES=(-f docker-compose.distributed.yml -f docker-compose.distributed.dev.yml)
+  BACKEND_SERVICE=backend
+  INSTALL_ARGS=(--distributed)
+else
+  FILES=(-f docker-compose.yml -f docker-compose.dev.yml)
+  BACKEND_SERVICE=app
+  INSTALL_ARGS=()
+fi
+dc() { docker compose -p "$PROJECT" "${FILES[@]}" "$@"; }
+
+installed() { docker volume inspect "${PROJECT}_postgres-data" >/dev/null 2>&1; }
+
+build_local() {
+  # Same images, tags and backend variant as ./bin/install --from-source.
+  local what="${1:-all}"
+  case "$what" in
+    all|backend)   docker build -t futureagi/future-agi:local -f futureagi/Dockerfile.oss \
+                     --build-arg IMAGE_VARIANT=slim futureagi ;;&
+    all|frontend)  docker build -t futureagi/frontend:local frontend ;;&
+    all|collector) docker build -t futureagi/fi-collector:local fi-collector ;;&
+    all|gateway)   docker build -t futureagi/agentcc-gateway:local agentcc-gateway ;;&
+    all|backend|frontend|collector|gateway)
+      [[ "$MODE" == standalone ]] && docker build -t futureagi/platform:local -f deploy/platform/Dockerfile \
+        --build-arg BACKEND_IMAGE=futureagi/future-agi:local \
+        --build-arg FRONTEND_IMAGE=futureagi/frontend:local \
+        --build-arg FI_COLLECTOR_IMAGE=futureagi/fi-collector:local \
+        --build-arg AGENTCC_GATEWAY_IMAGE=futureagi/agentcc-gateway:local \
+        deploy/platform
+      ;;
+    *) die "unknown rebuild target: $what (all, backend, frontend, collector, gateway)" ;;
+  esac
+  return 0
+}
+
+print_urls() {
+  local ui="${FRONTEND_PORT:-$(env_value FRONTEND_PORT)}" api="${BACKEND_PORT:-$(env_value BACKEND_PORT)}"
+  say ""
+  say "  ${BOLD}UI${RESET}    http://localhost:${ui:-3000}   ${DIM}(Vite, hot module replacement)${RESET}"
+  say "  ${BOLD}API${RESET}   http://localhost:${api:-8000}   ${DIM}(reloads on save under futureagi/)${RESET}"
+  say "  ${DIM}Logs: ./bin/dev logs   Shell: ./bin/dev shell   Stop: ./bin/dev down${RESET}"
+}
+
+case "$CMD" in
+  up)
+    printf '%s\n' "$MODE" > "$MODE_FILE"
+    if ! installed; then
+      step "First run: building from this checkout and installing ($MODE)"
+      ./bin/install --from-source "${INSTALL_ARGS[@]+"${INSTALL_ARGS[@]}"}" "$@"
+    fi
+    step "Starting the $MODE stack with hot reload"
+    if [[ "$MODE" == standalone ]]; then
+      docker image inspect futureagi/platform:local >/dev/null 2>&1 || build_local all
+      dc up -d --build --wait --wait-timeout 900
+    else
+      # The distributed overlay builds futureagi/future-agi:dev itself.
+      dc up -d --build
+    fi
+    ok "Up"
+    print_urls
+    ;;
+  logs)    dc logs -f --tail 200 "${@:-$BACKEND_SERVICE}" ;;
+  shell)   dc exec "$BACKEND_SERVICE" bash ;;
+  manage)
+    [[ $# -gt 0 ]] || die "usage: ./bin/dev manage <command> [args]"
+    # Interactive sessions never mutate the database by default; this one is
+    # an explicit developer action.
+    dc exec -e NO_STARTUP_DB_MUTATIONS=false -w /app/backend "$BACKEND_SERVICE" python manage.py "$@"
+    ;;
+  rebuild)
+    target="${1:-all}"
+    step "Rebuilding: $target"
+    if [[ "$MODE" == standalone ]]; then
+      build_local "$target"
+      if [[ "$target" == all || "$target" == frontend ]]; then
+        dc rm -sf frontend >/dev/null 2>&1 || true
+        docker volume rm "${PROJECT}_frontend-node-modules" >/dev/null 2>&1 || true
+        dc build frontend
+      fi
+    else
+      dc build
+    fi
+    dc up -d --wait --wait-timeout 900
+    ok "Rebuilt and restarted"
+    ;;
+  ps)   dc ps ;;
+  down) dc down "$@" ;;
+  *) die "unknown command: $CMD (try ./bin/dev --help)" ;;
+esac

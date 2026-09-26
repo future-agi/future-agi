@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# Entrypoint of the futureagi/platform image.
+#   no arguments  prepare /data and run every process under supervisord
+#   arguments     run just that command, e.g.
+#                 docker compose run --rm app python manage.py create_user
+# A one-off command never touches /data state or starts a second supervisor
+# (a second Temporal server on the same SQLite file would corrupt it).
+set -euo pipefail
+
+if [ "$#" -gt 0 ]; then
+  exec "$@"
+fi
+
+fail() {
+  echo "[start] $*" >&2
+  exit 1
+}
+
+# Eval code runs as the unprivileged `sandbox` user; keep stored state private.
+mkdir -p /data/temporal /data/objects /data/collector /data/telemetry
+chmod 700 /data /data/temporal /data/objects /data/collector /data/telemetry
+# api and collector start only after this boot's bootstrap succeeds.
+rm -f /data/.bootstrap-ok
+
+# Boot progress (bin/bootstrap.py): the UI on :3000 shows a starting page
+# until this boot's API answers, then the app. Root-owned but world-readable,
+# since nginx's workers read it; the container filesystem survives a restart,
+# so start from an empty directory every time.
+FI_BOOT_STARTED_AT=$(date +%s)
+export FI_BOOT_STARTED_AT
+rm -rf /run/futureagi
+install -d -m 0755 /run/futureagi
+printf '{"status": "starting", "phase": "starting", "message": "Starting services"}\n' \
+  > /run/futureagi/status.json
+chmod 0644 /run/futureagi/status.json
+# /tmp survives a container restart. Drop what code evals left there, so a
+# planted file cannot outlive the run that made it.
+find /tmp -mindepth 1 -user sandbox -delete 2>/dev/null || true
+# Root-only runtime files (Redis config) and nginx's temp directories.
+install -d -m 0700 /etc/futureagi/secrets
+install -d -m 0755 /var/lib/nginx
+
+# Values supervisord.conf interpolates; defaults cover runs outside Compose.
+export GRANIAN_THREADS="${GRANIAN_THREADS:-2}"
+export GOOGLE_API_KEY="${GOOGLE_API_KEY:-}"
+
+# Development (docker-compose.dev.yml, ./bin/dev): reload the API, and the
+# Temporal worker embedded in it, when code under /app/backend changes.
+# granian takes one value per option from the environment, so the watch list
+# is passed as flags. Only top-level code directories are watched: a polling
+# watcher walks every file under its paths each cycle, and dependency caches
+# in a checkout (.venv, .uv-cache, .mypy_cache, node_modules) make it miss
+# edits. Bind mounts deliver no inotify events for host edits, hence polling.
+GRANIAN_DEV_ARGS=""
+if [ "${FI_DEV_RELOAD:-false}" = "true" ]; then
+  export WATCHFILES_FORCE_POLLING="${WATCHFILES_FORCE_POLLING:-true}"
+  # Log files and dependency caches change on their own (the app writes
+  # tfc/logs inside the tree), and one event is enough to trigger a reload.
+  # An API worker never exits by itself (the app keeps non-daemon threads), so
+  # without a kill timeout granian waits forever to stop it and never reloads.
+  GRANIAN_DEV_ARGS="--reload --workers-kill-timeout 5"
+  for ignored in tests logs media static __pycache__ .uv-cache .ruff_cache .mypy_cache .pytest_cache; do
+    GRANIAN_DEV_ARGS="$GRANIAN_DEV_ARGS --reload-ignore-dirs $ignored"
+  done
+  GRANIAN_DEV_ARGS="$GRANIAN_DEV_ARGS --reload-ignore-patterns '.*[.](log|sqlite3?|db|pyc)$'"
+  for dir in /app/backend/*/; do
+    name=$(basename "$dir")
+    case "$name" in
+      .*|node_modules|logs|media|static|tests|docs|docker|__pycache__) continue ;;
+    esac
+    find "$dir" -maxdepth 3 -name '*.py' -print -quit 2>/dev/null | grep -q . || continue
+    GRANIAN_DEV_ARGS="$GRANIAN_DEV_ARGS --reload-paths ${dir%/}"
+  done
+  echo "[start] development mode: the API and its Temporal worker reload on code changes"
+fi
+export GRANIAN_DEV_ARGS
+
+# Redis: bound to loopback and, since code evals share this network
+# namespace, password-protected. The password goes in a root-only config file,
+# never on a command line (those are world-readable). docker-compose.yml puts
+# it into every Redis URL, so it must be URL-safe (./bin/install generates
+# hex). An empty value (a compose file older than the image) keeps Redis open.
+REDIS_PASSWORD="${REDIS_PASSWORD:-}"
+case "$REDIS_PASSWORD" in
+  *[!A-Za-z0-9._~-]*)
+    fail "REDIS_PASSWORD may only contain letters, digits and . _ ~ - (it is part of the Redis URLs)" ;;
+esac
+(
+  umask 077
+  cat > /etc/futureagi/secrets/redis.conf <<EOF
+bind 127.0.0.1
+port 6379
+save ""
+appendonly no
+maxmemory ${REDIS_MAXMEMORY:-128mb}
+maxmemory-policy volatile-lru
+loglevel warning
+EOF
+  if [ -n "$REDIS_PASSWORD" ]; then
+    printf 'requirepass %s\n' "$REDIS_PASSWORD" >> /etc/futureagi/secrets/redis.conf
+  else
+    echo "[start] REDIS_PASSWORD is empty: Redis accepts clients without a password" >&2
+  fi
+)
+# fi-collector builds without FI_AUTH_REDIS_PASSWORD cannot log in to Redis.
+# They run without it: API-key revocation then reaches the collector through
+# its auth-cache TTL (5 min) instead of Redis pub/sub.
+if [ -n "$REDIS_PASSWORD" ] && ! grep -q FI_AUTH_REDIS_PASSWORD /usr/local/bin/fi-collector; then
+  unset FI_AUTH_REDIS_ADDR
+fi
+
+# The collector's Postgres DSNs (docker-compose.yml) embed PG_USER and
+# PG_PASSWORD verbatim; percent-encode them when they need it.
+case "${PG_USER:-}${PG_PASSWORD:-}${PG_DB:-}" in
+  *[!A-Za-z0-9._~-]*)
+    dsn=$(python - <<'EOF'
+import os
+from urllib.parse import quote
+
+env = os.environ.get
+print(
+    "postgres://{}:{}@{}:{}/{}?sslmode=disable".format(
+        quote(env("PG_USER", ""), safe=""),
+        quote(env("PG_PASSWORD", ""), safe=""),
+        env("PG_HOST", "postgres"),
+        env("PG_PORT", "5432"),
+        quote(env("PG_DB", ""), safe=""),
+    )
+)
+EOF
+    )
+    export FI_PG_WRITE="$dsn" FI_PG_READ="$dsn"
+    ;;
+esac
+
+# Code evals go to the nsjail executor when its profile is enabled in .env
+# (COMPOSE_PROFILES=sandbox), unless CODE_EXECUTOR_URL names another one.
+case ",${COMPOSE_PROFILES:-}," in
+  *,sandbox,*)
+    if [ "${CODE_EXECUTOR_URL:-http://code-executor:8060}" = "http://code-executor:8060" ]; then
+      export CODE_EXECUTOR_URL=http://code-executor-nsjail:8060
+      echo "[start] code evals run in the nsjail sandbox (${CODE_EXECUTOR_URL})"
+    fi
+    ;;
+esac
+
+# Vertex AI: docker-compose.yml mounts the key file here, while
+# GOOGLE_APPLICATION_CREDENTIALS from .env is its path on the host. Without a
+# key (the /dev/null mount) the variable is dropped, so Google's other
+# credential sources keep working.
+if [ -s /etc/futureagi/secrets/vertex.json ]; then
+  export GOOGLE_APPLICATION_CREDENTIALS=/etc/futureagi/secrets/vertex.json
+else
+  unset GOOGLE_APPLICATION_CREDENTIALS
+fi
+
+# Every probe in this container (the bootstrap's wait for the API and the
+# healthcheck) asks for 127.0.0.1:8000. An ALLOWED_HOSTS that names only the
+# public host names would answer them 400, and the app would never be ready.
+hosts=",${ALLOWED_HOSTS-*},"
+case "${hosts// /}" in
+  ,,|*,\*,*) ;;
+  *) export ALLOWED_HOSTS="${ALLOWED_HOSTS},127.0.0.1,localhost" ;;
+esac
+
+# The SPA reads its runtime settings (VITE_*) from config.js, written by the
+# frontend image's own generator. Unset, the SPA would call port 8000 whatever
+# BACKEND_PORT says; the default is given to the generator only, so the setup
+# checks still see what .env says.
+VITE_HOST_API="${VITE_HOST_API:-http://localhost:${BACKEND_PORT:-8000}}" \
+  CONFIG_PATH=/srv/frontend/config.js /opt/futureagi/bin/frontend-config true
+
+exec supervisord -c /etc/futureagi/supervisord.conf

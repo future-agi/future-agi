@@ -1,0 +1,5 @@
+# The build context is this directory (docker build deploy/platform), never the
+# repo root. ClickHouse settings are bind-mounted by docker-compose.yml.
+clickhouse/
+# Bytecode the tests leave next to bin/bootstrap.py.
+**/__pycache__

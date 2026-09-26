@@ -6,6 +6,7 @@ The installer tests own bounded waits and read-only checks inside the jobs.
 
 from __future__ import annotations
 
+import re
 import shlex
 import shutil
 import subprocess
@@ -20,7 +21,7 @@ else:
 
 OVERLAYS = {
     "root": (),
-    "dev": ("docker-compose.dev.yml",),
+    "dev": ("docker-compose.distributed.dev.yml",),
     "e2e": ("e2e/stack/docker-compose.e2e.yml",),
     "production": ("deploy/docker-compose.production.yml",),
 }
@@ -38,8 +39,6 @@ PRODUCTION_ENV = {
     "AGENTCC_ADMIN_TOKEN": "startup-contract-admin-token",
     "PG_PASSWORD": "startup-contract-pg-password",
     "MINIO_ROOT_PASSWORD": "startup-contract-minio-password",
-    "RABBITMQ_USER": "startup-contract-user",
-    "RABBITMQ_PASSWORD": "startup-contract-rabbit-password",
     "PROPERTY_CATALOG_API_PASSWORD": "startup-contract-catalog-reader",
     "PROPERTY_CATALOG_CONSUMER_PASSWORD": "startup-contract-catalog-writer",
     "FRONTEND_URL": "https://app.example.com",
@@ -466,8 +465,6 @@ class StartupComposeContractTests(unittest.TestCase):
             "AGENTCC_ADMIN_TOKEN",
             "PG_PASSWORD",
             "MINIO_ROOT_PASSWORD",
-            "RABBITMQ_USER",
-            "RABBITMQ_PASSWORD",
         )
         services = render("production", full=True, overrides=OPERATOR_OVERRIDES)
         jobs = [PG_BOOTSTRAP, "peerdb-init", "peerdb-temporal-init"]
@@ -481,6 +478,32 @@ class StartupComposeContractTests(unittest.TestCase):
         for key in required:
             with self.subTest(missing=key), self.assertRaisesRegex(AssertionError, key):
                 render("production", full=True, overrides={key: ""})
+
+
+# The installers bring up one of two stacks, each with exactly one compose call:
+# the distributed stack (docker-compose.distributed.yml) gets a bounded `up --build --wait`;
+# the standalone install gets a plain `up -d` whose progress the readiness loop
+# reports (the app's first boot runs the migrations). Neither ever retries.
+FULL_UP = "up -d --build --wait --wait-timeout 1200"
+DEFAULT_UP = "up -d"
+INSTALL_MODES = {
+    # mode: (the one compose call, phrases every failure message carries)
+    "full": (FULL_UP, ("partial state retained", "no automatic retry")),
+    "default": (DEFAULT_UP, ("partial state retained",)),
+}
+
+
+def installer_code(block: str) -> str:
+    """The block without comment lines or quoted strings.
+
+    Messages may name a command for the operator to run later (the retired
+    RabbitMQ notice suggests `up -d --remove-orphans`); only what the
+    installer itself executes is held to the no-replay/no-cleanup contract.
+    """
+    code = "\n".join(
+        line for line in block.splitlines() if not line.lstrip().startswith("#")
+    )
+    return re.sub(r'"(?:[^"\\]|\\.)*"|\'[^\']*\'', '""', code)
 
 
 class InstallerStartupContractTests(unittest.TestCase):
@@ -499,16 +522,15 @@ class InstallerStartupContractTests(unittest.TestCase):
         return source.split(markers[0], 1)[1].split(markers[1], 1)[0]
 
     def test_both_installers_have_one_bounded_up_and_no_replay_or_cleanup(self):
-        command = "up -d --build --wait --wait-timeout 1200"
+        compose_up = {"install": r"\$DC up\b", "install.ps1": r"Invoke-Compose up\b"}
         for name in ("install", "install.ps1"):
             with self.subTest(installer=name):
                 block = self.startup_block(name)
-                self.assertEqual(block.count(command), 1)
-                code = "\n".join(
-                    line
-                    for line in block.splitlines()
-                    if not line.lstrip().startswith("#")
-                )
+                code = installer_code(block)
+                # One `up` per mode; the runs below prove the branches exclude
+                # each other and that each mode makes exactly one call.
+                self.assertEqual(code.count(FULL_UP), 1)
+                self.assertEqual(len(re.findall(compose_up[name], code)), 2)
                 self.assertNotRegex(
                     code, r"\b(?:until|while|for|foreach|sleep|Start-Sleep)\b"
                 )
@@ -531,89 +553,142 @@ class InstallerStartupContractTests(unittest.TestCase):
             r"if \(\$LASTEXITCODE -ne 0\) \{\s+Die ",
         )
 
-    def assert_attempt(self, result, status):
-        expected = "COMPOSE:up -d --build --wait --wait-timeout 1200"
+    def assert_attempt(self, result, status, mode):
+        command, failure_phrases = INSTALL_MODES[mode]
         calls = [
             line for line in result.stdout.splitlines() if line.startswith("COMPOSE:")
         ]
-        self.assertEqual(calls, [expected], result.stdout + result.stderr)
+        self.assertEqual(calls, [f"COMPOSE:{command}"], result.stdout + result.stderr)
         self.assertEqual(result.returncode == 0, status == 0, result.stderr)
         self.assertEqual("CONTINUED" in result.stdout, status == 0)
         if status:
-            self.assertIn("partial state retained", result.stdout)
-            self.assertIn("no automatic retry", result.stdout)
+            for phrase in failure_phrases:
+                self.assertIn(phrase, result.stdout)
             self.assertNotIn("OK:", result.stdout)
 
-    def test_shell_success_failure_and_timeout_never_replay_startup(self):
+    def assert_rabbitmq_notice(self, result, mode):
+        # A full-stack upgrade names the retired RabbitMQ container and how to
+        # remove it, but removes nothing itself (asserted by assert_attempt:
+        # still exactly one compose call). The standalone stack never had one.
+        notice = [line for line in result.stdout.splitlines() if line.startswith("WARN:")]
+        if mode == "full":
+            self.assertTrue(any("RabbitMQ" in line for line in notice), result.stdout)
+            self.assertTrue(
+                any("--remove-orphans" in line for line in notice), result.stdout
+            )
+        else:
+            self.assertEqual(notice, [], result.stdout)
+
+    def run_shell(self, mode, status, services=""):
         preamble = """
 set -euo pipefail
 compose_status=$1
+DISTRIBUTED=$2
+PROJECT_SERVICES=$3
+project_name=startup-test
 DC=mock_compose
 mock_compose() { printf 'COMPOSE:%s\\n' "$*"; return "$compose_status"; }
+project_has_service() {
+  case " $PROJECT_SERVICES " in *" $1 "*) return 0 ;; esac
+  return 1
+}
 step() { :; }
 ok() { printf 'OK:%s\\n' "$*"; }
-warn() { :; }
+warn() { printf 'WARN:%s\\n' "$*"; }
 sleep() { :; }
 die() { printf 'FAIL:%s\\n' "$*"; exit 1; }
 """
-        for status in (0, 1, 124):
-            with self.subTest(status=status):
-                result = subprocess.run(
-                    [
-                        "/bin/bash",
-                        "--noprofile",
-                        "--norc",
-                        "-c",
-                        preamble
-                        + self.startup_block("install")
-                        + "\nprintf 'CONTINUED\\n'",
-                        "startup-test",
-                        str(status),
-                    ],
-                    env={"PATH": "/nonexistent"},
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                    check=False,
-                )
-                self.assert_attempt(result, status)
+        return subprocess.run(
+            [
+                "/bin/bash",
+                "--noprofile",
+                "--norc",
+                "-c",
+                preamble + self.startup_block("install") + "\nprintf 'CONTINUED\\n'",
+                "startup-test",
+                str(status),
+                "1" if mode == "full" else "0",
+                services,
+            ],
+            env={"PATH": "/nonexistent"},
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
 
-    @unittest.skipUnless(
-        shutil.which("pwsh"), "pwsh unavailable; static contract still runs"
-    )
-    def test_powershell_success_failure_and_timeout_never_replay_startup(self):
-        preamble = """
+    def test_shell_success_failure_and_timeout_never_replay_startup(self):
+        for mode in INSTALL_MODES:
+            for status in (0, 1, 124):
+                with self.subTest(mode=mode, status=status):
+                    self.assert_attempt(self.run_shell(mode, status), status, mode)
+
+    def test_shell_retired_rabbitmq_is_named_not_removed(self):
+        for mode in INSTALL_MODES:
+            with self.subTest(mode=mode):
+                result = self.run_shell(mode, 0, services="app rabbitmq")
+                self.assert_attempt(result, 0, mode)
+                self.assert_rabbitmq_notice(result, mode)
+
+    def run_powershell(self, mode, status, services=()):
+        is_full = "$true" if mode == "full" else "$false"
+        service_list = ", ".join(f"'{name}'" for name in services)
+        preamble = f"""
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 3.0
+$script:ComposeStatus = {status}
+$IsDistributed = {is_full}
+$projectServices = @({service_list})
+$projectName = 'startup-test'
+$DcText = 'docker compose'
+"""
+        preamble += """
 function Invoke-Compose {
   Write-Output ('COMPOSE:' + ($args -join ' '))
   $global:LASTEXITCODE = $script:ComposeStatus
 }
 function Step { }
 function Ok { Write-Output ('OK:' + ($args -join ' ')) }
-function Warn { }
+function Warn { Write-Output ('WARN:' + ($args -join ' ')) }
 function Start-Sleep { }
 function Die { Write-Output ('FAIL:' + ($args -join ' ')); exit 1 }
 """
-        for status in (0, 1, 124):
-            with self.subTest(status=status):
-                result = subprocess.run(
-                    [
-                        shutil.which("pwsh"),
-                        "-NoProfile",
-                        "-NonInteractive",
-                        "-Command",
-                        f"$script:ComposeStatus = {status}\n"
-                        + preamble
-                        + self.startup_block("install.ps1")
-                        + "\nWrite-Output 'CONTINUED'",
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                    check=False,
-                )
-                self.assert_attempt(result, status)
+        return subprocess.run(
+            [
+                shutil.which("pwsh"),
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                preamble
+                + self.startup_block("install.ps1")
+                + "\nWrite-Output 'CONTINUED'",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+
+    @unittest.skipUnless(
+        shutil.which("pwsh"), "pwsh unavailable; static contract still runs"
+    )
+    def test_powershell_success_failure_and_timeout_never_replay_startup(self):
+        for mode in INSTALL_MODES:
+            for status in (0, 1, 124):
+                with self.subTest(mode=mode, status=status):
+                    self.assert_attempt(
+                        self.run_powershell(mode, status), status, mode
+                    )
+
+    @unittest.skipUnless(
+        shutil.which("pwsh"), "pwsh unavailable; static contract still runs"
+    )
+    def test_powershell_retired_rabbitmq_is_named_not_removed(self):
+        for mode in INSTALL_MODES:
+            with self.subTest(mode=mode):
+                result = self.run_powershell(mode, 0, services=("app", "rabbitmq"))
+                self.assert_attempt(result, 0, mode)
+                self.assert_rabbitmq_notice(result, mode)
 
 
 if __name__ == "__main__":

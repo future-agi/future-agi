@@ -4,14 +4,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="$ROOT/e2e/stack/e2e.env"
 COMPOSE=(docker compose --env-file "$ENV_FILE"
-  -f "$ROOT/docker-compose.yml" -f "$ROOT/e2e/stack/docker-compose.e2e.yml"
+  -f "$ROOT/docker-compose.distributed.yml" -f "$ROOT/e2e/stack/docker-compose.e2e.yml"
   -p futureagi-e2e)
 # Trimmed profile: no serving/code-executor; general ALL_QUEUES worker plus a
 # dedicated exact-aggregation worker. PeerDB is included through the same
 # bootstrap graph as OSS. Completed one-shot dependencies gate the application;
 # the harness never recreates failed jobs.
 SERVICES=(frontend backend worker worker-exact-aggregation
-  postgres clickhouse redis rabbitmq minio
+  postgres clickhouse redis minio
   temporal agentcc-gateway fi-collector fi-property-catalog-consumer mock-llm
   peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker peerdb-minio)
 

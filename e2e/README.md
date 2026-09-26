@@ -2,7 +2,7 @@
 
 End-to-end flows that drive the whole product as one running system: a Chromium browser against the
 production frontend image, the real Django API, the real fi-collector, the real agentcc-gateway, and
-the real datastores (Postgres, ClickHouse, Temporal, Redis, RabbitMQ, MinIO) plus the PeerDB CDC
+the real datastores (Postgres, ClickHouse, Temporal, Redis, MinIO) plus the PeerDB CDC
 mirrors that carry eval and annotation data from Postgres into ClickHouse. Every flow asserts what
 the user sees **and** the backend state that must exist behind it. The only fake in the stack is the
 LLM provider, mocked at the HTTP boundary _behind_ the real gateway, so routing, streaming and cost
@@ -21,7 +21,7 @@ Playwright config — and it imports nothing from `frontend/` or `futureagi/`.
 │                   └──────────────────────► Postgres   :25432                    │
 │                                                                                 │
 │  docker compose -p futureagi-e2e                                                │
-│    postgres · clickhouse · redis · rabbitmq · minio · temporal                   │
+│    postgres · clickhouse · redis · minio · temporal                              │
 │    backend · worker (ALL_QUEUES) · frontend · fi-collector · observation consumer                       │
 │    agentcc-gateway ──► mock-llm (OpenAI-compatible, deterministic, no host port) │
 │    peerdb (catalog · temporal · flow-api · flow-workers · server · minio · init) │
@@ -55,7 +55,7 @@ bin/e2e test flows/observe/  # or one area
 bin/e2e test --grep @smoke   # or one tag
 ```
 
-`bin/e2e up` composes the root `docker-compose.yml` with `e2e/stack/docker-compose.e2e.yml`, using
+`bin/e2e up` composes `docker-compose.distributed.yml` (the distributed topology) with `e2e/stack/docker-compose.e2e.yml`, using
 `e2e/stack/e2e.env` and the Compose project name `futureagi-e2e`. It starts an explicit service
 list — kept in `SERVICES` in `bin/e2e` so the trimmed set is visible in one place, with
 `COMPOSE_PROFILES=peerdb` in the env file making the profile-gated PeerDB services startable by
@@ -204,7 +204,7 @@ The E2E overlay sets the collector and observation consumer image together throu
 - _Before pushing_: `bin/e2e build all`, then validate fresh installation and retained-data
   upgrade behavior. Only reset volumes belonging to your explicitly disposable test project.
 
-**Why not the dev overlay.** `docker-compose.dev.yml` looks like the obvious vehicle for local code
+**Why not the dev overlay.** `docker-compose.distributed.dev.yml` looks like the obvious vehicle for local code
 and is not one. It hardcodes `FAST_STARTUP: "true"` in `environment:`, which cannot be overridden
 from an env file and which _skips migrations_ — on fresh volumes the stack comes up unmigrated. It
 serves a Vite dev server instead of the nginx artifact the product ships, it shares the `:dev` image

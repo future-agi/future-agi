@@ -7,7 +7,7 @@ import { E2E } from './env';
 import type { TestActor } from './provisioning';
 import type { StateProbe } from './state-probe';
 
-// docker-compose.yml backend-env; gateway.e2e.yaml providers.openai.
+// docker-compose.distributed.yml backend-env; gateway.e2e.yaml providers.openai.
 export const MOCK_MODEL = 'gpt-4o';
 export const MOCK_BASE = 'http://agentcc-gateway:8080/v1';
 export const MOCK_SERVING_BASE = 'http://mock-llm:8080';
