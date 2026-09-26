@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -137,6 +138,62 @@ func basicRequest() *models.ChatCompletionRequest {
 		Messages: []models.Message{
 			{Role: "user", Content: mustJSON("Hello")},
 		},
+	}
+}
+
+func TestToolPolicyRestrictionsFailBeforeGeminiRequest(t *testing.T) {
+	falseValue := false
+	for _, tc := range []struct {
+		name    string
+		request *models.ChatCompletionRequest
+		field   string
+	}{
+		{
+			name:    "parallel_tool_calls",
+			request: &models.ChatCompletionRequest{Model: "gemini-1.5-pro", Tools: []models.Tool{{Type: "function", Function: models.ToolFunction{Name: "tool_a"}}}, ParallelToolCalls: &falseValue},
+			field:   "parallel_tool_calls",
+		},
+		{
+			name:    "allowed_callers",
+			request: &models.ChatCompletionRequest{Model: "gemini-1.5-pro", Tools: []models.Tool{{Type: "function", Function: models.ToolFunction{Name: "tool_a"}, AllowedCallers: []string{"code_execution_20260120"}}}},
+			field:   "allowed_callers",
+		},
+		{
+			name:    "empty_allowed_callers",
+			request: &models.ChatCompletionRequest{Model: "gemini-1.5-pro", Tools: []models.Tool{{Type: "function", Function: models.ToolFunction{Name: "tool_a"}, AllowedCallers: []string{}}}},
+			field:   "allowed_callers",
+		},
+		{
+			name:    "unknown_allowed_tool",
+			request: &models.ChatCompletionRequest{Model: "gemini-1.5-pro", Tools: []models.Tool{{Type: "function", Function: models.ToolFunction{Name: "tool_a"}}}, ToolChoice: json.RawMessage(`{"type":"allowed_tools","allowed_tools":{"mode":"auto","tools":[{"type":"function","name":"missing"}]}}`)},
+			field:   "allowed_tools",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer server.Close()
+			p := newTestProvider(t, server.URL)
+			tc.request.Messages = basicRequest().Messages
+			_, err := p.ChatCompletion(context.Background(), tc.request)
+			if apiErr, ok := err.(*models.APIError); !ok || apiErr.Status != http.StatusBadRequest || !strings.Contains(apiErr.Message, tc.field) {
+				t.Fatalf("non-streaming error = %v, want 400 naming %s", err, tc.field)
+			}
+			chunks, errs := p.StreamChatCompletion(context.Background(), tc.request)
+			for range chunks {
+				t.Fatal("unexpected streaming chunk")
+			}
+			streamErr := <-errs
+			if apiErr, ok := streamErr.(*models.APIError); !ok || apiErr.Status != http.StatusBadRequest || !strings.Contains(apiErr.Message, tc.field) {
+				t.Fatalf("streaming error = %v, want 400 naming %s", streamErr, tc.field)
+			}
+			if calls.Load() != 0 {
+				t.Fatalf("sent %d requests despite unsupported policy", calls.Load())
+			}
+		})
 	}
 }
 
