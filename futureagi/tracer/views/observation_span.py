@@ -274,13 +274,20 @@ def _span_page_identity_sets(
 ) -> tuple[
     list[tuple[Any, ...]],
     list[tuple[str, str]],
-    dict[tuple[str, str], tuple[str, str, str]],
+    dict[tuple[str, str], tuple[tuple[str, str, str], ...]],
 ]:
-    """Build physical and external span keys without an identity downgrade."""
+    """Build physical and external span keys without an identity downgrade.
+
+    The third value maps each ``(trace_id, span_id)`` to every page copy that
+    holds it. A replay or re-import writes the same ids into several projects,
+    and an organization-scoped page lists each project's copy as its own row.
+    """
 
     physical: list[tuple[Any, ...]] = []
     external: list[tuple[str, str]] = []
-    app_identity_by_external: dict[tuple[str, str], tuple[str, str, str]] = {}
+    app_identities_by_external: dict[
+        tuple[str, str], tuple[tuple[str, str, str], ...]
+    ] = {}
     for row in rows:
         project_id = str(row.get("project_id") or default_project_id or "")
         trace_id = str(row.get("trace_id") or "")
@@ -292,11 +299,9 @@ def _span_page_identity_sets(
             row["project_id"] = project_id
         external_key = (trace_id, span_id)
         app_key = (project_id, trace_id, span_id)
-        previous = app_identity_by_external.setdefault(external_key, app_key)
-        if previous != app_key:
-            # Eval/score tables cannot reliably carry project identity. A page
-            # containing this collision cannot be decorated safely.
-            raise ValueError("ambiguous trace-scoped span identity")
+        copies = app_identities_by_external.get(external_key, ())
+        if app_key not in copies:
+            app_identities_by_external[external_key] = (*copies, app_key)
         external.append(external_key)
         if start_time is not None:
             if getattr(builder, "CONTENT_IDENTITY_FIELDS", None):
@@ -308,8 +313,40 @@ def _span_page_identity_sets(
     return (
         list(dict.fromkeys(physical)),
         list(dict.fromkeys(external)),
-        app_identity_by_external,
+        app_identities_by_external,
     )
+
+
+def _span_page_annotation_map(rows, label_types, app_identities_by_external):
+    """Key page annotations by each copy's ``(project_id, trace_id, span_id)``.
+
+    A score carrying ``tracer_project_id`` belongs to that project's copy only.
+    A score without one (legacy rows, or a read that did not select it) stays
+    on every copy of its trace/span id, under the copy's own values.
+    """
+    from tracer.services.clickhouse.query_builders import SpanListQueryBuilder
+
+    rows_by_project: dict[str, list[dict]] = {}
+    for row in rows:
+        project_id = str(row.get("tracer_project_id") or "")
+        rows_by_project.setdefault(project_id, []).append(row)
+    external_by_project = {
+        project_id: SpanListQueryBuilder.pivot_annotation_results(
+            project_rows, label_types, key_by_trace=True
+        )
+        for project_id, project_rows in rows_by_project.items()
+    }
+    unattributed = external_by_project.get("", {})
+    annotation_map = {}
+    for external_key, copies in app_identities_by_external.items():
+        for app_identity in copies:
+            values = {
+                **unattributed.get(external_key, {}),
+                **external_by_project.get(app_identity[0], {}).get(external_key, {}),
+            }
+            if values:
+                annotation_map[app_identity] = values
+    return annotation_map
 
 
 def _merge_span_page_content(rows, content_rows, *, builder, keys) -> bool:
@@ -2330,7 +2367,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # OTel span IDs are unique only within their trace. Carry that logical
         # identity through every page-scoped read and merge; a bare span ID can
         # otherwise attach content/evals/annotations from another trace.
-        span_identities, span_entities, app_identity_by_external = (
+        span_identities, span_entities, app_identities_by_external = (
             _span_page_identity_sets(
                 result.data,
                 default_project_id=None if org_scope else str(project_id),
@@ -2481,10 +2518,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             external_map = SpanListQueryBuilder.pivot_eval_results(
                 eval_result.data, key_by_trace=True
             )
+            # Every copy gets the pivot; the table below keeps only the
+            # columns of configs owned by the row's project.
             value = {
-                app_identity_by_external[external_key]: values
+                app_identity: values
                 for external_key, values in external_map.items()
-                if external_key in app_identity_by_external
+                for app_identity in app_identities_by_external.get(external_key, ())
             }
             return _stats(value, eval_result.data, True)
 
@@ -2495,6 +2534,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 span_ids,
                 created_after=page_min_created_at,
                 span_entities=span_entities,
+                by_project=org_scope,
             )
             if not ann_query:
                 return _stats({}, [], False)
@@ -2504,14 +2544,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 timeout_ms=read_deadline.remaining_ms(SPAN_LIST_ENRICHMENT_TIMEOUT_MS),
                 settings=SPAN_LIST_SINGLE_WORKER_READ_SETTINGS,
             )
-            external_map = SpanListQueryBuilder.pivot_annotation_results(
-                ann_result.data, label_types, key_by_trace=True
+            value = _span_page_annotation_map(
+                ann_result.data, label_types, app_identities_by_external
             )
-            value = {
-                app_identity_by_external[external_key]: values
-                for external_key, values in external_map.items()
-                if external_key in app_identity_by_external
-            }
             return _stats(value, ann_result.data, True)
 
         def _fetch_end_users():
@@ -2689,6 +2724,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             # Add eval metrics
             span_evals = eval_map.get(span_entity, {})
             for config in eval_configs:
+                # As in the trace list: across projects, a config's column is
+                # its own project's score, never another copy's.
+                if org_scope and str(config.project_id) != span_entity[0]:
+                    continue
                 config_id = str(config.id)
                 if config_id not in span_evals:
                     continue
@@ -3035,7 +3074,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
         # Phase 1b: Fetch input/output for the page
         span_ids = [str(row.get("id", "")) for row in result.data if row.get("id")]
-        span_identities, span_entities, app_identity_by_external = (
+        span_identities, span_entities, app_identities_by_external = (
             _span_page_identity_sets(
                 result.data,
                 default_project_id=project_id,
@@ -3105,9 +3144,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     eval_result.data, key_by_trace=True
                 )
                 eval_map = {
-                    app_identity_by_external[external_key]: values
+                    app_identity: values
                     for external_key, values in external_map.items()
-                    if external_key in app_identity_by_external
+                    for app_identity in app_identities_by_external.get(external_key, ())
                 }
 
         # Phase 3: Annotations
@@ -3126,9 +3165,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     ann_result.data, label_types, key_by_trace=True
                 )
                 annotation_map = {
-                    app_identity_by_external[external_key]: values
+                    app_identity: values
                     for external_key, values in external_map.items()
-                    if external_key in app_identity_by_external
+                    for app_identity in app_identities_by_external.get(external_key, ())
                 }
 
         # Build column config

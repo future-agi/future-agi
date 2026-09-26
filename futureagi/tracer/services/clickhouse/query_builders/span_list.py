@@ -2457,6 +2457,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         created_after: Any = None,
         *,
         span_entities: list[tuple[str, str]] | None = None,
+        by_project: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         """Build the Phase-3 annotation query for a page of span IDs.
 
@@ -2465,6 +2466,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 rationale as ``build_eval_query`` (``model_hub_score`` is also
                 ``PARTITION BY toYYYYMM(created_at)``; a score row cannot
                 pre-date its span row).
+            by_project: Also group by and return ``tracer_project_id`` so an
+                organization-scoped page can attribute each score to its own
+                project's copy of a trace/span id held by several projects.
         """
         entities = self._normalize_span_entities(span_entities)
         if entities is not None:
@@ -2500,17 +2504,22 @@ class SpanListQueryBuilder(BaseQueryBuilder):
               AND toString(trace_id) IN %(annotation_trace_ids)s
               AND (toString(trace_id), observation_span_id) IN %(annotation_span_entities)s
             """
+        project_select = project_inner_select = project_group = ""
+        if by_project:
+            project_select = "toString(tracer_project_id) AS tracer_project_id, "
+            project_inner_select = "tracer_project_id, "
+            project_group = "tracer_project_id, "
 
         # Candidate-scoped latest replay. Deletion predicates remain outside
         # LIMIT 1 BY id so an unmerged tombstone cannot resurrect an old score.
         query = f"""
         SELECT
-            {trace_select}
+            {project_select}{trace_select}
             observation_span_id,
             toString(label_id) AS label_id,
             anyLast(value) AS value
         FROM (
-            SELECT {trace_inner_select} observation_span_id, label_id, value,
+            SELECT {project_inner_select}{trace_inner_select} observation_span_id, label_id, value,
                    _peerdb_is_deleted AS latest_cdc_deleted,
                    deleted AS latest_soft_deleted
             FROM {self.ANNOTATION_TABLE}
@@ -2523,7 +2532,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         )
         WHERE latest_cdc_deleted = 0
           AND latest_soft_deleted = false
-        GROUP BY {trace_group}observation_span_id, label_id
+        GROUP BY {project_group}{trace_group}observation_span_id, label_id
         """
         return query, params
 
