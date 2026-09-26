@@ -42,6 +42,9 @@ from tracer.services.clickhouse.v2.query_builders.voice_call_list import (
 )
 from tracer.tests.test_bounded_trace_filter_reads import _render_driver_sql
 from tracer.tests.test_trace_root_physical_replay import complete_root_row
+from tracer.utils.attribute_suggestion_contract import (
+    TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -414,3 +417,65 @@ def test_voice_ordinary_long_text_still_seeds_with_its_anchor_and_companion():
     assert _copies(rendered, ORDINARY_VALUE) == 2
     assert "indexHint(arrayStringConcat" in rendered
     assert "arrayMap(x -> lowerUTF8(x), mapValues(attrs_string))" in rendered
+
+
+# ---------------------------------------------------------------------------
+# Kelvin-sign spellings
+# ---------------------------------------------------------------------------
+
+# The deployed ASCII value bloom lowers with ``lower()``, so the compiler adds a
+# witness listing every spelling whose ASCII lowercase is the value: each "k"
+# may be stored as U+212A KELVIN SIGN, and each doubles the list. Every
+# spelling is the whole value again. Bounded only in count, a public max-length
+# value with three "k"s rendered a 330,893-byte span seed, eight "k"s 8.5 MB,
+# and two "k"s in a value of newlines 298,049 bytes.
+_KELVIN_SHAPES = [
+    pytest.param(3, "x", id="three-k"),
+    pytest.param(8, "x", id="eight-k"),
+    pytest.param(2, "a\n", id="two-k-escaped"),
+]
+
+
+def _max_length_with_k(kelvin_slots: int, unit: str = "x") -> str:
+    """A public max-length value of ``unit`` carrying ``kelvin_slots`` "k"s."""
+
+    body = _text(TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES - kelvin_slots, unit)
+    step = len(body) // max(kelvin_slots, 1)
+    value = "".join(
+        body[index * step : (index + 1) * step] + "k" for index in range(kelvin_slots)
+    )
+    value += body[kelvin_slots * step :]
+    assert len(value.encode()) == TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES
+    assert value.count("k") == kelvin_slots
+    return value
+
+
+@pytest.mark.parametrize(("kelvin_slots", "unit"), _KELVIN_SHAPES)
+def test_span_seed_with_a_max_length_value_full_of_k_parses(kelvin_slots, unit):
+    rendered = _span_seed(
+        _span_builder("equals", _max_length_with_k(kelvin_slots, unit))
+    )
+    assert _fits(rendered)
+
+
+def test_span_seed_guard_sees_the_spellings_when_they_are_admitted_back(monkeypatch):
+    """Negative control: without the byte bound the spellings are refused."""
+
+    monkeypatch.setattr(
+        latest_filter_predicates, "_MAX_INDEX_COMPANION_VALUE_UTF8_BYTES", 1 << 40
+    )
+    rendered = _span_seed(_span_builder("equals", _max_length_with_k(3)))
+    assert not _fits(rendered)
+
+
+@pytest.mark.parametrize("kelvin_slots", [0, 4, 8])
+def test_voice_max_length_value_full_of_k_keeps_the_long_text_seed(kelvin_slots):
+    """The spellings used to count against the long-text lane's inline budget.
+
+    From the fourth "k" on, a 16 KiB value lost its seed, and the page seeded
+    every conversation root in the window, unfiltered, and classified them.
+    """
+
+    rendered = _voice_seed(_voice_builder("equals", _max_length_with_k(kelvin_slots)))
+    assert _fits(rendered)
+    assert "indexHint(arrayStringConcat" in rendered

@@ -5,7 +5,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
-from rest_framework import viewsets
+from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -27,6 +27,7 @@ from model_hub.serializers.scores import (
     UpdateScoreSerializer,
 )
 from model_hub.utils.annotation_queue_helpers import (
+    pinned_source_project_ids,
     resolve_default_queue_item_for_source,
     resolve_source_object,
     source_project,
@@ -102,6 +103,51 @@ def _resolve_queue_item(queue_item_id, source_type, source_obj, organization, us
     return resolve_default_queue_item_for_source(
         source_type, source_obj, organization, user
     )
+
+
+SCORE_PROJECT_MISMATCH = "score_project_mismatch"
+
+
+def _score_project_conflict(
+    queue_item, tracer_project_id, *, source_lookup, label_ids, annotator_id
+):
+    """Why saving on *queue_item* as *tracer_project_id* would move a score to
+    another project, or ``None``.
+
+    A trace / span id can exist in several projects, and each copy's default
+    queue holds its own item for it. The upsert keys on the queue item and
+    writes the resolved copy's project, so a save through another copy's item
+    found that copy's score and re-attributed it to this one. A queue item
+    belongs to ``QueueItem.project``, else to its project-scoped queue; an item
+    attributed to neither is shared, but each of its scores stays with the copy
+    that wrote it.
+    """
+    if not tracer_project_id:
+        return None
+    item_project_id = queue_item.project_id or queue_item.queue.project_id
+    if item_project_id and str(item_project_id) != str(tracer_project_id):
+        return (
+            "This queue item belongs to another project's copy of this source. "
+            "Annotate it from that project."
+        )
+    moved = (
+        Score.no_workspace_objects.filter(
+            **source_lookup,
+            label_id__in=label_ids,
+            annotator_id=annotator_id,
+            queue_item=queue_item,
+            tracer_project_id__isnull=False,
+            deleted=False,
+        )
+        .exclude(tracer_project_id=tracer_project_id)
+        .exists()
+    )
+    if moved:
+        return (
+            "A score on this queue item belongs to another project's copy of "
+            "this source. Annotate it from that project."
+        )
+    return None
 
 
 def _safe_auto_create_queue_items_for_default_queues(*args, **kwargs):
@@ -390,6 +436,18 @@ class ScoreViewSet(viewsets.ModelViewSet):
                 "Cannot resolve a default annotation queue for this source. "
                 "Pass an explicit queue_item_id or score from a queue flow."
             )
+        tracer_project_id = tracer_project_id_for_source(source_type, source_obj)
+        conflict = _score_project_conflict(
+            queue_item,
+            tracer_project_id,
+            source_lookup={f"{fk_field}_id": source_obj.pk},
+            label_ids=[label.pk],
+            annotator_id=request.user.pk,
+        )
+        if conflict:
+            return self._gm.custom_error_response(
+                status.HTTP_409_CONFLICT, conflict, code=SCORE_PROJECT_MISMATCH
+            )
 
         # Upsert: update if exists, create if not.
         #
@@ -404,7 +462,6 @@ class ScoreViewSet(viewsets.ModelViewSet):
         # (set_workspace_from_organization), so workspace-scoped reads
         # continue to work correctly.
         source_trace_id = _span_source_trace_id(source_type, source_obj)
-        tracer_project_id = tracer_project_id_for_source(source_type, source_obj)
         with transaction.atomic():
             score, created = Score.no_workspace_objects.update_or_create(
                 **{f"{fk_field}_id": source_obj.pk},
@@ -468,17 +525,20 @@ class ScoreViewSet(viewsets.ModelViewSet):
         source_id = data["source_id"]
         span_notes = data.get("span_notes")  # None when field was not sent
         span_notes_source_id = data.get("span_notes_source_id")
+        project_id = data.get("project_id")
 
         fk_field = SCORE_SOURCE_FK_MAP.get(source_type)
         if not fk_field:
             return self._gm.bad_request(f"Invalid source_type: {source_type}")
 
         # Tracer sources resolve CH-native via the single boundary (see create()).
+        # project_id pins the trace / span to the project it was opened from.
         source_obj = resolve_source_object(
             source_type,
             source_id,
             organization=request.organization,
             workspace=getattr(request, "workspace", None),
+            project_id=project_id,
         )
         if not source_obj:
             return self._gm.not_found(f"Source not found: {source_type}={source_id}")
@@ -493,6 +553,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
                     span_notes_source_id,
                     organization=request.organization,
                     workspace=getattr(request, "workspace", None),
+                    project_id=project_id,
                 )
                 if not span_notes_target:
                     return self._gm.not_found(
@@ -514,11 +575,22 @@ class ScoreViewSet(viewsets.ModelViewSet):
                 "Cannot resolve a default annotation queue for this source. "
                 "Pass an explicit queue_item_id or score from a queue flow."
             )
+        tracer_project_id = tracer_project_id_for_source(source_type, source_obj)
+        conflict = _score_project_conflict(
+            queue_item,
+            tracer_project_id,
+            source_lookup={f"{fk_field}_id": source_obj.pk},
+            label_ids=[score_data["label_id"] for score_data in data["scores"]],
+            annotator_id=request.user.pk,
+        )
+        if conflict:
+            return self._gm.custom_error_response(
+                status.HTTP_409_CONFLICT, conflict, code=SCORE_PROJECT_MISMATCH
+            )
 
         created_scores = []
         errors = []
         source_trace_id = _span_source_trace_id(source_type, source_obj)
-        tracer_project_id = tracer_project_id_for_source(source_type, source_obj)
         # SpanNotes.span (db_constraint=False FK) rejects a CHSpan object on assignment;
         # write the id form so collector-only spans work.
         span_notes_pk = (
@@ -721,8 +793,26 @@ class ScoreViewSet(viewsets.ModelViewSet):
         if not fk_field:
             return self._gm.bad_request(f"Invalid source_type: {source_type}")
 
+        # project_id pins a trace / span to the copy the drawer shows, as on the
+        # score write; a pin outside the caller's scope pins to nothing. Scores
+        # written before tracer_project_id was populated were never attributed
+        # to a copy, so every in-scope copy keeps them.
+        pinned_project_ids = pinned_source_project_ids(
+            source_type,
+            query_params.get("project_id"),
+            organization=request.organization,
+            workspace=getattr(request, "workspace", None),
+        )
+        project_filter = Q()
+        if pinned_project_ids is not None:
+            project_filter = Q(tracer_project_id__in=pinned_project_ids)
+            # Guarded: an empty IN beside an OR would leave only the IS NULL arm.
+            if pinned_project_ids:
+                project_filter |= Q(tracer_project_id__isnull=True)
+
         scores = (
             Score.objects.filter(
+                project_filter,
                 # Pin source_type: span Scores carry a denormalized trace_id (for the
                 # trace-detail rollup), so a trace_id= filter alone would also match them.
                 source_type=source_type,
@@ -771,7 +861,9 @@ class ScoreViewSet(viewsets.ModelViewSet):
             # (project_id + trace_id only): pulling the full span row here blows
             # the shared ClickHouse memory limit (code 241) on fat voice spans.
             with get_reader() as reader:
-                span_scope = reader.scope_by_ids([str(source_id)]).get(str(source_id))
+                span_scope = reader.scope_by_ids(
+                    [str(source_id)], project_ids=pinned_project_ids
+                ).get(str(source_id))
             span_belongs_to_org = False
             trace_id = None
             if (
@@ -824,6 +916,17 @@ class ScoreViewSet(viewsets.ModelViewSet):
                 )
                 if note.annotator_id:
                     users_with_queue_notes.add(note.annotator_id)
+                # A pinned read lists its own copy's notes and those on items
+                # never attributed to a project. Another copy's note still counts
+                # above: its legacy SpanNotes mirror (keyed on span + user, no
+                # project) must not bring it back below.
+                item_project_id = note.queue_item.project_id
+                if (
+                    pinned_project_ids is not None
+                    and item_project_id is not None
+                    and str(item_project_id) not in pinned_project_ids
+                ):
+                    continue
                 key = (note.annotator_id, note.queue_item_id)
                 if key in seen_user_queue:
                     continue
@@ -842,7 +945,8 @@ class ScoreViewSet(viewsets.ModelViewSet):
             # for this span) — keep them in the list as backward-compat
             # context until the SpanNotes backfill runs. Gated on the
             # org-scoped span check above so cross-org callers can't read
-            # this org's legacy notes.
+            # this org's legacy notes. SpanNotes carry no project, so a pinned
+            # read keeps them on every copy.
             legacy_notes = (
                 (
                     SpanNotes.objects.filter(span_id=source_id)

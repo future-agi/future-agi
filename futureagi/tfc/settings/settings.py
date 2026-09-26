@@ -748,12 +748,6 @@ FUTUREAGI_CLOUD_GATEWAY_URL = os.environ.get(
     "FUTUREAGI_CLOUD_GATEWAY_URL", "https://gateway.futureagi.com"
 )
 
-# Internal Agentcc gateway (cloud deployment only)
-INTERNAL_GATEWAY_URL = os.environ.get(
-    "INTERNAL_GATEWAY_URL", "http://agentcc-internal:8090"
-)
-INTERNAL_GATEWAY_KEY = os.environ.get("INTERNAL_GATEWAY_KEY", "")
-
 # ── Multi-Region ──────────────────────────────────────────────
 REGION = os.environ.get("REGION", "us")
 CLOUD_DEPLOYMENT = os.environ.get("CLOUD_DEPLOYMENT", "")

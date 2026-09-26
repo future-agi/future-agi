@@ -71,6 +71,7 @@ import { isExpectedRequestCancellation } from "src/utils/cacheUtils";
 import { isGridApiLive, withLiveGridApi } from "src/utils/gridApi";
 import CursorGridPagination from "./CursorGridPagination";
 import useCursorGridPagination from "./useCursorGridPagination";
+import { getTraceGridRowId } from "./traceGridRowId";
 import useImmediateGridQueryTransition from "./useImmediateGridQueryTransition";
 import {
   dispatchObservePageChanged,
@@ -142,13 +143,14 @@ const TraceGrid = React.forwardRef(
     const {
       traceDetailDrawerOpen,
       setTraceDetailDrawerOpen,
-      setVisibleTraceIds,
+      setVisibleTraces,
     } = useLLMTracingStoreShallow((state) => ({
       traceDetailDrawerOpen: state.traceDetailDrawerOpen,
       setTraceDetailDrawerOpen: state.setTraceDetailDrawerOpen,
-      setVisibleTraceIds: state.setVisibleTraceIds,
+      setVisibleTraces: state.setVisibleTraces,
     }));
     const activeTraceId = traceDetailDrawerOpen?.traceId || null;
+    const activeTraceProjectId = traceDetailDrawerOpen?.projectId || null;
     const [openQuickFilter, setOpenQuickFilter] = useState(null);
     const [selectedAll, setSelectedAll] = useState(false);
     const [readMessage, setReadMessage] = useState(null);
@@ -555,14 +557,19 @@ const TraceGrid = React.forwardRef(
               pageLoadRowCount = rows.length;
               setContinuationNotice(null);
 
-              // Collect all loaded trace IDs for prev/next navigation
+              // Collect all loaded trace rows for prev/next navigation
               setTimeout(() => {
                 if (!isGridApiLive(params.api)) return;
-                const ids = [];
+                const traces = [];
                 params.api.forEachNode((node) => {
-                  if (node.data?.trace_id) ids.push(node.data.trace_id);
+                  if (node.data?.trace_id) {
+                    traces.push({
+                      traceId: node.data.trace_id,
+                      projectId: node.data.project_id || null,
+                    });
+                  }
                 });
-                if (ids.length > 0) setVisibleTraceIds(ids);
+                if (traces.length > 0) setVisibleTraces(traces);
               }, 0);
             } catch (error) {
               if (isExpectedRequestCancellation(error)) {
@@ -798,7 +805,15 @@ const TraceGrid = React.forwardRef(
         if (!traceId) {
           return;
         }
-        setTraceDetailDrawerOpen({ traceId: traceId, filters: filters });
+        // Pin detail to the row's project: without a route project (the
+        // cross-project user page) an unpinned read serves the newest copy
+        // of this trace id in any project.
+        const rowProjectId = event.data.project_id;
+        setTraceDetailDrawerOpen({
+          traceId: traceId,
+          ...(rowProjectId ? { projectId: rowProjectId } : {}),
+          filters: filters,
+        });
 
         // trackEvent(Events.observeTraceidClicked);
       },
@@ -910,13 +925,17 @@ const TraceGrid = React.forwardRef(
           }}
           statusBar={statusBar}
           blockLoadDebounceMillis={300}
-          getRowId={(d) => {
-            return d?.data?.trace_id;
-          }}
+          // Without a route project (the user page) rows span projects and
+          // one trace id can be listed once per project.
+          getRowId={(d) =>
+            getTraceGridRowId(d?.data, { crossProject: !projectId })
+          }
           getRowStyle={(params) => {
             if (
               params.data?.trace_id &&
-              params.data.trace_id === activeTraceId
+              params.data.trace_id === activeTraceId &&
+              (!activeTraceProjectId ||
+                params.data.project_id === activeTraceProjectId)
             ) {
               return { backgroundColor: "rgba(120, 87, 252, 0.08)" };
             }

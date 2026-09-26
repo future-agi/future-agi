@@ -79,3 +79,15 @@ class MaxTokensDefaultTests(unittest.TestCase):
         with mock.patch.dict("os.environ", env, clear=True):
             client = FalconLLMClient(provider="anthropic", max_tokens=40000)
         self.assertEqual(client.max_tokens, 40000)
+
+
+class GatewayUrlDefaultTests(unittest.TestCase):
+    """The gateway listens on 8080 inside the network; compose publishes it on
+    host port 8090, which is refused container-to-container."""
+
+    def test_gateway_providers_default_to_the_in_network_port(self):
+        for provider in ("vertex_ai", "turing_small"):
+            with self.subTest(provider=provider):
+                with mock.patch.dict("os.environ", _clear_env(), clear=True):
+                    client = FalconLLMClient(provider=provider)
+                self.assertEqual(client.api_url, "http://agentcc-gateway:8080")

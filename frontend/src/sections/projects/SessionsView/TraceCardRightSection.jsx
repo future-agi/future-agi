@@ -52,6 +52,7 @@ const TraceCardRightSection = ({
 
   const { data: traceDetail } = useGetTraceDetail(
     isDrawerOpen ? traceId : null,
+    observeId,
   );
   const projectId = observeId || traceDetail?.trace?.project;
 

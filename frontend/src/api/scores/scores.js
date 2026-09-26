@@ -40,7 +40,12 @@ export const scoreEndpoints = {
 // ---------------------------------------------------------------------------
 export const scoreKeys = {
   all: ["scores"],
-  forSource: (sourceType, sourceId) => ["scores", sourceType, sourceId],
+  // The project goes last, so invalidating ["scores", type, id] also refreshes
+  // every project-pinned read of that source.
+  forSource: (sourceType, sourceId, projectId) =>
+    projectId
+      ? ["scores", sourceType, sourceId, projectId]
+      : ["scores", sourceType, sourceId],
 };
 
 // ---------------------------------------------------------------------------
@@ -49,12 +54,23 @@ export const scoreKeys = {
 
 /**
  * Fetch all scores for a given source (trace, span, session, etc.)
+ *
+ * The same trace / span id can exist in several projects; `projectId` pins
+ * the read to the copy the drawer shows.
  */
-export const useScoresForSource = (sourceType, sourceId, options = {}) => {
+export const useScoresForSource = (
+  sourceType,
+  sourceId,
+  { projectId, ...options } = {},
+) => {
   return useQuery({
-    queryKey: scoreKeys.forSource(sourceType, sourceId),
+    queryKey: scoreKeys.forSource(sourceType, sourceId, projectId),
     queryFn: () =>
-      modelHubScoresForSource({ source_type: sourceType, source_id: sourceId }),
+      modelHubScoresForSource({
+        source_type: sourceType,
+        source_id: sourceId,
+        ...(projectId ? { project_id: projectId } : {}),
+      }),
     select: (d) =>
       selectContractedList(d, {
         schema: ModelHubScoresForSourceResponse,
@@ -70,14 +86,18 @@ export const useScoresForSource = (sourceType, sourceId, options = {}) => {
 /**
  * Fetch span-level notes for an observation_span source.
  * Returns the span_notes array from the for-source endpoint.
+ * `projectId` pins the span to the copy the drawer shows.
  */
-export const useSpanNotes = (spanId, options = {}) => {
+export const useSpanNotes = (spanId, { projectId, ...options } = {}) => {
   return useQuery({
-    queryKey: ["span-notes", spanId],
+    queryKey: projectId
+      ? ["span-notes", spanId, projectId]
+      : ["span-notes", spanId],
     queryFn: () =>
       modelHubScoresForSource({
         source_type: "observation_span",
         source_id: spanId,
+        ...(projectId ? { project_id: projectId } : {}),
       }),
     select: (d) => d?.data?.span_notes || d?.span_notes || [],
     enabled: !!spanId,
@@ -152,6 +172,7 @@ export const useBulkCreateScores = () => {
       includeSpanNotes = false,
       spanNotesSourceId,
       scoreSource,
+      projectId,
     }) => {
       const payload = {
         source_type: sourceType,
@@ -168,6 +189,11 @@ export const useBulkCreateScores = () => {
       // falls back to the source's default queue.
       if (queueItemId) {
         payload.queue_item_id = queueItemId;
+      }
+      // The same trace / span id can exist in several projects; pin the write
+      // to the copy the drawer showed.
+      if (projectId) {
+        payload.project_id = projectId;
       }
       if (includeSpanNotes || spanNotes) {
         payload.span_notes = spanNotes || "";

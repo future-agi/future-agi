@@ -9,6 +9,7 @@ so each guard can see which statement decided what.
 from __future__ import annotations
 
 import hashlib
+import random
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -231,9 +232,12 @@ class Engine:
         )
 
     def _probe(self, params):
-        found = bool(self._witnessed(params, self.probe_ranges))
+        """The newest witnessed row of the range, as ``ORDER BY ... LIMIT 1``."""
+
+        found = self._witnessed(params, self.probe_ranges)
         return SimpleNamespace(
-            data=[{"witnessed": 1}] if found else [], query_time_ms=1.0
+            data=[{"witnessed": max(found.values())}] if found else [],
+            query_time_ms=1.0,
         )
 
     def _estimate(self, params):
@@ -564,14 +568,16 @@ def _signed_cursor(read) -> ListCursor:
     return decode_list_cursor(token, **binding)
 
 
-def _walk_every_page(world: World, *, max_hops: int, cursor=None, page_size=25):
+def _walk_every_page(
+    world: World, *, max_hops: int, cursor=None, page_size=25, filters=None
+):
     """Follow the cursor to the end; returns the names, per-hop counts, engines."""
 
     names: list[str] = []
     counts: list[int] = []
     engines: list[Engine] = []
     while True:
-        read, engine = _page(world, page_size=page_size, cursor=cursor)
+        read, engine = _page(world, page_size=page_size, cursor=cursor, filters=filters)
         names.extend(_names(read))
         counts.append(len(read.payload["table"]))
         engines.append(engine)
@@ -1288,32 +1294,158 @@ def test_a_costed_probe_that_reads_only_false_positives_still_proves_the_tail():
     assert read.has_more is False and read.checkpoint_order is None
 
 
-def test_a_probe_that_finds_a_row_leaves_the_walk_slicing_at_the_cap():
-    """A row proves existence, never a position: the slices go on at the cap.
+def test_a_probe_that_finds_a_row_resumes_the_walk_just_above_it():
+    """A row is the tail's newest witnessed row: nothing lies above it.
 
-    The populated slice re-arms the probe, so the twenty empty days below it
-    are proven by one more costed pair instead of spending the rest of the
-    budget one day at a time.
+    The ten empty days above it are proven by the probe, as ten empty
+    one-day slices would have proven them, and the next slice ends just above
+    the row. The populated slice re-arms the probe, so the twenty empty days
+    below it are proven by one more costed pair instead of spending the rest
+    of the budget one day at a time.
     """
 
     thirty_days = _filters(window_start=WINDOW_END - timedelta(days=30))
+    newest = WINDOW_END - timedelta(days=10)
     world = World()
-    world.user(
-        1,
-        key=WINDOW_END - timedelta(days=10),
-        raw=(WINDOW_END - timedelta(days=10),),
-    )
+    world.user(1, key=newest, raw=(newest,))
     read, engine = _page(world, page_size=25, filters=thirty_days)
 
     kinds = _kinds(engine)
     assert _names(read) == ["user-1"] and read.has_more is False
-    assert kinds[:3] == ["slice", "estimate", "probe"]
-    assert kinds.count("estimate") == 2 and kinds.count("probe") == 2
-    assert kinds[-2:] == ["estimate", "probe"]
+    assert kinds == [
+        "slice",
+        "estimate",
+        "probe",
+        "slice",
+        "remap",
+        "enrich",
+        "replay",
+        "slice",
+        "estimate",
+        "probe",
+    ]
+    assert engine.slice_ranges[1][1] == newest + timedelta(microseconds=1)
     cap = walk.USER_LIST_WALK_MAX_SLICE
     assert max(high - low for low, high in engine.slice_ranges) <= cap
-    assert kinds.count("slice") >= 3
+
+
+def test_a_probe_row_that_certifies_no_member_still_leaves_the_walk_exact():
+    """The tail's newest witnessed row may be a stale version or a user the
+    replay rejects: the walk resumes above it, decides it there, and goes on
+    below - the probe re-armed by that populated slice - to the members
+    further down, each published exactly once and in order.
+    """
+
+    six_months = _filters(window_start=WINDOW_END - timedelta(days=183))
+    stale = WINDOW_END - timedelta(days=40)
+    rejected = stale - timedelta(days=1)
+    world = World()
+    # Witnessed 40 days back, but its latest value no longer matches.
+    world.user(1, key=None, raw=(stale,))
+    # Live and matching a day lower, but not a curated user: its replay
+    # rejects it.
+    world.user(2, key=rejected, raw=(rejected,), curated=False)
+    for ordinal, days in ((3, 120), (4, 150)):
+        moment = WINDOW_END - timedelta(days=days)
+        world.user(ordinal, key=moment, raw=(moment,))
+
+    names, counts, engines = _walk_every_page(
+        world, max_hops=4, page_size=25, filters=six_months
+    )
+
+    assert names == ["user-3", "user-4"]
+    assert counts == [1, 1]
+    first = engines[0]
+    assert _kinds(first)[:4] == ["slice", "estimate", "probe", "slice"]
+    tick = timedelta(microseconds=1)
+    ends = [high for _low, high in first.slice_ranges]
+    assert stale + tick in ends and rejected + tick in ends
+    assert WINDOW_END - timedelta(days=120) + tick in ends
+    assert _kinds(first).count("probe") == 4
+
+
+def test_a_sparse_recent_window_publishes_its_first_page_in_one_request():
+    """Dev D3: six months, and the filter's newest match is 79 days back.
+
+    Each request used to read one empty slice, cost the tail, learn from the
+    probe only that a row exists somewhere below, and spend the rest of its
+    24 statements on one-day slices: about 21 empty days per request, so the
+    grid crossed four empty checkpoints before its first rows (5.3-7.8 s on
+    dev). The probe's row is the tail's NEWEST witnessed row, so nothing the
+    slices would find lies above it: the first request resumes just above it
+    and publishes the first page, and every page is the complete answer's
+    users in the complete answer's order, each exactly once.
+    """
+    window_start = WINDOW_END - timedelta(days=183)
+    six_months = _filters(window_start=window_start)
+    newest = WINDOW_END - timedelta(days=79)
+    world = World()
+    for ordinal in range(1, 31):
+        moment = newest - timedelta(seconds=ordinal - 1)
+        world.user(ordinal, key=moment, raw=(moment, moment - timedelta(days=2)))
+    expected = [f"user-{ordinal}" for ordinal in range(1, 31)]
+
+    read, engine = _page(world, page_size=25, filters=six_months)
+
+    assert _names(read) == expected[:25], "an empty checkpoint before the first rows"
+    assert read.payload["query_status"] == "complete"
+    kinds = _kinds(engine)
+    assert kinds[:4] == ["slice", "estimate", "probe", "slice"]
+    # The probe covered the whole tail below the first slice, and the next
+    # slice resumes just above the newest witnessed row, not a day lower.
+    assert engine.probe_ranges == [(window_start, engine.slice_ranges[0][0])]
+    assert engine.slice_ranges[1][1] == newest + timedelta(microseconds=1)
     assert len(engine.calls) <= walk.USER_LIST_WALK_MAX_STATEMENTS
+
+    names, counts, _engines = _walk_every_page(
+        world, max_hops=3, page_size=25, filters=six_months
+    )
+    assert names == expected and len(set(names)) == len(expected)
+    assert counts == [25, 5]
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_sparse_bursts_over_six_months_page_exactly_once_in_order(seed):
+    """Bursts of activity months apart, with stale witnesses, rejected users
+    and aliases: every member exactly once, in ``(key, id)`` order, however
+    many probes resume the walk above a newest witnessed row.
+    """
+    rng = random.Random(seed)
+    six_months = _filters(window_start=WINDOW_END - timedelta(days=183))
+    world = World()
+    ordinal = 0
+    for day in rng.sample(range(1, 183), rng.choice([1, 2, 3, 5])):
+        center = WINDOW_END - timedelta(days=day, seconds=rng.randrange(86_400))
+        for _ in range(rng.choice([1, 4, 30, 60])):
+            ordinal += 1
+            moment = center - timedelta(seconds=rng.randrange(3_600))
+            raw = [moment]
+            stale = moment + timedelta(days=rng.randrange(1, 60))
+            if rng.random() < 0.3 and stale < WINDOW_END:
+                raw.append(stale)
+            world.user(
+                ordinal,
+                key=None if rng.random() < 0.1 else moment,
+                raw=tuple(raw),
+                aliases=rng.choice([0, 0, 1]),
+                curated=rng.random() >= 0.1,
+            )
+    members = sorted(
+        (user["key"], uid)
+        for uid, user in world.users.items()
+        if user["key"] is not None and user["curated"]
+    )
+    expected = [world.users[uid]["name"] for _key, uid in reversed(members)]
+    page_size = rng.choice([1, 7, 25])
+
+    names, _counts, _engines = _walk_every_page(
+        world,
+        max_hops=30 + 2 * len(world.users),
+        page_size=page_size,
+        filters=six_months,
+    )
+
+    assert names == expected
 
 
 def test_a_probe_the_budget_refuses_or_that_fails_licenses_nothing():
@@ -1524,8 +1656,11 @@ def test_slice_statement_is_bounded_by_the_slice_and_carries_no_sorting_key_in_s
         range_start=WINDOW_START, range_end=minutes_before_end(60)
     )
     compact = " ".join(probe.split())
-    assert compact.startswith("SELECT 1 AS witnessed FROM spans PREWHERE")
-    assert "LIMIT 1" in compact and "GROUP BY" not in compact
+    # The newest witnessed row of the range, not just whether one exists: its
+    # time is the position the walk resumes above.
+    assert compact.startswith("SELECT start_time AS witnessed FROM spans PREWHERE")
+    assert "ORDER BY start_time DESC LIMIT 1" in compact
+    assert "GROUP BY" not in compact
     assert "end_user_id_remap" not in compact
     assert probe_params["slice_end_us"] == params["slice_start_us"]
     assert "slice_user_limit" not in probe_params

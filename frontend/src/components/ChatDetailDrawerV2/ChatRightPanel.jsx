@@ -353,6 +353,7 @@ const ChatRightPanel = ({
               sourceId={annotationSources.sourceId}
               secondarySourceType={annotationSources.secondarySourceType}
               secondarySourceId={annotationSources.secondarySourceId}
+              projectId={data?.project_id}
               title=""
               renderActions={
                 onAction ? (

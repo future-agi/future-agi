@@ -973,9 +973,11 @@ test('OBS-E2E-007: Users discovery selects only authorized user activity', {
       expect((JSON.parse(String(traceQuery.filters)) as Leaf[]).find(f => f.column_id === 'user_id')!.filter_config.filter_value).toBe(shared);
       await expect.poll(() => page.locator('.clean-data-table:visible .ag-row [col-id="trace_name"]').allTextContents(), { timeout: UI_READY })
         .toEqual([...userFacts].sort((a, b) => b.startMs - a.startMs).map(f => f.rootName));
+      // The user page lists every project's copy of a trace id, so TraceGrid keys its rows by
+      // [project_id, trace_id] (traceGridRowId.js); AG Grid writes that id HTML-escaped.
       await expect.poll(() => page.locator('.clean-data-table:visible .ag-row [col-id="trace_name"]').evaluateAll(cells =>
-        cells.map(c => c.closest('.ag-row')!.getAttribute('row-id')).sort()), { timeout: UI_READY })
-        .toEqual(userFacts.map(f => f.seeded.traceId).sort());
+        cells.map(c => c.closest('.ag-row')!.getAttribute('row-id')!.split('&quot;').join('"')).sort()), { timeout: UI_READY })
+        .toEqual(userFacts.map(f => JSON.stringify([f.project.id, f.seeded.traceId])).sort());
       await attach(`detail-${uiActor.workspaceId}`, { sessionIds, expectedTraceIds: userFacts.map(f => f.seeded.traceId), query, traceQuery, body });
     };
     await gate('check 4 / UI stage 5: label-based sibling-project session and trace union', async () => {

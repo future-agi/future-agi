@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import pytest
 from django.utils import timezone
+from redis.exceptions import RedisError
 from rest_framework import status
 
 from accounts.models.organization import Organization
@@ -363,7 +364,7 @@ class TestAddToNewDatasetAPI:
         self, mock_check_allowed, mock_task, auth_client, observe_spans, ch_seed
     ):
         """Request without project derives it from selected spans."""
-        mock_check_allowed.return_value = True
+        mock_check_allowed.return_value = (True, {})
         mock_task.delay.return_value = None
         ch_seed(observe_spans)
 
@@ -404,7 +405,7 @@ class TestAddToNewDatasetAPI:
         ch_seed,
     ):
         """Successfully create dataset with spanIds."""
-        mock_check_allowed.return_value = True
+        mock_check_allowed.return_value = (True, {})
         mock_task.delay.return_value = None
         ch_seed(observe_spans)
 
@@ -445,7 +446,7 @@ class TestAddToNewDatasetAPI:
         ch_seed,
     ):
         """Span ids derive their project from ClickHouse, not PG spans."""
-        mock_check_allowed.return_value = True
+        mock_check_allowed.return_value = (True, {})
         mock_task.delay.return_value = None
         trace_id = uuid.uuid4()
         span_id = f"ch_span_{uuid.uuid4().hex[:16]}"
@@ -481,7 +482,7 @@ class TestAddToNewDatasetAPI:
         ch_seed,
     ):
         """Successfully create dataset with traceIds."""
-        mock_check_allowed.return_value = True
+        mock_check_allowed.return_value = (True, {})
         mock_task.delay.return_value = None
         ch_seed(observe_spans)
 
@@ -514,7 +515,7 @@ class TestAddToNewDatasetAPI:
         ch_seed,
     ):
         """Trace ids no longer need PG Trace/ObservationSpan rows to export."""
-        mock_check_allowed.return_value = True
+        mock_check_allowed.return_value = (True, {})
         mock_task.delay.return_value = None
         trace_id = uuid.uuid4()
         span_id = f"ch_root_{uuid.uuid4().hex[:16]}"
@@ -550,7 +551,7 @@ class TestAddToNewDatasetAPI:
         ch_seed,
     ):
         """Successfully create dataset with selectAll=True."""
-        mock_check_allowed.return_value = True
+        mock_check_allowed.return_value = (True, {})
         mock_task.delay.return_value = None
         ch_seed(observe_spans)
 
@@ -577,7 +578,7 @@ class TestAddToNewDatasetAPI:
         self, mock_check_allowed, auth_client, observe_project, observe_spans, dataset
     ):
         """Creating dataset with existing name should return 400."""
-        mock_check_allowed.return_value = True
+        mock_check_allowed.return_value = (True, {})
 
         response = auth_client.post(
             "/tracer/dataset/add_to_new_dataset/",
@@ -610,7 +611,7 @@ class TestAddToNewDatasetAPI:
         ch_seed,
     ):
         """Same-org duplicate names outside the active workspace do not block create."""
-        mock_check_allowed.return_value = True
+        mock_check_allowed.return_value = (True, {})
         mock_task.delay.return_value = None
         ch_seed(observe_spans)
         dataset_name = f"Cross Workspace Name {uuid.uuid4().hex[:8]}"
@@ -654,7 +655,7 @@ class TestAddToNewDatasetAPI:
         ch_seed,
     ):
         """Selected spans from another workspace are hidden before dataset creation."""
-        mock_check_allowed.return_value = True
+        mock_check_allowed.return_value = (True, {})
         mock_task.delay.return_value = None
         _, _, other_span = create_observe_span_for_workspace(
             organization, other_workspace, suffix="new_dataset_guard"
@@ -688,7 +689,7 @@ class TestAddToNewDatasetAPI:
         with patch(
             "tracer.views.dataset.check_if_dataset_creation_is_allowed"
         ) as mock_check:
-            mock_check.return_value = False
+            mock_check.return_value = (False, {"resource_name": "dataset", "limit": 0})
 
             response = auth_client.post(
                 "/tracer/dataset/add_to_new_dataset/",
@@ -704,6 +705,89 @@ class TestAddToNewDatasetAPI:
             )
 
             assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    @pytest.mark.parametrize(
+        ("is_cloud", "expected_status"),
+        [(True, status.HTTP_400_BAD_REQUEST), (False, status.HTTP_200_OK)],
+    )
+    @patch("tracer.views.dataset.process_spans_chunk_task")
+    def test_entitlement_error_refuses_creation_on_cloud_only(
+        self,
+        mock_task,
+        auth_client,
+        organization,
+        observe_project,
+        observe_spans,
+        ch_seed,
+        is_cloud,
+        expected_status,
+    ):
+        """An erroring dataset entitlement check refuses on cloud like a limit."""
+        mock_task.delay.return_value = None
+        ch_seed(observe_spans)
+
+        with (
+            patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=is_cloud),
+            patch(
+                "ee.usage.services.entitlements.Entitlements.can_create",
+                side_effect=RedisError("entitlement cache unavailable"),
+            ),
+        ):
+            response = auth_client.post(
+                "/tracer/dataset/add_to_new_dataset/",
+                {
+                    "new_dataset_name": "Unverified Dataset",
+                    "project": str(observe_project.id),
+                    "span_ids": [s.id for s in observe_spans],
+                    "mapping_config": [
+                        {"col_name": "input", "data_type": "text"},
+                    ],
+                },
+                format="json",
+            )
+
+        assert response.status_code == expected_status
+        assert (
+            Dataset.no_workspace_objects.filter(
+                name="Unverified Dataset", organization=organization
+            ).exists()
+            is not is_cloud
+        )
+
+
+@pytest.mark.django_db
+class TestCreateNewDatasetEntitlement:
+    """create_new_dataset must act on the (allowed, detail) entitlement result."""
+
+    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    def test_denied_entitlement_blocks_creation(
+        self, mock_check, organization, workspace, user
+    ):
+        from tracer.views.dataset import create_new_dataset
+
+        mock_check.return_value = (False, {"resource_name": "dataset", "limit": 3})
+
+        with pytest.raises(ValueError):
+            create_new_dataset("Blocked Dataset", organization, workspace, user.id)
+
+        mock_check.assert_called_once_with(organization)
+        assert not Dataset.no_workspace_objects.filter(
+            name="Blocked Dataset", organization=organization
+        ).exists()
+
+    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    def test_allowed_entitlement_creates_dataset(
+        self, mock_check, organization, workspace, user
+    ):
+        from tracer.views.dataset import create_new_dataset
+
+        mock_check.return_value = (True, {})
+
+        dataset = create_new_dataset(
+            "Allowed Dataset", organization, workspace, user.id
+        )
+
+        assert dataset.name == "Allowed Dataset"
 
 
 @pytest.mark.integration

@@ -805,8 +805,8 @@ PatternSummary.propTypes = {
 };
 
 // ── Agent flow from real span tree ────────────────────────────────────────────
-export function TraceGraphView({ traceId, mode }) {
-  const { data, isLoading, isError } = useGetTraceDetail(traceId);
+export function TraceGraphView({ traceId, mode, projectId }) {
+  const { data, isLoading, isError } = useGetTraceDetail(traceId, projectId);
   const spanTree = data?.observation_spans || data?.observationSpans;
 
   const graphData = useMemo(() => {
@@ -867,6 +867,7 @@ export function TraceGraphView({ traceId, mode }) {
 TraceGraphView.propTypes = {
   traceId: PropTypes.string,
   mode: PropTypes.oneOf(["graph", "path"]),
+  projectId: PropTypes.string,
 };
 
 // ── Split-with-working graph compare ─────────────────────────────────────────
@@ -1043,9 +1044,14 @@ CompareColumn.propTypes = {
   children: PropTypes.node,
 };
 
-function TraceGraphCompare({ failingTraceId, workingTraceId, mode }) {
-  const failQ = useGetTraceDetail(failingTraceId);
-  const passQ = useGetTraceDetail(workingTraceId);
+function TraceGraphCompare({
+  failingTraceId,
+  workingTraceId,
+  mode,
+  projectId,
+}) {
+  const failQ = useGetTraceDetail(failingTraceId, projectId);
+  const passQ = useGetTraceDetail(workingTraceId, projectId);
 
   const failGraph = useMemo(() => {
     const tree = failQ.data?.observation_spans || failQ.data?.observationSpans;
@@ -1204,6 +1210,7 @@ TraceGraphCompare.propTypes = {
   failingTraceId: PropTypes.string,
   workingTraceId: PropTypes.string,
   mode: PropTypes.oneOf(["graph", "path"]),
+  projectId: PropTypes.string,
 };
 
 // ── Trace evidence reel (fail / pass tabs) ───────────────────────────────────
@@ -1770,7 +1777,13 @@ ReelTabs.propTypes = {
   onChange: PropTypes.func.isRequired,
 };
 
-function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
+function TraceEvidence({
+  evidence,
+  trace,
+  traceId,
+  workingTraceId,
+  projectId,
+}) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const [viewMode, setViewMode] = useState("breadcrumb");
@@ -1977,11 +1990,13 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
                 failingTraceId={traceId}
                 workingTraceId={workingTraceId}
                 mode={viewMode === "agentpath" ? "path" : "graph"}
+                projectId={projectId}
               />
             ) : (
               <TraceGraphView
                 traceId={traceId}
                 mode={viewMode === "agentpath" ? "path" : "graph"}
+                projectId={projectId}
               />
             )
           ) : (
@@ -2033,6 +2048,7 @@ TraceEvidence.propTypes = {
   trace: PropTypes.object,
   traceId: PropTypes.string,
   workingTraceId: PropTypes.string,
+  projectId: PropTypes.string,
 };
 
 // ── Co-occurring issues ───────────────────────────────────────────────────────
@@ -2814,6 +2830,7 @@ export default function OverviewTab({ _error: currentError }) {
                       trace={trace}
                       evalScore={trace?.eval_score}
                       successTraceId={currentError?.success_trace?.trace_id}
+                      projectId={currentError?.project_id}
                     />
                   ) : (
                     <EvalIOPanel trace={trace} evalScore={trace?.eval_score} />
@@ -2825,6 +2842,7 @@ export default function OverviewTab({ _error: currentError }) {
                   trace={trace}
                   traceId={trace.id}
                   workingTraceId={currentError?.success_trace?.trace_id}
+                  projectId={currentError?.project_id}
                 />
               )}
             </Stack>
@@ -2838,6 +2856,7 @@ export default function OverviewTab({ _error: currentError }) {
 OverviewTab.propTypes = {
   _error: PropTypes.shape({
     cluster_id: PropTypes.string,
+    project_id: PropTypes.string,
     source: PropTypes.string,
     modality: PropTypes.string,
     success_trace: PropTypes.shape({

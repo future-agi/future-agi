@@ -55,6 +55,31 @@ class TestCloudTransport:
         headers = mock_post.call_args.kwargs["headers"]
         assert headers["Authorization"] == "Bearer internal-key"
 
+    def test_cloud_default_gateway_url_uses_the_container_port(self):
+        # The gateway listens on 8080 inside the network (compose maps host
+        # 8090 -> 8080; the k8s service is 8080). 8090 is refused in-network.
+        response = _ok_response()
+        with (
+            patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=True),
+            patch(
+                "ee.usage.services.gateway_llm_client._get_setting",
+                side_effect=lambda name, default="": {
+                    "AGENTCC_INTERNAL_API_KEY": "internal-key",
+                }.get(name, default),
+            ),
+            patch("httpx.post", return_value=response) as mock_post,
+        ):
+            chat_completion(
+                {"model": "falcon_ai", "messages": [{"role": "user", "content": "hi"}]}
+            )
+
+        url = (
+            mock_post.call_args.args[0]
+            if mock_post.call_args.args
+            else (mock_post.call_args.kwargs["url"])
+        )
+        assert url == "http://agentcc-gateway:8080/v1/chat/completions"
+
     def test_cloud_does_not_use_activation_flow(self):
         response = _ok_response()
         with (

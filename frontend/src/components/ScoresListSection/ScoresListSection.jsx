@@ -56,13 +56,18 @@ export default function ScoresListSection({
   sourceId,
   secondarySourceType,
   secondarySourceId,
+  projectId,
   title = "Annotations",
   renderActions,
   openQueueItemOnRowClick = false,
 }) {
-  const { data: scores, isLoading } = useScoresForSource(sourceType, sourceId);
+  // The same trace / span id can exist in several projects; list only the
+  // scores of the copy this drawer shows.
+  const { data: scores, isLoading } = useScoresForSource(sourceType, sourceId, {
+    projectId,
+  });
   const { data: secondaryScores, isLoading: secondaryLoading } =
-    useScoresForSource(secondarySourceType, secondarySourceId);
+    useScoresForSource(secondarySourceType, secondarySourceId, { projectId });
   const spanNotesSourceId = useMemo(
     () =>
       sourceType === "observation_span"
@@ -72,7 +77,9 @@ export default function ScoresListSection({
           : null,
     [secondarySourceId, secondarySourceType, sourceId, sourceType],
   );
-  const { data: spanNotes = [] } = useSpanNotes(spanNotesSourceId);
+  const { data: spanNotes = [] } = useSpanNotes(spanNotesSourceId, {
+    projectId,
+  });
   const queueTargetSources = useMemo(
     () =>
       openQueueItemOnRowClick
@@ -92,6 +99,7 @@ export default function ScoresListSection({
   const { data: queueEntries = [] } = useQueueItemsForSource(
     queueTargetSources,
     {
+      projectId,
       enabled: openQueueItemOnRowClick && queueTargetSources.length > 0,
     },
   );
@@ -509,6 +517,7 @@ ScoresListSection.propTypes = {
   sourceId: PropTypes.string.isRequired,
   secondarySourceType: PropTypes.string,
   secondarySourceId: PropTypes.string,
+  projectId: PropTypes.string,
   title: PropTypes.string,
   renderActions: PropTypes.node,
   openQueueItemOnRowClick: PropTypes.bool,

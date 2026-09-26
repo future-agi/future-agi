@@ -110,6 +110,7 @@ const TestDetailSideDrawerChild = ({
     useVoiceCallDetail(
       traceId,
       urlModule === "project" && isVoiceCall && !!traceId,
+      resolvedProjectId,
     );
 
   // Fetch full call execution detail for simulate calls. The list response
@@ -607,8 +608,9 @@ const TestDetailSideDrawerChild = ({
         rootSpanId: rootObsSpanId,
         module: urlModule,
         callExecutionId: data?.id,
+        projectId: resolvedProjectId,
       }),
-    [traceId, rootObsSpanId, urlModule, data?.id],
+    [traceId, rootObsSpanId, urlModule, data?.id, resolvedProjectId],
   );
   const hasCurrentTerminalNavigator =
     urlModule === "project" &&

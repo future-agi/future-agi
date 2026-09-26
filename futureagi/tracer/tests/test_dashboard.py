@@ -1883,31 +1883,47 @@ class TestMetricsEndpoint:
             deadline=deadline,
         )
 
-    def test_dataset_native_values_use_remaining_wall_and_result_ceiling(self):
+    @pytest.mark.django_db
+    def test_dataset_native_values_use_remaining_wall_and_result_ceiling(
+        self, organization, workspace
+    ):
+        from tracer.views import dashboard
         from tracer.views.dashboard import (
             _FINITE_NATIVE_FILTER_VALUE_MAX_RESULT_BYTES,
             DashboardViewSet,
         )
 
-        analytics = MagicMock()
-        analytics.execute_ch_query.return_value = SimpleNamespace(
-            data=[{"val": "dataset-a"}]
+        Dataset.objects.create(
+            name="dataset-a", organization=organization, workspace=workspace
         )
         deadline = MagicMock()
         deadline.remaining_ms.return_value = 321
         request = SimpleNamespace(
             user=SimpleNamespace(pk="user-1"),
             organization=SimpleNamespace(pk="org-1"),
-            workspace=SimpleNamespace(pk="workspace-1", id="workspace-1"),
+            workspace=workspace,
             auth=None,
         )
+        run_statements = dashboard._run_filter_value_pg_statements
+        statements = []
 
-        with (
-            patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True),
-            patch(
-                "tracer.views.dashboard.AnalyticsQueryService",
-                return_value=analytics,
-            ),
+        def observed_statements(deadline, read):
+            def observed_read(fetch):
+                def observed_fetch(sql, params):
+                    rows = fetch(sql, params)
+                    (setting,) = fetch(
+                        "SELECT current_setting('statement_timeout') AS timeout", {}
+                    )
+                    statements.append((setting["timeout"], params))
+                    return rows
+
+                return read(observed_fetch)
+
+            return run_statements(deadline, observed_read)
+
+        with patch(
+            "tracer.views.dashboard._run_filter_value_pg_statements",
+            side_effect=observed_statements,
         ):
             response = DashboardViewSet()._filter_values_dataset(
                 request,
@@ -1918,40 +1934,49 @@ class TestMetricsEndpoint:
             )
 
         assert response.status_code == 200
-        execute_kwargs = analytics.execute_ch_query.call_args.kwargs
-        assert execute_kwargs["timeout_ms"] == 321
-        assert execute_kwargs["settings"] == {
-            "max_result_rows": 5_001,
-            "max_result_bytes": _FINITE_NATIVE_FILTER_VALUE_MAX_RESULT_BYTES,
-            "result_overflow_mode": "throw",
-        }
+        assert response.data["result"]["values"] == [
+            {"value": "dataset-a", "label": "dataset-a"}
+        ]
+        [(timeout, params)] = statements
+        assert timeout == "321ms"
+        assert params["result_limit"] == 5_001
+        assert (
+            params["max_result_bytes"] == _FINITE_NATIVE_FILTER_VALUE_MAX_RESULT_BYTES
+        )
+        assert params["workspace_id"] == workspace.id
+        assert params["organization_id"] == organization.id
 
     def test_dataset_native_values_do_not_relabel_programming_errors_as_retryable(self):
+        from django.db import OperationalError
+
         from tracer.views.dashboard import DashboardViewSet
 
-        analytics = MagicMock()
-        analytics.execute_ch_query.side_effect = RuntimeError("broken query builder")
         deadline = MagicMock()
         deadline.remaining_ms.return_value = 321
-        request = SimpleNamespace(workspace=SimpleNamespace(id="workspace-1"))
+        request = SimpleNamespace(
+            workspace=SimpleNamespace(id="workspace-1", organization_id="org-1")
+        )
 
-        with (
-            patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True),
-            patch(
-                "tracer.views.dashboard.AnalyticsQueryService",
-                return_value=analytics,
-            ),
-        ):
-            response = DashboardViewSet()._filter_values_dataset(
-                request,
-                "dataset",
-                "system_metric",
-                query_params={"page_size": 10, "search": ""},
-                deadline=deadline,
-            )
+        def read_values(error):
+            with patch(
+                "tracer.views.dashboard._run_filter_value_pg_statements",
+                side_effect=error,
+            ):
+                return DashboardViewSet()._filter_values_dataset(
+                    request,
+                    "dataset",
+                    "system_metric",
+                    query_params={"page_size": 10, "search": ""},
+                    deadline=deadline,
+                )
 
+        response = read_values(RuntimeError("broken query builder"))
         assert response.status_code == 500
         assert response.data["code"] == "server_error"
+        # A PostgreSQL statement_timeout surfaces as a DatabaseError.
+        response = read_values(OperationalError("canceling statement"))
+        assert response.status_code == 503
+        assert response.data["code"] == "service_unavailable"
 
     def test_native_value_vocabularies_use_signed_fixed_size_pages(self):
         from tracer.views.dashboard import DashboardViewSet
@@ -7516,25 +7541,24 @@ class TestDashboardQueryExecution:
         assert second_result["next_cursor"] is None
 
     @pytest.mark.django_db
-    @patch("tracer.views.dashboard.AnalyticsQueryService")
-    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
     def test_filter_values_dataset_picker_keeps_active_dataset_scope(
-        self, _mock_enabled, mock_analytics_cls, auth_client
+        self, auth_client, organization, workspace
     ):
-        mock_service = MagicMock()
-        mock_result = MagicMock()
-        mock_result.data = []
-        mock_service.execute_ch_query.return_value = mock_result
-        mock_analytics_cls.return_value = mock_service
+        Dataset.objects.create(
+            name="active", organization=organization, workspace=workspace
+        )
+        Dataset.objects.create(
+            name="deleted", organization=organization, workspace=workspace
+        ).delete()
 
         response = auth_client.get(
             "/tracer/dashboard/filter_values/?source=datasets&metric_name=dataset&metric_type=system_metric"
         )
 
         assert response.status_code == 200
-        sql = mock_service.execute_ch_query.call_args.args[0]
-        assert "FROM model_hub_dataset FINAL" in sql
-        assert "AND deleted = 0" in sql
+        assert response.json()["result"]["values"] == [
+            {"value": "active", "label": "active"}
+        ]
 
     @pytest.mark.django_db
     @patch(
@@ -12999,17 +13023,15 @@ class TestFilterValuesEndpoint:
         assert "temporarily unavailable" in json.dumps(payload)
 
     @pytest.mark.django_db
-    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
-    @patch("tracer.views.dashboard.AnalyticsQueryService")
     def test_dataset_column_flattens_array_cells(
-        self, mock_analytics_cls, _mock_ch, auth_client, organization, workspace
+        self, auth_client, organization, workspace
     ):
         from model_hub.models.choices import (
             DataTypeChoices,
             SourceChoices,
             StatusType,
         )
-        from model_hub.models.develop_dataset import Column, Dataset
+        from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 
         dataset = Dataset.objects.create(
             name="DS", organization=organization, workspace=workspace
@@ -13022,14 +13044,11 @@ class TestFilterValuesEndpoint:
             status=StatusType.RUNNING.value,
             dataset=dataset,
         )
-        mock_service = MagicMock()
-        mock_result = MagicMock()
-        mock_result.data = [
-            {"val": '["English","French"]'},
-            {"val": '["English","Spanish"]'},
-        ]
-        mock_service.execute_ch_query.return_value = mock_result
-        mock_analytics_cls.return_value = mock_service
+        for order, value in enumerate(
+            ['["English","French"]', '["English","Spanish"]']
+        ):
+            row = Row.objects.create(dataset=dataset, order=order)
+            Cell.objects.create(dataset=dataset, column=column, row=row, value=value)
 
         response = auth_client.get(
             self.URL,

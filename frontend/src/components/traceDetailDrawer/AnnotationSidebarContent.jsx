@@ -147,7 +147,7 @@ ShortcutsHelp.propTypes = {
 
 /**
  * @param {Object} props
- * @param {Array<{sourceType: string, sourceId: string, spanNotesSourceId?: string}>} props.sources
+ * @param {Array<{sourceType: string, sourceId: string, spanNotesSourceId?: string, projectId?: string}>} props.sources
  * @param {Function} props.onClose
  * @param {Function} props.onScoresChanged
  */
@@ -160,12 +160,15 @@ export default function AnnotationSidebarContent({
   hideEmpty = false,
 }) {
   const validSources = sources.filter((s) => s.sourceId);
+  // The drawer's sources all carry the project it shows; list only that copy's
+  // queue items, never another project's copy of the same trace / span.
+  const projectId = validSources.find((s) => s.projectId)?.projectId;
   const {
     data: queueItems,
     isLoading,
     isFetching,
     refetch,
-  } = useQueueItemsForSource(validSources);
+  } = useQueueItemsForSource(validSources, { projectId });
   const [showShortcuts, setShowShortcuts] = useState(false);
 
   if (validSources.length === 0) {
@@ -195,10 +198,14 @@ export default function AnnotationSidebarContent({
   // Build a lookup from source_type → sourceId for saving scores
   const sourceMap = {};
   const spanNotesSourceMap = {};
+  const projectMap = {};
   for (const s of validSources) {
     sourceMap[s.sourceType] = s.sourceId;
     if (s.spanNotesSourceId) {
       spanNotesSourceMap[s.sourceType] = s.spanNotesSourceId;
+    }
+    if (s.projectId) {
+      projectMap[s.sourceType] = s.projectId;
     }
   }
 
@@ -335,6 +342,7 @@ export default function AnnotationSidebarContent({
                 queueEntry={queueEntry}
                 sourceMap={sourceMap}
                 spanNotesSourceMap={spanNotesSourceMap}
+                projectMap={projectMap}
                 onScoresChanged={onScoresChanged}
                 showShortcuts={showShortcuts}
                 setShowShortcuts={setShowShortcuts}
@@ -363,6 +371,7 @@ AnnotationSidebarContent.propTypes = {
       sourceType: PropTypes.string,
       sourceId: PropTypes.string,
       spanNotesSourceId: PropTypes.string,
+      projectId: PropTypes.string,
     }),
   ),
   onClose: PropTypes.func,
@@ -379,6 +388,7 @@ function QueueAnnotationSection({
   queueEntry,
   sourceMap,
   spanNotesSourceMap,
+  projectMap = {},
   onScoresChanged,
   _showShortcuts,
   setShowShortcuts,
@@ -489,6 +499,7 @@ function QueueAnnotationSection({
         includeSpanNotes: Boolean(
           spanNotesSourceId && (notesTouched || notes || existingNotes),
         ),
+        projectId: projectMap[itemSourceType],
       },
       {
         onSuccess: () => {
@@ -506,6 +517,7 @@ function QueueAnnotationSection({
     itemSourceType,
     sourceId,
     spanNotesSourceId,
+    projectMap,
     bulkCreate,
     onScoresChanged,
   ]);
@@ -794,6 +806,7 @@ QueueAnnotationSection.propTypes = {
   }).isRequired,
   sourceMap: PropTypes.object.isRequired,
   spanNotesSourceMap: PropTypes.object.isRequired,
+  projectMap: PropTypes.object,
   onScoresChanged: PropTypes.func,
   _showShortcuts: PropTypes.bool,
   setShowShortcuts: PropTypes.func,

@@ -1434,7 +1434,7 @@ EvalCard.propTypes = { ev: PropTypes.object, spanLabel: PropTypes.string };
 
 /* ── AnnotationsTabContent — uses ScoresListSection ── */
 
-const AnnotationsTabContent = ({ spanId, traceId, onAction }) => (
+const AnnotationsTabContent = ({ spanId, traceId, projectId, onAction }) => (
   <Box sx={{ display: "flex", flexDirection: "column", height: "100%" }}>
     <Box sx={{ flex: 1, overflow: "auto", p: 2 }}>
       <ScoresListSection
@@ -1442,6 +1442,7 @@ const AnnotationsTabContent = ({ spanId, traceId, onAction }) => (
         sourceId={spanId}
         secondarySourceType="trace"
         secondarySourceId={traceId}
+        projectId={projectId}
         title=""
         openQueueItemOnRowClick
         renderActions={
@@ -1474,6 +1475,7 @@ const AnnotationsTabContent = ({ spanId, traceId, onAction }) => (
 AnnotationsTabContent.propTypes = {
   spanId: PropTypes.string,
   traceId: PropTypes.string,
+  projectId: PropTypes.string,
   onAction: PropTypes.func,
 };
 
@@ -2179,6 +2181,7 @@ const SpanDetailPane = ({
           <AnnotationsTabContent
             spanId={span?.id}
             traceId={span?.trace}
+            projectId={projectId}
             onAction={onAction}
           />
         )}

@@ -58,6 +58,7 @@ from tracer.models.eval_task import (
     EvalTask,
     EvalTaskLogger,
     EvalTaskStatus,
+    RowType,
     RunType,
 )
 from tracer.models.observation_span import EvalEntryStatus, EvalLogger, ObservationSpan
@@ -151,6 +152,16 @@ _EVAL_TASK_LIST_COMPATIBILITY_FILTER_UNITS = (
     settings.EVAL_TASK_LIST_COMPATIBILITY_FILTER_UNITS
 )
 _EVAL_TASK_ROOT_JSON_PREFLIGHT_UNITS = settings.EVAL_TASK_ROOT_JSON_PREFLIGHT_UNITS
+# The EvalLogger column that names an entry's target, per task row type. A task
+# materializes one entry per (target, eval), so its targets are the distinct
+# values here, not its entries. Trace entries also carry the root span id, so
+# they count by trace.
+_EVAL_TASK_TARGET_FIELD = {
+    RowType.SPANS: "observation_span_id",
+    RowType.VOICE_CALLS: "observation_span_id",
+    RowType.TRACES: "trace_id",
+    RowType.SESSIONS: "trace_session_id",
+}
 
 
 class _EvalTaskPageNumberPagination(ExtendedPageNumberPagination):
@@ -613,12 +624,15 @@ def _bounded_period_usage_rows(queryset):
     return rows, sampled
 
 
-def _terminal_usage_queryset(queryset):
-    """Limit usage calls/logs to attempts which actually reached a result."""
+def _successful_usage_queryset(queryset):
+    """Limit usage calls/logs to successful runs.
 
-    return queryset.filter(
-        status__in=(EvalEntryStatus.COMPLETED, EvalEntryStatus.ERRORED)
-    )
+    Usage counts only successful runs; errored and skipped runs stay in the
+    task logs. Legacy rows keep the default COMPLETED status with error=True,
+    so success needs both columns.
+    """
+
+    return queryset.filter(status=EvalEntryStatus.COMPLETED, error=False)
 
 
 def _usage_logs_page_metadata(
@@ -842,7 +856,7 @@ def _bounded_usage_logs_queryset(queryset):
         output_field=models.TextField(),
     )
     return (
-        _terminal_usage_queryset(queryset)
+        _successful_usage_queryset(queryset)
         .annotate(
             usage_reason=Left(reason_source, _USAGE_DETAIL_TEXT_MAX_CHARS),
             usage_reason_length=Length(reason_source),
@@ -2073,6 +2087,14 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 deleted=False,
             ).aggregate(
                 total_count=Count("id"),
+                # Distinct spans/traces/sessions/calls the entries cover; the
+                # UI's "Total Spans" card reads this, not the per-eval total.
+                target_count=Count(
+                    _EVAL_TASK_TARGET_FIELD.get(
+                        eval_task.row_type, "observation_span_id"
+                    ),
+                    distinct=True,
+                ),
                 success_count=Count("id", filter=Q(status=EvalEntryStatus.COMPLETED)),
                 errors_count=Count("id", filter=Q(status=EvalEntryStatus.ERRORED)),
                 # Skipped: the eval never ran (e.g. a mapped span attribute
@@ -2161,6 +2183,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 "skipped_count": counts["skipped_count"],
                 "warnings_count": counts["warnings_count"],
                 "total_count": counts["total_count"],
+                "target_count": counts["target_count"],
                 "error_groups": error_groups,
                 "warning_groups": warning_groups,
                 # Indicates whether we capped at _ERROR_GROUPS_LIMIT — the
@@ -2348,11 +2371,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 ]
 
             # ── Base queryset ──
-            # Match the existing get_eval_task_logs filter exactly so any
-            # task that shows logs also shows usage. Soft-deleted predecessor
-            # work items are excluded so re-evaluation never double-counts a
-            # superseded result and the partial time index stays applicable.
-            base_qs = _terminal_usage_queryset(
+            # Only successful runs are usage; get_eval_task_logs keeps
+            # reporting every run. Soft-deleted predecessor work items are
+            # excluded so re-evaluation never double-counts a superseded
+            # result and the partial time index stays applicable.
+            base_qs = _successful_usage_queryset(
                 EvalLogger.objects.filter(
                     eval_task_id=str(eval_task_id),
                     deleted=False,
@@ -2429,14 +2452,10 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 # the typed output columns. EvalLogger splits output across
                 # output_bool / output_float / output_str depending on the
                 # eval template's output type — see the model definition.
-                if log.status == EvalEntryStatus.ERRORED:
-                    result_label = "Error"
-                    score = None
-                    status = "error"
-                elif log.status != EvalEntryStatus.COMPLETED:
-                    # The queryset is terminal-only. Keep this defense in depth
-                    # so a future caller cannot render in-flight/skipped work as
-                    # a successful evaluation.
+                if log.status != EvalEntryStatus.COMPLETED or log.error:
+                    # The queryset is success-only. Keep this defense in depth
+                    # so a future caller cannot render failed, in-flight or
+                    # skipped work as a successful evaluation.
                     continue
                 elif log.output_bool is True:
                     result_label = "Passed"

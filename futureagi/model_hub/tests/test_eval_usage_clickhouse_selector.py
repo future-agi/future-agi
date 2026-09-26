@@ -882,7 +882,7 @@ def test_eval_usage_real_ch25_latest_tombstone_and_project_scope(
                 organization_id,
                 workspace_id,
                 template_id,
-                "error",
+                "success",
                 '{"output":{"output":"Failed"}}',
                 str(other_trace_id),
                 0,
@@ -945,6 +945,139 @@ def test_eval_usage_real_ch25_latest_tombstone_and_project_scope(
         assert result.error_count == 0
         assert len(result.logs) == 2
         assert sum(bucket.calls for bucket in result.chart) == 2
+    finally:
+        if "read_client" in locals():
+            read_client.close()
+        ch_client.execute(f"DROP TABLE IF EXISTS {trace_source}")
+        ch_client.execute(f"DROP TABLE IF EXISTS {usage_table}")
+
+
+@pytest.mark.integration
+def test_eval_usage_real_ch25_counts_only_successful_runs(ch_client, monkeypatch):
+    """Usage is successful runs only, decided on each run's newest version.
+
+    An error that was a success in an older CDC version must not resurrect,
+    and an in-flight run that later succeeded must count.
+    """
+
+    suffix = uuid.uuid4().hex[:10]
+    usage_table = f"_test_eval_usage_success_{suffix}"
+    trace_source = f"_test_eval_usage_success_trace_{suffix}"
+    organization_id = uuid.uuid4()
+    workspace_id = uuid.uuid4()
+    template_id = str(uuid.uuid4())
+    now = datetime.now(UTC).replace(microsecond=0)
+    log_ids = {name: uuid.uuid4() for name in ("old", "retried", "recent")}
+
+    def row(row_id, log_id, status, minutes_ago, version, config="{}"):
+        created_at = now - timedelta(minutes=minutes_ago)
+        return (
+            row_id,
+            log_id,
+            organization_id,
+            workspace_id,
+            template_id,
+            status,
+            config,
+            "",
+            0,
+            created_at,
+            created_at + timedelta(seconds=version),
+            0,
+            version,
+        )
+
+    ch_client.execute(
+        f"""
+        CREATE TABLE {usage_table} (
+            id Int64,
+            log_id UUID,
+            organization_id UUID,
+            workspace_id Nullable(UUID),
+            source_id String,
+            status String,
+            config String,
+            eval_trace_id String,
+            deleted UInt8,
+            created_at DateTime64(6, 'UTC'),
+            _peerdb_synced_at DateTime64(6, 'UTC'),
+            _peerdb_is_deleted UInt8,
+            _peerdb_version Int64
+        ) ENGINE = MergeTree
+        ORDER BY id
+        """
+    )
+    ch_client.execute(
+        f"""
+        CREATE TABLE {trace_source} (
+            id UUID,
+            project_id UUID,
+            is_deleted UInt8,
+            _version UInt64
+        ) ENGINE = ReplacingMergeTree(_version, is_deleted)
+        ORDER BY (project_id, id)
+        """
+    )
+    try:
+        passed = '{"output":{"output":"Passed"}}'
+        ch_client.execute(
+            f"INSERT INTO {usage_table} VALUES",
+            [
+                row(1, log_ids["old"], "success", 180, 1, passed),
+                # Evaluator failure and a validation rejection.
+                row(2, uuid.uuid4(), "error", 120, 1),
+                row(3, uuid.uuid4(), "error", 110, 1),
+                # Still running.
+                row(4, uuid.uuid4(), "processing", 100, 1),
+                # Newest version is an error: the older success must not count.
+                row(5, uuid.uuid4(), "success", 90, 1, passed),
+                row(5, uuid.uuid4(), "error", 90, 2),
+                # Newest version settled as a success.
+                row(6, log_ids["retried"], "processing", 60, 1),
+                row(6, log_ids["retried"], "success", 60, 2, passed),
+                row(7, log_ids["recent"], "success", 30, 1, passed),
+            ],
+        )
+        monkeypatch.setattr(eval_usage, "_USAGE_TABLE", usage_table)
+        monkeypatch.setattr(trace_project_scope, "_TRACE_TABLE", trace_source)
+        read_client = ClickHouseClient(
+            host=os.environ.get("CH25_HOST", "127.0.0.1"),
+            port=_ch_test_native_port().port,
+            database="default",
+        )
+        monkeypatch.setattr(eval_usage, "get_clickhouse_client", lambda: read_client)
+
+        def read(page, page_size):
+            return read_eval_usage(
+                organization_id=str(organization_id),
+                workspace_id=str(workspace_id),
+                project_ids=[],
+                template_id=template_id,
+                start_date=now - timedelta(days=1),
+                end_date=now,
+                bucket_minutes=60,
+                page=page,
+                page_size=page_size,
+            )
+
+        result = read(page=0, page_size=25)
+
+        assert result.total_runs == 3
+        assert result.runs_period == 3
+        assert result.success_count == 3
+        assert result.error_count == 0
+        assert sum(bucket.calls for bucket in result.chart) == 3
+        assert sum(bucket.pass_count for bucket in result.chart) == 3
+        assert [log.log_id for log in result.logs] == [
+            str(log_ids["recent"]),
+            str(log_ids["retried"]),
+            str(log_ids["old"]),
+        ]
+        assert {log.status for log in result.logs} == {"success"}
+
+        # A deep page seeks through the same successful rows only.
+        second = read(page=1, page_size=1)
+        assert [log.log_id for log in second.logs] == [str(log_ids["retried"])]
     finally:
         if "read_client" in locals():
             read_client.close()

@@ -402,7 +402,8 @@ INTERACTIVE_READ_SETTING_SPECS = {
             # After an empty slice whose tail does not fit the statement
             # budget at the slice cap, the walk asks EXPLAIN ESTIMATE how many
             # rows the blooms leave in the whole tail and issues the one
-            # existence statement only when that count fits here; otherwise
+            # existence statement, which reads all of them for the tail's
+            # newest witnessed row, only when that count fits here; otherwise
             # it keeps slicing at the cap. Rows, not bytes: neither the
             # estimate nor the transport's result carries bytes. Basis: on the
             # largest tenant an uncosted tail statement read 1.38M rows =

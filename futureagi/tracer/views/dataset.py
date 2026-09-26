@@ -430,11 +430,10 @@ def create_new_dataset(new_dataset_name, organization, workspace, user_id):
     ).exists():
         raise ValueError(get_error_message("DATASET_EXIST_IN_ORG"))
 
-    if (
-        check_if_dataset_creation_is_allowed is not None
-        and not check_if_dataset_creation_is_allowed(organization)
-    ):
-        raise ValueError(get_error_message("DATASET_CREATE_LIMIT_REACHED"))
+    if check_if_dataset_creation_is_allowed is not None:
+        allowed, _ = check_if_dataset_creation_is_allowed(organization)
+        if not allowed:
+            raise ValueError(get_error_message("DATASET_CREATE_LIMIT_REACHED"))
 
     return Dataset.no_workspace_objects.create(
         id=uuid.uuid4(),

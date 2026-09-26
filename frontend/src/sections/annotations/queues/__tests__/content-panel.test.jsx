@@ -111,7 +111,10 @@ vi.mock("src/components/traceDetail/SpanTreeTimeline", () => ({
 }));
 
 vi.mock("src/components/traceDetail/SpanDetailPane", () => ({
-  default: () => <div data-testid="span-detail" />,
+  // eslint-disable-next-line react/prop-types -- test stub
+  default: ({ projectId }) => (
+    <div data-testid="span-detail" data-project-id={projectId} />
+  ),
 }));
 
 vi.mock("src/components/traceDetail/TraceLeftPanel", () => ({
@@ -443,6 +446,90 @@ describe("Annotation queue ContentPanel", () => {
     expect(
       screen.queryByRole("button", { name: "View session" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("reads the span's annotations from the project the trace shows", () => {
+    mockUseGetTraceDetail.mockReturnValue({
+      data: {
+        trace: { project: "proj-1", session: null, tags: [] },
+        observation_spans: [
+          { observation_span: { id: "span-1", trace: "trace-1" } },
+        ],
+      },
+      isLoading: false,
+    });
+
+    renderWithQuery(
+      <ContentPanel
+        item={{
+          source_type: "observation_span",
+          source_content: { trace_id: "trace-1", span_id: "span-1" },
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("span-detail")).toHaveAttribute(
+      "data-project-id",
+      "proj-1",
+    );
+  });
+
+  // The same trace id can live in several projects; the queue item's content
+  // was read from one project's copy, so the detail read must pin to it.
+  it.each(["trace", "observation_span"])(
+    "pins the inline %s read to the queue item's project",
+    (sourceType) => {
+      renderWithQuery(
+        <ContentPanel
+          item={{
+            source_type: sourceType,
+            source_content: {
+              trace_id: "trace-1",
+              span_id: "span-1",
+              project_id: "proj-item",
+              observation_type: "llm",
+            },
+          }}
+        />,
+      );
+
+      expect(mockUseGetTraceDetail).toHaveBeenCalled();
+      for (const [traceId, projectId] of mockUseGetTraceDetail.mock.calls) {
+        expect([traceId, projectId]).toEqual(["trace-1", "proj-item"]);
+      }
+    },
+  );
+
+  it("pins the voice call read and its inline fallback to the queue item's project", async () => {
+    axios.get.mockResolvedValue({ data: {} });
+
+    renderWithQuery(
+      <ContentPanel
+        item={{
+          source_type: "trace",
+          source_content: {
+            trace_id: "trace-voice-3",
+            observation_type: "conversation",
+            project_source: "simulator",
+            project_id: "proj-item",
+          },
+        }}
+      />,
+    );
+
+    await screen.findByTestId("trace-display-panel");
+    const voiceReads = axios.get.mock.calls.filter(
+      ([, config]) => config?.params?.trace_id === "trace-voice-3",
+    );
+    expect(voiceReads).toHaveLength(1);
+    expect(voiceReads[0][1].params).toEqual({
+      trace_id: "trace-voice-3",
+      project_id: "proj-item",
+    });
+    expect(mockUseGetTraceDetail).toHaveBeenCalledWith(
+      "trace-voice-3",
+      "proj-item",
+    );
   });
 
   describe("View session for trace / span items", () => {

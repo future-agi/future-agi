@@ -153,11 +153,12 @@ test('EVAL-E2E-003: typed executed evaluations retain exact native results and r
     ],
   }),
 }, async ({ page, actor, probe, mockModel }, testInfo) => {
-  test.setTimeout(3_120_000);
+  test.setTimeout(3_780_000);
   // Approved ceiling: source 30 + valid task 90 + CDC 180 + UI edit 60 +
-  // 5*(detail + 4 filters)*60 + graph selection 120 + invalid tasks 180 +
-  // invalid CDC 180 + invalid UI (60 malformed + 60 API replays + 2 seeds *
-  // 5 families * 60 detail inspections = 720) + setup/source-invalid headroom 60.
+  // 5*(discovery + 2 detail inspections + 4 filters)*60 + graph selection 120 +
+  // invalid tasks 180 + invalid CDC 180 + invalid UI (60 malformed detail +
+  // 60 malformed filter + 60 API replays + 2 seeds * 5 families * 60 detail
+  // inspections = 780) + setup/source-invalid headroom 60.
   page.setDefaultTimeout(UI_READY);
   const req = await request.newContext();
   const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
@@ -682,7 +683,7 @@ test('EVAL-E2E-003: typed executed evaluations retain exact native results and r
 
     const positiveRequests: { family: Family; params: Record<string, string | number>; ids: string[] }[] = [];
     for (const f of families) {
-      await test.step(`backend check 3: ${f.key} current discovery and both native span results`, async () => {
+      await test.step(`backend check 3: ${f.key} current discovery`, async () => {
         const catalog = await actor.api.post<CatalogBody>(METRICS, { source: 'traces', project_ids: projectId,
           cursor_mode: true, per_eval_config: true, category: 'eval_metric', search: f.name, page_size: 25 });
         expect(catalog.result).toMatchObject({ has_more: false, next_cursor: null, query_complete: true, query_status: 'complete' });
@@ -694,8 +695,13 @@ test('EVAL-E2E-003: typed executed evaluations retain exact native results and r
         expect(values.result).toMatchObject({ has_more: false, next_cursor: null, query_complete: true, query_status: 'complete' });
         expect(values.result.values.map(v => v.value).sort()).toEqual([...f.choices].sort());
         await attach(`catalog-${f.key}`, { catalog, values });
-        for (const i of [0, 1]) await inspectDetail(f, seeds[i], childNames[i], f.expected[i], `${verdict} saw ${markers[i]}`);
       }, { timeout: UI_READY });
+      // Each detail inspection loads the spans page itself, so each gets its own UI_READY.
+      // (CI cut both inspections' single 60 s step at exactly 60.0 s, in the second screenshot.)
+      for (const i of [0, 1]) {
+        await test.step(`UI: ${childNames[i]} shows ${f.key} native result`, () =>
+          inspectDetail(f, seeds[i], childNames[i], f.expected[i], `${verdict} saw ${markers[i]}`), { timeout: UI_READY });
+      }
       await page.goto(traceURL(), { waitUntil: 'domcontentloaded' });
       await expect.poll(async () => (await traceCells.allTextContents()).map(t => t.trim()).sort(), { timeout: UI_READY })
         .toEqual([...rootNames].sort());
@@ -787,12 +793,14 @@ test('EVAL-E2E-003: typed executed evaluations retain exact native results and r
       await attach('invalid-clickhouse-actual', await readCH([malformedTask, semanticTask]));
       await clusteringEvidence('after-invalid');
 
-      await test.step('UI: malformed Error and no successful malformed filter match', async () => {
-        const f: Family = { ...families[0], key: 'pf', name: `${prefix}-malformed`,
-          templateId: malformedTemplate, configId: malformedConfig };
-        await inspectDetail(f, seeds[0], childNames[0], null, null, true);
+      // The detail inspection and the trace filter are two page loads, so two UI_READY steps.
+      const malformed: Family = { ...families[0], key: 'pf', name: `${prefix}-malformed`,
+        templateId: malformedTemplate, configId: malformedConfig };
+      await test.step('UI: malformed Error', () =>
+        inspectDetail(malformed, seeds[0], childNames[0], null, null, true), { timeout: UI_READY });
+      await test.step('UI: no successful malformed filter match', async () => {
         await page.goto(traceURL(), { waitUntil: 'domcontentloaded' });
-        await applySelection(f, { label: 'malformed-no-success', op: 'in', value: ['Passed', 'Failed'], indexes: [] }, false, true);
+        await applySelection(malformed, { label: 'malformed-no-success', op: 'in', value: ['Passed', 'Failed'], indexes: [] }, false, true);
       }, { timeout: UI_READY });
       await test.step('UI/API: every invalid family is Error and excluded from successful matches', async () => {
         // Reuse the exact union/range requests captured from supported native UI.

@@ -190,6 +190,12 @@ def _normalized_filter(item: Any) -> Any:
         canonical_item["output_type"] = normalized["output_type"]
     elif "outputType" in normalized:
         canonical_item["output_type"] = normalized["outputType"]
+    # The private canonical-root marker (voice calls, eval-task trace
+    # selection) turns an observation_type leaf into a root predicate, so an
+    # exact worker handed this leaf must see it. Requests cannot carry it:
+    # FilterItemField rejects the key.
+    if normalized.get("_eval_task_trace_root") is True:
+        canonical_item["_eval_task_trace_root"] = True
     return canonical_item
 
 

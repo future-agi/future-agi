@@ -15,6 +15,7 @@ from tracer.serializers.cursor_pagination import (
 from tracer.serializers.filters import (
     BOUNDED_PAGE_NUMBER_HELP_TEXT,
     JsonObjectField,
+    ObserveGraphDataRequestSerializer,
     SortParamListQueryParamField,
     StrictInputSerializer,
     bounded_filter_list_query_param_field,
@@ -563,6 +564,24 @@ class TraceVoiceCallListResponseSerializer(serializers.Serializer):
     query_applied_filter_count = serializers.IntegerField(required=False, min_value=0)
 
 
+_DETAIL_PROJECT_ID_HELP = (
+    "Project the detail was opened from. The same id can exist in several "
+    "projects; when supplied, only that project's copy is read."
+)
+
+
+class TraceDetailQuerySerializer(serializers.Serializer):
+    """Optional project pin for the trace-detail identity.
+
+    Not strict: trace detail read no query params before the pin, so callers'
+    extra params (DRF's ``?format=json`` included) keep being ignored.
+    """
+
+    project_id = serializers.UUIDField(
+        required=False, help_text=_DETAIL_PROJECT_ID_HELP
+    )
+
+
 class TraceVoiceCallDetailQuerySerializer(StrictInputSerializer):
     """Strict compatibility contract for the voice-call detail identity."""
 
@@ -573,6 +592,9 @@ class TraceVoiceCallDetailQuerySerializer(StrictInputSerializer):
     traceId = serializers.UUIDField(  # noqa: N815 - public compatibility alias
         required=False,
         help_text="Legacy alias for trace_id; when both are supplied they must match.",
+    )
+    project_id = serializers.UUIDField(
+        required=False, help_text=_DETAIL_PROJECT_ID_HELP
     )
 
     def validate(self, attrs):
@@ -698,6 +720,36 @@ class TraceObserveIndexQuerySerializer(StrictInputSerializer):
     trace_id = serializers.UUIDField()
     project_id = serializers.UUIDField()
     filters = filter_list_query_param_field(required=False, default=list)
+
+
+class TraceGraphDataRequestSerializer(ObserveGraphDataRequestSerializer):
+    observe_type = serializers.ChoiceField(
+        choices=["trace", "voice"],
+        required=False,
+        default="trace",
+        help_text=(
+            "Population the graph counts: every trace, or only voice calls "
+            "(traces whose root span is a conversation), exactly as "
+            "list_voice_calls selects them."
+        ),
+    )
+    remove_simulation_calls = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text=(
+            "Voice graphs only: exclude calls placed by a simulator phone, "
+            "exactly as list_voice_calls' remove_simulation_calls does."
+        ),
+    )
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        is_voice = attrs.get("observe_type") == "voice"
+        if attrs.get("remove_simulation_calls") and not is_voice:
+            raise serializers.ValidationError(
+                {"remove_simulation_calls": "Requires observe_type 'voice'."}
+            )
+        return attrs
 
 
 class TraceAgentGraphQuerySerializer(StrictInputSerializer):

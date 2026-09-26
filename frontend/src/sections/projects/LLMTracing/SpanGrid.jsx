@@ -901,9 +901,12 @@ const SpanGrid = React.forwardRef(
         if (!traceId || !spanId) {
           return;
         }
+        // Pin detail to the span's project (see TraceGrid's row click).
+        const rowProjectId = event.data.project_id;
         setSpanDetailDrawerOpen({
           trace_id: traceId,
           span_id: spanId,
+          ...(rowProjectId ? { project_id: rowProjectId } : {}),
           filters: filters,
           fromSpansView: true,
         });

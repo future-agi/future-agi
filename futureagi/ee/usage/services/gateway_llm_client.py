@@ -37,7 +37,7 @@ def _resolve_gateway_config() -> tuple[str, str, str]:
     mode = _deployment_mode()
     if mode == "cloud":
         return (
-            _get_setting("AGENTCC_INTERNAL_URL", "http://agentcc-gateway:8090"),
+            _get_setting("AGENTCC_INTERNAL_URL", "http://agentcc-gateway:8080"),
             _get_setting("AGENTCC_INTERNAL_API_KEY"),
             mode,
         )

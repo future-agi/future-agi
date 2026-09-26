@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 
 import pytest
 
+from tracer.services.clickhouse.query_builders import latest_filter_predicates
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     LatestFilterPredicate,
     compile_span_filter_plans,
     compile_trace_filter_plans,
+)
+from tracer.utils.attribute_suggestion_contract import (
+    TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES,
 )
 
 Compiler = Callable[[list[dict[str, object]]], list[LatestFilterPredicate]]
@@ -192,6 +197,214 @@ def test_ascii_filter_keeps_unicode_semantics_with_exhaustive_legacy_witness() -
         for key, value in plan.params.items()
         if key.startswith("latest_filter_legacy_index_0_")
     } == {"k", stored}
+
+
+def _kelvin_spellings(value: str) -> set[str]:
+    """Every spelling whose ASCII ``lower()`` is ``value``, by bitmask."""
+
+    slots = [position for position, char in enumerate(value) if char == "k"]
+    spellings = set()
+    for mask in range(1 << len(slots)):
+        chars = list(value)
+        for bit, position in enumerate(slots):
+            if mask >> bit & 1:
+                chars[position] = "\N{KELVIN SIGN}"
+        spellings.add("".join(chars))
+    return spellings
+
+
+@pytest.mark.parametrize(
+    ("operation", "picker_types"),
+    [("equals", False), ("in", False), ("in", True)],
+    ids=["equals", "in", "picker_in"],
+)
+@pytest.mark.parametrize("kelvin_slots", [0, 1, 2, 8, 9])
+def test_legacy_ascii_bloom_witness_enumerates_every_kelvin_spelling(
+    kelvin_slots: int,
+    operation: str,
+    picker_types: bool,
+) -> None:
+    value = "K".join(["seg"] * (kelvin_slots + 1))
+    leaf = _attribute_filter(
+        filter_type="text",
+        operation=operation,
+        value=[value] if operation == "in" else value,
+    )
+    if picker_types:
+        leaf["filter_config"]["attribute_value_types"] = ["string"]
+    (plan,) = compile_trace_filter_plans([leaf])
+
+    legacy = {
+        param_value
+        for key, param_value in plan.params.items()
+        if key.startswith("latest_filter_legacy_index_0_")
+    }
+    # Past 256 spellings (the ninth "k") the witness stands down entirely and
+    # the Unicode comparison stays the only value predicate.
+    expected = _kelvin_spellings(value.lower()) if kelvin_slots <= 8 else set()
+    assert legacy == expected
+
+
+def _python_lines_executed(call: Callable[[], object]) -> int:
+    """Count the Python lines one call executes, across every frame it enters."""
+
+    executed = 0
+
+    def trace(frame, event, arg):
+        nonlocal executed
+        if event == "line":
+            executed += 1
+        return trace
+
+    previous = sys.gettrace()
+    sys.settrace(trace)
+    try:
+        call()
+    finally:
+        sys.settrace(previous)
+    return executed
+
+
+@pytest.mark.parametrize(
+    "compiler",
+    [compile_trace_filter_plans, compile_span_filter_plans],
+    ids=["trace", "span"],
+)
+@pytest.mark.parametrize("short", ["absent", "k" * 8], ids=["no_k", "eight_k"])
+def test_max_length_text_equality_compiles_without_per_character_work(
+    compiler: Compiler,
+    short: str,
+) -> None:
+    """A 16 KiB equals value compiles with the Python work of a short one.
+
+    One Voice list request compiles its filter plans a few hundred times. On
+    dev a per-character loop in the legacy bloom witness made a max-length
+    absent value cost 6.0 s before the response headers while ClickHouse
+    answered in about 0.1 s; the same value at 32 bytes took 0.48 s.
+    """
+
+    long = short + "x" * (TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES - len(short))
+
+    def compile_equals(value: str) -> Callable[[], object]:
+        return lambda: _plan(
+            compiler,
+            filter_type="text",
+            operation="equals",
+            value=value,
+        )
+
+    short_lines = _python_lines_executed(compile_equals(short))
+    long_lines = _python_lines_executed(compile_equals(long))
+
+    assert long_lines <= short_lines + 64, (short_lines, long_lines)
+
+
+def _legacy_spellings(plan: LatestFilterPredicate) -> list[str]:
+    return [
+        value
+        for key, value in plan.params.items()
+        if key.startswith("latest_filter_legacy_index_")
+    ]
+
+
+def _max_length_value_with_k(kelvin_slots: int) -> str:
+    """A 16 KiB ASCII value carrying exactly ``kelvin_slots`` lowercase "k"s."""
+
+    size = TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES
+    if not kelvin_slots:
+        return "x" * size
+    chunk = "k" + "x" * (size // kelvin_slots - 1)
+    return (chunk * kelvin_slots).ljust(size, "x")
+
+
+@pytest.mark.parametrize(
+    ("operation", "picker_types"),
+    [("equals", False), ("in", False), ("in", True)],
+    ids=["equals", "in", "picker_in"],
+)
+@pytest.mark.parametrize("kelvin_slots", [0, 1, 2, 3, 8])
+def test_max_length_legacy_witness_builds_no_more_than_one_value_of_spellings(
+    kelvin_slots: int,
+    operation: str,
+    picker_types: bool,
+) -> None:
+    """The witness is bounded by the bytes it builds, not only by its count.
+
+    Every spelling is the whole value again, so 256 spellings of a 16 KiB
+    value are 4 MiB, built each of the ~530 times one Voice list request
+    compiled the leaf. On the local stack that value cost 4.1 s per request
+    against 0.1 s without its "k"s, while ClickHouse answered in under 20 ms.
+    Past one value's worth of spellings the witness stands down, as it does
+    past the ninth "k", and the Unicode comparison decides alone.
+    """
+
+    value = _max_length_value_with_k(kelvin_slots)
+    assert len(value) == TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES
+    assert value.count("k") == kelvin_slots
+    leaf = _attribute_filter(
+        filter_type="text",
+        operation=operation,
+        value=[value] if operation == "in" else value,
+    )
+    if picker_types:
+        leaf["filter_config"]["attribute_value_types"] = ["string"]
+    (plan,) = compile_trace_filter_plans([leaf])
+
+    spellings = _legacy_spellings(plan)
+    assert sum(map(len, spellings)) <= TYPED_STRING_SUGGESTION_MAX_UTF8_BYTES
+    # A value with no "k" is its own single spelling and keeps its witness.
+    assert spellings == ([value] if kelvin_slots == 0 else [])
+
+
+@pytest.mark.parametrize(
+    ("length", "kept"),
+    [(64, True), (65, False)],
+    ids=["exactly-one-value", "one-byte-over"],
+)
+def test_legacy_witness_keeps_every_spelling_while_their_bytes_fit(
+    length: int,
+    kept: bool,
+) -> None:
+    """Eight "k"s spell 256 ways: 64 bytes each is 16 KiB, 65 is past it."""
+
+    value = "k" * 8 + "x" * (length - 8)
+    plan = _plan(
+        compile_trace_filter_plans,
+        filter_type="text",
+        operation="equals",
+        value=value,
+    )
+
+    assert set(_legacy_spellings(plan)) == (_kelvin_spellings(value) if kept else set())
+
+
+def test_kelvin_spellings_are_built_once_per_value_not_once_per_compile() -> None:
+    """One Voice list request compiled "kkkkkkkk" ~1,800 times.
+
+    Replayed against an empty ClickHouse that request took 433 ms against
+    28 ms for "alpha", 250 ms of it rebuilding the same 256 spellings. The
+    plans must stay identical when they come from the per-value memo.
+    """
+
+    value = "k" * 8
+
+    def compile_equals() -> LatestFilterPredicate:
+        return _plan(
+            compile_trace_filter_plans,
+            filter_type="text",
+            operation="equals",
+            value=value,
+        )
+
+    memo = latest_filter_predicates._kelvin_sign_spellings
+    first = compile_equals()
+    before = memo.cache_info()
+    repeats = [compile_equals() for _ in range(3)]
+    after = memo.cache_info()
+
+    assert (after.hits - before.hits, after.misses - before.misses) == (3, 0)
+    assert set(_legacy_spellings(first)) == _kelvin_spellings(value)
+    assert all(plan == first for plan in repeats)
 
 
 def test_non_ascii_filter_declines_legacy_ascii_bloom_witness() -> None:

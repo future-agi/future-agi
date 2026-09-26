@@ -32,7 +32,7 @@ every user with such a row is represented and its newest witness is exact.
 Empty tail, costed. After an untruncated empty slice, when the rest of the
 window needs more slices at the cap than the statement budget has left, the
 walk may prove the whole tail empty in one existence statement
-(``build_matching_activity_existence_query``, ``LIMIT 1`` through the same
+(``build_matching_activity_existence_query``, the newest row through the same
 blooms) instead of one slice per day. That statement is wider than the slice
 cap, and nothing on the application read path bounds a statement's rows,
 bytes or time, so it is COSTED FIRST: ``EXPLAIN ESTIMATE`` of the identical
@@ -49,10 +49,13 @@ is issued only when the estimate's observed time fits what the probe budget
 has left. An estimate over the target, over its time, or one the walk cannot
 read, licenses nothing: the walk slices at the cap. The estimate never
 decides coverage - only the existence statement's own answer does: none
-proves the tail exhausted by the same rule an empty slice uses; a row proves
-existence, never a position, and leaves the walk slicing at the cap exactly
-where it was. The pair is asked at most once per page and once more after
-each populated slice, never twice in a row.
+proves the tail exhausted by the same rule an empty slice uses; a row is the
+tail's newest witnessed row, so the same rule proves the range above it empty,
+and the walk resumes just above it instead of slicing down to it a day at a
+time (a six-month window whose newest match lay 79 days back spent four
+requests, each an empty checkpoint, before its first rows). The pair is asked
+at most once per page and once more after each populated slice, never twice
+in a row.
 
 Budget. The walk owns a wall (``USER_LIST_PAGE_WALL_MS``) and a statement
 budget (``USER_LIST_WALK_MAX_STATEMENTS``, never less than one batch's
@@ -743,8 +746,15 @@ def _probe_wall_spent(state: _WalkState) -> None:
         state.budget.exhausted_by = "wall"
 
 
-def _tail_is_empty(state: _WalkState, *, below: datetime) -> bool | None:
-    """Whether no witnessed row lies in ``[window_start, below)``.
+@dataclass(frozen=True)
+class _Tail:
+    """The probe's answer: the newest witnessed row below, ``None`` for none."""
+
+    newest: datetime | None
+
+
+def _probe_tail(state: _WalkState, *, below: datetime) -> _Tail | None:
+    """The newest witnessed row in ``[window_start, below)``, or proof of none.
 
     Two statements under ONE budget, ``USER_LIST_WALK_PROBE_WALL_MS`` or what
     is left of the page wall, whichever is smaller: the estimate, which costs
@@ -757,9 +767,10 @@ def _tail_is_empty(state: _WalkState, *, below: datetime) -> bool | None:
     again before it reads its first row, so the existence statement is
     issued only when that time fits what the probe budget has left. ``None``
     when the walk's budget stops either, when the estimate refuses on rows
-    or on time, or when either statement fails on a read budget: a probe
-    that cannot answer inside its budget licenses nothing, and the walk goes
-    on slicing at the cap exactly as it would have without it.
+    or on time, when either statement fails on a read budget, or when the
+    row's time cannot be read inside the tail: a probe that cannot answer
+    inside its budget licenses nothing, and the walk goes on slicing at the
+    cap exactly as it would have without it.
     """
     from tracer.services import users_list_manager as ulm
 
@@ -832,7 +843,13 @@ def _tail_is_empty(state: _WalkState, *, below: datetime) -> bool | None:
             "users_matching_walk_tail_probe_failed", error_type=type(exc).__name__
         )
         return None
-    return not list(result.data or ())
+    found = list(result.data or ())
+    if not found:
+        return _Tail(newest=None)
+    newest = _utc(found[0].get("witnessed"))
+    if newest is None or not state.window_start <= newest < below:
+        return None
+    return _Tail(newest=newest)
 
 
 def _certify(state: _WalkState, batch: list[_Candidate]) -> int:
@@ -1394,21 +1411,34 @@ def walk_matching_activity_page(
         ):
             # The tail below this empty slice does not fit the statements
             # left at the cap: cost one existence statement over it and, if
-            # it fits, ask once whether anything witnessed is down there at
-            # all. Nothing means the window is exhausted; a row, an estimate
-            # over the target, or a statement the budget refuses or that
-            # fails, changes nothing: the walk slices on at the cap.
+            # it fits, ask once for the newest witnessed row down there.
+            # Nothing means the window is exhausted. A row means nothing any
+            # slice reads lies above it, as a run of empty slices down to it
+            # would have proven, so the walk resumes just above it. An
+            # estimate over the target, or a statement the budget refuses or
+            # that fails, changes nothing: the walk slices on at the cap.
             probed = True
-            empty = _tail_is_empty(state, below=slice_end)
-            if empty is None and state.budget.exhausted_by is not None:
+            tail = _probe_tail(state, below=slice_end)
+            if tail is None and state.budget.exhausted_by is not None:
                 state.stopped = True
                 break
-            if empty:
+            if tail is not None and tail.newest is None:
                 exhausted = True
                 boundary = None
                 if not _publish(state, boundary):
                     state.stopped = True
                 break
+            if tail is not None and tail.newest + _TICK < slice_end:
+                logger.info(
+                    "users_matching_walk_tail_resumed",
+                    skipped_seconds=(slice_end - tail.newest).total_seconds(),
+                )
+                boundary = tail.newest
+                if not _publish(state, boundary):
+                    state.stopped = True
+                    break
+                slice_end = tail.newest + _TICK
+                continue
         # An empty slice cost only its fixed overhead (the bloom pruned every
         # granule), so its time says nothing about a wider one: widen hard as
         # long as another statement like it fits the wall. A populated slice

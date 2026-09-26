@@ -26,6 +26,31 @@ from tracer.services.users_list_manager import (
 pytestmark = [pytest.mark.integration, pytest.mark.api]
 
 
+_SPAN_KIND_AGENT_FILTERS = [
+    {
+        "column_id": "start_time",
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": "datetime",
+            "filter_op": "between",
+            "filter_value": [
+                "2026-03-25T00:00:00+00:00",
+                "2026-09-25T00:00:00+00:00",
+            ],
+        },
+    },
+    {
+        "column_id": "gen_ai.span.kind",
+        "filter_config": {
+            "col_type": "SPAN_ATTRIBUTE",
+            "filter_type": "text",
+            "filter_op": "equals",
+            "filter_value": "AGENT",
+        },
+    },
+]
+
+
 def _ch_stub(rows):
     return MagicMock(data=rows)
 
@@ -266,6 +291,27 @@ class TestUsersExport:
         assert response.json()["code"] == "cursor_sort_unsupported"
         execute_query.assert_not_called()
 
+    def test_numbered_attribute_filter_asks_for_cursor_before_any_clickhouse_read(
+        self, auth_client, organization, workspace, observe_project
+    ):
+        # Dev 2026-09-25: an API client sent this unsorted numbered page and
+        # was told to "clear the sort" after a physical-presence read. The
+        # same filter with cursor_mode=true returned 200.
+        with patch.object(AnalyticsQueryService, "execute_ch_query") as execute_query:
+            response = auth_client.get(
+                "/tracer/users/",
+                {
+                    "project_id": str(observe_project.id),
+                    "current_page_index": 0,
+                    "page_size": 25,
+                    "filters": json.dumps(_SPAN_KIND_AGENT_FILTERS),
+                },
+            )
+
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.json()["code"] == "user_filter_requires_cursor"
+        execute_query.assert_not_called()
+
     @pytest.mark.parametrize("method", ["get", "post"])
     def test_users_endpoint_documents_bounded_failures(self, method):
         from tfc.utils.api_serializers import ApiErrorResponseSerializer
@@ -441,6 +487,31 @@ class TestUsersExportStreaming:
         ):
             with pytest.raises(RuntimeError, match="attr query down"):
                 manager.list_payload(page_size=30, current_page=0)
+
+    def test_numbered_list_refuses_attribute_filter_before_any_read(self):
+        # The shape decides the contract, not the data: a project with no user
+        # spans must refuse this page exactly like one with them.
+        pid = str(uuid.uuid4())
+        manager = UsersListManager(
+            organization_id=str(uuid.uuid4()),
+            allowed_project_ids=[pid],
+            project_id=pid,
+            filters=_SPAN_KIND_AGENT_FILTERS,
+        )
+        with (
+            patch.object(
+                AnalyticsQueryService, "execute_ch_query", return_value=_ch_stub([])
+            ) as execute_query,
+            patch(
+                "tracer.services.users_list_manager._log_user_read_failure"
+            ) as log_failure,
+        ):
+            with pytest.raises(UnsupportedBoundedUserListQuery):
+                manager.list_payload(page_size=25, current_page=0)
+
+        execute_query.assert_not_called()
+        # A typed 422 is not a read failure; no error event or stack trace.
+        log_failure.assert_not_called()
 
     def test_list_reads_keep_memory_policy_without_latency_abort_caps(self):
         from tracer.services.clickhouse.application_read_policy import (

@@ -296,6 +296,55 @@ describe("PrimaryGraph", () => {
     );
   });
 
+  it("asks the trace graph for the voice-call population on the Voice screen", async () => {
+    renderWithQueryClient(
+      <PrimaryGraph observeIdOverride="project-override" observeType="voice" />,
+    );
+
+    await waitFor(() => expect(axios.post).toHaveBeenCalled());
+    const [endpoint, body] = axios.post.mock.calls.at(-1);
+    expect(endpoint).toBe("/tracer/trace/get_graph_methods/");
+    expect(body.observe_type).toBe("voice");
+  });
+
+  it("excludes simulation calls from the Voice chart when the list does", async () => {
+    renderWithQueryClient(
+      <PrimaryGraph
+        observeIdOverride="project-override"
+        observeType="voice"
+        removeSimulationCalls
+      />,
+    );
+
+    await waitFor(() => expect(axios.post).toHaveBeenCalled());
+    const [, body] = axios.post.mock.calls.at(-1);
+    expect(body.observe_type).toBe("voice");
+    expect(body.remove_simulation_calls).toBe(true);
+  });
+
+  it("sends the simulation-call toggle only with the voice population", async () => {
+    renderWithQueryClient(
+      <PrimaryGraph
+        observeIdOverride="project-override"
+        removeSimulationCalls
+      />,
+    );
+
+    await waitFor(() => expect(axios.post).toHaveBeenCalled());
+    expect(axios.post.mock.calls.at(-1)[1]).not.toHaveProperty(
+      "remove_simulation_calls",
+    );
+  });
+
+  it("sends no population scope for an ordinary trace graph", async () => {
+    renderWithQueryClient(
+      <PrimaryGraph observeIdOverride="project-override" />,
+    );
+
+    await waitFor(() => expect(axios.post).toHaveBeenCalled());
+    expect(axios.post.mock.calls.at(-1)[1]).not.toHaveProperty("observe_type");
+  });
+
   it("offers project eval configs and excludes simulation-only system metrics", async () => {
     axios.get.mockResolvedValue({
       data: {
@@ -487,7 +536,10 @@ describe("PrimaryGraph", () => {
       ),
     );
     const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
     });
     const graph = (projectId) => (
       <QueryClientProvider client={queryClient}>

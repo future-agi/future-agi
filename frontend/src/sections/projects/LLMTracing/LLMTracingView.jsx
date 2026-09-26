@@ -193,6 +193,7 @@ import { buildAddEvalsDraft } from "./buildAddEvalsDraft";
 import SelectAllBanner from "./SelectAllBanner";
 import { getSelectionCountState } from "./listTotalMetadata";
 import { spanSourceIdsFromPhysicalRowIds } from "./spanPhysicalIdentity";
+import { traceIdsFromGridRowIds } from "./traceGridRowId";
 import { normalizeVoiceCallSavedFilters } from "./voiceCallFilterFields";
 import { serializeTraceFiltersForPersistence } from "./filter_persistence";
 import useProjectFilterField from "../UsersView/useProjectFilterField";
@@ -1007,6 +1008,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       return { ids: [], error };
     }
   }, [selectedSpans]);
+  // On the user page the trace grid's row ids carry each row's project.
+  const selectedTraceIds = useMemo(
+    () => traceIdsFromGridRowIds(selectedTraces),
+    [selectedTraces],
+  );
 
   const {
     openReplaySessionDrawer,
@@ -1192,6 +1198,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     projectSource,
     allowOrgScope: isUserMode,
   });
+  // The Voice screen lists voice calls (list_voice_calls), so its trace graph
+  // must count the same population rather than every trace in the project.
+  const traceGraphObserveType =
+    projectSource === PROJECT_SOURCE.SIMULATOR && selectedTab !== "spans"
+      ? "voice"
+      : undefined;
 
   const effectiveViewMode = canonicalObserveViewMode({
     viewMode,
@@ -3779,6 +3791,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     ? endpoints.project.getSpanGraphData()
                     : endpoints.project.getTraceGraphData()
                 }
+                observeType={traceGraphObserveType}
+                removeSimulationCalls={!!excludeSimulationCalls}
                 onFilterToggle={
                   showCompare
                     ? (e) => handleCompareFilterToggle(e, "primary")
@@ -3816,6 +3830,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       ? endpoints.project.getSpanGraphData()
                       : endpoints.project.getTraceGraphData()
                   }
+                  observeType={traceGraphObserveType}
+                  removeSimulationCalls={!!excludeSimulationCalls}
                   onFilterToggle={(e) =>
                     handleCompareFilterToggle(e, "compare")
                   }
@@ -4298,6 +4314,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     // Call rows don't carry tags — fetch current tags per
                     // trace so the popover can merge correctly. Guard
                     // against concurrent clicks triggering duplicate fetches.
+                    // A call's trace id can exist in several projects, so
+                    // read this project's copy.
                     if (tagsFetching) return;
                     const ids = (selectedCallIds || []).filter(Boolean);
                     if (ids.length === 0) return;
@@ -4305,7 +4323,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     Promise.all(
                       ids.map((id) =>
                         axios
-                          .get(endpoints.project.getTrace(id))
+                          .get(endpoints.project.getTrace(id), {
+                            params: { project_id: observeId },
+                          })
                           .then((res) => ({
                             id,
                             type: "trace",
@@ -4711,10 +4731,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       // Simulator calls are traces under the hood
                       return (selectedCallIds || []).filter(Boolean);
                     }
-                    return (
-                      selectedTraces?.filter((id) => id != null && id !== "") ||
-                      []
-                    );
+                    return selectedTraceIds;
                   })()}
                   selectedSpans={spanSourceSelection.ids}
                   currentTab={
@@ -4800,7 +4817,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   // deselection after opt-in is a follow-up (client-side
                   // CallLogsGrid has no inverted-selection model).
                   if (filterSelectionMode && selectedTab === "trace") {
-                    return selectedTraces || [];
+                    return selectedTraceIds;
                   }
                   if (spanFilterSelectionMode && selectedTab === "spans") {
                     return spanSourceSelection.ids;
@@ -4814,7 +4831,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                   if (projectSource === PROJECT_SOURCE.SIMULATOR)
                     return (selectedCallIds || []).filter(Boolean);
                   return selectedTab === "trace"
-                    ? (selectedTraces || []).filter(Boolean)
+                    ? selectedTraceIds
                     : spanSourceSelection.ids;
                 })()}
                 itemName={(() => {

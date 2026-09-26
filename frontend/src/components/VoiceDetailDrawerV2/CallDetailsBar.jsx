@@ -235,7 +235,10 @@ const CallDetailsBar = ({ data, onAction, hiddenActionIds = [] }) => {
   // call IDs aren't real tracer traces and the endpoint 404s, which
   // surfaces a nasty "Unable to retrieve trace" toast.
   const isObserve = data?.module === "project";
-  const { data: traceDetail } = useGetTraceDetail(isObserve ? traceId : null);
+  const { data: traceDetail } = useGetTraceDetail(
+    isObserve ? traceId : null,
+    data?.project_id,
+  );
   const tags =
     traceDetail?.trace?.tags ||
     traceDetail?.tags ||

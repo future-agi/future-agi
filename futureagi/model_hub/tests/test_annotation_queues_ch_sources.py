@@ -139,8 +139,10 @@ class _ReaderCM:
             return []
         return [self._span] if str(self._span.id) in ids else []
 
-    def get(self, span_id):
+    def get(self, span_id, *, project_id=None, project_ids=None):
         if self._span is None:
+            return None
+        if project_ids is not None and str(self._span.project_id) not in project_ids:
             return None
         return self._span if str(span_id) == str(self._span.id) else None
 
@@ -172,7 +174,7 @@ class _ReaderCM:
             str(self._span.trace_id): (str(self._span.id), str(self._span.project_id))
         }
 
-    def scope_by_ids(self, span_ids):
+    def scope_by_ids(self, span_ids, *, project_ids=None):
         """``{span_id: scope}`` where ``scope.project_id`` — for-source span match."""
         ids = {str(s) for s in span_ids}
         if self._span is None or str(self._span.id) not in ids:

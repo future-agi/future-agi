@@ -43,9 +43,27 @@ class TestGatewayClient:
 
     def test_internal_url_supports_legacy_env_name(self, monkeypatch):
         monkeypatch.delenv("AGENTCC_GATEWAY_INTERNAL_URL", raising=False)
-        monkeypatch.setenv("AGENTCC_INTERNAL_URL", "http://agentcc-gateway:8090")
+        monkeypatch.setenv("AGENTCC_INTERNAL_URL", "http://legacy-gateway:8080")
 
-        assert resolve_gateway_internal_url() == "http://agentcc-gateway:8090"
+        assert resolve_gateway_internal_url() == "http://legacy-gateway:8080"
+
+    def test_internal_url_defaults_to_the_in_network_gateway(self, monkeypatch):
+        # Inside a container, localhost:8090 is the container itself; the
+        # gateway listens on agentcc-gateway:8080 (8090 is only the port
+        # compose publishes on the host).
+        monkeypatch.delenv("AGENTCC_GATEWAY_INTERNAL_URL", raising=False)
+        monkeypatch.delenv("AGENTCC_INTERNAL_URL", raising=False)
+        monkeypatch.delenv("AGENTCC_GATEWAY_URL", raising=False)
+
+        assert resolve_gateway_internal_url() == "http://agentcc-gateway:8080"
+
+    def test_internal_url_honours_an_explicit_gateway_url(self, monkeypatch):
+        # Host-side tools reach the gateway on the published port.
+        monkeypatch.delenv("AGENTCC_GATEWAY_INTERNAL_URL", raising=False)
+        monkeypatch.delenv("AGENTCC_INTERNAL_URL", raising=False)
+        monkeypatch.setenv("AGENTCC_GATEWAY_URL", "http://localhost:8090")
+
+        assert resolve_gateway_internal_url() == "http://localhost:8090"
 
     @patch("agentcc.services.gateway_client.httpx.Client")
     def test_health_check(self, mock_client_cls):

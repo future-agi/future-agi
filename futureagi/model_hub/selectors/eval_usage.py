@@ -269,15 +269,19 @@ def read_eval_usage(
         }
     )
 
-    live = "_peerdb_is_deleted = 0 AND deleted = 0"
-    # Preserve the pre-CH contract exactly: total_runs is all live runs for the
-    # organization/workspace/template, independent of the requested period.
-    # Unlike period rendering, that contract never had project membership in
-    # its scope. Avoiding the trace dictionary here keeps this exact count on
-    # the table's organization/source ordering while the shared finite budget
-    # turns an unprovable count into a typed failure, never a partial success.
+    # Usage counts only successful runs; every run, failed or not, stays in
+    # the eval logs. Like the tombstones, status is judged on each row's newest
+    # version, after the collapse, so a run whose latest version is an error
+    # cannot count through an older success version.
+    live = "_peerdb_is_deleted = 0 AND deleted = 0 AND status = %(success_status)s"
+    # total_runs is every successful live run for the organization/workspace/
+    # template, independent of the requested period. Unlike period rendering,
+    # that contract never had project membership in its scope. Avoiding the
+    # trace dictionary here keeps this exact count on the table's
+    # organization/source ordering while the shared finite budget turns an
+    # unprovable count into a typed failure, never a partial success.
     total_slice = _latest_usage_slice(
-        projection="id, deleted, _peerdb_is_deleted",
+        projection="id, status, deleted, _peerdb_is_deleted",
         scope=scope,
         start_param=None,
         end_param=None,
@@ -382,7 +386,7 @@ def read_eval_usage(
     def page_count_query(*, extra_predicates: tuple[str, ...] = ()) -> str:
         return f"""
             SELECT count() AS page_window_count
-            FROM ({page_slice(projection="id, created_at, eval_trace_id, deleted, _peerdb_is_deleted", extra_predicates=extra_predicates)}) AS latest_usage
+            FROM ({page_slice(projection="id, created_at, eval_trace_id, status, deleted, _peerdb_is_deleted", extra_predicates=extra_predicates)}) AS latest_usage
             WHERE {live}
         """
 
@@ -393,7 +397,7 @@ def read_eval_usage(
                     AS older_count,
                 countIf(created_at >= %(page_window_midpoint)s)
                     AS newer_count
-            FROM ({page_slice(projection="id, created_at, eval_trace_id, deleted, _peerdb_is_deleted")}) AS latest_usage
+            FROM ({page_slice(projection="id, created_at, eval_trace_id, status, deleted, _peerdb_is_deleted")}) AS latest_usage
             WHERE {live}
         """
 
@@ -661,7 +665,7 @@ def read_eval_usage(
             if current_count and current_count > _MAX_PAGE_SELECTION_ROWS:
                 bounds_query = f"""
                     SELECT min(id), max(id), count()
-                    FROM ({page_slice(projection="id, created_at, eval_trace_id, deleted, _peerdb_is_deleted")}) AS latest_usage
+                    FROM ({page_slice(projection="id, created_at, eval_trace_id, status, deleted, _peerdb_is_deleted")}) AS latest_usage
                     WHERE {live}
                 """
                 bounds_params = {
@@ -704,7 +708,7 @@ def read_eval_usage(
                             countIf(id <= %(page_id_midpoint)s) AS lower_count,
                             countIf(id > %(page_id_midpoint)s) AS upper_count
                         FROM (
-                            {page_slice(projection="id, created_at, eval_trace_id, deleted, _peerdb_is_deleted", extra_predicates=id_predicates)}
+                            {page_slice(projection="id, created_at, eval_trace_id, status, deleted, _peerdb_is_deleted", extra_predicates=id_predicates)}
                         ) AS latest_usage
                         WHERE {live}
                     """

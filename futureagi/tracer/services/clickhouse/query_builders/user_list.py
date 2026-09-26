@@ -739,23 +739,28 @@ class UserListQueryBuilder(BaseQueryBuilder):
     def build_matching_activity_existence_query(
         self, *, range_start: Any, range_end: Any
     ) -> tuple[str, dict[str, Any]]:
-        """Whether any witnessed row lies in ``[range_start, range_end)``.
+        """The newest witnessed row's time in ``[range_start, range_end)``, if any.
 
-        The same scan shape as a slice, with no aggregation and ``LIMIT 1``:
-        it stops at the first witnessed row, and for a value the blooms
-        exclude everywhere it reads nothing but index marks. The walk uses it
-        to prove a long empty tail in one statement instead of one statement
-        per day; a row proves only existence, never a position. It is issued
-        only after ``build_matching_activity_existence_estimate_query`` has
-        costed it: nothing else bounds a statement wider than the slice cap
-        (application reads carry no server row, byte or time cap).
+        The same scan shape as a slice, with no aggregation: the newest row
+        (``ORDER BY start_time DESC LIMIT 1``) of the rows the blooms leave,
+        and for a value the blooms exclude everywhere it reads nothing but
+        index marks. The walk uses it to prove a long empty tail in one
+        statement instead of one statement per day, and when the tail is not
+        empty, to prove the range above its newest row empty: every slice
+        reads this predicate, so none would find a row there. It reads every
+        row its estimate counts, as the ``LIMIT 1`` existence statement it
+        replaced already did on dev (52,158 rows and 127 MiB for both), so it
+        is issued only after ``build_matching_activity_existence_estimate_query``
+        has costed it: nothing else bounds a statement wider than the slice
+        cap (application reads carry no server row, byte or time cap).
         """
         params = self._matching_activity_range_params(range_start, range_end)
         query = f"""
-        SELECT 1 AS witnessed
+        SELECT start_time AS witnessed
         FROM spans
         PREWHERE {self._matching_activity_range_predicate()}
         WHERE {params.pop("_witness_sql")}
+        ORDER BY start_time DESC
         LIMIT 1
         {_SEEDED_PAGE_READ_SETTINGS}
         """

@@ -23,7 +23,10 @@ const PANEL_WIDTH = "60vw";
 const TraceDetailPanel = ({ traceId, open, onClose, projectId }) => {
   const [selectedSpanId, setSelectedSpanId] = useState(null);
 
-  const { data, isLoading } = useGetTraceDetail(open ? traceId : null);
+  const { data, isLoading } = useGetTraceDetail(
+    open ? traceId : null,
+    projectId,
+  );
 
   const spans = data?.observation_spans;
   const summary = data?.summary;

@@ -1309,7 +1309,7 @@ def process_single_error_localization(task_id):
             )
             task.save(update_fields=["error_message"])
         api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-        api_call_log_row.save(update_fields=["status"])
+        api_call_log_row.save(update_fields=["status", "updated_at"])
 
         # Dual-write: emit usage event for new billing system (cost-based)
         try:

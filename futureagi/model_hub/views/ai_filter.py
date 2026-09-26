@@ -635,6 +635,26 @@ def _char_ngrams(s, n):
     return {s[i : i + n] for i in range(len(s) - n + 1)}
 
 
+def _dataset_column_value_rows(sql, params, *, deadline):
+    """Run one grounding read with the value wall as its statement timeout."""
+
+    from tracer.services.postgres_read_policy import application_postgres_reads
+
+    def remaining_ms():
+        return deadline.remaining_ms(SMART_FILTER_VALUE_READ_WALL_MS)
+
+    with application_postgres_reads(
+        connection=connection,
+        atomic=transaction.atomic,
+        check_request=remaining_ms,
+        statement_timeout_ms=remaining_ms,
+        read_only=True,
+    ):
+        with connection.cursor() as cursor:
+            cursor.execute(sql, params)
+            return [row[0] for row in cursor]
+
+
 def _fetch_dataset_column_values(
     dataset_id,
     column_id,
@@ -646,23 +666,20 @@ def _fetch_dataset_column_values(
 
     The LIMIT includes a sentinel. Filling it is a typed ``too broad`` refusal,
     never a sampled vocabulary. Array/JSON blobs are flattened only after the
-    complete searched raw-value set has been proven finite.
+    complete searched raw-value set has been proven finite. Values come from
+    PostgreSQL, which holds the dataset: the ClickHouse mirror is ordered by
+    cell id, so it cannot read one column cheaply, and it trails every write.
 
     NOTE: ownership is validated by the caller (which resolves the
     dataset against the workspace before calling this).
     """
     import json as _json
+    import uuid
 
-    from tracer.services.clickhouse.client import is_clickhouse_enabled
-    from tracer.services.clickhouse.query_service import (
-        AnalyticsQueryService,
-    )
     from tracer.services.clickhouse.read_budget import ReadDeadline
 
     if not dataset_id or not column_id:
         raise _grounding_too_broad()
-    if not is_clickhouse_enabled():
-        raise _grounding_unavailable()
     search = _normalize_grounding_search(search_query)
     deadline = deadline or ReadDeadline.start(SMART_FILTER_VALUE_READ_WALL_MS)
 
@@ -680,35 +697,25 @@ def _fetch_dataset_column_values(
     except Column.DoesNotExist as exc:
         raise _grounding_too_broad() from exc
 
-    analytics = AnalyticsQueryService()
     try:
-        sql = (
+        raw = _dataset_column_value_rows(
             "SELECT DISTINCT value AS val "
-            "FROM model_hub_cell FINAL "
-            "WHERE _peerdb_is_deleted = 0 "
-            "AND dataset_id = toUUID(%(dataset_id)s) "
-            "AND column_id = toUUID(%(column_id)s) "
-            "AND value != '' "
-            "AND positionCaseInsensitiveUTF8(value, %(search)s) > 0 "
+            "FROM model_hub_cell "
+            "WHERE dataset_id = %(dataset_id)s "
+            "AND column_id = %(column_id)s "
+            "AND deleted = false "
+            "AND value <> '' "
+            "AND strpos(lower(value), lower(%(search)s)) > 0 "
             "ORDER BY val "
-            "LIMIT %(result_limit)s"
-        )
-        result = analytics.execute_ch_query(
-            sql,
+            "LIMIT %(result_limit)s",
             {
-                "dataset_id": str(dataset_id),
-                "column_id": str(column_id),
+                "dataset_id": uuid.UUID(str(dataset_id)),
+                "column_id": uuid.UUID(str(column_id)),
                 "search": search,
                 "result_limit": SMART_FILTER_VALUE_LIMIT + 1,
             },
-            timeout_ms=deadline.remaining_ms(SMART_FILTER_VALUE_READ_WALL_MS),
-            settings={
-                "max_result_rows": SMART_FILTER_VALUE_LIMIT + 1,
-                "result_overflow_mode": "throw",
-                "timeout_overflow_mode": "throw",
-            },
+            deadline=deadline,
         )
-        raw = [row["val"] for row in result.data if row.get("val")]
         if len(raw) > SMART_FILTER_VALUE_LIMIT:
             raise _grounding_too_broad()
     except SmartFilterGroundingError:

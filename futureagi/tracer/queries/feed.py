@@ -677,7 +677,9 @@ def get_cluster_detail(
 
     success_trace: TracePreview | None = None
     if cluster.success_trace_id:
-        success_trace = _ch_trace_preview(str(cluster.success_trace_id))
+        success_trace = _ch_trace_preview(
+            str(cluster.success_trace_id), str(cluster.project_id)
+        )
     elif cluster.source == ClusterSource.EVAL and cluster.eval_config_id:
         # Eval clusters never get the scanner's KNN success match. A genuine
         # PASSING result for the same eval is the honest "working" reference
@@ -707,7 +709,9 @@ def get_cluster_detail(
                     [str(passing_session)], str(cluster.project_id)
                 ).get(str(passing_session))
                 if rep_tid:
-                    success_trace = _ch_trace_preview(str(rep_tid))
+                    success_trace = _ch_trace_preview(
+                        str(rep_tid), str(cluster.project_id)
+                    )
         else:
             member_ids = _trace_ids_for_cluster(
                 cluster.cluster_id, str(cluster.project_id)
@@ -725,13 +729,17 @@ def get_cluster_detail(
                 .first()
             )
             if passing_trace_id:
-                success_trace = _ch_trace_preview(str(passing_trace_id))
+                success_trace = _ch_trace_preview(
+                    str(passing_trace_id), str(cluster.project_id)
+                )
 
     representative_trace: TracePreview | None = None
     if row.trace_id:
         # Session clusters' latest_trace_id is an effective trace (the session's
         # rep) with no junction row — hydrate it from the CH root span.
-        representative_trace = _ch_trace_preview(str(row.trace_id))
+        representative_trace = _ch_trace_preview(
+            str(row.trace_id), str(cluster.project_id)
+        )
 
     rca = RcaSummary(
         synthesis=cluster.rca_synthesis,
@@ -869,16 +877,19 @@ def _trace_output_str(trace) -> str | None:
     return _safe_str(trace.output)
 
 
-def _ch_trace_preview(trace_id: str) -> TracePreview | None:
+def _ch_trace_preview(trace_id: str, project_id: str) -> TracePreview | None:
     """``TracePreview`` for a trace hydrated from its CH root span — the sole
     source post-cutover (no PG ``Trace`` row). Input/output prefer the typed
     ``input.value``/``output.value`` attrs, falling back to the span's raw
     input/output payload, matching the pass-reel precedence so the same trace
     renders identically across surfaces. ``None`` if the trace has no CH root.
+
+    ``project_id`` is the cluster's project: a trace id can exist in several
+    projects and organizations, and the preview must show this project's copy.
     """
     if not trace_id:
         return None
-    root = _get_root_span(str(trace_id))
+    root = _get_root_span(str(trace_id), project_id)
     if root is None:
         return None
     attrs = root.attrs_string or {}
@@ -1773,14 +1784,15 @@ def _fetch_pattern_summary(
     return PatternSummary(insights=insights, key_moments=key_moments)
 
 
-def _get_root_span(trace_id: str) -> CHSpan | None:
+def _get_root_span(trace_id: str, project_id: str | None = None) -> CHSpan | None:
     """Root span = no parent (NULL or empty string).
 
     Single-trace convenience — delegates to roots_by_trace_ids which
     queries only root spans (parent_span_id = '') instead of listing
     every span. Returns the latest root per the batch helper's ordering.
+    ``project_id`` pins the read to one project's copy of the trace.
     """
-    roots = _get_root_spans_batch([str(trace_id)])
+    roots = _get_root_spans_batch([str(trace_id)], project_id)
     return roots.get(str(trace_id))
 
 
@@ -2431,7 +2443,7 @@ def _fetch_success_trace_pass_reel(
     steps: list[dict] = []
 
     # 1. User input/output from the CH root span — the sole source post-cutover.
-    root = _get_root_span(success_id)
+    root = _get_root_span(success_id, str(cluster.project_id))
     input_text = None
     output_text = None
     if root:
@@ -3328,7 +3340,9 @@ def _fetch_sidebar_ai_metadata(
     model_version: str | None = None
     if focus_trace_id:
         with get_reader() as reader:
-            llm_span = reader.first_span_by_type(focus_trace_id, "llm")
+            llm_span = reader.first_span_by_type(
+                focus_trace_id, "llm", project_id=str(cluster.project_id)
+            )
         if llm_span:
             model = llm_span.model or None
             # CHSpan typed-Map string attrs live in attrs_string.
