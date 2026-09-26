@@ -317,6 +317,12 @@ def _platform_simulator_material() -> tuple[dict[str, str], bytes | None]:
         "SIMULATOR_STT_PROVIDER",
         "SIMULATOR_TTS_MODEL",
         "SIMULATOR_TTS_PROVIDER",
+        # Observe credentials for the guest. The harness's model calls happen inside the sandbox,
+        # so without these a run is only readable as log text in the diagnostics archive.
+        "HARNESS_OBSERVABILITY",
+        "FI_API_KEY",
+        "FI_SECRET_KEY",
+        "FI_HARNESS_PROJECT",
         # The caller's surroundings. Without these a hosted call is always heard in the clear,
         # whatever the scenario asked for, because the simulator reads them from its environment.
         "ALK_BACKGROUND_NOISE",
