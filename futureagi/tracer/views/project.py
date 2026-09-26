@@ -2,6 +2,7 @@ from datetime import timedelta
 from functools import wraps
 
 import structlog
+from django.conf import settings
 from django.db import models
 from django.db.models import Count
 from django.utils import timezone
@@ -82,6 +83,7 @@ from tracer.utils.constants import (
     INSTALLATION_GUIDE,
     INSTRUMENTORS,
     OBSERVE_CODEBLOCK,
+    ORG_BASE_URL,
     ORG_KEYS,
     PROTOTYPE_CODEBLOCK,
 )
@@ -97,6 +99,22 @@ from tracer.utils.helper import (
 from tracer.utils.property_registry import validate_property_graph_namespace
 
 logger = structlog.get_logger(__name__)
+
+
+def sdk_key_snippets():
+    """The keys block of the in-app SDK snippet, per language, with placeholder
+    keys. Off Future AGI Cloud it also sets FI_BASE_URL to this install's
+    collector: the SDKs default to Cloud, and without it the spans (prompts and
+    completions included) would leave for api.futureagi.com."""
+    snippets = {
+        lang: code.format("YOUR_FI_API_KEY", "YOUR_FI_SECRET_KEY")
+        for lang, code in ORG_KEYS.items()
+    }
+    if not settings.CLOUD_DEPLOYMENT:
+        for lang, line in ORG_BASE_URL.items():
+            snippets[lang] += line.format(settings.FI_COLLECTOR_PUBLIC_URL)
+    return snippets
+
 
 # The Observe landing page is a latency-critical navigation path. Never replay
 # raw span versions here: the dedicated rollup has one aggregate state per
@@ -1413,10 +1431,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         response = {
             "installation_guide": INSTALLATION_GUIDE,
             "project_add_code": sdk_code,
-            "keys": {
-                lang: code.format("YOUR_FI_API_KEY", "YOUR_FI_SECRET_KEY")
-                for lang, code in ORG_KEYS.items()
-            },
+            "keys": sdk_key_snippets(),
             "instruments": INSTRUMENTORS,
         }
         return self._gm.success_response(response)

@@ -13,28 +13,44 @@ verdict and the assertions pass for the wrong reason.
 """
 
 import re
+import socket
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from botocore.exceptions import ClientError, EndpointConnectionError
 from django.core.cache import cache
 from rest_framework import status
 
-from botocore.exceptions import ClientError, EndpointConnectionError
-
+from agentic_eval.core.embeddings import serving_client
+from tfc.views import setup_checks
 from tfc.views.setup_checks import (
+    ABSENT,
     CHECKS,
+    DISTRIBUTED,
     EXPERIMENT,
     FAILED,
+    HELM,
     LIVE,
     PASSED,
     SKIPPED,
+    STANDALONE,
     WARNING,
+    _code_executor_up,
+    _is_local_host,
+    _model_serving_up,
     _object_storage_up,
     _safe,
+    _setup,
+    _tls_up,
 )
 
 INSTALLATION = Path(__file__).resolve().parents[3] / "INSTALLATION.md"
+
+# Bound at import, before the conftest fixture swaps in its stand-in.
+REAL_SERVING_PROBE = serving_client._probe
 
 
 def _github_anchor(heading):
@@ -49,11 +65,11 @@ ALL_IDS = [c["id"] for c in CHECKS]
 
 
 def all_up():
-    return {check_id: True for check_id in ALL_IDS}
+    return dict.fromkeys(ALL_IDS, True)
 
 
 def all_down():
-    return {check_id: False for check_id in ALL_IDS}
+    return dict.fromkeys(ALL_IDS, False)
 
 
 def down_only(*check_ids):
@@ -63,15 +79,19 @@ def down_only(*check_ids):
     return results
 
 
-def get_checks(client, mode=None, probe_results=None):
-    """Request a snapshot with probe results forced, and return result payload."""
+def get_checks(client, mode=None, probe_results=None, setup=DISTRIBUTED, **extra):
+    """Request a snapshot with probe results and the setup forced, and return
+    the result payload. ``extra`` goes to the test client (e.g. HTTP_HOST)."""
     cache.clear()
     url = SETUP_CHECKS_URL if mode is None else f"{SETUP_CHECKS_URL}?mode={mode}"
-    with patch(
-        "tfc.views.setup_checks._run_probes",
-        return_value=probe_results if probe_results is not None else all_up(),
+    with (
+        patch(
+            "tfc.views.setup_checks._run_probes",
+            return_value=probe_results if probe_results is not None else all_up(),
+        ),
+        patch("tfc.views.setup_checks._setup", return_value=setup),
     ):
-        response = client.get(url)
+        response = client.get(url, **extra)
     assert response.status_code == status.HTTP_200_OK
     return response.json()["result"]
 
@@ -110,7 +130,22 @@ class TestSetupChecksResponseShape:
             body = api_client.get(SETUP_CHECKS_URL).json()
 
         assert body["status"] is True
-        assert set(body["result"]) == {"status", "mode", "checks"}
+        assert set(body["result"]) == {
+            "status",
+            "mode",
+            "setup",
+            "collector_http_url",
+            "checks",
+        }
+
+    def test_hands_out_the_public_collector_url(self, api_client, monkeypatch):
+        """What an SDK outside the stack sets as FI_BASE_URL; the installer
+        moves the port when 4318 is taken."""
+        monkeypatch.setattr(
+            setup_checks.settings, "FI_COLLECTOR_PUBLIC_URL", "http://localhost:4319"
+        )
+
+        assert get_checks(api_client)["collector_http_url"] == "http://localhost:4319"
 
     def test_every_check_carries_the_contracted_fields(self, api_client):
         result = get_checks(api_client)
@@ -193,7 +228,9 @@ class TestVerdict:
     def test_every_check_is_required_in_live(self, api_client):
         """Live mode draws no line between stack-level and feature-level: a
         deployment serving real traffic is expected to have all of it. Anything
-        down therefore blocks, and experiment mode is where that relaxes."""
+        down therefore blocks, and experiment mode is where that relaxes. A
+        service the install does not run at all is ABSENT, not down; see
+        TestSkipped."""
         result = get_checks(
             api_client, mode=LIVE, probe_results=down_only("code_executor")
         )
@@ -203,15 +240,11 @@ class TestVerdict:
         assert result["status"] == "issues"
         assert all(c[LIVE]["required"] for c in CHECKS)
 
-    def test_issues_requires_a_check_that_is_both_required_and_failed(
-        self, api_client
-    ):
+    def test_issues_requires_a_check_that_is_both_required_and_failed(self, api_client):
         for mode in (LIVE, EXPERIMENT):
             result = get_checks(api_client, mode=mode, probe_results=all_down())
             blocking = [
-                c
-                for c in result["checks"]
-                if c["required"] and c["status"] == FAILED
+                c for c in result["checks"] if c["required"] and c["status"] == FAILED
             ]
             assert (result["status"] == "issues") is bool(blocking)
 
@@ -309,25 +342,84 @@ class TestSkipped:
         assert skipped, "expected experiment mode to skip at least one service"
         assert all(not c["required"] for c in skipped)
 
-    def test_model_serving_blocks_in_live_and_only_warns_in_experiment(
-        self, api_client
+    @pytest.mark.parametrize("mode", [LIVE, EXPERIMENT])
+    @pytest.mark.parametrize(
+        "setup, how_to_enable",
+        [(STANDALONE, "--profile ml"), (DISTRIBUTED, "MODEL_SERVING_URL")],
+    )
+    def test_absent_model_serving_is_skipped_in_both_modes(
+        self, api_client, mode, setup, how_to_enable
     ):
-        """The eval runtime is optional to experiment with and mandatory to serve
-        real traffic, so the same outage stops one mode and not the other."""
-        live = get_checks(
-            api_client, mode=LIVE, probe_results=down_only("model_serving")
-        )
-        experiment = get_checks(
-            api_client, mode=EXPERIMENT, probe_results=down_only("model_serving")
+        """The standalone install only runs model serving with the `ml` profile,
+        and every feature that needs it degrades on its own, so its absence is
+        an install choice in either mode — never a blocker. The way to turn it
+        on depends on the setup."""
+        probes = all_up()
+        probes["model_serving"] = ABSENT
+        result = get_checks(api_client, mode=mode, probe_results=probes, setup=setup)
+
+        check = by_id(result, "model_serving")
+        assert check["status"] == SKIPPED
+        assert check["required"] is False
+        assert how_to_enable in check["fix"]
+        assert "everything else works" in check["detail"]
+        assert check["docs_url"].startswith("https://")
+        assert result["status"] == "ok"
+
+    @pytest.mark.parametrize("mode", [LIVE, EXPERIMENT])
+    def test_absent_code_executor_on_helm_is_optional(self, api_client, mode):
+        """The chart runs no sandbox by default (it needs privileged pods), and
+        leaves CODE_EXECUTOR_URL empty: that is a choice, not an outage."""
+        probes = all_up()
+        probes["code_executor"] = ABSENT
+        result = get_checks(api_client, mode=mode, probe_results=probes, setup=HELM)
+
+        check = by_id(result, "code_executor")
+        assert check["status"] == SKIPPED
+        assert check["required"] is False
+        assert "codeExecutor.enabled=true" in check["fix"]
+        assert "codeExecutor.localFallback=true" in check["fix"]
+        assert result["status"] == "ok"
+
+    def test_an_empty_code_executor_url_is_absent_without_a_probe(self, monkeypatch):
+        monkeypatch.setenv("CODE_EXECUTOR_URL", "")
+        with patch.object(setup_checks, "_http_ok") as http_ok:
+            assert setup_checks._code_executor_up() == ABSENT
+        http_ok.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "mode, status_when_down, blocks",
+        [(LIVE, FAILED, True), (EXPERIMENT, WARNING, False)],
+    )
+    def test_deployed_model_serving_that_is_down_is_not_skipped(
+        self, api_client, mode, status_when_down, blocks
+    ):
+        """The distributed stack and the `ml` profile run serving; a crashed or
+        unhealthy container there is an outage, not an opt-out."""
+        result = get_checks(
+            api_client, mode=mode, probe_results=down_only("model_serving")
         )
 
-        assert by_id(live, "model_serving")["status"] == FAILED
-        assert by_id(live, "model_serving")["required"] is True
-        assert live["status"] == "issues"
+        check = by_id(result, "model_serving")
+        assert check["status"] == status_when_down
+        assert check["required"] is blocks
+        assert "up -d serving" in check["fix"]
+        assert "--profile ml" not in check["fix"]
+        assert (result["status"] == "issues") is blocks
 
-        assert by_id(experiment, "model_serving")["status"] == WARNING
-        assert by_id(experiment, "model_serving")["required"] is False
-        assert experiment["status"] == "ok"
+    def test_absent_is_down_for_a_check_that_cannot_be_optional(self, api_client):
+        """Only a check with an ``absent`` block may be skipped as not
+        deployed; any other probe answering ABSENT reads as down."""
+        probes = all_up()
+        probes["cache"] = ABSENT
+        result = get_checks(api_client, mode=LIVE, probe_results=probes)
+
+        assert by_id(result, "cache")["status"] == FAILED
+        assert result["status"] == "issues"
+
+    def test_the_absent_verdict_survives_the_fail_closed_wrapper(self):
+        assert _safe(lambda: ABSENT) == ABSENT
+        assert _safe(lambda: "anything else") is True
 
 
 @pytest.mark.integration
@@ -432,6 +524,115 @@ class TestObjectStorageProbe:
             assert _safe(_object_storage_up) is False
 
 
+@pytest.fixture
+def health_server():
+    """A loopback server answering ``GET /health`` like the in-container
+    executor (and serving) do. Yields its base URL."""
+
+    class Health(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200 if self.path == "/health" else 404)
+            self.end_headers()
+            self.wfile.write(b'{"status": "ok"}')
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Health)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_address[1]}"
+    server.shutdown()
+    server.server_close()
+
+
+def _closed_port_url():
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return f"http://127.0.0.1:{sock.getsockname()[1]}"
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestCodeExecutorProbe:
+    def test_passes_against_the_in_container_executor(self, monkeypatch, health_server):
+        """The standalone install serves the executor on loopback inside `app`."""
+        monkeypatch.setenv("CODE_EXECUTOR_URL", f"{health_server}/")
+
+        assert _code_executor_up() is True
+
+    def test_nothing_listening_is_down(self, monkeypatch):
+        monkeypatch.setenv("CODE_EXECUTOR_URL", _closed_port_url())
+
+        assert _safe(_code_executor_up) is False
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestModelServingProbe:
+    """The row uses the same probe as the embedding features, so these run the
+    real HTTP probe rather than the stand-in conftest installs."""
+
+    @pytest.fixture(autouse=True)
+    def _real_probe(self, monkeypatch):
+        monkeypatch.setattr(serving_client, "_probe", REAL_SERVING_PROBE)
+
+    def test_up_when_health_answers(self, monkeypatch, health_server):
+        monkeypatch.setenv("MODEL_SERVING_URL", health_server)
+
+        assert _model_serving_up() is True
+
+    def test_down_when_nothing_listens(self, monkeypatch):
+        monkeypatch.setenv("MODEL_SERVING_URL", _closed_port_url())
+
+        assert _model_serving_up() is False
+
+    def test_an_empty_url_is_absent_without_a_probe(self, monkeypatch):
+        """``MODEL_SERVING_URL=`` switches serving off outright."""
+        monkeypatch.setenv("MODEL_SERVING_URL", "")
+        with patch.object(serving_client, "_probe") as probe:
+            assert _model_serving_up() == ABSENT
+        probe.assert_not_called()
+
+    @pytest.fixture
+    def no_serving_host(self, monkeypatch):
+        monkeypatch.setenv("MODEL_SERVING_URL", "http://serving:8080")
+
+        def no_such_host(host, *args, **kwargs):
+            assert host == "serving"
+            raise socket.gaierror(socket.EAI_NONAME, "Name does not resolve")
+
+        monkeypatch.setattr(setup_checks.socket, "getaddrinfo", no_such_host)
+
+    def test_default_install_host_that_does_not_resolve_is_absent(
+        self, monkeypatch, no_serving_host
+    ):
+        """The standalone install's `serving` host exists only with the `ml`
+        profile. Its API runs the Temporal worker in-process."""
+        monkeypatch.setenv("FI_EMBEDDED_TEMPORAL_WORKER", "true")
+        with patch.object(serving_client, "_probe") as probe:
+            assert _model_serving_up() == ABSENT
+        probe.assert_not_called()
+
+    def test_full_install_host_that_does_not_resolve_is_down(
+        self, monkeypatch, no_serving_host
+    ):
+        """The distributed install always runs serving; a host that does not
+        resolve there is a stopped or crash-looping container."""
+        monkeypatch.delenv("FI_EMBEDDED_TEMPORAL_WORKER", raising=False)
+        with patch.object(serving_client, "_probe", return_value=False) as probe:
+            assert _model_serving_up() is False
+        probe.assert_called_once_with("http://serving:8080")
+
+    def test_ignores_a_cached_verdict(self, monkeypatch, health_server):
+        """The screen polls while the stack starts; a stale 'down' from an
+        embedding call must not hide serving coming up."""
+        monkeypatch.setenv("MODEL_SERVING_URL", health_server)
+        serving_client.mark_serving_unavailable()
+
+        assert _model_serving_up() is True
+
+
 @pytest.mark.integration
 @pytest.mark.api
 class TestSnapshotCache:
@@ -453,9 +654,9 @@ class TestSnapshotCache:
             "tfc.views.setup_checks._run_probes", return_value=down_only("storage")
         ):
             live = api_client.get(f"{SETUP_CHECKS_URL}?mode={LIVE}").json()["result"]
-            experiment = api_client.get(
-                f"{SETUP_CHECKS_URL}?mode={EXPERIMENT}"
-            ).json()["result"]
+            experiment = api_client.get(f"{SETUP_CHECKS_URL}?mode={EXPERIMENT}").json()[
+                "result"
+            ]
 
         assert live["status"] == "issues"
         assert experiment["status"] == "ok"
@@ -499,6 +700,14 @@ class TestCheckInventory:
                 f"{check['id']} has no docs link"
             )
 
+    def test_a_fix_written_per_setup_covers_every_setup(self):
+        """A per-setup fix with a setup missing would render an empty remedy."""
+        for check in CHECKS:
+            for fix in (check["fix"], check.get("absent", {}).get("fix", "")):
+                if isinstance(fix, dict):
+                    assert set(fix) == {STANDALONE, DISTRIBUTED, HELM}, check["id"]
+                    assert all(isinstance(v, str) and v for v in fix.values())
+
     def test_every_docs_url_points_at_a_heading_that_exists(self):
         """A dead anchor drops the operator at the top of a page instead of at
         the service that failed, which is the bug this screen is fixing."""
@@ -523,3 +732,270 @@ class TestCheckInventory:
                 assert "down_detail" not in check[mode], (
                     f"{check['id']} still declares a per-mode down_detail"
                 )
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestSetup:
+    """The screen says which setup is running, and each fix names the
+    commands of that setup only."""
+
+    @pytest.mark.parametrize("setup", [STANDALONE, DISTRIBUTED, HELM])
+    def test_the_setup_is_reported(self, api_client, setup):
+        assert get_checks(api_client, setup=setup)["setup"] == setup
+
+    def test_the_embedded_worker_marks_the_standalone_install(self, monkeypatch):
+        monkeypatch.delenv("KUBERNETES_SERVICE_HOST", raising=False)
+        monkeypatch.setenv("FI_EMBEDDED_TEMPORAL_WORKER", "true")
+        assert _setup() == STANDALONE
+
+        monkeypatch.delenv("FI_EMBEDDED_TEMPORAL_WORKER")
+        assert _setup() == DISTRIBUTED
+
+    def test_a_kubernetes_pod_is_the_helm_install(self, monkeypatch):
+        monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.96.0.1")
+        assert _setup() == HELM
+
+    def test_helm_fixes_name_kubectl_and_values_not_compose(self, api_client):
+        result = get_checks(api_client, probe_results=all_down(), setup=HELM)
+
+        for check in result["checks"]:
+            if check["status"] == PASSED:
+                continue
+            assert "docker compose" not in check["fix"], check["id"]
+            assert ".env" not in check["fix"], check["id"]
+            assert "kubectl" in check["fix"] or "values" in check["fix"], check["id"]
+
+    def test_helm_fixes_name_the_chart_objects(self, api_client):
+        result = get_checks(
+            api_client,
+            probe_results=down_only("collector", "database", "ssl"),
+            setup=HELM,
+        )
+
+        collector_fix = by_id(result, "collector")["fix"]
+        assert (
+            "kubectl -n <namespace> logs deploy/<release>-futureagi-fi-collector"
+            in collector_fix
+        )
+        assert "postgres.external" in by_id(result, "database")["fix"]
+        assert "`urls.app` and `urls.api`" in by_id(result, "ssl")["fix"]
+
+    def test_a_standalone_fix_names_the_app_container(self, api_client):
+        result = get_checks(
+            api_client, probe_results=down_only("storage"), setup=STANDALONE
+        )
+        fix = by_id(result, "storage")["fix"]
+
+        assert "docker compose restart app" in fix
+        assert "minio" not in fix
+
+    def test_a_distributed_fix_names_the_service(self, api_client):
+        result = get_checks(
+            api_client, probe_results=down_only("storage"), setup=DISTRIBUTED
+        )
+        fix = by_id(result, "storage")["fix"]
+
+        assert "docker compose up -d minio" in fix
+        assert "restart app" not in fix
+
+    def test_a_setup_independent_fix_is_served_as_is(self, api_client):
+        for setup in (STANDALONE, DISTRIBUTED):
+            result = get_checks(
+                api_client, probe_results=down_only("database"), setup=setup
+            )
+            assert "docker compose up -d postgres" in by_id(result, "database")["fix"]
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestLocalInstallSkipsSsl:
+    """A laptop or a private network has no certificate to hold, so the SSL
+    row is SKIPPED there in both modes, and Production is green. A public host
+    keeps it strict."""
+
+    @pytest.mark.parametrize(
+        "host",
+        [
+            "localhost",
+            "app.localhost",
+            "127.0.0.1",
+            "::1",
+            "0.0.0.0",
+            "10.0.0.12",
+            "172.20.1.5",
+            "192.168.1.10",
+            "169.254.10.1",
+            "100.101.102.103",
+            "fd12:3456::1",
+            "::ffff:192.168.1.10",
+            "host.docker.internal",
+            "backend",
+            "mybox.local",
+            "futureagi.internal",
+            "LOCALHOST.",
+        ],
+    )
+    def test_local_hosts(self, host):
+        assert _is_local_host(host) is True
+
+    @pytest.mark.parametrize(
+        "host",
+        ["", None, "8.8.8.8", "34.120.1.5", "2606:4700::1111", "ai.example.com"],
+    )
+    def test_public_hosts(self, host):
+        assert _is_local_host(host) is False
+
+    @pytest.fixture
+    def public_urls(self, monkeypatch):
+        def set_urls(frontend="", api="", base=""):
+            monkeypatch.setenv("FRONTEND_URL", frontend)
+            monkeypatch.setenv("VITE_HOST_API", api)
+            monkeypatch.setenv("BASE_URL", base)
+
+        return set_urls
+
+    @pytest.mark.parametrize("request_host", [None, "localhost", "192.168.1.10"])
+    def test_no_url_reached_locally_is_absent(self, public_urls, request_host):
+        """The default install sets neither URL; the SPA then calls
+        http://localhost:8000, which only a browser on this machine reaches."""
+        public_urls()
+        with patch("tfc.views.setup_checks._tls_verified") as handshake:
+            assert _tls_up(request_host) == ABSENT
+        handshake.assert_not_called()
+
+    def test_no_url_reached_on_a_public_host_is_down(self, public_urls):
+        public_urls()
+        assert _tls_up("34.120.1.5") is False
+
+    LOCAL_URLS = [
+        ("http://localhost:3000", "http://localhost:8000"),
+        ("http://192.168.1.10:3000", "http://192.168.1.10:8000"),
+        ("", "http://127.0.0.1:8000"),
+        ("https://localhost:3443", ""),
+    ]
+
+    @pytest.mark.parametrize("frontend, api", LOCAL_URLS)
+    @pytest.mark.parametrize("request_host", [None, "localhost", "192.168.1.10"])
+    def test_local_urls_reached_locally_are_absent(
+        self, public_urls, frontend, api, request_host
+    ):
+        public_urls(frontend, api)
+        with patch("tfc.views.setup_checks._tls_verified") as handshake:
+            assert _tls_up(request_host) == ABSENT
+        handshake.assert_not_called()
+
+    @pytest.mark.parametrize("frontend, api", LOCAL_URLS)
+    def test_local_urls_do_not_excuse_a_browser_on_a_public_host(
+        self, public_urls, frontend, api
+    ):
+        """The Helm chart defaults FRONTEND_URL to http://localhost:3000, so a
+        local URL does not prove only this machine reaches the install: a
+        browser that came in on a public host did, in plain http."""
+        public_urls(frontend, api)
+        with patch("tfc.views.setup_checks._tls_verified") as handshake:
+            assert _tls_up("34.120.1.5") is False
+        handshake.assert_not_called()
+
+    def test_helm_api_url_is_base_url(self, public_urls):
+        """The chart hands VITE_HOST_API to the frontend pod only; the backend
+        has BASE_URL (``urls.api``)."""
+        public_urls("http://localhost:3000", base="http://api.example.com")
+        assert _tls_up("localhost") is False
+
+    def test_helm_https_urls_are_verified(self, public_urls):
+        public_urls("https://ai.example.com", base="https://api.example.com")
+        with patch(
+            "tfc.views.setup_checks._tls_verified", return_value=True
+        ) as handshake:
+            assert _tls_up("ai.example.com") is True
+
+        assert sorted(call.args[0] for call in handshake.call_args_list) == [
+            "https://ai.example.com",
+            "https://api.example.com",
+        ]
+
+    def test_an_https_ui_does_not_excuse_a_plaintext_api(self, public_urls):
+        public_urls("https://ai.example.com", base="http://api.example.com")
+        with patch(
+            "tfc.views.setup_checks._tls_verified",
+            side_effect=lambda u: u.startswith("https://"),
+        ):
+            assert _tls_up("ai.example.com") is False
+
+    def test_vite_host_api_wins_over_base_url(self, public_urls):
+        public_urls(api="http://localhost:8000", base="http://api.example.com")
+        assert _tls_up("localhost") == ABSENT
+
+    def test_a_public_http_url_is_down(self, public_urls):
+        public_urls("http://ai.example.com", "http://api.example.com")
+        assert _tls_up("localhost") is False
+
+    def test_public_https_urls_are_verified(self, public_urls):
+        public_urls("https://ai.example.com", "https://api.example.com")
+        with patch(
+            "tfc.views.setup_checks._tls_verified", return_value=True
+        ) as handshake:
+            assert _tls_up("localhost") is True
+        assert handshake.call_count == 2
+
+    def test_one_local_url_does_not_excuse_a_public_one(self, public_urls):
+        public_urls("https://ai.example.com", "http://localhost:8000")
+        with patch("tfc.views.setup_checks._tls_verified", return_value=False):
+            assert _tls_up("localhost") is False
+
+    @pytest.mark.parametrize("mode", [LIVE, EXPERIMENT])
+    def test_absent_ssl_is_skipped_and_production_stays_green(self, api_client, mode):
+        probes = all_up()
+        probes["ssl"] = ABSENT
+        result = get_checks(api_client, mode=mode, probe_results=probes)
+
+        check = by_id(result, "ssl")
+        assert check["status"] == SKIPPED
+        assert check["required"] is False
+        assert "local install" in check["detail"]
+        assert "FRONTEND_URL" in check["fix"]
+        assert result["status"] == "ok"
+
+    def test_ssl_down_on_a_public_host_still_blocks_production(self, api_client):
+        result = get_checks(api_client, mode=LIVE, probe_results=down_only("ssl"))
+
+        assert by_id(result, "ssl")["status"] == FAILED
+        assert by_id(result, "ssl")["required"] is True
+        assert result["status"] == "issues"
+
+    def test_the_probe_is_told_the_host_the_browser_came_in_on(self, api_client):
+        cache.clear()
+        with patch(
+            "tfc.views.setup_checks._run_probes", return_value=all_up()
+        ) as probes:
+            api_client.get(SETUP_CHECKS_URL, HTTP_HOST="ai.example.com:8000")
+
+        probes.assert_called_once_with("ai.example.com")
+
+    def test_the_ssl_probe_receives_the_request_host(self, monkeypatch):
+        """_run_probes hands the host to the probes that ask for it only."""
+        seen = []
+        ssl_check = next(c for c in CHECKS if c["id"] == "ssl")
+        monkeypatch.setitem(ssl_check, "probe", lambda host: seen.append(host) or True)
+        for check in CHECKS:
+            if check["id"] not in ("ssl", "database"):
+                monkeypatch.setitem(check, "probe", lambda: True)
+
+        with patch("tfc.views.setup_checks._postgres_up", return_value=True):
+            results = setup_checks._run_probes("ai.example.com")
+
+        assert seen == ["ai.example.com"]
+        assert results["ssl"] is True
+
+    def test_local_and_remote_browsers_do_not_share_a_snapshot(self, api_client):
+        """The SSL verdict depends on the host the browser came in on."""
+        cache.clear()
+        with patch(
+            "tfc.views.setup_checks._run_probes", return_value=all_up()
+        ) as probes:
+            api_client.get(SETUP_CHECKS_URL, HTTP_HOST="localhost:8000")
+            api_client.get(SETUP_CHECKS_URL, HTTP_HOST="ai.example.com")
+            api_client.get(SETUP_CHECKS_URL, HTTP_HOST="127.0.0.1:8000")
+
+        assert probes.call_count == 2

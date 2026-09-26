@@ -38,22 +38,40 @@ const STORAGE_DOWN = check({
   docs_url: "https://example.test/object-storage",
 });
 
-function renderStep(mode = LAUNCH_MODE.LIVE, onSwitchMode = vi.fn()) {
+function renderStep(
+  mode = LAUNCH_MODE.LIVE,
+  onSwitchMode = vi.fn(),
+  { authenticated = false } = {},
+) {
   render(
     <ThemeProvider theme={theme}>
       <ValidationStep
         mode={mode}
         onSwitchMode={onSwitchMode}
         onContinue={vi.fn()}
+        authenticated={authenticated}
       />
     </ThemeProvider>,
   );
   return onSwitchMode;
 }
 
+const SSL_LOCAL = check({
+  id: "ssl",
+  label: "SSL/TLS certificate",
+  status: "skipped",
+  required: false,
+  detail:
+    "Not needed on a local install: it is only reachable from this machine or a private network",
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
-  mockData = { status: "issues", mode: "live", checks: [check(), STORAGE_DOWN] };
+  mockData = {
+    status: "issues",
+    mode: "live",
+    checks: [check(), STORAGE_DOWN],
+  };
 });
 
 describe("ValidationStep", () => {
@@ -71,17 +89,24 @@ describe("ValidationStep", () => {
       name: "Object storage service",
     });
     expect(link).toHaveAttribute("href", "https://example.test/object-storage");
-    expect(await screen.findByText(/docker compose up -d minio/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/docker compose up -d minio/),
+    ).toBeInTheDocument();
   });
 
   it("carries the remedy for a warning too, not only a failure", async () => {
     mockData = {
       status: "ok",
       mode: "experiment",
-      checks: [check(), { ...STORAGE_DOWN, status: "warning", required: false }],
+      checks: [
+        check(),
+        { ...STORAGE_DOWN, status: "warning", required: false },
+      ],
     };
     renderStep(LAUNCH_MODE.EXPERIMENT);
-    expect(await screen.findByText(/docker compose up -d minio/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/docker compose up -d minio/),
+    ).toBeInTheDocument();
   });
 
   it("offers Test flight when a live launch is blocked, and switches mode", async () => {
@@ -106,7 +131,113 @@ describe("ValidationStep", () => {
 
   it("opens the operator's own mail client, not Gmail on the web", async () => {
     renderStep();
-    const support = await screen.findByRole("link", { name: "Contact support" });
-    expect(support.getAttribute("href")).toMatch(/^mailto:support@futureagi\.com\?/);
+    const support = await screen.findByRole("link", {
+      name: "Contact support",
+    });
+    expect(support.getAttribute("href")).toMatch(
+      /^mailto:support@futureagi\.com\?/,
+    );
+  });
+
+  it("names the setup that is running", async () => {
+    mockData = { ...mockData, setup: "standalone" };
+    renderStep();
+    expect(await screen.findByText("Standalone setup.")).toBeInTheDocument();
+    expect(screen.getByText(/one app container/)).toBeInTheDocument();
+  });
+
+  it("names the distributed setup too", async () => {
+    mockData = { ...mockData, setup: "distributed" };
+    renderStep();
+    expect(await screen.findByText("Distributed setup.")).toBeInTheDocument();
+  });
+
+  it("names the Helm setup too", async () => {
+    mockData = { ...mockData, setup: "helm" };
+    renderStep();
+    expect(await screen.findByText("Helm setup.")).toBeInTheDocument();
+    expect(screen.getByText(/on Kubernetes/)).toBeInTheDocument();
+  });
+
+  it("says nothing about the setup when an older server does not report it", async () => {
+    renderStep();
+    await screen.findByText("Object storage service");
+    expect(screen.queryByTestId("oss-setup-kind")).toBeNull();
+  });
+
+  it.each(["nomad", "constructor"])(
+    "says nothing about a setup this build does not know (%s)",
+    async (setup) => {
+      mockData = { ...mockData, setup };
+      renderStep();
+      await screen.findByText("Object storage service");
+      expect(screen.queryByTestId("oss-setup-kind")).toBeNull();
+    },
+  );
+
+  it("lets a local production launch through with SSL skipped", async () => {
+    mockData = {
+      status: "ok",
+      mode: "live",
+      setup: "standalone",
+      checks: [check(), SSL_LOCAL],
+    };
+    renderStep();
+    expect(
+      await screen.findByText(/Not needed on a local install/),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled(),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Continue with Test flight" }),
+    ).toBeNull();
+  });
+
+  it("shows the next steps once pre-flight is clear", async () => {
+    mockData = { status: "ok", mode: "live", checks: [check(), SSL_LOCAL] };
+    renderStep();
+    expect(await screen.findByText("Next up")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Create your account on the next screen/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Open Keys in the sidebar/)).toBeInTheDocument();
+    expect(
+      screen.getByText("FI_BASE_URL=http://localhost:4318"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Tracing guide" })).toHaveAttribute(
+      "href",
+      "https://docs.futureagi.com/docs/observe",
+    );
+  });
+
+  it("sends the first trace to the collector the server reports", async () => {
+    mockData = {
+      status: "ok",
+      mode: "live",
+      setup: "standalone",
+      collector_http_url: "http://localhost:4320",
+      checks: [check()],
+    };
+    renderStep();
+    expect(
+      await screen.findByText("FI_BASE_URL=http://localhost:4320"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/localhost:4318/)).toBeNull();
+  });
+
+  it("does not ask a signed-in operator to create an account", async () => {
+    mockData = { status: "ok", mode: "live", checks: [check()] };
+    renderStep(LAUNCH_MODE.LIVE, vi.fn(), { authenticated: true });
+    expect(
+      await screen.findByText("Continue to your workspace."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Create your account/)).toBeNull();
+  });
+
+  it("holds the next steps back while a production launch is blocked", async () => {
+    renderStep();
+    await screen.findByRole("button", { name: "Continue with Test flight" });
+    expect(screen.queryByText("Next up")).toBeNull();
   });
 });
