@@ -1230,3 +1230,18 @@ class TestMonitorViewHardening:
                 "/tracer/user-alerts/preview-graph/", payload, format="json"
             )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_preview_graph_missing_project_is_400(self, auth_client):
+        # A preview request without a project must raise MonitorConfigError
+        # at builder time and surface as HTTP 400 (issue #2925).
+        payload = {
+            "metric_type": "count_of_errors",
+            "threshold_operator": "greater_than",
+            "threshold_type": "static",
+            "critical_threshold_value": 0.15,
+            "alert_frequency": 60,
+        }
+        response = auth_client.post(
+            "/tracer/user-alerts/preview-graph/", payload, format="json"
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
