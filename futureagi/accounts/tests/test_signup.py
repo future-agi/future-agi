@@ -739,6 +739,19 @@ class TestPasswordResetValidation:
 class TestResendInvitationEmails:
     """Tests for /accounts/resend-invitation-emails/ endpoint."""
 
+    @staticmethod
+    def _create_invite(organization, invited_by, invitee, invite_status):
+        from accounts.models.organization_invite import OrganizationInvite
+        from tfc.constants.levels import Level
+
+        return OrganizationInvite.objects.create(
+            organization=organization,
+            target_email=invitee.email,
+            level=Level.MEMBER,
+            invited_by=invited_by,
+            status=invite_status,
+        )
+
     def test_resend_invitation_rejects_unknown_request_fields(self, auth_client):
         response = auth_client.post(
             "/accounts/resend-invitation-emails/",
@@ -774,6 +787,97 @@ class TestResendInvitationEmails:
         result = response.json()
         # Should have error in response
         assert any("error" in r for r in result if isinstance(r, dict))
+
+    def test_resend_refreshes_expired_pending_invitation(
+        self, auth_client, organization, user, second_user
+    ):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from accounts.models.organization_invite import InviteStatus
+        from tfc.constants.levels import INVITE_VALIDITY_DAYS
+
+        invite = self._create_invite(
+            organization, user, second_user, InviteStatus.PENDING
+        )
+        invite.created_at = timezone.now() - timedelta(days=INVITE_VALIDITY_DAYS + 1)
+        invite.save(update_fields=["created_at"])
+        assert invite.effective_status == InviteStatus.EXPIRED
+
+        started_at = timezone.now()
+        with patch("accounts.views.signup.email_helper") as mocked_email:
+            response = auth_client.post(
+                "/accounts/resend-invitation-emails/",
+                {"user_ids": [str(second_user.id)]},
+                format="json",
+            )
+        finished_at = timezone.now()
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() == [
+            {
+                "user_id": str(second_user.id),
+                "message": "Invitation email has been resent.",
+            }
+        ]
+        invite.refresh_from_db()
+        assert started_at <= invite.created_at <= finished_at
+        assert invite.effective_status == InviteStatus.PENDING
+        mocked_email.assert_called_once()
+
+    def test_resend_keeps_unexpired_pending_invitation_working(
+        self, auth_client, organization, user, second_user
+    ):
+        from accounts.models.organization_invite import InviteStatus
+
+        invite = self._create_invite(
+            organization, user, second_user, InviteStatus.PENDING
+        )
+        original_created_at = invite.created_at
+
+        with patch("accounts.views.signup.email_helper") as mocked_email:
+            response = auth_client.post(
+                "/accounts/resend-invitation-emails/",
+                {"user_ids": [str(second_user.id)]},
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert "message" in response.json()[0]
+        invite.refresh_from_db()
+        assert invite.created_at >= original_created_at
+        assert invite.effective_status == InviteStatus.PENDING
+        mocked_email.assert_called_once()
+
+    @pytest.mark.parametrize("invite_status", ["Accepted", "Cancelled"])
+    def test_resend_rejects_non_pending_invitation(
+        self,
+        auth_client,
+        organization,
+        user,
+        second_user,
+        invite_status,
+    ):
+        invite = self._create_invite(organization, user, second_user, invite_status)
+
+        with patch("accounts.views.signup.email_helper") as mocked_email:
+            response = auth_client.post(
+                "/accounts/resend-invitation-emails/",
+                {"user_ids": [str(second_user.id)]},
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() == [
+            {
+                "user_id": str(second_user.id),
+                "error": "Pending invitation does not exist.",
+            }
+        ]
+        invite.refresh_from_db()
+        assert invite.status == invite_status
+        mocked_email.assert_not_called()
 
 
 @pytest.mark.integration
