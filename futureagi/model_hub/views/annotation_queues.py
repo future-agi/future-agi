@@ -1389,11 +1389,18 @@ def _span_notes_target_for_queue_item(item, *, ch_cache=None):
     of its own CH read. Callers that resolve the item's source anyway should pass
     it; without one, a one-item cache reads the item's own copy (a trace / span id
     can exist in several tenants' projects, and the notes land on this span).
+
+    That uncached read backs the SpanNotes write in submit, so it FAILS CLOSED: a CH
+    error raises (the submit fails and can be retried) instead of reading as "no
+    target" and silently dropping the note. ``None`` means the id is not live in
+    the item's scope.
     """
     if item.source_type not in ("observation_span", "trace"):
         return None
     if ch_cache is None:
-        ch_cache = CollectorSourceCache.for_items([item])
+        ch_cache = CollectorSourceCache.for_items(
+            [item], caller="notes_target", raise_on_error=True
+        )
     if item.source_type == "observation_span":
         return ch_cache.span(item.observation_span_id)
     return ch_cache.trace_root(item.trace_id)

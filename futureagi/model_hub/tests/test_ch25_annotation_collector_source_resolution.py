@@ -61,6 +61,7 @@ from model_hub.models.score import Score
 from model_hub.utils import annotation_queue_helpers as helpers
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project, ProjectSourceChoices
+from tracer.models.span_notes import SpanNotes
 from tracer.services.clickhouse.v2.span_reader import CHSpan
 
 CH_READER_PATH = "tracer.services.clickhouse.v2.get_reader"
@@ -145,6 +146,20 @@ class _ReaderCM:
         if project_ids is not None and str(self._span.project_id) not in project_ids:
             return None
         return self._span if str(span_id) == str(self._span.id) else None
+
+    def newest_span_projects(self, span_ids, project_ids):
+        if self._span is None or str(self._span.id) not in {str(s) for s in span_ids}:
+            return {}
+        if str(self._span.project_id) not in project_ids:
+            return {}
+        return {str(self._span.id): str(self._span.project_id)}
+
+    def list_by_ids(self, span_ids, *, project_id=None, **_):
+        if self._span is None or str(self._span.id) not in {str(s) for s in span_ids}:
+            return []
+        if project_id is not None and str(self._span.project_id) != str(project_id):
+            return []
+        return [self._span]
 
     def root_ids_by_trace_ids(self, trace_ids, project_ids=None):
         """Lean stub: ``{trace_id: (root_span_id, project_id)}``, roots only."""
@@ -747,6 +762,9 @@ def test_collector_span_round_trips_create_to_annotate(
     # Score persists the collector soft id — and NO PG ObservationSpan backs it.
     assert str(score.observation_span_id) == str(span.id)
     assert not ObservationSpan.objects.filter(id=span.id).exists()
+    # The whole-item note lands on the CH-resolved span.
+    note = SpanNotes.objects.get(created_by_user=user)
+    assert (str(note.span_id), note.notes) == (str(span.id), "looks good")
 
 
 # ─────────── for_source: collector trace span_notes (TH-6622) ────────────────

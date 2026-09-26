@@ -898,10 +898,12 @@ def _batch_ch_spans(
     include_heavy=True,
     caller="render",
     reject_ambiguous_ids=False,
+    raise_on_error=False,
 ):
     """Batch CH point-read for a render path: ``{str(id): CHSpan}`` over *span_ids*
     in one query. CH error → ``{}`` (FAIL OPEN — the per-item collector branch then
-    renders the ``deleted`` sentinel, same as a single-read miss). Backs
+    renders the ``deleted`` sentinel, same as a single-read miss), or re-raised with
+    ``raise_on_error`` (a write path, where a miss would drop data). Backs
     :class:`CollectorSourceCache` so list/export pages do one CH read, not one per item.
     ``project_id`` (optional) scopes the read to one tenant on the ``spans`` PK prefix;
     omit for prior behavior — see :func:`_batch_ch_trace_roots` on why not ``org_id``.
@@ -931,6 +933,8 @@ def _batch_ch_spans(
             error=str(exc),
             caller=caller,
         )
+        if raise_on_error:
+            raise
         return {}
     if not reject_ambiguous_ids:
         return {str(span.id): span for span in spans}
@@ -967,7 +971,9 @@ def _batch_ch_spans(
 _CH_TRACE_ID_BATCH = 500
 
 
-def _batch_ch_trace_roots(trace_ids, *, project_id=None, caller="render"):
+def _batch_ch_trace_roots(
+    trace_ids, *, project_id=None, caller="render", raise_on_error=False
+):
     """Batch CH read of each trace's root span for a render/availability path:
     ``{str(trace_id): CHSpan}`` over *trace_ids* (chunked, LEAN).
 
@@ -982,8 +988,9 @@ def _batch_ch_trace_roots(trace_ids, *, project_id=None, caller="render"):
     an org filter would silently drop those roots and read them as "no root". When
     *project_id* is omitted the ``trace_ids`` are already tenant-scoped by the caller.
     CH error → ``{}`` (FAIL OPEN — the per-item branch then does its own point-read
-    or renders the ``deleted`` sentinel). Backs :class:`CollectorSourceCache` so a
-    list page over CH traces does one read per chunk, not one per item."""
+    or renders the ``deleted`` sentinel), or re-raised with ``raise_on_error``.
+    Backs :class:`CollectorSourceCache` so a list page over CH traces does one read
+    per chunk, not one per item."""
     if not trace_ids:
         return {}
     from tracer.services.clickhouse.v2 import get_reader
@@ -1012,6 +1019,8 @@ def _batch_ch_trace_roots(trace_ids, *, project_id=None, caller="render"):
             error=str(exc),
             caller=caller,
         )
+        if raise_on_error:
+            raise
         return {}
     return {
         trace_id: _pick_conversation_root(spans)
@@ -1019,10 +1028,13 @@ def _batch_ch_trace_roots(trace_ids, *, project_id=None, caller="render"):
     }
 
 
-def _batch_ch_session_fields(session_ids, *, project_id=None, caller="render"):
+def _batch_ch_session_fields(
+    session_ids, *, project_id=None, caller="render", raise_on_error=False
+):
     """Batch CH read of session identity fields: ``{str(id): fields}`` in one query.
-    CH error → ``{}`` (FAIL OPEN). Companion to :func:`_batch_ch_spans`. ``project_id``
-    (optional) scopes the read to one tenant on the ``trace_sessions`` PK prefix."""
+    CH error → ``{}`` (FAIL OPEN), or re-raised with ``raise_on_error``. Companion
+    to :func:`_batch_ch_spans`. ``project_id`` (optional) scopes the read to one
+    tenant on the ``trace_sessions`` PK prefix."""
     if not session_ids:
         return {}
     from tracer.services.clickhouse.v2.trace_session_dict_reader import (
@@ -1042,16 +1054,21 @@ def _batch_ch_session_fields(session_ids, *, project_id=None, caller="render"):
             error=str(exc),
             caller=caller,
         )
+        if raise_on_error:
+            raise
         return {}
 
 
-def _newest_ch_source_projects(span_ids, trace_ids, *, item, caller="render"):
+def _newest_ch_source_projects(
+    span_ids, trace_ids, *, item, caller="render", raise_on_error=False
+):
     """``({span_id: project_id}, {trace_id: project_id})`` for queue items added
     before their project was recorded: the project holding each id's newest copy
     among *item*'s tenant projects (:func:`_queue_item_source_project_ids`), read
     LEAN and chunked like :func:`_batch_ch_trace_roots`. An id with no copy in
     scope is absent. CH error → ``({}, {})`` (FAIL OPEN on the render: the items
-    show the ``deleted`` sentinel, never another tenant's copy)."""
+    show the ``deleted`` sentinel, never another tenant's copy), or re-raised with
+    ``raise_on_error``."""
     if not span_ids and not trace_ids:
         return {}, {}
     project_ids = _queue_item_source_project_ids(item)
@@ -1083,6 +1100,8 @@ def _newest_ch_source_projects(span_ids, trace_ids, *, item, caller="render"):
             error=str(exc),
             caller=caller,
         )
+        if raise_on_error:
+            raise
         return {}, {}
     return span_projects, trace_projects
 
@@ -1096,7 +1115,8 @@ class CollectorSourceCache:
     list/export page (CH has no ORM prefetch). Build one cache per page with
     :meth:`for_items` and pass it as ``ch_cache=`` so the page does a single CH read
     per kind. A cache miss returns ``None`` → ``deleted`` sentinel, matching the
-    single-read fail-open.
+    single-read fail-open. A write path builds it with ``raise_on_error=True`` so a
+    CH error raises instead of reading as a miss.
     """
 
     __slots__ = ("_spans", "_sessions", "_trace_roots")
@@ -1107,7 +1127,7 @@ class CollectorSourceCache:
         self._trace_roots = trace_roots or {}
 
     @classmethod
-    def for_items(cls, items):
+    def for_items(cls, items, *, caller="render", raise_on_error=False):
         """Collect the tracer source ids across *items* and batch-resolve each kind
         from CH. Traces resolve to their root span (LEAN), spans and sessions by soft id.
 
@@ -1122,7 +1142,10 @@ class CollectorSourceCache:
         exist in several organizations, and an unscoped read renders whichever copy
         it meets. Session items keep the unscoped NULL group (a session id is derived
         from its project). A page spans few distinct projects, so this is a handful
-        of scoped reads, not one per item. Empty id-sets short-circuit."""
+        of scoped reads, not one per item. Empty id-sets short-circuit.
+
+        ``raise_on_error`` re-raises a CH error from any of these reads (a write
+        path); by default the failed kind resolves empty (FAIL OPEN)."""
 
         def _buckets(groups, key):
             return groups.setdefault(
@@ -1160,7 +1183,11 @@ class CollectorSourceCache:
 
         for buckets in unattributed.values():
             span_projects, trace_projects = _newest_ch_source_projects(
-                buckets["spans"], buckets["traces"], item=buckets["item"]
+                buckets["spans"],
+                buckets["traces"],
+                item=buckets["item"],
+                caller=caller,
+                raise_on_error=raise_on_error,
             )
             for span_id, pid in span_projects.items():
                 _buckets(by_project, pid)["spans"].add(span_id)
@@ -1170,12 +1197,15 @@ class CollectorSourceCache:
         # One queue holds a source id once, so the per-group results never collide
         # on merge. NULL-project group (project_id=None) holds sessions only.
         spans, sessions, trace_roots = {}, {}, {}
+        strict = {"caller": caller, "raise_on_error": raise_on_error}
         for pid, buckets in by_project.items():
-            spans.update(_batch_ch_spans(buckets["spans"], project_id=pid))
+            spans.update(_batch_ch_spans(buckets["spans"], project_id=pid, **strict))
             sessions.update(
-                _batch_ch_session_fields(buckets["sessions"], project_id=pid)
+                _batch_ch_session_fields(buckets["sessions"], project_id=pid, **strict)
             )
-            trace_roots.update(_batch_ch_trace_roots(buckets["traces"], project_id=pid))
+            trace_roots.update(
+                _batch_ch_trace_roots(buckets["traces"], project_id=pid, **strict)
+            )
         return cls(spans=spans, sessions=sessions, trace_roots=trace_roots)
 
     def span(self, span_id):

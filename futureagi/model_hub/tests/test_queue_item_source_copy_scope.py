@@ -24,7 +24,14 @@ from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace
 from conftest import create_categorical_label
 from model_hub.models.ai_model import AIModel
-from model_hub.models.annotation_queues import QueueItem
+from model_hub.models.annotation_queues import (
+    AnnotationQueue,
+    AnnotationQueueLabel,
+    QueueItem,
+    QueueItemNote,
+)
+from model_hub.models.choices import AnnotationQueueStatusChoices
+from model_hub.models.score import Score
 from model_hub.serializers.annotation_queues import QueueItemSerializer
 from model_hub.utils.annotation_queue_helpers import (
     CollectorSourceCache,
@@ -33,6 +40,7 @@ from model_hub.utils.annotation_queue_helpers import (
 )
 from model_hub.views.annotation_queues import _span_notes_target_for_queue_item
 from tracer.models.project import Project
+from tracer.models.span_notes import SpanNotes
 from tracer.services.clickhouse.v2.span_reader import CHSpan
 
 QUEUE_URL = "/model-hub/annotation-queues/"
@@ -94,6 +102,10 @@ def _copy(project, *, trace_id, span_id, second):
     )
 
 
+class _ClickHouseDown(Exception):
+    pass
+
+
 class _Copies:
     """``get_reader()`` stand-in over per-project copies of trace roots / spans.
 
@@ -105,8 +117,9 @@ class _Copies:
     organization's — stands in for it.
     """
 
-    def __init__(self, copies):
+    def __init__(self, copies, *, down=False):
         self.copies = copies  # [(version, CHSpan)]
+        self.down = down
 
     def __enter__(self):
         return self
@@ -115,6 +128,8 @@ class _Copies:
         return False
 
     def _scoped(self, project_id=None, project_ids=None):
+        if self.down:
+            raise _ClickHouseDown("clickhouse unavailable")
         pids = None if project_ids is None else {str(pid) for pid in project_ids}
         rows = [
             (version, span)
@@ -338,3 +353,102 @@ def test_id_held_only_by_another_organization_renders_deleted(
         "type": "trace",
         "deleted": True,
     }
+
+
+def _clickhouse_down(monkeypatch, copies):
+    monkeypatch.setattr(
+        "tracer.services.clickhouse.v2.get_reader",
+        lambda: _Copies(copies.rows, down=True),
+    )
+
+
+@pytest.mark.django_db
+def test_item_notes_target_fails_closed_when_clickhouse_errors(
+    items, copies, monkeypatch
+):
+    """The notes target feeds the SpanNotes write in submit: a ClickHouse error
+    must raise (the submit fails and the annotator retries), never read as "no
+    target" and drop the whole-item note. Attributed items read the roots / spans
+    of their project; unattributed ones first read the newest-copy project."""
+    _clickhouse_down(monkeypatch, copies)
+    for cases in items.values():
+        for item, _expected in cases:
+            with pytest.raises(_ClickHouseDown):
+                _span_notes_target_for_queue_item(QueueItem.objects.get(pk=item.pk))
+
+
+@pytest.mark.django_db
+def test_submit_fails_closed_when_the_notes_target_read_errors(
+    auth_client, items, copies, user, monkeypatch
+):
+    queue_id, cases = next(iter(items.items()))
+    item = next(item for item, _ in cases if str(item.trace_id) == TRACE_X)
+    AnnotationQueue.objects.filter(pk=queue_id).update(
+        status=AnnotationQueueStatusChoices.ACTIVE.value
+    )
+    label_id = AnnotationQueueLabel.objects.get(queue_id=queue_id).label_id
+    url = f"{QUEUE_URL}{queue_id}/items/{item.pk}/annotations/submit/"
+    payload = {
+        "annotations": [{"label_id": str(label_id), "value": "A"}],
+        "item_notes": "whole item note",
+    }
+
+    _clickhouse_down(monkeypatch, copies)
+    with pytest.raises(_ClickHouseDown):
+        auth_client.post(url, payload, format="json")
+    assert not Score.no_workspace_objects.filter(queue_item=item).exists()
+    assert not QueueItemNote.no_workspace_objects.filter(queue_item=item).exists()
+    assert not SpanNotes.objects.filter(created_by_user=user).exists()
+
+    # The retry, with ClickHouse back, writes the note on the item's own copy.
+    monkeypatch.setattr(
+        "tracer.services.clickhouse.v2.get_reader", lambda: _Copies(copies.rows)
+    )
+    response = auth_client.post(url, payload, format="json")
+    assert response.status_code == status.HTTP_200_OK, response.content
+    note = SpanNotes.objects.get(created_by_user=user)
+    assert (note.span_id, note.notes) == (SPAN_X, "whole item note")
+
+
+@pytest.mark.django_db
+def test_item_notes_target_is_none_when_the_id_is_not_live_in_scope(
+    auth_client, copies, user, workspace
+):
+    """A genuine miss (the id is held only by another organization) still
+    resolves to no target, without raising."""
+    trace_id = str(uuid.uuid4())
+    copies.rows.append(
+        (40, _copy(copies.foreign, trace_id=trace_id, span_id="lone", second=0))
+    )
+    for project in (None, copies.own):
+        item = QueueItem.objects.create(
+            queue_id=_queue(auth_client, f"Miss Queue {bool(project)}"),
+            source_type="trace",
+            organization=user.organization,
+            workspace=workspace,
+            project=project,
+            trace_id=trace_id,
+            order=1,
+        )
+        assert _span_notes_target_for_queue_item(item) is None
+
+
+@pytest.mark.django_db
+def test_render_paths_fail_open_when_clickhouse_errors(
+    auth_client, items, copies, monkeypatch
+):
+    """Previews, content and annotate-detail (a read; its notes list is display
+    only) still render the ``deleted`` sentinel on a ClickHouse error."""
+    _clickhouse_down(monkeypatch, copies)
+    for queue_id, cases in items.items():
+        page = list(QueueItem.objects.filter(pk__in=[item.pk for item, _ in cases]))
+        cache = CollectorSourceCache.for_items(page)
+        for item in page:
+            assert resolve_source_preview(item).get("deleted") is True
+            assert resolve_source_content(item, ch_cache=cache).get("deleted") is True
+            detail = auth_client.get(
+                f"{QUEUE_URL}{queue_id}/items/{item.pk}/annotate-detail/"
+            )
+            assert detail.status_code == status.HTTP_200_OK, detail.content
+            body = detail.data.get("result", detail.data)["item"]
+            assert body["source_content"].get("deleted") is True
