@@ -16,6 +16,7 @@ Usage:
     all_attrs = accessor.get_all()
 """
 
+import json
 from typing import Any, Optional
 
 from tracer.models.observation_span import ObservationSpan
@@ -135,3 +136,19 @@ def get_span_attribute(span: ObservationSpan, key: str, default: Any = None) -> 
         The attribute value or default
     """
     return SpanAttributeAccessor(span).get(key, default)
+
+
+def span_raw_log(attrs) -> dict:
+    """The provider call payload (``raw_log``) in a voice span's attributes.
+
+    ClickHouse keeps it as a JSON string in ``attrs_string`` (collector
+    ingest) or as an object in ``attributes_extra`` (PG-era rows); return a
+    dict either way, ``{}`` when absent or unparseable.
+    """
+    raw_log = attrs.get("raw_log")
+    if isinstance(raw_log, str):
+        try:
+            raw_log = json.loads(raw_log)
+        except json.JSONDecodeError:
+            return {}
+    return raw_log if isinstance(raw_log, dict) else {}

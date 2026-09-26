@@ -9,6 +9,7 @@ Covers the multi-phase voice-call list query strategy:
 The builder builds SQL STRINGS only — nothing here touches ClickHouse.
 """
 
+import json
 import re
 from datetime import UTC, datetime, timedelta
 
@@ -225,6 +226,28 @@ def test_is_simulator_call_unknown_provider():
 @pytest.mark.unit
 def test_is_simulator_call_missing_raw_log():
     assert VoiceCallListQueryBuilder.is_simulator_call({}, "vapi") is False
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "provider,raw_log,expected",
+    [
+        ("vapi", {"customer": {"number": VAPI_PHONE_NUMBERS[0]}}, True),
+        ("vapi", {"customer": {"number": "+10000000000"}}, False),
+        ("retell", {"from_number": VAPI_PHONE_NUMBERS[1]}, True),
+    ],
+)
+def test_is_simulator_call_reads_a_json_string_raw_log(provider, raw_log, expected):
+    # The list hydrates span attributes from ClickHouse, where the collector
+    # stores raw_log as a JSON string in attrs_string.
+    attrs = {"raw_log": json.dumps(raw_log)}
+    assert VoiceCallListQueryBuilder.is_simulator_call(attrs, provider) is expected
+
+
+@pytest.mark.unit
+def test_is_simulator_call_unparseable_raw_log():
+    attrs = {"raw_log": "{not json"}
+    assert VoiceCallListQueryBuilder.is_simulator_call(attrs, "vapi") is False
 
 
 # ---------------------------------------------------------------------------

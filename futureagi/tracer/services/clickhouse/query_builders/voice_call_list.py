@@ -27,6 +27,7 @@ from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 from tracer.services.clickhouse.query_builders.trace_list import TraceListQueryBuilder
 from tracer.services.simulator_phones import SIMULATOR_PHONE_NUMBERS
+from tracer.utils.attribute_accessor import span_raw_log
 
 # Backward-compatible public name used by existing callers and tests.
 VAPI_PHONE_NUMBERS = SIMULATOR_PHONE_NUMBERS
@@ -1193,7 +1194,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
 
         Called after Phase 1b as a defensive parity check.
         """
-        raw_log = span_attrs.get("raw_log") or {}
+        raw_log = span_raw_log(span_attrs)
         if provider == "vapi":
             phone = (raw_log.get("customer") or {}).get("number", "")
         elif provider == "retell":
