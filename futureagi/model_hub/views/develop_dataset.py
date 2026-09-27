@@ -123,6 +123,7 @@ from model_hub.models.experiments import ExperimentDatasetTable, ExperimentsTabl
 from model_hub.models.optimize_dataset import OptimizeDataset
 from model_hub.models.run_prompt import PromptVersion, RunPrompter
 from model_hub.selectors.feedback import resolve_feedback_template_data
+from model_hub.serializers.catalog_queries import DatasetEvaluationsQuerySerializer
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
     AddAsNewDatasetRequestSerializer,
@@ -5503,15 +5504,6 @@ class AddDataRowsView(APIView):
                 call_log_row.status = APICallStatusChoices.SUCCESS.value
                 call_log_row.save()
 
-            # Get valid columns for this dataset
-            columns = Column.objects.filter(dataset=dataset, deleted=False).exclude(
-                source__in=[
-                    SourceChoices.EXPERIMENT.value,
-                    SourceChoices.EXPERIMENT_EVALUATION.value,
-                    SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
-                ]
-            )
-
             last_row = (
                 Row.all_objects.filter(dataset=dataset).order_by("-created_at").first()
             )
@@ -5519,6 +5511,13 @@ class AddDataRowsView(APIView):
                 max_order = last_row.order
             else:
                 max_order = -1
+            columns = Column.objects.filter(dataset=dataset, deleted=False).exclude(
+                source__in=[
+                    SourceChoices.EXPERIMENT.value,
+                    SourceChoices.EXPERIMENT_EVALUATION.value,
+                    SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
+                ]
+            )
 
             # Create rows and cells
             for index, row_data in enumerate(rows):
@@ -7348,8 +7347,9 @@ class GetEvalsListView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        responses={200: EvalListResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    @validated_request(
+        query_serializer=DatasetEvaluationsQuerySerializer,
+        responses={200: EvalListResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def get(
         self, request, dataset_id=None, *args, **kwargs

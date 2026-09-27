@@ -235,7 +235,10 @@ def _append_v2_settings(sql: str, *, aggregation_in_order: bool = True) -> str:
     v2 settings into it (don't double-apply). If not, append a fresh one.
 
     Handles trailing FORMAT clause: SETTINGS must come BEFORE FORMAT.
-    Ordered aggregation remains the default; individual helpers may opt out.
+    Ordered aggregation remains the default; individual helpers may opt out,
+    either through ``aggregation_in_order`` or by stating
+    ``optimize_aggregation_in_order`` in the statement's own SETTINGS clause,
+    which this boundary then leaves alone.
     """
     sql_stripped = sql.rstrip().rstrip(";").rstrip()
     # Check for an existing SETTINGS clause (case-insensitive, at end before
@@ -255,14 +258,21 @@ def _append_v2_settings(sql: str, *, aggregation_in_order: bool = True) -> str:
         *_V2_REQUIRED_SETTINGS,
         f"optimize_aggregation_in_order = {int(aggregation_in_order)}",
     )
-    settings_clause = "SETTINGS " + ", ".join(required_settings)
     existing = _re.search(r"\s+SETTINGS\s+", sql_stripped, _re.IGNORECASE)
     if existing:
         # Merge — append our settings to the existing clause (later wins on
-        # duplicate keys, which is what we want).
+        # duplicate keys, which is what we want for the required keys). The
+        # aggregation strategy is a DEFAULT this boundary supplies, never a
+        # veto: a statement that states ``optimize_aggregation_in_order``
+        # itself has chosen its execution shape (the seeded Users acquisition
+        # opts out of in-order reads as a whole), so that key is not repeated.
+        if _re.search(
+            r"\boptimize_aggregation_in_order\s*=", sql_stripped[existing.end() :]
+        ):
+            required_settings = _V2_REQUIRED_SETTINGS
         sql_stripped = sql_stripped + ", " + ", ".join(required_settings)
     else:
-        sql_stripped = sql_stripped + "\n" + settings_clause
+        sql_stripped = sql_stripped + "\nSETTINGS " + ", ".join(required_settings)
 
     return sql_stripped + format_clause
 

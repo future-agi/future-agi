@@ -1156,7 +1156,10 @@ def test_v2_content_query_uses_valid_latest_json_aggregate():
 
     assert "argMax(tuple(" in sql
     assert "AS _root" in sql
-    assert "JSONExtractKeysAndValuesRaw(toJSONString(attributes_extra))" in sql
+    assert "JSONExtractKeysAndValuesRaw(toString(attributes_extra))" in sql
+    assert "toJSONString(attributes_extra)" not in sql
+    assert "kv.1 != 'call_logs'" in sql
+    assert "mapFilter((k, v) -> k != 'call_logs', attrs_string)" in sql
     assert (
         "GROUP BY project_id, observation_type, service_name, "
         "toStartOfHour(start_time), trace_id, id"

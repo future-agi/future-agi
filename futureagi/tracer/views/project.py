@@ -14,7 +14,7 @@ from accounts.utils import get_request_organization
 from tfc.middleware.db_health_check import db_connection_required
 from tfc.middleware.query_timeout import monitor_query_performance
 from tfc.routers import uses_db
-from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_contracts import ExplicitQueryAutoSchema, validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.error_codes import get_error_message
@@ -43,6 +43,7 @@ from tracer.serializers.project import (
     ProjectUserGraphDataResponseSerializer,
     ProjectUserMetricsRequestSerializer,
     ProjectUsersAggregateGraphDataRequestSerializer,
+    ProjectViewSetListQuerySerializer,
 )
 from tracer.services.clickhouse.graph_action_deadline import (
     GraphActionUnavailable,
@@ -252,6 +253,10 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         except Exception:
             logger.warning("pii_cache_invalidation_failed", exc_info=True)
 
+    @validated_request(
+        query_serializer=ProjectViewSetListQuerySerializer,
+        auto_schema=ExplicitQueryAutoSchema,
+    )
     def list(self, request, *args, **kwargs):
         """
         Get a paginated list of all projects for the organization.
@@ -264,8 +269,8 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             total_count = queryset.count()
 
             # Apply pagination
-            page_number = int(self.request.query_params.get("page_number", 0))
-            page_size = int(self.request.query_params.get("page_size", 20))
+            page_number = request.validated_query_data["page_number"]
+            page_size = request.validated_query_data["page_size"]
             start = page_number * page_size
             end = start + page_size
 

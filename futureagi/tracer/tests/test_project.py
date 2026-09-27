@@ -162,6 +162,30 @@ class TestProjectListAPI:
         data = get_result(response)
         assert data["projects"][0]["name"] == "Zebra Project"
 
+    def test_list_keeps_accepting_large_page_sizes(
+        self, auth_client, organization, workspace
+    ):
+        """Documenting the ViewSet list must not cap page_size; page_size=200
+        worked before the query serializer existed."""
+        Project.objects.create(
+            name="Large page project",
+            organization=organization,
+            workspace=workspace,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="experiment",
+        )
+
+        response = auth_client.get("/tracer/project/", {"page_size": 200})
+
+        assert response.status_code == status.HTTP_200_OK, response.content
+        data = get_result(response)
+        assert any(row["name"] == "Large page project" for row in data["projects"])
+
+    def test_list_still_rejects_non_positive_page_size(self, auth_client):
+        response = auth_client.get("/tracer/project/", {"page_size": 0})
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
 
 @pytest.mark.integration
 @pytest.mark.api

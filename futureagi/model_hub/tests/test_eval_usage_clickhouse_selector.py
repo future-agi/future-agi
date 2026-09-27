@@ -6,9 +6,9 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from clickhouse_driver import Client
 from clickhouse_driver.errors import NetworkError, ServerException
 
+from conftest import _ch_test_native_client, _ch_test_native_port
 from model_hub.selectors import eval_usage
 from model_hub.selectors.eval_usage import read_eval_usage
 from tracer.services.clickhouse import trace_project_scope
@@ -765,17 +765,8 @@ def test_eval_usage_empty_project_set_fails_closed_for_trace_rows(monkeypatch):
 
 @pytest.fixture(scope="module")
 def ch_client():
-    host = os.environ.get("CH25_HOST", "127.0.0.1")
-    port = int(os.environ.get("CH25_NATIVE_PORT", "19000"))
-    client = Client(host=host, port=port, connect_timeout=3)
-    try:
-        client.execute("SELECT 1")
-    except Exception as exc:
-        pytest.skip(f"CH25 unavailable on {host}:{port}: {exc!r}")
-    try:
+    with _ch_test_native_client() as client:
         yield client
-    finally:
-        client.disconnect_connection()
 
 
 @pytest.mark.integration
@@ -922,7 +913,7 @@ def test_eval_usage_real_ch25_latest_tombstone_and_project_scope(
         monkeypatch.setattr(trace_project_scope, "_TRACE_TABLE", trace_source)
         read_client = ClickHouseClient(
             host=os.environ.get("CH25_HOST", "127.0.0.1"),
-            port=int(os.environ.get("CH25_NATIVE_PORT", "19000")),
+            port=_ch_test_native_port().port,
             database="default",
         )
         monkeypatch.setattr(

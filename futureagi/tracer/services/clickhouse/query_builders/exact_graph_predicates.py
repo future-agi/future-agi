@@ -25,8 +25,10 @@ from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import (
+    boolean_meta_presence_condition,
     build_annotation_value_predicate,
     normalize_filter_op,
+    parse_boolean_meta_filter,
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
@@ -122,18 +124,6 @@ def _local_param(params: dict[str, Any], prefix: str, value: Any) -> str:
         name = f"{prefix}_{index}"
     params[name] = value
     return name
-
-
-def _parse_boolean_filter(column_id: str, value: Any, operator: str | None) -> bool:
-    if normalize_filter_op(operator) != "equals":
-        raise UnsupportedFilterShapeError(
-            f"{column_id} supports only the equals operation"
-        )
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
-        return value.strip().lower() == "true"
-    raise UnsupportedFilterShapeError(f"{column_id} requires a boolean value")
 
 
 def _validated_uuid(value: Any, *, field: str) -> str:
@@ -261,7 +251,10 @@ def _compile_annotation_filter(
     params: dict[str, Any] = {}
 
     if column_id == "has_annotation":
-        required = _parse_boolean_filter(column_id, filter_value, filter_op)
+        presence = boolean_meta_presence_condition(filter_op)
+        if presence is not None:
+            return [(presence, True, {})]
+        required = parse_boolean_meta_filter(column_id, filter_value, filter_op)
         if annotation_label_ids is not None:
             if not annotation_label_ids:
                 # Completeness across an authoritative empty label set is
@@ -293,7 +286,10 @@ def _compile_annotation_filter(
         return [(predicate, required, relation_params)]
 
     if column_id == "my_annotations":
-        required = _parse_boolean_filter(column_id, filter_value, filter_op)
+        presence = boolean_meta_presence_condition(filter_op)
+        if presence is not None:
+            return [(presence, True, {})]
+        required = parse_boolean_meta_filter(column_id, filter_value, filter_op)
         user_id = config.get("user_id") or config.get("userId")
         if not user_id:
             return [("0 = 1", True, {})]
@@ -468,10 +464,14 @@ def _compile_has_eval_filter(
         eval_logger_version_column,
     )
 
-    required = _parse_boolean_filter(
+    filter_op = config.get("filter_op") or config.get("filterOp")
+    presence = boolean_meta_presence_condition(filter_op)
+    if presence is not None:
+        return presence, True, {}
+    required = parse_boolean_meta_filter(
         "has_eval",
         config.get("filter_value", config.get("filterValue")),
-        config.get("filter_op") or config.get("filterOp"),
+        filter_op,
     )
     try:
         config_ids = tuple(
@@ -725,15 +725,19 @@ def compile_exact_graph_row_predicates(
                 predicates.append(predicate)
                 output_window_only.append(False)
                 required_matches.append(required)
+            annotation_filter_op = config.get("filter_op") or config.get("filterOp")
             if (
                 column_id == "has_annotation"
                 and annotation_label_ids
                 and requirement_predicate_indexes
+                # A presence operator compiles to one constant predicate, not
+                # to the per-label completeness fan-out below.
+                and boolean_meta_presence_condition(annotation_filter_op) is None
             ):
-                wants_complete = _parse_boolean_filter(
+                wants_complete = parse_boolean_meta_filter(
                     column_id,
                     raw_value,
-                    config.get("filter_op") or config.get("filterOp"),
+                    annotation_filter_op,
                 )
                 if wants_complete:
                     match_condition_groups.extend(

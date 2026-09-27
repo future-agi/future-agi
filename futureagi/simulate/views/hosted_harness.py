@@ -8,22 +8,29 @@ from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from simulate.authentication import HarnessAttemptAuthentication
+from simulate.serializers.harness_usage import (
+    HarnessUsageRequestSerializer,
+    HarnessUsageResponseSerializer,
+)
 from simulate.serializers.hosted_harness import (
     HarnessAcceptedResponseSerializer,
     HarnessArtifactUploadResponseSerializer,
     HarnessEventBatchResponseSerializer,
     HarnessEventBatchSerializer,
-    HarnessManifestSerializer,
+    HarnessIngressProxyRequestSerializer,
     HarnessIngressRequestSerializer,
     HarnessIngressResponseSerializer,
+    HarnessManifestSerializer,
     HarnessResultReceiptSerializer,
     HarnessScenarioOperationResponseSerializer,
     HarnessScenarioOperationSerializer,
 )
+from simulate.services.harness_usage import check_harness_usage, record_harness_usage
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     begin_scenarios,
@@ -35,9 +42,21 @@ from simulate.services.hosted_harness_ingestion import (
     ingest_manifest,
     ingest_result_receipt,
 )
+from simulate.services.hosted_harness_ingress import (
+    create_ingress_proxy_url,
+    proxy_ingress_request,
+)
 from tfc.utils.api_contracts import validated_request
 
 logger = logging.getLogger(__name__)
+_INGRESS_REQUEST_SCHEMA = openapi.Schema(
+    type=openapi.TYPE_OBJECT,
+    additional_properties=True,
+)
+_INGRESS_RESPONSE = openapi.Response(
+    description="Raw response returned by the sandbox callback service.",
+    schema=openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_BINARY),
+)
 
 
 class HostedHarnessAttemptViewSet(viewsets.ViewSet):
@@ -61,6 +80,22 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
     @property
     def _attempt(self):
         return self.request.auth
+
+    @validated_request(
+        request_serializer=HarnessUsageRequestSerializer,
+        responses={
+            200: HarnessUsageResponseSerializer,
+            402: HarnessUsageResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"])
+    def usage(self, request, pk=None):
+        payload = request.validated_data
+        if payload["operation"] == "check":
+            decision = check_harness_usage(self._attempt, payload["action"])
+            return Response(decision, status=200 if decision["allowed"] else 402)
+        return Response(record_harness_usage(self._attempt, payload))
 
     @validated_request(
         request_serializer=HarnessEventBatchSerializer,
@@ -107,12 +142,11 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
     )
     @action(detail=True, methods=["post"])
     def ingress(self, request, pk=None):
-        """Mint a short-lived, no-header Daytona URL for one guest-selected HTTP port.
+        """Mint a short-lived, no-header URL for one guest-selected HTTP port.
 
         The attempt capability authenticates the trusted ALK guest. Customer processes never
         receive that bearer and therefore cannot expose arbitrary sandbox ports themselves.
         """
-        from django.conf import settings
 
         attempt = self._attempt
         if not attempt.provider_ref:
@@ -125,26 +159,28 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
         remaining = max(60, int((attempt.expires_at - timezone.now()).total_seconds()))
         expires_in_seconds = min(requested_ttl, remaining, 86400)
         try:
-            # Inside the guard: a backend image without the SDK must surface as the typed
-            # 502 below, not as an unhandled 500 the guest reports as spawn_failed.
-            from daytona import Daytona, DaytonaConfig
+            # Import inside the guard so a backend image missing the selected provider SDK
+            # surfaces as the typed 502 below rather than an unhandled server error.
+            from simulate.services.hosted_sandbox import get_sandbox_provider
 
-            client = Daytona(
-                DaytonaConfig(
-                    api_key=getattr(settings, "DAYTONA_API_KEY", ""),
-                    api_url=getattr(settings, "DAYTONA_API_URL", None),
-                    target=getattr(settings, "DAYTONA_TARGET", None),
-                    organization_id=getattr(
-                        settings, "DAYTONA_ORGANIZATION_ID", None
-                    ),
-                )
-            )
-            sandbox = client.get(str(attempt.provider_ref))
-            preview = sandbox.create_signed_preview_url(
+            provider = get_sandbox_provider()
+            sandbox = provider.get(str(attempt.provider_ref))
+            preview = provider.create_preview_url(
+                sandbox,
                 request.validated_data["port"],
                 expires_in_seconds=expires_in_seconds,
             )
-            preview_url = str(getattr(preview, "url", "") or "")
+            relay_headers = getattr(preview, "headers", {}) or {}
+            preview_url = (
+                create_ingress_proxy_url(
+                    request,
+                    attempt,
+                    request.validated_data["port"],
+                    expires_in_seconds=expires_in_seconds,
+                )
+                if relay_headers
+                else preview.url
+            )
             if not preview_url.startswith("https://"):
                 raise ValueError("signed preview URL is missing or not HTTPS")
         except Exception as exc:
@@ -161,9 +197,7 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
                 status_code=502,
                 retryable=True,
             ) from exc
-        return Response(
-            {"url": preview_url, "expires_in_seconds": expires_in_seconds}
-        )
+        return Response({"url": preview_url, "expires_in_seconds": expires_in_seconds})
 
     @validated_request(
         request_serializer=HarnessManifestSerializer,
@@ -220,3 +254,46 @@ class HostedHarnessAttemptViewSet(viewsets.ViewSet):
             {"artifact_id": f"sha256:{artifact_digest}", "duplicate": not created},
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
+
+
+class HostedHarnessIngressProxyView(APIView):
+    """Relay a signed callback URL to the active sandbox without exposing provider headers."""
+
+    authentication_classes = []
+    permission_classes = [AllowAny]
+    http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
+
+    def handle_exception(self, exc):
+        if isinstance(exc, HostedHarnessError):
+            return Response(exc.as_dict(), status=exc.status_code)
+        return super().handle_exception(exc)
+
+    def _proxy(self, request, token, target_path=""):
+        return proxy_ingress_request(request, token, target_path)
+
+    get = _proxy
+
+    @validated_request(
+        request_serializer=HarnessIngressProxyRequestSerializer,
+        responses={200: _INGRESS_RESPONSE, 201: _INGRESS_RESPONSE},
+    )
+    def post(self, request, token, target_path=""):
+        return self._proxy(request, token, target_path)
+
+    @validated_request(
+        request_serializer=HarnessIngressProxyRequestSerializer,
+        responses={200: _INGRESS_RESPONSE, 201: _INGRESS_RESPONSE},
+    )
+    def put(self, request, token, target_path=""):
+        return self._proxy(request, token, target_path)
+
+    @validated_request(
+        request_serializer=HarnessIngressProxyRequestSerializer,
+        responses={200: _INGRESS_RESPONSE, 201: _INGRESS_RESPONSE},
+    )
+    def patch(self, request, token, target_path=""):
+        return self._proxy(request, token, target_path)
+
+    delete = _proxy
+    head = _proxy
+    options = _proxy

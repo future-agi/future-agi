@@ -126,6 +126,7 @@ from simulate.serializers.test_execution import (
     TestExecutionColumnOrderResponseSerializer,
     TestExecutionColumnOrderSerializer,
     TestExecutionDetailResponseSerializer,
+    TestExecutionListQuerySerializer,
     TestExecutionRerunResponseSerializer,
     TestExecutionRerunSerializer,
     TestExecutionSerializer,
@@ -1413,13 +1414,41 @@ class TestExecutionCancelView(APIView):
         Tries the native TestExecutionWorkflow, hosted
         SimulationRunnerWorkflow, and any active RerunCoordinatorWorkflow.
         """
+        from simulate.models import HostedHarnessJob
+        from simulate.services.hosted_harness import request_cancellation
         from simulate.temporal.client import (
+            cancel_hosted_harness_gateway_workflow,
             cancel_simulation_runner_workflow,
             cancel_test_execution,
             cancel_workflow,
         )
 
         test_execution_id = str(test_execution.id)
+
+        hosted_job = HostedHarnessJob.no_workspace_objects.filter(
+            test_execution_id=test_execution.id
+        ).first()
+        if hosted_job is not None:
+            reason = "user_canceled"
+            request_cancellation(hosted_job, reason)
+            try:
+                cancel_hosted_harness_gateway_workflow(str(hosted_job.id))
+            except Exception:
+                logger.exception(
+                    "hosted simulation workflow cancellation signal failed job=%s",
+                    hosted_job.id,
+                )
+                from simulate.services.hosted_harness_gateway import (
+                    HostedHarnessGateway,
+                )
+
+                HostedHarnessGateway().cancel(hosted_job, reason=reason)
+            return {
+                "success": True,
+                "message": "Cancellation signal sent to hosted simulation",
+                "test_execution_id": test_execution_id,
+            }
+
         any_cancelled = False
 
         try:
@@ -1628,7 +1657,8 @@ class TestExecutionAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
+    @validated_request(
+        query_serializer=TestExecutionListQuerySerializer,
         responses={
             200: TestExecutionSerializer(many=True),
             404: RunTestErrorResponseSerializer,
@@ -1654,8 +1684,8 @@ class TestExecutionAPIView(APIView):
                 return _gm.not_found("Organization not found for the user.")
 
             # Get query parameters
-            search_query = request.query_params.get("search", "").strip()
-            status_filter = request.query_params.get("status", "").strip()
+            search_query = request.validated_query_data["search"]
+            status_filter = request.validated_query_data["status"]
 
             # Filter test executions by organization and workspace
             test_executions = TestExecution.objects.filter(
@@ -6888,7 +6918,6 @@ class CallExecutionRerunView(APIView):
             is_hosted = _hosted_execution_eligible(
                 test_execution.run_test, test_execution
             )
-
 
             repository_job_id = _repository_harness_job_id(test_execution)
 

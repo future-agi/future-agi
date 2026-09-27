@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 
+import { withApiPathPrefix } from "../utils";
+
 // The shared axios instance is created without a `timeout`, and axios defaults
 // to 0 — wait forever. A stalled gateway request therefore never rejects, so
 // React Query's isPending sticks on and the caller's UI is left disabled with
@@ -227,10 +229,22 @@ export function useReloadConfig() {
 
 export function useFetchProviderModels() {
   return useMutation({
-    mutationFn: async ({ providerName, baseUrl, apiKey, apiFormat }) => {
-      const body = providerName
-        ? { provider_name: providerName }
-        : { base_url: baseUrl, api_key: apiKey, api_format: apiFormat };
+    mutationFn: async ({
+      providerName,
+      baseUrl,
+      apiKey,
+      apiFormat,
+      apiPathPrefix,
+    }) => {
+      // Discovery has to probe the same versioned path the proxy will use, and
+      // the prefix is an openai-format concept, so gate it the way saving does.
+      const body = withApiPathPrefix(
+        providerName
+          ? { provider_name: providerName }
+          : { base_url: baseUrl, api_key: apiKey, api_format: apiFormat },
+        apiFormat,
+        apiPathPrefix,
+      );
       try {
         const { data } = await axios.post(
           endpoints.gateway.providerCredentials.fetchModels,

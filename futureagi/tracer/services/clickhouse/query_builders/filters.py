@@ -9,6 +9,7 @@ Django ORM querysets.
 
 import math
 import re
+import uuid
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
@@ -31,6 +32,15 @@ _LEGACY_OP_ALIAS = {"is": "equals", "is_not": "not_equals"}
 _LITERAL_TEXT_MATCH_OPS = frozenset(
     {"contains", "not_contains", "starts_with", "ends_with"}
 )
+
+# ``has_eval`` / ``has_annotation`` / ``my_annotations`` are derived per row
+# from the authoritative eval and Score relations.  The flag is computed for
+# every row and is therefore never NULL, so ``is_not_null`` constrains nothing
+# and ``is_null`` matches nothing.  ``not_equals`` is compiled by negating the
+# requested value, never by inferring intent from the value alone.
+_BOOLEAN_META_PRESENCE_CONDITIONS = {"is_null": "0 = 1", "is_not_null": "1 = 1"}
+
+_BOOLEAN_META_VALUE_OPS = frozenset({"equals", "not_equals"})
 
 
 class EvalFilterMetadata(NamedTuple):
@@ -92,6 +102,37 @@ def resolve_eval_filter_metadata(
     return EvalFilterMetadata(config_ids=config_ids, output_type=output_type)
 
 
+def resolve_annotation_label_output_type(
+    label_id: str,
+    organization_id: str | None = None,
+) -> str | None:
+    """Resolve one annotation label's authoritative value type from PostgreSQL.
+
+    The label's ``type`` is the only authoritative statement of what a Score
+    row's JSON payload holds, so a compiler must not infer it from the
+    operator or from an optional client hint.  Labels are org-scoped and may
+    be attached to a workspace rather than to one project, so the tenancy
+    fence here is the organization — the same fence the Score predicate
+    itself carries.  Returns ``None`` when the identifier names no live label
+    in scope; callers reject such a filter rather than compiling a predicate
+    against a guessed type.
+    """
+
+    from django.core.exceptions import ValidationError
+
+    from model_hub.models.develop_annotations import AnnotationsLabels
+
+    try:
+        labels = AnnotationsLabels.no_workspace_objects.filter(
+            id=label_id, deleted=False
+        )
+        if organization_id:
+            labels = labels.filter(organization_id=organization_id)
+        return labels.values_list("type", flat=True).first()
+    except (TypeError, ValueError, ValidationError):
+        return None
+
+
 def _voice_root_metric_expressions(
     expressions: dict[str, str], keys: tuple[str, ...]
 ) -> dict[str, str]:
@@ -102,6 +143,99 @@ def normalize_filter_op(op: str | None) -> str | None:
     if op is None:
         return None
     return _LEGACY_OP_ALIAS.get(op, op)
+
+
+def _unsupported_filter_shape(message: str) -> ValueError:
+    """Build the shared bad-filter error that public readers map to HTTP 400.
+
+    ``latest_filter_predicates`` imports this module, so the exception it owns
+    can only be resolved at call time.  Raising a bare ``ValueError`` here
+    would reach the views' generic handler and answer HTTP 500 for a filter
+    the caller can correct.
+    """
+
+    from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+        UnsupportedFilterShapeError,
+    )
+
+    return UnsupportedFilterShapeError(message)
+
+
+def boolean_meta_presence_condition(filter_op: str | None) -> str | None:
+    """Compile a presence operator on a derived boolean flag.
+
+    Returns the finished constant predicate for ``is_null`` / ``is_not_null``,
+    and ``None`` for every other operator — which the caller then resolves with
+    :func:`parse_boolean_meta_filter`.
+    """
+
+    return _BOOLEAN_META_PRESENCE_CONDITIONS.get(normalize_filter_op(filter_op) or "")
+
+
+class BooleanMetaFilterShapeError(ValueError):
+    """The shared boolean meta-filter rule rejected a shape.
+
+    Raised by :func:`resolve_boolean_meta_value` so the rule itself owns no
+    public error class.  Each compiler re-raises it as the class its own
+    reader maps to a response: the list and graph compilers as
+    ``UnsupportedFilterShapeError`` (HTTP 400 for the whole read), the
+    dashboard builder as ``InvalidMetricCombinationError`` (a per-widget
+    message, so one nonsensical filter does not fail the whole query).
+    """
+
+
+def resolve_boolean_meta_value(
+    column_id: str,
+    filter_value: Any,
+    operation: str | None,
+) -> bool:
+    """The one value rule behind every boolean meta-filter, in one place.
+
+    Which operators carry a value, how a value coerces to a boolean, and that
+    ``not_equals`` is compiled by negating the requested value rather than by
+    inferring intent from the value alone.
+
+    ``operation`` is already normalised by the caller, because the compilers
+    reach this rule through different alias tables — the list and graph
+    compilers through :func:`normalize_filter_op`, the dashboard through its
+    own payload aliases — and normalising twice here would silently widen
+    each compiler's accepted vocabulary to the other's.
+    """
+
+    if operation not in _BOOLEAN_META_VALUE_OPS:
+        raise BooleanMetaFilterShapeError(
+            f"{column_id} supports only equals, not_equals, is_null and is_not_null"
+        )
+    if isinstance(filter_value, bool):
+        wanted = filter_value
+    elif isinstance(filter_value, str) and filter_value.strip().lower() in {
+        "true",
+        "false",
+    }:
+        wanted = filter_value.strip().lower() == "true"
+    else:
+        raise BooleanMetaFilterShapeError(f"{column_id} requires a boolean value")
+    return wanted if operation == "equals" else not wanted
+
+
+def parse_boolean_meta_filter(
+    column_id: str,
+    filter_value: Any,
+    filter_op: str | None,
+) -> bool:
+    """Resolve one boolean meta-filter to the presence its operator requires.
+
+    Presence operators are deliberately not accepted here: they carry no value
+    and callers compile them through :func:`boolean_meta_presence_condition`
+    first.
+    """
+
+    try:
+        return resolve_boolean_meta_value(
+            column_id, filter_value, normalize_filter_op(filter_op)
+        )
+    except BooleanMetaFilterShapeError as exc:
+        raise _unsupported_filter_shape(str(exc)) from exc
 
 
 def build_literal_text_predicate(
@@ -695,6 +829,7 @@ class ClickHouseFilterBuilder:
         strict_enduser_project_correlation: bool = False,
         annotation_label_set_known: bool = False,
         eval_filter_metadata: dict[str, EvalFilterMetadata] | None = None,
+        resolved_candidate_sessions_table: str | None = None,
     ) -> None:
         self.table = table
         self.annotation_label_ids = annotation_label_ids or []
@@ -768,6 +903,19 @@ class ClickHouseFilterBuilder:
         # candidates, including parent_span_id and start_time. It is code-owned,
         # never an HTTP-supplied table or a raw/insert-only candidate index.
         self.resolved_candidate_spans_table = resolved_candidate_spans_table
+        if resolved_candidate_sessions_table is not None and (
+            re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", resolved_candidate_sessions_table)
+            is None
+            or query_mode != self.QUERY_MODE_TRACE
+            or candidate_ids_param is None
+        ):
+            raise ValueError(
+                "resolved_candidate_sessions_table requires a bounded internal trace relation"
+            )
+        # Only session classification supplies this already-live, finite mapping
+        # of (project_id, session_id, trace_id), including remapped session IDs.
+        # Trace/span callers must not inherit annotations from their session.
+        self.resolved_candidate_sessions_table = resolved_candidate_sessions_table
         # Organization trace pages can contain the same textual trace id in
         # more than one project.  Their residual predicates are compiled as
         # finite, per-project branches and opt into this guard so score rows
@@ -831,10 +979,30 @@ class ClickHouseFilterBuilder:
         self._params: dict[str, Any] = {}
 
     def _candidate_filter(self, column: str) -> str:
-        """Bound a relational/filter subquery to the active <=200-ID batch."""
+        """Bound a relational/filter subquery to the active <=200-ID batch.
+
+        The spans table's ``trace_id`` is compared bare. It is a ``String``
+        column (``002_spans_v2.sql``) and is not one of ``_UUID_COLUMNS``, so
+        the ``toString`` every other column takes here changed no value on it;
+        it only hid the column from ``idx_trace_id`` and from the sorting key.
+        Each classifier residual membership subquery therefore read the
+        project's whole retained span history per candidate chunk, whatever
+        its ``IN`` set held. Measured on production's high-volume tenant, the
+        user-detail Traces page at thirty days: the seed completed, and the
+        classifier died at the 9.5 s wall as ``ExceptionBeforeStart`` with
+        zero bytes read, on eighteen candidates - the set is built while
+        planning, before the first progress packet. The same statement already
+        binds ``trace_id IN %(candidate_trace_ids)s`` bare in its innermost
+        replay with the same literals, so the bare form admits exactly the rows
+        the cast did and fails nowhere the statement did not already fail.
+        Every other column keeps the cast: the trace-tags table's ``id`` and
+        the Score-side expressions are not this column.
+        """
 
         if self.candidate_ids_param is None:
             return ""
+        if column == "trace_id":
+            return f" AND {column} IN %({self.candidate_ids_param})s"
         return f" AND toString({column}) IN %({self.candidate_ids_param})s"
 
     def _candidate_span_entity_filter(
@@ -1129,6 +1297,27 @@ class ClickHouseFilterBuilder:
         renders in the trace row.
         """
         score_trace_expr = self._score_trace_id_expr()
+        session_join = ""
+        session_scope = ""
+        if self.resolved_candidate_sessions_table is not None:
+            has_session = (
+                "ifNull(s.trace_session_id, "
+                "toUUID('00000000-0000-0000-0000-000000000000')) != "
+                "toUUID('00000000-0000-0000-0000-000000000000')"
+            )
+            session_join = (
+                f"LEFT JOIN {self.resolved_candidate_sessions_table} AS session_sp "
+                "ON session_sp.session_id = s.trace_session_id "
+                "AND session_sp.project_id = s.tracer_project_id "
+            )
+            score_trace_expr = (
+                f"if({has_session}, toString(session_sp.trace_id), {score_trace_expr})"
+            )
+            # A missing join must not turn into a zero/default trace match.
+            session_scope = (
+                f" AND (NOT ({has_session}) "
+                "OR session_sp.session_id = s.trace_session_id)"
+            )
         select_keyword = "SELECT DISTINCT" if distinct else "SELECT"
         extra_clause = f" {extra_where}" if extra_where else ""
         date_clause = self._score_date_filter("s")
@@ -1148,12 +1337,14 @@ class ClickHouseFilterBuilder:
             f"FROM model_hub_score AS s FINAL "
             f"LEFT JOIN {spans_subq} AS sp "
             f"ON sp.id = s.observation_span_id "
+            f"{session_join}"
             f"WHERE {self._score_live_predicate('s')} "
             f"AND isNotNull({score_trace_expr}) "
             f"AND {score_trace_expr} != ''"
             f"{candidate_filter}"
             f"{date_clause}"
             f"{project_clause}"
+            f"{session_scope}"
             f"{extra_clause}"
         )
 
@@ -1406,7 +1597,8 @@ class ClickHouseFilterBuilder:
             # Annotation controls retain legacy/native routing, but never
             # override an explicit raw attribute or eval-value source.
             if col_id == "my_annotations" and col_type not in {
-                self.SPAN_ATTRIBUTE, self.EVAL_METRIC,
+                self.SPAN_ATTRIBUTE,
+                self.EVAL_METRIC,
             }:
                 cond = self._build_my_annotations_condition(
                     filter_value, config, filter_op
@@ -1416,7 +1608,8 @@ class ClickHouseFilterBuilder:
                 continue
 
             if col_id == "annotator" and col_type not in {
-                self.SPAN_ATTRIBUTE, self.EVAL_METRIC,
+                self.SPAN_ATTRIBUTE,
+                self.EVAL_METRIC,
             }:
                 cond = self._build_annotator_condition(filter_value, filter_op)
                 if cond:
@@ -1425,7 +1618,9 @@ class ClickHouseFilterBuilder:
 
             # Handle has_eval filter — subquery against tracer_eval_logger
             if col_id == "has_eval" and col_type not in {
-                self.SPAN_ATTRIBUTE, self.EVAL_METRIC, self.ANNOTATION,
+                self.SPAN_ATTRIBUTE,
+                self.EVAL_METRIC,
+                self.ANNOTATION,
             }:
                 cond = self._build_has_eval_condition(filter_value, filter_op)
                 if cond:
@@ -1434,7 +1629,8 @@ class ClickHouseFilterBuilder:
 
             # Handle has_annotation filter — subquery against model_hub_score
             if col_id == "has_annotation" and col_type not in {
-                self.SPAN_ATTRIBUTE, self.EVAL_METRIC,
+                self.SPAN_ATTRIBUTE,
+                self.EVAL_METRIC,
             }:
                 cond = self._build_has_annotation_condition(filter_value, filter_op)
                 if cond:
@@ -1873,6 +2069,21 @@ class ClickHouseFilterBuilder:
             f"AND {inner})"
         )
 
+    def _span_attr_key_sql(self, attribute_key: str) -> str:
+        """Render attribute data without relaxing SQL identifier validation."""
+        # Lazy import avoids the latest-predicate compiler's import of this
+        # builder. Share its exact UTF-8/length contract.
+        from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
+            _validate_attribute_key,
+        )
+
+        attribute_key = _validate_attribute_key(attribute_key)
+        # Even ASCII keys can equal a column name rewritten at the V2 schema
+        # boundary. Keep every key out of SQL text, including that rewrite.
+        param = self._next_param("attr_key")
+        self._params[param] = attribute_key
+        return f"%({param})s"
+
     def _build_span_attr_condition(
         self,
         attribute_key: str,
@@ -1884,7 +2095,7 @@ class ClickHouseFilterBuilder:
 
         Negation ops use ``exists AND value NOT …`` so MV-gap rows are excluded.
         """
-        attribute_key = _sanitize_key(attribute_key)
+        attribute_key = self._span_attr_key_sql(attribute_key)
 
         normalized_filter_type, map_column, value_coercer = (
             self._resolve_span_attr_type(filter_type)
@@ -1894,7 +2105,7 @@ class ClickHouseFilterBuilder:
         normalized_value = self._normalize_span_attr_value(
             filter_op, value_coercer, filter_value
         )
-        exists_predicate = f"mapContains({map_column}, '{attribute_key}')"
+        exists_predicate = f"mapContains({map_column}, {attribute_key})"
         if filter_op in NO_VALUE_OPS:
             return self._scope_span_attr_inner(
                 exists_predicate,
@@ -1978,7 +2189,7 @@ class ClickHouseFilterBuilder:
         preserving the ordinary homogeneous filter contract.
         """
 
-        attribute_key = _sanitize_key(attribute_key)
+        attribute_key = self._span_attr_key_sql(attribute_key)
         if filter_op not in LIST_OPS:
             raise ValueError(
                 "attribute_value_types is only supported for in/not_in filters"
@@ -2030,7 +2241,7 @@ class ClickHouseFilterBuilder:
             normalized_values = self._normalize_span_attr_value(
                 "in", value_coercer, values
             )
-            exists_predicate = f"mapContains({map_column}, '{attribute_key}')"
+            exists_predicate = f"mapContains({map_column}, {attribute_key})"
             exists_predicates.append(exists_predicate)
             predicate = self._span_attr_inner(
                 map_column,
@@ -2124,8 +2335,10 @@ class ClickHouseFilterBuilder:
         ``case_insensitive`` is set for text-typed span attributes. Equality
         and membership use Unicode-aware case folding; substring operations
         treat the supplied value as a literal UTF-8 needle.
+        ``attribute_key`` is the literal/placeholder from _span_attr_key_sql,
+        not raw user text (also passed through the v2 override).
         """
-        column_access = f"{map_column}['{attribute_key}']"
+        column_access = f"{map_column}[{attribute_key}]"
         eq_lhs = (
             f"lowerUTF8(toString({column_access}))"
             if case_insensitive
@@ -2230,6 +2443,11 @@ class ClickHouseFilterBuilder:
     # equality, and membership work — ClickHouse rejects direct UUID-vs-String
     # comparisons. Ops absent here (is_null/is_not_null, ranges) operate on
     # the bare column.
+    #
+    # ``end_user_id`` with ``equals``/``in`` is the one carve-out: those two
+    # ops are compiled against the bare column and ``toUUID`` literals by
+    # ``_end_user_uuid_equality`` so ``idx_end_user_id`` stays eligible. See
+    # that method for why the remaining ops keep the cast.
     _UUID_TEXT_FILTER_OPS = frozenset(
         {
             "equals",
@@ -2243,6 +2461,103 @@ class ClickHouseFilterBuilder:
         }
     )
 
+    @staticmethod
+    def _canonical_uuid_literal(value: Any) -> str | None:
+        """Return ``value`` as canonical UUID text, or ``None`` if it is not one.
+
+        Only the canonical 8-4-4-4-12 spelling is accepted, in either case. A
+        literal spelled any other way that ``uuid.UUID`` would still parse
+        (braces, a ``urn:uuid:`` prefix, 32 bare hex digits) does not equal
+        ``toString(<uuid>)`` today either, so it keeps folding to no rows
+        instead of silently matching more rows than before. Case is the one
+        deliberate difference: ClickHouse renders a UUID in lower case, so an
+        upper-case literal matches nothing under the cast and matches its own
+        row under ``toUUID``.
+        """
+
+        if isinstance(value, uuid.UUID):
+            return str(value)
+        if not isinstance(value, str):
+            return None
+        text = value.lower()
+        try:
+            canonical = str(uuid.UUID(text))
+        except (AttributeError, TypeError, ValueError):
+            return None
+        return canonical if canonical == text else None
+
+    @classmethod
+    def _canonical_uuid_negation_value(cls, filter_value: Any) -> Any:
+        """Lower-case the valid UUID literals a negation compares as text.
+
+        ``not_equals``/``not_in`` keep ``toString(end_user_id)``, which renders
+        a UUID in lower case, so an upper-case literal compared against it is
+        unequal to the row ``_end_user_uuid_equality`` now matches. Binding the
+        canonical spelling keeps the positive and negative forms complementary.
+        A value that is not a canonical UUID is returned untouched, so its
+        existing behaviour under a negation is unchanged.
+        """
+
+        if isinstance(filter_value, list):
+            return [cls._canonical_uuid_negation_value(item) for item in filter_value]
+        canonical = cls._canonical_uuid_literal(filter_value)
+        return filter_value if canonical is None else canonical
+
+    def _end_user_uuid_equality(
+        self,
+        filter_op: str,
+        filter_value: Any,
+        first_param: str,
+    ) -> str:
+        """Compile ``end_user_id`` equality/membership so the bloom index prunes.
+
+        ``toString(end_user_id) IN (...)`` hides the column behind a function,
+        so ClickHouse can use neither the ``idx_end_user_id`` bloom filter nor
+        the primary key: the statement reads every span of the project on every
+        window. Comparing the bare column against ``toUUID`` literals keeps
+        both eligible and is otherwise the same predicate.
+
+        A literal that is not a UUID can never equal a UUID, so under these two
+        positive ops it contributes no rows: ``equals`` folds to ``0 = 1`` and
+        an invalid member of an ``in`` set is dropped (all of them invalid
+        folds the whole condition to ``0 = 1``).
+
+        ``not_equals``/``not_in`` keep the cast and their NULL handling exactly
+        as they were: a bloom filter cannot serve ``NOT IN`` so unwrapping buys
+        them no pruning, and the non-UUID fold would have to invert. They do
+        canonicalise a *valid* UUID literal the same way this method does, via
+        ``_canonical_uuid_negation_value``. Otherwise the two forms would stop
+        being complementary — an upper-case literal is bound lower case here
+        and, against a lower-case ``toString``, was unequal to the very row
+        this method matches, so one row satisfied both ``equals`` and
+        ``not_equals`` on the same value. An *invalid* literal is left as
+        written for the negations, where it goes on matching every non-NULL
+        row as it does today.
+        """
+
+        if not isinstance(filter_value, list):
+            values = [filter_value]
+        elif filter_op == "in":
+            values = list(filter_value)
+        else:
+            # ``equals`` is scalar; tolerate a one-element list from callers
+            # that reuse an ``in`` payload.
+            values = list(filter_value)[:1]
+
+        placeholders: list[str] = []
+        for value in values:
+            canonical = self._canonical_uuid_literal(value)
+            if canonical is None:
+                continue
+            param = first_param if not placeholders else self._next_param("col")
+            self._params[param] = canonical
+            placeholders.append(f"toUUID(%({param})s)")
+
+        if not placeholders:
+            # Empty set, or no literal that could ever equal a UUID.
+            return "0 = 1"
+        return f"end_user_id IN ({', '.join(placeholders)})"
+
     def _build_column_condition(
         self,
         column: str,
@@ -2253,6 +2568,12 @@ class ClickHouseFilterBuilder:
         """Build a condition for a direct column reference."""
         param = self._next_param("col")
         case_insensitive = column in self._CASE_INSENSITIVE_COLUMNS
+        if column == "end_user_id" and filter_op in ("equals", "in"):
+            return self._end_user_uuid_equality(filter_op, filter_value, param)
+        if column == "end_user_id" and filter_op in ("not_equals", "not_in"):
+            # Same literal, same spelling as the positive ops above; the cast
+            # and the NULL handling below are deliberately left alone.
+            filter_value = self._canonical_uuid_negation_value(filter_value)
         comparison_column = (
             f"toString({column})"
             if column in self._NULLABLE_UUID_COLUMNS
@@ -2767,24 +3088,6 @@ class ClickHouseFilterBuilder:
     # Boolean metric filter handlers (has_eval, has_annotation)
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _parse_boolean_meta_filter(
-        column_id: str,
-        filter_value: Any,
-        filter_op: str | None,
-    ) -> bool:
-        """Parse one boolean meta-filter without implicit operator inversion."""
-
-        if normalize_filter_op(filter_op) != "equals":
-            raise ValueError(f"{column_id} supports only the equals operation")
-        if isinstance(filter_value, bool):
-            return filter_value
-        if isinstance(filter_value, str):
-            normalized_value = filter_value.strip().lower()
-            if normalized_value in {"true", "false"}:
-                return normalized_value == "true"
-        raise ValueError(f"{column_id} requires a boolean value")
-
     def _build_has_eval_condition(
         self,
         filter_value: Any,
@@ -2795,9 +3098,10 @@ class ClickHouseFilterBuilder:
         Generates a ``trace_id IN (SELECT ...)`` subquery against the
         ``tracer_eval_logger`` CDC table.
         """
-        wants_eval = self._parse_boolean_meta_filter(
-            "has_eval", filter_value, filter_op
-        )
+        presence = boolean_meta_presence_condition(filter_op)
+        if presence is not None:
+            return presence
+        wants_eval = parse_boolean_meta_filter("has_eval", filter_value, filter_op)
         if (
             not wants_eval
             and self.candidate_ids_param is None
@@ -2806,7 +3110,9 @@ class ClickHouseFilterBuilder:
             # Absence has no positive row witness. Public list readers compile
             # this predicate only after producing a <=200 candidate batch. Do
             # not silently widen a negative filter into a whole-table anti-scan.
-            raise ValueError("has_eval=false requires bounded candidate scope")
+            raise _unsupported_filter_shape(
+                "has_eval=false requires bounded candidate scope"
+            )
         membership_op = "IN" if wants_eval else "NOT IN"
         # The eval table has no ``project_id`` column, so scope the subquery by
         # INNER JOIN to the spans table (which does) — otherwise we would match
@@ -2921,7 +3227,10 @@ class ClickHouseFilterBuilder:
         stored against observation_span_id. Resolve through ``spans`` so this
         filter sees the same annotations rendered in trace rows.
         """
-        wants_annotation = self._parse_boolean_meta_filter(
+        presence = boolean_meta_presence_condition(filter_op)
+        if presence is not None:
+            return presence
+        wants_annotation = parse_boolean_meta_filter(
             "has_annotation", filter_value, filter_op
         )
 
@@ -2950,7 +3259,13 @@ class ClickHouseFilterBuilder:
         """Handle ``my_annotations`` filter: check if the current user has
         any annotation on the trace.  ``filter_value`` should be truthy and
         the user_id is expected inside ``config``."""
-        wants_my_annotations = self._parse_boolean_meta_filter(
+        presence = boolean_meta_presence_condition(filter_op)
+        if presence is not None:
+            # The flag is derived from the caller's own Score rows, so the
+            # presence operators are answered without a principal: neither
+            # constant exposes another user's annotations.
+            return presence
+        wants_my_annotations = parse_boolean_meta_filter(
             "my_annotations", filter_value, filter_op
         )
         user_id = config.get("user_id")

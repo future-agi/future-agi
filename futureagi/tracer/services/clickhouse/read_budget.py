@@ -85,12 +85,20 @@ class ReadDeadline:
 
     total_ms: int
     started: float
+    # Whether a statement under this deadline also asks the server to stop at
+    # it (``server_execution_cap_ms``). Off by default: application reads keep
+    # the no-abort policy and use the deadline for admission only.
+    enforce_on_server: bool = False
 
     @classmethod
-    def start(cls, total_ms: int) -> "ReadDeadline":
+    def start(cls, total_ms: int, *, enforce_on_server: bool = False) -> "ReadDeadline":
         if total_ms <= 0:
             raise ValueError("read deadline must be positive")
-        return cls(total_ms=int(total_ms), started=time.monotonic())
+        return cls(
+            total_ms=int(total_ms),
+            started=time.monotonic(),
+            enforce_on_server=enforce_on_server,
+        )
 
     def elapsed_ms(self) -> float:
         return (time.monotonic() - self.started) * 1000
@@ -153,7 +161,13 @@ def is_clickhouse_query_error(exc: Exception) -> bool:
     :func:`is_read_budget_error`.
     """
 
-    if isinstance(exc, (ClickHouseNetworkError, ClickHouseSocketTimeoutError)):
+    # The native driver's socket reader raises a bare EOFError, neither wrapped
+    # nor an OSError, when the server closes the connection mid-response. Only
+    # the bare exception qualifies: a coded error raised while one is being
+    # handled is still judged by its code below.
+    if isinstance(
+        exc, (ClickHouseNetworkError, ClickHouseSocketTimeoutError, EOFError)
+    ):
         return True
     if isinstance(exc, ClickHouseError):
         return getattr(exc, "code", None) in _TRANSIENT_CLICKHOUSE_ERROR_CODES

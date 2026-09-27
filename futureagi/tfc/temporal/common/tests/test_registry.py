@@ -6,6 +6,30 @@ import pytest
 from tfc.temporal.common import registry
 
 
+def test_hosted_runner_dropin_stays_on_its_dedicated_queue():
+    from simulate.tasks.hosted_harness_conversation import (
+        ensure_hosted_harness_conversation_runtime,
+    )
+    from simulate.temporal.constants import QUEUE_RUNNER
+    from tfc.temporal.drop_in.decorator import _ACTIVITY_WRAPPERS
+    from tfc.temporal.drop_in.workflow import TaskRunnerWorkflow
+
+    runner_activities = registry.get_activities_for_queue(QUEUE_RUNNER)
+    runner = _ACTIVITY_WRAPPERS[ensure_hosted_harness_conversation_runtime.name]
+    assert runner in runner_activities
+    assert TaskRunnerWorkflow in registry.get_workflows_for_queue(QUEUE_RUNNER)
+    for queue in (
+        "default",
+        "tasks_s",
+        "tasks_l",
+        "tasks_xl",
+        "agent_compass",
+        "trace_ingestion",
+        "exact_aggregation",
+    ):
+        assert runner not in registry.get_activities_for_queue(queue)
+
+
 def test_usage_temporal_registry_prefers_cloud(monkeypatch):
     cloud_registry = MagicMock()
     import_module = MagicMock(

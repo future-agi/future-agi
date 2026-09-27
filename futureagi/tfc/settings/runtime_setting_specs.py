@@ -70,16 +70,6 @@ PROPERTY_CATALOG_RUNTIME_SETTING_SPECS = {
             ("MAX_PAGE_SIZE", 50, 1, 200),
             ("MAX_SEARCH_BYTES", 512, 1, 4096),
             ("QUERY_WALL_MS", 10_000, 100, 30_000),
-            ("DEV_STANDARD_MAX_WALL_MS", 100_000, 100, 1_740_000),
-            ("DEV_INITIAL_BACKFILL_MAX_WALL_MS", 1_740_000, 100, 3_600_000),
-            ("DEV_SCHEDULED_RECONCILE_MAX_WALL_MS", 1_740_000, 100, 3_600_000),
-            ("REVISION_LEASE_SECONDS", 600, 60, 1_800),
-            ("MAX_REVISION_LEASE_SECONDS", 1_800, 60, 3_600),
-            ("INITIAL_BACKFILL_LEASE_HEADROOM_MS", 60_000, 1_000, 600_000),
-            ("RECONCILE_INTERVAL_SECONDS", 120, 30, 86_400),
-            ("RECONCILE_MAX_WORKSPACES", 1, 1, 256),
-            ("RECONCILE_DEFAULT_EXTENDED_WALL_MS", 1_200_000, 100, 3_600_000),
-            ("RECONCILE_ACTIVITY_TIME_LIMIT_SECONDS", 1_800, 60, 7_200),
             ("READ_POOL_SIZE", 4, 1, 32),
             ("READ_MAX_THREADS", 2, 1, 16),
             ("READ_MAX_CONCURRENT_QUERIES_PER_USER", 4, 1, 16),
@@ -98,60 +88,15 @@ PROPERTY_CATALOG_RUNTIME_SETTING_SPECS = {
                 32 * 1024**2,
                 8 * 1024**3,
             ),
-            ("MAX_LINEAGE_REVISIONS", 2_048, 1, 16_384),
-            ("SOURCE_MAX_PAGE_BYTES", 2 * 1024**2, 64 * 1024, 32 * 1024**2),
-            ("SOURCE_MAX_TOTAL_BYTES", 32 * 1024**2, 64 * 1024, 64 * 1024**2),
-            ("POSTGRES_STATEMENT_TIMEOUT_MS", 8_000, 100, 60_000),
-            ("POSTGRES_PAGE_ROWS", 1_000, 1, 10_000),
-            ("POSTGRES_MAX_TOTAL_ROWS", 100_000, 1, 1_000_000),
-            ("PUBLISHER_WALL_MS", 8_500, 100, 60_000),
-            ("DEADLINE_MAX_WALL_MS", 7_200_000, 100, 24 * 60 * 60 * 1_000),
-            ("DRAIN_PROOF_MAX_BYTES", 64 * 1024**2, 64 * 1024, 64 * 1024**2),
-            ("DRAIN_POLL_INTERVAL_MS", 50, 1, 1_000),
-            ("DRAIN_POLL_CAP_MS", 1_000, 1, 5_000),
-            ("VISIBILITY_RETRY_CAP_MS", 250, 1, 5_000),
-            ("STATE_STORE_TIMEOUT_MS", 8_500, 100, 60_000),
-            ("STATE_STORE_MIN_ROW_CAP", 256, 1, 16_384),
-            ("CURRENT_BINDING_MAX_ROWS", 100_000, 1, 1_000_000),
             ("CURSOR_MAX_AGE_SECONDS", 24 * 60 * 60, 60, 7 * 24 * 60 * 60),
-            ("CURSOR_MAX_BYTES", 16 * 1024, 1024, 64 * 1024),
-            ("LINEAGE_ANCHOR_MAX_AGE_SECONDS", 26 * 60 * 60, 60 * 60, 604_800),
-            ("FULL_REPAIR_INTERVAL_SECONDS", 24 * 60 * 60, 60 * 60, 604_800),
-            ("MAX_NONTERMINAL_RESERVATIONS", 64, 1, 1024),
-            ("CANONICAL_SPAN_MAX_WINDOWS", 366 * 24, 24, 5 * 366 * 24),
-            ("CANONICAL_SPAN_PAGE_ROWS", 1024, 1, 4096),
-            ("CANONICAL_SPAN_DEFAULT_PAGE_ROWS", 8, 1, 4096),
-            ("DEV_CANONICAL_SPAN_PAGE_ROWS", 256, 1, 4096),
-            ("INITIAL_BACKFILL_CANONICAL_SPAN_PAGE_ROWS", 1024, 1, 4096),
-            ("CANONICAL_SPAN_QUERY_TIMEOUT_MS", 8_500, 100, 60_000),
-            ("CANONICAL_SPAN_MAX_THREADS", 1, 1, 16),
-            ("INITIAL_BACKFILL_CANONICAL_SPAN_QUERY_TIMEOUT_MS", 30_000, 100, 120_000),
-            ("CANONICAL_SPAN_SCAN_WINDOW_HOURS", 7 * 24, 1, 31 * 24),
-            ("CANONICAL_SPAN_MAX_GROUPS", 100_000, 1000, 1_000_000),
-            ("CANONICAL_SPAN_MAX_GROUP_BYTES", 64 * 1024**2, 1024**2, 512 * 1024**2),
-            ("AUTHORITATIVE_VALUE_BATCH_MAX_ROWS", 2000, 1, 10_000),
-            ("AUTHORITATIVE_VALUE_BATCH_MAX_BYTES", 400 * 1024, 64 * 1024, 8 * 1024**2),
-            ("RECONCILE_INCREMENTAL_OVERLAP_SECONDS", 120, 0, 86_400),
-            ("RECONCILE_DEFAULT_ENVELOPE_ROWS", 500, 1, 1000),
-            ("RECONCILE_MAX_ENVELOPE_ROWS", 1000, 1, 10_000),
-            ("RECONCILE_DEFAULT_MAX_ENVELOPE_BYTES", 1024**2, 64 * 1024, 2 * 1024**2),
-            ("RECONCILE_MAX_ENVELOPE_BYTES", 2 * 1024**2, 64 * 1024, 8 * 1024**2),
-            ("PRODUCER_RETIREMENT_MAX_BYTES", 64 * 1024**2, 64 * 1024, 64 * 1024**2),
+            # A keyset contains canonical value bytes; do not depend on JSON
+            # compression to fit an eligible 16 KiB string after escaping.
+            ("CURSOR_MAX_BYTES", 256 * 1024, 1024, 256 * 1024),
         ),
         prefix="PROPERTY_CATALOG_",
     ),
     **_specs(
-        (
-            ("READ_TRANSPORT_TIMEOUT_SECONDS", 10.0, 0.1, 30.0),
-            ("SOURCE_ADAPTER_WALL_SECONDS", 8.5, 0.1, 540.0),
-            (
-                "SCHEDULED_RECONCILE_SOURCE_ADAPTER_WALL_SECONDS",
-                120.0,
-                0.1,
-                540.0,
-            ),
-            ("INITIAL_BACKFILL_SOURCE_ADAPTER_WALL_SECONDS", 540.0, 0.1, 540.0),
-        ),
+        (("READ_TRANSPORT_TIMEOUT_SECONDS", 10.0, 0.1, 30.0),),
         value_type=float,
         prefix="PROPERTY_CATALOG_",
     ),
@@ -185,11 +130,80 @@ DATASET_READ_SETTING_SPECS = {
     ),
 }
 
+# Out-of-band recovery for eval tasks whose per-task workflow stopped.
+#
+# These two constants mirror ``_RUN_ENTRY_TIMEOUT`` and
+# ``RUN_ENTRY_RETRY_POLICY.maximum_attempts`` in
+# ``tfc.temporal.eval_tasks.workflows``, which cannot be imported at
+# settings-load time. ``test_the_mirrored_run_entry_ceiling_matches_the_workflow``
+# pins them against the real values, so a change there fails a test here
+# rather than silently loosening the bounds below.
+RUN_ENTRY_CEILING_SECONDS = 1_800
+RUN_ENTRY_MAX_ATTEMPTS = 3
+# The longest a run the sweep can still meet may legitimately last. The sweep
+# asks Temporal before it reaps and skips a task whose workflow is progressing,
+# so the only run it can overlap belongs to an execution that has since closed:
+# one activity attempt already in flight on a worker, bounded by the run-entry
+# start-to-close ceiling, with no retries because a closed execution dispatches
+# none. The retry count is kept in the product as headroom rather than as the
+# bound it models, so the floor stays conservative if that gate ever moves.
+#
+# This deliberately does NOT model a claim waiting in the queue. An entry is
+# ``RUNNING`` from the moment ``claim_pending_batch`` stamps its batch, and the
+# drain runs ``max_concurrent`` of a ``batch_size`` batch at a time, so a batch
+# tail can hold a frozen claim stamp for several waves — a span no threshold in
+# this range would cover. The describe-first gate is what makes that safe: a
+# task with a queued tail has a progressing workflow, so the sweep never reaps
+# it. See ``tracer.services.eval_tasks.recovery.recover_task``.
+LONGEST_RUNNING_ENTRY_SECONDS = RUN_ENTRY_CEILING_SECONDS * RUN_ENTRY_MAX_ATTEMPTS
+
+# ``SWEEP_STALE_RUNNING_SECONDS`` is the threshold of the sweep's *own* reap,
+# and stays above that bound at every value an operator can configure, so that
+# reap never requeues an entry whose run is still in flight from a closed
+# execution. It does not bound the recovery as a whole. The workflow the sweep
+# then restarts reaps first at ``ReapInput``'s 600 s, on the evidence of the
+# same describe, which the sweep hands to the starter rather than letting it
+# describe again (``RESTART_REAP_SECONDS`` in
+# ``tracer.services.eval_tasks.recovery``), so a claim older than ten minutes
+# is reclaimed as soon as that run starts, whatever this is set to — and a run
+# of the closed execution can still be in flight under it. What keeps the row
+# correct there is the claim-epoch fence, which refuses that run's write; the
+# cost is one evaluation paid for twice and one of the entry's three reclaims.
+# Raising this setting does not prevent that. It only moves which reap
+# reclaims a row, and so what the tick's ``entries_requeued`` counts.
+EVAL_EXECUTION_SETTING_SPECS = {
+    **_specs(
+        (
+            (
+                "SWEEP_STALE_RUNNING_SECONDS",
+                7_200,
+                LONGEST_RUNNING_ENTRY_SECONDS + 1,
+                86_400,
+            ),
+            # 0 is the off switch. A Temporal pause is the immediate lever,
+            # but ``register_temporal_schedules`` runs on every backend
+            # container start and re-registers the schedule with
+            # ``ScheduleState`` rebuilt from config, so a manual pause does not
+            # survive the next deploy, restart or scale-up. A setting does.
+            ("SWEEP_MAX_TASKS", 25, 0, 500),
+        ),
+        prefix="EVAL_TASK_",
+    ),
+}
+
 INTERACTIVE_READ_SETTING_SPECS = {
     **_specs(
         (
             ("INTERACTIVE_READ_DEFAULT_WALL_MS", 30_000, 100, 60_000),
             ("INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS", 30_000, 100, 60_000),
+            # Per-route acquisition wall for a cursor-capable list page: the
+            # walk that decides which rows are on the page stops here and
+            # publishes the rows found so far plus a resumable cursor.
+            # Numbered pages, hydration, navigation and pickers keep the
+            # interactive analytics wall above.
+            ("SPAN_LIST_PAGE_WALL_MS", 5_000, 100, 60_000),
+            ("TRACE_LIST_PAGE_WALL_MS", 5_000, 100, 60_000),
+            ("SESSION_LIST_PAGE_WALL_MS", 5_000, 100, 60_000),
             ("INTERACTIVE_READ_DEFAULT_MAX_PAGE_SIZE", 100, 1, 500),
             ("ANALYTICS_DEFAULT_LOOKBACK_DAYS", 30, 1, 3_660),
             ("PG_CONNECT_TIMEOUT_SECONDS", 1, 1, 5),
@@ -286,6 +300,7 @@ INTERACTIVE_READ_SETTING_SPECS = {
                 512 * 1024**2,
             ),
             ("DASHBOARD_TRACE_MAX_CONCURRENT_METRICS", 2, 1, 8),
+            ("DASHBOARD_BREAKDOWN_MAX_SERIES", 100, 1, 10_000),
             ("DASHBOARD_FILTER_VALUE_MAX_PAGE_SIZE", 50, 1, 200),
             ("DASHBOARD_FILTER_VALUE_FINITE_MAX", 5_000, 1, 50_000),
             ("DASHBOARD_FILTER_VALUE_LEGACY_MAX", 500, 1, 5_000),
@@ -355,14 +370,221 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ),
             ("FILTER_VALUE_CURSOR_MAX_QUERIES", 6, 1, 128),
             ("FILTER_VALUE_CURSOR_SCAN_LIMIT", 201, 2, 10_001),
+            # A span-attribute-filtered Users page walks witnessed spans
+            # newest-first in time slices, certifies each slice's users and
+            # stops on its own wall or statement budget with a cursor. The
+            # unfiltered Users page does not read these.
+            ("USER_LIST_PAGE_WALL_MS", 5_000, 100, 60_000),
+            ("USER_LIST_WALK_MAX_STATEMENTS", 24, 1, 256),
+            ("USER_LIST_WALK_INITIAL_SLICE_SECONDS", 60 * 60, 1, 7 * 24 * 60 * 60),
+            # A slice asks the server to stop it at half of what is left of
+            # the request's analytics wall and is then retried a quarter as
+            # wide, so a width too dense for the wall costs retries, not a
+            # stall: a one-day slice of a common value on the largest tenant
+            # measured about two seconds at eight threads. Wider slices trade
+            # that against the statements an empty result needs to prove
+            # itself.
+            (
+                "USER_LIST_WALK_MAX_SLICE_SECONDS",
+                24 * 60 * 60,
+                60,
+                366 * 24 * 60 * 60,
+            ),
+            ("USER_LIST_WALK_SLICE_USER_LIMIT", 200, 2, 10_001),
+            # A slice that fails on a read budget is retried at a quarter of
+            # its width down to this floor; below it the failure propagates.
+            ("USER_LIST_WALK_MIN_SLICE_SECONDS", 60, 1, 7 * 24 * 60 * 60),
+            # Users certified per enrichment statement and replayed per
+            # materialisation; the enrichment result is bounded by this times
+            # the requested keys.
+            ("USER_LIST_WALK_CERTIFY_BATCH_SIZE", 25, 1, 1_000),
+            # The rows a walk's tail existence statement may knowingly read.
+            # After an empty slice whose tail does not fit the statement
+            # budget at the slice cap, the walk asks EXPLAIN ESTIMATE how many
+            # rows the blooms leave in the whole tail and issues the one
+            # existence statement only when that count fits here; otherwise
+            # it keeps slicing at the cap. Rows, not bytes: neither the
+            # estimate nor the transport's result carries bytes. Basis: on the
+            # largest tenant an uncosted tail statement read 1.38M rows =
+            # 4.7 GB in 1.66 s (rig run r2b); a million rows there is about
+            # 3.3 GB and 1.2 s at eight threads, a fifth of the page wall, and
+            # a slice of a common value at the one-day cap reads 2.4M.
+            ("USER_LIST_WALK_PROBE_TARGET_READ_ROWS", 1_000_000, 8_192, 50_000_000),
+            # The wall the estimate and the existence statement share, inside
+            # the page wall. The estimate is the existence statement's own
+            # index analysis under the same read settings; the existence
+            # statement repeats it before reading a row, so it is issued only
+            # when the estimate's observed time fits what is left here (at
+            # most half the wall). Basis: the twelve-month text estimate on
+            # the largest tenant at eight threads measured 135-456 ms server
+            # (95 parts, 16k marks; 3.2 s at one thread on a cold index), the
+            # boolean-key estimate 114-117 ms (395 parts, 33k marks).
+            ("USER_LIST_WALK_PROBE_WALL_MS", 1_000, 25, 60_000),
             ("FILTER_VALUE_READ_MAX_THREADS", 2, 1, 16),
             ("FILTER_SELECTOR_QUERY_TIMEOUT_MS", 2_500, 25, 10_000),
             ("FILTER_SELECTOR_MAX_OPT_IN_QUERY_TIMEOUT_MS", 3_000, 25, 30_000),
             ("FILTER_SELECTOR_MAX_BUILDER_QUERY_TIMEOUT_MS", 30_000, 25, 120_000),
             ("FILTER_SELECTOR_MAX_THREADS", 1, 1, 8),
+            # Workers for a seed statement over a slice wider than one day, the
+            # doubling walk's 32 h and 48 h steps. Measured read-only against
+            # production on the span list's 48 h seeds (2-13 parts, 26-48
+            # marks per slice): four workers took the heaviest statement from
+            # 1.64 s to 0.49 s reading the same 311k rows / 957 MB, and eight
+            # gained nothing over four because a slice has only that many
+            # independent mark ranges. Rows, bytes and results never depend on
+            # this number; peak memory per statement roughly doubles.
+            ("FILTER_SELECTOR_WIDE_SEED_MAX_THREADS", 4, 1, 8),
+            # Rows one short exact-string seed statement should read. That
+            # seed's cost tracks the rows inside its slice, not the slice's
+            # width, and its child witness is time-unbounded, so read rows
+            # chiefly measure the ROOTS inside the slice through a trace-id
+            # bloom false-positive scan (~1 - 0.999 ** roots of a ~107M-row
+            # history; 52.4M rows / 4.29 GB measured once, over a dense
+            # fifteen-minute window at k=676 roots - a single point, not a
+            # measured saturation curve). The selector doubles a slice that
+            # reads under a quarter of this budget and halves one that
+            # overruns it, but never below the lane's own floor, which is the
+            # four-hour fixed ceiling this budget replaced. So in practice the
+            # knob decides how far the seed may WIDEN across near-empty
+            # history (four hours of sparse history cost 110-220 ms at any
+            # width); anywhere results actually live it holds at four hours,
+            # i.e. at least what the fixed ceiling gave. That floor is
+            # provisional, and bounding the dense statement itself is the
+            # pending owner decision on the child-witness contract, not this
+            # setting.
+            (
+                "FILTER_SELECTOR_TEXT_SEED_TARGET_READ_ROWS",
+                2_000_000,
+                100_000,
+                50_000_000,
+            ),
+            # Hours of slack the same seed's child-witness scan is allowed
+            # around the roots one statement can publish. The default is 1 h,
+            # the approved bounded-witness contract. ZERO is the legacy
+            # any-span escape hatch: that scan then carries no time bound at
+            # all - a trace is a candidate when ANY raw span of it carries the
+            # value, whenever that span started - and the generated SQL and its
+            # parameters are byte-identical to what shipped before this
+            # setting, so an operator can restore the old contract without a
+            # deploy.
+            #
+            # Above zero the seed statement additionally requires a witness to
+            # start inside the envelope
+            #     [hour_floor(slice_start) - slack, hour_ceil(slice_end) + slack)
+            # where the roots that statement can publish are the ones inside
+            # the slice, tightened on a keyset continuation to the cursor's own
+            # position - so the envelope is the tightest one that still carries
+            # every publishable root's own witness. Every published row is
+            # still an exact any-span match: the latest-state classifier
+            # (``build_filter_match_query``) stays UNBOUNDED, so the switch can
+            # only OMIT a trace whose sole witness lies outside the envelope
+            # and can never admit one the unbounded contract would reject.
+            #
+            # Why it is a switch and not a tuning knob: the unbounded witness
+            # was measured (read-only, against production) to cost a flat
+            # ~4-5 GB bloom false-positive scan per seed statement whatever the
+            # slice's width, with no measured path to a page under five
+            # seconds; the bounded shape's cost is instead LINEAR in envelope
+            # hours (~0.46-0.49 GB per hour - a dense four-hour slice reads
+            # 3.66M rows / 4.47 GB in 3.8 s at ``max_threads`` 1 and 1.76 s at
+            # 2, sparse hours 30-116 MB / 0.4 s), and at one hour of slack it
+            # reproduced the unbounded results exactly on the measured cohort
+            # (3 of 3 page digests, 150 of 150 classifier rows). What one hour
+            # rests on there: the root itself carried the value in 165 of 165
+            # matching traces, the largest child-witness lag was 468 s, and 0
+            # of 1,000 sampled traces held a span more than two days from their
+            # root. That is one project over one burst - bounds, not
+            # guarantees - which is why narrowing the contract was an owner
+            # decision, taken as the 1 h default; a per-project override is a
+            # follow-up. The 168 h ceiling is one week;
+            # beyond that the envelope stops bounding this lane's own windows.
+            # See ``filter_seed_width_policy`` for the width schedule each mode
+            # uses, which differs because only the bounded shape's cost tracks
+            # the slice.
+            # Default one hour as of the bounded-witness owner decision. The
+            # measured cohort puts the largest child-witness lag at 468 s and
+            # carries the value on the root itself in 165 of 165 matching
+            # traces, so one hour of envelope omitted nothing there while
+            # reading 28.7x fewer bytes than the unbounded shape (1.14 MB vs
+            # 32.8 MB over the same sparse hours; one 4 h unbounded slice read
+            # 521,441 rows where the bounded 1 h slice read 1,233). ZERO
+            # remains the legacy escape hatch and emits no envelope at all, so
+            # a tenant whose spans really do arrive more than an hour after
+            # their root can be put back on the old contract without a deploy.
+            # FOLLOW-UP: this is one global number for a property that is
+            # per-tenant (how long after its root a trace's spans may still
+            # arrive). A per-project override belongs here, so the escape hatch
+            # does not have to be pulled for the whole install.
+            ("FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS", 1, 0, 168),
+            # The same envelope, row budget and density probe on the OTHER two
+            # trace candidate seed lanes - numeric (``span_attr_num`` value
+            # bloom) and long text (schema 023's concatenated-lowercase LIKE
+            # index). Both open at the FULL request window in one statement
+            # today, which is the 12M-shaped hazard the short lane's row budget
+            # already removed; the numeric lane's witness CTE additionally
+            # carries no time restriction at all, so one statement scans the
+            # project's whole retained history.
+            #
+            # ZERO - the default - is today's contract exactly: no envelope, no
+            # width policy, no probe, and SQL, parameters and cursor payload
+            # byte-identical to what ships without this setting. Above zero the
+            # lane adopts the short lane's bounded schedule: the witness must
+            # start inside
+            #     [hour_floor(slice_start) - slack, hour_ceil(slice_end) + slack)
+            # the seed opens at one hour under the row budget, and a width above
+            # the unprobed cap must first be costed by ``EXPLAIN ESTIMATE``.
+            #
+            # It is a SEPARATE setting because it is a SEPARATE contract. The
+            # approved 1 h slack was argued from a measured cohort of the short
+            # exact-string lane (largest child-witness lag 468 s; the root
+            # itself carried the value in 165 of 165 matching traces); nothing
+            # was measured about how long after its root a trace's spans may
+            # still carry a matching NUMBER or a matching long literal, and a
+            # numeric attribute written on a closing span is the concrete
+            # failure. Off until an owner approves the contract for these lanes
+            # on their own evidence; the trace-list approval does not transfer.
+            ("FILTER_SELECTOR_NUMERIC_LONG_TEXT_SEED_WITNESS_SLACK_HOURS", 0, 0, 168),
             # Broad key-only span population proofs read thin raw columns;
             # their CPU budget is separate from the normal seed/classifier.
             ("FILTER_SELECTOR_POPULATION_MAX_THREADS", 2, 1, 4),
+            # The SPAN list's own two row budgets. The span lane has two
+            # statements whose cost tracks the rows inside an interval rather
+            # than the interval's width, and they read DIFFERENT columns, so
+            # one number cannot serve both.
+            #
+            # THE SEED replays the typed Map of every physical row inside its
+            # slice - 3.73 KB of ``attrs_string`` per row measured (755,996
+            # rows = 2.82 GB), about 0.3M rows/s at one worker - so 500,000
+            # rows is roughly 1.7 s of that Map walk.
+            #
+            # THE POPULATION-DISCOVERY PROOF reads ``start_time`` plus the thin
+            # Map ``.keys`` stream its witness evaluates, and no Map VALUE at
+            # all. Measured read-only against production at one worker:
+            # 831,771 rows in 0.567 s (36.5 MB, 43.9 B/row), i.e. ~1.5M rows/s,
+            # so 2,000,000 rows is about 1.4 s - less at this proof's own
+            # two-worker budget above. The number is calibrated for the witness
+            # the proof actually CARRIES: a proof reading ``start_time`` alone
+            # walks more than an order of magnitude faster, and a budget chosen
+            # for that shape would not bound this statement.
+            #
+            # Both are consumed as ``EXPLAIN ESTIMATE`` rows, which are an
+            # upper bound twice over - whole granules, and every physical
+            # version inside them - so both errors point at a NARROWER issued
+            # interval. Narrowing either never skips history: intervals are
+            # contiguous and half-open and the remainder is the next adjacent
+            # interval's work.
+            (
+                "FILTER_SELECTOR_SPAN_SEED_TARGET_READ_ROWS",
+                500_000,
+                50_000,
+                50_000_000,
+            ),
+            (
+                "FILTER_SELECTOR_SPAN_POPULATION_DISCOVERY_TARGET_READ_ROWS",
+                2_000_000,
+                100_000,
+                2_000_000_000,
+            ),
             ("FILTER_SELECTOR_MAX_NUMBERED_PAGE_WORK_ROWS", 5_000, 1, 100_000),
             ("OBSERVABILITY_NAVIGATION_CANDIDATE_LIMIT", 4_095, 1, 65_535),
             ("OBSERVABILITY_NAVIGATION_SCAN_PAGE_SIZE", 200, 1, 1_000),
@@ -381,10 +603,55 @@ INTERACTIVE_READ_SETTING_SPECS = {
             ("VOICE_FILTER_EXPENSIVE_CLASSIFIER_CHUNKS", 4, 1, 64),
             ("VOICE_FILTER_LIGHT_CLASSIFIER_CHUNKS", 8, 1, 64),
             ("VOICE_FILTER_PUBLIC_MAX_PAGE_SIZE", 512, 1, 5_000),
+            # Voice's own witness slack for the short exact-string seed lane,
+            # read instead of FILTER_SELECTOR_TEXT_SEED_WITNESS_SLACK_HOURS.
+            # The default is ZERO - today's contract - because a voice call
+            # writes its ``call.*`` attributes on the span that CLOSES the
+            # call, so a long conversation's only matching witness can start
+            # many hours after its root and the trace list's approved one-hour
+            # envelope would drop it from a filtered page. Above zero the seed
+            # additionally requires a witness to start inside
+            #     [hour_floor(slice_start) - slack, hour_ceil(slice_end) + slack)
+            # which is candidacy only: the unbounded latest-state classifier
+            # still decides membership. Raise it per install only after
+            # measuring that tenant's voice child-witness lag.
+            ("VOICE_FILTER_TEXT_SEED_WITNESS_SLACK_HOURS", 0, 0, 168),
             ("SESSION_LIST_READ_MAX_THREADS", 2, 1, 16),
             ("SESSION_LIST_MAX_RESULT_BYTES", 32 * 1024**2, 64 * 1024, 512 * 1024**2),
-            ("SESSION_LIST_ATTRIBUTE_MAX_RESULT_ROWS", 50_000, 1, 1_000_000),
             ("SESSION_LIST_FILTER_MAX_CANDIDATES", 200, 1, 5_000),
+            # Whether the bounded session seed narrows candidacy by the
+            # filter's own any-span witness, and how many hours of slack that
+            # witness scan is allowed around the roots one seed statement can
+            # publish.
+            #
+            # NEGATIVE (the default) is today's contract: the seed carries no
+            # attribute predicate at all and groups every root span of its
+            # slice, so the generated SQL and its parameters are byte-identical
+            # to what shipped before this setting.
+            #
+            # ZERO seeds the identity superset with a time-UNBOUNDED witness: a
+            # session is a candidate when any raw span of it carries the value,
+            # whenever that span started. That publishes exactly the same rows
+            # as the default - the witness is a necessary condition of a match
+            # and ``build_filter_match_query`` stays authoritative - but its
+            # cost is unmeasured on this surface and the trace lane's
+            # equivalent scan read tens of millions of rows per statement.
+            #
+            # ABOVE ZERO additionally requires the witness to start inside
+            #     [hour_floor(slice_start) - slack, hour_ceil(slice_end) + slack)
+            # On sessions this is WEAKER than the trace list's bounded-witness
+            # contract and is NOT approved. A session is discovered by any of
+            # its roots but ranked by its oldest, and a continuation hop
+            # resumes at the rank the previous page last published, C, so every
+            # envelope that hop emits ends at or below the end of the hour
+            # holding C plus the slack (its first slice ends at C + 1us). A
+            # session is therefore dropped when every trace of it that carries
+            # a witnessing span is rooted above C: the loss is governed by the
+            # session's root-to-root spread, which can be as wide as the
+            # request window, so no slack short of the window closes it. Zero
+            # stays exact. Needs the owner's decision before a deployment moves
+            # off the default.
+            ("SESSION_LIST_FILTER_SEED_WITNESS_SLACK_HOURS", -1, -1, 168),
             ("SESSION_LIST_FILTER_MAX_SEED_ATTEMPTS", 24, 1, 512),
             ("SESSION_LIST_FILTER_MAX_QUERIES", 48, 1, 1_024),
             ("ANNOTATION_QUEUE_ADD_ITEMS_SYNC_MAX", 1_000, 1, 10_000),
@@ -495,6 +762,7 @@ RUNTIME_NUMERIC_SETTING_SPECS = {
     **PROPERTY_CATALOG_RUNTIME_SETTING_SPECS,
     **DATASET_READ_SETTING_SPECS,
     **INTERACTIVE_READ_SETTING_SPECS,
+    **EVAL_EXECUTION_SETTING_SPECS,
 }
 
 if len(RUNTIME_NUMERIC_SETTING_SPECS) != sum(
@@ -504,6 +772,7 @@ if len(RUNTIME_NUMERIC_SETTING_SPECS) != sum(
             PROPERTY_CATALOG_RUNTIME_SETTING_SPECS,
             DATASET_READ_SETTING_SPECS,
             INTERACTIVE_READ_SETTING_SPECS,
+            EVAL_EXECUTION_SETTING_SPECS,
         ),
     )
 ):
@@ -544,61 +813,6 @@ def validate_property_catalog_settings(values: Mapping[str, Numeric]) -> None:
         return values[f"PROPERTY_CATALOG_{name}"]
 
     _require_at_most(
-        value("REVISION_LEASE_SECONDS"),
-        value("MAX_REVISION_LEASE_SECONDS"),
-        "revision lease cannot exceed maximum revision lease",
-    )
-    _require_at_most(
-        value("DEV_STANDARD_MAX_WALL_MS"),
-        value("DEV_INITIAL_BACKFILL_MAX_WALL_MS"),
-        "standard DEV wall cannot exceed initial-backfill DEV wall",
-    )
-    _require_at_most(
-        value("RECONCILE_DEFAULT_EXTENDED_WALL_MS"),
-        value("DEV_SCHEDULED_RECONCILE_MAX_WALL_MS"),
-        "default reconcile wall cannot exceed scheduled reconcile wall",
-    )
-    _require_at_most(
-        value("SOURCE_MAX_PAGE_BYTES"),
-        value("SOURCE_MAX_TOTAL_BYTES"),
-        "source page bytes cannot exceed source total bytes",
-    )
-    _require_at_most(
-        value("SOURCE_ADAPTER_WALL_SECONDS"),
-        value("SCHEDULED_RECONCILE_SOURCE_ADAPTER_WALL_SECONDS"),
-        "source adapter wall cannot exceed scheduled reconcile source adapter wall",
-    )
-    _require_at_most(
-        value("SCHEDULED_RECONCILE_SOURCE_ADAPTER_WALL_SECONDS"),
-        value("INITIAL_BACKFILL_SOURCE_ADAPTER_WALL_SECONDS"),
-        "scheduled reconcile source adapter wall cannot exceed initial backfill source adapter wall",
-    )
-    if (
-        value("POSTGRES_STATEMENT_TIMEOUT_MS")
-        >= value("SOURCE_ADAPTER_WALL_SECONDS") * 1_000
-    ):
-        raise ValueError("PostgreSQL statement timeout must be below the source wall")
-    _require_at_most(
-        value("POSTGRES_PAGE_ROWS"),
-        value("POSTGRES_MAX_TOTAL_ROWS"),
-        "PostgreSQL page rows cannot exceed total rows",
-    )
-    _require_at_most(
-        value("PUBLISHER_WALL_MS"),
-        value("DEADLINE_MAX_WALL_MS"),
-        "deadline wall cannot be below the publisher wall",
-    )
-    _require_at_most(
-        value("DRAIN_POLL_INTERVAL_MS"),
-        value("DRAIN_POLL_CAP_MS"),
-        "drain poll interval cannot exceed the poll cap",
-    )
-    _require_at_most(
-        value("STATE_STORE_TIMEOUT_MS"),
-        value("PUBLISHER_WALL_MS"),
-        "state-store timeout cannot exceed the publisher wall",
-    )
-    _require_at_most(
         value("READ_MAX_THREADS"),
         value("READ_POOL_SIZE"),
         "ClickHouse read threads cannot exceed the read pool size",
@@ -617,63 +831,6 @@ def validate_property_catalog_settings(values: Mapping[str, Numeric]) -> None:
         value("READ_EXTERNAL_SORT_BYTES"),
         value("READ_MAX_MEMORY_BYTES"),
         "ClickHouse external sort threshold cannot exceed read memory",
-    )
-    if (
-        value("DEV_INITIAL_BACKFILL_MAX_WALL_MS")
-        + value("INITIAL_BACKFILL_LEASE_HEADROOM_MS")
-        > value("MAX_REVISION_LEASE_SECONDS") * 1_000
-    ):
-        raise ValueError(
-            "initial-backfill wall plus headroom cannot exceed the maximum lease"
-        )
-    _require_at_most(
-        value("CURSOR_MAX_AGE_SECONDS"),
-        value("LINEAGE_ANCHOR_MAX_AGE_SECONDS"),
-        "cursor lifetime cannot exceed lineage-anchor retention",
-    )
-    _require_at_most(
-        max(
-            value("CANONICAL_SPAN_DEFAULT_PAGE_ROWS"),
-            value("DEV_CANONICAL_SPAN_PAGE_ROWS"),
-            value("INITIAL_BACKFILL_CANONICAL_SPAN_PAGE_ROWS"),
-        ),
-        value("CANONICAL_SPAN_PAGE_ROWS"),
-        "specialized span page size cannot exceed the maximum",
-    )
-    _require_at_most(
-        value("CANONICAL_SPAN_QUERY_TIMEOUT_MS"),
-        value("INITIAL_BACKFILL_CANONICAL_SPAN_QUERY_TIMEOUT_MS"),
-        "standard span timeout cannot exceed initial backfill timeout",
-    )
-    _require_at_most(
-        value("CANONICAL_SPAN_MAX_THREADS"),
-        value("READ_MAX_THREADS"),
-        "canonical-span threads cannot exceed catalog read threads",
-    )
-    _require_at_most(
-        value("CANONICAL_SPAN_MAX_GROUP_BYTES"),
-        min(value("READ_MAX_BYTES"), value("READ_MAX_MEMORY_BYTES")),
-        "canonical-span group bytes cannot exceed read or memory bytes",
-    )
-    _require_at_most(
-        value("AUTHORITATIVE_VALUE_BATCH_MAX_ROWS"),
-        value("CANONICAL_SPAN_MAX_GROUPS"),
-        "authoritative value batch rows cannot exceed canonical span groups",
-    )
-    _require_at_most(
-        value("AUTHORITATIVE_VALUE_BATCH_MAX_BYTES"),
-        value("CANONICAL_SPAN_MAX_GROUP_BYTES"),
-        "authoritative value batch bytes cannot exceed canonical group bytes",
-    )
-    _require_at_most(
-        value("RECONCILE_DEFAULT_ENVELOPE_ROWS"),
-        value("RECONCILE_MAX_ENVELOPE_ROWS"),
-        "default envelope rows cannot exceed maximum envelope rows",
-    )
-    _require_at_most(
-        value("RECONCILE_DEFAULT_MAX_ENVELOPE_BYTES"),
-        value("RECONCILE_MAX_ENVELOPE_BYTES"),
-        "default envelope bytes cannot exceed maximum envelope bytes",
     )
 
 
@@ -787,6 +944,26 @@ def validate_interactive_read_settings(values: Mapping[str, Numeric]) -> None:
         raise ValueError(
             "filter value cursor segment limits must satisfy minimum <= initial <= maximum"
         )
+    _require_at_most(
+        values["USER_LIST_PAGE_WALL_MS"],
+        values["INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS"],
+        "USER_LIST_PAGE_WALL_MS cannot exceed INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS",
+    )
+    _require_at_most(
+        values["USER_LIST_WALK_INITIAL_SLICE_SECONDS"],
+        values["USER_LIST_WALK_MAX_SLICE_SECONDS"],
+        "USER_LIST_WALK_INITIAL_SLICE_SECONDS cannot exceed USER_LIST_WALK_MAX_SLICE_SECONDS",
+    )
+    _require_at_most(
+        values["USER_LIST_WALK_MIN_SLICE_SECONDS"],
+        values["USER_LIST_WALK_INITIAL_SLICE_SECONDS"],
+        "USER_LIST_WALK_MIN_SLICE_SECONDS cannot exceed USER_LIST_WALK_INITIAL_SLICE_SECONDS",
+    )
+    _require_at_most(
+        values["USER_LIST_WALK_PROBE_WALL_MS"],
+        values["USER_LIST_PAGE_WALL_MS"],
+        "USER_LIST_WALK_PROBE_WALL_MS cannot exceed USER_LIST_PAGE_WALL_MS",
+    )
     _require_at_most(
         values["FILTER_SELECTOR_QUERY_TIMEOUT_MS"],
         values["FILTER_SELECTOR_MAX_OPT_IN_QUERY_TIMEOUT_MS"],
@@ -953,10 +1130,28 @@ def validate_interactive_read_settings(values: Mapping[str, Numeric]) -> None:
     )
 
 
+def validate_eval_execution_settings(values: Mapping[str, Numeric]) -> None:
+    """Validate the eval-execution knobs against the workflow's own ceilings.
+
+    The spec bound already carries this relation, but it carries it as a
+    literal a future edit can loosen. This checks the *resolved* value against
+    the mirrored constants, so loosening the bound alone is not enough to ship
+    a configuration that lets the sweep race a live worker.
+    """
+
+    _require_at_least(
+        values["EVAL_TASK_SWEEP_STALE_RUNNING_SECONDS"],
+        LONGEST_RUNNING_ENTRY_SECONDS + 1,
+        "the eval-task sweep's stale threshold must exceed a running entry's "
+        "longest legitimate life",
+    )
+
+
 def validate_runtime_numeric_settings(values: Mapping[str, Numeric]) -> None:
     validate_property_catalog_settings(values)
     validate_dataset_read_settings(values)
     validate_interactive_read_settings(values)
+    validate_eval_execution_settings(values)
     _require_at_most(
         values["PROPERTY_CATALOG_MAX_PAGE_SIZE"],
         values["DASHBOARD_METRICS_CATALOG_MAX_PAGE_SIZE"],
@@ -966,6 +1161,11 @@ def validate_runtime_numeric_settings(values: Mapping[str, Numeric]) -> None:
 
 def _require_at_most(left: Numeric, right: Numeric, message: str) -> None:
     if left > right:
+        raise ValueError(message)
+
+
+def _require_at_least(left: Numeric, right: Numeric, message: str) -> None:
+    if left < right:
         raise ValueError(message)
 
 

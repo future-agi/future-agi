@@ -57,7 +57,7 @@ _PRIVATE_KEY = re.compile(
 
 
 @dataclass(frozen=True)
-class DaytonaDiagnostics:
+class SandboxDiagnostics:
     entrypoint_log: str
     process_logs: str
     command_status: str | None
@@ -164,7 +164,7 @@ def _command_logs(sandbox: Any, session_id: str, command_id: str) -> str:
     )
 
 
-def poll_daytona_diagnostics(
+def poll_sandbox_diagnostics(
     attempt: HostedHarnessAttempt,
     sandbox: Any,
     *,
@@ -173,7 +173,7 @@ def poll_daytona_diagnostics(
     command: Any | None = None,
     final: bool = False,
     secret_values: Iterable[str] = (),
-) -> DaytonaDiagnostics:
+) -> SandboxDiagnostics:
     """Poll one sandbox and persist its latest secret-safe diagnostics snapshot.
 
     Collection and storage are deliberately best-effort: diagnostics must never change the
@@ -225,7 +225,7 @@ def poll_daytona_diagnostics(
     process_logs = _tail_utf8(
         _redact(process_logs, fragments), _PROCESS_LOG_LIMIT_BYTES
     )
-    capture = DaytonaDiagnostics(
+    capture = SandboxDiagnostics(
         entrypoint_log=entrypoint_log,
         process_logs=process_logs,
         command_status=str(command_status) if command_status is not None else None,
@@ -269,7 +269,7 @@ def poll_daytona_diagnostics(
     except Exception as exc:  # noqa: BLE001 - diagnostics cannot block the harness lifecycle
         attempt.diagnostics_error = f"storage:{type(exc).__name__}"
         attempt.save(update_fields=["diagnostics_error", "updated_at"])
-        logger.exception("could not persist Daytona diagnostics attempt=%s", attempt.id)
+        logger.exception("could not persist sandbox diagnostics attempt=%s", attempt.id)
         return capture
 
     attempt.diagnostics_object_key = object_key

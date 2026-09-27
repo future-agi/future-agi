@@ -6,24 +6,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 )
 
 func newTestRedis(t *testing.T) *redis.Client {
 	t.Helper()
-	rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if err := rdb.Ping(ctx).Err(); err != nil {
-		t.Skipf("Redis not available: %v", err)
-	}
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { rdb.Close() })
 	return rdb
 }
 
 func newTestMetering(t *testing.T) *Metering {
 	t.Helper()
 	rdb := newTestRedis(t)
-	t.Cleanup(func() { rdb.Close() })
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	sha, err := rdb.ScriptLoad(ctx, checkQuotaLua).Result()

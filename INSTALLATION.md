@@ -54,6 +54,10 @@ Useful flags:
 | `--skip-user-creation` | Skip the first-user prompt. Run the `create_user` command later. |
 | `--no-up`              | Bootstrap `.env` only; don't start the stack.                    |
 
+`bin/install` exits `1` when the stack came up but your first account could not
+be created, so an unattended run fails loudly instead of pointing you at a login
+you cannot use. Skipping user creation still exits `0`.
+
 When the backend logs `Application startup complete`, open:
 
 - **Frontend**: <http://localhost:3000>
@@ -122,6 +126,10 @@ If you'd rather run the steps by hand:
 cp .env.example .env       # optional — empty .env works fine for local
 docker compose up
 ```
+
+`.env.example` ships `MINIO_ROOT_PASSWORD=CHANGEME-set-by-bin-install`. Only
+`./bin/install` replaces that with a generated secret, so when you copy the file
+by hand set your own value before the first `docker compose up`.
 
 ---
 
@@ -232,6 +240,11 @@ Installing all six extras reproduces the full "fat" image (~14 GB, GPU wheels in
 cp .env.example .env
 ```
 
+One line needs you: `MINIO_ROOT_PASSWORD` arrives as
+`CHANGEME-set-by-bin-install` and only `./bin/install` replaces it. Copying the
+file by hand and booting leaves your object storage on a password that is
+published in this repository, so set your own first.
+
 Every knob in the compose file has a sensible local default, so the stack boots against an empty `.env`. For production, see [`deploy/README.md`](deploy/README.md) — the production overlay re-binds these with `${VAR:?error}` guards and refuses to boot on dev fallbacks.
 
 ### Optional values
@@ -245,6 +258,36 @@ Only needed if you enable the corresponding feature:
 | `GOOGLE_API_KEY`                              | Gemini models                                                    |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Bedrock models, S3 object storage                                |
 | `FUTURE_AGI_CLOUD_API_KEY`                    | Future AGI Cloud API features. Leave blank to run fully offline. |
+
+### Secrets that must be changed
+
+Every value below has a working default in `docker-compose.yml`, which is why
+the stack boots against an empty `.env`. That default is identical on every
+install, because it is published in this repository. Set your own before the
+deployment is reachable by anyone else.
+
+| Variable | Value if you leave it unset | What it protects |
+| --- | --- | --- |
+| `SECRET_KEY` | `local-dev-only-not-for-production-replace-me` | Django signing: sessions, password-reset links |
+| `PG_PASSWORD` | `futureagi` | Postgres and every row in it |
+| `MINIO_ROOT_PASSWORD` | `futureagi` | Object storage: datasets, exports, media |
+| `AGENTCC_INTERNAL_API_KEY` | `local-dev-only-shared-secret-replace-me` | Backend to LLM-gateway calls |
+| `AGENTCC_ADMIN_TOKEN` | `local-dev-only-admin-token-replace-me` | Gateway admin endpoints |
+
+`./bin/install` generates `MINIO_ROOT_PASSWORD` for you, because `.env.example`
+ships it as `CHANGEME-set-by-bin-install`. The other four have no placeholder in
+`.env.example`, so the installer's rotation never reaches them and they are
+yours to set.
+
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+`PG_PASSWORD` is written into the Postgres volume on first boot, so changing it
+later means restoring the old value or wiping that volume. The other four,
+`MINIO_ROOT_PASSWORD` included, change at any time: set them in `.env` and run
+`docker compose up -d`, which recreates the containers that use them with the
+new values and keeps their data volumes.
 
 ### Ports reference
 
@@ -485,9 +528,169 @@ docker compose up -d frontend
 
 The container's entrypoint regenerates `/config.js` on each start, so no rebuild is needed.
 
+### Pre-flight says **Object storage service** failed
+
+The `minio` container is not answering, so dataset uploads, exports and media
+will fail. Tracing, prompts and evals keep working.
+
+```bash
+docker compose up -d minio
+```
+
+Then re-run pre-flight. A default install needs no S3 credentials at all:
+compose fixes `S3_ENDPOINT_URL` at `http://minio:9000` and derives
+`S3_ACCESS_KEY` / `S3_SECRET_KEY` from `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`.
+`MINIO_ROOT_USER` defaults to `futureagi`; `MINIO_ROOT_PASSWORD` is generated for
+your install by `./bin/install`. To use your own, set both in `.env` and run
+`docker compose up -d`, which recreates `minio`, the backend and every worker
+with the new values. The three `S3_*` variables live in the compose `environment`
+block, which takes precedence over `.env`, so setting them there has no effect.
+
+### Pre-flight says **SSL/TLS certificate** failed
+
+Expected on a laptop, and the reason a **Production** launch blocks: the
+backend could not verify https on the URLs it serves, so browser and SDK traffic
+travels unencrypted. Nothing is broken.
+
+Either continue with **Test flight**, which does not run this check, or, for a
+real deployment, put a reverse proxy with a valid certificate in front and point
+both URLs at it in `.env`:
+
+```bash
+VITE_HOST_API=https://api.example.com
+FRONTEND_URL=https://app.example.com
+```
+
+Restart the stack and re-run pre-flight. See
+[`deploy/README.md`](deploy/README.md) for the reverse-proxy and TLS guide.
+
+### Pre-flight says **Core application database** failed
+
+Postgres is not answering, so nothing in the app loads.
+
+```bash
+docker compose up -d postgres
+```
+
+If it starts and the backend still cannot reach it, check `PG_HOST` and
+`PG_PASSWORD` in `.env`. A password changed after the volume was created gives
+[`FATAL: password authentication failed`](#backend-logs-fatal-password-authentication-failed-for-user-futureagi).
+
+### Pre-flight says **Tracing data warehouse** failed
+
+ClickHouse is not answering, so traces, spans and dashboards will not load.
+The rest of the app keeps working.
+
+```bash
+docker compose up -d clickhouse
+```
+
+First boot applies the schema and can take a minute; `docker compose logs
+clickhouse` shows it.
+
+### Pre-flight says **Cache and session store** failed
+
+Redis is not answering, so sessions, caching and rate limits will not work.
+
+```bash
+docker compose up -d redis
+```
+
+### Pre-flight says **Websocket connection** failed
+
+RabbitMQ is not answering, so live updates will not reach the browser. Pages
+still load, they just stop refreshing on their own.
+
+```bash
+docker compose up -d rabbitmq
+```
+
+### Pre-flight says **LLM request gateway** failed
+
+`agentcc-gateway` is not answering, so every LLM call fails: evaluations, the
+playground and agents.
+
+```bash
+docker compose up -d agentcc-gateway
+```
+
+It also needs at least one provider key to be useful. See [Configuring LLM
+providers](#configuring-llm-providers).
+
+### Pre-flight says **Async task engine** failed
+
+Temporal is not answering, so evaluations, optimizations and scheduled jobs
+will not run.
+
+```bash
+docker compose up -d temporal
+```
+
+If it starts and then restarts in a loop, that is usually Postgres. See
+[`temporal-server` keeps restarting](#temporal-server-keeps-restarting).
+
+### Pre-flight says **Trace ingestion** failed
+
+`fi-collector` is not answering, so spans sent by the SDK will not arrive.
+Traces already in ClickHouse still show.
+
+```bash
+docker compose up -d fi-collector
+```
+
+### Pre-flight says **Django backend** failed
+
+The backend is not answering on its port, so nothing in the app works.
+
+```bash
+docker compose up -d backend
+docker compose logs --tail=50 backend
+```
+
+The logs carry the real reason. The usual one is Postgres, above.
+
+### Pre-flight says **React frontend** failed
+
+The frontend container is not serving. If you are reading this inside the app,
+then the check is pointing somewhere else rather than at a dead container:
+confirm `FRONTEND_URL` in `.env` matches the URL you actually opened.
+
+```bash
+docker compose up -d frontend
+```
+
+### Pre-flight says **Agent fixer** failed
+
+`serving` is not answering, so built-in evaluations and guardrails will not
+run. Tracing, prompts and datasets keep working.
+
+```bash
+docker compose up -d serving
+```
+
+It is one of the optional extras and it is the heaviest one. See [Optional
+feature extras](#optional-feature-extras).
+
+### Pre-flight says **Code execution sandbox** failed
+
+`code-executor` is not answering, so custom code evaluations will not run.
+
+```bash
+docker compose up -d code-executor
+```
+
+If it starts and immediately dies, the host does not allow `privileged: true`.
+See [`clone: Operation not permitted`](#code-executor-crashes-with-clone-operation-not-permitted).
+
 ### `code-executor` crashes with `clone: Operation not permitted`
 
 The host kernel or container platform disallows `privileged: true` (Fargate, Cloud Run, some Kubernetes policies). Either run on a platform that allows privileged containers (EC2, GKE with privileged enabled, bare-metal) or disable code evaluation features.
+
+### Code evals fail with `Code executor unavailable`
+
+Code evals run only on `code-executor`. When the workers cannot reach it (container not running, wrong `CODE_EXECUTOR_URL`), each code eval returns this error instead of a score. Start it with `docker compose up -d code-executor` and check `docker compose logs code-executor`.
+
+If your platform cannot run `code-executor` at all, you can set `CODE_EXECUTOR_LOCAL_FALLBACK=true` in `.env` and restart the backend and workers. Code evals then run inside the worker container when `code-executor` cannot be reached. Enable it only on installs where every user who can create or edit code evals is trusted. The setting is ignored when `CLOUD_DEPLOYMENT` is `US`, `EU` or `DEV`, and an HTTP error, timeout or invalid response from a running `code-executor` is always returned as an eval error.
 
 ### `temporal-server` keeps restarting
 

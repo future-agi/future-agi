@@ -138,7 +138,8 @@ services:
 
   # PeerDB MinIO (staging area for CH ingestion)
   peerdb-minio:
-    image: quay.io/minio/minio:latest
+    # Frozen build of the last community MinIO release (see docker-compose.yml).
+    image: ghcr.io/coollabsio/minio:RELEASE.2025-10-15T17-29-55Z@sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9
     restart: unless-stopped
     volumes:
       - peerdb-minio-data:/data

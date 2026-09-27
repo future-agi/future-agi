@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Skeleton, Stack, Typography } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
@@ -15,7 +15,10 @@ export default function FilterValueLabel({
   variant = "body2",
   innerRef,
   onClick,
+  disableTooltip = false,
 }) {
+  const [tooltipOpen, setTooltipOpen] = useState(false);
+  const tooltipDisabled = useRef(disableTooltip);
   const values = useMemo(
     () => (Array.isArray(filter?.value) ? filter.value : []),
     [filter?.value],
@@ -46,6 +49,11 @@ export default function FilterValueLabel({
   const entityLabel = pluralize(entity, extra);
   const sizeVariant = variant === "caption" ? "s2" : "s2_1";
   const showBadge = extra > 0 && !isResolving;
+
+  useEffect(() => {
+    tooltipDisabled.current = disableTooltip;
+    if (disableTooltip || !showBadge) setTooltipOpen(false);
+  }, [disableTooltip, showBadge]);
 
   const content = (
     <Stack
@@ -106,6 +114,16 @@ export default function FilterValueLabel({
   return (
     <CustomTooltip
       show={showBadge}
+      // Keep the wrapper mounted: the value picker anchors to this DOM node.
+      open={tooltipOpen && !disableTooltip}
+      onOpen={() => {
+        // MUI may call this from a hover timer queued before the picker opened.
+        if (!tooltipDisabled.current) setTooltipOpen(true);
+      }}
+      onClose={() => setTooltipOpen(false)}
+      disableHoverListener={disableTooltip}
+      disableFocusListener={disableTooltip}
+      disableTouchListener={disableTooltip}
       placement="top"
       size="small"
       arrow
@@ -168,4 +186,5 @@ FilterValueLabel.propTypes = {
   variant: PropTypes.string,
   innerRef: PropTypes.func,
   onClick: PropTypes.func,
+  disableTooltip: PropTypes.bool,
 };

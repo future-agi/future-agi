@@ -13,7 +13,7 @@ Future AGI is an open-source AI evaluation and observability platform, and we we
 - 🐛 [Report a bug](https://github.com/future-agi/future-agi/issues/new?template=bug_report.yml)
 - ✨ [Request a feature](https://github.com/future-agi/future-agi/issues/new?template=feature_request.yml)
 - 🔖 [Good first issues](https://github.com/future-agi/future-agi/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
-- 💬 [Join Discord](https://discord.com/invite/QDVvTgA8Xp)
+- 💬 [Join Discord](https://discord.com/invite/n2tCUKBkAw)
 
 ---
 

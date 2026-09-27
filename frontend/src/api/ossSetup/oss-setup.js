@@ -11,12 +11,15 @@ export const OSS_SETUP_KEYS = {
   checks: (mode) => ["ossSetup", "checks", mode],
 };
 
+// Every field the SetupCheck contract declares, or the screen silently loses it.
 const normalizeCheck = (check) => ({
   id: check.id,
   label: check.label,
   status: check.status,
   required: Boolean(check.required),
   detail: check.detail || "",
+  fix: check.fix || "",
+  docs_url: check.docs_url || "",
 });
 
 export async function fetchSetupChecks(mode, { signal } = {}) {

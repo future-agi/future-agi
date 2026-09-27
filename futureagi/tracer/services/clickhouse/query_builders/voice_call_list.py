@@ -401,7 +401,37 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         return min(self.recommended_filter_seed_batch_size(), requested)
 
     def recommended_filter_query_timeout_ms(self) -> int | None:
-        """Share the public endpoint's 9.5-second wall across required reads."""
+        """Give each required read the public endpoint's whole wall.
+
+        ``INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS`` is the deadline of the entire
+        voice-list request, and on this read path it is also the only wall a
+        statement has. Two earlier revisions of this docstring argued for the
+        trace list's smaller 9.5 s share on the ground that the selector
+        halves a slice which overruns its per-statement timeout and retries it
+        narrower. That recovery exists, but it is gated on
+        ``retry_wide_read_budget`` (``trace_filter_reads.py``), which the voice
+        list view never passes - only the bulk-selection service does - so it
+        cannot fire on a voice filtered read at any timeout value. One
+        revision also claimed the share was implemented on the short
+        exact-string seed lane; it was, and it has been removed again, because
+        the measurement below shows it buys nothing and can cost a page.
+
+        What the selector does with this number here is pass it to
+        ``execute_ch_query`` as ``timeout_ms``, and ``AnalyticsQueryService``
+        discards it: it calls the client with ``timeout_ms=None`` and
+        ``application_read_settings`` zeroes ``max_execution_time``. Measured
+        offline through the real bounded selector on an empty 365-day window
+        with a transport shaped like that one: a seed statement that spends
+        12 s of the wall yields the identical complete 12-slice page at 9 500
+        ms and at the whole wall, and one that spends 40 s ends both at
+        ``deadline_exceeded`` after the same two seeds. On a transport that
+        DOES enforce ``timeout_ms``, the same 12 s seed returned
+        ``read_budget_exceeded`` after two statements - 12 hours of the 365
+        days, which the view answers with 503 - at 9 500 ms, against a
+        complete page at the wall. So every voice filtered read keeps the
+        wall, the seed lane included, and a slow statement is bounded by the
+        request deadline rather than by a number this transport ignores.
+        """
 
         if not self._bounded_internal_scan and not self._bounded_identity_only:
             return settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS

@@ -14,7 +14,7 @@ from model_hub.serializers.performance_report import PerformanceReportSerializer
 from model_hub.services.ai_eval_writer_service import OUTPUT_FORMAT_PROMPTS
 from model_hub.services.dataset_validators import MAX_PAGE_SIZE as DATASET_MAX_PAGE_SIZE
 from tfc.utils.api_errors import API_ERROR_TYPE_CHOICES
-from tfc.utils.serializer_fields import StringOrObjectField
+from tfc.utils.serializer_fields import JsonValueField, StringOrObjectField
 from tracer.serializers.filters import (
     SortParamField,
     StrictInputSerializer,
@@ -3164,7 +3164,9 @@ class CreateDatasetFromExperimentRequestSerializer(serializers.Serializer):
 
 class CreateEmptyDatasetRequestSerializer(serializers.Serializer):
     new_dataset_name = serializers.CharField()
-    model_type = serializers.CharField(required=False, allow_blank=True)
+    model_type = serializers.CharField(
+        required=False, allow_blank=True, default=ModelTypes.GENERATIVE_LLM.value
+    )
     is_sdk = serializers.BooleanField(required=False, default=False)
     row = serializers.IntegerField(
         required=False, min_value=0, max_value=MAX_EMPTY_DATASET_ROWS
@@ -3219,8 +3221,20 @@ class DatasetSdkRowsRequestSerializer(serializers.Serializer):
     dataset_id = serializers.UUIDField(required=False, allow_null=True)
 
 
+class DatasetRowCellRequestSerializer(serializers.Serializer):
+    column_name = serializers.CharField()
+    value = JsonValueField(required=False, allow_null=True)
+
+
+class DatasetRowRequestSerializer(serializers.Serializer):
+    id = serializers.UUIDField(required=False)
+    # A row without cells is valid and creates an empty row; the endpoint has
+    # always accepted ``{"rows": [{}]}`` so the contract must keep it optional.
+    cells = DatasetRowCellRequestSerializer(many=True, required=False, default=list)
+
+
 class DatasetAddRowsRequestSerializer(serializers.Serializer):
-    rows = serializers.ListField(child=serializers.JSONField())
+    rows = DatasetRowRequestSerializer(many=True, allow_empty=False)
 
 
 class DatasetAddRowsFromExistingRequestSerializer(serializers.Serializer):

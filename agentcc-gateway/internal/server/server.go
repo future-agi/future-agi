@@ -445,6 +445,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 
 	// Native Google GenAI API.
 	router.Handle("POST", "/v1beta/models/{model_action}", handlers.GenAIHandler)
+	router.Handle("POST", "/v1beta/models/{provider}/{model_action}", handlers.GenAIHandler)
 
 	// Search API.
 	router.Handle("POST", "/v1/search", handlers.Search)

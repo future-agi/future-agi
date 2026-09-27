@@ -23,6 +23,14 @@ Each one names the capability the operator loses, not the failure itself.
 row's status; "spans sent by the SDK will not arrive" tells them what breaks.
 Keep them plain and free of mode wording.
 
+``fix`` and ``docs_url`` sit beside it, under the same rule. ``down_detail``
+says what breaks; ``fix`` is the one line that gets the operator moving again,
+and it stays one line, because the row above it already carries the
+consequence. Both are blank on a passing check, since a healthy service has no
+remedy to offer. Every check carries them, not only the ones that happen to
+fail on a laptop, or the next check added here reintroduces the dead end this
+pair exists to close.
+
 This endpoint only reports. It never starts or stops anything — bringing model
 serving up or down stays an operator decision. What the mode decides is whether
 that decision stops you: an install run purely for observability is a legitimate
@@ -162,8 +170,10 @@ def _object_storage_up() -> bool:
     try:
         client.head_bucket(Bucket=settings.UPLOAD_BUCKET_NAME)
     except ClientError as exc:
+        # An answer of any kind means the service is reachable, including the 404
+        # a fresh install gets: the bucket is created on the first upload.
         code = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-        return code is not None and code != 404
+        return code is not None
     return True
 
 
@@ -227,6 +237,8 @@ CHECKS = (
         "label": "Core application database",
         "down_detail": "Nothing loads without it — check PG_HOST and PG_PASSWORD",
         "probe": _postgres_up,
+        "fix": "Start it: `docker compose up -d postgres`. Check `PG_HOST` and `PG_PASSWORD` in `.env`.",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-core-application-database-failed",
         LIVE: {
             "required": True,
             "on_down": FAILED,
@@ -241,6 +253,8 @@ CHECKS = (
         "label": "Tracing data warehouse",
         "down_detail": "Traces, spans and dashboards will not load",
         "probe": _clickhouse_up,
+        "fix": "Start it: `docker compose up -d clickhouse`.",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-tracing-data-warehouse-failed",
         LIVE: {
             "required": True,
             "on_down": FAILED,
@@ -255,6 +269,8 @@ CHECKS = (
         "label": "Cache and session store",
         "down_detail": "Sessions, caching and rate limits will not work",
         "probe": _redis_up,
+        "fix": "Start it: `docker compose up -d redis`.",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-cache-and-session-store-failed",
         LIVE: {
             "required": True,
             "on_down": FAILED,
@@ -269,6 +285,8 @@ CHECKS = (
         "label": "Websocket connection",
         "down_detail": "Live updates will not reach the browser",
         "probe": _rabbitmq_up,
+        "fix": "Start it: `docker compose up -d rabbitmq`.",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-websocket-connection-failed",
         LIVE: {
             "required": True,
             "on_down": FAILED,
@@ -283,6 +301,8 @@ CHECKS = (
         "label": "Object storage service",
         "down_detail": "Dataset uploads, exports and media will fail",
         "probe": _object_storage_up,
+        "fix": "Start it: `docker compose up -d minio`.",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-object-storage-service-failed",
         LIVE: {
             "required": True,
             "on_down": FAILED,
@@ -297,6 +317,8 @@ CHECKS = (
         "label": "LLM request gateway",
         "down_detail": "Every LLM call fails — evaluations, playground and agents",
         "probe": _gateway_up,
+        "fix": "Start it: `docker compose up -d agentcc-gateway`.",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-llm-request-gateway-failed",
         LIVE: {
             "required": True,
             "on_down": FAILED,
@@ -311,6 +333,8 @@ CHECKS = (
         "label": "Async task engine",
         "down_detail": "Evaluations, optimizations and scheduled jobs will not run",
         "probe": _temporal_up,
+        "fix": "Start it: `docker compose up -d temporal`.",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-async-task-engine-failed",
         LIVE: {
             "required": True,
             "on_down": FAILED,
@@ -325,6 +349,8 @@ CHECKS = (
         "label": "Trace ingestion",
         "down_detail": "Spans sent by the SDK will not arrive",
         "probe": _collector_up,
+        "fix": "Start it: `docker compose up -d fi-collector`.",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-trace-ingestion-failed",
         LIVE: {
             "required": True,
             "on_down": FAILED,
@@ -338,6 +364,8 @@ CHECKS = (
         "id": "backend",
         "label": "Django backend",
         "probe": lambda: True,
+        "fix": "Start it: `docker compose up -d backend`.",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-django-backend-failed",
         LIVE: {"required": True, "on_down": FAILED},
         EXPERIMENT: {"required": True, "on_down": FAILED},
     },
@@ -345,6 +373,8 @@ CHECKS = (
         "id": "frontend",
         "label": "React frontend",
         "probe": lambda: True,
+        "fix": "Start it: `docker compose up -d frontend`.",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-react-frontend-failed",
         LIVE: {"required": True, "on_down": FAILED},
         EXPERIMENT: {"required": True, "on_down": FAILED},
     },
@@ -353,6 +383,8 @@ CHECKS = (
         "label": "Agent fixer (evals + Error Feed)",
         "down_detail": "Built-in evaluations and guardrails will not run",
         "probe": _model_serving_up,
+        "fix": "Start it: `docker compose up -d serving`. Only evals and guardrails need it.",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-agent-fixer-failed",
         LIVE: {
             "required": True,
             "on_down": FAILED,
@@ -367,6 +399,8 @@ CHECKS = (
         "label": "Code execution sandbox",
         "down_detail": "Custom code evaluations will not run",
         "probe": _code_executor_up,
+        "fix": "Start it: `docker compose up -d code-executor`. The host has to allow `privileged: true`.",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-code-execution-sandbox-failed",
         LIVE: {
             "required": True,
             "on_down": FAILED,
@@ -384,6 +418,8 @@ CHECKS = (
             "and VITE_HOST_API at https endpoints with a valid certificate"
         ),
         "probe": _tls_up,
+        "fix": "Normal on a laptop. For production, point `FRONTEND_URL` and `VITE_HOST_API` at https.",
+        "docs_url": "https://github.com/future-agi/future-agi/blob/dev/INSTALLATION.md#pre-flight-says-ssltls-certificate-failed",
         LIVE: {
             "required": True,
             "on_down": FAILED,
@@ -438,6 +474,10 @@ def _build_checks(mode: str, probe_results: dict) -> list:
                 "status": PASSED if up else overlay["on_down"],
                 "required": bool(overlay["required"]),
                 "detail": "" if up else check.get("down_detail", ""),
+                # Only a down check needs a remedy; a passing row would render an
+                # instruction for a problem the operator does not have.
+                "fix": "" if up else check.get("fix", ""),
+                "docs_url": "" if up else check.get("docs_url", ""),
             }
         )
     return checks

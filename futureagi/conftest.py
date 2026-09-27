@@ -8,7 +8,13 @@ import os
 import re
 import sys
 import types
+import uuid
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
+from typing import NamedTuple
+
+import pytest
 
 _project_root = Path(__file__).parent
 if str(_project_root) not in sys.path:
@@ -234,6 +240,204 @@ def _require_safe_ch25_test_target(*, host: str, database: str) -> None:
         )
 
 
+# Ports an operator host forwards a remote ClickHouse onto. A live test never
+# takes one of them from a general port variable, whatever else the environment
+# says, and never defaults to a port: with no port named, it skips.
+_FORWARDED_CH_PORTS = frozenset({19010, 19000, 19001, 19002, 18230, 18231, 18232})
+_GENERAL_CH_NATIVE_PORT_VARIABLES = (
+    "CH25_NATIVE_PORT",
+    "CH25_TCP_PORT",
+    "CH_NATIVE_PORT",
+)
+# CI's own ClickHouse is published on 19000 (``docker-compose.test.yml``), one
+# of those ports, so the CI job names it through this variable instead. A port
+# taken from it is trusted only after the server proves it is the test sidecar:
+# ``.ci/clickhouse-test-config.xml`` sets the replica macro below, and no
+# production server carries it. Every client proves it before its caller can
+# issue a statement.
+CH_TEST_SIDECAR_NATIVE_PORT_VARIABLE = "FI_CH_TEST_SIDECAR_NATIVE_PORT"
+# The same for the sidecar's HTTP interface (published on 18123).
+_GENERAL_CH_HTTP_PORT_VARIABLES = ("CH25_HTTP_PORT", "CH_HTTP_PORT")
+CH_TEST_SIDECAR_HTTP_PORT_VARIABLE = "FI_CH_TEST_SIDECAR_HTTP_PORT"
+_CH_TEST_SIDECAR_REPLICA = "test-01"
+_CH_TEST_SIDECAR_STATEMENT = "SELECT getMacro('replica')"
+
+
+class ClickHouseTestPort(NamedTuple):
+    port: int
+    requires_test_sidecar: bool
+
+
+def _resolve_ch_test_port(
+    environ: Mapping[str, str], *, opt_in: str, general: tuple[str, ...]
+) -> ClickHouseTestPort:
+    """Resolve a live test's port, refusing a forwarded one before any socket."""
+
+    opted_in = (environ.get(opt_in) or "").strip()
+    if opted_in:
+        return ClickHouseTestPort(int(opted_in), requires_test_sidecar=True)
+    port_text = next(
+        (text for name in general if (text := (environ.get(name) or "").strip())),
+        "",
+    )
+    if not port_text:
+        pytest.skip(f"no test ClickHouse named: set {' or '.join((opt_in, *general))}")
+    port = int(port_text)
+    if port in _FORWARDED_CH_PORTS:
+        raise UnsafeClickHouseTestTarget(
+            f"Refusing ClickHouse test statements on forwarded port {port}. A"
+            f" disposable ClickHouse on such a port is named through {opt_in},"
+            " which requires the server to prove it is the test sidecar."
+        )
+    return ClickHouseTestPort(port, requires_test_sidecar=False)
+
+
+def _ch_test_native_port(
+    environ: Mapping[str, str] = os.environ,
+) -> ClickHouseTestPort:
+    return _resolve_ch_test_port(
+        environ,
+        opt_in=CH_TEST_SIDECAR_NATIVE_PORT_VARIABLE,
+        general=_GENERAL_CH_NATIVE_PORT_VARIABLES,
+    )
+
+
+def _ch_test_http_port(
+    environ: Mapping[str, str] = os.environ,
+) -> ClickHouseTestPort:
+    return _resolve_ch_test_port(
+        environ,
+        opt_in=CH_TEST_SIDECAR_HTTP_PORT_VARIABLE,
+        general=_GENERAL_CH_HTTP_PORT_VARIABLES,
+    )
+
+
+def _require_ch_test_sidecar(
+    target: ClickHouseTestPort, query_rows: Callable[[str], object]
+) -> None:
+    """Refuse an opted-in port until its server proves it is the test sidecar."""
+
+    if not target.requires_test_sidecar:
+        return
+    try:
+        rows = [tuple(row) for row in query_rows(_CH_TEST_SIDECAR_STATEMENT)]
+    except Exception as exc:
+        # A server with no replica macro at all raises here (code 139).
+        raise UnsafeClickHouseTestTarget(
+            f"Refusing ClickHouse test statements on port {target.port}: the server"
+            " did not report a replica macro, so it is not the test sidecar"
+            f" ({type(exc).__name__})."
+        ) from exc
+    if rows != [(_CH_TEST_SIDECAR_REPLICA,)]:
+        raise UnsafeClickHouseTestTarget(
+            f"Refusing ClickHouse test statements on port {target.port}: its replica"
+            f" macro is not {_CH_TEST_SIDECAR_REPLICA!r}, so it is not the test sidecar."
+        )
+
+
+def _open_ch_test_native_client(
+    *,
+    database: str = "default",
+    owned_database: str | None = None,
+    environ: Mapping[str, str] = os.environ,
+    **client_kwargs,
+):
+    """A native client on a safe test ClickHouse, or skip. The caller disconnects.
+
+    Nothing is constructed for a forwarded or unnamed port. On an opted-in port
+    the server proves it is the test sidecar before this returns, so before the
+    caller's first statement. ``owned_database`` names a database the caller
+    will create; the mutation policy is checked against it.
+    """
+
+    from clickhouse_driver import Client
+
+    target = _ch_test_native_port(environ)
+    host = environ.get("CH25_HOST", "127.0.0.1")
+    _require_safe_ch25_test_target(host=host, database=owned_database or database)
+    options = {
+        "user": environ.get("CH25_USER") or environ.get("CH_USERNAME") or "default",
+        "password": environ.get("CH25_PASSWORD") or environ.get("CH_PASSWORD") or "",
+        "connect_timeout": 3,
+        **client_kwargs,
+    }
+    client = Client(host=host, port=target.port, database=database, **options)
+    try:
+        try:
+            client.execute("SELECT 1")
+        except Exception as exc:
+            pytest.skip(
+                f"test ClickHouse is not reachable on {host}:{target.port} ({exc!r})"
+            )
+        _require_ch_test_sidecar(target, client.execute)
+    except BaseException:
+        client.disconnect()
+        raise
+    return client
+
+
+@contextmanager
+def _ch_test_native_client(**kwargs) -> Iterator:
+    """``_open_ch_test_native_client`` as a context manager that disconnects."""
+
+    client = _open_ch_test_native_client(**kwargs)
+    try:
+        yield client
+    finally:
+        client.disconnect()
+
+
+@contextmanager
+def _ch_test_owned_database(
+    prefix: str, *, environ: Mapping[str, str] = os.environ
+) -> Iterator[str]:
+    """Create one uniquely named test database and drop it on exit."""
+
+    database = f"{prefix}{uuid.uuid4().hex}"
+    with _ch_test_native_client(owned_database=database, environ=environ) as admin:
+        admin.execute(f"CREATE DATABASE {database}")
+        try:
+            yield database
+        finally:
+            admin.execute(f"DROP DATABASE IF EXISTS {database} SYNC")
+
+
+def _open_ch_test_http_client(
+    *,
+    database: str = "default",
+    environ: Mapping[str, str] = os.environ,
+    **client_kwargs,
+):
+    """``_open_ch_test_native_client`` over HTTP. The caller closes the client."""
+
+    import clickhouse_connect
+
+    target = _ch_test_http_port(environ)
+    host = environ.get("CH25_HOST", "127.0.0.1")
+    _require_safe_ch25_test_target(host=host, database=database)
+    options = {
+        "username": environ.get("CH25_USER") or environ.get("CH_USERNAME") or "default",
+        "password": environ.get("CH25_PASSWORD") or environ.get("CH_PASSWORD") or "",
+        **client_kwargs,
+    }
+    try:
+        client = clickhouse_connect.get_client(
+            host=host, port=target.port, database=database, **options
+        )
+    except Exception as exc:
+        pytest.skip(
+            f"test ClickHouse is not reachable on {host}:{target.port} ({exc!r})"
+        )
+    try:
+        _require_ch_test_sidecar(
+            target, lambda statement: client.query(statement).result_rows
+        )
+    except BaseException:
+        client.close()
+        raise
+    return client
+
+
 def _apply_ch25_schema_for_tests():
     """Apply the CH 25.3 v2 schema to the test ClickHouse BEFORE
     Django app startup runs `model_hub.apps._ensure_analytics_schema`.
@@ -427,7 +631,6 @@ def pytest_collection_modifyitems(config, items):
                 break
 
 
-import pytest
 from rest_framework.test import APIClient
 from rest_framework.views import APIView
 

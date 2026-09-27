@@ -1,5 +1,5 @@
 import pg from 'pg';
-import { ApiClient } from './api-client';
+import type { ApiClient } from './api-client';
 
 export const POLL = {
   // Collector inserts synchronously per export batch; SDK flush dominates.
@@ -15,15 +15,27 @@ export const POLL = {
 export class StateProbe {
   private pool: pg.Pool;
 
-  constructor(private cfg: { api: ApiClient; chUrl: string; chDatabase: string; pgUrl: string }) {
+  constructor(private cfg: { api: ApiClient; chUrl: string; chDatabase: string; pgUrl: string;
+    catalogChUrl?: string; catalogChDatabase?: string }) {
     this.pool = new pg.Pool({ connectionString: cfg.pgUrl, max: 2 });
   }
 
   /** Read-only ClickHouse query over HTTP with server-side param binding:
    *  probe.ch('SELECT … WHERE project_id = {p:UUID}', { p: id }) */
   async ch<T>(query: string, params: Record<string, string | number> = {}): Promise<T[]> {
-    const url = new URL(this.cfg.chUrl);
-    url.searchParams.set('database', this.cfg.chDatabase);
+    return this.queryCh<T>(this.cfg.chUrl, this.cfg.chDatabase, query, params);
+  }
+
+  /** Catalog queries use unqualified table names so the configured database applies. */
+  async catalogCh<T>(query: string, params: Record<string, string | number> = {}): Promise<T[]> {
+    return this.queryCh<T>(this.cfg.catalogChUrl ?? this.cfg.chUrl,
+      this.cfg.catalogChDatabase ?? 'property_catalog', query, params);
+  }
+
+  private async queryCh<T>(endpoint: string, database: string, query: string,
+    params: Record<string, string | number>): Promise<T[]> {
+    const url = new URL(endpoint);
+    url.searchParams.set('database', database);
     url.searchParams.set('default_format', 'JSONEachRow');
     for (const [k, v] of Object.entries(params)) url.searchParams.set(`param_${k}`, String(v));
     const res = await fetch(url, { method: 'POST', body: query });

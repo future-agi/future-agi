@@ -142,7 +142,7 @@ const EvalsUsageView = () => {
           const payload = {
             search_text: debouncedSearchQuery?.length
               ? debouncedSearchQuery
-              : null,
+              : "",
             current_page_index: pageNumber,
             page_size: pageSize,
             sort: request?.sortModel?.map(({ colId, sort }) => ({

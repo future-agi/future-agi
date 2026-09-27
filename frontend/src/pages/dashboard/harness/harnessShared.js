@@ -306,6 +306,18 @@ const STAGE_LABELS = {
 export const readable = (value = "") =>
   STAGE_LABELS[value] ||
   value.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase());
+export const displayText = (value, fallback = "") => {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return fallback;
+  }
+};
 
 // StatusChip infers its state from the string it is given, and "completed" matches
 // neither "pass" nor "ok". Map the stages explicitly: the terminal outcomes get
@@ -387,12 +399,62 @@ const hostedMessage = (type, payload) => {
       return null;
   }
 };
+const EVENT_METADATA_KEYS = new Set([
+  "call_id",
+  "function_call_id",
+  "invocation_id",
+  "signature",
+  "sig",
+]);
+
+const compactEventText = (value) => {
+  if (typeof value !== "string") return displayText(value);
+  const text = value.trim();
+  if (!text.startsWith("{") && !text.startsWith("[")) return displayText(value);
+  try {
+    const parsed = JSON.parse(text);
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed) &&
+      (parsed.label || parsed.tool || parsed.target || parsed.path)
+    ) {
+      const label = parsed.label || parsed.tool || "Tool";
+      const target = parsed.target || parsed.path;
+      return target
+        ? `${readable(label)} · ${displayText(target)}`
+        : readable(label);
+    }
+    const scrub = (item) => {
+      if (Array.isArray(item)) return item.map(scrub);
+      if (!item || typeof item !== "object") {
+        return typeof item === "string" ? item.slice(0, 240) : item;
+      }
+      return Object.fromEntries(
+        Object.entries(item)
+          .filter(([key]) => !EVENT_METADATA_KEYS.has(key))
+          .map(([key, child]) => [key, scrub(child)]),
+      );
+    };
+    const compact = JSON.stringify(scrub(parsed));
+    return compact.length > 320 ? `${compact.slice(0, 317)}…` : compact;
+  } catch {
+    return displayText(value);
+  }
+};
 
 export function eventMessage(event) {
   const payload = event.payload || {};
-  if (payload.detail) return String(payload.detail);
+  if (event.type === "harness.activity") {
+    if (payload.text) return compactEventText(payload.text);
+    if (payload.tool) {
+      return `${readable(displayText(payload.event_kind || "tool"))} · ${readable(displayText(payload.tool))}`;
+    }
+    return readable(displayText(payload.event_kind || "Authoring activity"));
+  }
+  if (payload.detail) return compactEventText(payload.detail);
   // Hosted `log` events land here, carrying the line they want shown.
-  if (payload.message) return String(payload.message);
+  if (payload.message) return compactEventText(payload.message);
 
   const hosted = hostedMessage(event.type, payload);
   if (hosted) return hosted;
@@ -402,16 +464,15 @@ export function eventMessage(event) {
     // "Completed completed" that reading its terminal stage back produced.
     if (event.type?.startsWith("harness.run."))
       return `Run ${event.type.slice("harness.run.".length)}`;
-    // "Calls completed" reads better than "Calls Harness.stage.completed".
     if (event.type?.endsWith(".started"))
-      return `${readable(payload.stage)} started`;
+      return `${readable(displayText(payload.stage))} started`;
     if (event.type?.endsWith(".completed"))
-      return `${readable(payload.stage)} completed`;
+      return `${readable(displayText(payload.stage))} completed`;
     if (event.type?.endsWith(".failed"))
-      return `${readable(payload.stage)} failed`;
-    return `${readable(payload.stage)} updated`;
+      return `${readable(displayText(payload.stage))} failed`;
+    return `${readable(displayText(payload.stage))} updated`;
   }
-  return readable(event.type || "Progress updated");
+  return readable(displayText(event.type || "Progress updated"));
 }
 
 // "1 / 10" reads as nine still to come when in fact nine failed. Hosted runs count failures

@@ -8,5 +8,8 @@ export const E2E = {
   gatewayUrl: process.env.E2E_GATEWAY_URL ?? 'http://localhost:28090',
   chUrl: process.env.E2E_CH_URL ?? 'http://localhost:28123',
   chDatabase: process.env.E2E_CH_DB ?? 'default',
+  // Catalog storage may live on a separate server/database in attach mode.
+  catalogChUrl: process.env.E2E_CATALOG_CH_URL ?? process.env.E2E_CH_URL ?? 'http://localhost:28123',
+  catalogChDatabase: process.env.E2E_CATALOG_CH_DB ?? 'property_catalog',
   pgUrl: process.env.E2E_PG_URL ?? 'postgresql://futureagi:futureagi@localhost:25432/futureagi',
 } as const;

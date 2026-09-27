@@ -126,6 +126,28 @@ def test_clickhouse_query_error_classifier_allows_narrow_transport_failures() ->
     assert is_clickhouse_query_error(
         OperationalError("Network Error: private connection detail")
     )
+    assert is_clickhouse_query_error(EOFError("Unexpected EOF while reading bytes"))
+
+
+@pytest.mark.parametrize("code", [47, 60, 62])
+def test_clickhouse_query_error_classifier_keeps_coded_errors_closed_under_eof(
+    code: int,
+) -> None:
+    # Neither driver wraps its mid-response EOFError. A coded server error
+    # raised while one is being handled is a query defect and fails closed.
+    for suppress in (False, True):
+        exc = ServerException("private query defect", code=code)
+        exc.__cause__ = EOFError("Unexpected EOF while reading bytes")
+        exc.__context__ = exc.__cause__
+        exc.__suppress_context__ = suppress
+        assert not is_clickhouse_query_error(exc)
+        assert not is_clickhouse_api_read_unavailable_error(exc)
+
+
+def test_clickhouse_query_error_classifier_rejects_eof_caused_errors() -> None:
+    unrelated = ValueError("bad format")
+    unrelated.__cause__ = EOFError("Unexpected EOF while reading bytes")
+    assert not is_clickhouse_query_error(unrelated)
 
 
 @pytest.mark.parametrize("code", [47, 60, 62])
@@ -164,4 +186,10 @@ def test_api_read_unavailable_classifier_keeps_query_defects_and_text_fail_close
     )
     assert not is_clickhouse_api_read_unavailable_error(
         RuntimeError("Received ClickHouse exception, code: 386, private")
+    )
+
+
+def test_api_read_unavailable_classifier_allows_eof_error() -> None:
+    assert is_clickhouse_api_read_unavailable_error(
+        EOFError("Unexpected EOF while reading bytes")
     )
