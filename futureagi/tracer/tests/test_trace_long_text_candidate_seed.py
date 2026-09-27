@@ -1,5 +1,7 @@
 """Long text may change acquisition, never exact membership or child scope."""
 
+import random
+import re
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -608,3 +610,77 @@ def test_escaped_literal_chars_match_the_driver():
     """If clickhouse-driver's escape table moves, this budget must move with it."""
 
     assert set(_ESCAPED_LITERAL_CHARS) == set(escape_chars_map)
+
+
+def _ascii_only_anchor(value):
+    """The pre-#2825 rule, kept as an oracle for non-caseless-script input."""
+    runs = [
+        run for run in re.findall(r"[^IiKk\x80-\U0010ffff]+", value) if len(run) >= 4
+    ]
+    if not runs:
+        return None
+    return (
+        "%"
+        + "%".join(
+            run.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            for run in runs
+        )
+        + "%"
+    )
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("用户登录失败", "%用户登录失败%"),
+        ("خطأ في الخادم", "%خطأ في الخادم%"),
+        ("שגיאת שרת פנימית", "%שגיאת שרת פנימית%"),
+        ("サーバーエラー", "%サーバーエラー%"),
+        ("서버 오류 발생", "%서버 오류 발생%"),
+        ("ERROR 用户登录失败", "%error 用户登录失败%"),
+        # i/k still split runs inside mixed text; the caseless run survives.
+        ("İ服务器超时K", "%服务器超时%"),
+        ("token 服务器超时 kill", "%en 服务器超时 %"),
+        # Cased non-ASCII scripts are still unsafe under ASCII lower().
+        ("ошибка сервера", None),
+        ("σφάλμα διακομιστή", None),
+        ("café crème", None),
+        ("ＡＢＣＤＥＦ", None),
+        ("１２３４，５６。", "%１２３４，５６。%"),
+        # Below the four-code-point n-gram: nothing to prune with.
+        ("登录失败了", "%登录失败了%"),
+        ("超时", None),
+        ("İ超时K错误", None),
+    ],
+)
+def test_caseless_script_runs_can_anchor_the_ngram_index(value, expected):
+    assert _caseless_ascii_ngram_anchor(value) == expected
+
+
+def test_caseless_script_rule_is_unchanged_for_every_other_input():
+    rng = random.Random(2825)
+    alphabet = (
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 %_\\-."
+        "İıKΣσςéÉßẞﬃＡａǅΩΩ̇ошибка"
+    )
+    for _ in range(5000):
+        value = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 40)))
+        assert _caseless_ascii_ngram_anchor(value) == _ascii_only_anchor(value)
+
+
+def test_long_caseless_script_text_takes_the_indexed_seed():
+    value = "支付回调处理失败，订单状态未更新，请检查上游服务是否超时并重试。"
+    assert len(value) >= 32
+    plan = builder(value=value)._public_long_text_candidate_seed_plan()
+    assert plan is not None
+    assert plan.params["long_text_ngram_0"] == "%" + value + "%"
+    assert "indexHint(" in plan.raw_graph_value_witness_predicate
+
+
+def test_anchor_budget_counts_utf8_bytes_for_caseless_scripts():
+    value = "服务器" * 3000  # 9000 characters, 27000 UTF-8 bytes
+    anchor = _caseless_ascii_ngram_anchor(value)
+    assert anchor is not None
+    body = anchor[1:-1]
+    assert len(body.encode("utf-8")) <= 4 * 1024
+    assert value.startswith(body)
