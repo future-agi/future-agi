@@ -7,6 +7,14 @@ set -e
 
 BASELINE_FILE="mypy-baseline.txt"
 BACKUP_FILE="mypy-baseline.txt.backup"
+RAW_OUTPUT=$(mktemp)
+
+# Must stay in sync with the identical filter in bin/check_mypy.sh — the
+# baseline and the run it is compared against have to be shaped the same way.
+# See that script for why the raw output cannot be used directly.
+mypy_diagnostics_only() {
+    grep -E '^[^[:space:]]+\.pyi?:' "$1" || true
+}
 
 echo "🔄 Generating mypy baseline..."
 
@@ -20,7 +28,15 @@ fi
 
 # Generate new baseline
 echo "🏃 Running mypy..."
-if mypy . > "$BASELINE_FILE" 2>&1; then
+if mypy . > "$RAW_OUTPUT" 2>&1; then
+    MYPY_CLEAN=1
+else
+    MYPY_CLEAN=0
+fi
+mypy_diagnostics_only "$RAW_OUTPUT" > "$BASELINE_FILE"
+rm -f "$RAW_OUTPUT"
+
+if [ "$MYPY_CLEAN" -eq 1 ]; then
     echo "✅ Perfect! No type errors found!"
     echo "   Baseline is empty (all code is properly typed!)"
     echo "" > "$BASELINE_FILE"
