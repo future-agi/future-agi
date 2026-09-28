@@ -68,6 +68,17 @@ def test_missing_eval_config_raises_config_error_at_builder(
         build_monitor_ch_builder(user_alert_monitor)
 
 
+def test_missing_project_raises_config_error_at_builder(
+    user_alert_monitor,
+) -> None:
+    # A monitor with an unset or deleted project must raise MonitorConfigError
+    # at builder time so 'None' never reaches ClickHouse (issue #2925).
+    user_alert_monitor.project = None
+    user_alert_monitor.project_id = None
+    with pytest.raises(MonitorConfigError, match="has no project configured"):
+        build_monitor_ch_builder(user_alert_monitor)
+
+
 def test_unknown_eval_output_type_raises_config_error(user_alert_monitor) -> None:
     user_alert_monitor.metric_type = "evaluation_metrics"
     user_alert_monitor.metric = "22222222-2222-2222-2222-222222222222"
@@ -114,8 +125,9 @@ def _patch_ch(results: List[Any]) -> mock._patch:
 
 @pytest.fixture(autouse=True)
 def _mute_notifications():
-    with mock.patch.object(monitor_mod, "_send_alert_email"), mock.patch.object(
-        monitor_mod, "_send_slack_notification"
+    with (
+        mock.patch.object(monitor_mod, "_send_alert_email"),
+        mock.patch.object(monitor_mod, "_send_slack_notification"),
     ):
         yield
 
@@ -254,6 +266,18 @@ def test_deleted_monitor_returns_quietly() -> None:
     assert UserAlertMonitorLog.objects.count() == 0
 
 
+def test_monitor_without_project_skips_without_clickhouse_query(
+    user_alert_monitor,
+) -> None:
+    user_alert_monitor.project = None
+    user_alert_monitor.project_id = None
+    user_alert_monitor.save()
+    task_fn = process_monitor_task._original_func
+    with _patch_ch([]):  # must not query CH when project is missing
+        task_fn(str(user_alert_monitor.id), timezone.now().isoformat())
+    assert UserAlertMonitorLog.objects.count() == 0
+
+
 def test_notification_helpers_receive_alert_args(user_alert_monitor) -> None:
     with mock.patch.object(monitor_mod, "_send_alert_email") as email_mock:
         with _patch_ch([_ch_result([{"value": 5.0}])]):
@@ -308,9 +332,7 @@ def test_graph_static_formats_ch_series(user_alert_monitor) -> None:
     instance.execute_ch_query.return_value = _ch_result(
         [{"timestamp": ts, "value": 3}, {"timestamp": ts, "value": None}]
     )
-    with mock.patch.object(
-        graphs_mod, "AnalyticsQueryService", return_value=instance
-    ):
+    with mock.patch.object(graphs_mod, "AnalyticsQueryService", return_value=instance):
         data = graphs_mod.get_static_metric_graph_data(user_alert_monitor)
     assert data == [
         {"timestamp": ts.isoformat(), "value": 3},
@@ -338,9 +360,7 @@ def test_percentage_graph_alert_bars_use_evaluator_band(user_alert_monitor) -> N
         _ch_result([{"timestamp": ts, "value": 1000.0}]),
         _ch_result([{"mean": 100.0, "stddev": 10.0}]),  # per-row band
     ]
-    with mock.patch.object(
-        graphs_mod, "AnalyticsQueryService", return_value=instance
-    ):
+    with mock.patch.object(graphs_mod, "AnalyticsQueryService", return_value=instance):
         out = graphs_mod.get_percentage_change_metric_graph_data(user_alert_monitor)
 
     # A second CH query (the evaluator's historical stats) was issued.
