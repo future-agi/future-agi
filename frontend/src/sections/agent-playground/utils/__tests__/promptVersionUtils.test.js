@@ -25,8 +25,16 @@ const apiVersion = {
       presence_penalty: 0.1,
       response_format: "text",
       output_format: "json",
+      template_format: "jinja",
     },
   },
+};
+const responseSchema = {
+  type: "object",
+  properties: {
+    answer: { type: "string" },
+  },
+  required: ["answer"],
 };
 
 describe("mapVersionToFormConfig", () => {
@@ -42,6 +50,10 @@ describe("mapVersionToFormConfig", () => {
     expect(cfg.modelConfig.tools).toEqual([{ name: "search" }]);
     expect(cfg.modelConfig.responseFormat).toBe("text");
     expect(cfg.outputFormat).toBe("json");
+    expect(cfg.templateFormat).toBe("jinja");
+    expect(cfg.payload.promptConfig[0].configuration.template_format).toBe(
+      "jinja",
+    );
   });
 
   it("maps snake_case penalty/token params into the payload config", () => {
@@ -53,6 +65,26 @@ describe("mapVersionToFormConfig", () => {
     expect(config.topP).toBe(0.9);
     expect(config.frequencyPenalty).toBe(0.3);
     expect(config.presencePenalty).toBe(0.1);
+  });
+
+  it("preserves separate response_schema from schema-backed snapshots", () => {
+    const cfg = mapVersionToFormConfig({
+      ...apiVersion,
+      prompt_config_snapshot: {
+        ...apiVersion.prompt_config_snapshot,
+        configuration: {
+          ...apiVersion.prompt_config_snapshot.configuration,
+          response_format: "json_schema",
+          response_schema: responseSchema,
+        },
+      },
+    });
+
+    expect(cfg.modelConfig.responseFormat).toBe("json_schema");
+    expect(cfg.modelConfig.responseSchema).toEqual(responseSchema);
+    expect(cfg.payload.promptConfig[0].configuration.response_schema).toEqual(
+      responseSchema,
+    );
   });
 
   it("preserves snapshot messages by role and content", () => {
@@ -83,6 +115,7 @@ describe("mapVersionToFormConfig", () => {
     expect(cfg.modelConfig.model).toBe("");
     expect(cfg.modelConfig.modelDetail).toEqual({});
     expect(cfg.outputFormat).toBe("string");
+    expect(cfg.templateFormat).toBe("mustache");
     // A system and a user message are always injected.
     expect(cfg.messages.map((m) => m.role)).toEqual(["system", "user"]);
   });
