@@ -409,6 +409,9 @@ def download_document_from_url(doc_url, max_retries=5, timeout=20):
             logger.warning(f"SSRF-blocked URL, not retrying: {e}")
             raise ValueError(f"ERROR_DOWNLOADING_DOCUMENT: {e}") from e
         except RequestException as e:
+            # Size cap is permanent — retrying re-downloads the same oversize body.
+            if "byte limit" in str(e).lower():
+                raise ValueError(str(e)) from e
             logger.error(f"Attempt {attempt + 1} failed with error: {e}")
             if attempt < max_retries - 1:
                 time.sleep(2**attempt)
