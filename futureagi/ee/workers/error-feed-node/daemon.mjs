@@ -1,3 +1,4 @@
+import {startObservability, stopObservability} from './observability.mjs';
 import {readFile} from 'node:fs/promises';
 import {hostname} from 'node:os';
 import {pathToFileURL} from 'node:url';
@@ -20,6 +21,12 @@ async function secret(env, name) {
 }
 
 export async function runDaemon(env = process.env, signal) {
+  await startObservability({...env, FI_PROJECT_NAME: env.FI_PROJECT_NAME || 'error-feed-investigation'});
+  try { return await executeDaemon(env, signal); }
+  finally { await stopObservability(); }
+}
+
+async function executeDaemon(env = process.env, signal) {
   const brokers = (env.OMEGA_KAFKA_BROKERS ?? '').split(',').map(item => item.trim());
   if (brokers.some(item => !item) || !env.OMEGA_ENGINE_VERSION || !env.OMEGA_REPORT_SPOOL) throw new Error('Kafka, engine version and mounted report spool are required');
   const concurrency = Number(env.OMEGA_CONCURRENCY ?? '4');

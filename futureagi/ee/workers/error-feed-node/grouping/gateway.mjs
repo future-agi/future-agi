@@ -1,3 +1,4 @@
+import {observe, spanAttributes, spanContent} from '../observability.mjs';
 import {featureDigest} from './features.mjs';
 import {measureRequest, requestLimits, reservationUsd} from './request-limits.mjs';
 
@@ -51,6 +52,7 @@ export async function createGroupingInvestigator({claim, control, config, signal
     // Omega transports differ in support for structured output/max tokens.
     // Apply the exact grouping request only here; investigation is unchanged.
     const body = JSON.stringify(activeBody);
+    spanContent('input', activeBody);
     if (Buffer.byteLength(body) > limits.requestBytes) throw new Error('Grouping transport limit exceeded');
     const timeout = AbortSignal.timeout(120000);
     return fetchImpl(url, {...init, body, signal:signal ? AbortSignal.any([signal,timeout]) : timeout, redirect:'error'});
@@ -59,7 +61,7 @@ export async function createGroupingInvestigator({claim, control, config, signal
   const resultReceipts = new WeakMap();
   const base = purpose === 'severity' ? `/grouping/severity/attempts/${claim.attempt_id}/`
     : `/grouping/attempts/${claim.attempt_id}/`;
-  const investigate = async (prompt, schema, _evidenceRows, {repairIntent = null} = {}) => {
+  const runDecision = async (prompt, schema, _evidenceRows, {repairIntent = null} = {}) => {
     if (busy) throw new Error('Grouping provider calls must be serial within an attempt');
     signal?.throwIfAborted();
     if (repairIntent !== null && (typeof repairIntent !== 'object' || Array.isArray(repairIntent)
@@ -97,6 +99,9 @@ export async function createGroupingInvestigator({claim, control, config, signal
         ...(repairIntent ? {repair_intent:repairIntent} : {})}, {signal});
       if (!reservation.receipt_id || reservation.request_digest !== requestDigest) throw new Error('Invalid reservation receipt');
       receiptIds.add(reservation.receipt_id);
+      spanAttributes({'error_feed.receipt_id': reservation.receipt_id,
+        'error_feed.receipt_reused': ['settled','unknown'].includes(reservation.status) && reservation.result != null,
+        'error_feed.citation_repair': repairIntent !== null});
       if (['settled','unknown'].includes(reservation.status) && reservation.result != null) {
         const cached = structuredClone(reservation.result);
         resultReceipts.set(cached,reservation.receipt_id);
@@ -146,6 +151,8 @@ export async function createGroupingInvestigator({claim, control, config, signal
       return result;
     } finally { busy = false; activeBody = null; }
   };
+  const investigate = (...args) => observe('error_feed.' + purpose + '.decision', 'CHAIN', {},
+    () => runDecision(...args), {input: () => args, output: true});
   investigate.receiptFor = result => resultReceipts.get(result) ?? null;
   return {investigate,receiptIds:()=>[...receiptIds]};
 }

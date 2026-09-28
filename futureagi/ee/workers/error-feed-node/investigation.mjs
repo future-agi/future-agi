@@ -1,3 +1,4 @@
+import {observe, claimAttributes, claimInput, executionResult, observeAgent, observeTool} from './observability.mjs';
 import {createHash} from 'node:crypto';
 import {mkdtemp, mkdir, rm} from 'node:fs/promises';
 import {join} from 'node:path';
@@ -11,9 +12,10 @@ const text = {type: 'string', maxLength: 8000};
 const identifier = {type: 'string', minLength: 1, maxLength: 128};
 const ids = {type: 'array', maxItems: 100, items: identifier};
 const object = properties => ({type: 'object', additionalProperties: false, required: Object.keys(properties), properties});
-const roleSchema = recordId => object({status: {type: 'string', enum: ['supported', 'unsupported', 'unknown']},
+const roleSchema = recordId => ({type: 'object', additionalProperties: false,
+  required: ['status', recordId, 'evidence_ids'], properties: {status: {type: 'string', enum: ['supported', 'unsupported', 'unknown']},
   [recordId]: {type: ['string', 'null'], minLength: 1, maxLength: 64}, evidence_ids: ids,
-  explanation: {type: 'string', minLength: 1, maxLength: 600}});
+  explanation: {type: 'string', minLength: 1, maxLength: 600}}});
 const reportSchema = recordId => {
   const finding = object({finding_id: identifier, kind: {type: 'string', minLength: 1, maxLength: 64}, statement: {...text, minLength: 1}, requirement_id: {type: ['string', 'null'], minLength: 1, maxLength: 128},
     evidence_ids: ids, recovery: {type: 'string', minLength: 1, maxLength: 64}, attribution: object({
@@ -143,11 +145,13 @@ function applyCoverageBoundary(assessment, coverage) {
 // adaptive experiment. The file-tool adapter is a new engine version: its
 // accuracy must be remeasured; the old full-prompt benchmark is not its score.
 export function investigateTrace(claim, options) {
-  return investigateClaim(claim, options, false);
+  return observe('error_feed.investigation', 'AGENT', claimAttributes(claim), async () =>
+    executionResult(await investigateClaim(claim, options, false)), {root: true, input: () => claimInput(claim), output: true});
 }
 
 export function investigateSimulation(claim, options) {
-  return investigateClaim(claim, options, true);
+  return observe('error_feed.investigation', 'AGENT', claimAttributes(claim), async () =>
+    executionResult(await investigateClaim(claim, options, true)), {root: true, input: () => claimInput(claim), output: true});
 }
 
 async function investigateClaim(claim, {gatewayConfig, clickhouse, control, scratchRoot = '/tmp', signal,
@@ -198,7 +202,7 @@ async function investigateClaim(claim, {gatewayConfig, clickhouse, control, scra
           length: {type: 'integer', minimum: 1, maximum: Math.min(claim.limits.max_tool_result_bytes, 8000)}}),
         execute: args => reader.read(args[recordIdField], args.offset, args.length)}),
       ...(audioInspection ? [audioInspection.tool] : []),
-    ];
+    ].map(observeTool);
     const rules = assessmentRules(simulation, audioInspection);
     const provider = {...gateway.provider, async generate(request) {
       signal?.throwIfAborted();
@@ -256,7 +260,7 @@ async function investigateClaim(claim, {gatewayConfig, clickhouse, control, scra
       const forceFinish = children.length >= maxChildren || remaining < 5;
       let output;
       try {
-        output = (await omega.runJson('controller', JSON.stringify({...shared, coverage: currentCoverage(),
+        output = (await observeAgent(omega, 'controller', JSON.stringify({...shared, coverage: currentCoverage(),
           children, force_finish: forceFinish}), {output: decision})).value;
       } catch (error) {
         if (!(error instanceof EarlierStageOutputTruncated)) throw error;
@@ -273,7 +277,7 @@ async function investigateClaim(claim, {gatewayConfig, clickhouse, control, scra
       phase = 'child';
       try {
         const child = applyCoverageBoundary(
-          (await omega.runJson(childId, JSON.stringify({...shared, coverage: currentCoverage(),
+          (await observeAgent(omega, childId, JSON.stringify({...shared, coverage: currentCoverage(),
             question: output.question}), {output: report})).value, currentCoverage());
         validateAssessment(child, reader.receipts(), currentCoverage(), recordIdField);
         children.push({question: output.question, assessment: child});
@@ -287,7 +291,7 @@ async function investigateClaim(claim, {gatewayConfig, clickhouse, control, scra
       const receiptCount = reader.receipts().length;
       let modelAssessment;
       try {
-        modelAssessment = (await omega.runJson('verifier', JSON.stringify({...shared,
+        modelAssessment = (await observeAgent(omega, 'verifier', JSON.stringify({...shared,
           coverage: currentCoverage(), proposed, children,
           [simulation ? 'unread_call_ids' : 'unread_span_ids']: unreadEvidenceIds(),
           observed_evidence_ids: reader.receipts().map(receipt => receipt.evidence_id)}), {output: report})).value;
