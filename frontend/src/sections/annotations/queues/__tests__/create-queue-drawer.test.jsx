@@ -20,6 +20,7 @@ vi.mock("src/api/annotation-queues/annotation-queues", () => ({
     mutate: mockUpdateStatus,
     isPending: false,
   }),
+  useCustomEvalConfigList: () => ({ data: [], isLoading: false }),
 }));
 
 vi.mock("src/components/iconify", () => ({

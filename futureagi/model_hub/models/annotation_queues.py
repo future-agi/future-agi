@@ -141,6 +141,13 @@ class AnnotationQueue(BaseModel):
         null=True,
         blank=True,
     )
+    custom_eval_config = models.ForeignKey(
+        "tracer.CustomEvalConfig",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="annotation_queues",
+    )
     is_default = models.BooleanField(default=False)
     created_by = models.ForeignKey(
         User,
