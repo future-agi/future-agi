@@ -769,6 +769,103 @@ def ingest_files_to_s3(files, kb_id, org):
 
 
 @temporal_activity(time_limit=3600, queue="tasks_l")
+def ingest_dataset_rows_to_kb(dataset_id, column_ids, kb_id, org):
+    """Index an existing dataset's rows into a Knowledge Base.
+
+    For each row, the values of `column_ids` are concatenated (in the given
+    order) into one document and embedded via KBIndexer.process_content,
+    reusing the same chunk/embed/upsert path as file-based ingestion.
+    """
+    if not column_ids:
+        return None
+
+    if is_kb_deleted_or_cancelled(kb_id):
+        logger.info(f"KB {kb_id} was deleted/cancelled, skipping dataset ingestion")
+        return None
+
+    try:
+        kb_file = KnowledgeBaseFile.objects.get(id=kb_id)
+        kb_file.status = StatusType.PROCESSING.value
+        kb_file.save()
+
+        rows = Row.objects.filter(dataset_id=dataset_id, deleted=False).order_by(
+            "order"
+        )
+        cells = Cell.objects.filter(
+            dataset_id=dataset_id, column_id__in=column_ids, deleted=False
+        ).exclude(value__isnull=True).exclude(value="")
+
+        cells_by_row = {}
+        for cell in cells:
+            cells_by_row.setdefault(cell.row_id, {})[str(cell.column_id)] = cell.value
+
+        indexer = KBIndexer()
+        indexed_count = 0
+        error_count = 0
+
+        # One worker pool shared across every row, instead of process_content
+        # spinning up its own each call — the difference between one pool and
+        # one per row at real dataset sizes.
+        with ThreadPoolExecutor(max_workers=20) as shared_executor:
+            for row in rows:
+                if is_kb_deleted_or_cancelled(kb_id):
+                    logger.info(
+                        f"KB {kb_id} was deleted/cancelled during dataset ingestion, stopping"
+                    )
+                    return None
+
+                row_cells = cells_by_row.get(row.id, {})
+                row_text = "\n\n".join(
+                    row_cells[col_id] for col_id in column_ids if col_id in row_cells
+                )
+                if not row_text.strip():
+                    continue
+
+                try:
+                    indexer.process_content(
+                        row_text,
+                        str(row.id),
+                        str(kb_id),
+                        str(org),
+                        executor=shared_executor,
+                    )
+                    indexed_count += 1
+                except Exception as e:
+                    logger.error(f"Error indexing row {row.id} into KB {kb_id}: {e}")
+                    error_count += 1
+
+        if is_kb_deleted_or_cancelled(kb_id):
+            logger.info(f"KB {kb_id} was deleted/cancelled, skipping status update")
+            return None
+
+        kb_file.refresh_from_db()
+        if indexed_count == 0:
+            kb_file.status = StatusType.FAILED.value
+            kb_file.last_error = "No content found in the selected columns to index."
+        elif error_count:
+            kb_file.status = StatusType.PARTIAL_COMPLETED.value
+            kb_file.last_error = f"{error_count} row(s) failed to index."
+        else:
+            kb_file.status = StatusType.COMPLETED.value
+        kb_file.save()
+
+        return {"indexed": indexed_count, "errors": error_count}
+
+    except Exception as e:
+        logger.exception(
+            f"Error ingesting dataset {dataset_id} into KB {kb_id}: {e}"
+        )
+        try:
+            kb_file = KnowledgeBaseFile.objects.get(id=kb_id)
+            kb_file.status = StatusType.FAILED.value
+            kb_file.last_error = str(e)
+            kb_file.save()
+        except Exception as inner_e:
+            logger.error(f"Error updating KB status: {inner_e}")
+        return None
+
+
+@temporal_activity(time_limit=3600, queue="tasks_l")
 def remove_kb_files(files, org, kb_id):
     if not kb_id:
         return None

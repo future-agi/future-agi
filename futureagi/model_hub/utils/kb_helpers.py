@@ -167,6 +167,35 @@ def schedule_kb_ingestion_on_commit(file_metadata, kb_id, org_id):
     transaction.on_commit(_start_ingestion)
 
 
+def schedule_dataset_kb_ingestion_on_commit(dataset_id, column_ids, kb_id, org_id):
+    """
+    Schedule KB ingestion from an existing dataset's rows to run after
+    transaction commits. Mirrors schedule_kb_ingestion_on_commit, but the
+    source is dataset rows/columns instead of uploaded files, so there is
+    no S3 upload to poll for first.
+
+    Args:
+        dataset_id: Source Dataset ID
+        column_ids: Ordered list of Column IDs whose cell values become
+            document content, in the order they should be concatenated
+        kb_id: Knowledge Base ID
+        org_id: Organization ID
+    """
+    dataset_id_str = str(dataset_id)
+    column_ids_str = [str(c) for c in column_ids]
+    kb_id_str = str(kb_id)
+    org_id_str = str(org_id)
+
+    def _start_ingestion():
+        from model_hub.tasks.develop_dataset import ingest_dataset_rows_to_kb
+
+        ingest_dataset_rows_to_kb.delay(
+            dataset_id_str, column_ids_str, kb_id_str, org_id_str
+        )
+
+    transaction.on_commit(_start_ingestion)
+
+
 def cancel_kb_ingestion_workflow(kb_id):
     """
     Cancel a running KB ingestion workflow.
