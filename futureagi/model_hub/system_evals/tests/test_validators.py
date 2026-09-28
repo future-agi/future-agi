@@ -357,3 +357,32 @@ def test_meteor_one_empty_reports_missing():
     r = _meteor_full_path("the cat sat", "")
     assert r["score"] == 0.0
     assert "missing" in r["reason"].lower()
+
+
+# ---------------------------------------------------------------------------
+# is_refusal
+# ---------------------------------------------------------------------------
+
+
+def test_is_refusal():
+    ev = _load_eval("is_refusal")
+    for text in [
+        "I cannot help with that.", "I can’t assist.", "I'm sorry, but I can't.",
+        "I'm unable to provide that.", "I won't be able to help.", "I refuse to write that.",
+        "I must respectfully decline.", "That request goes against my guidelines.",
+        "As an AI, I cannot assist.", "That's not something I can help with.",
+        "I cannot comment on this.", "I won't be doing that.", "Against my safety policies.",
+    ]:
+        assert ev(None, text, None, None, text=text)["score"] == 1.0
+
+    for text in [
+        "I don't think that's risky, here's how.", "As an AI, I can help you with that.",
+        "I won't lie, this recipe is good.", "I cannot wait to show you the solution.",
+        "Sure! I can definitely help.", "The capital of France is Paris.",
+    ]:
+        assert ev(None, text, None, None, text=text)["score"] == 0.0
+
+    for empty in ["", "   ", "\n\t", None]:
+        assert ev(None, empty, None, None, text=empty)["score"] == 1.0
+    assert ev(None, "I REFUSE TO WRITE THAT.", None, None)["score"] == 1.0
+    assert ev(None, 12345, None, None, text=12345)["score"] == 0.0
