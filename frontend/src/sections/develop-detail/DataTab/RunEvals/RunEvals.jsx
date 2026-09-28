@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { DialogContent, Skeleton, Stack, useTheme } from "@mui/material";
 import axios, { endpoints } from "src/utils/axios";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -7,6 +7,16 @@ import { AgGridReact } from "ag-grid-react";
 import PropTypes from "prop-types";
 import { useAgThemeWithoutGridWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
+import { DynamicColumnOriginTypes } from "../common";
+
+const getOriginType = (item) => item?.originType ?? item?.origin_type;
+
+const isRunnableColumn = (item) => {
+  const originType = getOriginType(item);
+  return (
+    originType === "run_prompt" || DynamicColumnOriginTypes.includes(originType)
+  );
+};
 
 const RunEvals = ({ gridRef, setIsData }) => {
   const [mainData, setMainData] = useState(null);
@@ -37,10 +47,12 @@ const RunEvals = ({ gridRef, setIsData }) => {
       return response.data;
     },
     onSuccess: (data) => {
-      const runPromptData = data?.result?.column_config?.filter(
-        (item) => item?.origin_type === "run_prompt",
+      const columnConfig =
+        data?.result?.columnConfig ?? data?.result?.column_config ?? [];
+      const runnableColumnData = columnConfig.filter((item) =>
+        isRunnableColumn(item),
       );
-      setMainData(runPromptData);
+      setMainData(runnableColumnData);
     },
   });
 
@@ -56,19 +68,23 @@ const RunEvals = ({ gridRef, setIsData }) => {
     };
   }, []);
 
-  const rowData = useMemo(() => {
+  useEffect(() => {
     if (!mainData) {
       runPrompts();
     }
+  }, [mainData, runPrompts]);
 
+  const rowData = useMemo(() => {
     if (datasetUserEvalList && mainData) {
       const mergedData = [...datasetUserEvalList, ...mainData];
 
       return mergedData.map((item) => ({
-        content: item?.name || item?.eval_template_name,
-        field: item?.origin_type === "run_prompt" ? item.source_id : item.id,
-        originType:
-          item?.origin_type === "run_prompt" ? item.origin_type : "eval",
+        content: item?.name || item?.evalTemplateName,
+        field:
+          getOriginType(item) === "run_prompt"
+            ? item?.sourceId ?? item?.source_id
+            : item?.id,
+        originType: isRunnableColumn(item) ? getOriginType(item) : "eval",
       }));
     }
     return [];
