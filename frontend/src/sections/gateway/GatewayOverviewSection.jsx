@@ -14,10 +14,9 @@ import {
   Tooltip,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { useMutation } from "@tanstack/react-query";
+import { useGatewayHealthCheck } from "./hooks/useGatewayHealthCheck";
 import { useNavigate } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
-import axiosInstance, { endpoints } from "src/utils/axios";
 import { useGatewayContext } from "./context/useGatewayContext";
 import { useProviderHealth } from "./providers/hooks/useGatewayConfig";
 import { useAnalyticsOverview } from "./analytics/hooks/useAnalyticsOverview";
@@ -112,22 +111,7 @@ const GatewayOverviewSection = () => {
     [gateway, apiKeys, overview],
   );
 
-  const healthCheckMutation = useMutation({
-    mutationFn: async (id) => {
-      const res = await axiosInstance.post(
-        endpoints.gateway.healthCheck(id),
-        {},
-      );
-      return res.data;
-    },
-    onSuccess: () => {
-      refreshGateways();
-      enqueueSnackbar("Health check complete", { variant: "success" });
-    },
-    onError: () => {
-      enqueueSnackbar("Health check failed", { variant: "error" });
-    },
-  });
+  const healthCheckMutation = useGatewayHealthCheck();
 
   // Provider summary
   const providers = providerHealth?.providers;

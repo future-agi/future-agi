@@ -2571,6 +2571,8 @@ export interface GatewaySummaryResultApi {
   base_url: string;
   /** @minLength 1 */
   status: string;
+  /** Completion time of this request's live health probe, including unreachable results. */
+  last_health_check: string;
   provider_count?: number;
   model_count?: number;
 }
@@ -2752,6 +2754,8 @@ export type GatewayHealthResultApiHealth = { [key: string]: unknown };
 export interface GatewayHealthResultApi {
   /** @minLength 1 */
   status: string;
+  /** Completion time of this request's live health probe. */
+  last_health_check: string;
   health?: GatewayHealthResultApiHealth;
   providers: GatewayConfiguredProvidersApi;
   provider_count: number;
@@ -2761,6 +2765,58 @@ export interface GatewayHealthResultApi {
 export interface GatewayHealthResponseApi {
   status: boolean;
   result: GatewayHealthResultApi;
+}
+
+export type GatewayHealthErrorResponseApiType =
+  (typeof GatewayHealthErrorResponseApiType)[keyof typeof GatewayHealthErrorResponseApiType];
+
+export const GatewayHealthErrorResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type GatewayHealthErrorResponseApiDetails = { [key: string]: string[] };
+
+export type GatewayHealthErrorResultApiStatus =
+  (typeof GatewayHealthErrorResultApiStatus)[keyof typeof GatewayHealthErrorResultApiStatus];
+
+export const GatewayHealthErrorResultApiStatus = {
+  unreachable: "unreachable",
+} as const;
+
+export type GatewayHealthErrorResultApi =
+  | string
+  | {
+      status: GatewayHealthErrorResultApiStatus;
+      error: string;
+      /** Completion time of this request's failed live health probe. */
+      last_health_check: string;
+    };
+
+/**
+ * Failed probes return a result object with status (unreachable), error, and last_health_check (ISO 8601 completion time). Request validation and other errors return a string result without a probe timestamp.
+ */
+export interface GatewayHealthErrorResponseApi {
+  status?: boolean;
+  type?: GatewayHealthErrorResponseApiType;
+  code?: string;
+  detail?: string;
+  result: GatewayHealthErrorResultApi;
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: GatewayHealthErrorResponseApiDetails;
 }
 
 export type GatewayMCPStatusResultApiServersItem = { [key: string]: unknown };
