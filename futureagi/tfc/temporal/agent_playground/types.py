@@ -8,6 +8,21 @@ when Temporal validates workflows in its sandbox.
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+# Default used when a graph has no user-set step concurrency.
+# Keep this as the single source of truth; callers and models import it.
+DEFAULT_MAX_CONCURRENT_NODES = 10
+MAX_CONCURRENT_NODES_ERROR = (
+    "Step concurrency must be an integer greater than zero."
+)
+
+
+def validate_max_concurrent_nodes(value: Any) -> int:
+    """Refuse values the engine cannot honour before a run starts."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(MAX_CONCURRENT_NODES_ERROR)
+    return value
+
+
 # =============================================================================
 # Output Sink Config
 # =============================================================================
@@ -163,7 +178,7 @@ class ExecuteGraphInput:
     graph_execution_id: str
     graph_version_id: str
     input_payload: dict[str, Any]
-    max_concurrent_nodes: int = 10
+    max_concurrent_nodes: int = DEFAULT_MAX_CONCURRENT_NODES
     task_queue: str = "tasks_l"
     parent_node_execution_id: Optional[str] = None  # Set when executing as module
     # Output sink configuration
@@ -291,6 +306,9 @@ class ExecuteNodeStandaloneOutput:
 
 
 __all__ = [
+    "DEFAULT_MAX_CONCURRENT_NODES",
+    "MAX_CONCURRENT_NODES_ERROR",
+    "validate_max_concurrent_nodes",
     # Output sink config
     "OutputSinkConfig",
     # Activity types

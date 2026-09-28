@@ -65,8 +65,13 @@ export const useUpdateDatasetCell = (options = {}) => {
  */
 export const useExecuteDataset = (options = {}) =>
   useMutation({
-    mutationFn: ({ graphId }) =>
-      axios.post(endpoints.agentPlayground.executeDataset(graphId), {}),
+    mutationFn: ({ graphId, maxConcurrentNodes }) =>
+      axios.post(
+        endpoints.agentPlayground.executeDataset(graphId),
+        maxConcurrentNodes != null
+          ? { max_concurrent_nodes: maxConcurrentNodes }
+          : {},
+      ),
     ...options,
   });
 
