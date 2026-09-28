@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Optional, Tuple, cast
 
 if TYPE_CHECKING:
     from tracer.services.clickhouse.query_builders.monitor_metrics import (
@@ -48,8 +48,14 @@ class MonitorConfigError(Exception):
 
 def build_monitor_ch_builder(monitor: UserAlertMonitor) -> "MonitorMetricsQueryBuilder":
     """Construct the routed MONITOR_METRICS builder from a monitor instance."""
-    eval_config_id = None
-    eval_output_type = None
+    project_id = getattr(monitor, "project_id", None) or (
+        monitor.project.id if monitor.project else None
+    )
+    if not project_id or str(project_id).strip() == "None":
+        raise MonitorConfigError(f"Monitor {monitor.id} has no project")
+
+    eval_config_id: Optional[str] = None
+    eval_output_type: Optional[str] = None
     if (
         monitor.metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS
         and monitor.metric
@@ -70,15 +76,16 @@ def build_monitor_ch_builder(monitor: UserAlertMonitor) -> "MonitorMetricsQueryB
     # v1↔v2 dispatch — flips with CH25_QUERY_TYPES_V2_PRIMARY=MONITOR_METRICS
     from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
 
-    BuilderCls = get_query_builder_class("MONITOR_METRICS")
+    BuilderCls: Any = get_query_builder_class("MONITOR_METRICS")
     try:
-        return BuilderCls(
-            project_id=str(monitor.project_id),
+        builder = BuilderCls(  # type: ignore[call-arg]
+            project_id=str(project_id),
             filters=monitor.filters,
             eval_config_id=eval_config_id,
             eval_output_type=eval_output_type,
             threshold_metric_value=monitor.threshold_metric_value,
         )
+        return cast("MonitorMetricsQueryBuilder", builder)
     except ValueError as e:
         # Filter translation rejects the stored filters — permanent misconfig.
         raise MonitorConfigError(f"Invalid monitor filters: {e}") from e
@@ -311,7 +318,8 @@ def _get_metric_value(
         settings=MONITOR_CH_SETTINGS,
     )
     if result.data:
-        return result.data[0].get("value")
+        val = result.data[0].get("value")
+        return float(val) if val is not None else None
     return None
 
 
@@ -383,8 +391,9 @@ def _check_static_threshold(
         threshold_val = warning_val
 
     if alert_type:
+        project_name = monitor.project.name if monitor.project else "unknown"
         message = (
-            f"Metric '{monitor.name}' for Project '{monitor.project.name}'"
+            f"Metric '{monitor.name}' for Project '{project_name}'"
             f"({current_value:.2f}) breached the {alert_type} threshold "
             f"({monitor.threshold_operator} {threshold_val})."
         )
@@ -448,8 +457,9 @@ def _check_percentage_change_threshold(
         threshold_val = warning_threshold
 
     if alert_type:
+        project_name = monitor.project.name if monitor.project else "unknown"
         message = (
-            f"Metric '{monitor.name}' for project '{monitor.project.name}' "
+            f"Metric '{monitor.name}' for project '{project_name}' "
             f"({current_value:.2f}) breached the {alert_type} threshold "
             f"({monitor.threshold_operator} {threshold_val:.2f}) based on historical data "
             f"(mean: {historical_mean:.2f}, stddev: {historical_stddev:.2f})."
