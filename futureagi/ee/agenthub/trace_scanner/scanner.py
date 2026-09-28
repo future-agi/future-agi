@@ -366,7 +366,12 @@ class TraceScanner:
     """
 
     TEMPERATURE = 0.2
-    MAX_TOKENS = 6144
+    # The model spends this budget on thinking BEFORE the JSON: measured 945-3648
+    # completion tokens for 200-400 tokens of visible output, i.e. 70-90% thoughts.
+    # At 6144 the richest traces ran out mid-JSON, and a truncated response parses
+    # to nothing and is persisted as a permanent "clean" verdict. verify.py hit the
+    # identical failure and settled on 16k; the scanner needs the same headroom.
+    MAX_TOKENS = 16_000
 
     def __init__(self, model_config: Optional[ModelConfig] = None):
         self.model_config = model_config or _DEFAULT_SCANNER_MODEL
@@ -425,6 +430,12 @@ class TraceScanner:
             if raw_response is None:
                 raise RuntimeError("scanner_gateway_returned_none")
             parsed = self._parse_response(raw_response)
+            # Same contract as a transport failure: the scan did not happen. Without
+            # this the empty parse falls through to has_issues=False, error=None,
+            # retryable=False -- which write_scan_results persists as COMPLETED and
+            # filter_already_scanned then treats as terminal, forever.
+            if not parsed:
+                raise RuntimeError("scanner_json_parse_failed")
             # V8 returns ONE flat object per trace; the mapping below expects the
             # batched {label: {...}} shape the old multi-trace prompt produced.
             if "dimensions" in parsed or "key_moments" in parsed:
@@ -569,6 +580,16 @@ class TraceScanner:
                 usage, "completion_tokens", 0
             ) or 0
             self.token_usage["total_tokens"] += getattr(usage, "total_tokens", 0) or 0
+        # A response cut off by the token cap is a non-answer, not a clean trace.
+        # Raising here routes it to the retryable path below instead of letting a
+        # half-written JSON body fall through to has_issues=False.
+        finish_reason = None
+        try:
+            finish_reason = response.choices[0].finish_reason
+        except (AttributeError, IndexError):
+            pass
+        if finish_reason == "length":
+            raise RuntimeError("scanner_response_truncated")
         try:
             return response.choices[0].message.content
         except (AttributeError, IndexError):
