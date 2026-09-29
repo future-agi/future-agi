@@ -1254,6 +1254,128 @@ class TestRunResultsV3Views:
             )
             assert response.status_code == status.HTTP_404_NOT_FOUND
 
+    def test_eval_added_after_completion_appears_on_next_load(
+        self,
+        auth_client,
+        test_execution,
+        run_test,
+        score_template,
+        eval_summary_te1_calls,
+    ):
+        """TH-8121: configs added after a run completes must not wait on the cache."""
+        url = f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        warm = auth_client.get(url)
+        assert warm.status_code == status.HTTP_200_OK
+
+        new_config = SimulateEvalConfig.objects.create(
+            name="Bonus Score", eval_template=score_template, run_test=run_test
+        )
+        call = eval_summary_te1_calls[0]
+        call.eval_outputs = {
+            **call.eval_outputs,
+            str(new_config.id): {
+                "name": "Bonus Score",
+                "output": 0.75,
+                "output_type": "score",
+            },
+        }
+        call.save(update_fields=["eval_outputs"])
+
+        response = auth_client.get(url)
+        assert response.status_code == status.HTTP_200_OK
+        body = response.json()
+        assert str(new_config.id) in {
+            column["id"] for column in body["evaluation_columns"]
+        }
+        row = next(item for item in body["results"] if item["id"] == str(call.id))
+        evaluations = {item["id"]: item for item in row["evaluations"]}
+        assert evaluations[str(new_config.id)]["score"] == 0.75
+
+    def test_eval_removed_after_completion_disappears_on_next_load(
+        self,
+        auth_client,
+        test_execution,
+        pass_fail_eval_config,
+        eval_summary_te1_calls,
+    ):
+        url = f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        warm = auth_client.get(url)
+        assert str(pass_fail_eval_config.id) in {
+            column["id"] for column in warm.json()["evaluation_columns"]
+        }
+
+        pass_fail_eval_config.deleted = True
+        pass_fail_eval_config.save(update_fields=["deleted"])
+
+        response = auth_client.get(url)
+        assert response.status_code == status.HTTP_200_OK
+        assert str(pass_fail_eval_config.id) not in {
+            column["id"] for column in response.json()["evaluation_columns"]
+        }
+
+    def test_harness_columns_remain_cached_after_completion(
+        self, auth_client, test_execution, analytics_call_executions
+    ):
+        call = analytics_call_executions[-1]
+        call.eval_outputs = {
+            "policy-check": {
+                "source": "harness",
+                "name": "Policy check",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            }
+        }
+        call.save(update_fields=["eval_outputs"])
+
+        url = f"/simulate/v3/test-executions/{test_execution.id}/calls/"
+        warm = auth_client.get(url)
+        assert warm.status_code == status.HTTP_200_OK
+        assert "policy-check" in {
+            column["id"] for column in warm.json()["evaluation_columns"]
+        }
+
+        call.eval_outputs = {}
+        call.save(update_fields=["eval_outputs"])
+
+        response = auth_client.get(url)
+        assert response.status_code == status.HTTP_200_OK
+        # Served from the harness-columns cache: the column survives even
+        # though the call no longer carries that output.
+        assert "policy-check" in {
+            column["id"] for column in response.json()["evaluation_columns"]
+        }
+
+    def test_harness_scored_config_deleted_after_warm_load_keeps_its_column(
+        self, test_execution, analytics_call_executions, score_eval_config
+    ):
+        # The catalog alone decides columns for other pages and the CSV
+        # header, so check it directly: page rows would mask a gap here.
+        from simulate.services.run_results_v3 import build_evaluation_catalog
+
+        config_id = str(score_eval_config.id)
+        call = analytics_call_executions[0]
+        call.eval_outputs = {
+            config_id: {
+                "source": "harness",
+                "name": "Accuracy Score",
+                "output": 0.7,
+                "output_type": "score",
+            }
+        }
+        call.save(update_fields=["eval_outputs"])
+
+        warm, _ = build_evaluation_catalog(test_execution)
+        assert config_id in {column["id"] for column in warm}
+
+        score_eval_config.deleted = True
+        score_eval_config.save(update_fields=["deleted"])
+
+        columns, live_eval_ids = build_evaluation_catalog(test_execution)
+        # Same as an uncached scan: the config is gone, but the harness's own
+        # result is still listed as a harness column.
+        assert config_id in {column["id"] for column in columns}
+        assert config_id not in live_eval_ids
+
 
 # ============================================================================
 # RunTestAnalyticsView
