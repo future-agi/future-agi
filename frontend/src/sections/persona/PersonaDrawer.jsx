@@ -7,7 +7,7 @@ import {
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import PersonaListView from "./PersonaListView";
 import Iconify from "src/components/iconify";
 import { Collapse } from "@mui/material";
@@ -15,30 +15,14 @@ import PersonaCreateEditForm from "./PersonaCreateEdit/PersonaCreateEditForm";
 
 const PersonaListContent = ({
   personaCreateEditType,
-  lockedFilters,
   onClose,
   onAddPersonas,
   onCreatePersona,
-  preSelectedPersonas,
+  selectedPersonas,
+  onToggleSelect,
 }) => {
-  const [selectedPersonas, setSelectedPersonas] = useState(
-    preSelectedPersonas ?? [],
-  );
-
-  const handleToggleSelect = (persona, newValue) => {
-    setSelectedPersonas((prev) => {
-      if (newValue) {
-        return prev.some((p) => p.id === persona.id)
-          ? prev
-          : [...prev, persona];
-      }
-      return prev.filter((p) => p.id !== persona.id);
-    });
-  };
-
   const handleAddPersonas = () => {
     onAddPersonas(selectedPersonas);
-    setSelectedPersonas([]);
   };
 
   return (
@@ -62,22 +46,13 @@ const PersonaListContent = ({
       >
         <Iconify icon="akar-icons:cross" />
       </IconButton>
-      <Box
-        sx={{
-          flex: 1,
-          minHeight: 0,
-          p: 2,
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
+      <Box sx={{ flex: 1, minHeight: 0, p: 2, display: "flex", flexDirection: "column" }}>
         <PersonaListView
           onCreatePersona={onCreatePersona}
           selectedPersonas={selectedPersonas}
-          onToggleSelect={handleToggleSelect}
+          onToggleSelect={onToggleSelect}
           isSelectable
           personaCreateEditType={personaCreateEditType}
-          lockedFilters={lockedFilters}
         />
       </Box>
       <Divider flexItem orientation="horizontal" />
@@ -123,14 +98,14 @@ const PersonaListContent = ({
 
 PersonaListContent.propTypes = {
   personaCreateEditType: PropTypes.string,
-  lockedFilters: PropTypes.object,
   onClose: PropTypes.func,
   onAddPersonas: PropTypes.func,
   onCreatePersona: PropTypes.func,
-  preSelectedPersonas: PropTypes.array,
+  selectedPersonas: PropTypes.array,
+  onToggleSelect: PropTypes.func,
 };
 
-const PersonaCreateContent = ({ onCancel, type }) => {
+const PersonaCreateContent = ({ onCancel, onSuccess, type }) => {
   return (
     <Box sx={{ width: "700px", height: "100vh" }}>
       <IconButton
@@ -146,7 +121,7 @@ const PersonaCreateContent = ({ onCancel, type }) => {
       </IconButton>
       <PersonaCreateEditForm
         onCancel={onCancel}
-        onSuccess={onCancel}
+        onSuccess={onSuccess}
         type={type}
       />
     </Box>
@@ -155,6 +130,7 @@ const PersonaCreateContent = ({ onCancel, type }) => {
 
 PersonaCreateContent.propTypes = {
   onCancel: PropTypes.func,
+  onSuccess: PropTypes.func,
   type: PropTypes.string,
 };
 
@@ -163,10 +139,37 @@ const PersonaDrawer = ({
   onClose,
   onAddPersonas,
   personaCreateEditType,
-  lockedFilters = null,
   preSelectedPersonas = [],
 }) => {
   const [createEditOpen, setCreateEditOpen] = useState(false);
+  const [selectedPersonas, setSelectedPersonas] = useState(
+    preSelectedPersonas ?? [],
+  );
+
+  useEffect(() => {
+    if (open) setSelectedPersonas(preSelectedPersonas ?? []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const handleToggleSelect = (persona, newValue) => {
+    setSelectedPersonas((prev) => {
+      if (newValue) {
+        return prev.some((p) => p.id === persona.id)
+          ? prev
+          : [...prev, persona];
+      }
+      return prev.filter((p) => p.id !== persona.id);
+    });
+  };
+
+  const handleCreatedPersona = (response) => {
+    const persona = response?.data?.result || response?.data;
+    setCreateEditOpen(false);
+    if (!persona?.id) return;
+    setSelectedPersonas((prev) =>
+      prev.some((p) => p.id === persona.id) ? prev : [...prev, persona],
+    );
+  };
 
   const handleDrawerClose = () => {
     onClose();
@@ -186,6 +189,7 @@ const PersonaDrawer = ({
       >
         <PersonaCreateContent
           onCancel={handleCreateEditClose}
+          onSuccess={handleCreatedPersona}
           type={personaCreateEditType}
         />
       </Collapse>
@@ -196,11 +200,11 @@ const PersonaDrawer = ({
       >
         <PersonaListContent
           personaCreateEditType={personaCreateEditType}
-          lockedFilters={lockedFilters}
           onClose={handleDrawerClose}
           onAddPersonas={onAddPersonas}
           onCreatePersona={() => setCreateEditOpen(true)}
-          preSelectedPersonas={preSelectedPersonas}
+          selectedPersonas={selectedPersonas}
+          onToggleSelect={handleToggleSelect}
         />
       </Collapse>
     </Drawer>
@@ -212,7 +216,6 @@ PersonaDrawer.propTypes = {
   onClose: PropTypes.func,
   onAddPersonas: PropTypes.func,
   personaCreateEditType: PropTypes.string,
-  lockedFilters: PropTypes.object,
   preSelectedPersonas: PropTypes.array,
 };
 
