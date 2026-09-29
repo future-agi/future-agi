@@ -102,8 +102,10 @@ Go-based gateway with **~9.9 ns weighted routing**, **~29 k req/s on t3.xlarge**
 
 Two ways, depending on how much you want to install:
 
-The self-host path requires Docker Desktop or Docker Engine with Docker Compose
-available before running the installer.
+The self-host path requires Docker Desktop, [Colima](https://github.com/abiosoft/colima),
+or Docker Engine with Docker Compose available before running the installer. On macOS,
+see [Docker Desktop or Colima](INSTALLATION.md#macos-docker-desktop-or-colima) for the
+VM sizing and the three Colima settings that the stack needs.
 
 <table width="100%">
 <tr>

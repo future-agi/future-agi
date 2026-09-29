@@ -10,6 +10,7 @@ If you just want to try it on your laptop, jump to [Quick start](#quick-start).
 
 - [Quick start](#quick-start)
 - [Prerequisites](#prerequisites)
+  - [macOS: Docker Desktop or Colima](#macos-docker-desktop-or-colima)
 - [Deployment modes](#deployment-modes)
   - [Full OSS stack (default)](#mode-1-full-oss-stack)
   - [Development mode (hot reload)](#mode-2-development-mode)
@@ -137,7 +138,7 @@ by hand set your own value before the first `docker compose up`.
 
 | Requirement    | Minimum                      | Notes                                                                    |
 | -------------- | ---------------------------- | ------------------------------------------------------------------------ |
-| Docker Engine  | 24.0+                        | Docker Desktop on Mac/Windows, or native Docker on Linux                 |
+| Docker Engine  | 24.0+                        | Docker Desktop or Colima on Mac, Docker Desktop on Windows, native Docker on Linux |
 | Docker Compose | v2.20+                       | `docker compose version` should print v2.x                               |
 | RAM            | 8 GB                         | 16 GB recommended (ClickHouse and the worker each hold ~1 GB)            |
 | Disk           | 20 GB free                   | Image pulls are ~3 GB; data grows from there                             |
@@ -145,9 +146,32 @@ by hand set your own value before the first `docker compose up`.
 | Platform       | `privileged: true` supported | `code-executor` needs it — won't run on Fargate, Cloud Run, or some PaaS |
 | Architecture   | `linux/amd64`                | Prebuilt images ship amd64 only; see Apple Silicon note below            |
 
-On Docker Desktop for Mac, give Docker at least **8 GB RAM** and **64 GB disk** under Settings → Resources. The defaults are often too small.
+On a Mac the limit that matters is the one on the Docker VM, not the machine's own RAM, and the default is too small on both runtimes. Give it at least **8 GB RAM** and **64 GB disk**: Docker Desktop under Settings → Resources, Colima with flags on `colima start`.
 
-**Apple Silicon (M-series) Macs:** prebuilt images are `linux/amd64`, so Docker Desktop will pull with an arch warning and run them under **Rosetta 2** emulation (auto-enabled on Docker Desktop 4.16+). Functional for evaluation and most local development; expect a 20–50% performance hit vs. native. For native arm64, build locally with `docker compose build` instead of `docker compose pull`.
+**Apple Silicon (M-series) Macs:** prebuilt images are `linux/amd64`, so Docker will pull with an arch warning and emulate them. Functional for evaluation and most local development; expect a 20–50% performance hit vs. native. Docker Desktop 4.16+ uses Rosetta 2 automatically; Colima needs `--vm-type vz --vz-rosetta` at VM creation or you get slower QEMU emulation. The default stack has no build context for `backend`/`worker`, so it only pulls. For a native arm64 backend image, build it through the dev overlay: `docker compose -f docker-compose.yml -f docker-compose.dev.yml build backend`.
+
+### macOS: Docker Desktop or Colima
+
+Either runtime works and the install steps are identical. [Colima](https://github.com/abiosoft/colima) is MIT licensed, so it is the usual choice where Docker Desktop's subscription terms do not fit.
+
+```bash
+brew install docker docker-compose colima git
+colima start --cpu 4 --memory 8 --disk 64 --vm-type vz --vz-rosetta   # drop --vz-rosetta on Intel
+```
+
+Three things differ from a Docker Desktop install, and all three fail quietly:
+
+1. **Clone inside your home directory.** Colima mounts only `/Users/$USER` into its VM. Compose bind-mounts several files out of this repo into containers, and Colima raises no error for a host path it cannot see: the mount just arrives empty. The first symptom is ClickHouse exiting with `Unknown storage policy 'tiered'`, because `futureagi/.ci/clickhouse-storage-policy.xml` never made it in. To keep the repo elsewhere, mount it explicitly, and keep `$HOME` in the same list because passing any `--mount` replaces the default home mount: `colima start --mount "$HOME:w" --mount /path/to/parent:w`.
+
+2. **Raise CPU and memory at creation time.** Colima defaults to 2 CPUs and 2 GiB of RAM. At 2 GiB the kernel OOM-kills ClickHouse or the backend part-way through boot, so you see a container restart loop rather than an error. Changing it later needs `colima stop` first; the disk can only grow.
+
+3. **Development mode needs the socket path.** `docker-compose.dev.yml` mounts the host Docker socket and defaults to Docker Desktop's `/var/run/docker.sock`. On Colima, set it in `.env`:
+
+   ```bash
+   echo "DOCKER_SOCKET=$HOME/.colima/default/docker.sock" >> .env
+   ```
+
+Full guide, including resizing and Colima-specific troubleshooting: <https://docs.futureagi.com/docs/self-hosting/colima>.
 
 **Linux arm64 hosts (e.g. Graviton):** install `qemu-user-static` (most distros include it) for amd64 emulation, or build locally.
 
@@ -492,14 +516,16 @@ MinIO can be mirrored to any S3 endpoint via `mc mirror`.
 
 ### `Cannot connect to the Docker daemon`
 
-Docker isn't running. Start Docker Desktop (Mac/Windows) or `sudo systemctl start docker` (Linux).
+Docker isn't running. Start Docker Desktop (Mac/Windows), run `colima start` on Colima, or `sudo systemctl start docker` (Linux).
+
+On Colima this also shows up when the VM is running but the CLI points elsewhere. `docker context show` should print `colima`; if not, run `docker context use colima`.
 
 ### `ERROR: You don't have enough free space in /var/cache/apt/archives/`
 
-Docker Desktop's virtual disk is full. Either:
+The Docker VM's virtual disk is full, which is separate from the Mac's own free space. Either:
 
-- Settings → Resources → Disk image size — raise to 100 GB+.
 - Clean up: `docker system prune -af && docker builder prune -af`.
+- Raise the limit: Docker Desktop at Settings → Resources → Disk image size (100 GB+), or on Colima `colima stop && colima start --disk 100`. Colima disks only grow.
 
 ### `ports are not available: exposing port ... address already in use`
 
@@ -694,7 +720,7 @@ If your platform cannot run `code-executor` at all, you can set `CODE_EXECUTOR_L
 
 ### `temporal-server` keeps restarting
 
-Postgres connection is the usual cause. Check `docker compose logs postgres` for OOM. Raise Docker Desktop's RAM to 8 GB+.
+Postgres connection is the usual cause. Check `docker compose logs postgres` for OOM. Raise the Docker VM's RAM to 8 GB+ (Docker Desktop: Settings → Resources; Colima: `colima stop && colima start --memory 8`).
 
 ---
 
