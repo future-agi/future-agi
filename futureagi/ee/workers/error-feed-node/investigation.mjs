@@ -10,6 +10,7 @@ import {createAudioInspectionTool} from './audio-inspection.mjs';
 
 const text = {type: 'string', maxLength: 8000};
 const identifier = {type: 'string', minLength: 1, maxLength: 128};
+const requirementId = {type: 'string', minLength: 1, maxLength: 256};
 const ids = {type: 'array', maxItems: 100, items: identifier};
 const object = properties => ({type: 'object', additionalProperties: false, required: Object.keys(properties), properties});
 const roleSchema = recordId => ({type: 'object', additionalProperties: false,
@@ -17,10 +18,10 @@ const roleSchema = recordId => ({type: 'object', additionalProperties: false,
   [recordId]: {type: ['string', 'null'], minLength: 1, maxLength: 64}, evidence_ids: ids,
   explanation: {type: 'string', minLength: 1, maxLength: 600}}});
 const reportSchema = recordId => {
-  const finding = object({finding_id: identifier, kind: {type: 'string', minLength: 1, maxLength: 64}, statement: {...text, minLength: 1}, requirement_id: {type: ['string', 'null'], minLength: 1, maxLength: 128},
+  const finding = object({finding_id: identifier, kind: {type: 'string', minLength: 1, maxLength: 64}, statement: {...text, minLength: 1}, requirement_id: {...requirementId, type: ['string', 'null']},
     evidence_ids: ids, recovery: {type: 'string', minLength: 1, maxLength: 64}, attribution: object({
       origin: roleSchema(recordId), decisive: roleSchema(recordId), symptom: roleSchema(recordId)})});
-  const check = object({requirement_id: identifier, requirement: {...text, minLength: 1},
+  const check = object({requirement_id: requirementId, requirement: {...text, minLength: 1},
     status: {type: 'string', enum: ['satisfied', 'violated', 'unknown']}, evidence_ids: ids});
   return object({outcome: {type: 'string', enum: ['success', 'failure', 'unknown']},
     findings: {type: 'array', maxItems: 100, items: finding},

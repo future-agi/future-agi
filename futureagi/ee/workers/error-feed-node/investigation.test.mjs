@@ -297,16 +297,17 @@ test('Node report digest matches the Django wire fixture', () => {
 test('simulation investigation reads call evidence and returns a scoped report', async () => {
   const scratch = await mkdtemp(join(tmpdir(), 'omega-simulation-investigation-test-'));
   try {
+    const goalName = 'g'.repeat(256);
     const claim = {...makeClaim(), workload_type: 'simulation_test_execution',
       contract_version: 'omega-simulation/v1', test_execution_id: randomUUID(), lease_token: 'fixture-lease'};
     const row = {call_execution_id: randomUUID(), status: 'completed',
       simulation_call_type: 'conversation', scenario: 'Ask for help',
       call_summary: 'Agent answered', error_message: null, ended_reason: null,
       transcript: [{id: randomUUID(), speaker: 'assistant', content: 'How can I help?', start_time: 1, end_time: 2}],
-      goals: {use_case: 'Get help', sub_goals: ['greeting'], expected_outcome: 'The agent greets the caller'}};
+      goals: {use_case: 'Get help', sub_goals: [goalName], expected_outcome: 'The agent greets the caller'}};
     const evidenceId = `${row.call_execution_id}:0:${Buffer.byteLength(JSON.stringify(row))}`;
     const assessment = {outcome: 'success', findings: [], requirement_checks: [
-      {requirement_id: 'greeting', requirement: 'Agent greets the caller', status: 'satisfied',
+      {requirement_id: goalName, requirement: 'Agent greets the caller', status: 'satisfied',
         evidence_ids: [evidenceId]}]};
     const controlCalls = [];
     const result = await investigateSimulation(claim, {scratchRoot: scratch,
