@@ -24,6 +24,8 @@ import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
 import { effectiveModality } from "../_mock/rlContract";
 import { taskToVoiceData } from "../_mock/voiceCallData";
 import AddEvalsDrawer from "../workspace/evals/AddEvalsDrawer";
+import EditEvalDrawer, { canEditEval } from "../workspace/evals/EditEvalDrawer";
+import { useAppliedEvals } from "../workspace/evals/appliedEvals";
 import { useEnvState } from "../store";
 import useRunFitCheck from "./useRunFitCheck";
 import { protoRunId } from "../_mock/executionAdapter";
@@ -207,6 +209,22 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
   const [addingEvals, setAddingEvals] = useState(false);
   const [selected, setSelected] = useState(() => new Set());
   const { envState, patch, addAgentVersion } = useEnvState(envId);
+  /* Same edit drawer the Evaluations tab uses — the variable mapping and any
+     configurable fields live there. Opens when a column is edited from its
+     kebab menu. Delegated to the environment's applied evals so a saved edit
+     shows up wherever the eval is used. */
+  const { appliedEvals, update: updateAppliedEval } = useAppliedEvals(envState, patch);
+  const [editingEvalId, setEditingEvalId] = useState(null);
+  const editingEval = editingEvalId ? appliedEvals.find((x) => x.id === editingEvalId) : null;
+  const editEvalColumn = (e) => {
+    /* The header hands us the eval as it sits in the run's results — id,
+       name, icon. Look up the applied eval on the environment to get the
+       template / custom flags canEditEval reads. */
+    const applied = appliedEvals.find((x) => x.id === e.id);
+    if (!applied || !canEditEval(applied)) return;
+    setEditingEvalId(e.id);
+  };
+
   const { check: checkRunFit, dialog: runFitDialog } = useRunFitCheck(env, envState, patch);
 
   /*
@@ -751,6 +769,7 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
                   onOpenEval={(t, r) => { setEvalFocus(r.name); setOpenTask(t); }}
                   onRerunEval={rerunEvalColumn}
                   onDeleteEval={deleteEvalColumn}
+                  onEditEval={editEvalColumn}
                   rescoringEvalId={rescoringEval}
                 />
               )}
@@ -788,6 +807,16 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
         is why this offers the re-run rather than silently changing the numbers
         above.
       */}
+      {editingEval && (
+        <EditEvalDrawer
+          item={editingEval}
+          env={env}
+          envState={envState}
+          onClose={() => setEditingEvalId(null)}
+          onSave={(changes) => updateAppliedEval(editingEval.id, changes)}
+        />
+      )}
+
       <AddEvalsDrawer
         open={addingEvals}
         onClose={() => setAddingEvals(false)}

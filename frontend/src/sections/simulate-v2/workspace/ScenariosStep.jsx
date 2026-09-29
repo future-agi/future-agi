@@ -73,6 +73,26 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
   const [asOf, setAsOf] = useState(null);
   const [flashId, setFlashId] = useState(null);
   const flashTimer = useRef(null);
+  /* The sticky header: its height (so group headers and history jumps land
+     below it) and whether it is stuck (for the hairline under it). */
+  /* Held in state, not refs, so the observers attach once the header has
+     actually mounted — the panel can render before it does. */
+  const [headEl, headRef] = useState(null);
+  const [sentinelEl, headSentinel] = useState(null);
+  const [headH, setHeadH] = useState(0);
+  const [headStuck, setHeadStuck] = useState(false);
+  useEffect(() => {
+    if (!headEl || typeof ResizeObserver === "undefined") return undefined;
+    const ro = new ResizeObserver(() => setHeadH(headEl.offsetHeight));
+    ro.observe(headEl);
+    return () => ro.disconnect();
+  }, [headEl]);
+  useEffect(() => {
+    if (!sentinelEl || typeof IntersectionObserver === "undefined") return undefined;
+    const io = new IntersectionObserver(([e]) => setHeadStuck(!e.isIntersecting));
+    io.observe(sentinelEl);
+    return () => io.disconnect();
+  }, [sentinelEl]);
   /*
     Search + use-case filter are shared by both views now. They used to
     live inside the list-only toolbar, which meant switching to the
@@ -469,12 +489,32 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
   return (
     /* The build pane already frames this panel, so it only needs a sliver of
        side padding there; the workspace keeps the full inset. */
-    <Box sx={{ py: 2, px: buildMode ? 1 : 2 }}>
+    <Box sx={{ py: 2, px: buildMode ? 1 : 2, "--scn-head": `${headH}px` }}>
       {/*
         Title and the add button on one line. Adding is a secondary action on
         this screen — the scenarios are already derived — so it is an outlined
         button beside the heading rather than five cards above it.
       */}
+      {/*
+        The whole header — title, quick filters and the toolbar — pins to the
+        top while the list scrolls, so search, grouping and the selection
+        actions are always in reach through 80+ rows. It used to be only the
+        toolbar, inside a wrapper that ended right under it, so it had nothing
+        to stick through. A hairline appears once it is actually stuck.
+      */}
+      <Box ref={headSentinel} sx={{ height: 0 }} />
+      <Box
+        ref={headRef}
+        sx={{
+          position: "sticky", top: 0, zIndex: 4,
+          bgcolor: "background.paper",
+          mt: -2, pt: 2, mx: buildMode ? -1 : -2, px: buildMode ? 1 : 2,
+          mb: 1.5,
+          borderBottom: "1px solid",
+          borderColor: headStuck ? "divider" : "transparent",
+          transition: "border-color .15s ease",
+        }}
+      >
       <Stack
         direction={{ xs: "column", sm: "row" }}
         alignItems={{ sm: "center" }}
@@ -574,81 +614,8 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
         </Stack>
       )}
 
-      {broken.length > 0 && (
-        <Stack
-          direction="row" alignItems="flex-start" spacing={1.5}
-          sx={{
-            mb: 2, px: 2.5, py: 1.75, borderRadius: 1.5, border: "1px solid",
-            borderColor: alpha("#DC2626", 0.35),
-            bgcolor: (t) => alpha("#DC2626", t.palette.mode === "dark" ? 0.08 : 0.04),
-          }}
-        >
-          <Iconify icon="solar:danger-triangle-bold" width={16} sx={{ color: "#DC2626", flexShrink: 0, mt: "2px" }} />
-          <Box flex={1} minWidth={0}>
-            <Typography sx={{ typography: "s2", fontWeight: 700 }}>
-              {broken.length} scenarios broke after the env changed
-            </Typography>
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              We re-checked them against {envState?.activeEnvVersion || "the current version"}. Fix, remove, or dismiss.
-            </Typography>
-          </Box>
-          <Stack direction="row" spacing={0.75} sx={{ flexShrink: 0 }}>
-            <Button
-              variant="contained" color="primary" size="small"
-              onClick={() => setQuick("attention")}
-              startIcon={<Iconify icon="solar:eye-linear" width={14} />}
-              sx={{ typography: "s2", fontWeight: 700 }}
-            >
-              Show them
-            </Button>
-            <Button
-              variant="outlined" size="small"
-              onClick={() => {
-                /* Keep the scenarios and accept them on the current world —
-                   stamped as proved against it, so the next auto re-prove
-                   doesn't flag them all over again. */
-                const label = currentEnvVersion(env, envState).label;
-                const at = new Date().toISOString();
-                patch({
-                  scenarios: selected.map((s) => (s.provedBroke
-                    ? { ...s, provedBroke: false, brokeReasons: [], provedAgainst: label, provedAt: at }
-                    : s)),
-                });
-              }}
-              sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider" }}
-            >
-              Dismiss
-            </Button>
-          </Stack>
-        </Stack>
-      )}
-
-
-      {selected.length === 0 ? (
-        <RoutePlaceholder env={genEnv} onAdd={() => setAdding(true)} />
-      ) : (
-        /*
-          No title/subtitle on the section card — the page heading above
-          already names this list. The card's top row is a shared
-          toolbar (search · filter · list/table tabs) that both views
-          read from, so filters survive a view switch.
-        */
-        /* No frame around the toolbar — it is a row of controls over the
-           batch containers, not a container of its own. */
-        <Box sx={{ mb: 1.5 }}>
-          {/*
-            Sticky toolbar row. It pins to the top of the scenarios
-            viewport as the user scrolls through 88+ rows, so when
-            the row transforms into the SelectionBar the actions are
-            always in reach — no floating pill over content, no
-            scroll-hunting to find the toolbar. Same slot handles
-            both states, which is why nothing feels "in a random
-            place" any more.
-          */}
-          <Box sx={{
-            position: "sticky", top: 0, zIndex: 3,
-            bgcolor: "background.paper",
-          }}>
+      {selected.length > 0 && (
+        <Box>
           {!locked && selectedIds.length > 0 ? (
             <SelectionBar
               count={selectedIds.length}
@@ -799,8 +766,72 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
             </Stack>
           </Stack>
           )}
-          </Box>
+        </Box>
+      )}
+      </Box>
 
+      {broken.length > 0 && (
+        <Stack
+          direction="row" alignItems="flex-start" spacing={1.5}
+          sx={{
+            mb: 2, px: 2.5, py: 1.75, borderRadius: 1.5, border: "1px solid",
+            borderColor: alpha("#DC2626", 0.35),
+            bgcolor: (t) => alpha("#DC2626", t.palette.mode === "dark" ? 0.08 : 0.04),
+          }}
+        >
+          <Iconify icon="solar:danger-triangle-bold" width={16} sx={{ color: "#DC2626", flexShrink: 0, mt: "2px" }} />
+          <Box flex={1} minWidth={0}>
+            <Typography sx={{ typography: "s2", fontWeight: 700 }}>
+              {broken.length} scenarios broke after the env changed
+            </Typography>
+            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+              We re-checked them against {envState?.activeEnvVersion || "the current version"}. Fix, remove, or dismiss.
+            </Typography>
+          </Box>
+          <Stack direction="row" spacing={0.75} sx={{ flexShrink: 0 }}>
+            <Button
+              variant="contained" color="primary" size="small"
+              onClick={() => setQuick("attention")}
+              startIcon={<Iconify icon="solar:eye-linear" width={14} />}
+              sx={{ typography: "s2", fontWeight: 700 }}
+            >
+              Show them
+            </Button>
+            <Button
+              variant="outlined" size="small"
+              onClick={() => {
+                /* Keep the scenarios and accept them on the current world —
+                   stamped as proved against it, so the next auto re-prove
+                   doesn't flag them all over again. */
+                const label = currentEnvVersion(env, envState).label;
+                const at = new Date().toISOString();
+                patch({
+                  scenarios: selected.map((s) => (s.provedBroke
+                    ? { ...s, provedBroke: false, brokeReasons: [], provedAgainst: label, provedAt: at }
+                    : s)),
+                });
+              }}
+              sx={{ typography: "s2", fontWeight: 700, color: "text.primary", borderColor: "divider" }}
+            >
+              Dismiss
+            </Button>
+          </Stack>
+        </Stack>
+      )}
+
+
+      {selected.length === 0 ? (
+        <RoutePlaceholder env={genEnv} onAdd={() => setAdding(true)} />
+      ) : (
+        /*
+          No title/subtitle on the section card — the page heading above
+          already names this list. The card's top row is a shared
+          toolbar (search · filter · list/table tabs) that both views
+          read from, so filters survive a view switch.
+        */
+        /* No frame around the toolbar — it is a row of controls over the
+           batch containers, not a container of its own. */
+        <Box>
           {shownGroups.length === 0 ? (
             <Box sx={{ px: 2.5, py: 6, textAlign: "center" }}>
               <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
@@ -1237,13 +1268,19 @@ function CollapsibleGroup({ group, env, envState, buildMode, onEdit, onRemove, s
         direction="row" alignItems="center" spacing={1.5}
         onClick={() => setOpen((o) => !o)}
         sx={{
-          position: "sticky", top: 0, zIndex: 2, cursor: "pointer",
+          position: "sticky", top: "var(--scn-head, 0px)", zIndex: 2, cursor: "pointer",
           px: 2.5, py: 1.75,
           bgcolor: "background.neutral",
           borderBottom: "1px solid", borderColor: "divider",
           borderTop: "1px solid", borderTopColor: "divider",
+          /* The hover tint is laid over the solid background, not swapped in
+             for it — this header pins over the rows, and a see-through
+             background let them show through it while hovered. */
           "&:hover": {
-            bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05),
+            backgroundImage: (t) => {
+              const tint = alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05);
+              return `linear-gradient(${tint}, ${tint})`;
+            },
           },
         }}
       >
@@ -1307,8 +1344,10 @@ function CollapsibleGroup({ group, env, envState, buildMode, onEdit, onRemove, s
               const checked = !!selectedSet?.has(s.id);
               return (
                 <Stack key={s.id} direction="row" alignItems="flex-start">
+                  {/* Centred on the scenario's name line (not the top of the row),
+                      and sitting under the group's chevron — one level in. */}
                   {selectable && (
-                    <Box sx={{ pt: 1.75, pl: 1.75, flexShrink: 0 }}>
+                    <Box sx={{ pt: "5px", pl: 3, flexShrink: 0 }}>
                       <Checkbox
                         size="small"
                         checked={checked}

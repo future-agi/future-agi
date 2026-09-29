@@ -9,6 +9,7 @@ import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
 import { paths } from "src/routes/paths";
 import { protoRunId } from "../_mock/executionAdapter";
+import { runListCount } from "../_mock/runList";
 import { generatedPool, scenariosFromDescription } from "../_mock/scenarios";
 import { detectAddScenariosIntent, describedAsk } from "../_mock/addScenariosIntent";
 import { stampNewBatch, unanswerableNote } from "../_mock/addScenarios";
@@ -366,11 +367,10 @@ export default function EnvironmentWorkspace() {
   const counts = {
     scenarios: envState.scenarios.length || null,
     evals: envState.evals.length || null,
-    /* The synthetic build-and-fit-check row IS run #1 (the store seeds it on
-       adopt, and both the environments list and the Runs tab count it), so the
-       rail badge counts it too — filtering it out here made the rail disagree
-       with every other surface for a freshly-built env (list showed 1, rail 0). */
-    runs: envState.runs.length || null,
+    /* Every row the Runs list shows — manual runs, self-improvement trials and
+       the queued one — counted by the same rules the list uses. Counting only
+       the manual runs put "2" on the tab above a list of 11. */
+    runs: runListCount(env, envState) || null,
   };
   /*
     Setup gaps are shown as amber dots on the rail items that own them

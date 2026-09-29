@@ -12,6 +12,7 @@ import { statusStyles } from "src/sections/common/simulation";
 import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { runSummaries, evalSeries, trialSummaries, RUN_COLORS } from "../_mock/comparison";
+import { TRIAL_CAP, DEMO_QUEUED_ROW } from "../_mock/runList";
 import { currentEnvVersion, currentAgentVersion } from "../_mock/versions";
 import { staleScenarios } from "../_mock/proofs";
 import WinnerDrawer from "./WinnerDrawer";
@@ -113,11 +114,10 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
     stream and assign a single continuous ordinal across both — Run 4, 5,
     6, … regardless of which one is a manual re-run and which is a trial.
   */
-  /* Demo-friendly cap: show at most 8 trials so the merged list stays
-     readable at a glance. The mock generates far more; the search is
-     the same story with 8 candidates. Take the earliest 8 so the
-     narrative of the SI reads left-to-right. */
-  const TRIAL_CAP = 8;
+  /* Demo-friendly cap (TRIAL_CAP, shared with the Runs tab badge): show at
+     most 8 trials so the merged list stays readable at a glance. The mock
+     generates far more; the search is the same story with 8 candidates. Take
+     the earliest 8 so the narrative of the SI reads left-to-right. */
   const trials = useMemo(() => {
     const all = trialSummaries(env, envState);
     return all
@@ -1523,8 +1523,6 @@ RunsSummary.propTypes = {
    everywhere in the product. */
 const STATUS_COL = 96;
 
-/* Prototype: show one queued run on top of the table so the status is demoable. */
-const DEMO_QUEUED_ROW = true;
 const QUEUED_ID = "demo-queued";
 
 /* Recorded runs carry status "running" until they finish, then "passed" /

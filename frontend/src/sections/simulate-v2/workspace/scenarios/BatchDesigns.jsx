@@ -96,11 +96,15 @@ function BatchContainer({ batch, latest, view, tableProps, renderList, flash }) 
     <Box
       id={`batch-${batch.meta.batchId}`}
       sx={{
-        borderRadius: 1.5, overflow: "hidden",
+        /* `clip`, not `hidden`: it rounds the corners the same way but is not
+           a scroll container, so the list view's group headers stick to the
+           page (under the sticky Scenarios header) instead of being pushed
+           down inside this card. */
+        borderRadius: 1.5, overflow: "clip",
         border: "1px solid", borderColor: "divider",
         bgcolor: "background.paper",
         /* Clear of the sticky toolbar when the history jumps here. */
-        scrollMarginTop: 72,
+        scrollMarginTop: "calc(var(--scn-head, 64px) + 8px)",
         transition: "border-color 150ms, box-shadow 300ms",
         "&:hover": { borderColor: (t) => alpha(t.palette.text.primary, 0.16) },
         /* Picked in the history — a brief ring so the eye lands on it. */

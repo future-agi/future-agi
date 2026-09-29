@@ -100,4 +100,8 @@ export const scenarioStatus = (row, ctx) => {
   return { id: "proved", ...STATUS_META.proved, detail: "Staged, solvable and not vacuous." };
 };
 
-export const needsAttention = (status) => status.id !== "proved";
+/* Something to fix before the results can be trusted. A scenario added on a
+   later environment version is correctly left out of this one, and one still
+   being checked is mid-build — neither is waiting on the user. */
+const NO_ACTION = new Set(["proved", "needs-env", "checking"]);
+export const needsAttention = (status) => !NO_ACTION.has(status.id);

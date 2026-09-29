@@ -302,7 +302,7 @@ const GROUP_SORT_ORDER = {
 
 export default function TraceTable({
   tasks, evals, selected, onToggle, onToggleAll, onOpen, onOpenEval,
-  groupBy = "useCase", columns, env, onRerunEval, onDeleteEval, rescoringEvalId,
+  groupBy = "useCase", columns, env, onRerunEval, onDeleteEval, onEditEval, rescoringEvalId,
 }) {
   /* Groups start collapsed. Lazy-primed with the group list once it resolves. */
   const [collapsed, setCollapsed] = useState(null);
@@ -637,6 +637,7 @@ export default function TraceTable({
                   <EvalHeadCell
                     name={e.name}
                     rescoring={rescoringEvalId === e.id}
+                    onEdit={onEditEval ? () => onEditEval(e) : null}
                     onRerun={onRerunEval ? () => onRerunEval(e) : null}
                     onDelete={onDeleteEval ? () => onDeleteEval(e) : null}
                   />
@@ -691,6 +692,7 @@ TraceTable.propTypes = {
   env: PropTypes.object,
   onRerunEval: PropTypes.func,
   onDeleteEval: PropTypes.func,
+  onEditEval: PropTypes.func,
   rescoringEvalId: PropTypes.string,
 };
 
@@ -912,9 +914,9 @@ GroupHeaderRow.propTypes = {
    column only: re-run just this eval (re-score its cells, no full simulation)
    or delete the whole column. The trigger appears on hover so the header stays
    clean. */
-function EvalHeadCell({ name, onRerun, onDelete, rescoring }) {
+function EvalHeadCell({ name, onEdit, onRerun, onDelete, rescoring }) {
   const [anchor, setAnchor] = useState(null);
-  const hasActions = !!(onRerun || onDelete);
+  const hasActions = !!(onEdit || onRerun || onDelete);
   return (
     <Stack
       direction="row" alignItems="center" spacing={0.5}
@@ -942,6 +944,15 @@ function EvalHeadCell({ name, onRerun, onDelete, rescoring }) {
             transformOrigin={{ vertical: "top", horizontal: "right" }}
             slotProps={{ paper: { sx: { minWidth: 190 } } }}
           >
+            {/* Opens the same drawer the Evaluations tab uses, so mapping and
+                config edits land in one place — and a saved change is picked up
+                wherever this eval is applied. */}
+            {onEdit && (
+              <MenuItem onClick={() => { setAnchor(null); onEdit(); }} sx={{ typography: "s2", gap: 1 }}>
+                <Iconify icon="solar:pen-linear" width={16} sx={{ flexShrink: 0 }} />
+                <Box component="span" sx={{ typography: "s2" }}>Edit eval</Box>
+              </MenuItem>
+            )}
             {onRerun && (
               <MenuItem onClick={() => { setAnchor(null); onRerun(); }} sx={{ typography: "s2", gap: 1 }}>
                 <Iconify icon="solar:refresh-linear" width={16} sx={{ flexShrink: 0 }} />
@@ -961,7 +972,7 @@ function EvalHeadCell({ name, onRerun, onDelete, rescoring }) {
   );
 }
 EvalHeadCell.propTypes = {
-  name: PropTypes.string, onRerun: PropTypes.func, onDelete: PropTypes.func, rescoring: PropTypes.bool,
+  name: PropTypes.string, onEdit: PropTypes.func, onRerun: PropTypes.func, onDelete: PropTypes.func, rescoring: PropTypes.bool,
 };
 
 /*
