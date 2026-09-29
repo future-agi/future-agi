@@ -293,7 +293,10 @@ test('EVAL-E2E-004: executed dataset evaluations retain typed cells, exact filte
       if (index === 0) {
         await page.getByRole('button', { name: 'Add Evaluations', exact: true }).click();
       } else {
-        await page.getByText(`Evals (${index})`, { exact: true }).locator('..')
+        // The header reads "Evals (n)" only while nothing is ticked; a saved eval
+        // is auto-selected, which switches it to "n of m selected". Match either
+        // form so the Add button is reachable in both states.
+        await page.getByText(/^(?:Evals \(\d+\)|\d+ of \d+ selected)$/).locator('..')
           .getByRole('button', { name: 'Add', exact: true }).click();
       }
       await page.getByPlaceholder('Search evaluations...', { exact: true }).fill(family.name);

@@ -13,10 +13,14 @@ const evalRow = (id, name) => ({
   eval_required_keys: ["output"],
 });
 
-const list = ({ evals, autoSelectedNames }) => (
+// One save = one {name, token}. The drawer bumps the token on every successful
+// save, so re-saving the same eval is a new event.
+const save = (name, token) => ({ name, token });
+
+const list = ({ evals, autoSelectRequest }) => (
   <SavedEvalsList
     evals={evals}
-    autoSelectedNames={autoSelectedNames}
+    autoSelectRequest={autoSelectRequest}
     onDeleteEvalClick={vi.fn()}
     onRunEvalClick={vi.fn()}
     onStopEvalClick={vi.fn()}
@@ -31,19 +35,19 @@ const renderList = (props) => render(list(props));
 // `evals` order.
 const rowCheckboxes = () => screen.getAllByRole("checkbox").slice(1);
 
-describe("SavedEvalsList — auto-select of newly added evals", () => {
+describe("SavedEvalsList — auto-select of saved evals", () => {
   it("checks a newly added eval once its row arrives in the list", async () => {
-    // The drawer records the name on save, but the row only appears after the
-    // grid refresh, so the effect has to fire on the later `evals` change.
+    // The drawer records the save immediately, but the row only appears after
+    // the grid refresh, so the effect has to fire on the later `evals` change.
     const { rerender } = renderList({
       evals: [],
-      autoSelectedNames: new Set(["toxicity"]),
+      autoSelectRequest: save("toxicity", 1),
     });
 
     rerender(
       list({
         evals: [evalRow("e1", "toxicity")],
-        autoSelectedNames: new Set(["toxicity"]),
+        autoSelectRequest: save("toxicity", 1),
       }),
     );
 
@@ -53,10 +57,10 @@ describe("SavedEvalsList — auto-select of newly added evals", () => {
     expect(screen.getByText("1 of 1 selected")).toBeInTheDocument();
   });
 
-  it("leaves evals the user never added unchecked", () => {
+  it("selects only the eval that was saved, not others in the list", () => {
     renderList({
       evals: [evalRow("e1", "toxicity"), evalRow("e2", "groundedness")],
-      autoSelectedNames: new Set(["toxicity"]),
+      autoSelectRequest: save("toxicity", 1),
     });
 
     const [first, second] = rowCheckboxes();
@@ -64,11 +68,11 @@ describe("SavedEvalsList — auto-select of newly added evals", () => {
     expect(second).not.toBeChecked();
   });
 
-  it("keeps a manual uncheck when a later eval is added", async () => {
+  it("keeps a manual uncheck when a different eval is added afterwards", async () => {
     const user = userEvent.setup();
     const { rerender } = renderList({
       evals: [evalRow("e1", "toxicity")],
-      autoSelectedNames: new Set(["toxicity"]),
+      autoSelectRequest: save("toxicity", 1),
     });
 
     await waitFor(() => expect(rowCheckboxes()[0]).toBeChecked());
@@ -77,12 +81,12 @@ describe("SavedEvalsList — auto-select of newly added evals", () => {
     await user.click(rowCheckboxes()[0]);
     expect(rowCheckboxes()[0]).not.toBeChecked();
 
-    // A second eval is added. Only the new one should get checked — the
-    // `processedRef` guard is what stops the first from being re-selected.
+    // A *different* eval is saved. Only that one should get checked — the
+    // token names groundedness, so toxicity is never reconsidered.
     rerender(
       list({
         evals: [evalRow("e1", "toxicity"), evalRow("e2", "groundedness")],
-        autoSelectedNames: new Set(["toxicity", "groundedness"]),
+        autoSelectRequest: save("groundedness", 2),
       }),
     );
 
@@ -93,10 +97,69 @@ describe("SavedEvalsList — auto-select of newly added evals", () => {
     expect(screen.getByText("1 of 2 selected")).toBeInTheDocument();
   });
 
-  it("selects nothing when no eval has been added in this session", () => {
+  it("re-selects an eval that is edited after being manually unchecked", async () => {
+    // The counterpart to the test above, and the reason a set of names is not
+    // enough: adding another eval must not revive toxicity, but explicitly
+    // editing and saving toxicity must. Only the token distinguishes them.
+    const user = userEvent.setup();
+    const A = evalRow("e1", "toxicity");
+    const B = evalRow("e2", "groundedness");
+
+    const { rerender } = renderList({
+      evals: [A],
+      autoSelectRequest: save("toxicity", 1),
+    });
+    await waitFor(() => expect(rowCheckboxes()[0]).toBeChecked());
+
+    rerender(
+      list({ evals: [A, B], autoSelectRequest: save("groundedness", 2) }),
+    );
+    await waitFor(() => expect(rowCheckboxes()[1]).toBeChecked());
+
+    await user.click(rowCheckboxes()[0]);
+    expect(rowCheckboxes()[0]).not.toBeChecked();
+
+    // User edits toxicity and saves — a fresh token for the same name.
+    rerender(list({ evals: [A, B], autoSelectRequest: save("toxicity", 3) }));
+
+    await waitFor(() => {
+      expect(rowCheckboxes()[0]).toBeChecked();
+    });
+    expect(rowCheckboxes()[1]).toBeChecked();
+    expect(screen.getByText("2 of 2 selected")).toBeInTheDocument();
+  });
+
+  it("does not re-select on an unrelated list refresh", async () => {
+    // Status polling re-renders with a new `evals` array and the same request.
+    // The token is already consumed, so a manual uncheck must survive it.
+    const user = userEvent.setup();
+    const { rerender } = renderList({
+      evals: [evalRow("e1", "toxicity")],
+      autoSelectRequest: save("toxicity", 1),
+    });
+    await waitFor(() => expect(rowCheckboxes()[0]).toBeChecked());
+
+    await user.click(rowCheckboxes()[0]);
+    expect(rowCheckboxes()[0]).not.toBeChecked();
+
+    // Same token, fresh array objects — as a poll would produce.
+    rerender(
+      list({
+        evals: [{ ...evalRow("e1", "toxicity"), status: "running" }],
+        autoSelectRequest: save("toxicity", 1),
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Evals (1)")).toBeInTheDocument();
+    });
+    expect(rowCheckboxes()[0]).not.toBeChecked();
+  });
+
+  it("selects nothing when no eval has been saved in this session", () => {
     renderList({
       evals: [evalRow("e1", "toxicity")],
-      autoSelectedNames: new Set(),
+      autoSelectRequest: null,
     });
 
     expect(rowCheckboxes()[0]).not.toBeChecked();

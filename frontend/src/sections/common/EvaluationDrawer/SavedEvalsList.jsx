@@ -744,7 +744,7 @@ const SavedEvalsList = ({
   onClose,
   disableDelete = false,
   disableDeleteReason,
-  autoSelectedNames,
+  autoSelectRequest,
 }) => {
   const { setVisibleSection, setCurrentTab } = useEvaluationContext();
   const handleAddClick = () => {
@@ -756,23 +756,27 @@ const SavedEvalsList = ({
     setVisibleSection("config");
   };
   const [sel, setSel] = useState(new Set());
-  const processedRef = useRef(new Set());
+  // Highest auto-selection token already applied. Tokens are consumed once, so
+  // a later `evals` change (grid refresh, status poll) never re-selects an eval
+  // the user has since unchecked — while a fresh save of that same eval carries
+  // a new token and does select it again.
+  const consumedTokenRef = useRef(0);
 
   useEffect(() => {
-    if (!autoSelectedNames?.size) return;
-    const newIds = evals
-      .filter(
-        (e) => autoSelectedNames.has(e.name) && !processedRef.current.has(e.id),
-      )
-      .map((e) => e.id);
-    if (newIds.length === 0) return;
-    newIds.forEach((id) => processedRef.current.add(id));
+    if (!autoSelectRequest?.name) return;
+    if (autoSelectRequest.token <= consumedTokenRef.current) return;
+    // The row only appears after the grid refresh, so wait for it rather than
+    // burning the token on a list that does not contain the eval yet.
+    const saved = evals.find((e) => e.name === autoSelectRequest.name);
+    if (!saved) return;
+    consumedTokenRef.current = autoSelectRequest.token;
     setSel((prev) => {
+      if (prev.has(saved.id)) return prev;
       const next = new Set(prev);
-      newIds.forEach((id) => next.add(id));
+      next.add(saved.id);
       return next;
     });
-  }, [evals, autoSelectedNames]);
+  }, [evals, autoSelectRequest]);
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const toggle = (item) =>
     setSel((p) => {
@@ -983,7 +987,10 @@ SavedEvalsList.propTypes = {
   onClose: PropTypes.func,
   disableDelete: PropTypes.bool,
   disableDeleteReason: PropTypes.string,
-  autoSelectedNames: PropTypes.instanceOf(Set),
+  autoSelectRequest: PropTypes.shape({
+    name: PropTypes.string,
+    token: PropTypes.number,
+  }),
 };
 
 export default SavedEvalsList;

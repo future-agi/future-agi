@@ -318,9 +318,13 @@ test('PROMPT-E2E-001: a mock-run prompt exposes its current evaluation configura
         .getByText(evaluatorName, { exact: true }).locator('..').getByRole('button').first().click();
       await page.getByLabel('Delete', { exact: true }).click();
       await expect(page.getByText('Delete this evaluation and its results?', { exact: true })).toBeVisible({ timeout: UI_READY });
+      const deleteEvalDialog = page.getByRole('dialog').filter({
+        has: page.getByText('Delete this evaluation and its results?', { exact: true }) });
       const removed = page.waitForResponse(r => new URL(r.url()).pathname === `${PROMPTS}${ids.promptId}/delete-evaluation-config/` &&
         r.request().method() === 'DELETE', { timeout: UI_READY });
-      await page.getByRole('button', { name: 'Delete', exact: true }).click();
+      // Scope to the confirmation: a saved eval is auto-selected, and the
+      // selected-rows footer carries its own exact "Delete" button.
+      await deleteEvalDialog.getByRole('button', { name: 'Delete', exact: true }).click();
       const responseDelete = await removed;
       expect(responseDelete.status()).toBe(200);
       expect(new URL(responseDelete.url()).searchParams.get('id')).toBe(ids.bindingId);

@@ -77,7 +77,19 @@ const EvaluationDrawerChild = ({
   const [confirmRunEvaluationsOpen, setConfirmRunEvaluationsOpen] =
     useState(false);
   const [evalPickerOpen, setEvalPickerOpen] = useState(false);
-  const [addedEvalNames, setAddedEvalNames] = useState(new Set());
+  // One auto-selection event per successful save: the eval just written, plus a
+  // token so saving the same eval again is a *new* event rather than a no-op.
+  // A set of names cannot express this — once a name is in it, re-saving that
+  // eval is indistinguishable from it having been added earlier, so an edit
+  // could not re-select an eval the user had deliberately unchecked.
+  // SavedEvalsList consumes each token exactly once.
+  const [autoSelectRequest, setAutoSelectRequest] = useState(null);
+  const autoSelectTokenRef = useRef(0);
+  const requestAutoSelect = useCallback((name) => {
+    if (!name) return;
+    autoSelectTokenRef.current += 1;
+    setAutoSelectRequest({ name, token: autoSelectTokenRef.current });
+  }, []);
   // When editing an existing eval, pre-select it so the picker opens at config step
   const [editingEval, setEditingEval] = useState(null);
 
@@ -369,7 +381,7 @@ const EvaluationDrawerChild = ({
                     evals={SavedEvals}
                     allColumns={allColumns}
                     onClose={onClose}
-                    autoSelectedNames={addedEvalNames}
+                    autoSelectRequest={autoSelectRequest}
                     disableDelete={
                       module === "experiment" &&
                       Array.isArray(SavedEvals) &&
@@ -762,11 +774,7 @@ const EvaluationDrawerChild = ({
                 });
               }
               refreshGrid?.(null, true);
-              if (evalConfig.name) {
-                setAddedEvalNames(
-                  (prev) => new Set([...prev, evalConfig.name]),
-                );
-              }
+              requestAutoSelect(evalConfig.name);
               setEvalPickerOpen(false);
               setVisibleSection("list");
             } catch (err) {
@@ -786,9 +794,7 @@ const EvaluationDrawerChild = ({
           // catch block — keeps the drawer open on failure.
           const addedName = payload.name;
           await handleRun(payload, () => {
-            if (addedName) {
-              setAddedEvalNames((prev) => new Set([...prev, addedName]));
-            }
+            requestAutoSelect(addedName);
             setEvalPickerOpen(false);
             setVisibleSection("list");
           });
