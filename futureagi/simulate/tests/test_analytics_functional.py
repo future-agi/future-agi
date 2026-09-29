@@ -1262,7 +1262,7 @@ class TestRunResultsV3Views:
         score_template,
         eval_summary_te1_calls,
     ):
-        """TH-8121: configs added after a run completes must not wait on the cache."""
+        """Configs added after a run completes must not wait on the cache."""
         url = f"/simulate/v3/test-executions/{test_execution.id}/calls/"
         warm = auth_client.get(url)
         assert warm.status_code == status.HTTP_200_OK
@@ -1375,6 +1375,109 @@ class TestRunResultsV3Views:
         # result is still listed as a harness column.
         assert config_id in {column["id"] for column in columns}
         assert config_id not in live_eval_ids
+
+    def test_harness_output_for_live_config_id_is_deduped_with_name_precedence(
+        self, test_execution, analytics_call_executions, score_eval_config
+    ):
+        """A harness output keyed by a still-live config id must not create a
+        second column, the configured name must win over the harness name,
+        and among harness-only ids the first name seen must win."""
+        from simulate.services.run_results_v3 import build_evaluation_catalog
+
+        config_id = str(score_eval_config.id)
+        calls = analytics_call_executions
+        # calls[0]: a harness output that collides with the live config id,
+        # plus a harness-only id ("policy-check") named "Name A" here.
+        calls[0].eval_outputs = {
+            config_id: {
+                "source": "harness",
+                "name": "Harness Name Should Lose",
+                "output": 0.7,
+                "output_type": "score",
+            },
+            "policy-check": {
+                "source": "harness",
+                "name": "Name A",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            },
+        }
+        calls[0].save(update_fields=["eval_outputs"])
+        # calls[1]: the same harness-only id under a different name. Force
+        # it to be scanned before calls[0] (the scan orders by -updated_at)
+        # so it is the "first seen" occurrence.
+        calls[1].eval_outputs = {
+            "policy-check": {
+                "source": "harness",
+                "name": "Name B",
+                "output": "Failed",
+                "output_type": "Pass/Fail",
+            }
+        }
+        calls[1].save(update_fields=["eval_outputs"])
+        CallExecution.objects.filter(pk=calls[1].pk).update(
+            updated_at=timezone.now() + timedelta(minutes=1)
+        )
+
+        columns, live_eval_ids = build_evaluation_catalog(test_execution)
+
+        assert columns == [
+            {"id": config_id, "name": "Accuracy Score"},
+            {"id": "policy-check", "name": "Name B"},
+        ]
+        assert [column["id"] for column in columns].count(config_id) == 1
+        assert live_eval_ids == {config_id}
+
+    def test_rerun_computes_fresh_harness_columns_and_rotates_the_cache_key(
+        self, test_execution, analytics_call_executions
+    ):
+        """A rerun must not surface the previous attempt's harness columns:
+        the scan must be fresh while the run is not completed, and the
+        completed-run cache key must rotate so a new attempt is never
+        masked by the old one."""
+        from simulate.services.run_results_v3 import build_evaluation_catalog
+
+        call = analytics_call_executions[0]
+        call.eval_outputs = {
+            "attempt-a": {
+                "source": "harness",
+                "name": "Attempt A",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            }
+        }
+        call.save(update_fields=["eval_outputs"])
+        original_completed_at = test_execution.completed_at or timezone.now()
+        test_execution.completed_at = original_completed_at
+        test_execution.save(update_fields=["completed_at"])
+
+        warm, _ = build_evaluation_catalog(test_execution)
+        assert {column["id"] for column in warm} == {"attempt-a"}
+
+        # Rerun starts: status flips to RUNNING and the harness output changes.
+        test_execution.status = TestExecution.ExecutionStatus.RUNNING
+        test_execution.save(update_fields=["status"])
+        call.eval_outputs = {
+            "attempt-b": {
+                "source": "harness",
+                "name": "Attempt B",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            }
+        }
+        call.save(update_fields=["eval_outputs"])
+
+        while_running, _ = build_evaluation_catalog(test_execution)
+        assert {column["id"] for column in while_running} == {"attempt-b"}
+
+        # Rerun completes with a new completed_at: the cache key rotates,
+        # so the catalog reflects the new attempt only.
+        test_execution.status = TestExecution.ExecutionStatus.COMPLETED
+        test_execution.completed_at = original_completed_at + timedelta(seconds=1)
+        test_execution.save(update_fields=["status", "completed_at"])
+
+        rerun_catalog, _ = build_evaluation_catalog(test_execution)
+        assert {column["id"] for column in rerun_catalog} == {"attempt-b"}
 
 
 # ============================================================================

@@ -229,6 +229,10 @@ def build_evaluation_catalog(
             f"simulate:v3:harness-eval-columns:{execution.id}:{version.timestamp()}"
         )
         harness_columns = cache.get(harness_cache_key)
+        # A value under this key that isn't a list can only be a leftover
+        # from an incompatible key shape; treat it as a miss, not a crash.
+        if not isinstance(harness_columns, list):
+            harness_columns = None
 
     if harness_columns is None:
         # Cache every harness column, including ones a config covers today:
