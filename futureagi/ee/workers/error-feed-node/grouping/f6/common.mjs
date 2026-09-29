@@ -12,7 +12,9 @@ export function exactKeys(value, keys) {
   assert.deepEqual(Object.keys(value).sort(), [...keys].sort(), 'Unexpected/missing fields');
 }
 export const pairKey = (a, b) => canonical([a, b].sort());
-export const scopeKey = r => canonical([r.organization_id, r.project_id]);
+export const scopeKey = r => r.workload_type === 'simulation_test_execution'
+  ? canonical([r.organization_id, r.project_id, r.workload_type, r.test_execution_id])
+  : canonical([r.organization_id, r.project_id]);
 export const sameScope = (a, b) => scopeKey(a) === scopeKey(b);
 export function pairSafety(a, b, constraints) {
   assert.ok(a && b, 'Unknown occurrence');

@@ -3,11 +3,20 @@ import {createHash} from 'node:crypto';
 
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 export function validateClaim(claim) {
-  for (const key of ['organization_id', 'project_id', 'trace_id', 'job_id', 'attempt_id']) {
+  const simulation = claim?.workload_type === 'simulation_test_execution';
+  if (claim?.workload_type !== undefined && !simulation) throw new Error('Unsupported workload type');
+  const identity = simulation
+    ? ['organization_id', 'project_id', 'job_id', 'attempt_id', 'test_execution_id']
+    : ['organization_id', 'project_id', 'trace_id', 'job_id', 'attempt_id'];
+  for (const key of identity) {
     if (!uuid.test(claim?.[key] ?? '')) throw new Error('Invalid claim identity');
   }
   if (claim.workspace_id !== null && !uuid.test(claim.workspace_id ?? '')) throw new Error('Invalid workspace identity');
-  if (claim.contract_version !== 'omega-investigation/v1' || !claim.feature_enabled
+  if ((!simulation && (claim.contract_version !== 'omega-investigation/v1' || !claim.feature_enabled))
+      || (simulation && (claim.contract_version !== 'omega-simulation/v1'
+        || typeof claim.lease_token !== 'string' || !claim.lease_token || /[\r\n]/.test(claim.lease_token)
+        || typeof claim.engine_version !== 'string' || !claim.engine_version.trim()
+        || !claim.memory || typeof claim.memory !== 'object' || Array.isArray(claim.memory)))
       || !Number.isSafeInteger(claim.generation) || claim.generation < 1
       || !Number.isFinite(Date.parse(claim.read_cutoff))) throw new Error('Unsupported or disabled claim');
   for (const key of ['deadline_seconds', 'max_model_calls', 'max_input_tokens_total', 'max_output_tokens_total', 'max_evidence_bytes', 'max_tool_result_bytes']) {

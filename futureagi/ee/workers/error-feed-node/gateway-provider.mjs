@@ -1,3 +1,4 @@
+import {observe, modelAttributes, spanContent} from './observability.mjs';
 import {readFile} from 'node:fs/promises';
 import {setTimeout as sleep} from 'node:timers/promises';
 import {ChatCompletionsCompatibleProvider} from '@future-agi/omega-runtime';
@@ -65,6 +66,8 @@ export function createGatewayProvider({baseUrl, model, apiKey, signal, maxCalls 
       const call = {call_number: calls.length + 1, requested_model: model, status: 'started',
         cost_microusd: null, cost_status: 'unknown', usage: null, request_bytes: bytes};
       calls.push(call);
+      // Body contains the actual model messages; HTTP authorization is never captured.
+      spanContent('input', () => JSON.parse(init.body));
       const started = Date.now();
       try {
         const response = await fetchImpl(url, {...init, signal, redirect: 'error'});
@@ -104,14 +107,19 @@ export function createGatewayProvider({baseUrl, model, apiKey, signal, maxCalls 
       for (let retry = 0; ; retry++) {
         const before = calls.length;
         try {
-          const response = await transport.generate(request);
-          const call = calls[before];
-          if (call) {
-            call.status = 'completed';
-            call.usage = response.raw?.usage ?? null;
-            call.response_id = response.raw?.id ?? null;
-          }
-          return response;
+          return await observe('error_feed.model', 'LLM', {'gen_ai.request.model': model}, async () => {
+            try {
+              const response = await transport.generate(request);
+              const call = calls[before];
+              if (call) {
+                call.status = 'completed';
+                call.usage = response.raw?.usage ?? null;
+                call.response_id = response.raw?.id ?? null;
+              }
+              spanContent('output', response.raw?.choices ?? response);
+              return response;
+            } finally { modelAttributes(calls[before]); }
+          });
         } catch (error) {
           const call = calls[before];
           if (call && call.status === 'received') call.status = 'invalid_response';
@@ -138,6 +146,9 @@ export function createGatewayProvider({baseUrl, model, apiKey, signal, maxCalls 
   return {
     provider,
     async inspectAudio({url, format, question}) {
+      const before = calls.length;
+      return observe('error_feed.audio_model', 'LLM', {'gen_ai.request.model': model}, async () => {
+      try {
       if (typeof url !== 'string' || !url.startsWith('https://') || url.length > 2048
           || !['wav', 'mp3'].includes(format) || typeof question !== 'string'
           || !question.trim() || question.length > 1000) throw new Error('Invalid audio inspection input');
@@ -152,6 +163,9 @@ export function createGatewayProvider({baseUrl, model, apiKey, signal, maxCalls 
       const call = calls.at(-1);
       try {
         const raw = await response.json();
+        call.usage = raw.usage ?? null;
+        call.response_id = raw.id ?? null;
+        spanContent('output', raw.choices);
         const content = raw.choices?.[0]?.message?.content;
         if (typeof content !== 'string' || content.length > 16000) throw new Error('Invalid audio model response');
         const parsed = JSON.parse(content.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, '').trim());
@@ -167,6 +181,8 @@ export function createGatewayProvider({baseUrl, model, apiKey, signal, maxCalls 
         call.status = 'invalid_response';
         throw new Error('Audio gateway response could not be processed');
       }
+      } finally { modelAttributes(calls[before]); }
+      });
     },
     accounting() {
       const unknown = calls.filter(c => c.cost_microusd === null).length;

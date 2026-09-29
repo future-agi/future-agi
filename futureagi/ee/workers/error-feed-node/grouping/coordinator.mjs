@@ -1,3 +1,4 @@
+import {observe, claimAttributes, claimInput} from '../observability.mjs';
 import {setTimeout as delay} from 'node:timers/promises';
 import {adaptGroupingSnapshot} from './snapshot.mjs';
 import {buildFeatures, featureDigest, FEATURE_VERSION} from './features.mjs';
@@ -37,6 +38,11 @@ async function withLease(claim, path, {control, signal, heartbeatMs = 15000}, ru
 }
 
 export async function processFeatureClaim(claim, options) {
+  return observe('error_feed.prepare_findings_for_grouping', 'EMBEDDING', claimAttributes(claim),
+    () => runFeatureClaim(claim, options), {root: true, input: () => claimInput(claim), output: true});
+}
+
+async function runFeatureClaim(claim, options) {
   const {control, embedBatch, model} = options;
   if (!UUID.test(claim.feature_attempt_id ?? '') || claim.policy_version !== FEATURE_VERSION) {
     throw new Error('Unsupported feature claim');
@@ -158,6 +164,11 @@ function validateCommandProvenance(commands, receiptIds) {
 }
 
 export async function processGroupingClaim(claim, options) {
+  return observe('error_feed.grouping', 'CHAIN', claimAttributes(claim),
+    () => runGroupingClaim(claim, options), {root: true, input: () => claimInput(claim), output: true});
+}
+
+async function runGroupingClaim(claim, options) {
   const {control, gatewayConfig, reserveUsd, createInvestigator = createGroupingInvestigator,
     engine = runGrouping} = options;
   if (!UUID.test(claim.attempt_id ?? '')) throw new Error('Invalid grouping attempt');
@@ -182,6 +193,11 @@ export async function processGroupingClaim(claim, options) {
 }
 
 export async function processSeverityClaim(claim, options) {
+  return observe('error_feed.severity', 'CHAIN', claimAttributes(claim),
+    () => runSeverityClaim(claim, options), {root: true, input: () => claimInput(claim), output: true});
+}
+
+async function runSeverityClaim(claim, options) {
   if (!UUID.test(claim.attempt_id ?? '')) throw new Error('Invalid severity attempt');
   const path = `/grouping/severity/attempts/${claim.attempt_id}/`;
   return withLease(claim,path,options,async signal => {
