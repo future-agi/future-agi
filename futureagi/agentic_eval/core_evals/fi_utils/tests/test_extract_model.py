@@ -1,48 +1,34 @@
-from unittest.mock import patch
-
 from agentic_eval.core_evals.fi_utils.extract_model import _extract_model_name
 
 
 def _azure_serialized(last_id: str) -> dict:
     return {
         "type": "not_implemented",
-        "id": ["langchain_community", "chat_models", last_id],
-        "repr": "",
+        "id": ["langchain", "chat_models", last_id],
         "kwargs": {},
+        "repr": f"{last_id}()",
     }
 
 
-class TestExtractModelName:
-    """Regression tests for _extract_model_name with None invocation_params (issue #644)."""
+def test_azure_chat_openai_without_invocation_params_does_not_crash():
+    assert _extract_model_name(_azure_serialized("AzureChatOpenAI")) is None
 
-    def test_azure_chat_openai_none_invocation_params(self):
-        serialized = _azure_serialized("AzureChatOpenAI")
-        with (
-            patch(
-                "agentic_eval.core_evals.fi_utils.extract_model._extract_model_by_key",
-                return_value=None,
-            ),
-            patch(
-                "agentic_eval.core_evals.fi_utils.extract_model._extract_model_by_pattern",
-                return_value=None,
-            ),
-        ):
-            result = _extract_model_name(serialized, invocation_params=None)
-        assert result is None
 
-    def test_azure_openai_returns_model_name_from_invocation_params(self):
-        serialized = _azure_serialized("AzureOpenAI")
-        with (
-            patch(
-                "agentic_eval.core_evals.fi_utils.extract_model._extract_model_by_key",
-                return_value=None,
-            ),
-            patch(
-                "agentic_eval.core_evals.fi_utils.extract_model._extract_model_by_pattern",
-                return_value=None,
-            ),
-        ):
-            result = _extract_model_name(
-                serialized, invocation_params={"model_name": "gpt-4-turbo"}
-            )
-        assert result == "gpt-4-turbo"
+def test_azure_chat_openai_reads_model_from_invocation_params():
+    assert (
+        _extract_model_name(
+            _azure_serialized("AzureChatOpenAI"),
+            invocation_params={"model": "gpt-4o"},
+        )
+        == "gpt-4o"
+    )
+
+
+def test_azure_openai_reads_model_name_from_invocation_params():
+    assert (
+        _extract_model_name(
+            _azure_serialized("AzureOpenAI"),
+            invocation_params={"model_name": "gpt-4-turbo"},
+        )
+        == "gpt-4-turbo"
+    )

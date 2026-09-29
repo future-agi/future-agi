@@ -15,6 +15,13 @@ from agentic_eval.core_evals.llm_services.abstract_llm import AbstractLlmService
 DEFAULT_TEMPERATURE = 0.0
 
 
+def _first_choice(response, operation: str):
+    choices = getattr(response, "choices", None)
+    if not choices:
+        raise ValueError(f"OpenAI {operation} returned no choices")
+    return choices[0]
+
+
 class OpenAiService(AbstractLlmService):
     _instance = None
 
@@ -23,7 +30,7 @@ class OpenAiService(AbstractLlmService):
     #         cls._instance = super(OpenAiService, cls).__new__(cls)
     #     return cls._instance
 
-    def __init__(self,openai_api_key):
+    def __init__(self, openai_api_key):
         # openai_api_key = OpenAiApiKey.get_key()
         # if openai_api_key is None:
         #     raise NoOpenAiApiKeyException()
@@ -47,13 +54,14 @@ class OpenAiService(AbstractLlmService):
         """
         Fetches response from OpenAI's ChatCompletion API.
         """
-        if 'temperature' not in kwargs:
-            kwargs['temperature'] = DEFAULT_TEMPERATURE
+        if "temperature" not in kwargs:
+            kwargs["temperature"] = DEFAULT_TEMPERATURE
         try:
             start_time = time.time()
             response = self.openai.chat.completions.create(
                 model=model, messages=messages, **kwargs
             )
+            choice = _first_choice(response, "chat_completion")
             end_time = time.time()
             completion_time = (end_time - start_time) * 1000
             metadata = {
@@ -63,30 +71,60 @@ class OpenAiService(AbstractLlmService):
                     "total_tokens": response.usage.total_tokens,
                 },
                 "cost": calculate_total_cost(model, dict(response.usage)),
-                "response_time": completion_time
+                "response_time": completion_time,
             }
-            if response.choices[0].finish_reason == 'tool_calls':
-                tool_calls = [call.model_dump() for call in response.choices[0].message.tool_calls]
-                tool_calls_data = [{"arguments": call["function"]["arguments"], "name": call["function"]["name"]} for call in tool_calls]
+            if choice.finish_reason == "tool_calls":
+                tool_calls = [call.model_dump() for call in choice.message.tool_calls]
+                tool_calls_data = [
+                    {
+                        "arguments": call["function"]["arguments"],
+                        "name": call["function"]["name"],
+                    }
+                    for call in tool_calls
+                ]
                 return {"value": json.dumps(tool_calls_data), "metadata": metadata}
             else:
-                prompt_response = response.choices[0].message.content
+                prompt_response = choice.message.content
 
                 if not prompt_response:
-                    if response.choices[0].message.tool_calls:
-                        tool_calls = [call.model_dump() for call in response.choices[0].message.tool_calls]
-                        tool_calls_data = [{"arguments": call["function"]["arguments"], "name": call["function"]["name"]} for call in tool_calls]
-                        return {"value": json.dumps(tool_calls_data), "metadata": metadata}
+                    if choice.message.tool_calls:
+                        tool_calls = [
+                            call.model_dump() for call in choice.message.tool_calls
+                        ]
+                        tool_calls_data = [
+                            {
+                                "arguments": call["function"]["arguments"],
+                                "name": call["function"]["name"],
+                            }
+                            for call in tool_calls
+                        ]
+                        return {
+                            "value": json.dumps(tool_calls_data),
+                            "metadata": metadata,
+                        }
                     else:
-                        return {"value": json.dumps(response.choices[0].message.__dict__), "metadata": metadata}
+                        return {
+                            "value": json.dumps(choice.message.__dict__),
+                            "metadata": metadata,
+                        }
                 return {"value": prompt_response, "metadata": metadata}
         except Exception as e:
             logger.error(f"Error in ChatCompletion: {e}")
             raise e
 
     # @retry(stop_max_attempt_number=3, wait_fixed=2000)
-    def log_probs(self, messages: list[dict[str, str]], model: str = "gpt-4", max_tokens=512,
-        temperature=0, stop=None, seed=123, tools=None, logprobs=None, top_logprobs=None ) -> str:
+    def log_probs(
+        self,
+        messages: list[dict[str, str]],
+        model: str = "gpt-4",
+        max_tokens=512,
+        temperature=0,
+        stop=None,
+        seed=123,
+        tools=None,
+        logprobs=None,
+        top_logprobs=None,
+    ) -> str:
         params = {
             "model": model,
             "messages": messages,
@@ -100,10 +138,10 @@ class OpenAiService(AbstractLlmService):
         if tools:
             params["tools"] = tools
 
-
         response = self.openai.chat.completions.create(**params)
+        choice = _first_choice(response, "log_probs")
 
-        top_1_raw_logprobs = [token.logprob for token in response.choices[0].logprobs.content]
+        top_1_raw_logprobs = [token.logprob for token in choice.logprobs.content]
 
         return top_1_raw_logprobs
 
@@ -112,16 +150,17 @@ class OpenAiService(AbstractLlmService):
         """
         Fetches response from OpenAI's ChatCompletion API using JSON mode.
         """
-        if 'temperature' not in kwargs:
-            kwargs['temperature'] = DEFAULT_TEMPERATURE
+        if "temperature" not in kwargs:
+            kwargs["temperature"] = DEFAULT_TEMPERATURE
         try:
             response = self.openai.chat.completions.create(
                 model=model,
                 messages=messages,
                 response_format={"type": "json_object"},
-                **kwargs
+                **kwargs,
             )
-            return response.choices[0].message.content
+            choice = _first_choice(response, "chat_completion_json")
+            return choice.message.content
         except Exception as e:
             logger.error(f"Error in ChatCompletion: {e}")
             raise e
@@ -131,8 +170,8 @@ class OpenAiService(AbstractLlmService):
         Fetches response from OpenAI's ChatCompletion API using JSON mode.
         """
         completion_response = None
-        if 'temperature' not in kwargs:
-            kwargs['temperature'] = DEFAULT_TEMPERATURE
+        if "temperature" not in kwargs:
+            kwargs["temperature"] = DEFAULT_TEMPERATURE
         try:
             if Model.supports_json_mode(model):
                 chat_completion_response = self.chat_completion(
@@ -148,13 +187,13 @@ class OpenAiService(AbstractLlmService):
                 )
             completion_response = chat_completion_response["value"]
             # Extract JSON object from LLM response
-            response= JsonHelper.extract_json_from_text(completion_response)
+            response = JsonHelper.extract_json_from_text(completion_response)
 
-
-            response["metadata"] = chat_completion_response.get('metadata')
+            response["metadata"] = chat_completion_response.get("metadata")
             return response
 
         except Exception as e:
             logger.error(f"Error in ChatCompletion: {e}")
-            raise ValueError(f"Failed to parse response from LLM, Response data format is not valid -REASON: {completion_response}") from e
-
+            raise ValueError(
+                f"Failed to parse response from LLM, Response data format is not valid -REASON: {completion_response}"
+            ) from e
