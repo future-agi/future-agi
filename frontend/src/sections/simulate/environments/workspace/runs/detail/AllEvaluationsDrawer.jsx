@@ -26,11 +26,14 @@ import {
 } from "src/api/simulate-environments/runEvals";
 import SideDrawer from "../../../components/SideDrawer";
 import EmptyState from "../../../components/EmptyState";
+import AddEvaluationDrawer from "../../evals/AddEvaluationDrawer";
+import { EVALS_COPY } from "../../evals/evals.constants";
 import { refusalText } from "../../evals/refusalText";
 
 // Only a harness call rerun can refresh a non-regradable row's score, so both
 // its checkbox and its run action are locked with the same explanation.
 export const HARNESS_ONLY_TOOLTIP = "Only a call rerun refreshes this";
+export const NOT_EDITABLE_TOOLTIP = EVALS_COPY.notEditable;
 // Shown when a ticked eval has no mapping of its own: on this page that is one
 // of the harness's suite evals, whose scores the platform will replace.
 export const HARNESS_NOTE =
@@ -54,6 +57,10 @@ const NO_CONFIGS = [];
  * rerun refreshes them, but they can still be removed. Ticking rows and the
  * footer both open the same confirm dialog as the rest of the product; a
  * single row's run icon opens it pre-filled with just that row.
+ *
+ * A row's edit icon opens the add flow on that eval's own settings; once it is
+ * saved, the same confirm dialog opens for just that eval, so an edit is graded
+ * again through the one run path here.
  */
 export default function AllEvaluationsDrawer({
   open,
@@ -69,12 +76,17 @@ export default function AllEvaluationsDrawer({
   const [ticked, setTicked] = useState(() => new Set());
   // Holds the configs the confirm dialog is about, or null while it's closed.
   const [confirming, setConfirming] = useState(null);
+  // The eval whose settings are open for editing, or null.
+  const [editing, setEditing] = useState(null);
 
-  // The run page keeps this drawer mounted while it's closed, so ticks would
-  // otherwise still be there on reopening — including on a removed eval that
-  // came back under the same id.
+  // The run page keeps this drawer mounted while it's closed, so ticks, an open
+  // edit or a pending confirm would otherwise still be there on reopening —
+  // including on a removed eval that came back under the same id.
   useEffect(() => {
-    if (!open) setTicked(new Set());
+    if (open) return;
+    setTicked(new Set());
+    setEditing(null);
+    setConfirming(null);
   }, [open]);
 
   const {
@@ -240,6 +252,14 @@ export default function AllEvaluationsDrawer({
             >
               {configs.map((config) => {
                 const runnable = config.regradable === true;
+                const editable = config.editable === true;
+                const editTooltip = !editable
+                  ? NOT_EDITABLE_TOOLTIP
+                  : grading
+                    ? GRADING_TOOLTIP
+                    : !canRun
+                      ? NOT_FINISHED_TOOLTIP
+                      : "";
                 const runTooltip = !runnable
                   ? HARNESS_ONLY_TOOLTIP
                   : !canRun
@@ -288,6 +308,19 @@ export default function AllEvaluationsDrawer({
                         </IconButton>
                       </span>
                     </Tooltip>
+                    <Tooltip arrow title={editTooltip}>
+                      <span>
+                        <IconButton
+                          aria-label={`Edit ${config.name}`}
+                          disabled={
+                            !editable || grading || !canRun || Boolean(editing)
+                          }
+                          onClick={() => setEditing(config)}
+                        >
+                          <Iconify icon="solar:pen-linear" width={18} />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
                     {/* A grader that has not started yet skips a removed eval,
                         so its pending cell on this run would never clear. */}
                     <Tooltip arrow title={grading ? GRADING_TOOLTIP : ""}>
@@ -331,6 +364,17 @@ export default function AllEvaluationsDrawer({
           </Tooltip>
         </Box>
       </Box>
+
+      <AddEvaluationDrawer
+        open={Boolean(editing)}
+        env={env}
+        editingEval={editing}
+        onClose={() => setEditing(null)}
+        onEdited={(updated) => {
+          setEditing(null);
+          setConfirming(updated ? [updated] : null);
+        }}
+      />
 
       <ConfirmRunEvaluations
         open={Boolean(confirming)}

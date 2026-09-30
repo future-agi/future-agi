@@ -14,6 +14,7 @@ vi.mock("src/api/simulate-environments/harnessEnvironments", () => ({
   renameHarnessEnvironment: vi.fn(),
   getHarnessEnvironment: vi.fn(),
   deleteAppliedEvaluation: vi.fn(),
+  updateAppliedEvaluation: vi.fn(),
   addRunEvaluation: vi.fn(),
 }));
 vi.mock("src/utils/axios", () => ({

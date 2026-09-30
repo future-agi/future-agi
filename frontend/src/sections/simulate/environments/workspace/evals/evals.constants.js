@@ -19,6 +19,10 @@ export const EVALS_COPY = {
   },
   needsScenariosHint: "Add scenarios first",
   remove: "Remove evaluation",
+  edit: "Edit evaluation",
+  // A row the harness created and fills in itself: changing it would change
+  // what later runs write into, so the server refuses the edit.
+  notEditable: "Set by the harness, so it can't be edited here.",
   suggestedTitle: (n) => `Suggested evaluations (${n})`,
   suggestedSubtitle:
     "The environment thinks these would matter. Add the ones you want the run scored against.",

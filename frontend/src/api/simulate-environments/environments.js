@@ -16,6 +16,7 @@ import {
   deleteHarnessEnvironment,
   renameHarnessEnvironment,
   deleteAppliedEvaluation,
+  updateAppliedEvaluation,
   addRunEvaluation,
 } from "src/api/simulate-environments/harnessEnvironments";
 import { harnessEnvironmentKey } from "src/api/simulate-environments/environment";
@@ -147,6 +148,43 @@ export function useEnvironmentRunTest(runTestId, { enabled = true } = {}) {
       Array.isArray(data?.simulate_eval_configs_detail)
         ? data.simulate_eval_configs_detail
         : [],
+  });
+}
+
+// Edit an eval bound to the environment. The 200 body is the edited row, so it
+// replaces that row in the run test's cached list at once — the confirm that
+// follows reads the new mapping without waiting on a refetch. The cache holds
+// the raw run-test payload (`select` runs on read), hence the unwrap here.
+//
+// A failed edit re-reads the run test's list too: a 404 means the row is gone
+// on the server, and only a refetch drops it from the lists on screen.
+export function useEditAppliedEvaluation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: ({ id, evalConfigId, body }) =>
+      updateAppliedEvaluation(id, evalConfigId, body),
+    onSuccess: (updated, { evalConfigId, runTestId }) => {
+      queryClient.setQueryData(environmentRunTestKey(runTestId), (raw) =>
+        Array.isArray(raw?.simulate_eval_configs_detail)
+          ? {
+              ...raw,
+              simulate_eval_configs_detail:
+                raw.simulate_eval_configs_detail.map((c) =>
+                  c.id === evalConfigId ? updated : c,
+                ),
+            }
+          : raw,
+      );
+    },
+    onError: (_error, { runTestId }) => {
+      queryClient.invalidateQueries({
+        queryKey: environmentRunTestKey(runTestId),
+      });
+    },
+    onSettled: (_data, _error, { id }) => {
+      queryClient.invalidateQueries({ queryKey: harnessEnvironmentKey(id) });
+    },
   });
 }
 
