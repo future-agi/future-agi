@@ -133,13 +133,22 @@ UnscoredEval.propTypes = {
 export function Field({ icon, label, value }) {
   if (value == null || value === "") return null;
   return (
+    // The value wraps rather than truncating, so a long persona (traits) reads
+    // in full; the icon and label stay pinned to its first line.
     <Stack
-      direction="row" alignItems="center" spacing={0.75}
+      direction="row" alignItems="flex-start" spacing={0.75}
       sx={{ px: 1, py: 0.5, borderRadius: 0.75, bgcolor: "background.neutral" }}
     >
-      <Iconify icon={icon} width={13} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-      <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{label}:</Typography>
-      <Typography noWrap sx={{ typography: "s3", color: "text.primary", fontWeight: "fontWeightMedium" }}>{value}</Typography>
+      <Iconify icon={icon} width={13} sx={{ color: "text.subtitle", flexShrink: 0, mt: "3px" }} />
+      <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}>{label}:</Typography>
+      <Typography
+        sx={{
+          typography: "s3", color: "text.primary", fontWeight: "fontWeightMedium",
+          minWidth: 0, overflowWrap: "anywhere",
+        }}
+      >
+        {value}
+      </Typography>
     </Stack>
   );
 }

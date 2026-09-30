@@ -134244,6 +134244,10 @@
                 "duration_ms": {
                     "title": "Duration ms",
                     "type": "number"
+                },
+                "start_time_ms": {
+                    "title": "Start time ms",
+                    "type": "integer"
                 }
             }
         },
