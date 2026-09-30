@@ -1,4 +1,6 @@
-# Not part of the packaged chart.
+# Not part of the packaged chart. LICENSE, README.md, values.schema.json,
+# examples/ (the README uses it) and files/ ship; helm-ci.yml runs every check
+# against the packaged .tgz, so a pattern here that drops one of them fails CI.
 .DS_Store
 .git/
 .gitignore
@@ -9,6 +11,10 @@
 *~
 .idea/
 .vscode/
-# Maintenance script and CI value sets (examples/ ships: the README uses it).
+# Release outputs that may sit next to the chart during a local package.
+*.tgz
+*.prov
+*.sigstore.json
+# Maintenance scripts and CI value sets.
 hack/
 ci/

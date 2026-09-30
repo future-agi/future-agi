@@ -5,9 +5,18 @@
 # Datastores are external by default: set postgres/clickhouse/redis/temporal/
 # objectStorage .mode, or start from a ready-made file:
 #
-#   examples/bundled.yaml    everything in the cluster, for evaluation (not HA)
-#   examples/external.yaml   your own PostgreSQL, ClickHouse, Redis, Temporal, S3
-#   examples/ingress.yaml    public UI, API and OTLP endpoints with TLS
+#   examples/bundled.yaml          everything in the cluster, for evaluation (not HA)
+#   examples/local.yaml            the same on Docker Desktop, k3s or OrbStack, no port-forwards
+#   examples/external.yaml         your own PostgreSQL, ClickHouse, Redis, Temporal, S3
+#   examples/gateway-api.yaml      public UI, API and OTLP endpoints (Gateway API)
+#   examples/ingress-traefik.yaml  the same through a Traefik Ingress
+#   examples/ingress.yaml          the same through ingress-nginx (legacy)
+#   examples/sizes/                small, medium and large sizing
+#   examples/cloud/                GKE, EKS and AKS with managed datastores
+#   examples/enterprise.yaml       Enterprise: license, SSO, first admin, proxy, CA, private registry
+#   examples/external-secrets.yaml every credential from Vault or a cloud secret manager
+#   examples/airgap.yaml           no internet access: mirrored images, offline models
+#   examples/gitops/               Argo CD Application and Flux HelmRelease (not values)
 #
 # Environment variable names in [brackets] are what each key sets in the
 # application; https://docs.futureagi.com/docs/self-hosting/configuration/reference
@@ -20,12 +29,34 @@ nameOverride: ""
 fullnameOverride: ""
 
 global:
-  # -- Registry prepended to every image, Future AGI and third-party, e.g. a pull-through mirror (`registry.example.com/dockerhub`). Empty keeps each image's own registry.
+  # -- Registry that replaces every image's own, Future AGI and third-party alike (docker.io, and ghcr.io for the bundled MinIO): a mirror holding every image `hack/list-images.sh` lists, e.g. `registry.example.com/futureagi-mirror`. Not a pull-through cache of one upstream: for Docker Hub alone set `image.registry` and each Docker Hub `<datastore>.bundled.image.registry` to it instead, and leave `objectStorage.bundled.image.registry` on ghcr.io (or a ghcr.io cache). Empty keeps each image's own registry.
   imageRegistry: ""
   # -- Pull secrets added to every pod, e.g. `[{name: regcred}]`.
   imagePullSecrets: []
   # -- StorageClass of every PersistentVolumeClaim the chart creates. Empty uses the cluster default. Install-time only for the bundled datastores (see "Install-time settings" in README.md).
   storageClass: ""
+  # -- Air-gapped install: turns off the platform's own calls to the internet. Turns telemetry off [FUTURE_AGI_TELEMETRY_DISABLED=true] (one minimal registration attempt remains; offline it fails harmlessly and is retried), the license heartbeat off unless `license.heartbeat` is `true` [FUTURE_AGI_ENTERPRISE_HEARTBEAT_DISABLED=true], sets [LITELLM_LOCAL_MODEL_COST_MAP=True] on the Python pods and serving, and [HF_HUB_OFFLINE=1, TRANSFORMERS_OFFLINE=1] on serving, whose models must then be pre-seeded on `serving.persistence` (examples/airgap.yaml). Mirror the images first (`hack/list-images.sh`) and set `global.imageRegistry` and `global.imagePullSecrets`.
+  airgap: false
+  # Outbound HTTP(S) proxy for the Future AGI pods (backend, workers, bootstrap job, frontend, fi-collector, agentcc-gateway, serving; never the code sandbox). The LLM gateway (agentcc-gateway) gets the variables but its provider connections do not use them yet: allow its egress to the providers directly.
+  proxy:
+    # -- [HTTP_PROXY, http_proxy] e.g. `http://proxy.example.com:3128`. Empty: no proxy.
+    httpProxy: ""
+    # -- [HTTPS_PROXY, https_proxy] e.g. `http://proxy.example.com:3128`. Empty: no proxy.
+    httpsProxy: ""
+    # -- [NO_PROXY, no_proxy] extra hosts, domains or CIDRs that bypass the proxy, comma-separated. The chart always adds localhost, 127.0.0.1, the release's Services, `.<namespace>`, `.svc`, `.cluster.local` and the PostgreSQL, ClickHouse, Redis and Temporal hosts; add an external object-storage endpoint here when it is reachable without the proxy (MinIO in your network, an S3 VPC endpoint). Object storage requests match against the host they go to: with `objectStorage.external.endpoint` empty (AWS S3), that is `<bucket>.s3.<region>.amazonaws.com`, so list `.s3.<region>.amazonaws.com`, not `s3.amazonaws.com`. Set only with `httpProxy` or `httpsProxy`.
+    noProxy: ""
+  # Extra CA certificates (a corporate root, a TLS-inspecting proxy, a private PostgreSQL CA), mounted read-only at /etc/futureagi/ca/ca.crt in the Future AGI pods and the bootstrap job.
+  caBundle:
+    # -- ConfigMap holding the PEM bundle. Use `configMap` or `secret`, not both.
+    configMap: ""
+    # -- Secret holding the PEM bundle.
+    secret: ""
+    # -- Key of the PEM bundle in the ConfigMap or Secret. It must contain every CA the pods need, public roots included when the pods also reach the internet: it replaces the image's trust store [SSL_CERT_FILE, REQUESTS_CA_BUNDLE, CURL_CA_BUNDLE, NODE_EXTRA_CA_CERTS; PGSSLROOTCERT when `postgres.external.sslMode` is verify-ca or verify-full].
+    key: ca.crt
+  compatibility:
+    openshift:
+      # -- `auto`: on OpenShift (the security.openshift.io/v1 API exists) leave runAsUser, runAsGroup, fsGroup and seccompProfile out of every pod and container security context, so the restricted-v2 SCC assigns them. `force`: always. `disabled`: never.
+      adaptSecurityContext: auto
 
 image:
   # -- Registry of the Future AGI images.
@@ -34,19 +65,23 @@ image:
   tag: ""
   # -- Pull policy of every image unless a component sets its own.
   pullPolicy: IfNotPresent
+  # -- Pin each Future AGI image to the digest in `image.digests`, but only while its tag is the chart's appVersion and its repository path the published one: `--set image.tag=...` or another repository path runs that image by tag. Another registry (`image.registry`, `global.imageRegistry`) keeps the digest, which suits a mirror that copies the images with `crane copy` or `oras copy -r` (they keep the digests). Set `false` for a mirror that re-pushes images, or for your own build under the same repository path (or give that component its own `image.digest`): the published digest does not exist there and the pull fails. The bundled PostgreSQL, Redis and MinIO images are pinned the same way, on their default tags only.
+  pinDigests: true
+  # -- Digests (`sha256:...`) of the release's images, by component: backend (also the workers and the bootstrap job), frontend, fiCollector, agentccGateway, serving, codeExecutor. Empty in git; the published chart carries the digests of its own release. A component's own `image.digest` wins.
+  digests: {}
 
 # -----------------------------------------------------------------------------
 # Public URLs. Leave them empty for a port-forwarded evaluation; set them (or
 # the ingress hosts) as soon as anyone opens the UI from another machine.
 # -----------------------------------------------------------------------------
 urls:
-  # -- Public URL of the UI, e.g. `https://futureagi.example.com` [FRONTEND_URL, APP_URL, EXTRA_CSRF_ORIGINS]. Invite and password-reset links and app emails point here, with its scheme. Empty: derived from `ingress.app.host`, else `http://localhost:3000`.
+  # -- Public URL of the UI, e.g. `https://futureagi.example.com` [FRONTEND_URL, APP_URL, EXTRA_CSRF_ORIGINS]. Invite and password-reset links and app emails point here, with its scheme. Empty: derived from `ingress.app.host` with `ingress.enabled`, else from `gatewayApi.app.host` with `gatewayApi.enabled` (https unless `gatewayApi.tls` is false), else `http://localhost:3000`.
   app: ""
-  # -- Public URL of the API, e.g. `https://api.futureagi.example.com` [BASE_URL, and the UI's VITE_HOST_API]. Empty: derived from `ingress.api.host`, else `http://localhost:8000`.
+  # -- Public URL of the API, e.g. `https://api.futureagi.example.com` [BASE_URL, and the UI's VITE_HOST_API]. Empty: derived from `ingress.api.host` with `ingress.enabled`, else from `gatewayApi.api.host` with `gatewayApi.enabled`, else `http://localhost:8000`.
   api: ""
-  # -- [FI_COLLECTOR_PUBLIC_URL] Public OTLP/HTTP base URL of fi-collector, e.g. `https://otlp.example.com`: what SDKs outside the cluster set as FI_BASE_URL, shown in the install notes, the in-app SDK snippet and the setup screen. Set it when the collector is exposed another way (e.g. `fiCollector.service.type=LoadBalancer`). Empty: derived from `ingress.otlp`, else `http://localhost:4318` (the port-forward in the install notes).
+  # -- [FI_COLLECTOR_PUBLIC_URL] Public OTLP/HTTP base URL of fi-collector, e.g. `https://otlp.example.com`: what SDKs outside the cluster set as FI_BASE_URL, shown in the install notes, the in-app SDK snippet and the setup screen. Set it when the collector is exposed another way (e.g. `fiCollector.service.type=LoadBalancer`). Empty: derived from `ingress.otlp` with `ingress.enabled`, else from `gatewayApi.otlp` with `gatewayApi.enabled`, else `http://localhost:4318` (the port-forward in the install notes).
   otlp: ""
-  # -- Public URL browsers download stored files from [MINIO_URL]; used when `objectStorage.backend` is `minio`. Empty: derived from `ingress.objects.host`, else the external endpoint, else `http://localhost:9005`.
+  # -- Public URL browsers download stored files from [MINIO_URL]; used when `objectStorage.backend` is `minio`. Empty: derived from `ingress.objects.host` with `ingress.enabled`, else the external endpoint, else `http://localhost:<objectStorage.bundled.service.downloadPort>` (9005).
   objects: ""
 
 # -----------------------------------------------------------------------------
@@ -57,9 +92,9 @@ config:
   envType: production
   # -- [LOG_LEVEL] of the backend, workers and bootstrap job.
   logLevel: INFO
-  # -- [ALLOWED_HOSTS], comma-separated. `*` accepts any Host header. A restricted list also gets localhost and the in-cluster service names, which the probes and the workers use.
-  allowedHosts: "*"
-  # -- [CORS_ALLOWED_ORIGINS], comma-separated. Empty allows every origin.
+  # -- [ALLOWED_HOSTS], comma-separated. `*` accepts any Host header. A list also gets localhost and the in-cluster service names, which the probes and the workers use, and the pod's own IP (`$(POD_IP)`), which load balancers that health-check pods directly send as the Host. Empty: the API host once the API has a public URL (`urls.api`, `gatewayApi.api.host` or `ingress.api.host`), else `*`.
+  allowedHosts: ""
+  # -- [CORS_ALLOWED_ORIGINS] browser origins allowed to call the API with credentials, comma-separated. `*`: every origin. Empty: the UI's origin plus `extraCsrfOrigins` once the UI has a public URL (`urls.app`, `gatewayApi.app.host` or `ingress.app.host`), else every origin.
   corsAllowedOrigins: ""
   # -- [EXTRA_CSRF_ORIGINS] in addition to the UI URL, comma-separated.
   extraCsrfOrigins: ""
@@ -82,6 +117,10 @@ config:
     replyTo: ""
     # -- [SERVER_EMAIL] sender of error emails.
     serverEmail: ""
+    # -- Existing Secret with the Mailgun API key [MAILGUN_API_KEY] (wins over `secrets.mailgunApiKey`).
+    existingSecret: ""
+    # -- Key of the Mailgun API key in `existingSecret`.
+    existingSecretKey: MAILGUN_API_KEY
   # -- Extra environment variables for the backend, workers and bootstrap job, as `NAME: value`. Every supported key: https://docs.futureagi.com/docs/self-hosting/configuration/reference (rows marked H).
   extraEnv: {}
   # -- Extra `envFrom` sources for the backend, workers and bootstrap job, e.g. `[{secretRef: {name: my-env}}]`.
@@ -110,14 +149,107 @@ secrets:
     awsSecretAccessKey: ""
     # -- [AWS_REGION] AWS Bedrock region (not secret).
     awsRegion: us-east-1
-  # -- [EE_LICENSE_KEY] Enterprise Edition license.
+  # -- Deprecated: use `license.key` or `license.existingSecret`. [EE_LICENSE_KEY] Enterprise Edition license, still honoured when `license.*` is empty.
   eeLicenseKey: ""
-  # -- [MAILGUN_API_KEY] turns email on, with `config.email`.
+  # -- [MAILGUN_API_KEY] turns email on, with `config.email`. `config.email.existingSecret` wins.
   mailgunApiKey: ""
   # -- [AGENTCC_WEBHOOK_SECRET] shared secret the gateway sends its request logs to the backend with. Empty: read from `existingSecret` when that is set, else generated.
   agentccWebhookSecret: ""
   # -- Any other secret environment variables for the backend, workers and bootstrap job, as `NAME: value` (e.g. SENTRY_DSN, DAYTONA_API_KEY). Stored in <fullname>-secrets.
   extra: {}
+
+# -----------------------------------------------------------------------------
+# Edition and Enterprise license. One chart and one image for both: `ee` is
+# the public futureagi/future-agi image plus a license. A customer given a
+# private image sets backend.image.registry/repository (the workers and the
+# bootstrap job follow) and global.imagePullSecrets.
+# -----------------------------------------------------------------------------
+# -- `oss` or `ee`. `ee` requires a license (`license.key` or `license.existingSecret`) and shows the license and SSO settings in the install notes. It never changes the image.
+edition: oss
+
+license:
+  # -- [EE_LICENSE_KEY] Enterprise license key, stored in <fullname>-secrets. Prefer `existingSecret`. Setting a license also turns on the Enterprise apps, whose migrations the bootstrap job runs.
+  key: ""
+  # -- Existing Secret with the license key (wins over `key`). The backend, the workers and the bootstrap job read it.
+  existingSecret: ""
+  # -- Key of the license in `existingSecret`.
+  existingSecretKey: EE_LICENSE_KEY
+  # -- [FUTURE_AGI_LICENSE_URL] license activation and heartbeat server. Empty: the application default (Future AGI's license service).
+  url: ""
+  # -- License heartbeat [FUTURE_AGI_ENTERPRISE_HEARTBEAT_DISABLED, inverted]. Empty (null): on, off with `global.airgap`. `true` or `false` wins.
+  heartbeat: null
+  # -- [EE_LICENSE_PUBLIC_KEY] PEM public key that verifies the license. Honoured only by images without a built-in license key (pre-GA builds); leave empty unless Future AGI gave you one.
+  publicKey: ""
+  # -- [EE_LICENSE_CLOCK_SKEW_SECONDS] tolerance when checking the license's validity window; set only while a license is configured.
+  clockSkewSeconds: 300
+
+# -----------------------------------------------------------------------------
+# Sign-in with Google, GitHub or Microsoft. Register the callback URLs the
+# install notes print (they derive from urls.api). SAML is configured per
+# organization in the UI; the notes print its ACS URL and entity ID too.
+# -----------------------------------------------------------------------------
+auth:
+  google:
+    # -- [AUTH0_CLIENT_ID] OAuth client ID of a Google Cloud "Web application" client (the app names Google's settings AUTH0_*).
+    clientId: ""
+    # -- [AUTH0_CLIENT_SECRET] stored in <fullname>-secrets. Prefer `existingSecret`.
+    clientSecret: ""
+    # -- Existing Secret with the client ID and secret (wins over the values above).
+    existingSecret: ""
+    # -- Key of the client ID in `existingSecret`.
+    clientIdKey: AUTH0_CLIENT_ID
+    # -- Key of the client secret in `existingSecret`.
+    clientSecretKey: AUTH0_CLIENT_SECRET
+  github:
+    # -- [GITHUB_CLIENT_ID] of a GitHub OAuth app.
+    clientId: ""
+    # -- [GITHUB_CLIENT_SECRET] stored in <fullname>-secrets. Prefer `existingSecret`.
+    clientSecret: ""
+    # -- Existing Secret with the client ID and secret (wins over the values above).
+    existingSecret: ""
+    # -- Key of the client ID in `existingSecret`.
+    clientIdKey: GITHUB_CLIENT_ID
+    # -- Key of the client secret in `existingSecret`.
+    clientSecretKey: GITHUB_CLIENT_SECRET
+  microsoft:
+    # -- [MICROSOFT_CLIENT_ID] of a Microsoft Entra app registration (multi-tenant: the app signs in through the `common` endpoint).
+    clientId: ""
+    # -- [MICROSOFT_CLIENT_SECRET] stored in <fullname>-secrets. Prefer `existingSecret`.
+    clientSecret: ""
+    # -- Existing Secret with the client ID and secret (wins over the values above).
+    existingSecret: ""
+    # -- Key of the client ID in `existingSecret`.
+    clientIdKey: MICROSOFT_CLIENT_ID
+    # -- Key of the client secret in `existingSecret`.
+    clientSecretKey: MICROSOFT_CLIENT_SECRET
+
+# -----------------------------------------------------------------------------
+# Secrets from an external store (External Secrets Operator). Each entry of
+# `secrets` renders an external-secrets.io/v1 ExternalSecret whose target is
+# the Secret an existingSecret value names, so the chart reads it as usual.
+# -----------------------------------------------------------------------------
+externalSecrets:
+  # -- Render the ExternalSecrets below (needs the External Secrets Operator and its CRDs).
+  enabled: false
+  # -- API version of the ExternalSecret objects.
+  apiVersion: external-secrets.io/v1
+  # -- SecretStore or ClusterSecretStore every ExternalSecret reads from, e.g. `{name: vault, kind: ClusterSecretStore}`. An entry's own `secretStoreRef` wins.
+  secretStoreRef:
+    name: ""
+    kind: ClusterSecretStore
+  # -- How often the operator re-reads the store.
+  refreshInterval: 1h
+  # -- One ExternalSecret per entry, as `<group>: {data: {<SECRET_KEY>: {key, property}}, dataFrom: [...], secretStoreRef: {...}}`. Groups and the Secret each creates: `app` (secrets.existingSecret), `llm` (secrets.llm.existingSecret), `license` (license.existingSecret), `email` (config.email.existingSecret), `google`, `github`, `microsoft` (auth.*.existingSecret), `admin` (bootstrap.admin.existingSecret), `postgres`, `clickhouse`, `redis`, `objectStorage` (<store>.existingSecret). That existingSecret value must be set. See examples/external-secrets.yaml.
+  secrets: {}
+
+# Roll the Deployments when a Secret or ConfigMap they read changes (a rotated
+# existingSecret or ExternalSecret). Kubernetes does not restart pods itself.
+reloader:
+  # -- Add `reloader.annotations` to every Future AGI Deployment (needs Stakater Reloader, or a tool that reads the same annotations).
+  enabled: false
+  # -- Annotations added to the Deployments' metadata.
+  annotations:
+    reloader.stakater.com/auto: "true"
 
 # -----------------------------------------------------------------------------
 # Datastores. `external` (default) connects to services you run; `bundled`
@@ -138,21 +270,39 @@ postgres:
   # -- Key of the password in `existingSecret`.
   existingSecretPasswordKey: password
   external:
-    # -- [PG_HOST] PostgreSQL 16 server (11 or newer works). Connect directly: a transaction-mode pooler breaks the CDC advisory lock.
+    # -- [PG_HOST] PostgreSQL 16 server (11 or newer works), reached directly: the outbox CDC holds a session advisory lock and migrations set session options. Put a pooler in `postgres.pooler`, not here.
     host: ""
     # -- [PG_PORT]
     port: 5432
     # -- [PGSSLMODE] disable, allow, prefer, require, verify-ca or verify-full. verify-ca and verify-full need the server's CA: mount it with `backend`, `worker`, `bootstrap` and `fiCollector` `extraVolumes`/`extraVolumeMounts`, and point PGSSLROOTCERT at it in `config.extraEnv` and `fiCollector.extraEnv`.
     sslMode: prefer
+  pooler:
+    # -- Send the backend's and workers' Django connections through a transaction-mode pooler such as PgBouncer [PGBOUNCER_HOST, PGBOUNCER_PORT], for many API and worker pods. `PG_HOST` stays the direct server (outbox CDC, migrations), and the bootstrap job always connects directly [PG_DIRECT_HOST]. PgBouncer settings the app needs: `pool_mode = transaction`, `server_reset_query_always = 1`, `ignore_startup_parameters = extra_float_digits,search_path`.
+    enabled: false
+    # -- [PGBOUNCER_HOST] host of the pooler.
+    host: ""
+    # -- [PGBOUNCER_PORT] port of the pooler.
+    port: 6432
+  readReplica:
+    # -- Register a read replica (or a pooler in front of one) for the backend and workers [PGBOUNCER_READ_HOST, PGBOUNCER_READ_PORT, PG_READ_DB]. Only the models and features in `optIn` read from it; everything else stays on the primary.
+    enabled: false
+    # -- [PGBOUNCER_READ_HOST] host of the replica, or of its pooler. Same user and password as the primary.
+    host: ""
+    # -- [PGBOUNCER_READ_PORT]
+    port: 5432
+    # -- [PG_READ_DB] database on the replica. Empty: `postgres.database`.
+    database: ""
+    # -- [READ_REPLICA_OPT_IN] model class names (e.g. `Dashboard`) and `feature:` keys routed to the replica. Empty: nothing reads from it.
+    optIn: []
   bundled:
     image:
       # -- Registry of the bundled PostgreSQL image.
       registry: docker.io
       # -- Repository of the bundled PostgreSQL image. Debian-based, like the compose setups, so data directories are interchangeable.
       repository: library/postgres
-      # -- Tag of the bundled PostgreSQL image.
-      tag: "16"
-      # -- Optional digest (`sha256:...`) pinned after the tag.
+      # -- Tag of the bundled PostgreSQL image: an exact 16.x release on Debian (the compose setups run `postgres:16`, also Debian).
+      tag: 16.15-trixie
+      # -- Digest pinned after the tag; wins over the chart's own pin. Empty: the default tag above runs pinned to the digest the chart was tested with (while `image.pinDigests` is on), and any other tag or repository runs by tag.
       digest: ""
     # -- Server settings passed as `-c name=value`.
     parameters:
@@ -173,13 +323,17 @@ postgres:
     tolerations: []
     # -- Affinity of the bundled PostgreSQL. Empty: the top-level `affinity`.
     affinity: {}
+    # -- Pod securityContext merged over the chart's (runAsNonRoot, the image's user and group, fsGroup, RuntimeDefault seccomp). `global.compatibility.openshift.adaptSecurityContext` drops the fixed IDs.
+    podSecurityContext: {}
+    # -- Container securityContext merged over the chart's (no privilege escalation, all capabilities dropped).
+    containerSecurityContext: {}
 
 clickhouse:
   # -- `external` or `bundled`. ClickHouse 25.3 or newer.
   mode: external
   # -- [CH_DATABASE, CH25_DATABASE] database of traces and analytics.
   database: default
-  # -- [CH_USERNAME] needs CREATE on the database; the bootstrap also creates the observed-attribute index (CREATE DATABASE, CREATE USER, GRANT) unless `bootstrap.propertyCatalog` is false.
+  # -- [CH_USERNAME] needs CREATE on the database; the bootstrap also creates the observed-attribute index (CREATE DATABASE, CREATE USER, GRANT) unless `bootstrap.propertyCatalog` is false. Bundled: `default`, the bundled server's only user.
   user: default
   # -- [CH_PASSWORD]. External: may be empty. Bundled: empty generates one.
   password: ""
@@ -223,6 +377,10 @@ clickhouse:
     tolerations: []
     # -- Affinity of the bundled ClickHouse. Empty: the top-level `affinity`.
     affinity: {}
+    # -- Pod securityContext merged over the chart's (runAsNonRoot, the image's user and group, fsGroup, RuntimeDefault seccomp). `global.compatibility.openshift.adaptSecurityContext` drops the fixed IDs.
+    podSecurityContext: {}
+    # -- Container securityContext merged over the chart's (no privilege escalation, all capabilities dropped).
+    containerSecurityContext: {}
 
 redis:
   # -- `external` or `bundled`. Cache, locks and the live-update channel layer.
@@ -234,7 +392,7 @@ redis:
   # -- Key of the password in `existingSecret`.
   existingSecretPasswordKey: password
   external:
-    # -- [REDIS_HOST] Redis 6 or newer with databases 0-3 (the app uses 0 to 3).
+    # -- [REDIS_HOST] Redis 6 or newer with databases 0-4 (the app uses 0 to 3; the LLM gateway 4, see `agentccGateway.redis`).
     host: ""
     # -- [REDIS_PORT]
     port: 6379
@@ -246,9 +404,9 @@ redis:
       registry: docker.io
       # -- Repository of the bundled Redis image.
       repository: library/redis
-      # -- Tag of the bundled Redis image.
-      tag: 7-alpine
-      # -- Optional digest (`sha256:...`) pinned after the tag.
+      # -- Tag of the bundled Redis image: an exact 7.x release.
+      tag: 7.4.11-alpine
+      # -- Digest pinned after the tag; wins over the chart's own pin. Empty: the default tag above runs pinned to the digest the chart was tested with (while `image.pinDigests` is on), and any other tag or repository runs by tag.
       digest: ""
     # -- Redis `maxmemory`; keep it below the memory limit.
     maxmemory: 384mb
@@ -271,6 +429,10 @@ redis:
     tolerations: []
     # -- Affinity of the bundled Redis. Empty: the top-level `affinity`.
     affinity: {}
+    # -- Pod securityContext merged over the chart's (runAsNonRoot, the image's user and group, fsGroup, RuntimeDefault seccomp). `global.compatibility.openshift.adaptSecurityContext` drops the fixed IDs.
+    podSecurityContext: {}
+    # -- Container securityContext merged over the chart's (no privilege escalation, all capabilities dropped).
+    containerSecurityContext: {}
 
 temporal:
   # -- `external` (a Temporal cluster, e.g. the temporalio/temporal Helm chart) or `bundled` (the single-binary dev server with SQLite on a volume).
@@ -309,6 +471,10 @@ temporal:
     tolerations: []
     # -- Affinity of the bundled Temporal. Empty: the top-level `affinity`.
     affinity: {}
+    # -- Pod securityContext merged over the chart's (runAsNonRoot, the image's user and group, fsGroup, RuntimeDefault seccomp). `global.compatibility.openshift.adaptSecurityContext` drops the fixed IDs.
+    podSecurityContext: {}
+    # -- Container securityContext merged over the chart's (no privilege escalation, all capabilities dropped).
+    containerSecurityContext: {}
 
 objectStorage:
   # -- `external` (AWS S3, GCS or any S3-compatible service) or `bundled` (one MinIO, for evaluation).
@@ -340,8 +506,8 @@ objectStorage:
       repository: coollabsio/minio
       # -- Tag of the bundled object storage image.
       tag: RELEASE.2025-10-15T17-29-55Z
-      # -- Digest pinned after the tag.
-      digest: sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9
+      # -- Digest pinned after the tag; wins over the chart's own pin. Empty: the default tag above runs pinned to the digest the chart was tested with (while `image.pinDigests` is on), and any other tag or repository runs by tag.
+      digest: ""
     persistence:
       # -- Size of the data volume. Install-time only (see "Install-time settings" in README.md).
       size: 20Gi
@@ -349,6 +515,11 @@ objectStorage:
       storageClass: ""
     # -- [GOMEMLIMIT] soft memory limit; keep it below the memory limit.
     goMemLimit: 384MiB
+    service:
+      # -- Service type of the bundled object storage. `LoadBalancer` (examples/local.yaml) also publishes `downloadPort` for browser downloads. Evaluation only: it exposes the bucket.
+      type: ClusterIP
+      # -- Local port of browser downloads [MINIO_URL `http://localhost:<port>`, unless `urls.objects` or `ingress.objects.host` is set]: the Service's download port with a `LoadBalancer` or `NodePort` type, else the local end of the install notes' port-forward.
+      downloadPort: 9005
     # -- Resources of the bundled object storage.
     resources:
       requests: {cpu: 100m, memory: 256Mi}
@@ -359,6 +530,10 @@ objectStorage:
     tolerations: []
     # -- Affinity of the bundled object storage. Empty: the top-level `affinity`.
     affinity: {}
+    # -- Pod securityContext merged over the chart's (runAsNonRoot, the image's user and group, fsGroup, RuntimeDefault seccomp). `global.compatibility.openshift.adaptSecurityContext` drops the fixed IDs.
+    podSecurityContext: {}
+    # -- Container securityContext merged over the chart's (no privilege escalation, all capabilities dropped).
+    containerSecurityContext: {}
 
 # -----------------------------------------------------------------------------
 # Application components
@@ -377,6 +552,10 @@ backend:
     pullPolicy: ""
   # -- Replicas when autoscaling is off. More than one needs the Redis channel layer, which this chart always configures.
   replicas: 1
+  # -- Seconds each API pod sleeps before it stops (preStop), so Services and load balancers stop sending it requests first. 0: none.
+  preStopSleepSeconds: 10
+  # -- Seconds a stopping API pod gets: the preStop sleep, then in-flight requests. Raise it to at least your load balancer's read timeout for long requests.
+  terminationGracePeriodSeconds: 90
   granian:
     # -- Granian worker processes per pod.
     workers: 1
@@ -408,6 +587,8 @@ backend:
     targetCPUUtilizationPercentage: 70
     # -- Target average memory utilization (percent of requests). Empty: not used.
     targetMemoryUtilizationPercentage: ""
+    # -- HorizontalPodAutoscaler `behavior` (autoscaling/v2), e.g. `{scaleDown: {stabilizationWindowSeconds: 300}}`. Empty: the Kubernetes defaults.
+    behavior: {}
   pdb:
     # -- PodDisruptionBudget for the API.
     enabled: true
@@ -427,11 +608,11 @@ backend:
   extraVolumes: []
   # -- Extra volume mounts.
   extraVolumeMounts: []
-  # -- Node selector. Empty: the top-level `nodeSelector`.
+  # -- Node selector of the API pods, the bootstrap job and the `helm test` pod. Empty: the top-level `nodeSelector`.
   nodeSelector: {}
-  # -- Tolerations. Empty: the top-level `tolerations`.
+  # -- Tolerations of the API pods, the bootstrap job and the `helm test` pod. Empty: the top-level `tolerations`.
   tolerations: []
-  # -- Affinity. Empty: the top-level `affinity`.
+  # -- Affinity of the API pods, the bootstrap job and the `helm test` pod. Empty: the top-level `affinity`.
   affinity: {}
   # -- Topology spread constraints. Empty: the top-level `topologySpreadConstraints`.
   topologySpreadConstraints: []
@@ -448,8 +629,12 @@ worker:
     digest: ""
     # -- Pull policy. Empty: `backend.image.pullPolicy`, else `image.pullPolicy`.
     pullPolicy: ""
-  # -- [TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT] seconds a stopping worker lets running activities finish. The pod's grace period is 30 s longer.
+  # -- [TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT] seconds a stopping worker lets running activities finish. The pod's grace period is this plus `preStopSleepSeconds` plus 30 s. A `queues` entry can set its own.
   gracefulShutdownSeconds: 60
+  # -- Seconds each worker pod sleeps before it stops (preStop). 0: none. A `queues` entry can set its own.
+  preStopSleepSeconds: 15
+  # -- PriorityClass of every worker pod. Empty: the top-level `priorityClassName`. A `queues` entry can set its own.
+  priorityClassName: ""
   allQueues:
     # -- One Deployment polling every generic queue (default, tasks_s, tasks_l, tasks_xl, trace_ingestion, agent_compass). This worker also drains the outbox CDC.
     enabled: true
@@ -458,6 +643,8 @@ worker:
     # -- [TEMPORAL_EXCLUDED_QUEUES] queues it does not poll. simulation_runner needs the separate simulation-runner image (a `queues` entry with its own image).
     excludedQueues:
       - simulation_runner
+    # -- Also exclude every `queues` entry [TEMPORAL_EXCLUDED_QUEUES], so heavy queues run only on their own Deployments. `false`: the all-queues worker polls them too.
+    excludeDedicatedQueues: true
     # -- [TEMPORAL_MAX_CONCURRENT_ACTIVITIES] activity slots per queue.
     maxConcurrentActivities: 50
     # -- [TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS] workflow-task slots per queue.
@@ -475,6 +662,10 @@ worker:
       maxReplicas: 4
       # -- Target average CPU utilization (percent of requests).
       targetCPUUtilizationPercentage: 70
+      # -- Target average memory utilization (percent of requests). Empty: not used.
+      targetMemoryUtilizationPercentage: ""
+      # -- HorizontalPodAutoscaler `behavior` (autoscaling/v2). Empty: the Kubernetes defaults.
+      behavior: {}
   exactAggregation:
     # -- A single-slot worker for the exact_aggregation queue, the admission boundary for expensive exact analytics [EXACT_AGGREGATION_TASK_QUEUE=exact_aggregation]. Off: that work runs on tasks_xl.
     enabled: true
@@ -482,7 +673,7 @@ worker:
     resources:
       requests: {cpu: 100m, memory: 512Mi}
       limits: {cpu: "1", memory: 1536Mi}
-  # -- Dedicated per-queue Deployments, added to (not replacing) the all-queues worker, e.g. `[{name: tasks_s, replicas: 2, maxConcurrentActivities: 200}]`. Each entry: name (required), replicas, maxConcurrentActivities, maxConcurrentWorkflowTasks, resources, image, extraEnv (wins over `worker.extraEnv` and the chart's own values).
+  # -- Dedicated per-queue Deployments, added to the all-queues worker (which stops polling them, see `allQueues.excludeDedicatedQueues`), e.g. `[{name: tasks_s, replicas: 2, maxConcurrentActivities: 200}]`; examples/sizes/large.yaml has a full split. Each entry: name (required), replicas, maxConcurrentActivities, maxConcurrentWorkflowTasks, resources, image, extraEnv (wins over `worker.extraEnv` and the chart's own values), autoscaling {enabled, minReplicas, maxReplicas, targetCPUUtilizationPercentage, targetMemoryUtilizationPercentage, behavior} (gaps filled from `allQueues.autoscaling`), gracefulShutdownSeconds, preStopSleepSeconds, pdb {enabled, maxUnavailable}, and nodeSelector, tolerations, affinity, topologySpreadConstraints, priorityClassName, podAnnotations, podLabels (each falling back to the `worker` one).
   queues: []
   pdb:
     # -- PodDisruptionBudget for every worker Deployment.
@@ -548,6 +739,10 @@ frontend:
     maxReplicas: 4
     # -- Target average CPU utilization (percent of requests).
     targetCPUUtilizationPercentage: 70
+    # -- Target average memory utilization (percent of requests). Empty: not used.
+    targetMemoryUtilizationPercentage: ""
+    # -- HorizontalPodAutoscaler `behavior` (autoscaling/v2), e.g. `{scaleDown: {stabilizationWindowSeconds: 300}}`. Empty: the Kubernetes defaults.
+    behavior: {}
   pdb:
     # -- PodDisruptionBudget for the UI.
     enabled: true
@@ -586,6 +781,10 @@ fiCollector:
     pullPolicy: ""
   # -- Replicas when autoscaling is off.
   replicas: 1
+  # -- Seconds each collector pod waits before it stops (preStop, the kubelet's sleep action: Kubernetes 1.30 or newer, skipped on older clusters), so Services stop sending it spans first. 0: none.
+  preStopSleepSeconds: 10
+  # -- Seconds a stopping collector gets: the preStop sleep, then it flushes its batches to ClickHouse.
+  terminationGracePeriodSeconds: 45
   service:
     # -- Service type. `LoadBalancer` exposes OTLP/gRPC (4317) outside the cluster; OTLP/HTTP can go through the ingress instead.
     type: ClusterIP
@@ -610,6 +809,10 @@ fiCollector:
     maxReplicas: 6
     # -- Target average CPU utilization (percent of requests).
     targetCPUUtilizationPercentage: 70
+    # -- Target average memory utilization (percent of requests). Empty: not used.
+    targetMemoryUtilizationPercentage: ""
+    # -- HorizontalPodAutoscaler `behavior` (autoscaling/v2), e.g. `{scaleDown: {stabilizationWindowSeconds: 300}}`. Empty: the Kubernetes defaults.
+    behavior: {}
   pdb:
     # -- PodDisruptionBudget for the collector.
     enabled: true
@@ -652,6 +855,10 @@ agentccGateway:
     pullPolicy: ""
   # -- Replicas when autoscaling is off.
   replicas: 1
+  # -- Seconds each gateway pod waits before it stops (preStop, the kubelet's sleep action: Kubernetes 1.30 or newer, skipped on older clusters), so Services stop sending it requests first. 0: none.
+  preStopSleepSeconds: 10
+  # -- Seconds a stopping gateway gets. Keep it at least the preStop sleep + `config.server.shutdown_timeout` (30 s, for in-flight streams) + 5 s (the gateway then sends its buffered request logs): 10 + 30 + 5 = 45. With `config.otel.exporter: otlp`, add up to 15 s for the exporter's last flush.
+  terminationGracePeriodSeconds: 45
   # -- Existing ConfigMap with the gateway configuration under the key `config.yaml`. Empty: rendered from `config`.
   existingConfigMap: ""
   # -- Gateway configuration (agentcc-gateway/config.example.yaml documents every field). `${VAR}` expands from the environment: provider keys come from `secrets.llm`. `server.port` is also the container port: the chart pins it with the AGENTCC_PORT variable, which wins over an `existingConfigMap` too.
@@ -690,6 +897,11 @@ agentccGateway:
   controlPlaneSync: true
   # -- Let org providers use base URLs on private networks, such as a local Ollama or vLLM [AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS], for the gateway and the backend. Loopback, link-local and cloud metadata addresses stay refused. Only when everyone who can add a provider is trusted: it puts every in-cluster service in reach of a provider URL. Gateway and backend images from before this setting ignore it and refuse every private URL.
   allowPrivateProviderURLs: false
+  redis:
+    # -- Keep rate limits, budgets and other shared gateway state in the release's Redis [AGENTCC_REDIS_ADDRESS, AGENTCC_REDIS_PASSWORD, AGENTCC_REDIS_DB]. `auto`: on when the gateway runs more than one replica (`replicas` above 1 or autoscaling), off with `redis.external.tls` (the gateway has no Redis TLS): give it a Redis without TLS with AGENTCC_REDIS_ADDRESS in `extraEnv` instead (examples/cloud/aks.yaml). The chart refuses more than one replica without either.
+    enabled: auto
+    # -- [AGENTCC_REDIS_DB] Redis database of the gateway, apart from the app's 0-3.
+    db: 4
   gcpCredentials:
     # -- Existing Secret with a GCP service-account JSON for Vertex AI, mounted read-only [GOOGLE_APPLICATION_CREDENTIALS].
     existingSecret: ""
@@ -717,6 +929,10 @@ agentccGateway:
     maxReplicas: 6
     # -- Target average CPU utilization (percent of requests).
     targetCPUUtilizationPercentage: 70
+    # -- Target average memory utilization (percent of requests). Empty: not used.
+    targetMemoryUtilizationPercentage: ""
+    # -- HorizontalPodAutoscaler `behavior` (autoscaling/v2), e.g. `{scaleDown: {stabilizationWindowSeconds: 300}}`. Empty: the Kubernetes defaults.
+    behavior: {}
   pdb:
     # -- PodDisruptionBudget for the gateway.
     enabled: true
@@ -841,7 +1057,7 @@ bootstrap:
   backoffLimit: 2
   # -- Deadline of the whole job, in seconds. Keep it below `helm install/upgrade --timeout` (20m in every documented command), so Helm reports how the job ended; raise both together for a long migration.
   activeDeadlineSeconds: 1080
-  # -- Seconds a finished job (and its logs) is kept.
+  # -- Seconds a finished job (and its logs) is kept. `0`: deleted as soon as it finishes. Empty: kept until the next install or upgrade replaces it.
   ttlSecondsAfterFinished: 86400
   # -- Resources of the bootstrap job.
   resources:
@@ -860,6 +1076,16 @@ bootstrap:
   extraVolumes: []
   # -- Extra volume mounts. Empty: `backend.extraVolumeMounts`.
   extraVolumeMounts: []
+  # The first admin account, created by the job after the migrations (the account creation `manage.py create_user` uses) when no user has its email yet; later runs leave it alone, password included.
+  admin:
+    # -- Existing Secret with the admin's email, name and password (the sign-up rules: 8+ characters, not a common password, not all digits). Empty: create the first account yourself (install notes, step 3).
+    existingSecret: ""
+    # -- Key of the email in `existingSecret`.
+    emailKey: email
+    # -- Key of the full name in `existingSecret`.
+    nameKey: name
+    # -- Key of the password in `existingSecret`.
+    passwordKey: password
 
 # -----------------------------------------------------------------------------
 # Networking
@@ -885,8 +1111,61 @@ ingress:
     # -- Host for OTLP/HTTP. Empty: the API host.
     host: ""
   objects:
-    # -- Host of the bundled object storage (`objectStorage.mode=bundled`), for browser downloads [MINIO_URL]. Empty: not exposed.
+    # -- Host of the bundled object storage (`objectStorage.mode=bundled`), for browser downloads [MINIO_URL]. Evaluation only, like the bundled storage itself: it publishes the bucket through the Ingress. Empty: not exposed.
     host: ""
+  websocket:
+    # -- A second Ingress for the API's WebSocket paths (`/ws/`) with its own annotations, so long-lived connections get long timeouts without raising them for every request. Same class, host and TLS as the main one.
+    enabled: false
+    # -- Annotations of the WebSocket Ingress, over `ingress.annotations`. ingress-nginx: `nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"` and `proxy-send-timeout: "3600"`. Traefik has no per-Ingress timeout: raise the entrypoint's `respondingTimeouts` (examples/ingress-traefik.yaml).
+    annotations: {}
+
+# -----------------------------------------------------------------------------
+# Gateway API (recommended over `ingress`): HTTPRoutes and a GRPCRoute on a
+# Gateway you run (Envoy Gateway, Istio, Cilium, GKE, AWS, ...). Needs the
+# Gateway API CRDs, v1.2 or newer (route `timeouts` are Standard channel from
+# v1.2). examples/gateway-api.yaml shows a setup.
+# -----------------------------------------------------------------------------
+gatewayApi:
+  # -- Render HTTPRoutes for the UI and the API (OTLP/HTTP on the exact paths `/v1/traces` and `/tracer/v1/traces` to fi-collector), plus the optional routes below. URLs (`urls.*`) are derived from these hosts unless the ingress is on.
+  enabled: false
+  # -- Gateways (and listeners) the routes attach to, e.g. `[{name: public, namespace: gateway-system, sectionName: https}]`.
+  parentRefs: []
+  # -- The Gateway terminates TLS for these hosts: derived URLs use https. `false`: http.
+  tls: true
+  # -- Annotations on every route.
+  annotations: {}
+  app:
+    # -- Hostname of the UI. Empty: `ingress.app.host`.
+    host: ""
+  api:
+    # -- Hostname of the API. It must differ from the UI host. Empty: `ingress.api.host`.
+    host: ""
+  otlp:
+    # -- Route OTLP/HTTP to fi-collector [FI_COLLECTOR_PUBLIC_URL].
+    enabled: true
+    # -- Hostname for OTLP/HTTP. Empty: the API host.
+    host: ""
+  otlpGrpc:
+    # -- A GRPCRoute for OTLP/gRPC (the TraceService) to fi-collector's gRPC port. The listener must accept HTTP/2 (HTTPS).
+    enabled: false
+    # -- Hostname for OTLP/gRPC; it must differ from the HTTP route hosts.
+    host: ""
+  llmGateway:
+    # -- An HTTPRoute to the LLM gateway (agentcc-gateway), for applications outside the cluster; every call needs a virtual key. It also opens the gateway in the NetworkPolicies.
+    enabled: false
+    # -- Hostname of the LLM gateway. It must differ from the app and API hosts: each route sends `/` to its own service.
+    host: ""
+    # -- Route timeout (Gateway API duration) of LLM calls; keep it above the gateway's `config.server.write_timeout`. Empty: the Gateway's default.
+    timeout: 310s
+  timeouts:
+    # -- Route timeout of API requests (Gateway API duration, e.g. `300s`). Empty: the Gateway's default, often 15 s, which cuts long requests.
+    request: 300s
+    # -- Route timeout of the WebSocket paths (`/ws/`). `0s` disables it where the Gateway supports that; some also need a backend or client traffic policy for idle connections (README).
+    websocket: 24h
+  gke:
+    healthChecks:
+      # -- GKE Gateway only: a HealthCheckPolicy (networking.gke.io/v1) for each Service the routes use. GKE's load balancer ignores readiness probes and sends `GET /` with the pod's IP as the Host, which the API (a redirect) and the collector's OTLP port (no `/`) fail; these probe the API's `/health/` with Host `localhost`, the collector's `/healthz` on its admin port 9464, the LLM gateway's `/readyz` and the UI's `/`. Needs the GKE Gateway controller (its CRDs).
+      enabled: false
 
 networkPolicy:
   # -- NetworkPolicies: the datastores, the gateway, serving and the code sandbox accept traffic only from this release's pods; the UI, API and collector also from `ingressFrom`. A component whose Service is a LoadBalancer or NodePort accepts any source on its Service ports. Egress is open, except for the code sandbox.
@@ -901,7 +1180,7 @@ serviceAccount:
   name: ""
   # -- Annotations of the application pods' ServiceAccount. Object storage does not use them: it always authenticates with `objectStorage` keys.
   annotations: {}
-  # -- Mount the service account token (the application does not call the Kubernetes API).
+  # -- Mount the ServiceAccount's token in the pods that run as it: the backend, workers, UI, collector, gateway and serving (never the code sandbox). The application does not call the Kubernetes API; turn it on for a sidecar that needs the token (e.g. a Vault agent).
   automountServiceAccountToken: false
 
 # -----------------------------------------------------------------------------
@@ -913,8 +1192,11 @@ nodeSelector: {}
 tolerations: []
 # -- Default affinity.
 affinity: {}
-# -- Default topology spread constraints of the application Deployments.
+# -- Default topology spread constraints of the application Deployments. Entries without a `labelSelector` get each component's.
 topologySpreadConstraints: []
+topologySpread:
+  # -- Spread of the backend, UI, collector, gateway and worker pods that can run more than one replica and set no `topologySpreadConstraints`: `soft` prefers other zones and nodes, `hard` never puts two replicas on one node while another is free (needs at least two nodes), `none` leaves placement to the scheduler. Bundled datastores are never spread.
+  preset: soft
 # -- PriorityClass of every pod.
 priorityClassName: ""
 # -- Extra labels on every resource.

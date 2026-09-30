@@ -22,6 +22,7 @@ bundled datastores (wave -2) are ready and before the rest of the release
 {{- $b := .Values.backend -}}
 {{- $ctx := dict "root" . "component" "bootstrap" -}}
 {{- $installHook := include "futureagi.bootstrap.installHook" . -}}
+{{- $admin := $bs.admin | default dict -}}
 {{- $extraVolumes := $bs.extraVolumes | default $b.extraVolumes -}}
 {{- $extraVolumeMounts := $bs.extraVolumeMounts | default $b.extraVolumeMounts -}}
 {{- $args := list "--wait-timeout" (toString $bs.waitTimeoutSeconds) "--clickhouse-timeout" (toString $bs.clickhouseTimeoutSeconds) -}}
@@ -55,8 +56,10 @@ metadata:
 spec:
   backoffLimit: {{ $bs.backoffLimit }}
   activeDeadlineSeconds: {{ $bs.activeDeadlineSeconds }}
-  {{- if $bs.ttlSecondsAfterFinished }}
-  ttlSecondsAfterFinished: {{ $bs.ttlSecondsAfterFinished }}
+  {{- /* 0 deletes the job as soon as it finishes; empty (or null) never. */}}
+  {{- $ttl := $bs.ttlSecondsAfterFinished }}
+  {{- if not (or (kindIs "invalid" $ttl) (eq (toString $ttl) "")) }}
+  ttlSecondsAfterFinished: {{ $ttl }}
   {{- end }}
   template:
     metadata:
@@ -72,17 +75,24 @@ spec:
       automountServiceAccountToken: false
       {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 6) }}
       securityContext:
-        {{- include "futureagi.podSecurityContext" (dict "uid" 1000 "overrides" $b.podSecurityContext) | nindent 8 }}
+        {{- include "futureagi.podSecurityContext" (dict "root" $ "uid" 1000 "overrides" $b.podSecurityContext) | nindent 8 }}
       {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $b)) "indent" 6) }}
       containers:
         - name: bootstrap
-          image: {{ include "futureagi.image" (dict "root" . "image" $b.image) }}
+          image: {{ include "futureagi.image" (dict "root" . "image" $b.image "digestKey" "backend") }}
           imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" . "image" $b.image) }}
+          # The first admin (bootstrap.admin) is a step of bootstrap_install,
+          # fed by FAGI_ADMIN_* below: created once, never changed afterwards.
           command: ["python", "manage.py", "bootstrap_install"]
           args:
             {{- toYaml $args | nindent 12 }}
           env:
-            {{- include "futureagi.env.python" (dict "root" . "component" $component "catalogWriter" true) | trim | nindent 12 }}
+            {{- include "futureagi.env.python" (dict "root" . "component" $component "catalogWriter" true "direct" true) | trim | nindent 12 }}
+            {{- if $admin.existingSecret }}
+            {{- range $name, $key := dict "FAGI_ADMIN_EMAIL" ($admin.emailKey | default "email") "FAGI_ADMIN_NAME" ($admin.nameKey | default "name") "FAGI_ADMIN_PASSWORD" ($admin.passwordKey | default "password") }}
+            {{- include "futureagi.secretEnv" (dict "name" $name "secret" $admin.existingSecret "key" $key) | nindent 12 }}
+            {{- end }}
+            {{- end }}
           {{- with .Values.config.extraEnvFrom }}
           envFrom:
             {{- toYaml . | nindent 12 }}
@@ -90,7 +100,7 @@ spec:
           resources:
             {{- toYaml $bs.resources | nindent 12 }}
           securityContext:
-            {{- include "futureagi.containerSecurityContext" (dict "overrides" $b.containerSecurityContext) | nindent 12 }}
+            {{- include "futureagi.containerSecurityContext" (dict "root" $ "overrides" $b.containerSecurityContext) | nindent 12 }}
           volumeMounts:
             {{- include "futureagi.python.volumeMounts" . | trim | nindent 12 }}
             {{- with $extraVolumeMounts }}

@@ -97,6 +97,7 @@ x-backend-env: &backend-env
   ALK_HOSTED_AGENTCC_MODEL: ${ALK_HOSTED_AGENTCC_MODEL:-vertex_ai/gemini-3.7-flash}
   SIMULATOR_LLM_PROVIDER: ${SIMULATOR_LLM_PROVIDER:-vertex}
   SIMULATOR_LLM_MODEL: ${SIMULATOR_LLM_MODEL:-gemini-3.8-flash}
+  HARNESS_CALLER_BARGE_IN_RATE: ${HARNESS_CALLER_BARGE_IN_RATE:-0.4}
   # Temporary, disabled-by-default Cab Guest Booking POC policy. The target value stays in
   # deployment configuration and is sent only through the platform simulator-secret channel.
   ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER: ${ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER:-}
