@@ -102,4 +102,49 @@ describe("GuardrailConfigTab", () => {
       "browser_guardrail_keyword",
     ]);
   });
+
+  it("saves Lakera Guard v2 detector categories and project id", async () => {
+    const onChange = vi.fn();
+
+    render(
+      <GuardrailConfigTab guardrails={{ checks: {} }} onChange={onChange} />,
+    );
+
+    const lakeraCard = screen
+      .getByText("Lakera Guard")
+      .closest(".MuiCard-root");
+    fireEvent.click(within(lakeraCard).getByRole("button"));
+
+    expect(
+      await screen.findByText("Configure: Lakera Guard"),
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/API Key/), {
+      target: { value: "lk-test" },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText("Optional Lakera project ID"),
+      {
+        target: { value: " project-123 " },
+      },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onChange).toHaveBeenCalledWith({
+      checks: {
+        "lakera-guard": {
+          enabled: true,
+          action: "block",
+          confidence_threshold: 0.8,
+          provider: "lakera",
+          config: {
+            api_key: "lk-test",
+            endpoint: "https://api.lakera.ai/v2/guard",
+            project_id: "project-123",
+            categories: ["prompt_attack", "moderated_content"],
+          },
+        },
+      },
+    });
+  });
 });
