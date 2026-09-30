@@ -9,11 +9,11 @@ import structlog
 from django.conf import settings as django_settings
 
 from agentcc.contracts.gateway_admin import (
-    OrgConfig as GatewayOrgConfig,
+    AlertChannelConfig as GatewayAlertChannelConfig,
 )
-from agentcc.contracts.gateway_admin import (
-    ProviderConfig as GatewayProviderConfig,
-)
+from agentcc.contracts.gateway_admin import AlertRuleConfig as GatewayAlertRuleConfig
+from agentcc.contracts.gateway_admin import OrgConfig as GatewayOrgConfig
+from agentcc.contracts.gateway_admin import ProviderConfig as GatewayProviderConfig
 from agentcc.models import AgentccOrgConfig
 from agentcc.org_config_defaults import normalize_cache_config
 from agentcc.services.gateway_client import GatewayClientError, get_gateway_client
@@ -79,6 +79,14 @@ def _contract_input_names(contract_model):
 
 
 _PROVIDER_INPUT_FIELDS = _contract_input_names(GatewayProviderConfig)
+_ALERT_RULE_INPUT_FIELDS = _contract_input_names(GatewayAlertRuleConfig)
+_ALERT_CHANNEL_INPUT_FIELDS = _contract_input_names(GatewayAlertChannelConfig)
+
+# Keys the Monitoring UI stores on alert rules/channels to drive its own
+# rendering (severity chip, Active/Disabled status). The gateway has no
+# equivalent, so they are projected out here — and not logged, because they are
+# expected rather than a misconfiguration.
+_UI_ONLY_ALERTING_KEYS = frozenset({"enabled", "severity", "severity_filter"})
 
 
 class UnsupportedProviderCredentialFields(ValueError):
@@ -453,18 +461,71 @@ def _assemble_providers(org_id):
     return providers
 
 
+def _as_named_entries(value):
+    """
+    Coerce an alerting rules/channels collection into a list of dicts.
+
+    Two writers produce two shapes: Settings → Alerting saves an array, while
+    Monitoring → Create Rule saves a name-keyed object so its patch can add one
+    entry without clobbering the rest. Returns None when the value is neither.
+    """
+    if isinstance(value, dict):
+        return [
+            {"name": name, **entry} if isinstance(entry, dict) else {"name": name}
+            for name, entry in value.items()
+        ]
+    if isinstance(value, list):
+        return [entry for entry in value if isinstance(entry, dict)]
+    return None
+
+
+def _project_alerting_entries(entries, allowed_fields, kind):
+    """
+    Drop disabled entries and any key the gateway's alerting contract forbids.
+
+    The gateway evaluates every rule it is given — it has no per-rule enable
+    switch — so a rule stored with `enabled: false` is omitted rather than
+    forwarded with the flag stripped.
+    """
+    projected = []
+    unknown = set()
+    for entry in entries:
+        if entry.get("enabled") is False:
+            continue
+        projected.append({k: v for k, v in entry.items() if k in allowed_fields})
+        unknown.update(
+            k
+            for k in entry
+            if k not in allowed_fields and k not in _UI_ONLY_ALERTING_KEYS
+        )
+
+    if unknown:
+        logger.warning("alerting_fields_ignored", kind=kind, keys=sorted(unknown))
+    return projected
+
+
 def _normalize_alerting(alerting):
-    """Normalize alerting config so rules/channels are always arrays (Go expects arrays)."""
+    """
+    Project stored alerting config onto the gateway admin contract.
+
+    The `alerting` column is a free-form JSONField that the UI writes directly,
+    but `AlertingConfig` is `extra="forbid"`. Without this projection any key
+    the UI adds for its own use fails validation, and because the bulk sync
+    endpoint validates every org in one pass, a single such rule takes the whole
+    fleet's config sync down.
+    """
     if not alerting or not isinstance(alerting, dict):
         return alerting
+
     result = {**alerting}
-    for key in ("rules", "channels"):
-        val = result.get(key)
-        if isinstance(val, dict):
-            result[key] = [
-                {"name": name, **cfg} if isinstance(cfg, dict) else {"name": name}
-                for name, cfg in val.items()
-            ]
+    for key, allowed_fields in (
+        ("rules", _ALERT_RULE_INPUT_FIELDS),
+        ("channels", _ALERT_CHANNEL_INPUT_FIELDS),
+    ):
+        entries = _as_named_entries(result.get(key))
+        if entries is None:
+            continue
+        result[key] = _project_alerting_entries(entries, allowed_fields, key)
     return result
 
 

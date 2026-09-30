@@ -13,20 +13,22 @@ import {
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import { useUpdateConfig } from "../providers/hooks/useGatewayConfig";
+import {
+  ALERT_METRIC_OPTIONS,
+  DEFAULT_ALERT_METRIC,
+} from "../constants/alerting";
 
-const METRICS = [
-  "error_rate",
-  "latency_p99",
-  "latency_p95",
-  "request_rate",
-  "cost_per_hour",
-];
 const CONDITIONS = [">", ">=", "<", "<=", "=="];
 const SEVERITIES = ["critical", "warning", "info"];
 
-const CreateAlertRuleDialog = ({ open, onClose, gatewayId }) => {
+const CreateAlertRuleDialog = ({
+  open,
+  onClose,
+  gatewayId,
+  existingRules = [],
+}) => {
   const [name, setName] = useState("");
-  const [metric, setMetric] = useState("error_rate");
+  const [metric, setMetric] = useState(DEFAULT_ALERT_METRIC);
   const [condition, setCondition] = useState(">");
   const [threshold, setThreshold] = useState("");
   const [window, setWindow] = useState("5m");
@@ -36,7 +38,7 @@ const CreateAlertRuleDialog = ({ open, onClose, gatewayId }) => {
 
   const resetForm = () => {
     setName("");
-    setMetric("error_rate");
+    setMetric(DEFAULT_ALERT_METRIC);
     setCondition(">");
     setThreshold("");
     setWindow("5m");
@@ -49,8 +51,9 @@ const CreateAlertRuleDialog = ({ open, onClose, gatewayId }) => {
   };
 
   const handleCreate = () => {
+    const ruleName = name.trim();
     const rule = {
-      name,
+      name: ruleName,
       metric,
       condition,
       threshold: Number(threshold),
@@ -59,19 +62,19 @@ const CreateAlertRuleDialog = ({ open, onClose, gatewayId }) => {
       enabled: true,
     };
 
-    // We'll send this as a config patch that adds the rule
+    // Send the whole array rather than a single name-keyed entry: the patch
+    // endpoint only deep-merges dict-into-dict, so a keyed object would replace
+    // an existing rules array wholesale and drop every rule saved from
+    // Settings → Alerting.
+    const rules = [...existingRules.filter((r) => r?.name !== ruleName), rule];
+
     updateConfig.mutate(
-      {
-        gatewayId,
-        config: {
-          alerting: {
-            rules: { [name]: rule },
-          },
-        },
-      },
+      // `enabled` gates per-org alerting in the gateway, and this page has no
+      // switch for it — without it the rule syncs and is then never evaluated.
+      { gatewayId, config: { alerting: { enabled: true, rules } } },
       {
         onSuccess: () => {
-          enqueueSnackbar(`Alert rule "${name}" created`, {
+          enqueueSnackbar(`Alert rule "${ruleName}" created`, {
             variant: "success",
           });
           handleClose();
@@ -103,9 +106,9 @@ const CreateAlertRuleDialog = ({ open, onClose, gatewayId }) => {
             value={metric}
             onChange={(e) => setMetric(e.target.value)}
           >
-            {METRICS.map((m) => (
-              <MenuItem key={m} value={m}>
-                {m}
+            {ALERT_METRIC_OPTIONS.map((m) => (
+              <MenuItem key={m.value} value={m.value}>
+                {m.label}
               </MenuItem>
             ))}
           </TextField>
@@ -178,6 +181,7 @@ CreateAlertRuleDialog.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   gatewayId: PropTypes.string,
+  existingRules: PropTypes.arrayOf(PropTypes.object),
 };
 
 export default CreateAlertRuleDialog;
