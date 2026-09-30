@@ -64,4 +64,10 @@ func TestOrgConfigContractRoundTripsIntoGatewayTenantConfig(t *testing.T) {
 	if runtime.MCP == nil || runtime.MCP.Servers["github"] == nil {
 		t.Fatalf("mcp server missing: %#v", runtime.MCP)
 	}
+	if runtime.Guardrails == nil {
+		t.Fatal("expected guardrails")
+	}
+	if check := runtime.Guardrails.Checks["bedrock-output"]; check == nil || check.Stage != "post" {
+		t.Fatalf("guardrail check stage mismatch: %#v", check)
+	}
 }

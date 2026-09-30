@@ -65,6 +65,10 @@ type GuardrailCheck struct {
 	Action              string                 `json:"action,omitempty"` // "block", "warn", "mask", "log"
 	ConfidenceThreshold float64                `json:"confidence_threshold,omitempty"`
 	Config              map[string]interface{} `json:"config,omitempty"` // check-specific settings
+	// Stage is "pre", "post" or "both". Only guardrails that can check either
+	// side honour it (external providers, Future AGI evals); an empty or
+	// unknown value, or any other guardrail, runs at the guardrail's own stage.
+	Stage string `json:"stage,omitempty"`
 }
 
 // RoutingConfig holds per-org routing strategy settings.

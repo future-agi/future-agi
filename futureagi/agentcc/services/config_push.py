@@ -178,6 +178,25 @@ def _inject_guardrail_credentials(checks):
                     del cfg[key]
 
 
+# "pre" is not forwarded: it is already the default stage of every guardrail
+# whose stage can be changed, and a gateway that predates per-check stages
+# rejects the whole org config when a check carries "stage".
+_CHECK_STAGES = ("post", "both")
+
+
+def _set_check_stage(check, stage):
+    """
+    Forward a check's stage ("post" or "both", any case) to the gateway.
+    Anything else, "pre" included, is dropped so the gateway runs the guardrail
+    at its own stage.
+    """
+    stage = stage.strip().lower() if isinstance(stage, str) else None
+    if stage in _CHECK_STAGES:
+        check["stage"] = stage
+    else:
+        check.pop("stage", None)
+
+
 def _transform_guardrails(guardrails_data, org_id=None):
     """
     Transform Django org-config guardrails (rules array) into gateway tenant
@@ -217,6 +236,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
                 "confidence_threshold": rule.get("threshold", 0.8),
                 "config": cfg,
             }
+            _set_check_stage(checks[registry_name], rule.get("stage"))
         if org_id:
             _inject_fi_credentials(checks, org_id)
         result = {
@@ -246,6 +266,8 @@ def _transform_guardrails(guardrails_data, org_id=None):
             )
             inner = clean_cfg.get("config") if isinstance(clean_cfg, dict) else None
             _normalize_eval_ids(inner)
+            if isinstance(clean_cfg, dict):
+                _set_check_stage(clean_cfg, clean_cfg.get("stage"))
             mapped[registry_name] = clean_cfg
         if org_id:
             _inject_fi_credentials(mapped, org_id)
@@ -272,6 +294,7 @@ def _transform_guardrails(guardrails_data, org_id=None):
             "confidence_threshold": rule.get("threshold", 0.8),
             "config": cfg,
         }
+        _set_check_stage(checks[registry_name], rule.get("stage"))
 
     # Auto-inject org's FI platform credentials for futureagi-eval
     if org_id:
