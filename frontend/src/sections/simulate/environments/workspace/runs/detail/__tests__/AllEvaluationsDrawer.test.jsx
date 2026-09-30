@@ -1,3 +1,4 @@
+/* eslint-disable react/prop-types */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   act,
@@ -15,12 +16,33 @@ import { enqueueSnackbar } from "notistack";
 import AllEvaluationsDrawer, {
   HARNESS_ONLY_TOOLTIP,
   HARNESS_NOTE,
+  NOT_EDITABLE_TOOLTIP,
 } from "../AllEvaluationsDrawer";
 
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 vi.mock("src/api/simulate-environments/environments", () => ({
   useEnvironmentRunTest: vi.fn(),
   useRemoveAppliedEvaluation: vi.fn(),
+}));
+// The edit form itself is covered by the add drawer's own tests; here it only
+// has to open for the right row and report a save back.
+const editor = vi.hoisted(() => ({ props: null, updated: null }));
+vi.mock("../../../evals/AddEvaluationDrawer", () => ({
+  default: (props) => {
+    editor.props = props;
+    if (!props.open) return null;
+    return (
+      <div data-testid="edit-drawer">
+        {`edit-drawer:${props.editingEval?.id}`}
+        <button type="button" onClick={() => props.onEdited(editor.updated)}>
+          save edit
+        </button>
+        <button type="button" onClick={props.onClose}>
+          close edit
+        </button>
+      </div>
+    );
+  },
 }));
 vi.mock("src/api/simulate-environments/runEvals", () => ({
   useRunNewEvals: vi.fn(),
@@ -34,6 +56,7 @@ const CONFIGS = [
     mapping: { conversation: "voice_recording" },
     eval_type: "llm",
     regradable: true,
+    editable: true,
   },
   {
     id: "c2",
@@ -41,6 +64,7 @@ const CONFIGS = [
     mapping: {},
     eval_type: "agent",
     regradable: true,
+    editable: false,
   },
   {
     id: "c3",
@@ -48,6 +72,7 @@ const CONFIGS = [
     mapping: {},
     eval_type: "llm",
     regradable: false,
+    editable: false,
   },
 ];
 
@@ -55,6 +80,8 @@ let runMutate;
 let removeMutate;
 
 beforeEach(() => {
+  editor.props = null;
+  editor.updated = null;
   enqueueSnackbar.mockReset();
   useEnvironmentRunTest.mockReset();
   useRemoveAppliedEvaluation.mockReset();
@@ -344,5 +371,156 @@ describe("AllEvaluationsDrawer", () => {
       { variant: "warning" },
     );
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("AllEvaluationsDrawer — editing an eval", () => {
+  it("offers edit on every row but only lets a person-added eval be edited", () => {
+    setup();
+
+    expect(
+      screen.getByRole("button", { name: "Edit no_misselling" }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", {
+        name: "Edit customer_agent_task_completion",
+      }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Edit refund_issued_claim" }),
+    ).toBeDisabled();
+  });
+
+  it("says why a harness-set eval can't be edited", async () => {
+    setup();
+
+    fireEvent.mouseOver(
+      screen.getByRole("button", { name: "Edit refund_issued_claim" })
+        .parentElement,
+    );
+    expect(await screen.findByText(NOT_EDITABLE_TOOLTIP)).toBeInTheDocument();
+  });
+
+  it("treats an eval the server didn't mark editable as not editable", () => {
+    const { editable: _editable, ...unmarked } = CONFIGS[0];
+    useEnvironmentRunTest.mockReturnValue({
+      data: [unmarked],
+      isPending: false,
+      isError: false,
+    });
+    setup();
+
+    expect(
+      screen.getByRole("button", { name: "Edit no_misselling" }),
+    ).toBeDisabled();
+  });
+
+  it("holds edits while the run is being graded", async () => {
+    setup({ canRun: false, grading: true });
+
+    const edit = screen.getByRole("button", { name: "Edit no_misselling" });
+    expect(edit).toBeDisabled();
+    fireEvent.mouseOver(edit.parentElement);
+    expect(
+      await screen.findByText("Available once grading finishes."),
+    ).toBeInTheDocument();
+  });
+
+  it("holds edits until the run has finished", async () => {
+    setup({ canRun: false });
+
+    const edit = screen.getByRole("button", { name: "Edit no_misselling" });
+    expect(edit).toBeDisabled();
+    fireEvent.mouseOver(edit.parentElement);
+    expect(
+      await screen.findByText("Available once this run finishes."),
+    ).toBeInTheDocument();
+  });
+
+  it("opens the edit form for that eval and keeps this drawer open", () => {
+    setup();
+
+    expect(screen.queryByTestId("edit-drawer")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Edit no_misselling" }));
+
+    expect(screen.getByText("edit-drawer:c1")).toBeInTheDocument();
+    expect(editor.props.env).toEqual({ id: "env-1" });
+    expect(screen.getByText("All Evaluations")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Edit no_misselling" }),
+    ).toBeDisabled();
+  });
+
+  it("forgets an open edit once the drawer itself is closed", () => {
+    const { rerenderWith } = setup();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit no_misselling" }));
+    expect(screen.getByTestId("edit-drawer")).toBeInTheDocument();
+    act(() => rerenderWith({ open: false }));
+    act(() => rerenderWith({ open: true }));
+
+    expect(screen.queryByTestId("edit-drawer")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Edit no_misselling" }),
+    ).toBeEnabled();
+  });
+
+  it("opens no confirm when the save hands back no eval", () => {
+    editor.updated = undefined;
+    setup();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit no_misselling" }));
+    fireEvent.click(screen.getByText("save edit"));
+
+    expect(screen.queryByTestId("edit-drawer")).toBeNull();
+    expect(
+      screen.queryByText("This will overwrite previous evaluation results."),
+    ).toBeNull();
+  });
+
+  it("grades nothing when the edit form is closed without saving", () => {
+    setup();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit no_misselling" }));
+    fireEvent.click(screen.getByText("close edit"));
+
+    expect(screen.queryByTestId("edit-drawer")).toBeNull();
+    expect(
+      screen.queryByText("This will overwrite previous evaluation results."),
+    ).toBeNull();
+    expect(runMutate).not.toHaveBeenCalled();
+  });
+
+  it("offers to grade the edited eval again once it is saved", () => {
+    editor.updated = {
+      ...CONFIGS[0],
+      mapping: { conversation: "call.transcript" },
+    };
+    setup();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit no_misselling" }));
+    fireEvent.click(screen.getByText("save edit"));
+
+    expect(screen.queryByTestId("edit-drawer")).toBeNull();
+    expect(
+      screen.getByText("This will overwrite previous evaluation results."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(HARNESS_NOTE)).toBeNull();
+
+    fireEvent.click(screen.getByText("Run Evaluations"));
+    expect(runMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ evalConfigIds: ["c1"] }),
+      expect.any(Object),
+    );
+  });
+
+  it("warns that harness scores are replaced when the saved eval has no mapping of its own", () => {
+    editor.updated = { ...CONFIGS[0], mapping: {} };
+    setup();
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit no_misselling" }));
+    fireEvent.click(screen.getByText("save edit"));
+
+    expect(screen.getByText(HARNESS_NOTE)).toBeInTheDocument();
   });
 });

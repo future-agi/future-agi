@@ -293,6 +293,7 @@ const EvalPickerContent = ({
  * @param {Array} addedEvals - Opt-in: already-added evals ({ id, name, meta }) shown in a collapsible "Added evaluations" box and left out of the list
  * @param {Object} addedEvalAction - Opt-in: one button per added row ({ label, onClick(addedEval), busyName?, disabled?, show?(addedEval) })
  * @param {boolean} requireInputs - Opt-in: refuse to add an eval that has no inputs to map
+ * @param {boolean} hideCompositeCreate - Opt-in: "Create new" offers single evals only
  * @param {string} drawerType - MUI Drawer variant: "temporary" (default) or "persistent"
  * @param {number|string} width - Drawer width (default: 700px)
  */
@@ -361,6 +362,9 @@ const EvalPickerDrawer = ({
   addedEvalAction = null,
   // Opt-in: refuse to add an eval that has no inputs to map.
   requireInputs = false,
+  // Opt-in: for hosts that can't grade a composite eval, "Create new" drops
+  // its Composite mode.
+  hideCompositeCreate = false,
 }) => {
   const [currentStep, setCurrentStep] = useState("list");
 
@@ -424,6 +428,7 @@ const EvalPickerDrawer = ({
         addedEvals={addedEvals}
         addedEvalAction={addedEvalAction}
         requireInputs={requireInputs}
+        hideCompositeCreate={hideCompositeCreate}
       >
         <EvalPickerContent
           onStepChange={setCurrentStep}
@@ -481,6 +486,7 @@ EvalPickerDrawer.propTypes = {
     show: PropTypes.func,
   }),
   requireInputs: PropTypes.bool,
+  hideCompositeCreate: PropTypes.bool,
 };
 
 export default EvalPickerDrawer;

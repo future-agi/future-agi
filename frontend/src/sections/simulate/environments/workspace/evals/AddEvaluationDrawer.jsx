@@ -14,6 +14,7 @@ import {
 import {
   useAddRunEvaluation,
   useAddRunTestEval,
+  useEditAppliedEvaluation,
   useEnvironmentRunTest,
 } from "src/api/simulate-environments/environments";
 import {
@@ -28,6 +29,7 @@ import { refusalText } from "./refusalText";
 
 const ADD_FALLBACK = "Couldn’t add the evaluation. Try again.";
 const GRADE_FALLBACK = "Couldn’t grade this run. Try again.";
+const EDIT_FALLBACK = "Couldn’t update the evaluation. Try again.";
 const DETAIL_FALLBACK = EVALS_COPY.addedError;
 const NO_INPUTS =
   "This evaluation has no inputs to map, so it can't run in an environment.";
@@ -37,6 +39,9 @@ const STALE_LIST =
 // render, which would re-run both `useMemo`s below even when the run test's
 // configs have not changed.
 const NO_CONFIGS = [];
+// The harness can't grade a composite eval on an environment run yet, so the
+// picker neither lists nor creates one here.
+const SINGLE_EVALS_ONLY = { template_type: ["single"] };
 
 /**
  * Adding evaluations to a built environment.
@@ -51,14 +56,22 @@ const NO_CONFIGS = [];
  *
  * Opened from a run, a new pick also grades that run's finished calls, and
  * each added eval can grade them too.
+ *
+ * Given `editingEval`, the picker opens straight on that eval's own settings
+ * and saving edits it in place. Grading after an edit is the host's call, so
+ * nothing is graded here.
  */
 export default function AddEvaluationDrawer({
   open,
   env,
   executionId,
   onClose,
+  editingEval = null,
+  editingEvalId = null,
+  onEdited,
 }) {
   const envId = env?.id;
+  const editMode = Boolean(editingEval || editingEvalId);
   const runMode = Boolean(executionId);
   const queryClient = useQueryClient();
   const detailQuery = useQuery(
@@ -73,8 +86,19 @@ export default function AddEvaluationDrawer({
     enabled: open && Boolean(runTestId),
   });
   const configs = runTestQuery.data ?? NO_CONFIGS;
+  // The Evaluations tab only has display rows, so it hands over an id and the
+  // full row (template, mapping, config) is read from the run test's own list.
+  const editTarget = useMemo(
+    () =>
+      editingEval ??
+      (editingEvalId
+        ? configs.find((c) => c.id === editingEvalId) ?? null
+        : null),
+    [editingEval, editingEvalId, configs],
+  );
   const addToRunTest = useAddRunTestEval();
   const gradeRun = useAddRunEvaluation();
+  const editEval = useEditAppliedEvaluation();
 
   const refreshFailed =
     open && runTestQuery.isError && runTestQuery.data !== undefined;
@@ -151,6 +175,50 @@ export default function AddEvaluationDrawer({
     }
   };
 
+  // The picker keeps its config step open when this rejects, so a refused edit
+  // is re-thrown. The name is locked while editing, so it is never a change and
+  // is left out rather than sent back to the name-uniqueness check.
+  const saveEdit = async (config) => {
+    const { name: _name, ...body } = serializeEvalConfig(config);
+    if (!Object.keys(body.mapping || {}).length) {
+      enqueueSnackbar(NO_INPUTS, { variant: "error" });
+      throw new Error(NO_INPUTS);
+    }
+    let updated;
+    try {
+      updated = await editEval.mutateAsync({
+        id: envId,
+        evalConfigId: editTarget.id,
+        runTestId,
+        body,
+      });
+    } catch (error) {
+      enqueueSnackbar(refusalText(error, EDIT_FALLBACK), { variant: "error" });
+      throw error;
+    }
+    enqueueSnackbar("Evaluation updated", { variant: "success" });
+    onEdited?.(updated);
+  };
+
+  // `id` stays the template id — the picker loads the template by it — and
+  // `userEvalId` keys the picker per eval, so two evals of one template don't
+  // share a mounted form.
+  const initialEval = useMemo(
+    () =>
+      editTarget
+        ? {
+            id: editTarget.template_id,
+            userEvalId: editTarget.id,
+            template_id: editTarget.template_id,
+            name: editTarget.name,
+            mapping: editTarget.mapping || {},
+            config: editTarget.config || {},
+            run_config: editTarget.config?.run_config || {},
+          }
+        : null,
+    [editTarget],
+  );
+
   const gradeAdded = (addedEval) =>
     grade(addedEval.name).catch((error) =>
       enqueueSnackbar(refusalText(error, GRADE_FALLBACK), { variant: "error" }),
@@ -165,7 +233,19 @@ export default function AddEvaluationDrawer({
   // Once the run test's evals have been read, a failed background refresh
   // (window focus, the add's own refetch) keeps the last good list rather
   // than tearing down a picker the person may be halfway through.
-  if (open && runTestId && runTestQuery.data !== undefined) {
+  const loaded = open && runTestId && runTestQuery.data !== undefined;
+  // While editing, the picker never falls back to its add list: a missing or
+  // harness-set eval gets its own message instead.
+  const editRefusal =
+    loaded && editMode
+      ? !editTarget
+        ? "This evaluation no longer exists."
+        : editTarget.editable !== true
+          ? EVALS_COPY.notEditable
+          : null
+      : null;
+
+  if (loaded && !editRefusal) {
     return (
       <EvalPickerDrawer
         open
@@ -173,11 +253,14 @@ export default function AddEvaluationDrawer({
         source="simulation"
         sourceId={runTestId}
         sourceColumns={sourceColumns}
-        existingEvals={existingEvals}
-        addedEvals={addedEvals}
+        existingEvals={editMode ? NO_CONFIGS : existingEvals}
+        addedEvals={editMode ? null : addedEvals}
+        initialEval={initialEval}
+        lockedFilters={SINGLE_EVALS_ONLY}
+        hideCompositeCreate
         requireInputs
         addedEvalAction={
-          runMode
+          runMode && !editMode
             ? {
                 label: "Grade this run",
                 onClick: gradeAdded,
@@ -189,7 +272,7 @@ export default function AddEvaluationDrawer({
               }
             : null
         }
-        onEvalAdded={addPicked}
+        onEvalAdded={editMode ? saveEdit : addPicked}
       />
     );
   }
@@ -197,7 +280,18 @@ export default function AddEvaluationDrawer({
   return (
     <SideDrawer open={open} onClose={handleClose} width={560}>
       <Box sx={{ p: 3 }}>
-        {pending ? (
+        {editRefusal ? (
+          <EmptyState
+            icon="solar:danger-triangle-linear"
+            title="Can’t edit this evaluation"
+            body={editRefusal}
+            action={
+              <Button variant="outlined" size="small" onClick={handleClose}>
+                Back to evaluations
+              </Button>
+            }
+          />
+        ) : pending ? (
           <Stack alignItems="center" sx={{ py: 6 }}>
             <CircularProgress size={22} />
           </Stack>
@@ -236,4 +330,14 @@ AddEvaluationDrawer.propTypes = {
   env: PropTypes.shape({ id: PropTypes.string }),
   executionId: PropTypes.string,
   onClose: PropTypes.func,
+  editingEval: PropTypes.shape({
+    id: PropTypes.string,
+    name: PropTypes.string,
+    template_id: PropTypes.string,
+    mapping: PropTypes.object,
+    config: PropTypes.object,
+    editable: PropTypes.bool,
+  }),
+  editingEvalId: PropTypes.string,
+  onEdited: PropTypes.func,
 };
