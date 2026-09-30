@@ -421,7 +421,7 @@ def test_read_hosted_tool_trace_ignores_blank_and_malformed_lines():
         "simulate.services.hosted_harness_ingestion.get_storage_client",
         return_value=storage,
     ):
-        calls = _read_hosted_tool_trace(artifact)
+        calls = _read_hosted_tool_trace(artifact, None)
 
     assert calls == [
         {"name": "lookup", "ok": True},
@@ -429,6 +429,29 @@ def test_read_hosted_tool_trace_ignores_blank_and_malformed_lines():
     ]
     response.close.assert_called_once_with()
     response.release_conn.assert_called_once_with()
+
+
+def test_read_hosted_tool_trace_places_timed_calls_on_the_transcript_clock():
+    response = MagicMock()
+    response.read.return_value = (
+        b'{"name":"lookup","at":1700000012.5}\n'
+        b'{"name":"untimed","at":0}\n'
+        b'{"name":"missing"}\n'
+    )
+    storage = MagicMock()
+    storage.get_object.return_value = response
+
+    with patch(
+        "simulate.services.hosted_harness_ingestion.get_storage_client",
+        return_value=storage,
+    ):
+        calls = _read_hosted_tool_trace(MagicMock(object_key="trace"), 1700000010.0)
+
+    assert calls == [
+        {"name": "lookup", "at": 1700000012.5, "start_time_ms": 2500},
+        {"name": "untimed", "at": 0},
+        {"name": "missing"},
+    ]
 
 
 def _payload(**overrides):
@@ -647,7 +670,7 @@ def test_hosted_voice_transcript_offsets_follow_the_recording(
     rows = call.transcripts.order_by("start_time_ms", "created_at")
     assert [row.start_time_ms for row in rows] == expected_starts
     assert [row.end_time_ms for row in rows] == [
-        expected_starts[1],
+        expected_starts[0] + 3740,
         expected_starts[1],
         expected_starts[2] + 7180,
     ]
@@ -878,9 +901,7 @@ def test_capability_budget_starts_after_sandbox_provisioning(organization, setti
     attempt.refresh_from_db()
     assert activated.token == capability.token
     assert activated.fence == capability.fence
-    expected_active_budget = (
-        3600 + job.payload["runtime"]["max_duration_seconds"]
-    )
+    expected_active_budget = 3600 + job.payload["runtime"]["max_duration_seconds"]
     assert job.deadline_at == activated_at + timedelta(seconds=expected_active_budget)
     assert attempt.expires_at == job.deadline_at + timedelta(seconds=420)
     assert activated.document["expires_at"] == attempt.expires_at.isoformat(

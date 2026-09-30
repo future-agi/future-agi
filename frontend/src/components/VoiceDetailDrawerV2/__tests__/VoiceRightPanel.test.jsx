@@ -156,4 +156,72 @@ describe("VoiceRightPanel", () => {
     );
     getContext.mockRestore();
   });
+
+  describe("Fix with Falcon on the Evals tab", () => {
+    const failingEval = {
+      id: "call-2",
+      module: "simulate",
+      status: "completed",
+      provider: "livekit",
+      transcript: [],
+      eval_metrics: {
+        "eval-1": {
+          id: "eval-1",
+          name: "Concise replies",
+          value: "Failed",
+          type: "Pass/Fail",
+          reason: "Four sentences where three were allowed.",
+        },
+      },
+    };
+
+    it("shows by default, on the summary bar and on the expanded failing eval", async () => {
+      renderWithQueryClient(<VoiceRightPanel data={failingEval} />);
+      await userEvent.click(screen.getByRole("tab", { name: "Evals" }));
+      expect(screen.getAllByText("Fix with Falcon")).toHaveLength(1);
+      await userEvent.click(screen.getByText("Concise replies"));
+      expect(screen.getAllByText("Fix with Falcon")).toHaveLength(2);
+    });
+
+    it("hides when the host has no Falcon flow wired", async () => {
+      renderWithQueryClient(<VoiceRightPanel data={failingEval} showFixWithFalcon={false} />);
+      await userEvent.click(screen.getByRole("tab", { name: "Evals" }));
+      await userEvent.click(screen.getByText("Concise replies"));
+      expect(screen.queryByText("Fix with Falcon")).not.toBeInTheDocument();
+    });
+  });
+
+  it("shows the Scenario tab for a call with a persona but no scenario columns", () => {
+    renderWithQueryClient(
+      <VoiceRightPanel
+        data={{
+          id: "call-3",
+          module: "simulate",
+          status: "completed",
+          provider: "livekit",
+          transcript: [],
+          scenario_columns: {},
+          persona_details: { name: "Siddharth Nair", voice: null, age: null, traits: [] },
+        }}
+      />,
+    );
+    expect(screen.getByRole("tab", { name: "Scenario" })).toBeInTheDocument();
+  });
+
+  it("still has no Scenario tab when there is neither", () => {
+    renderWithQueryClient(
+      <VoiceRightPanel
+        data={{
+          id: "call-4",
+          module: "simulate",
+          status: "completed",
+          provider: "livekit",
+          transcript: [],
+          scenario_columns: {},
+          persona_details: { name: null, voice: null, age: null, traits: [] },
+        }}
+      />,
+    );
+    expect(screen.queryByRole("tab", { name: "Scenario" })).not.toBeInTheDocument();
+  });
 });

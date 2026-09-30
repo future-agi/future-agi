@@ -10,6 +10,7 @@ import {
   TableHead,
   TableRow,
   Button,
+  tableBodyClasses,
   tableCellClasses,
   tableHeadClasses,
   tableRowClasses,
@@ -34,8 +35,8 @@ import TraceGroupHeaderRow from "./TraceGroupHeaderRow";
 
 // The theme hides every border on a table's last row, which here is the head
 // row and the final call row. The column dividers are cell left borders, so put
-// those back, and the head's bottom line; the body's last bottom line stays
-// hidden so it doesn't double up with the container edge. Separate borders,
+// those back, the head's bottom line, and the body's last bottom line, which
+// closes the table when its rows don't fill the scroll box. Separate borders,
 // because collapsed ones stay behind when the head and group rows stick.
 const lastRowDividersSx = {
   minWidth: 1000,
@@ -44,9 +45,8 @@ const lastRowDividersSx = {
   borderSpacing: 0,
   [`& .${tableRowClasses.root}:last-of-type .${tableCellClasses.root}:not(:first-of-type)`]:
     { borderLeftColor: "divider" },
-  [`& .${tableHeadClasses.root} .${tableCellClasses.root}`]: {
-    borderBottomColor: "divider",
-  },
+  [`& .${tableHeadClasses.root} .${tableCellClasses.root}, & .${tableBodyClasses.root} .${tableRowClasses.root}:last-of-type .${tableCellClasses.root}`]:
+    { borderBottomColor: "divider" },
 };
 
 /**
@@ -75,6 +75,11 @@ const clampSx = {
   overflow: "hidden",
   wordBreak: "break-word",
 };
+
+// A persona is worth showing when any field is filled, not only the name: the
+// API sends name: null when the persona has no name key.
+const hasPersonaDetails = (p) =>
+  !!(p && (p.name || p.voice || p.age || p.traits?.length));
 
 export default function TraceTable({
   groups,
@@ -234,7 +239,7 @@ export default function TraceTable({
 
         {show("persona") && (
           <TableCell sx={bodyCellSx} onClick={() => onOpen(t)}>
-            {t.personaDetails?.name ? (
+            {hasPersonaDetails(t.personaDetails) ? (
               <Stack spacing={0.5} sx={{ minWidth: 210 }}>
                 <Field
                   icon="solar:user-id-linear"

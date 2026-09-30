@@ -9,6 +9,7 @@ import WorkspaceHeader from "../WorkspaceHeader";
 import LivePill from "../LivePill";
 import EnvVersionPin from "../EnvVersionPin";
 import SystemBanners from "../SystemBanners";
+import VersionBar from "../VersionBar";
 
 const ENV = {
   id: "env-1",
@@ -281,5 +282,24 @@ describe("WorkspaceHeader", () => {
     expect(btn).toBeDisabled();
     await user.hover(btn.parentElement);
     expect(await screen.findByText(reason)).toBeInTheDocument();
+  });
+});
+
+describe("VersionBar", () => {
+  it("counts the scenarios for a real environment whose version carries no count", () => {
+    const v1 = { label: "v1", note: "First run of this environment." };
+    render(
+      <VersionBar
+        env={ENV}
+        envState={{
+          scenarios: [1, 2, 3, 4],
+          envVersions: [v1],
+          agentVersions: [v1],
+          activeEnvVersion: "v1",
+          activeAgentVersion: "v1",
+        }}
+      />,
+    );
+    expect(screen.getByText("4 scenarios, shared across agent versions")).toBeInTheDocument();
   });
 });

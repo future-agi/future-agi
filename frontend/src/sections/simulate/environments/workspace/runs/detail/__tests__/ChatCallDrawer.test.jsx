@@ -49,3 +49,12 @@ describe("ChatCallDrawer share", () => {
     expect(screen.queryByTestId("share-dialog")).not.toBeInTheDocument();
   });
 });
+
+describe("ChatCallDrawer tabs", () => {
+  it("has no Checklist or Graph tab while they have no data behind them", () => {
+    render(<ChatCallDrawer task={{ id: "call-execution-1", status: "completed" }} onClose={vi.fn()} />);
+    expect(screen.getByRole("tab", { name: "Transcript" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Checklist" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Graph" })).not.toBeInTheDocument();
+  });
+});

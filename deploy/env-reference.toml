@@ -625,6 +625,12 @@ the default backend ([Backend variants](/docs/self-hosting/images#backend-varian
     text = "That LLM's thinking level or token budget. Set it to go lower where the model allows, e.g. `minimal` on `gemini-3.5-flash-lite` (`gemini-3.7-flash` refuses it)."
 
     [[part.section.row]]
+    keys = ["HARNESS_CALLER_BARGE_IN_RATE"]
+    default = "`0.4`"
+    setups = ["S", "D", "H"]
+    text = "Fraction of hosted voice calls selected for optional simulator caller interruptions. Set `0` to disable or a value up to `1` to enable more calls; selected calls may contain multiple interjections."
+
+    [[part.section.row]]
     keys = ["ALK_HOSTED_BASE_EGRESS_DOMAINS"]
     default = "empty"
     setups = ["S", "D", "H"]
@@ -706,7 +712,7 @@ the default backend ([Backend variants](/docs/self-hosting/images#backend-varian
     keys = ["ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER", "ALK_CAB_GUEST_POC_PIN"]
     default = "empty: off"
     setups = ["S", "D", "H"]
-    text = "Temporary proof-of-concept scenario policy of Future AGI's hosted service (an E.164 target and its PIN), passed to sandboxes on the platform's simulator-secret channel. Leave empty when self-hosting."
+    text = "Temporary proof-of-concept scenario policy of Future AGI's hosted service (an E.164 target and its PIN), passed only to phone sandboxes whose submitted target exactly matches the configured number. Both values are required; leave empty when self-hosting."
     audience = "internal"
 
   [[part.section]]
