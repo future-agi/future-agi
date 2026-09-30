@@ -5,7 +5,7 @@ import {mkdtemp, rm, readdir} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
-import {investigateTrace, validateAssessment, canonicalDigest, failureDiagnostic} from './investigation.mjs';
+import {investigateTrace, investigateSimulation, validateAssessment, canonicalDigest, failureDiagnostic} from './investigation.mjs';
 import {storeEvidence} from './evidence-store.mjs';
 
 function makeClaim() {
@@ -292,6 +292,54 @@ test('Node report digest matches the Django wire fixture', () => {
       {cost: 0, model_used: 'openai/test', raw: {units: 1}}, {cost: 1, model_used: 'openai/test', raw: null}],
     nested: {small: 0.001, large: 1000000000000000}}),
   'sha256:c0c2d86a98393d4a34d1ec1f7aabff4b5c134d06c7fb568185f607bbb91e09c8');
+});
+
+test('simulation investigation reads call evidence and returns a scoped report', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'omega-simulation-investigation-test-'));
+  try {
+    const goalName = 'g'.repeat(256);
+    const claim = {...makeClaim(), workload_type: 'simulation_test_execution',
+      contract_version: 'omega-simulation/v1', test_execution_id: randomUUID(), lease_token: 'fixture-lease'};
+    const row = {call_execution_id: randomUUID(), status: 'completed',
+      simulation_call_type: 'conversation', scenario: 'Ask for help',
+      call_summary: 'Agent answered', error_message: null, ended_reason: null,
+      transcript: [{id: randomUUID(), speaker: 'assistant', content: 'How can I help?', start_time: 1, end_time: 2}],
+      goals: {use_case: 'Get help', sub_goals: [goalName], expected_outcome: 'The agent greets the caller'}};
+    const evidenceId = `${row.call_execution_id}:0:${Buffer.byteLength(JSON.stringify(row))}`;
+    const assessment = {outcome: 'success', findings: [], requirement_checks: [
+      {requirement_id: goalName, requirement: 'Agent greets the caller', status: 'satisfied',
+        evidence_ids: [evidenceId]}]};
+    const controlCalls = [];
+    const result = await investigateSimulation(claim, {scratchRoot: scratch,
+      control: async (path, body) => {
+        controlCalls.push({path, body});
+        return {calls: [row], next_cursor: 1, total_calls: 1};
+      },
+      gatewayConfig: {baseUrl: 'http://fixture/v1', model: 'fixture-model', apiKey: 'fixture-secret',
+        fetchImpl: async (_url, init) => {
+          const request = JSON.parse(init.body);
+          const system = request.messages.find(message => message.role === 'system').content;
+          const verifier = system.includes('Independently check');
+          const toolMessage = request.messages.find(message => message.role === 'tool');
+          const message = !toolMessage
+            ? {role: 'assistant', content: '', tool_calls: [{id: 'read-call', type: 'function',
+              function: {name: 'read_simulation_call', arguments: JSON.stringify({
+                call_execution_id: row.call_execution_id, offset: 0, length: 4096})}}]}
+            : {role: 'assistant', content: JSON.stringify(verifier ? assessment : {
+              action: 'finish', question: '', child_instructions: '', assessment})};
+          return new Response(JSON.stringify({choices: [{message}], usage: {prompt_tokens: 10, completion_tokens: 5}}),
+            {headers: {'Content-Type': 'application/json', 'x-agentcc-cost': '0'}});
+        }}});
+    assert.equal(result.execution_status, 'completed');
+    assert.equal(result.outcome, 'success');
+    assert.equal(result.test_execution_id, claim.test_execution_id);
+    assert.equal(result.coverage.read_complete, true);
+    assert.deepEqual(result.evidence_receipts.map(item => item.call_execution_id), [row.call_execution_id]);
+    assert.deepEqual(controlCalls, [{path: `/attempts/${claim.attempt_id}/simulation-evidence/`,
+      body: {lease_token: claim.lease_token, cursor: 0}}]);
+  } finally {
+    await rm(scratch, {recursive: true, force: true});
+  }
 });
 
 test('unresolved external payloads downgrade attempted success without failing the investigation', async () => {

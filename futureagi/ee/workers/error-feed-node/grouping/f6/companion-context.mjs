@@ -8,7 +8,9 @@ export function companionsFor(row, rows) {
   const events=new Set(row.source_event_ids||[]);
   return rows.filter(other=>other.id!==row.id&&!other.control
     && other.organization_id===row.organization_id&&other.project_id===row.project_id
-    && other.workspace_id===row.workspace_id&&other.trace_id===row.trace_id
+    && other.workspace_id===row.workspace_id&&other.workload_type===row.workload_type
+    && (row.workload_type==='simulation_test_execution'
+      ? other.test_execution_id===row.test_execution_id : other.trace_id===row.trace_id)
     && other.engine_version===row.engine_version&&other.scan_version===row.scan_version
     && other.investigation_report_ref?.report_id===row.investigation_report_ref?.report_id)
     .map(other=>({row:other,overlap:[...new Set(other.source_event_ids||[])].filter(id=>events.has(id))}))
@@ -25,6 +27,8 @@ export function addCompanionEvidence(rows,policy) {
       id:`companion:${other.id}`,text:other.summary,digest:digest(other.summary),
       provenance:'accepted_companion_finding_report',
       reference:{occurrence_id:other.id,finding_id:other.upstream_finding_id,trace_id:other.trace_id,
+        ...(other.workload_type==='simulation_test_execution'
+          ? {workload_type:other.workload_type,test_execution_id:other.test_execution_id} : {}),
         kind:other.kind,evidence_revision:other.evidence_revision,source_event_ids:other.source_event_ids,
         shared_event_ids:overlap,link_status:'candidate_only_not_established'},
     }));

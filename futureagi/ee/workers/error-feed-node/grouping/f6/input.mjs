@@ -6,9 +6,16 @@ import {digest, requireText, pairKey, VIEWS} from './common.mjs';
 export function validateInput(rows, cannotLinks = []) {
   const byId = new Map();
   for (const row of rows) {
-    for (const field of ['id', 'organization_id', 'project_id', 'trace_id',
+    for (const field of ['id', 'organization_id', 'project_id',
       'engine_version', 'scan_version', 'evidence_revision', 'source_digest', 'slice']) {
       requireText(row[field], field);
+    }
+    if (row.workload_type === 'simulation_test_execution') {
+      requireText(row.test_execution_id, 'test_execution_id');
+      assert.equal(row.trace_id, null, 'Simulation rows cannot carry a trace ID');
+    } else {
+      assert.equal(row.workload_type, undefined, 'Unsupported grouping workload');
+      requireText(row.trace_id, 'trace_id');
     }
     assert.ok(!byId.has(row.id), 'Duplicate occurrence identity');
     assert.ok(typeof row.control === 'boolean' && Array.isArray(row.missing_evidence));

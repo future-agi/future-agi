@@ -74,6 +74,9 @@ function hydrateCandidates(window, byId, constraints, policy) {
       assert.equal(member.source_digest, row.source_digest, 'Candidate member source changed');
       assert.equal(member.evidence_revision, row.evidence_revision, 'Candidate member evidence changed');
       assert.equal(member.trace_id, row.trace_id, 'Candidate member trace changed');
+      if (row.workload_type === 'simulation_test_execution') {
+        assert.equal(member.test_execution_id, row.test_execution_id, 'Candidate member execution changed');
+      }
       assert.equal(member.report_id, row.investigation_report_ref?.report_id,
         'Candidate member report changed');
     }

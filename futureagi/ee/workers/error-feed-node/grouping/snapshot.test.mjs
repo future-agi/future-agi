@@ -7,6 +7,9 @@ import {
   canonicalSnapshotDigest,
 } from './snapshot.mjs';
 import {makeGroupingSnapshotFixture} from './snapshot-fixture.mjs';
+import {scopeKey} from './f6/common.mjs';
+import {validateInput} from './f6/input.mjs';
+import {visible} from './f6/admission.mjs';
 
 function redigest(snapshot) {
   const {snapshot_digest: _old, ...body} = snapshot;
@@ -36,6 +39,30 @@ test('adapts normalized snapshot to deterministic F6 statement and task rows', (
   assert.deepEqual(row.investigation_report_ref,
     {report_id: snapshot.report.id, result_digest: snapshot.report.result_digest});
   assert.deepEqual(adaptGroupingSnapshot(structuredClone(snapshot)), [row]);
+});
+test('adapts simulation snapshots with call-scoped evidence and no trace identity', () => {
+  const snapshot = makeGroupingSnapshotFixture();
+  const report = snapshot.report;
+  const callExecutionId = '66666666-6666-4666-8666-666666666666';
+  report.workload_type = 'simulation_test_execution';
+  report.test_execution_id = '77777777-7777-4777-8777-777777777777';
+  report.trace_id = null;
+  report.coverage = {scope: 'simulation_test_execution', observed_call_count: 1, read_complete: true};
+  report.evidence_receipts[0] = {...report.evidence_receipts[0], span_id: null, parent_span_id: null,
+    call_execution_id: callExecutionId};
+  report.findings[0].attribution.decisive = {...report.findings[0].attribution.decisive,
+    span_id: null, call_execution_id: callExecutionId};
+  redigest(snapshot);
+
+  const [row] = adaptGroupingSnapshot(snapshot);
+  assert.equal(row.workload_type, 'simulation_test_execution');
+  assert.equal(row.test_execution_id, report.test_execution_id);
+  assert.equal(row.trace_id, null);
+  assert.equal(row.evidence[1].reference.call_execution_id, callExecutionId);
+  assert.equal(row.attribution.decisive.call_execution_id, callExecutionId);
+  assert.equal(visible(row).test_execution_id, report.test_execution_id);
+  assert.equal(validateInput([row]).byId.get(row.id), row);
+  assert.notEqual(scopeKey(row), scopeKey({...row, test_execution_id: '88888888-8888-4888-8888-888888888888'}));
 });
 
 test('a recovered finding never inherits a failing report outcome', () => {

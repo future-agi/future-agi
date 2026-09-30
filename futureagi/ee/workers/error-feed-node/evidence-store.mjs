@@ -3,11 +3,20 @@ import {createHash} from 'node:crypto';
 
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 export function validateClaim(claim) {
-  for (const key of ['organization_id', 'project_id', 'trace_id', 'job_id', 'attempt_id']) {
+  const simulation = claim?.workload_type === 'simulation_test_execution';
+  if (claim?.workload_type !== undefined && !simulation) throw new Error('Unsupported workload type');
+  const identity = simulation
+    ? ['organization_id', 'project_id', 'job_id', 'attempt_id', 'test_execution_id']
+    : ['organization_id', 'project_id', 'trace_id', 'job_id', 'attempt_id'];
+  for (const key of identity) {
     if (!uuid.test(claim?.[key] ?? '')) throw new Error('Invalid claim identity');
   }
   if (claim.workspace_id !== null && !uuid.test(claim.workspace_id ?? '')) throw new Error('Invalid workspace identity');
-  if (claim.contract_version !== 'omega-investigation/v1' || !claim.feature_enabled
+  if ((!simulation && (claim.contract_version !== 'omega-investigation/v1' || !claim.feature_enabled))
+      || (simulation && (claim.contract_version !== 'omega-simulation/v1'
+        || typeof claim.lease_token !== 'string' || !claim.lease_token || /[\r\n]/.test(claim.lease_token)
+        || typeof claim.engine_version !== 'string' || !claim.engine_version.trim()
+        || !claim.memory || typeof claim.memory !== 'object' || Array.isArray(claim.memory)))
       || !Number.isSafeInteger(claim.generation) || claim.generation < 1
       || !Number.isFinite(Date.parse(claim.read_cutoff))) throw new Error('Unsupported or disabled claim');
   for (const key of ['deadline_seconds', 'max_model_calls', 'max_input_tokens_total', 'max_output_tokens_total', 'max_evidence_bytes', 'max_tool_result_bytes']) {
@@ -33,12 +42,18 @@ export async function downloadEvidence(claim, path, {baseUrl, database, username
   endpoint.searchParams.set('param_cutoff', new Date(claim.read_cutoff).toISOString().replace('T', ' ').replace('Z', ''));
   const maxBytes = Math.min(claim.limits.max_evidence_bytes, 256 * 1024 * 1024);
   const maxRows = 50000;
+  // trace_id is part of the immutable ReplacingMergeTree key, so its Bloom index
+  // can safely prune before FINAL. Deletion and cutoff filters must remain after
+  // FINAL; skipping on them could expose an older row version.
   const query = `SELECT * FROM spans FINAL
 PREWHERE project_id = {project:UUID} AND trace_id = {trace:String}
 WHERE (org_id = {org:UUID} OR isNull(org_id)) AND is_deleted = 0
 AND created_at <= {cutoff:DateTime64(6)} AND updated_at <= {cutoff:DateTime64(6)}
 ORDER BY start_time, id LIMIT ${maxRows + 1}
-SETTINGS max_execution_time=30, max_result_bytes=${maxBytes}, result_overflow_mode='throw', max_threads=1, max_memory_usage=${maxQueryMemoryBytes}
+SETTINGS max_execution_time=30, max_result_bytes=${maxBytes}, result_overflow_mode='throw', max_threads=1, max_memory_usage=${maxQueryMemoryBytes},
+  use_skip_indexes_if_final=1,
+  optimize_move_to_prewhere_if_final=0,
+  ignore_data_skipping_indices='auto_minmax_index_is_deleted,auto_minmax_index_created_at'
 FORMAT JSONEachRow`;
   const response = await fetchImpl(endpoint, {method: 'POST', body: query, signal, redirect: 'error',
     headers: {'Content-Type': 'text/plain', 'X-ClickHouse-User': username, 'X-ClickHouse-Key': password}});

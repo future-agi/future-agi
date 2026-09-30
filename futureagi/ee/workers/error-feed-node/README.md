@@ -100,6 +100,15 @@ Legacy ingestion and sweep paths skip Omega projects. Enable collector notificat
 with `FI_ERROR_FEED_ENABLED=true` and `FI_ERROR_FEED_KAFKA_BROKERS`; asynchronous
 ClickHouse insert acknowledgement is rejected for this mode.
 
+Simulation Debug Analysis uses the same daemon and Django control plane but not
+Kafka notifications or a per-project trace scanner. For a completed
+`TestExecution`, `POST /simulate/test-executions/{id}/debug-analysis/` queues one
+execution-scoped job; `GET` returns its current state and findings. Claims carry
+`workload_type=simulation_test_execution` and `omega-simulation/v1`. Django pages
+only that execution's terminal `CallExecution` rows and transcripts from
+PostgreSQL. The worker cites call execution IDs, not span IDs, and publishes
+through the existing report endpoint. It has no direct PostgreSQL access.
+
 The collector announces an ended root after its batch write. It does not certify
 that all children have arrived. Django applies the readiness delay. The worker's
 server-issued read cutoff excludes later rows but cannot recover historical versions
