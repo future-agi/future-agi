@@ -612,16 +612,8 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
         >
           Export
         </Button>
-        {!trialMeta && (
-          <Button
-            variant="outlined" size="small"
-            startIcon={<Iconify icon="solar:refresh-linear" width={15} />}
-            onClick={rerun}
-            sx={{ color: "text.primary", borderColor: "divider", typography: "s2", fontWeight: 600 }}
-          >
-            Run again
-          </Button>
-        )}
+        {/* "Run again" removed — selecting rows and choosing "Run as a new
+            simulation" from the Re-run popover is the same flow. */}
         {/*
           The primary action after a failed run is not to run it again —
           the same agent against the same graders returns the same
@@ -716,7 +708,16 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
                 sizing to its rows. Values tuned so the card starts
                 just below the tab strip and ends at the viewport edge.
               */
-              sx={{ minHeight: "calc(100vh - 260px)", display: "flex", flexDirection: "column" }}
+              /* The traces card fills the viewport below the tab strip and
+                 the rows scroll INSIDE it — so the toolbar (Group by, Filter,
+                 Clear, Re-run N…) and the column headers stay put while the
+                 reader walks the rows. `overflow: hidden` on the outer box
+                 traps the row scroll inside, and the flex column lets the
+                 table area grow to fill what's left after the toolbar. */
+              sx={{
+                height: "calc(100vh - 260px)",
+                display: "flex", flexDirection: "column",
+              }}
               /*
                 The title used to be "Task traces" plus a one-liner
                 subtitle. The header is now the two table controls: the

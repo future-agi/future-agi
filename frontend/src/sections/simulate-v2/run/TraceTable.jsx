@@ -212,6 +212,21 @@ export const GROUPINGS = [
   { id: "subGoal", label: "Failure sub-goal", icon: "solar:map-linear" },
   { id: "pattern", label: "Failure pattern",   icon: "solar:danger-triangle-linear" },
   { id: "status",  label: "Status",            icon: "solar:check-circle-linear" },
+  /* Persona-attribute buckets — same-accent / same-age-band callers
+     cluster together, so a reader can spot regional or generational
+     regressions ("older callers keep dropping mid-flow"). */
+  { id: "accent",  label: "Accent",             icon: "solar:global-linear" },
+  { id: "age",     label: "Age",                icon: "solar:calendar-linear" },
+  /* Attack — adversarial pressure the scenario applies (rule probe,
+     data trap, prompt-injection, edge branch). Groups the run by how
+     it was trying to break the agent. */
+  { id: "attack",  label: "Attack",             icon: "solar:bug-linear" },
+  /* Task — bucket by scenario name. Trials of the same task cluster,
+     so flakiness across trials becomes obvious. */
+  { id: "task",    label: "Task",               icon: "solar:document-text-linear" },
+  /* Escape hatch — flat table, no grouping at all. Kept last so the
+     dropdown reads "…then no grouping" as the exit. */
+  { id: "none",    label: "No grouping",        icon: "solar:list-linear" },
 ];
 
 /*
@@ -354,6 +369,53 @@ const groupOfTask = (t, mode, env) => {
     if (m) return m[1].trim();
     return null;
   }
+  if (mode === "accent") {
+    /* Accent lives inside the persona's voice string ("US male",
+       "IN female", "UK female"). The first token is the region — that
+       is what clusters callers together for a reader looking at whether
+       accent explains a failure. */
+    const voice = t.persona?.voice || "";
+    const region = voice.split(/\s+/)[0];
+    return region || "No accent";
+  }
+  if (mode === "age") {
+    /* Age bracket in 10-year bands, using `ageGroup` when the mock
+       enriched it or deriving it from the raw age. Missing values
+       land in "Unknown age" so the reader can see how many rows
+       lacked persona demographics. */
+    const bracket = t.persona?.ageGroup;
+    if (bracket) return bracket;
+    const age = t.persona?.age;
+    if (typeof age === "number") {
+      const decade = Math.floor(age / 10) * 10;
+      return `${decade}-${decade + 10}`;
+    }
+    return "Unknown age";
+  }
+  if (mode === "attack") {
+    /* Attack — how the scenario was trying to break the agent. Derived
+       from the scenario id (rule / trap / adversarial / edge), with core
+       scenarios falling into "No attack" so the reader can see how many
+       of the run's rows were happy-path baselines. */
+    const id = t.id || "";
+    if (id.includes("-rule-")) return "Rule probe";
+    if (id.includes("-adversarial-")) return "Adversarial";
+    if (id.includes("-trap-")) return "Data trap";
+    if (id.includes("-edge-")) return "Edge case";
+    return "No attack";
+  }
+  if (mode === "task") {
+    /* Task groups rows by scenario title so trials of the same
+       scenario cluster together. Falls back to the scenario id when a
+       row hasn't materialised a title yet. */
+    return t.title || t.name || t.id || "Untitled task";
+  }
+  if (mode === "none") {
+    /* Flat view — every row lands in the same group. The group header
+       just prints a single "All tasks" band which the table hides
+       when there is only one group. */
+    return "All tasks";
+  }
   return "All";
 };
 
@@ -443,9 +505,15 @@ export default function TraceTable({
     return arr;
   }, [tasks, groupBy, env]);
 
+  /* Sticky at the top of the scroll area, without MUI's `stickyHeader`
+     prop — that prop switches `borderCollapse` to `separate`, which makes
+     the per-cell score tints on the eval columns bleed into one solid
+     column-wide fill. Rolling our own sticky keeps `border-collapse: collapse`
+     so each row's cell stays its own outlined rectangle. */
   const headCell = {
     typography: "s2", fontWeight: 500, color: "text.secondary",
     whiteSpace: "nowrap", bgcolor: "background.paper", height: 44, py: 0,
+    position: "sticky", top: 0, zIndex: 2,
     borderBottom: "1px solid", borderColor: "divider",
     "&:not(:first-of-type)": { borderLeft: "1px solid", borderColor: "divider" },
   };
@@ -460,9 +528,15 @@ export default function TraceTable({
     borderBottom: "1px solid", borderColor: "divider",
     "&:not(:first-of-type)": { borderLeft: "1px solid", borderColor: "divider" },
   };
+  /* Pinned to the left of the scroll area so the checkboxes stay reachable
+     when the table scrolls horizontally. On the header row this cell also
+     needs `top: 0` to pin at the corner — that's handled by combining
+     `headCell` (which sets top: 0) with `checkCell` on that first cell. */
   const checkCell = {
     width: 48, p: 0, pl: 1.25, verticalAlign: "middle",
     borderBottom: "1px solid", borderColor: "divider",
+    position: "sticky", left: 0, zIndex: 1,
+    bgcolor: "background.paper",
   };
 
   /*
@@ -654,21 +728,28 @@ export default function TraceTable({
   };
 
   return (
-    <Box>
+    /* Fills the vertical space left by the card's toolbar — the "Expand all"
+       row stays put and the table below it scrolls, so the column headers
+       (sticky inside the Table) always sit above whatever row is on screen. */
+    <Box sx={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
       <Stack
         direction="row" alignItems="center" spacing={1}
-        sx={{ px: 1.5, py: 1, borderBottom: "1px solid", borderColor: "divider" }}
+        sx={{ px: 1.5, py: 1, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
       >
         <Button
           size="small" variant="text"
-          onClick={toggleAll}
+          disableRipple
+          onClick={(e) => { toggleAll(); e.currentTarget.blur(); }}
           startIcon={<Iconify
             icon={allCollapsed ? "solar:alt-arrow-down-linear" : "solar:alt-arrow-right-linear"}
             width={14}
           />}
           sx={{
             typography: "s3", fontWeight: 600, color: "text.secondary",
+            /* Drop the focus tint MUI leaves after a click — was staying
+               grey even with the pointer elsewhere. */
             "&:hover": { bgcolor: "action.hover" },
+            "&:focus, &:focus-visible": { bgcolor: "transparent" },
           }}
         >
           {allCollapsed ? "Expand all" : "Collapse all"}
@@ -677,7 +758,7 @@ export default function TraceTable({
           {groups.length} {groups.length === 1 ? "group" : "groups"}
         </Typography>
       </Stack>
-      <Box sx={{ overflowX: "auto" }}>
+      <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         {/*
           tableLayout: "auto" lets each column size to its widest cell
           (header or body) rather than being pinned to the width props.
@@ -687,11 +768,19 @@ export default function TraceTable({
           more naturally than the previous fixed-layout, which
           truncated long labels while leaving short aggregate columns
           swimming in whitespace.
+
+          `position: sticky` on the headCell style pins the column-header
+          row to the top of this scroll area — the reader always sees which
+          column each number belongs to as they scroll through the rows.
         */}
         <Table size="small" sx={{ minWidth: 1200, tableLayout: "auto" }}>
           <TableHead>
             <TableRow>
-              <TableCell sx={{ ...headCell, ...checkCell }}>
+              {/* Corner cell — sticky top (from headCell) + sticky left (from
+                  checkCell). `zIndex: 3` puts it above both the sticky header
+                  row (z 2) and the sticky checkbox column (z 1) so nothing
+                  slides underneath the corner. */}
+              <TableCell sx={{ ...headCell, ...checkCell, zIndex: 3 }}>
                 <Checkbox
                   size="small"
                   checked={allOn}
@@ -729,30 +818,35 @@ export default function TraceTable({
           </TableHead>
 
           <TableBody>
-            {groups.map((g) => (
-              <React.Fragment key={g.label}>
-                <GroupHeaderRow
-                  group={g}
-                  collapsed={collapsedSet.has(g.label)}
-                  onToggle={() => toggleCollapsed(g.label)}
-                  colspan={totalColSpan}
-                  show={show}
-                  showEvals={showEvals}
-                  evals={shownEvals}
-                  selected={selected}
-                  onToggleGroup={(rows) => {
-                    /* Group checkbox behaves like the header select-all:
-                       if every task in the group is already selected,
-                       deselect them; otherwise select all. */
-                    const ids = rows.map((r) => r.id);
-                    const allSelected = ids.every((id) => selected.has(id));
-                    if (allSelected) ids.forEach((id) => onToggle(id));
-                    else ids.filter((id) => !selected.has(id)).forEach((id) => onToggle(id));
-                  }}
-                />
-                {!collapsedSet.has(g.label) && g.rows.map(renderRow)}
-              </React.Fragment>
-            ))}
+            {groupBy === "none"
+              /* Flat view — skip the group header band entirely and render
+                 every row as a plain list. Reader gets a clean single-column
+                 stream when they don't want any bucketing. */
+              ? groups.flatMap((g) => g.rows).map(renderRow)
+              : groups.map((g) => (
+                <React.Fragment key={g.label}>
+                  <GroupHeaderRow
+                    group={g}
+                    collapsed={collapsedSet.has(g.label)}
+                    onToggle={() => toggleCollapsed(g.label)}
+                    colspan={totalColSpan}
+                    show={show}
+                    showEvals={showEvals}
+                    evals={shownEvals}
+                    selected={selected}
+                    onToggleGroup={(rows) => {
+                      /* Group checkbox behaves like the header select-all:
+                         if every task in the group is already selected,
+                         deselect them; otherwise select all. */
+                      const ids = rows.map((r) => r.id);
+                      const allSelected = ids.every((id) => selected.has(id));
+                      if (allSelected) ids.forEach((id) => onToggle(id));
+                      else ids.filter((id) => !selected.has(id)).forEach((id) => onToggle(id));
+                    }}
+                  />
+                  {!collapsedSet.has(g.label) && g.rows.map(renderRow)}
+                </React.Fragment>
+              ))}
           </TableBody>
         </Table>
       </Box>
@@ -1181,17 +1275,57 @@ MetricValue.propTypes = { metric: PropTypes.string, value: PropTypes.any, suffix
  *   uses_approved_filler_phrase        ✓
  *   rephrases_with_conversational_...  ✓
  */
+/**
+ * Sub-goals list for the Run details cell — peek + expand.
+ *
+ * Default state:
+ *   - Every failed sub-goal named with a red cross (always).
+ *   - Passed sub-goals fill the remaining slots up to `CAP` total lines,
+ *     in scenario order.
+ *   - If anything else is left out, a "Show all N" link expands the full
+ *     list in place. Nothing is truly hidden — everything is one click away
+ *     without leaving the row.
+ *
+ * For scenarios with N ≤ CAP: no link, every sub-goal shown as-is.
+ * For scenarios with N > CAP: failed rows always visible, the rest one
+ * click away.
+ *
+ * All-pass rows show every sub-goal up to CAP with a "Show all" for the
+ * rest — matches prod for the common small-N case.
+ */
+const CAP = 6;
+
 function SubGoalsSummary({ task, env }) {
+  const [expanded, setExpanded] = useState(false);
   const rows = subGoalStatuses(task, env);
   if (rows.length === 0) return null;
+
+  /* When collapsed and there are more than CAP, keep every failed and
+     not-reached one, then fill with passed in scenario order. Preserves
+     each row's original position so the eye can still trace "sub-goal 3
+     failed" against the checklist. */
+  let visible;
+  if (expanded || rows.length <= CAP) {
+    visible = rows;
+  } else {
+    const priorityIdx = new Set();
+    rows.forEach((r, i) => { if (r.status !== "passed") priorityIdx.add(i); });
+    let slots = Math.max(0, CAP - priorityIdx.size);
+    rows.forEach((r, i) => {
+      if (slots > 0 && r.status === "passed" && !priorityIdx.has(i)) {
+        priorityIdx.add(i);
+        slots -= 1;
+      }
+    });
+    visible = rows.filter((_, i) => priorityIdx.has(i));
+  }
+  const hidden = rows.length - visible.length;
+
   return (
     <Stack spacing={0.125} sx={{ mt: 0.75 }}>
-      {rows.map((r, i) => (
+      {visible.map((r, i) => (
         <Stack key={r.id || i} direction="row" alignItems="center" spacing={0.5}>
-          <Typography
-            noWrap
-            sx={{ typography: "s3", color: "text.secondary" }}
-          >
+          <Typography noWrap sx={{ typography: "s3", color: "text.secondary" }}>
             {r.label}
           </Typography>
           {r.status === "passed" ? (
@@ -1201,6 +1335,35 @@ function SubGoalsSummary({ task, env }) {
           )}
         </Stack>
       ))}
+      {(hidden > 0 || expanded) && rows.length > CAP && (
+        <Stack
+          role="button"
+          tabIndex={0}
+          direction="row"
+          alignItems="center"
+          spacing={0.25}
+          onClick={(e) => { e.stopPropagation(); setExpanded((o) => !o); }}
+          sx={{
+            mt: 0.5,
+            alignSelf: "flex-start",
+            cursor: "pointer",
+            color: "primary.main",
+            "&:hover .subgoal-toggle-label": { textDecoration: "underline" },
+          }}
+        >
+          <Typography
+            className="subgoal-toggle-label"
+            sx={{ typography: "s3", color: "inherit", fontWeight: "fontWeightMedium" }}
+          >
+            {expanded ? "Show less" : `Show all ${rows.length}`}
+          </Typography>
+          <Iconify
+            icon={expanded ? "eva:chevron-up-fill" : "eva:chevron-down-fill"}
+            width={14}
+            sx={{ color: "inherit", flexShrink: 0 }}
+          />
+        </Stack>
+      )}
     </Stack>
   );
 }

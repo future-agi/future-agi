@@ -184,6 +184,33 @@ export const subTasksFor = (row, env) => {
   if (kind === "trap") middle.push("Adjust the plan for the condition — do not take the row as ordinary");
   if (kind === "edge") middle.push("Handle the awkward branch explicitly, not by falling through");
 
+  /* Deterministically mark ~35% of "core" scenarios as procedurally
+     deep — they exercise a longer chain of validations, tool calls
+     and hand-offs. Real customer-support / ops scenarios often have
+     10+ small proofs to settle; without a few of them in the mock,
+     the peek+expand affordance never triggers. */
+  const deep = kind === "core" && (i % 100) < 35;
+  if (deep) {
+    const extras = [
+      "Confirm the order id resolves to a real account",
+      "Check the order is inside the returns window",
+      "Read the refund policy version the account is on",
+      "Look up the shipping carrier and current status",
+      "Check for existing open tickets on the same order",
+      "Note any pending charges or refunds already in flight",
+      "Confirm the caller's contact details before writing",
+      "Log the decision reason for the audit trail",
+      "Offer a specific next-step time window, not a vague promise",
+    ];
+    /* Rotate through the pool starting at hash — same scenario, same
+       set, so a reader who reopens the row sees the same list. */
+    const start = i % extras.length;
+    const take = 6 + (i % 4); /* 6–9 extras + opener + closer ⇒ 8–11 rows */
+    for (let n = 0; n < take; n += 1) {
+      middle.push(extras[(start + n) % extras.length]);
+    }
+  }
+
   const closer = {
     rule: "Refuse politely, explain the policy in one sentence, offer the closest legal alternative",
     trap: "Report the outcome accurately, including what was skipped and why",

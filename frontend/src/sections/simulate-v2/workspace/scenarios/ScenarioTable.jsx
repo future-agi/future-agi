@@ -369,7 +369,7 @@ export default function ScenarioTable({
 
                 return (
                   <TableRow key={row.id} hover>
-                    <TableCell padding="checkbox" sx={{ ...pin(0), pl: 1.5, verticalAlign: "top" }}>
+                    <TableCell padding="checkbox" sx={{ ...pin(0), pl: 1.5, verticalAlign: "middle" }}>
                       <Checkbox
                         size="small"
                         checked={selected.has(row.id)}
@@ -378,14 +378,14 @@ export default function ScenarioTable({
                         sx={selectableCheckboxSx}
                       />
                     </TableCell>
-                    <TableCell sx={{ ...pin(1), px: 1, typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums", verticalAlign: "top" }}>
+                    <TableCell sx={{ ...pin(1), px: 1, typography: "s3", color: "text.subtitle", fontVariantNumeric: "tabular-nums", verticalAlign: "middle" }}>
                       {idx}
                     </TableCell>
 
                 {/* SCENARIO — name (bold, truncated) + summary (subtle,
                     truncated). Both wrapped in tooltips so long values
                     are readable on hover. */}
-                <TableCell sx={{ ...pin(2), verticalAlign: "top" }}>
+                <TableCell sx={{ ...pin(2), verticalAlign: "middle" }}>
                   <Stack direction="row" alignItems="center" spacing={0.75}>
                     <TruncTooltip title={row.name || row.title}>
                       <Typography noWrap sx={{ typography: "s2", fontWeight: 600 }}>{row.name || row.title}</Typography>
@@ -460,12 +460,12 @@ export default function ScenarioTable({
                 {/* STATUS — one answer to "can I trust this row?", with the
                     reason on hover. Same status the Needs attention chip
                     counts. */}
-                <TableCell sx={{ verticalAlign: "top", whiteSpace: "nowrap" }}>
+                <TableCell sx={{ verticalAlign: "middle", whiteSpace: "nowrap" }}>
                   {statusOf && <StatusChip status={statusOf(row)} />}
                 </TableCell>
 
                 {/* PERSONA — name + gender/age line */}
-                <TableCell sx={{ maxWidth: 200, verticalAlign: "top" }}>
+                <TableCell sx={{ maxWidth: 200, verticalAlign: "middle" }}>
                   <TruncTooltip title={p?.name || ""}>
                     <Typography noWrap sx={{ typography: "s2" }}>{p?.name}</Typography>
                   </TruncTooltip>
@@ -477,7 +477,7 @@ export default function ScenarioTable({
                 {/* SITUATION — clamped to 3 lines, full text on hover
                     tooltip so a long paragraph is still readable
                     without breaking the row height. */}
-                <TableCell sx={{ maxWidth: 320, verticalAlign: "top" }}>
+                <TableCell sx={{ maxWidth: 320, verticalAlign: "middle" }}>
                   <ClampCell text={situationText} />
                 </TableCell>
 
@@ -485,13 +485,13 @@ export default function ScenarioTable({
                     situation columns because it describes the *shape*
                     of the task, not its result. Same 3-row cap with a
                     hover popover for the full list. */}
-                <TableCell sx={{ maxWidth: 260, verticalAlign: "top" }}>
+                <TableCell sx={{ maxWidth: 260, verticalAlign: "middle" }}>
                   <SubTasksCell subTasks={subTasks} />
                 </TableCell>
 
                 {/* TOOLS IT NEEDS — the tools the world must answer for
                     this scenario; amber when the pinned world can't. */}
-                <TableCell sx={{ maxWidth: 220, verticalAlign: "top" }}>
+                <TableCell sx={{ maxWidth: 220, verticalAlign: "middle" }}>
                   <ToolChips
                     tools={toolsOf ? toolsOf(row) : (row.requiredTools || [])}
                     answers={answers}
@@ -505,14 +505,14 @@ export default function ScenarioTable({
                     hover. Renamed from "Outcome" so it clearly
                     describes the criterion, not what a specific run
                     actually did. */}
-                <TableCell sx={{ maxWidth: 320, verticalAlign: "top" }}>
+                <TableCell sx={{ maxWidth: 320, verticalAlign: "middle" }}>
                   <ClampCell text={idealOutcomeText} />
                 </TableCell>
 
                 <TableCell
                   align="right"
                   sx={{
-                    whiteSpace: "nowrap", verticalAlign: "top",
+                    whiteSpace: "nowrap", verticalAlign: "middle",
                     position: "sticky", right: 0, zIndex: 1,
                     width: ACTIONS_W, minWidth: ACTIONS_W,
                     /*

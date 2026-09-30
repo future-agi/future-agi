@@ -359,6 +359,62 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
     clearScenarioSelection();
   };
 
+  /* Escape key + click outside the *table* both drop the selection.
+     "Outside the table" here means anywhere that isn't the scenarios
+     list itself or the SelectionBar that acts on it — both carry a
+     `data-scenarios-safe` marker below and count as "inside" for this
+     check. Portalled UI (menus, popovers, dialogs, drawers, snackbar)
+     is also treated as inside so opening the Delete confirmation or
+     the group-by menu doesn't kill the selection those actions are
+     about to work on.
+
+     Uses `click` (bubble phase) so the target's own React onClick has
+     already run by the time we check — a click on Delete inside the
+     SelectionBar fires bulkDelete first, then this fires and clears
+     what's left. */
+  useEffect(() => {
+    if (selectedIds.length === 0) return undefined;
+    const isSafe = (target) => {
+      if (!(target instanceof Element)) return false;
+      if (target.closest("[data-scenarios-safe]")) return true;
+      return !!target.closest(
+        [
+          '[role="dialog"]',
+          '[role="menu"]',
+          '[role="tooltip"]',
+          ".MuiPopover-root",
+          ".MuiMenu-root",
+          ".MuiModal-root",
+          ".MuiDrawer-root",
+          ".SnackbarContainer-root",
+          ".notistack-SnackbarContainer",
+          ".notistack-Snackbar",
+        ].join(","),
+      );
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        clearSelection();
+      }
+    };
+    const onDown = (e) => {
+      if (isSafe(e.target)) return;
+      clearSelection();
+    };
+    window.addEventListener("keydown", onKey);
+    /* Capture phase on mousedown — fires before any other handler on
+       the way down so an ancestor's stopPropagation on click can't hide
+       the click from us. Everything that should keep the selection
+       alive (rows, group headers, SelectionBar, portalled menus and
+       dialogs) is marked as safe below, so this is fine to run first. */
+    document.addEventListener("mousedown", onDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onDown, true);
+    };
+  }, [selectedIds.length]);
+
   /* Edit with builder — pins a Claude-style skill chip inside the
      composer instead of stuffing text into the draft. The chip's
      visible label stays compact ("Edit 2 scenarios"), while the
@@ -617,12 +673,16 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
       {selected.length > 0 && (
         <Box>
           {!locked && selectedIds.length > 0 ? (
-            <SelectionBar
-              count={selectedIds.length}
-              onEdit={handleEditSelected}
-              onDelete={bulkDelete}
-              onClear={clearSelection}
-            />
+            /* Marked safe so a click on Edit / Delete inside the bar
+               doesn't trip the outside-the-table clear-selection. */
+            <Box data-scenarios-safe="selection-bar">
+              <SelectionBar
+                count={selectedIds.length}
+                onEdit={handleEditSelected}
+                onDelete={bulkDelete}
+                onClear={clearSelection}
+              />
+            </Box>
           ) : (
           <Stack
             direction="row" alignItems="center" spacing={1}
@@ -850,8 +910,11 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
 
 
       {/* Each batch in its own container, newest first — who added it and
-          when on top, its scenarios under the Group by inside. */}
+          when on top, its scenarios under the Group by inside.
+          Marked safe so clicks on rows, checkboxes, and group headers
+          keep the selection intact. */}
       {shown.length > 0 && (
+        <Box data-scenarios-safe="list">
         <ScenarioRowContext.Provider value={rowContext}>
           {(() => {
             const all = batchesFrom(shownGroups);
@@ -935,6 +998,7 @@ export default function ScenariosStep({ env, envState, patch, buildMode, onBuild
             );
           })()}
         </ScenarioRowContext.Provider>
+        </Box>
       )}
 
       <SideDrawer open={coverageOpen} onClose={() => setCoverageOpen(false)} width={{ xs: "100%", md: 880 }}>
