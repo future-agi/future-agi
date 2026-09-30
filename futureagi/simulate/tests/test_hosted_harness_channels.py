@@ -206,6 +206,112 @@ def test_index_takes_the_key_of_a_row_it_first_saw_by_name(organization):
 
 
 @pytest.mark.django_db
+def test_provision_hides_rows_indexed_for_scenarios_the_suite_dropped(organization):
+    from simulate.models import HostedHarnessScenario
+
+    job, _ = create_hosted_job(
+        organization,
+        _payload(scenario_count=2),
+        idempotency_key="provision-drops-stale-index-rows",
+    )
+    kept = {
+        "scenario_key": "late-refund",
+        "name": "Sam",
+        "situation": "My refund is late",
+    }
+    added = {
+        "scenario_key": "duplicate-charge",
+        "name": "Avery",
+        "situation": "Charged twice",
+    }
+    dropped = {
+        "scenario_key": "wrong-address",
+        "name": "Lee",
+        "situation": "Wrong address",
+    }
+    index_scenarios(job, [kept, dropped])
+    kept_id = job.scenario_registrations.get(scenario_key="late-refund").id
+
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    response = APIClient().post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Billing support suite",
+            "modality": "text",
+            "personas": [kept, added],
+        },
+        format="json",
+        **_headers(capability),
+    )
+
+    assert response.status_code == 200, response.content
+    live = {row.scenario_key: row for row in job.scenario_registrations.all()}
+    assert set(live) == {"late-refund", "duplicate-charge"}
+    assert live["late-refund"].id == kept_id
+    assert all(row.scenario_id and row.dataset_row_id for row in live.values())
+    stale = HostedHarnessScenario.all_objects.get(job=job, scenario_key="wrong-address")
+    assert stale.deleted is True
+
+
+@pytest.mark.django_db
+def test_provision_still_refuses_to_drop_a_registered_scenario(organization):
+    job, _ = create_hosted_job(
+        organization,
+        _payload(scenario_count=2),
+        idempotency_key="provision-keeps-registered-rows",
+    )
+    kept = {
+        "scenario_key": "late-refund",
+        "name": "Sam",
+        "situation": "My refund is late",
+    }
+    registered = {
+        "scenario_key": "wrong-address",
+        "name": "Lee",
+        "situation": "Wrong address",
+    }
+    added = {
+        "scenario_key": "duplicate-charge",
+        "name": "Avery",
+        "situation": "Charged twice",
+    }
+    index_scenarios(job, [kept, registered])
+    capability = register_attempt(job.id, endpoint_base_url="https://platform.example")
+    client, headers = APIClient(), _headers(capability)
+    first = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Suite",
+            "modality": "text",
+            "personas": [kept, registered],
+        },
+        format="json",
+        **headers,
+    )
+    assert first.status_code == 200, first.content
+    job.refresh_from_db()
+    job.run_test = None
+    job.save(update_fields=["run_test"])
+
+    second = client.post(
+        f"{BASE}/{capability.attempt.id}/scenarios/",
+        {
+            "operation": "provision",
+            "name": "Suite",
+            "modality": "text",
+            "personas": [kept, added],
+        },
+        format="json",
+        **headers,
+    )
+
+    assert second.status_code == 409, second.content
+    assert job.scenario_registrations.filter(scenario_key="wrong-address").exists()
+
+
+@pytest.mark.django_db
 def test_hosted_personas_share_one_dataset_and_map_to_distinct_calls(organization):
     job, _ = create_hosted_job(
         organization,
