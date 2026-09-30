@@ -16,14 +16,10 @@ import {
   Divider,
 } from "@mui/material";
 import { Icon } from "@iconify/react";
-
-const METRICS = [
-  { value: "error_count", label: "Error Count" },
-  { value: "request_count", label: "Request Count" },
-  { value: "cost_total", label: "Total Cost ($)" },
-  { value: "latency_avg", label: "Avg Latency (ms)" },
-  { value: "tokens_total", label: "Total Tokens" },
-];
+import {
+  ALERT_METRIC_OPTIONS,
+  DEFAULT_ALERT_METRIC,
+} from "../constants/alerting";
 
 const CONDITIONS = [
   { value: ">=", label: ">=" },
@@ -56,7 +52,7 @@ const AlertingConfigTab = ({ alerting, onChange }) => {
       ...rules,
       {
         name: `rule_${rules.length + 1}`,
-        metric: "error_count",
+        metric: DEFAULT_ALERT_METRIC,
         condition: ">=",
         threshold: 10,
         window: "5m",
@@ -290,13 +286,13 @@ const AlertingConfigTab = ({ alerting, onChange }) => {
                       select
                       size="small"
                       label="Metric"
-                      value={rule.metric || "error_count"}
+                      value={rule.metric || DEFAULT_ALERT_METRIC}
                       onChange={(e) =>
                         handleRuleChange(idx, "metric", e.target.value)
                       }
                       sx={{ width: 160 }}
                     >
-                      {METRICS.map((m) => (
+                      {ALERT_METRIC_OPTIONS.map((m) => (
                         <MenuItem key={m.value} value={m.value}>
                           {m.label}
                         </MenuItem>
