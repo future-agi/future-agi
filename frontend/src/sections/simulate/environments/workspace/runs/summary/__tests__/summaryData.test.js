@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildSummaryRow, buildEvalSeries, deriveEvals, EVAL_COLORS } from "../summaryData";
+import { buildSummaryRow, buildEvalSeries, countCoveredScenarios, deriveEvals, EVAL_COLORS } from "../summaryData";
 
 // A run row as produced by `mapExecutions` (newest-first ordinal already
 // stamped), extended with the run-level duration the summary table shows.
@@ -98,5 +98,28 @@ describe("deriveEvals", () => {
 
   it("is empty when no run carries any score", () => {
     expect(deriveEvals([{ scores: {} }, {}])).toEqual([]);
+  });
+});
+
+describe("countCoveredScenarios", () => {
+  it("counts the distinct scenarios across runs that carry ids", () => {
+    const rows = [{ scenarioIds: ["a", "b"] }, { scenarioIds: ["b", "c"] }];
+    expect(countCoveredScenarios(rows, 20)).toBe(3);
+  });
+
+  it("counts every id once when runs overlap fully", () => {
+    const rows = [{ scenarioIds: ["a", "b"] }, { scenarioIds: ["a", "b"] }];
+    expect(countCoveredScenarios(rows, 20)).toBe(2);
+  });
+
+  it("skips a run without ids instead of falling back to the environment total", () => {
+    const rows = [{ scenarioIds: ["a", "b"] }, { scenarioIds: [] }, {}];
+    expect(countCoveredScenarios(rows, 20)).toBe(2);
+  });
+
+  it("falls back to the environment total only when no run carries ids", () => {
+    expect(countCoveredScenarios([{ scenarioIds: [] }, {}], 20)).toBe(20);
+    expect(countCoveredScenarios([], 20)).toBe(20);
+    expect(countCoveredScenarios(undefined, 20)).toBe(20);
   });
 });

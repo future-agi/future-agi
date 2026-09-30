@@ -84,6 +84,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
   const { enqueueSnackbar } = useSnackbar();
   const amend = useAmendScenarios(env?.id);
   const [view, setView] = useState("table");
+  const [rowHeight, setRowHeight] = useState("Short");
   // Repeats (k) for a selection run — how many times each selected scenario is
   // re-run. Lives here (the selection bar is presentational) and rides the run
   // URL as ?trials=k. Default single-shot.
@@ -414,6 +415,8 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
                   onQueryChange={handleQueryChange}
                   view={view}
                   onViewChange={setView}
+                  rowHeight={rowHeight}
+                  onRowHeightChange={setRowHeight}
                   groupBy={activeGroupBy}
                   onGroupByChange={setGroupBy}
                   groupings={pageData.groupings}
@@ -474,6 +477,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
               filters={filters}
               groupBy={activeGroupBy}
               locked={locked}
+              rowHeight={rowHeight}
             />
           </SectionCard>
         </>

@@ -22320,6 +22320,7 @@ export interface SimulateRunV3FunctionCallApi {
   result?: SimulateRunV3FunctionCallApiResult;
   output?: SimulateRunV3FunctionCallApiOutput;
   duration_ms?: number;
+  start_time_ms?: number;
 }
 
 export interface CallExecutionV3DetailResponseApi {

@@ -46802,6 +46802,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       result: zod.object({}).passthrough().optional(),
       output: zod.object({}).passthrough().optional(),
       duration_ms: zod.number().optional(),
+      start_time_ms: zod.number().optional(),
     }),
   ),
 });
