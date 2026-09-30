@@ -10731,6 +10731,14 @@ export const EvalListRequestApiOwnerFilter = {
   system: "system",
 } as const;
 
+export type EvalListRequestApiFilterCombinator =
+  (typeof EvalListRequestApiFilterCombinator)[keyof typeof EvalListRequestApiFilterCombinator];
+
+export const EvalListRequestApiFilterCombinator = {
+  and: "and",
+  or: "or",
+} as const;
+
 export type EvalListRequestApiSortBy =
   (typeof EvalListRequestApiSortBy)[keyof typeof EvalListRequestApiSortBy];
 
@@ -10826,6 +10834,7 @@ export interface EvalListRequestApi {
   search?: string;
   owner_filter?: EvalListRequestApiOwnerFilter;
   filters?: EvalListFiltersApi;
+  filter_combinator?: EvalListRequestApiFilterCombinator;
   sort_by?: EvalListRequestApiSortBy;
   sort_order?: EvalListRequestApiSortOrder;
 }
@@ -26552,6 +26561,14 @@ export type ObserveGraphDataRequestApiFiltersItem = {
   filter_config: ObserveGraphDataRequestApiFiltersItemFilterConfig;
 };
 
+export type ObserveGraphDataRequestApiFilterCombinator =
+  (typeof ObserveGraphDataRequestApiFilterCombinator)[keyof typeof ObserveGraphDataRequestApiFilterCombinator];
+
+export const ObserveGraphDataRequestApiFilterCombinator = {
+  and: "and",
+  or: "or",
+} as const;
+
 export type ObserveGraphDataRequestApiInterval =
   (typeof ObserveGraphDataRequestApiInterval)[keyof typeof ObserveGraphDataRequestApiInterval];
 
@@ -26597,6 +26614,7 @@ export interface ObserveGraphDataRequestApi {
   project_id: string;
   /** On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result. */
   filters?: ObserveGraphDataRequestApiFiltersItem[];
+  filter_combinator?: ObserveGraphDataRequestApiFilterCombinator;
   interval?: ObserveGraphDataRequestApiInterval;
   property?: string;
   req_data_config: ObserveGraphDataRequestApiReqDataConfig;
@@ -26935,6 +26953,14 @@ export interface SpanObserveListResponseApi {
   result: SpanObserveListResultApi;
 }
 
+export type SpanObserveListQueryApiFilterCombinator =
+  (typeof SpanObserveListQueryApiFilterCombinator)[keyof typeof SpanObserveListQueryApiFilterCombinator];
+
+export const SpanObserveListQueryApiFilterCombinator = {
+  and: "and",
+  or: "or",
+} as const;
+
 export interface SpanObserveListQueryApi {
   project_id?: string;
   user_id?: string;
@@ -26943,6 +26969,7 @@ export interface SpanObserveListQueryApi {
    * @minLength 1
    */
   filters?: string;
+  filter_combinator?: SpanObserveListQueryApiFilterCombinator;
   /**
    * Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.
    * @minimum 0
@@ -28257,6 +28284,14 @@ export type TraceSessionGraphDataRequestApiFiltersItem = {
   filter_config: TraceSessionGraphDataRequestApiFiltersItemFilterConfig;
 };
 
+export type TraceSessionGraphDataRequestApiFilterCombinator =
+  (typeof TraceSessionGraphDataRequestApiFilterCombinator)[keyof typeof TraceSessionGraphDataRequestApiFilterCombinator];
+
+export const TraceSessionGraphDataRequestApiFilterCombinator = {
+  and: "and",
+  or: "or",
+} as const;
+
 export type TraceSessionGraphDataRequestApiInterval =
   (typeof TraceSessionGraphDataRequestApiInterval)[keyof typeof TraceSessionGraphDataRequestApiInterval];
 
@@ -28302,6 +28337,7 @@ export interface TraceSessionGraphDataRequestApi {
   project_id: string;
   /** On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result. */
   filters?: TraceSessionGraphDataRequestApiFiltersItem[];
+  filter_combinator?: TraceSessionGraphDataRequestApiFilterCombinator;
   interval?: TraceSessionGraphDataRequestApiInterval;
   property?: string;
   req_data_config: TraceSessionGraphDataRequestApiReqDataConfig;
@@ -28821,6 +28857,14 @@ export type TraceGraphDataRequestApiFiltersItem = {
   filter_config: TraceGraphDataRequestApiFiltersItemFilterConfig;
 };
 
+export type TraceGraphDataRequestApiFilterCombinator =
+  (typeof TraceGraphDataRequestApiFilterCombinator)[keyof typeof TraceGraphDataRequestApiFilterCombinator];
+
+export const TraceGraphDataRequestApiFilterCombinator = {
+  and: "and",
+  or: "or",
+} as const;
+
 export type TraceGraphDataRequestApiInterval =
   (typeof TraceGraphDataRequestApiInterval)[keyof typeof TraceGraphDataRequestApiInterval];
 
@@ -28877,6 +28921,7 @@ export interface TraceGraphDataRequestApi {
   project_id: string;
   /** On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result. */
   filters?: TraceGraphDataRequestApiFiltersItem[];
+  filter_combinator?: TraceGraphDataRequestApiFilterCombinator;
   interval?: TraceGraphDataRequestApiInterval;
   property?: string;
   req_data_config: TraceGraphDataRequestApiReqDataConfig;
@@ -28976,6 +29021,14 @@ export interface TracePrototypeListResponseApi {
   result: TracePrototypeListResultApi;
 }
 
+export type TraceListQueryApiFilterCombinator =
+  (typeof TraceListQueryApiFilterCombinator)[keyof typeof TraceListQueryApiFilterCombinator];
+
+export const TraceListQueryApiFilterCombinator = {
+  and: "and",
+  or: "or",
+} as const;
+
 export interface TraceListQueryApi {
   project_version_id: string;
   trace_ids?: string;
@@ -28984,6 +29037,7 @@ export interface TraceListQueryApi {
    * @minLength 1
    */
   filters?: string;
+  filter_combinator?: TraceListQueryApiFilterCombinator;
   /**
    * JSON-encoded list of sort params.
    * @minLength 1
@@ -29018,6 +29072,14 @@ export interface TraceObserveListResponseApi {
   result: TraceObserveListResultApi;
 }
 
+export type TraceObserveListQueryApiFilterCombinator =
+  (typeof TraceObserveListQueryApiFilterCombinator)[keyof typeof TraceObserveListQueryApiFilterCombinator];
+
+export const TraceObserveListQueryApiFilterCombinator = {
+  and: "and",
+  or: "or",
+} as const;
+
 export interface TraceObserveListQueryApi {
   project_id?: string;
   project_version_id?: string;
@@ -29027,6 +29089,7 @@ export interface TraceObserveListQueryApi {
    * @minLength 1
    */
   filters?: string;
+  filter_combinator?: TraceObserveListQueryApiFilterCombinator;
   /**
    * Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.
    * @minimum 0
@@ -35049,6 +35112,7 @@ export type TracerObservationSpanListSpansObserveParams = {
    * @minLength 1
    */
   filters?: string;
+  filter_combinator?: TracerObservationSpanListSpansObserveFilterCombinator;
   /**
    * Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.
    * @minimum 0
@@ -35071,6 +35135,14 @@ export type TracerObservationSpanListSpansObserveParams = {
    */
   allow_sampled?: boolean;
 };
+
+export type TracerObservationSpanListSpansObserveFilterCombinator =
+  (typeof TracerObservationSpanListSpansObserveFilterCombinator)[keyof typeof TracerObservationSpanListSpansObserveFilterCombinator];
+
+export const TracerObservationSpanListSpansObserveFilterCombinator = {
+  and: "and",
+  or: "or",
+} as const;
 
 export type TracerObservationSpanRetrieveLoadingParams = {
   /**
@@ -35683,6 +35755,7 @@ export type TracerTraceListTracesParams = {
    * @minLength 1
    */
   filters?: string;
+  filter_combinator?: TracerTraceListTracesFilterCombinator;
   /**
    * @minLength 1
    */
@@ -35703,6 +35776,14 @@ export type TracerTraceListTracesParams = {
   allow_sampled?: boolean;
 };
 
+export type TracerTraceListTracesFilterCombinator =
+  (typeof TracerTraceListTracesFilterCombinator)[keyof typeof TracerTraceListTracesFilterCombinator];
+
+export const TracerTraceListTracesFilterCombinator = {
+  and: "and",
+  or: "or",
+} as const;
+
 export type TracerTraceListTracesOfSessionParams = {
   project_id?: string;
   project_version_id?: string;
@@ -35711,6 +35792,7 @@ export type TracerTraceListTracesOfSessionParams = {
    * @minLength 1
    */
   filters?: string;
+  filter_combinator?: TracerTraceListTracesOfSessionFilterCombinator;
   /**
    * Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.
    * @minimum 0
@@ -35738,6 +35820,14 @@ export type TracerTraceListTracesOfSessionParams = {
   allow_sampled?: boolean;
   interval?: string;
 };
+
+export type TracerTraceListTracesOfSessionFilterCombinator =
+  (typeof TracerTraceListTracesOfSessionFilterCombinator)[keyof typeof TracerTraceListTracesOfSessionFilterCombinator];
+
+export const TracerTraceListTracesOfSessionFilterCombinator = {
+  and: "and",
+  or: "or",
+} as const;
 
 export type TracerTraceListVoiceCallsParams = {
   project_id: string;

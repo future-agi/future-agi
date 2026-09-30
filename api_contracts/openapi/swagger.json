@@ -64672,6 +64672,17 @@
                         "minLength": 1
                     },
                     {
+                        "name": "filter_combinator",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "and",
+                            "or"
+                        ],
+                        "default": "and"
+                    },
+                    {
                         "name": "page_number",
                         "in": "query",
                         "description": "Zero-based numbered page. Pages whose required ordered work exceeds the finite read contract return HTTP 422 with code page_depth_exceeded; request an earlier page or narrow the time range.",
@@ -69459,6 +69470,17 @@
                         "minLength": 1
                     },
                     {
+                        "name": "filter_combinator",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "and",
+                            "or"
+                        ],
+                        "default": "and"
+                    },
+                    {
                         "name": "sort_params",
                         "in": "query",
                         "required": false,
@@ -69629,6 +69651,17 @@
                         "type": "string",
                         "default": "[]",
                         "minLength": 1
+                    },
+                    {
+                        "name": "filter_combinator",
+                        "in": "query",
+                        "required": false,
+                        "type": "string",
+                        "enum": [
+                            "and",
+                            "or"
+                        ],
+                        "default": "and"
                     },
                     {
                         "name": "page_number",
@@ -107164,6 +107197,15 @@
                 },
                 "filters": {
                     "$ref": "#/definitions/EvalListFilters"
+                },
+                "filter_combinator": {
+                    "title": "Filter combinator",
+                    "type": "string",
+                    "enum": [
+                        "and",
+                        "or"
+                    ],
+                    "default": "and"
                 },
                 "sort_by": {
                     "title": "Sort by",
@@ -145080,6 +145122,15 @@
                         "not_equals"
                     ]
                 },
+                "filter_combinator": {
+                    "title": "Filter combinator",
+                    "type": "string",
+                    "enum": [
+                        "and",
+                        "or"
+                    ],
+                    "default": "and"
+                },
                 "interval": {
                     "title": "Interval",
                     "type": "string",
@@ -145914,6 +145965,15 @@
                         "not_between",
                         "not_equals"
                     ]
+                },
+                "filter_combinator": {
+                    "title": "Filter combinator",
+                    "type": "string",
+                    "enum": [
+                        "and",
+                        "or"
+                    ],
+                    "default": "and"
                 },
                 "page_number": {
                     "title": "Page number",
@@ -148724,6 +148784,15 @@
                         "not_equals"
                     ]
                 },
+                "filter_combinator": {
+                    "title": "Filter combinator",
+                    "type": "string",
+                    "enum": [
+                        "and",
+                        "or"
+                    ],
+                    "default": "and"
+                },
                 "interval": {
                     "title": "Interval",
                     "type": "string",
@@ -149991,6 +150060,15 @@
                         "not_equals"
                     ]
                 },
+                "filter_combinator": {
+                    "title": "Filter combinator",
+                    "type": "string",
+                    "enum": [
+                        "and",
+                        "or"
+                    ],
+                    "default": "and"
+                },
                 "interval": {
                     "title": "Interval",
                     "type": "string",
@@ -150330,6 +150408,15 @@
                         "not_equals"
                     ]
                 },
+                "filter_combinator": {
+                    "title": "Filter combinator",
+                    "type": "string",
+                    "enum": [
+                        "and",
+                        "or"
+                    ],
+                    "default": "and"
+                },
                 "sort_params": {
                     "title": "Sort params",
                     "type": "string",
@@ -150441,6 +150528,15 @@
                         "not_between",
                         "not_equals"
                     ]
+                },
+                "filter_combinator": {
+                    "title": "Filter combinator",
+                    "type": "string",
+                    "enum": [
+                        "and",
+                        "or"
+                    ],
+                    "default": "and"
                 },
                 "page_number": {
                     "title": "Page number",
