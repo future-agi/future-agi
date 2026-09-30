@@ -63,6 +63,9 @@ test('query binds the claimed tenant and cutoff and never silently truncates pay
         const prewhere = request.body.split('PREWHERE')[1].split('WHERE')[0];
         assert.doesNotMatch(prewhere, /is_deleted|updated_at|created_at|org_id/);
         assert.match(request.body, /max_threads=1, max_memory_usage=268435456/);
+        assert.match(request.body, /use_skip_indexes_if_final=1/);
+        assert.match(request.body, /optimize_move_to_prewhere_if_final=0/);
+        assert.match(request.body, /ignore_data_skipping_indices='auto_minmax_index_is_deleted,auto_minmax_index_created_at'/);
         assert.match(request.body, /result_overflow_mode='throw'/);
         assert.doesNotMatch(request.body, /\breadonly\s*=/);
         assert.doesNotMatch(request.body, /substring|summary/i);
