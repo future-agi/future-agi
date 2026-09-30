@@ -62,3 +62,10 @@ test('429 retries cannot spend the reserved verifier call', async () => {
   assert.equal((await gateway.provider.generate(request)).content, 'ok');
   assert.equal(gateway.accounting().model_calls, 2);
 });
+
+test('gateway request ID is captured from the gateway response header', async () => {
+  const {gateway} = fixture([503], {fetchImpl: async () => new Response('private upstream body',
+    {status: 503, headers: {'x-agentcc-request-id': 'gateway-request-123'}})});
+  await assert.rejects(gateway.provider.generate(request), /HTTP 503/);
+  assert.equal(gateway.accounting().calls[0].gateway_request_id, 'gateway-request-123');
+});

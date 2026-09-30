@@ -74,7 +74,8 @@ export function createGatewayProvider({baseUrl, model, apiKey, signal, maxCalls 
         call.http_status = response.status;
         call.provider = response.headers.get('x-agentcc-provider');
         call.routed_model = response.headers.get('x-agentcc-model-used');
-        call.gateway_request_id = response.headers.get('x-request-id');
+        call.gateway_request_id = response.headers.get('x-agentcc-request-id')
+          ?? response.headers.get('x-request-id');
         call.cache_status = response.headers.get('x-agentcc-cache');
         call.cost_microusd = parseGatewayCost(response.headers.get('x-agentcc-cost'));
         call.cost_status = call.cost_microusd === null ? 'unknown' : 'reported';

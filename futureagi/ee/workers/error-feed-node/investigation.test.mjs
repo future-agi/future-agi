@@ -37,6 +37,85 @@ test('failure diagnostics classify host budget errors without exposing upstream 
   }
 });
 
+for (const malformed of ['{', '{"action":"finish"}']) {
+  test(`controller repairs one malformed structured response: ${malformed}`, async () => {
+    const scratch = await mkdtemp(join(tmpdir(), 'omega-structured-repair-test-'));
+    try {
+      const claim = makeClaim();
+      const row = {id: 'span-repair', project_id: claim.project_id, trace_id: claim.trace_id,
+        input: 'Check the trace', output: 'Outcome unresolved'};
+      const assessment = {outcome: 'unknown', findings: [], requirement_checks: []};
+      const calls = [];
+      const result = await investigateTrace(claim, {scratchRoot: scratch,
+        fetchEvidence: async (c, path) => storeEvidence([Buffer.from(JSON.stringify(row) + '\n')], path, c),
+        gatewayConfig: {baseUrl: 'http://fixture/v1', model: 'fixture', apiKey: 'fixture',
+          fetchImpl: async (_url, init) => {
+            const request = JSON.parse(init.body);
+            const system = request.messages.find(message => message.role === 'system').content;
+            const verifier = system.includes('Independently check');
+            const repairing = request.messages.some(message => typeof message.content === 'string'
+              && message.content.includes('response_format_retry'));
+            calls.push({verifier, repairing});
+            const content = verifier ? JSON.stringify(assessment) : repairing
+              ? JSON.stringify({action: 'finish', question: '', child_instructions: '', assessment}) : malformed;
+            return new Response(JSON.stringify({choices: [{message: {role: 'assistant', content},
+              finish_reason: 'stop'}], usage: {prompt_tokens: 10, completion_tokens: 10}}),
+            {headers: {'content-type': 'application/json', 'x-agentcc-cost': '0.000100'}});
+          }}});
+      assert.equal(result.execution_status, 'completed');
+      assert.equal(result.outcome, 'unknown');
+      assert.deepEqual(calls, [{verifier: false, repairing: false},
+        {verifier: false, repairing: true}, {verifier: true, repairing: false}]);
+      assert.equal(result.usage.model_calls, 3);
+    } finally { await rm(scratch, {recursive: true, force: true}); }
+  });
+}
+
+test('upstream HTTP status is retained in a failed investigation receipt', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'omega-upstream-test-'));
+  try {
+    const claim = makeClaim();
+    const row = {id: 'span-upstream', project_id: claim.project_id, trace_id: claim.trace_id,
+      input: 'Check the trace'};
+    const result = await investigateTrace(claim, {scratchRoot: scratch,
+      fetchEvidence: async (c, path) => storeEvidence([Buffer.from(JSON.stringify(row) + '\n')], path, c),
+      gatewayConfig: {baseUrl: 'http://fixture/v1', model: 'fixture', apiKey: 'fixture',
+        fetchImpl: async () => new Response('private upstream body', {status: 503})}});
+    assert.equal(result.execution_status, 'failed');
+    assert.equal(result.gateway_accounting.length, 1);
+    assert.equal(result.gateway_accounting[0].raw.http_status, 503);
+    assert.ok(!JSON.stringify(result).includes('private upstream body'));
+  } finally { await rm(scratch, {recursive: true, force: true}); }
+});
+
+test('verifier call-budget exhaustion without an assessment remains a technical failure', async () => {
+  const scratch = await mkdtemp(join(tmpdir(), 'omega-verifier-budget-test-'));
+  try {
+    const claim = makeClaim();
+    claim.limits.max_model_calls = 4;
+    const row = {id: 'span-verifier-budget', project_id: claim.project_id, trace_id: claim.trace_id,
+      input: 'Check the trace'};
+    const assessment = {outcome: 'unknown', findings: [], requirement_checks: []};
+    let calls = 0;
+    const result = await investigateTrace(claim, {scratchRoot: scratch,
+      fetchEvidence: async (c, path) => storeEvidence([Buffer.from(JSON.stringify(row) + '\n')], path, c),
+      gatewayConfig: {baseUrl: 'http://fixture/v1', model: 'fixture', apiKey: 'fixture',
+        fetchImpl: async () => {
+          calls++;
+          const message = calls === 1
+            ? {role: 'assistant', content: JSON.stringify({action: 'finish', question: '', child_instructions: '', assessment})}
+            : {role: 'assistant', content: '', tool_calls: [{id: `read-${calls}`, type: 'function',
+              function: {name: 'read_span', arguments: JSON.stringify({span_id: row.id, offset: 0, length: 5})}}]};
+          return new Response(JSON.stringify({choices: [{message, finish_reason: 'tool_calls'}],
+            usage: {prompt_tokens: 10, completion_tokens: 10}}),
+          {headers: {'content-type': 'application/json', 'x-agentcc-cost': '0.000100'}});
+        }}});
+    assert.equal(result.execution_status, 'failed');
+    assert.equal(result.outcome, 'unknown');
+    assert.equal(result.usage.model_calls, 4);
+  } finally { await rm(scratch, {recursive: true, force: true}); }
+});
+
 test('Omega compacts a long investigation transcript through the accounted gateway', async () => {
   const scratch = await mkdtemp(join(tmpdir(), 'omega-compaction-test-'));
   const spans = [];
