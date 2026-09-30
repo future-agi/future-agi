@@ -7,6 +7,7 @@ from simulate.models import HostedHarnessScenario
 from simulate.services.harness_scenarios import index_scenarios
 from simulate.services.hosted_harness import create_selected_harness_run
 from simulate.tests.test_harness_amend_archive import NAMES, _key, _run_environment
+from simulate.tests.test_hosted_harness_conversation import storage  # noqa: F401
 
 BASE = "/simulate/api/harness-environments"
 LANGUAGES = ["English", "Spanish", "Hindi"]
@@ -105,3 +106,156 @@ def test_unknown_scenarios_and_run_ids_are_not_found(client, environment):
     )
     assert client.get(f"{BASE}/{run.id}/scenarios/").status_code == 404
     assert client.get(f"{BASE}/{run.id}/scenarios/{row.id}/").status_code == 404
+
+
+@pytest.fixture
+def editable(environment, storage):  # noqa: F811
+    from simulate.models import HostedHarnessJob, HostedHarnessStageOutput
+    from simulate.tests.test_harness_amend_archive import _archive
+
+    HostedHarnessStageOutput.no_workspace_objects.create(
+        job=environment,
+        title="Scenarios",
+        summary="2 pre-authored scenarios",
+        kind="scenarios",
+        data=[
+            {"name": name, "scenario_key": _key(name), "tests": "t", "persona": {}}
+            for name in NAMES[:2]
+        ],
+    )
+    storage.objects[environment.payload["metadata"]["authoring_object_key"]] = _archive(
+        names=NAMES[:2]
+    )
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+        state=HostedHarnessJob.State.COMPLETED
+    )
+    environment.refresh_from_db()
+    return environment
+
+
+def _contract(client, environment):
+    return client.get(f"{BASE}/{environment.id}/scenarios/").json()["scenario_editing"]
+
+
+def _row(environment, name=NAMES[0]):
+    return HostedHarnessScenario.no_workspace_objects.get(
+        job=environment, scenario_key=_key(name)
+    )
+
+
+@pytest.mark.django_db
+def test_a_direct_edit_keeps_every_language_and_reaches_the_next_run(client, editable):
+    languages = _contract(client, editable)["persona_choices"]["languages"][:3]
+    before = editable.payload["metadata"]["authoring_object_key"]
+    row = _row(editable)
+
+    response = client.patch(
+        f"{BASE}/{editable.id}/scenarios/{row.id}/",
+        {"persona": {"languages": languages}},
+        format="json",
+    )
+
+    assert response.status_code == 200, response.content
+    assert response.json()["scenario"]["persona"]["languages"] == languages
+    editable.refresh_from_db()
+    assert editable.payload["metadata"]["authoring_object_key"] != before
+    run, _ = create_selected_harness_run(
+        editable,
+        scenario_keys=[row.scenario_key],
+        trials=1,
+        idempotency_key="after-edit",
+    )
+    edits = run.payload["metadata"]["scenario_edits"][row.scenario_key]
+    assert edits["persona"]["languages"] == languages
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"persona": {"languages": "English"}},
+        {"persona": {"languages": ["Klingon"]}},
+        {"persona": {"name": "Somebody"}},
+        {"background_noise": "a jet engine"},
+    ],
+)
+def test_values_outside_the_editing_contract_are_refused(client, editable, body):
+    row = _row(editable)
+
+    response = client.patch(
+        f"{BASE}/{editable.id}/scenarios/{row.id}/", body, format="json"
+    )
+
+    assert response.status_code == 400, response.content
+    assert response.json()["error"] in {"field_not_editable", "value_not_allowed"}
+
+
+@pytest.mark.django_db
+def test_the_passes_when_line_is_not_a_direct_edit(client, editable):
+    row = _row(editable)
+
+    response = client.patch(
+        f"{BASE}/{editable.id}/scenarios/{row.id}/",
+        {"tests": "anything"},
+        format="json",
+    )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.django_db
+def test_a_stale_revision_or_an_unbuilt_environment_is_refused(client, editable):
+    from simulate.models import HostedHarnessJob
+
+    row = _row(editable)
+    stale = client.patch(
+        f"{BASE}/{editable.id}/scenarios/{row.id}/",
+        {"keywords": ["refund"], "expected_revision": "sha256:not-current"},
+        format="json",
+    )
+    HostedHarnessJob.no_workspace_objects.filter(id=editable.id).update(
+        state=HostedHarnessJob.State.RUNNING
+    )
+    building = client.patch(
+        f"{BASE}/{editable.id}/scenarios/{row.id}/",
+        {"keywords": ["refund"]},
+        format="json",
+    )
+
+    assert (stale.status_code, stale.json()["error"]) == (409, "scenario_suite_changed")
+    assert (building.status_code, building.json()["error"]) == (
+        409,
+        "environment_not_ready",
+    )
+
+
+@pytest.mark.django_db
+def test_deleting_hides_scenarios_and_keeps_their_rows(client, editable):
+    first, second = _row(editable, NAMES[0]), _row(editable, NAMES[1])
+
+    one = client.delete(f"{BASE}/{editable.id}/scenarios/{first.id}/")
+    missing = client.post(
+        f"{BASE}/{editable.id}/scenarios/delete/",
+        {"scenario_ids": [str(second.id), str(uuid.uuid4())]},
+        format="json",
+    )
+
+    assert one.status_code == 200, one.content
+    listed = client.get(f"{BASE}/{editable.id}/scenarios/").json()["results"]
+    assert [row["id"] for row in listed] == [str(second.id)]
+    assert HostedHarnessScenario.all_objects.get(id=first.id).deleted is True
+    assert missing.status_code == 404
+
+
+@pytest.mark.django_db
+def test_changes_address_environments_only(client, editable):
+    row = _row(editable)
+    run, _ = create_selected_harness_run(
+        editable, scenario_keys=[row.scenario_key], trials=1, idempotency_key="run-only"
+    )
+
+    response = client.patch(
+        f"{BASE}/{run.id}/scenarios/{row.id}/", {"keywords": ["refund"]}, format="json"
+    )
+
+    assert response.status_code == 404

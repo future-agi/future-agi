@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1058,
+  endpointCount: 1059,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -856,8 +856,11 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         ["post"],
       "/simulate/api/harness-environments/{id}/scenarios/": ["get"],
       "/simulate/api/harness-environments/{id}/scenarios/coverage/": ["get"],
+      "/simulate/api/harness-environments/{id}/scenarios/delete/": ["post"],
       "/simulate/api/harness-environments/{id}/scenarios/{scenario_id}/": [
+        "delete",
         "get",
+        "patch",
       ],
       "/simulate/api/harness-jobs/": ["get", "post"],
       "/simulate/api/harness-jobs/health/": ["get"],
@@ -2135,7 +2138,12 @@ export const API_SURFACE_PATHS = Object.freeze({
   ],
   "/simulate/api/harness-environments/{id}/scenarios/": ["get"],
   "/simulate/api/harness-environments/{id}/scenarios/coverage/": ["get"],
-  "/simulate/api/harness-environments/{id}/scenarios/{scenario_id}/": ["get"],
+  "/simulate/api/harness-environments/{id}/scenarios/delete/": ["post"],
+  "/simulate/api/harness-environments/{id}/scenarios/{scenario_id}/": [
+    "delete",
+    "get",
+    "patch",
+  ],
   "/simulate/api/harness-jobs/": ["get", "post"],
   "/simulate/api/harness-jobs/health/": ["get"],
   "/simulate/api/harness-jobs/preflight/": ["post"],

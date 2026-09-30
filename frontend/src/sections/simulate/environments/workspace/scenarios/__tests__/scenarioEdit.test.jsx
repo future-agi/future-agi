@@ -25,12 +25,15 @@ vi.mock("src/api/simulate-environments/scenarios", async () => {
     ...actual,
     listScenarios: vi.fn(),
     amendScenarios: vi.fn(),
+    editScenario: vi.fn(),
     // Mock coverage too so CoverageMatrix does not fire a real (failing) request
     // that spams the axios auth-redirect interceptor on every render.
     scenarioCoverage: vi.fn(async () => ({ axes: [], per_axis: [], rows: [], columns: [], cells: [] })),
   };
 });
-const { listScenarios, amendScenarios } = await import("src/api/simulate-environments/scenarios");
+const { listScenarios, amendScenarios, editScenario } = await import(
+  "src/api/simulate-environments/scenarios"
+);
 const { queryScenarioFixture, resetScenarioFixture } = await import(
   "src/api/simulate-environments/_fixtures/scenariosFixtures"
 );
@@ -60,6 +63,8 @@ beforeEach(() => {
   );
   amendScenarios.mockReset();
   amendScenarios.mockResolvedValue({ receipts: [] });
+  editScenario.mockReset();
+  editScenario.mockResolvedValue({ receipts: [], revision: "", scenario: null });
 });
 
 describe("ScenariosStep — add", () => {
@@ -127,6 +132,23 @@ describe("ScenariosStep — edit", () => {
         { op: "set_field", scenario: row.name, field: "tests", value: "Passes when it books the ride." },
       ],
     });
+  });
+});
+
+describe("ScenariosStep: direct edits", () => {
+  it("saves a directly editable field on the scenario by its row id", async () => {
+    renderStep();
+    await screen.findByRole("table");
+    const row = firstRow();
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit scenario" })[0]);
+
+    const turns = Number(row.max_turns) === 7 ? 9 : 7;
+    fireEvent.change(screen.getByRole("slider"), { target: { value: turns } });
+    fireEvent.click(screen.getByRole("button", { name: "Save scenario" }));
+
+    await waitFor(() => expect(editScenario).toHaveBeenCalledTimes(1));
+    expect(editScenario).toHaveBeenCalledWith("job-test", row.id, { max_turns: turns });
+    expect(amendScenarios).not.toHaveBeenCalled();
   });
 });
 

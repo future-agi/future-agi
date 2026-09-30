@@ -17721,6 +17721,48 @@ export interface HarnessScenarioCoverageResponseApi {
   level_labels: HarnessScenarioCoverageResponseApiLevelLabels;
 }
 
+export interface HarnessScenarioDeleteApi {
+  /**
+   * @minItems 1
+   * @maxItems 1000
+   */
+  scenario_ids: string[];
+  expected_revision?: string;
+}
+
+export type HarnessScenarioChangeResponseApiReceiptsItem = {
+  [key: string]: string;
+};
+
+export interface HarnessScenarioChangeResponseApi {
+  receipts: HarnessScenarioChangeResponseApiReceiptsItem[];
+  revision: string;
+  scenario: HarnessScenarioRowApi;
+}
+
+export interface HarnessScenarioErrorApi {
+  /** @minLength 1 */
+  error: string;
+  /** @minLength 1 */
+  message: string;
+}
+
+export type HarnessScenarioEditApiPersona = { [key: string]: string };
+
+export interface HarnessScenarioEditApi {
+  /**
+   * @minimum 1
+   * @maximum 200
+   */
+  max_turns?: number;
+  /** @minLength 1 */
+  background_noise?: string;
+  /** @maxItems 50 */
+  keywords?: string[];
+  persona?: HarnessScenarioEditApiPersona;
+  expected_revision?: string;
+}
+
 export type HarnessJobReadApiReceiptsItem = { [key: string]: unknown };
 
 export type HarnessJobReadApiUsageLimit = { [key: string]: unknown };

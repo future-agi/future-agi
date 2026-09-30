@@ -666,7 +666,7 @@ def editing_contract(spoken: bool = True) -> dict[str, Any]:
     }
 
 
-def _spoken(job: HostedHarnessJob) -> bool:
+def is_spoken_suite(job: HostedHarnessJob) -> bool:
     from simulate.services.harness_environment import AGENT_TYPE_VOICE, agent_type
 
     return agent_type(job) == AGENT_TYPE_VOICE
@@ -722,7 +722,7 @@ def scenario_page(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """One page's rows and the panel details that go with them."""
     group_by = DEFAULT_GROUP_BY if group_by is None else group_by
-    spoken = _spoken(job)
+    spoken = is_spoken_suite(job)
     rows = grouped([scenario_row(one) for one in page], group_by)
     fields = field_catalogue(offerable, spoken=spoken)
     return rows, {
@@ -750,5 +750,5 @@ def suite_coverage(job: HostedHarnessJob, params) -> dict[str, Any]:
         queryset,
         params.get("row_axis") or DEFAULT_ROW_AXIS,
         params.get("col_axis") or DEFAULT_COL_AXIS,
-        spoken=_spoken(job),
+        spoken=is_spoken_suite(job),
     )

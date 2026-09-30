@@ -36069,6 +36069,53 @@ export const SimulateApiHarnessEnvironmentsScenariosScenarioCoverageResponse =
   });
 
 /**
+ * Remove several scenarios at once.
+ */
+export const SimulateApiHarnessEnvironmentsScenariosRemoveScenariosParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const simulateApiHarnessEnvironmentsScenariosRemoveScenariosBodyScenarioIdsMax = 1000;
+
+export const SimulateApiHarnessEnvironmentsScenariosRemoveScenariosBody =
+  zod.object({
+    scenario_ids: zod
+      .array(zod.string().uuid())
+      .min(1)
+      .max(
+        simulateApiHarnessEnvironmentsScenariosRemoveScenariosBodyScenarioIdsMax,
+      ),
+    expected_revision: zod.string().optional(),
+  });
+
+export const SimulateApiHarnessEnvironmentsScenariosRemoveScenariosResponse =
+  zod.object({
+    receipts: zod.array(zod.record(zod.string(), zod.string())),
+    revision: zod.string(),
+    scenario: zod.object({
+      id: zod.string().uuid(),
+      scenario_id: zod.string().uuid(),
+      scenario_key: zod.string().min(1),
+      number: zod.number(),
+      name: zod.string(),
+      use_case: zod.string(),
+      instruction: zod.string(),
+      branch: zod.string(),
+      tests: zod.string(),
+      persona: zod.record(zod.string(), zod.string()),
+      coverage: zod.record(zod.string(), zod.string()),
+      sub_goals: zod.array(zod.object({}).passthrough()),
+      keywords: zod.array(zod.object({}).passthrough()),
+      background_noise: zod.string(),
+      max_turns: zod.number(),
+      status: zod.string().min(1),
+      call_execution_id: zod.string().uuid(),
+      group: zod.string().min(1).optional(),
+    }),
+  });
+
+/**
  * An environment is the job that built it (the world itself lives in object
 storage, addressed from the job's metadata), so these endpoints project the
 same rows the harness-jobs API serves. They exist separately because the
@@ -36105,6 +36152,105 @@ export const SimulateApiHarnessEnvironmentsScenarioDetailResponse = zod.object({
   call_execution_id: zod.string().uuid(),
   group: zod.string().min(1).optional(),
 });
+
+/**
+ * Replace a scenario's directly editable fields; nothing is re-proved.
+ */
+export const SimulateApiHarnessEnvironmentsScenariosPartialUpdateParams =
+  zod.object({
+    id: zod.string(),
+    scenario_id: zod.string(),
+  });
+
+export const simulateApiHarnessEnvironmentsScenariosPartialUpdateBodyMaxTurnsMax = 200;
+
+export const simulateApiHarnessEnvironmentsScenariosPartialUpdateBodyKeywordsItemMax = 100;
+
+export const simulateApiHarnessEnvironmentsScenariosPartialUpdateBodyKeywordsMax = 50;
+
+export const SimulateApiHarnessEnvironmentsScenariosPartialUpdateBody =
+  zod.object({
+    max_turns: zod
+      .number()
+      .min(1)
+      .max(simulateApiHarnessEnvironmentsScenariosPartialUpdateBodyMaxTurnsMax)
+      .optional(),
+    background_noise: zod.string().min(1).optional(),
+    keywords: zod
+      .array(
+        zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessEnvironmentsScenariosPartialUpdateBodyKeywordsItemMax,
+          ),
+      )
+      .max(simulateApiHarnessEnvironmentsScenariosPartialUpdateBodyKeywordsMax)
+      .optional(),
+    persona: zod.record(zod.string(), zod.string()).optional(),
+    expected_revision: zod.string().optional(),
+  });
+
+export const SimulateApiHarnessEnvironmentsScenariosPartialUpdateResponse =
+  zod.object({
+    receipts: zod.array(zod.record(zod.string(), zod.string())),
+    revision: zod.string(),
+    scenario: zod.object({
+      id: zod.string().uuid(),
+      scenario_id: zod.string().uuid(),
+      scenario_key: zod.string().min(1),
+      number: zod.number(),
+      name: zod.string(),
+      use_case: zod.string(),
+      instruction: zod.string(),
+      branch: zod.string(),
+      tests: zod.string(),
+      persona: zod.record(zod.string(), zod.string()),
+      coverage: zod.record(zod.string(), zod.string()),
+      sub_goals: zod.array(zod.object({}).passthrough()),
+      keywords: zod.array(zod.object({}).passthrough()),
+      background_noise: zod.string(),
+      max_turns: zod.number(),
+      status: zod.string().min(1),
+      call_execution_id: zod.string().uuid(),
+      group: zod.string().min(1).optional(),
+    }),
+  });
+
+/**
+ * Remove one scenario; runs that used it keep it in their history.
+ */
+export const SimulateApiHarnessEnvironmentsScenariosDeleteParams = zod.object({
+  id: zod.string(),
+  scenario_id: zod.string(),
+});
+
+export const SimulateApiHarnessEnvironmentsScenariosDeleteResponse = zod.object(
+  {
+    receipts: zod.array(zod.record(zod.string(), zod.string())),
+    revision: zod.string(),
+    scenario: zod.object({
+      id: zod.string().uuid(),
+      scenario_id: zod.string().uuid(),
+      scenario_key: zod.string().min(1),
+      number: zod.number(),
+      name: zod.string(),
+      use_case: zod.string(),
+      instruction: zod.string(),
+      branch: zod.string(),
+      tests: zod.string(),
+      persona: zod.record(zod.string(), zod.string()),
+      coverage: zod.record(zod.string(), zod.string()),
+      sub_goals: zod.array(zod.object({}).passthrough()),
+      keywords: zod.array(zod.object({}).passthrough()),
+      background_noise: zod.string(),
+      max_turns: zod.number(),
+      status: zod.string().min(1),
+      call_execution_id: zod.string().uuid(),
+      group: zod.string().min(1).optional(),
+    }),
+  },
+);
 
 /**
  * Validates the v1.6 request contract and delegates execution to the public backend selected by

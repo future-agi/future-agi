@@ -51004,6 +51004,61 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/scenarios/delete/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_scenarios_remove_scenarios",
+                "description": "Remove several scenarios at once.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioDelete"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioChangeResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/scenarios/{scenario_id}/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_scenario_detail",
@@ -51015,6 +51070,91 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/HarnessScenarioRow"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ]
+            },
+            "patch": {
+                "operationId": "simulate_api_harness-environments_scenarios_partial_update",
+                "description": "Replace a scenario's directly editable fields; nothing is re-proved.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioEdit"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioChangeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioError"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "delete": {
+                "operationId": "simulate_api_harness-environments_scenarios_delete",
+                "description": "Remove one scenario; runs that used it keep it in their history.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioChangeResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioError"
+                        }
+                    },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioError"
                         }
                     },
                     "default": {
@@ -124216,6 +124356,110 @@
                         "type": "string",
                         "x-nullable": true
                     }
+                }
+            }
+        },
+        "HarnessScenarioDelete": {
+            "required": [
+                "scenario_ids"
+            ],
+            "type": "object",
+            "properties": {
+                "scenario_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "maxItems": 1000,
+                    "minItems": 1
+                },
+                "expected_revision": {
+                    "title": "Expected revision",
+                    "type": "string"
+                }
+            }
+        },
+        "HarnessScenarioChangeResponse": {
+            "required": [
+                "receipts",
+                "revision",
+                "scenario"
+            ],
+            "type": "object",
+            "properties": {
+                "receipts": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "revision": {
+                    "title": "Revision",
+                    "type": "string"
+                },
+                "scenario": {
+                    "$ref": "#/definitions/HarnessScenarioRow"
+                }
+            }
+        },
+        "HarnessScenarioError": {
+            "required": [
+                "error",
+                "message"
+            ],
+            "type": "object",
+            "properties": {
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessScenarioEdit": {
+            "type": "object",
+            "properties": {
+                "max_turns": {
+                    "title": "Max turns",
+                    "type": "integer",
+                    "maximum": 200,
+                    "minimum": 1
+                },
+                "background_noise": {
+                    "title": "Background noise",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "keywords": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 100,
+                        "minLength": 1
+                    },
+                    "maxItems": 50
+                },
+                "persona": {
+                    "title": "Persona",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "x-nullable": true
+                    }
+                },
+                "expected_revision": {
+                    "title": "Expected revision",
+                    "type": "string"
                 }
             }
         },

@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1058,
+  endpointCount: 1059,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28311,6 +28311,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-environments/{id}/scenarios/delete/": {
+      post: {
+        operationId:
+          "simulate_api_harness-environments_scenarios_remove_scenarios",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessScenarioDelete",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessScenarioChangeResponse",
+          },
+          404: {
+            $ref: "#/definitions/HarnessScenarioError",
+          },
+          409: {
+            $ref: "#/definitions/HarnessScenarioError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-environments/{id}/scenarios/{scenario_id}/": {
       get: {
         operationId: "simulate_api_harness-environments_scenario_detail",
@@ -28321,6 +28347,54 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessScenarioRow",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      patch: {
+        operationId:
+          "simulate_api_harness-environments_scenarios_partial_update",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessScenarioEdit",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessScenarioChangeResponse",
+          },
+          400: {
+            $ref: "#/definitions/HarnessScenarioError",
+          },
+          404: {
+            $ref: "#/definitions/HarnessScenarioError",
+          },
+          409: {
+            $ref: "#/definitions/HarnessScenarioError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      delete: {
+        operationId: "simulate_api_harness-environments_scenarios_delete",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessScenarioChangeResponse",
+          },
+          404: {
+            $ref: "#/definitions/HarnessScenarioError",
+          },
+          409: {
+            $ref: "#/definitions/HarnessScenarioError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -63248,6 +63322,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessScenarioChangeResponse: {
+      required: ["receipts", "revision", "scenario"],
+      type: "object",
+      properties: {
+        receipts: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        revision: {
+          title: "Revision",
+          type: "string",
+        },
+        scenario: {
+          $ref: "#/definitions/HarnessScenarioRow",
+        },
+      },
+    },
     HarnessScenarioCoverageResponse: {
       required: [
         "per_axis",
@@ -63338,6 +63435,78 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "string",
             "x-nullable": true,
           },
+        },
+      },
+    },
+    HarnessScenarioDelete: {
+      required: ["scenario_ids"],
+      type: "object",
+      properties: {
+        scenario_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          maxItems: 1000,
+          minItems: 1,
+        },
+        expected_revision: {
+          title: "Expected revision",
+          type: "string",
+        },
+      },
+    },
+    HarnessScenarioEdit: {
+      type: "object",
+      properties: {
+        max_turns: {
+          title: "Max turns",
+          type: "integer",
+          maximum: 200,
+          minimum: 1,
+        },
+        background_noise: {
+          title: "Background noise",
+          type: "string",
+          minLength: 1,
+        },
+        keywords: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 100,
+            minLength: 1,
+          },
+          maxItems: 50,
+        },
+        persona: {
+          title: "Persona",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        expected_revision: {
+          title: "Expected revision",
+          type: "string",
+        },
+      },
+    },
+    HarnessScenarioError: {
+      required: ["error", "message"],
+      type: "object",
+      properties: {
+        error: {
+          title: "Error",
+          type: "string",
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
         },
       },
     },

@@ -17,8 +17,12 @@ from simulate.serializers.harness_environment import (
     HarnessEnvironmentRenameSerializer,
     HarnessEnvironmentRunEvaluationQueuedSerializer,
     HarnessEnvironmentToolCallEvaluationSerializer,
+    HarnessScenarioChangeResponseSerializer,
     HarnessScenarioCoverageQuerySerializer,
     HarnessScenarioCoverageResponseSerializer,
+    HarnessScenarioDeleteSerializer,
+    HarnessScenarioEditSerializer,
+    HarnessScenarioErrorSerializer,
     HarnessScenarioListQuerySerializer,
     HarnessScenarioListResponseSerializer,
     HarnessScenarioRowSerializer,
@@ -44,6 +48,11 @@ from simulate.services.harness_scenarios import (
     scenario_page,
     scenario_row,
     suite_coverage,
+)
+from simulate.services.scenario_changes import (
+    ScenarioChangeRefused,
+    delete_scenarios,
+    edit_scenario,
 )
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.pagination import ExtendedPageNumberPagination
@@ -95,6 +104,12 @@ def _uuid_or_none(value):
         return UUID(str(value))
     except (AttributeError, TypeError, ValueError):
         return None
+
+
+def _refused(refused):
+    return Response(
+        {"error": refused.code, "message": refused.message}, status=refused.status
+    )
 
 
 class HarnessEnvironmentViewSet(viewsets.ViewSet):
@@ -247,7 +262,10 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             )
         return Response(suite_coverage(job, request.query_params))
 
-    @swagger_auto_schema(responses={200: HarnessScenarioRowSerializer})
+    @swagger_auto_schema(
+        operation_id="simulate_api_harness-environments_scenario_detail",
+        responses={200: HarnessScenarioRowSerializer},
+    )
     @action(
         detail=True,
         methods=["get"],
@@ -269,6 +287,92 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
         return Response(scenario_row(row))
+
+    @validated_request(
+        request_serializer=HarnessScenarioEditSerializer,
+        responses={
+            200: HarnessScenarioChangeResponseSerializer,
+            400: HarnessScenarioErrorSerializer,
+            404: HarnessScenarioErrorSerializer,
+            409: HarnessScenarioErrorSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    @scenario_detail.mapping.patch
+    def patch_scenario(self, request, pk=None, scenario_id=None):
+        """Replace a scenario's directly editable fields; nothing is re-proved."""
+        job = self._job(request, pk)
+        identifier = _uuid_or_none(scenario_id)
+        if job is None or identifier is None:
+            return _refused(
+                ScenarioChangeRefused("scenario_not_found", "scenario not found", 404)
+            )
+        data = dict(request.validated_data)
+        expected = data.pop("expected_revision", None)
+        persona = data.pop("persona", None) or {}
+        try:
+            return Response(
+                edit_scenario(
+                    job,
+                    identifier,
+                    fields=data,
+                    persona=persona,
+                    expected_revision=expected,
+                )
+            )
+        except ScenarioChangeRefused as refused:
+            return _refused(refused)
+
+    @swagger_auto_schema(
+        responses={
+            200: HarnessScenarioChangeResponseSerializer,
+            404: HarnessScenarioErrorSerializer,
+            409: HarnessScenarioErrorSerializer,
+        }
+    )
+    @scenario_detail.mapping.delete
+    def remove_scenario(self, request, pk=None, scenario_id=None):
+        """Remove one scenario; runs that used it keep it in their history."""
+        job = self._job(request, pk)
+        identifier = _uuid_or_none(scenario_id)
+        if job is None or identifier is None:
+            return _refused(
+                ScenarioChangeRefused("scenario_not_found", "scenario not found", 404)
+            )
+        try:
+            return Response(delete_scenarios(job, [identifier]))
+        except ScenarioChangeRefused as refused:
+            return _refused(refused)
+
+    @validated_request(
+        request_serializer=HarnessScenarioDeleteSerializer,
+        responses={
+            200: HarnessScenarioChangeResponseSerializer,
+            404: HarnessScenarioErrorSerializer,
+            409: HarnessScenarioErrorSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="scenarios/delete")
+    def remove_scenarios(self, request, pk=None):
+        """Remove several scenarios at once."""
+        job = self._job(request, pk)
+        if job is None:
+            return _refused(
+                ScenarioChangeRefused(
+                    "scenario_not_found", "environment not found", 404
+                )
+            )
+        try:
+            return Response(
+                delete_scenarios(
+                    job,
+                    request.validated_data["scenario_ids"],
+                    expected_revision=request.validated_data.get("expected_revision"),
+                )
+            )
+        except ScenarioChangeRefused as refused:
+            return _refused(refused)
 
     @validated_request(
         request_serializer=HarnessRunCreateSerializer,
