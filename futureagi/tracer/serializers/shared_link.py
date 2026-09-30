@@ -12,6 +12,7 @@ SUPPORTED_SHARED_RESOURCE_TYPE_CHOICES = [
     (ResourceType.TRACE.value, ResourceType.TRACE.label),
     (ResourceType.DASHBOARD.value, ResourceType.DASHBOARD.label),
     (ResourceType.PROJECT.value, ResourceType.PROJECT.label),
+    (ResourceType.CALL_EXECUTION.value, ResourceType.CALL_EXECUTION.label),
 ]
 
 

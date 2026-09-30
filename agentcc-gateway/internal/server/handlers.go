@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -172,33 +173,8 @@ func mergeModelObjects(globalModels, orgModels []models.ModelObject) []models.Mo
 }
 
 func (h *Handlers) resolveProviderWithOrgFallback(ctx context.Context, rc *models.RequestContext, orgID string, orgCfg *tenant.OrgConfig, model string) (providers.Provider, error) {
-	if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-		for providerID, provCfg := range orgCfg.Providers {
-			if provCfg == nil || !provCfg.Enabled || !provCfg.HasCredentials() {
-				continue
-			}
-			for _, m := range provCfg.Models {
-				if orgModelMatches(m, model, providerID) {
-					orgProvider, err := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, providerID, provCfg.APIKey, provCfg)
-					if err == nil {
-						rc.Provider = providerID
-						rc.Metadata["org_provider_model_match"] = model
-						return orgProvider, nil
-					}
-				}
-			}
-		}
-	}
-
-	provider, err := h.resolveProvider(ctx, rc, model)
+	provider, err := h.resolveProviderOrgFirst(ctx, rc, orgID, orgCfg, model)
 	if err != nil {
-		if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-			if orgP, providerID := h.resolveOrgProvider(orgID, orgCfg, model); orgP != nil {
-				rc.Provider = providerID
-				rc.Metadata["org_provider"] = "true"
-				return orgP, nil
-			}
-		}
 		return nil, err
 	}
 
@@ -206,6 +182,25 @@ func (h *Handlers) resolveProviderWithOrgFallback(ctx context.Context, rc *model
 		provider = h.applyOrgProviderOverride(orgID, orgCfg, rc.Provider, provider)
 	}
 	return provider, nil
+}
+
+// resolveProviderOrgFirst resolves model to the org's own provider for it when
+// there is one, and otherwise through resolveProvider. When the org's
+// providers for the model all fail to build and the key may use only those,
+// it reports that failure without trying them again.
+func (h *Handlers) resolveProviderOrgFirst(ctx context.Context, rc *models.RequestContext, orgID string, orgCfg *tenant.OrgConfig, model string) (providers.Provider, error) {
+	if orgID != "" {
+		p, providerID, err := h.orgProviderFor(orgID, orgCfg, model)
+		if p != nil {
+			rc.Provider = providerID
+			rc.Metadata["org_provider_model_match"] = model
+			return p, nil
+		}
+		if err != nil && h.orgProvidersOnly(ctx, rc) {
+			return nil, orgProviderError(model, providerID, err)
+		}
+	}
+	return h.resolveProvider(ctx, rc, model)
 }
 
 // SetCaptureStreamContent enables reassembly of streamed completions. Off by
@@ -398,9 +393,21 @@ func (h *Handlers) applyOrgProviderOverride(orgID string, orgCfg *tenant.OrgConf
 // provider config. It checks each enabled provider's model list and creates a
 // cached provider instance with the org's API key.
 func (h *Handlers) resolveOrgProvider(orgID string, orgCfg *tenant.OrgConfig, model string) (providers.Provider, string) {
-	if orgCfg == nil || h.orgProviderCache == nil {
-		return nil, ""
+	if p, providerID, _ := h.orgProviderFor(orgID, orgCfg, model); p != nil {
+		return p, providerID
 	}
+	return nil, ""
+}
+
+// orgProviderFor returns the first of the org's enabled providers that lists
+// model and can be built. When every one that lists it fails to build, it
+// returns the first failure and that provider's ID instead.
+func (h *Handlers) orgProviderFor(orgID string, orgCfg *tenant.OrgConfig, model string) (providers.Provider, string, error) {
+	if orgCfg == nil || h.orgProviderCache == nil {
+		return nil, "", nil
+	}
+	var failedID string
+	var firstErr error
 	for providerID, pcfg := range orgCfg.Providers {
 		if pcfg == nil || !pcfg.Enabled || !pcfg.HasCredentials() {
 			continue
@@ -411,13 +418,16 @@ func (h *Handlers) resolveOrgProvider(orgID string, orgCfg *tenant.OrgConfig, mo
 				if err != nil {
 					slog.Warn("failed to create org provider for model",
 						"org_id", orgID, "provider", providerID, "model", model, "error", err)
+					if firstErr == nil {
+						failedID, firstErr = providerID, err
+					}
 					continue
 				}
-				return p, providerID
+				return p, providerID, nil
 			}
 		}
 	}
-	return nil, ""
+	return nil, failedID, firstErr
 }
 
 func (h *Handlers) effectiveFailover(orgCfg *tenant.OrgConfig) *routing.Failover {
@@ -1017,54 +1027,14 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve provider (with load balancing and failover if configured).
 	var provider providers.Provider
-	var orgModelResolved bool
-
-	// Check if the org has a provider that specifically registers this model.
-	if !providerLocked && orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-		slog.Info("checking org providers for model", "model", req.Model, "org_providers_count", len(orgCfg.Providers))
-		for providerID, provCfg := range orgCfg.Providers {
-			if provCfg == nil || !provCfg.Enabled || !provCfg.HasCredentials() {
-				slog.Info("skipping org provider", "provider", providerID, "nil", provCfg == nil, "enabled", provCfg != nil && provCfg.Enabled, "has_credentials", provCfg != nil && provCfg.HasCredentials())
-				continue
-			}
-			for _, m := range provCfg.Models {
-				if orgModelMatches(m, req.Model, providerID) {
-					slog.Info("org provider model match, creating override", "provider", providerID, "model", m)
-					orgProvider, err := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, providerID, provCfg.APIKey, provCfg)
-					if err == nil {
-						provider = orgProvider
-						rc.Provider = providerID
-						rc.Metadata["org_provider_model_match"] = req.Model
-						orgModelResolved = true
-						break
-					}
-				}
-			}
-			if orgModelResolved {
-				break
-			}
-		}
-	}
-
 	if providerLocked {
 		provider = lockedProvider
-	} else if !orgModelResolved {
+	} else {
 		var err error
-		provider, err = h.resolveProvider(ctx, rc, req.Model)
+		provider, err = h.resolveProviderOrgFirst(ctx, rc, orgID, orgCfg, req.Model)
 		if err != nil {
-			// Try org provider model lists before giving up.
-			if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-				if orgP, providerID := h.resolveOrgProvider(orgID, orgCfg, req.Model); orgP != nil {
-					provider = orgP
-					rc.Provider = providerID
-					rc.Metadata["org_provider"] = "true"
-					err = nil
-				}
-			}
-			if err != nil {
-				models.WriteErrorFromError(w, err)
-				return
-			}
+			models.WriteErrorFromError(w, err)
+			return
 		}
 	}
 
@@ -1154,16 +1124,61 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// unavailableModelError explains why a non-internal key cannot use model. When
+// one of the org's own providers lists the model but cannot be built (its
+// base_url was refused, say) that is the reason to report: the generic
+// answer would send the caller looking at their API key instead.
+func (h *Handlers) unavailableModelError(rc *models.RequestContext, model string) error {
+	if orgID, orgCfg := h.resolveOrgConfig(rc); orgID != "" {
+		if _, providerID, err := h.orgProviderFor(orgID, orgCfg, model); err != nil {
+			return orgProviderError(model, providerID, err)
+		}
+	}
+	return models.ErrForbidden(fmt.Sprintf("model %q is not available for this API key", model))
+}
+
+// orgProviderError turns an org provider that could not be built into the
+// error the caller sees. Only a refused base_url is explained in detail; other
+// build errors can carry config the caller should not see (orgProviderFor
+// logs them).
+func orgProviderError(model, providerID string, err error) *models.APIError {
+	var urlErr *providers.BaseURLError
+	if errors.As(err, &urlErr) {
+		status, errType, code := http.StatusForbidden, models.ErrTypePermission, "provider_base_url_blocked"
+		if urlErr.Reason == providers.BaseURLInvalid || urlErr.Reason == providers.BaseURLUnresolvable {
+			status, errType, code = http.StatusBadGateway, models.ErrTypeServer, "provider_base_url_unusable"
+		}
+		return &models.APIError{
+			Status: status,
+			Type:   errType,
+			Code:   code,
+			Message: fmt.Sprintf("model %q is served by your organization's provider %q, but the gateway will not call it: %s.",
+				model, providerID, urlErr.PublicMessage()),
+		}
+	}
+	return &models.APIError{
+		Status:  http.StatusBadGateway,
+		Type:    models.ErrTypeServer,
+		Code:    "provider_unavailable",
+		Message: fmt.Sprintf("model %q is served by your organization's provider %q, but the gateway could not set that provider up; check its configuration.", model, providerID),
+	}
+}
+
+// orgProvidersOnly reports whether rc's key may use only its org's own
+// providers: any key but an internal one, unless a license authorized the
+// request.
+func (h *Handlers) orgProvidersOnly(ctx context.Context, rc *models.RequestContext) bool {
+	return h.keyStore != nil && rc.Metadata["key_type"] != "internal" && !middleware.IsLicenseAuthorized(ctx)
+}
+
 // resolveProvider resolves the provider for a model, with failover support for non-streaming.
 // For failover, it tries providers sequentially until one succeeds at the provider call level.
 func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContext, model string) (providers.Provider, error) {
 	// Non-internal keys must not resolve to global (FutureAGI-credentialed) providers.
 	// This guard runs first so no code path (model map, conditional routes, registry)
 	// can bypass it for user keys.
-	if h.keyStore != nil && rc.Metadata["key_type"] != "internal" && !middleware.IsLicenseAuthorized(ctx) {
-		return nil, models.ErrForbidden(
-			fmt.Sprintf("model %q is not available for this API key", model),
-		)
+	if h.orgProvidersOnly(ctx, rc) {
+		return nil, h.unavailableModelError(rc, model)
 	}
 
 	// Check per-org model map first — allows orgs to alias model names to providers.
@@ -1199,12 +1214,6 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 	}
 
 	// Try primary model first.
-	// Non-internal keys must not resolve to global (FutureAGI-credentialed) providers —
-	// they should only use org-configured providers (resolved above) or be rejected.
-	if h.keyStore != nil && rc.Metadata["key_type"] != "internal" && !middleware.IsLicenseAuthorized(ctx) {
-		return nil, fmt.Errorf("model %q is not available for this API key: configure provider access via the control plane", model)
-	}
-
 	result, err := h.registry.ResolveWithRouting(model)
 	if err == nil {
 		rc.Provider = result.Provider.ID()

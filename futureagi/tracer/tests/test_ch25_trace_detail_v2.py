@@ -279,7 +279,9 @@ def test_trace_view_retrieve_routes_v2_detail_to_split_ch25_host():
     reset_v2_query_client()
     try:
         with patch.object(TraceDetailHandlerV2, "fetch", _fetch):
-            response = TraceView().retrieve(MagicMock(), pk="T1")
+            response = unwrap(TraceView.retrieve)(
+                TraceView(), SimpleNamespace(), pk="T1"
+            )
         analytics = captured["analytics"]
         assert response.status_code == 200
         assert isinstance(analytics, V2AnalyticsQueryService)
@@ -333,31 +335,50 @@ class TestV2TenantGate:
         assert len(analytics.queries) == 1
         assert "LIMIT 1001" in analytics.queries[0]
 
-    def test_cross_project_trace_collision_fails_before_content_hydration(self):
+    def test_cross_project_trace_collision_serves_newest_copy(self):
         started = datetime(2026, 1, 1, tzinfo=UTC)
         identity_rows = [
             {
                 "project_id": project_id,
                 "trace_id": "T1",
-                "span_id": f"root-{project_id}",
+                "span_id": "S1",
                 "start_time": started,
                 "latest_is_deleted": 0,
+                "latest_version": version,
             }
-            for project_id in ("P1", "P2")
+            for project_id, version in (("P2", 20), ("P1", 10))
         ]
-        analytics = _SequenceAnalytics([identity_rows])
+        analytics = _SequenceAnalytics(
+            [
+                identity_rows,
+                [_root_span_row(project_id="P2", start_time=started)],
+                [],
+            ]
+        )
+        resolved_projects = []
 
-        with pytest.raises(
-            TraceDetailReadUnavailable, match="ambiguous_trace_identity"
-        ):
-            read_trace_detail(
-                analytics=analytics,
-                project_ids=["P1", "P2"],
-                trace_id="T1",
-                deadline_ms=1000,
-            )
+        def resolve_project_configs(project_id):
+            resolved_projects.append(project_id)
+            return []
 
-        assert len(analytics.query_calls) == 1
+        detail = read_trace_detail(
+            analytics=analytics,
+            project_ids=["P1", "P2"],
+            trace_id="T1",
+            eval_config_ids_resolver=resolve_project_configs,
+            deadline_ms=1000,
+        )
+
+        assert "max(_version) AS latest_version" in analytics.query_calls[0][0]
+        assert detail.project_id == "P2"
+        assert resolved_projects == ["P2"]
+        content_params = analytics.query_calls[1][1]
+        assert content_params["detail_project_ids"] == ("P2",)
+        assert [
+            identity[0] for identity in content_params["detail_span_identities"]
+        ] == ["P2"]
+        annotation_params = analytics.query_calls[2][1]
+        assert annotation_params["detail_annotation_project_id"] == "P2"
 
     def test_trace_latest_tombstone_is_not_resurrected(self):
         analytics = _SequenceAnalytics(
@@ -450,20 +471,32 @@ class TestDirectSpanDetailAnchor:
         assert "argMax(is_deleted, _version)" in query
         assert params["detail_project_ids"] == ("P1",)
 
-    def test_cross_project_live_collision_fails_before_hydration(self):
+    def test_cross_project_live_collision_resolves_to_newest_copy_in_sql(self):
+        anchor = self._anchor_row(project_id="P2")
         analytics = _SequenceAnalytics(
-            [[self._anchor_row(project_id="P1"), self._anchor_row(project_id="P2")]]
+            [
+                [anchor],
+                [dict(anchor)],
+                [_root_span_row(project_id="P2", trace_id="T-P2")],
+                [],
+            ]
         )
 
-        with pytest.raises(TraceDetailReadUnavailable, match="ambiguous_span_identity"):
-            read_span_detail(
-                analytics=analytics,
-                project_ids=["P1", "P2"],
-                span_id="S1",
-                deadline_ms=1000,
-            )
+        detail = read_span_detail(
+            analytics=analytics,
+            project_ids=["P1", "P2"],
+            span_id="S1",
+            deadline_ms=1000,
+        )
 
-        assert len(analytics.query_calls) == 1
+        query, params, _timeout, kwargs = analytics.query_calls[0]
+        assert params["detail_project_ids"] == ("P1", "P2")
+        assert "HAVING latest_is_deleted = 0" in query
+        assert "ORDER BY latest_version DESC" in query
+        assert "LIMIT 1" in query
+        assert kwargs["settings"]["max_result_rows"] == 1
+        assert detail.project_id == "P2"
+        assert analytics.query_calls[1][1]["detail_project_ids"] == ("P2",)
 
     def test_one_live_anchor_replays_only_its_project_and_trace(self):
         anchor = self._anchor_row(project_id="P1")

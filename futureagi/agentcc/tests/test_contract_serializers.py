@@ -121,9 +121,11 @@ def test_api_key_bulk_response_is_typed():
                     "name": "Production key",
                     "owner": "platform",
                     "key_hash": "sha256:abc",
+                    "key_prefix": "sk-agentcc-a...",
                     "models": ["gpt-4o"],
                     "providers": ["openai"],
                     "metadata": {"purpose": "gateway-startup"},
+                    "expires_at": None,
                 }
             ],
         }

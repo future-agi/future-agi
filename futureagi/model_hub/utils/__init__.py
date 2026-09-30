@@ -5,6 +5,7 @@ import structlog
 from django.conf import settings
 
 from accounts.models import OrgApiKey
+from tfc.ee_loader import is_cloud_env
 
 logger = structlog.get_logger(__name__)
 
@@ -14,7 +15,7 @@ def is_forbidden_vendor_endpoint(url):
     Such an install must never send its org's API key and secret there."""
     host = (urlparse(url).hostname or "").rstrip(".").lower()
     on_vendor_host = host == "futureagi.com" or host.endswith(".futureagi.com")
-    return on_vendor_host and not settings.CLOUD_DEPLOYMENT
+    return on_vendor_host and not is_cloud_env(settings.CLOUD_DEPLOYMENT)
 
 
 # Function to send message to websocket to avoid RunTimeError

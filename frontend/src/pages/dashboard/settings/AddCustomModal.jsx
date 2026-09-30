@@ -755,6 +755,7 @@ const AddCustomModalForm = ({
                 fieldName={field.fieldName}
                 label={field.label}
                 placeholder={field.placeholder}
+                helperText={field.helperText}
                 type={field.type}
                 inputProps={field.inputProps}
                 onChange={field.onChange}

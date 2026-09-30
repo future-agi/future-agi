@@ -23,12 +23,32 @@ from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
 )
 
+# MATERIALIZED ``spans`` columns a compiled filter can reference. ``SELECT *``
+# omits MATERIALIZED columns, so a predicate on one over the latest-row
+# snapshot fails with an unknown identifier (code 47); the snapshot names each
+# of them after the star instead. That works whatever
+# ``asterisk_include_materialized_columns`` says (and on a read-only profile
+# that drops query settings): with it on, ClickHouse does not duplicate the
+# column. Only ``trace_name`` is emitted by the filter compilers today; every
+# other MATERIALIZED column is left out, since one that was ``ALTER``-added is
+# computed on read for older parts from its source (``lengthUTF8(input)`` for
+# ``input_length``), and nothing proves ``physical.*`` prunes an unreferenced
+# one. ``test_graph_snapshot_materialized_columns`` lists every MATERIALIZED
+# column in the DDL and fails when a compiler starts emitting one missing here.
+SPANS_FILTERABLE_MATERIALIZED_COLUMNS: tuple[str, ...] = ("trace_name",)
+
 
 def latest_physical_span_rows_sql(
     *, table: str = "spans", project_predicate: str,
     start_hour: str, end_hour: str, mutable_columns: tuple[str, ...],
 ) -> str:
-    """Fence trusted mutable output columns after full physical FINAL winners."""
+    """Fence trusted mutable output columns after full physical FINAL winners.
+
+    A ``spans`` snapshot names the MATERIALIZED columns a filter can reference
+    (``SPANS_FILTERABLE_MATERIALIZED_COLUMNS``) after ``*``, which omits them.
+    """
+    materialized = SPANS_FILTERABLE_MATERIALIZED_COLUMNS if table == "spans" else ()
+    named = "".join(f", {column}" for column in materialized)
     columns = ", ".join(mutable_columns)
     values = ", ".join(f"physical.{column}" for column in mutable_columns)
     projection = ",\n            ".join(
@@ -38,7 +58,7 @@ def latest_physical_span_rows_sql(
     return f"""
         SELECT physical.* EXCEPT ({columns}), {projection}
         FROM (
-            SELECT * FROM {table} FINAL
+            SELECT *{named} FROM {table} FINAL
             PREWHERE {project_predicate}
               AND toStartOfHour(start_time) >= {start_hour}
               AND toStartOfHour(start_time) < {end_hour}
@@ -441,11 +461,16 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
                 for index in range(len(self.user_membership_plan.predicates))
             )
 
+        # Latency is the pooled mean of every live span of the bucket's user
+        # traces: each level carries a latency sum and a count, and only the
+        # bucket divides. No level averages another level's means, so a user
+        # with many spans weighs by its spans, not as one vote.
         user_bucket_rows = f"""
             SELECT
                 {bucket_fn}(min_start) AS time_bucket,
                 end_user_id,
-                avg(span_avg_latency) AS user_avg_latency,
+                sum(span_latency_sum) AS user_latency_sum,
+                sum(span_latency_count) AS user_latency_count,
                 sum(span_total_tokens) AS user_total_tokens,
                 sum(span_total_cost) AS user_total_cost,
                 sum(span_prompt_tokens) AS user_prompt_tokens,
@@ -457,7 +482,8 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
                     {resolved_eu} AS end_user_id,
                     rs.trace_id AS trace_id,
                     min(rs.start_time) AS min_start,
-                    avg(rs.latency_ms) AS span_avg_latency,
+                    sum(rs.latency_ms) AS span_latency_sum,
+                    count(rs.latency_ms) AS span_latency_count,
                     sum(rs.total_tokens) AS span_total_tokens,
                     sum(rs.cost) AS span_total_cost,
                     sum(rs.prompt_tokens) AS span_prompt_tokens,
@@ -503,7 +529,7 @@ class UserTimeSeriesQueryBuilderV2(V2RewriteMixin, UserTimeSeriesQueryBuilder):
         eu_survivor_map AS ({eu_map})
         SELECT
             time_bucket,
-            avg(user_avg_latency) AS avg_latency,
+            sum(user_latency_sum) / greatest(sum(user_latency_count), 1) AS avg_latency,
             sum(user_total_tokens) AS total_tokens,
             avg(user_total_cost) AS avg_cost,
             count() AS traffic_count,

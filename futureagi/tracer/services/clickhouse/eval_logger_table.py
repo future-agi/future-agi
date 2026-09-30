@@ -76,9 +76,11 @@ def eval_logger_source(
 
     ``include_cdc_tombstone_guard`` adds the legacy CDC tombstone guard
     (``_peerdb_is_deleted = 0``) alongside the app ``deleted`` soft-delete
-    filter. Only rewrite-EXCLUDED callers may pass True: the v2 rewriter renames
-    ``_peerdb_is_deleted`` → ``is_deleted`` (which the legacy table lacks), so
-    rewritten fragments must keep the ``deleted``-only predicate (default).
+    filter. Only rewrite-EXCLUDED callers, or rewritten callers whose alias is
+    listed in the v2 rewriter's ``_EVAL_LEGACY_COLUMN_MARKERS``, may pass True:
+    the v2 rewriter renames ``_peerdb_is_deleted`` → ``is_deleted`` (which the
+    legacy table lacks), so other rewritten fragments must keep the
+    ``deleted``-only predicate (default).
     Residual tombstone visibility is accepted there. The version-only legacy
     engine's ``FINAL`` does not drop CDC tombstones, so unrewritten eval reads
     need this guard to match the display queries. No-op on the v2 table (no CDC

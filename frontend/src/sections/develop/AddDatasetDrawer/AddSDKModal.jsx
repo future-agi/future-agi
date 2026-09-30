@@ -113,6 +113,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
       });
       setIsNext(true);
     },
+    meta: { errorHandled: true },
     onError: (error) => {
       enqueueSnackbar(
         getRequestErrorMessage(error, "Failed to create dataset", {

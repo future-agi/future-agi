@@ -5,7 +5,7 @@ import { POLL } from '../../lib/state-probe';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
 
-// docker-compose.yml + stack/gateway.e2e.yaml: backend-side validation of this
+// docker-compose.distributed.yml + stack/gateway.e2e.yaml: backend-side validation of this
 // model uses the isolated gateway and mock, never a host URL or paid provider.
 const GATEWAY_INTERNAL_URL = 'http://agentcc-gateway:8080/v1';
 const GATEWAY_INTERNAL_KEY = 'local-dev-only-shared-secret-replace-me';

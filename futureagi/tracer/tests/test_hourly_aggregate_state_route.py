@@ -236,11 +236,12 @@ def test_state_source_scopes_by_the_predicate_it_is_given():
         "completion_tokens",
         "cost",
         "error_rate",
-        "latency",
+        # Latency never reads the states: an unfiltered latency graph takes
+        # the exact path (test_latency_graph_routing).
     ],
 )
 def test_graph_never_reports_the_aggregate_states_as_exact(metric_id):
-    """The states are per part, not latest-live; latency is also a tDigest.
+    """The states are per part, not latest-live.
 
     ``test_hourly_aggregate_state_exactness_ch25`` shows the numbers that
     make this false on a real ClickHouse.

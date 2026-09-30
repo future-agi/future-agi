@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "83fe2c54b6fbda789c5a5040e90d216af3279ab24d431ffbcdf003356fd1f02b",
+  "source_contract_sha256": "ec33f8fb949f1a3b3e226935669251cf4f5fd698734bdfe38614ea22024d89ee",
   "tool_count": 92,
   "tools": [
     {
@@ -3610,6 +3610,11 @@
         "properties": {
           "id": {
             "type": "string"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Project the detail was opened from. The same id can exist in several projects; when supplied, only that project's copy is read."
           }
         },
         "additionalProperties": false,
@@ -3630,7 +3635,9 @@
           "path": [
             "id"
           ],
-          "query": [],
+          "query": [
+            "project_id"
+          ],
           "body": []
         }
       },

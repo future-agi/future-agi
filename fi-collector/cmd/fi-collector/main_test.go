@@ -108,3 +108,36 @@ func TestLoadPriceTable_SkippedEntriesWarns(t *testing.T) {
 		t.Error("want a WARN log reporting the skipped-entry count")
 	}
 }
+
+// TestLogStarting_MasksClickHousePassword: FI_CH_URL may carry credentials
+// (Go's HTTP client sends http://user:pass@host as basic auth), and the
+// startup line must not print them.
+func TestLogStarting_MasksClickHousePassword(t *testing.T) {
+	const password = "s3cretChPassw0rd"
+	for _, raw := range []string{
+		"http://default:" + password + "@clickhouse:8123",
+		"http://default:" + password + "@clickhouse:8123/%zz", // unparseable
+	} {
+		var buf bytes.Buffer
+		log := slog.New(slog.NewJSONHandler(&buf, nil))
+		var cfg rootConfig
+		cfg.Writer.URL = raw
+
+		logStarting(log, cfg)
+
+		if strings.Contains(buf.String(), password) {
+			t.Fatalf("startup log leaks the ClickHouse password: %s", buf.String())
+		}
+		if !strings.Contains(buf.String(), `"ch_url"`) {
+			t.Fatalf("startup log lost the ch_url field: %s", buf.String())
+		}
+	}
+
+	var buf bytes.Buffer
+	var cfg rootConfig
+	cfg.Writer.URL = "http://clickhouse:8123"
+	logStarting(slog.New(slog.NewJSONHandler(&buf, nil)), cfg)
+	if !strings.Contains(buf.String(), `"ch_url":"http://clickhouse:8123"`) {
+		t.Fatalf("a URL without credentials must be logged as is: %s", buf.String())
+	}
+}

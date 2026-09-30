@@ -21,6 +21,7 @@ import { LoadingButton } from "@mui/lab";
 import EvaluationsSelectionGrid from "./EvaluationsSelectionGrid";
 import { useEvalsList, getUserEvalListKey } from "./getEvalsList";
 import SavedEvalsList from "./SavedEvalsList";
+import usePendingEvalSelections from "./usePendingEvalSelections";
 import SavedEvalsSkeleton from "./SavedEvalsSkeleton";
 import DeleteEval from "./DeleteEval";
 import RunEvals from "./RunEvals";
@@ -77,19 +78,8 @@ const EvaluationDrawerChild = ({
   const [confirmRunEvaluationsOpen, setConfirmRunEvaluationsOpen] =
     useState(false);
   const [evalPickerOpen, setEvalPickerOpen] = useState(false);
-  // One auto-selection event per successful save: the eval just written, plus a
-  // token so saving the same eval again is a *new* event rather than a no-op.
-  // A set of names cannot express this — once a name is in it, re-saving that
-  // eval is indistinguishable from it having been added earlier, so an edit
-  // could not re-select an eval the user had deliberately unchecked.
-  // SavedEvalsList consumes each token exactly once.
-  const [autoSelectRequest, setAutoSelectRequest] = useState(null);
-  const autoSelectTokenRef = useRef(0);
-  const requestAutoSelect = useCallback((name) => {
-    if (!name) return;
-    autoSelectTokenRef.current += 1;
-    setAutoSelectRequest({ name, token: autoSelectTokenRef.current });
-  }, []);
+  const { autoSelectRequests, requestAutoSelect, acknowledgeAutoSelect } =
+    usePendingEvalSelections();
   // When editing an existing eval, pre-select it so the picker opens at config step
   const [editingEval, setEditingEval] = useState(null);
 
@@ -381,7 +371,8 @@ const EvaluationDrawerChild = ({
                     evals={SavedEvals}
                     allColumns={allColumns}
                     onClose={onClose}
-                    autoSelectRequest={autoSelectRequest}
+                    autoSelectRequests={autoSelectRequests}
+                    onAutoSelectApplied={acknowledgeAutoSelect}
                     disableDelete={
                       module === "experiment" &&
                       Array.isArray(SavedEvals) &&

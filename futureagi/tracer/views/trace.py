@@ -42,6 +42,7 @@ from rest_framework.viewsets import ModelViewSet
 
 from model_hub.models.score import Score
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import ApiErrorCode
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
@@ -64,15 +65,16 @@ from tracer.selectors.trace_filter_reads import (
 )
 from tracer.serializers.filters import (
     ObserveGraphDataQuerySerializer,
-    ObserveGraphDataRequestSerializer,
     ObserveGraphDataResponseSerializer,
     PageDepthExceededErrorSerializer,
 )
 from tracer.serializers.trace import (
     TraceAgentGraphQuerySerializer,
     TraceAgentGraphResponseSerializer,
+    TraceDetailQuerySerializer,
     TraceDetailResponseSerializer,
     TraceExportQuerySerializer,
+    TraceGraphDataRequestSerializer,
     TraceIndexQuerySerializer,
     TraceListQuerySerializer,
     TraceNavigationResponseSerializer,
@@ -131,6 +133,10 @@ from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
 from tracer.services.clickhouse.query_builders.user_list import (
     UnsupportedBoundedUserListQuery,
 )
+from tracer.services.clickhouse.query_builders.voice_call_list import (
+    VOICE_CALL_ROOT_FILTER,
+    VOICE_CALL_SIMULATOR_EXCLUSION_FILTER,
+)
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
 from tracer.services.clickhouse.read_budget import (
     ReadDeadline,
@@ -168,6 +174,7 @@ from tracer.services.users_list_manager import USER_EXPORT_PAGE_SIZE, UsersListM
 from tracer.utils.annotations import (
     build_annotation_subqueries as _build_annotation_subqueries_impl,
 )
+from tracer.utils.attribute_accessor import span_raw_log
 from tracer.utils.bounded_csv import (
     BOUNDED_EXPORT_PAGE_SIZE,
     bounded_page_csv_response,
@@ -2028,7 +2035,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
     def perform_destroy(self, instance):
         _soft_delete_trace_tree([instance])
 
-    @swagger_auto_schema(
+    @validated_request(
+        query_serializer=TraceDetailQuerySerializer,
         responses={
             200: TraceDetailResponseSerializer,
             **ERROR_RESPONSES,
@@ -2038,6 +2046,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
     def retrieve(self, request, *args, **kwargs):
         """
         Retrieve a trace by its ID.
+
+        Query params:
+        - project_id (optional) — the project the trace was opened from.
         """
         from tracer.services.clickhouse.v2.trace_detail_reads import (
             TraceDetailReadUnavailable,
@@ -2054,6 +2065,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 request=request,
                 pk=trace_id,
                 analytics=V2AnalyticsQueryService(),
+                project_id=getattr(request, "validated_query_data", {}).get(
+                    "project_id"
+                ),
             )
             return self._gm.success_response(handler.fetch())
         except Trace.DoesNotExist:
@@ -2134,18 +2148,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             or mono.get("assistant_url")
         )
 
-    @staticmethod
-    def _coerce_raw_log(value):
-        """raw_log rides in span attributes as a JSON string (collector path) or a
-        dict (legacy PG+CDC). Return a dict either way so process_raw_logs can
-        recompute status/duration/recording_available/transcript from it."""
-        if isinstance(value, str):
-            try:
-                return json.loads(value) or {}
-            except (json.JSONDecodeError, TypeError):
-                return {}
-        return value or {}
-
     def populate_call_logs_result(
         self, qs, eval_configs, annotation_labels=None, *, detail_mode=False
     ):
@@ -2197,7 +2199,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             recording = self._build_recording_dict(attrs)
 
             # Raw provider payload if present (collector ships it as JSON string)
-            raw_log = self._coerce_raw_log(attrs.get("raw_log"))
+            raw_log = span_raw_log(attrs)
             provider = trace.provider or "vapi"
 
             processed_log = ObservabilityService.process_raw_logs(
@@ -2747,7 +2749,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
     @bounded_graph_action_request(resource="trace_graph")
     @validated_request(
         query_serializer=ObserveGraphDataQuerySerializer,
-        request_serializer=ObserveGraphDataRequestSerializer,
+        request_serializer=TraceGraphDataRequestSerializer,
         responses={
             200: ObserveGraphDataResponseSerializer,
             400: ApiErrorResponseSerializer,
@@ -2790,6 +2792,16 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 body["filters"],
             )
             filters = graph_execution_filters(filters)
+            observe_type = body.get("observe_type", "trace")
+            evidence_filters = filters
+            if observe_type == "voice":
+                # A voice call is a trace whose canonical root is a
+                # conversation span. Apply the voice list's own private root
+                # leaf so the chart counts the list's population.
+                filters = [*filters, VOICE_CALL_ROOT_FILTER]
+                if body.get("remove_simulation_calls"):
+                    # The list's "exclude simulation calls" toggle.
+                    filters.append(VOICE_CALL_SIMULATOR_EXCLUSION_FILTER)
             interval = body["interval"]
             req_data_config = body["req_data_config"]
             try:
@@ -2894,8 +2906,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 graph.update(
                     graph_query_evidence(
                         project_id=project_id,
-                        observe_type="trace",
-                        filters=filters,
+                        observe_type=observe_type,
+                        filters=evidence_filters,
                     )
                 )
                 graph = enforce_exact_graph_data_contract(graph)
@@ -3883,6 +3895,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         Query params:
         - trace_id or legacy traceId (required) — UUID of the voice call trace.
+        - project_id (optional) — the project the call was opened from.
         """
         trace_id = ""
         try:
@@ -3891,12 +3904,18 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             # Scope the ClickHouse identity read up front.  The exact reader
             # resolves latest span versions/tombstones inside only these
             # authorized projects, so a colliding public trace id cannot select
-            # another tenant via an arbitrary LIMIT 1.
+            # another tenant via an arbitrary LIMIT 1.  A project_id pins the
+            # read to the project the call was opened from; outside the
+            # caller's scope it resolves like a missing trace.
+            project_scope = _project_queryset_for_request(request)
+            pinned_project_id = request.validated_query_data.get("project_id")
+            if pinned_project_id:
+                project_scope = project_scope.filter(id=pinned_project_id)
             project_ids = [
                 str(project_id)
-                for project_id in _project_queryset_for_request(request)
-                .values_list("id", flat=True)
-                .order_by("id")[:4097]
+                for project_id in project_scope.values_list("id", flat=True).order_by(
+                    "id"
+                )[:4097]
             ]
             eval_configs_by_project: dict[str, list[CustomEvalConfig]] = {}
 
@@ -4002,7 +4021,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # fi.simulator.call_execution_id and similar keys.
         eval_attrs = span_attrs.get("eval_attributes", {}) or {}
 
-        raw_log = self._coerce_raw_log(span_attrs.get("raw_log"))
+        root_span_id = str(row.get("span_id", row.get("id", "")))
+        raw_log = span_raw_log(span_attrs, span_id=root_span_id)
         metadata_raw = row.get("metadata_json") or "{}"
         try:
             metadata = (
@@ -4037,7 +4057,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         recording = self._build_recording_dict(attr_str)
 
         # Build observation_span array — root span first
-        root_span_id = str(row.get("span_id", row.get("id", "")))
         observation_span = [
             {
                 "id": root_span_id,
@@ -6183,13 +6202,14 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             span_attrs = attr_row.get("span_attributes") or {}
             provider = attr_row.get("provider") or provider
 
-            # Post-filter simulator calls in Python (can't do in CH without OOM)
+            raw_log = span_raw_log(span_attrs, span_id=span_id)
+            # Parity backstop: simulator_call_sql already dropped these in
+            # ClickHouse when Phase 1 selected the page.
             if sim_flag and VoiceCallListQueryBuilderV2.is_simulator_call(
-                span_attrs, provider
+                raw_log, provider
             ):
                 continue
 
-            raw_log = self._coerce_raw_log(span_attrs.get("raw_log"))
             voice_metrics = self._extract_voice_turn_and_talk_metrics(
                 span_attrs, raw_log
             )
@@ -7243,6 +7263,15 @@ class UsersView(APIView):
                 status.HTTP_400_BAD_REQUEST, str(exc), code=exc.code
             )
         except UnsupportedBoundedUserListQuery:
+            if not query_data.get("sort_params"):
+                # Raw-span, eval/annotation and derived-metric filters decide
+                # membership after the page is read, so a numbered OFFSET page
+                # cannot be exact. The cursor contract (the UI's) serves them.
+                return self._gm.custom_error_response(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    get_error_message("USER_FILTER_REQUIRES_CURSOR"),
+                    code=ApiErrorCode.USER_FILTER_REQUIRES_CURSOR,
+                )
             # A globally sorted page over a derived metric requires evaluating
             # every matching user before LIMIT.  The bounded cursor path cannot
             # preserve that contract, so fail explicitly instead of leaking a
@@ -7291,13 +7320,13 @@ class GetUserCodeExampleView(APIView):
                 return self._gm.bad_request("Project type must be 'observe'.")
 
         code_example = f"""import openai
-from fi_instrumentation import using_attributes
+from fi_instrumentation import FITracer, register, using_attributes
+from fi_instrumentation.fi_types import ProjectType
 from traceai_openai import OpenAIInstrumentor
 
 trace_provider = register(
     project_type=ProjectType.OBSERVE,
     project_name="{project_name}",
-    session_name="new-session",
 )
 
 tracer = FITracer(trace_provider.get_tracer(__name__))

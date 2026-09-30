@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Box,
   Button,
@@ -744,7 +744,8 @@ const SavedEvalsList = ({
   onClose,
   disableDelete = false,
   disableDeleteReason,
-  autoSelectRequest,
+  autoSelectRequests,
+  onAutoSelectApplied,
 }) => {
   const { setVisibleSection, setCurrentTab } = useEvaluationContext();
   const handleAddClick = () => {
@@ -756,27 +757,24 @@ const SavedEvalsList = ({
     setVisibleSection("config");
   };
   const [sel, setSel] = useState(new Set());
-  // Highest auto-selection token already applied. Tokens are consumed once, so
-  // a later `evals` change (grid refresh, status poll) never re-selects an eval
-  // the user has since unchecked — while a fresh save of that same eval carries
-  // a new token and does select it again.
-  const consumedTokenRef = useRef(0);
-
   useEffect(() => {
-    if (!autoSelectRequest?.name) return;
-    if (autoSelectRequest.token <= consumedTokenRef.current) return;
-    // The row only appears after the grid refresh, so wait for it rather than
-    // burning the token on a list that does not contain the eval yet.
-    const saved = evals.find((e) => e.name === autoSelectRequest.name);
-    if (!saved) return;
-    consumedTokenRef.current = autoSelectRequest.token;
+    if (!autoSelectRequests?.length) return;
+    // Rows can arrive out of order. Acknowledge only the saves whose rows are
+    // present, leaving every other save pending until a later refresh.
+    const rowsByName = new Map(
+      evals.map((evalItem) => [evalItem.name, evalItem]),
+    );
+    const applied = autoSelectRequests.filter(({ name }) =>
+      rowsByName.has(name),
+    );
+    if (!applied.length) return;
     setSel((prev) => {
-      if (prev.has(saved.id)) return prev;
       const next = new Set(prev);
-      next.add(saved.id);
+      applied.forEach(({ name }) => next.add(rowsByName.get(name).id));
       return next;
     });
-  }, [evals, autoSelectRequest]);
+    onAutoSelectApplied(applied.map(({ token }) => token));
+  }, [evals, autoSelectRequests, onAutoSelectApplied]);
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const toggle = (item) =>
     setSel((p) => {
@@ -987,10 +985,13 @@ SavedEvalsList.propTypes = {
   onClose: PropTypes.func,
   disableDelete: PropTypes.bool,
   disableDeleteReason: PropTypes.string,
-  autoSelectRequest: PropTypes.shape({
-    name: PropTypes.string,
-    token: PropTypes.number,
-  }),
+  autoSelectRequests: PropTypes.arrayOf(
+    PropTypes.shape({
+      name: PropTypes.string.isRequired,
+      token: PropTypes.number.isRequired,
+    }),
+  ),
+  onAutoSelectApplied: PropTypes.func,
 };
 
 export default SavedEvalsList;

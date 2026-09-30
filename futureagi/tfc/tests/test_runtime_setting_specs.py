@@ -332,6 +332,10 @@ def test_bulk_selection_query_budget_formula_is_shared_with_the_resolver():
             "EXACT_GRAPH_TRACE_CLASSIFIER_MAX_THREADS",
             "CLICKHOUSE_APPLICATION_READ_MAX_THREADS",
         ),
+        (
+            "EXACT_GRAPH_SESSION_READ_MAX_THREADS",
+            "CLICKHOUSE_APPLICATION_READ_MAX_THREADS",
+        ),
         ("ANALYTICS_DEFAULT_LOOKBACK_DAYS", "EVAL_METRIC_MAX_WINDOW_DAYS"),
         ("MONITOR_GRAPH_CH_TIMEOUT_CAP_MS", "INTERACTIVE_READ_DEFAULT_WALL_MS"),
         (

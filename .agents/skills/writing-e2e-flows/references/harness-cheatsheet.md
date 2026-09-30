@@ -157,7 +157,7 @@ Reusable, already verified by shipped flows. Copy the constant _and_ its provena
 | AG Grid cell          | `page.locator('.ag-row [col-id="span_name"]')`                                                        | span table                                                                                                                                              |
 | Span Evals tab        | `page.getByRole('tab', { name: 'Evals' })`, then `'1/1 passed'`                                       | `e2e/flows/evals/eval-task.spec.ts`                                                                                                                     |
 | Login                 | `/auth/jwt/login`, `POST /accounts/token/`; a new org routes to `/auth/jwt/setup-org`                 | `e2e/flows/auth/login.spec.ts`                                                                                                                          |
-| Gateway, in-container | `http://agentcc-gateway:8080/v1`, key `local-dev-only-shared-secret-replace-me`                       | `docker-compose.yml` `AGENTCC_INTERNAL_URL` (which is the bare origin — the `/v1` is the OpenAI suffix the spec appends) and `AGENTCC_INTERNAL_API_KEY` |
+| Gateway, in-container | `http://agentcc-gateway:8080/v1`, key `local-dev-only-shared-secret-replace-me`                       | `docker-compose.distributed.yml` `AGENTCC_INTERNAL_URL` (which is the bare origin — the `/v1` is the OpenAI suffix the spec appends) and `AGENTCC_INTERNAL_API_KEY` |
 
 **Before planning locators, grep product code for hooks that already exist:**
 `grep -rn 'data-[a-z-]*=' frontend/src/sections frontend/src/components`. Grep the whole tree, not a

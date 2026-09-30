@@ -379,6 +379,11 @@ test('EVAL-E2E-004: executed dataset evaluations retain typed cells, exact filte
 
   await test.step('backend check 2: native Run All and exact public result/reason cells', async () => {
     await mockModel.assertReady();
+    // Saves select their rows. Clear that selection to exercise Run All, whose
+    // two individual requests and exact results are asserted below.
+    const selectionHeader = page.getByText('2 of 2 selected', { exact: true });
+    await ui(selectionHeader).toBeVisible();
+    await selectionHeader.locator('..').getByRole('checkbox').uncheck();
     await ui(page.getByRole('button', { name: 'Run All (2)', exact: true })).toBeEnabled();
     const startedAt = Date.now();
     const runPath = `${DATASETS}${datasetId}/start_evals_process/`;
@@ -462,8 +467,11 @@ test('EVAL-E2E-004: executed dataset evaluations retain typed cells, exact filte
 
   const gridCells = (columnId: string) => page.locator(`.ag-center-cols-container .ag-row [col-id="${columnId}"]`);
   const assertVisibleRows = async (aliases: Alias[]) => {
-    await ui.poll(async () => Promise.all((await gridCells(inputColumns.region).all()).map(cell =>
-      cell.locator('..').getAttribute('row-id')))).toEqual(ORACLE.filter(o => aliases.includes(o.alias)).map(o => ids[o.alias]));
+    // One atomic, non-waiting read per tick. ag-grid keeps outgoing rows for its fade-out; a
+    // per-cell getAttribute on an nth() counted before they left would wait out the whole step.
+    await ui.poll(() => gridCells(inputColumns.region).evaluateAll(cells =>
+      cells.map(cell => cell.parentElement?.getAttribute('row-id') ?? null)))
+      .toEqual(ORACLE.filter(o => aliases.includes(o.alias)).map(o => ids[o.alias]));
     await ui(gridCells(inputColumns.region)).toHaveText(ORACLE.filter(o => aliases.includes(o.alias)).map(o => o.region));
   };
   const filterSignature = (filters: Filter[]) => filters.map(f => ({ id: f.column_id, property: f.property_id,

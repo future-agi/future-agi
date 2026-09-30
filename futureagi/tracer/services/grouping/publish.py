@@ -5,7 +5,7 @@ import json
 import uuid
 
 from django.db import transaction
-from django.db.models import Count, F, Max, Min
+from django.db.models import Count, F, Max, Min, Q
 from django.utils import timezone
 
 from tracer.models.trace_error_analysis import ErrorClusterTraces, TraceErrorGroup
@@ -22,6 +22,7 @@ from tracer.models.trace_grouping import (
     TraceGroupingWork,
 )
 from tracer.models.trace_investigation import (
+    InvestigationWorkload,
     TraceInvestigationFinding,
     TraceInvestigationGroupingStatus,
     TraceInvestigationReport,
@@ -506,6 +507,11 @@ def _issue_members(state: TraceGroupingIssueState) -> list[str]:
         for item in junctions
     ):
         raise GroupingConflict("issue junction provenance is not canonical Omega")
+    if any(
+        finding.report.test_execution_id != state.cluster.test_execution_id
+        for finding in rows
+    ):
+        raise GroupingConflict("issue contains cross-execution membership")
     for finding in rows:
         report = finding.report
         if (
@@ -565,6 +571,14 @@ def _clear_rca(cluster: TraceErrorGroup) -> None:
 def _recount(state: TraceGroupingIssueState) -> None:
     cluster = state.cluster
     memberships = ErrorClusterTraces.no_workspace_objects.filter(
+        Q(
+            finding__report__workload_type=InvestigationWorkload.SIMULATION_TEST_EXECUTION,
+            trace_id__isnull=True,
+        )
+        | Q(
+            finding__report__workload_type=InvestigationWorkload.TRACE,
+            trace_id=F("finding__report__trace_id"),
+        ),
         cluster=cluster,
         finding__isnull=False,
         finding__deleted=False,
@@ -573,7 +587,6 @@ def _recount(state: TraceGroupingIssueState) -> None:
         finding__report__is_current=True,
         finding__report__source="omega",
         finding__report__execution_status="completed",
-        trace_id=F("finding__report__trace_id"),
         span_id__isnull=True,
         trace_session_id__isnull=True,
     )
@@ -624,6 +637,14 @@ def _new_issue(
             break
     else:
         raise GroupingConflict("could not allocate a unique issue ID")
+    prototype_scopes = set(
+        TraceInvestigationFinding.no_workspace_objects.filter(
+            id__in=prototype_ids
+        ).values_list("report__test_execution_id", flat=True)
+    )
+    if len(prototype_scopes) != 1:
+        raise GroupingConflict("grouping prototypes cross execution scopes")
+    test_execution_id = next(iter(prototype_scopes))
     cluster = TraceErrorGroup.no_workspace_objects.create(
         id=cluster_id,
         project_id=scope.project_id,
@@ -636,6 +657,8 @@ def _new_issue(
         combined_description=mechanism["mechanism"],
         error_count=0,
         severity_source="default",
+        target_type=("simulation" if test_execution_id is not None else "error_feed"),
+        test_execution_id=test_execution_id,
     )
     return TraceGroupingIssueState.no_workspace_objects.create(
         scope=scope,
@@ -656,6 +679,8 @@ def _assign(
         or finding.report.workspace_id != scope.workspace_id
     ):
         raise GroupingConflict("finding scope changed")
+    if finding.report.test_execution_id != state.cluster.test_execution_id:
+        raise GroupingConflict("finding belongs to another simulation execution")
     existing = ErrorClusterTraces.no_workspace_objects.filter(finding=finding)
     if existing.exclude(cluster=state.cluster).exists():
         # The caller must first retire a source issue; never override manual
@@ -901,7 +926,20 @@ def publish_grouping(
                         {
                             "occurrence_id": item,
                             "report_id": str(findings[item].report_id),
-                            "trace_id": str(findings[item].report.trace_id),
+                            "trace_id": (
+                                str(findings[item].report.trace_id)
+                                if findings[item].report.trace_id is not None
+                                else None
+                            ),
+                            **(
+                                {
+                                    "test_execution_id": str(
+                                        findings[item].report.test_execution_id
+                                    )
+                                }
+                                if findings[item].report.test_execution_id
+                                else {}
+                            ),
                             "source_digest": canonical_grouping_source_digest(
                                 snapshots[str(findings[item].report_id)]
                             ),
