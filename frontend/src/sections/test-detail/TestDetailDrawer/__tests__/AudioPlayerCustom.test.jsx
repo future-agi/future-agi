@@ -163,4 +163,23 @@ describe("AudioPlayerCustom picks the renderer from the recording shape", () => 
     expect(captured.singleUrl).toBe(COMBINED);
     expect(captured.trackUrls).toBeNull();
   });
+
+  it("uses audio_url when an older detail response has no recordings map", () => {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <AudioPlayerCustom
+          data={{
+            module: "simulate",
+            status: "completed",
+            simulation_call_type: "voice",
+            audio_url: COMBINED,
+            recordings: {},
+          }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(captured.singleUrl).toBe(COMBINED);
+    expect(captured.trackUrls).toBeNull();
+  });
 });

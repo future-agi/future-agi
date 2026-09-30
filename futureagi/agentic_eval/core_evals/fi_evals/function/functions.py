@@ -10,15 +10,16 @@ import Levenshtein
 import numpy as np
 import requests
 from jinja2 import Environment
-from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu
-from rouge_score import rouge_scorer
-from scipy.spatial.distance import cityblock, cosine, euclidean
 
 from agentic_eval.core_evals.fi_evals.grounded.similarity import CosineSimilarity
-from agentic_eval.core_evals.fi_utils.exceptions import NoOpenAiApiKeyException
+from agentic_eval.core_evals.fi_utils.exceptions import (
+    CodeEvalSetupError,
+    NoOpenAiApiKeyException,
+)
 from agentic_eval.core_evals.fi_utils.fi_code_execution import CodeExecution
 from agentic_eval.core_evals.fi_utils.json import extract_json_path, validate_json
 from agentic_eval.core_evals.fi_utils.logging import logger
+from agentic_eval.core_evals.fi_utils.sandbox import SETUP_ERROR_MESSAGES
 from agentic_eval.core_evals.fi_utils.utils import PreserveUndefined
 from agentic_eval.core_evals.keys.openai_api import OpenAiApiKey
 from agentic_eval.core_evals.llm_services.openai_api import OpenAiService
@@ -155,6 +156,7 @@ def calculate_bleu(reference, hypothesis, **kwargs):
     Returns:
         float: BLEU score (0 to 1).
     """
+    from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu  # lazy
     reference_tokens = [reference.split()]
     hypothesis_tokens = hypothesis.split()
     smoothie = SmoothingFunction().method4
@@ -174,6 +176,7 @@ def calculate_rouge(reference, hypothesis):
         dict: ROUGE scores (precision, recall, fmeasure for each metric).
     """
 
+    from rouge_score import rouge_scorer  # lazy
     scorer = rouge_scorer.RougeScorer(['rouge1', 'rouge2', 'rougeL'], use_stemmer=True)
     scores = scorer.score(reference, hypothesis)
 
@@ -188,8 +191,10 @@ def _pil_to_uint8_tensor(img, size: int = 299):
     Requires torch and torchvision to be installed.
     """
     import numpy as np
-    import torch
-    from torchvision.transforms import functional as TF
+    from tfc.utils.lazy_extras import load_extra
+
+    torch = load_extra("torch", "ml")
+    TF = load_extra("torchvision.transforms.functional", "ml")
 
     img = img.convert("RGB")
     img = TF.resize(img, [size, size], antialias=True)
@@ -375,6 +380,7 @@ def calculate_clip_score(
 
     import numpy as np
     from PIL import Image
+    from scipy.spatial.distance import cosine  # lazy
 
     from agentic_eval.core.embeddings.embedding_manager import model_manager
 
@@ -1051,6 +1057,8 @@ def calculate_embedding_similarity(output:str, expected: str, similarity_method=
     and provides a descriptive reason string. If embedding or similarity computation fails,
     raises an exception.
     """
+    from scipy.spatial.distance import cityblock, cosine, euclidean  # lazy
+
     from agentic_eval.core.embeddings.embedding_manager import model_manager
     model = model_manager.text_model
     emb1, emb2 = model([str(output)]), model([str(expected)])
@@ -1079,6 +1087,7 @@ def calculate_semantic_list_contains(output:str, expected:str, case_insensitive=
     and provides a descriptive reason string. If embedding or similarity computation fails,
     raises an exception.
     """
+    from scipy.spatial.distance import cosine  # lazy
     def _preprocess(text):
         if not isinstance(text, str):
             text = str(text)
@@ -1344,7 +1353,7 @@ def contains_valid_link(text, **kwargs):
                         "result": False,
                         "reason": f"link {matched_url} found in output but is invalid",
                     }
-            except:
+            except Exception:
                 return {
                     "result": False,
                     "reason": f"link {matched_url} found in output but is invalid",
@@ -1380,7 +1389,7 @@ def no_invalid_links(text, **kwargs):
                         "result": False,
                         "reason": f"link {matched_url} found in output but is invalid",
                     }
-            except:
+            except Exception:
                 return {
                     "result": False,
                     "reason": f"link {matched_url} found in output but is invalid",
@@ -1715,6 +1724,9 @@ def custom_code_eval(code, language=None, **kwargs):
         raise ValueError("Code eval function returned None (no result produced)")
     if status != "success":
         error_msg = result.get("data", "Unknown error in code eval")
+        # Only the sandbox's own texts: an eval script can print any result.
+        if isinstance(error_msg, str) and error_msg in SETUP_ERROR_MESSAGES:
+            raise CodeEvalSetupError(error_msg)
         raise ValueError(f"Code eval input validation failed: {error_msg}")
 
     data = result.get("data")

@@ -18,16 +18,11 @@ from simulate.models import (
 from simulate.serializers.chat_message import ChatMessageSerializer
 from simulate.utils.eval_summary import iter_live_eval_outputs
 from simulate.utils.test_execution_utils import canonical_scenario_column_name
+from tracer.models.observability_provider import ProviderChoices
 from tracer.serializers.filters import (
     StrictInputSerializer,
     filter_list_query_param_field,
 )
-
-try:
-    from ee.voice.services.voice_service_manager import VoiceServiceManager
-except ImportError:
-    VoiceServiceManager = None
-from tracer.models.observability_provider import ProviderChoices
 
 logger = structlog.get_logger(__name__)
 
@@ -52,6 +47,15 @@ class JsonArrayQueryParamField(serializers.CharField):
         if not isinstance(data, list):
             raise serializers.ValidationError("Value must be a list.")
         return data
+
+
+class TestExecutionListQuerySerializer(serializers.Serializer):
+    search = serializers.CharField(required=False, allow_blank=True, default="")
+    status = serializers.CharField(required=False, allow_blank=True, default="")
+    page = serializers.IntegerField(required=False, min_value=1)
+    # The list never capped `limit`; documenting it must not start rejecting
+    # callers that already passed values above 100.
+    limit = serializers.IntegerField(required=False, min_value=1)
 
 
 class ExecutionDetailQuerySerializer(StrictInputSerializer):
@@ -221,6 +225,13 @@ class CallExecutionEvalMetricSerializer(serializers.Serializer):
     error = serializers.BooleanField(required=False)
     status = serializers.CharField(allow_blank=True, required=False)
     skipped = serializers.BooleanField(required=False)
+    removed = serializers.BooleanField(
+        required=False,
+        help_text=(
+            "Present and true only when the eval was removed from the "
+            "environment; a live eval's verdict omits the key entirely."
+        ),
+    )
     error_localizer = serializers.BooleanField(required=False)
     error_analysis = serializers.JSONField(required=False, allow_null=True)
     error_localizer_status = serializers.CharField(
@@ -310,6 +321,9 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
     service_provider_call_id = serializers.CharField(
         source="customer_call_id", read_only=True
     )
+    source_scenario_key = serializers.SerializerMethodField()
+    harness_outcome_status = serializers.SerializerMethodField()
+    trial_index = serializers.SerializerMethodField()
 
     # New fields for simulator and agent definition used in this execution
     simulator_agent_name = serializers.CharField(
@@ -398,6 +412,9 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             "recordings",
             "test_execution_id",
             "scenario_id",
+            "source_scenario_key",
+            "trial_index",
+            "harness_outcome_status",
             "scenario_graph",
             "scenario_graph_id",
             # Conversation metrics fields
@@ -440,6 +457,16 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "timestamp"]
 
+    def get_source_scenario_key(self, obj):
+        return (obj.call_metadata or {}).get("harness_scenario_key")
+
+    def get_harness_outcome_status(self, obj):
+        metadata = obj.call_metadata if isinstance(obj.call_metadata, dict) else {}
+        return metadata.get("harness_outcome_status")
+
+    def get_trial_index(self, obj):
+        return (obj.call_metadata or {}).get("harness_trial_index")
+
     def get_session_id(self, obj):
         """
         Return session_id (if present) from the dataset Row.metadata for this call execution.
@@ -481,7 +508,6 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             and isinstance(obj.provider_call_data, dict)
             else {}
         )
-        provider_payload = pcd.get(ProviderChoices.VAPI.value)
 
         # Per-channel recording URLs live under <provider>.recording for whatever
         # provider produced the call (vapi, livekit, ...). Read the shortcut from
@@ -506,12 +532,44 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         if shortcut.get("assistant"):
             recordings["assistant"] = shortcut["assistant"]
 
-        # Fall back to the VoiceServiceManager resolution when no URLs are present.
-        if not recordings:
-            if VoiceServiceManager is None:
-                return {}
-            vsm = VoiceServiceManager(system_voice_provider=ProviderChoices.VAPI)
-            recordings = vsm.get_recording_urls(provider_payload) or {}
+        # Hosted harness artifacts are re-hosted by the platform rather than
+        # nested in provider_call_data.  Surface all available tracks through
+        # the same recording shape consumed by the existing drawer.
+        call_metadata = (
+            obj.call_metadata
+            if hasattr(obj, "call_metadata") and isinstance(obj.call_metadata, dict)
+            else {}
+        )
+        hosted = call_metadata.get("hosted_harness_artifacts") or {}
+        hosted_track_kinds = {
+            "combined": "recording_combined",
+            "stereo": "recording_stereo",
+            "customer": "recording_customer",
+            "assistant": "recording_assistant",
+        }
+        for track, artifact_kind in hosted_track_kinds.items():
+            artifact = hosted.get(artifact_kind)
+            if (
+                track not in recordings
+                and isinstance(artifact, dict)
+                and artifact.get("url")
+            ):
+                recordings[track] = artifact["url"]
+
+        if not recordings and isinstance(pcd.get(ProviderChoices.VAPI.value), dict):
+            from simulate.utils.session_comparison import (
+                fetch_simulated_call_recordings,
+            )
+
+            fallback = fetch_simulated_call_recordings(obj)
+            for track, source in (
+                ("combined", "mono_combined"),
+                ("stereo", "stereo"),
+                ("customer", "mono_customer"),
+                ("assistant", "mono_assistant"),
+            ):
+                if url := fallback.get(source):
+                    recordings[track] = url
 
         if isinstance(recordings, dict) and recordings:
             from simulate.utils.speaker_roles import SpeakerRoleResolver
@@ -610,6 +668,13 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
 
     def _is_chat_simulation(self, obj):
         """Check if this call execution is a chat/text simulation (agent-based or prompt-based)."""
+        # The executed call is authoritative. Hosted harness runs may reuse an
+        # AgentDefinition whose legacy/default type is text while projecting a
+        # real voice call. Falling through to that stale definition hides voice
+        # duration and recordings from the call-details response.
+        simulation_call_type = getattr(obj, "simulation_call_type", None)
+        if simulation_call_type is not None:
+            return simulation_call_type == CallExecution.SimulationCallType.TEXT
         if not hasattr(obj, "test_execution") or not obj.test_execution:
             return False
         run_test = obj.test_execution.run_test
@@ -726,6 +791,15 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             if hasattr(self, "context") and self.context
             else None
         )
+        # ``mark_removed_only``: the caller wants only the removed-marker
+        # stamped, with every other effect of an ``eval_configs`` context
+        # switched off, so ``iter_live_eval_outputs`` is skipped and a key
+        # with no config row is still returned, as with no context at all.
+        mark_removed_only = bool(
+            self.context.get("mark_removed_only")
+            if hasattr(self, "context") and self.context
+            else False
+        )
         if eval_configs is None:
             logger.debug(
                 "eval_outputs_serialized_without_live_config_context",
@@ -733,7 +807,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             )
         eval_items = (
             eval_outputs.items()
-            if eval_configs is None
+            if eval_configs is None or mark_removed_only
             else iter_live_eval_outputs(eval_outputs, eval_configs)
         )
 
@@ -747,6 +821,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                 is_error = bool(raw_error is True or raw_error == "error") or (
                     eval_data.get("status") == "error"
                 )
+                eval_config = (eval_configs or {}).get(eval_id)
                 structured_outputs[eval_id] = {
                     "value": _normalize_eval_value(
                         eval_data.get("output"),
@@ -762,6 +837,13 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     "skipped": bool(eval_data.get("skipped", False))
                     or eval_data.get("status") == "skipped",
                 }
+                # The eval was removed from the environment after this
+                # verdict was stored; the verdict is shown, marked, never
+                # hidden or rewritten. A live eval's verdict carries no
+                # "removed" key. ``getattr`` also covers harness-native rows,
+                # which have no config object.
+                if getattr(eval_config, "deleted", False):
+                    structured_outputs[eval_id]["removed"] = True
 
         return structured_outputs
 
@@ -790,6 +872,16 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             if hasattr(self, "context") and self.context
             else None
         )
+        # See ``get_eval_outputs``'s ``mark_removed_only`` comment: this
+        # surface needs the marker only, with ``template_type``, the
+        # error-localizer lookup, and the ``eval_config.name`` fallback all
+        # switched off, so it stays unchanged from the no-context branch
+        # except for the added ``"removed": true`` keys.
+        mark_removed_only = bool(
+            self.context.get("mark_removed_only")
+            if hasattr(self, "context") and self.context
+            else False
+        )
         if eval_configs is None:
             logger.debug(
                 "eval_outputs_serialized_without_live_config_context",
@@ -797,7 +889,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             )
         eval_items = (
             eval_outputs.items()
-            if eval_configs is None
+            if eval_configs is None or mark_removed_only
             else iter_live_eval_outputs(eval_outputs, eval_configs)
         )
 
@@ -815,7 +907,12 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                 metrics[eval_id] = {
                     "id": eval_id,
                     "name": eval_data.get(
-                        "name", eval_config.name if eval_config else ""
+                        "name",
+                        (
+                            ""
+                            if mark_removed_only
+                            else (eval_config.name if eval_config else "")
+                        ),
                     ),
                     "value": _normalize_eval_value(
                         eval_data.get("output"),
@@ -824,9 +921,14 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     "reason": eval_data.get("reason", ""),
                     "type": eval_data.get("output_type", ""),
                     "template_type": (
-                        getattr(eval_config.eval_template, "template_type", None)
-                        if eval_config and getattr(eval_config, "eval_template", None)
-                        else None
+                        None
+                        if mark_removed_only
+                        else (
+                            getattr(eval_config.eval_template, "template_type", None)
+                            if eval_config
+                            and getattr(eval_config, "eval_template", None)
+                            else None
+                        )
                     ),
                     "visible": True,  # Default to visible
                     "error": is_error,
@@ -835,8 +937,15 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     ),
                     "skipped": bool(eval_data.get("skipped", False))
                     or eval_data.get("status") == "skipped",
-                    "error_localizer": error_localizer_enabled(eval_config),
+                    "error_localizer": (
+                        False
+                        if mark_removed_only
+                        else error_localizer_enabled(eval_config)
+                    ),
                 }
+                # Same marker as the eval_outputs projection above.
+                if getattr(eval_config, "deleted", False):
+                    metrics[eval_id]["removed"] = True
 
         call_execution_id = getattr(obj, "id", None)
         enabled_eval_config_ids = [
@@ -848,7 +957,10 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             )
 
             request = (self.context or {}).get("request")
-            workspace = getattr(request, "workspace", None) if request else None
+            # A shared link has no request workspace; it passes its own.
+            workspace = (self.context or {}).get("workspace") or (
+                getattr(request, "workspace", None) if request else None
+            )
             state_by_eval_config = get_error_localizer_state_by_eval_config(
                 call_execution_id, enabled_eval_config_ids, workspace
             )
@@ -1267,6 +1379,20 @@ class RunTestKPIsResponseSerializer(serializers.Serializer):
     """Response for GET /simulate/test-executions/{id}/kpis/."""
 
     total_calls = serializers.IntegerField(read_only=True)
+    # The run's COMPLETED-status call count, for both modalities. Distinct
+    # from `total_calls` (every status), `connected_calls`
+    # (`connected_voice_calls` on a voice run), and from
+    # `TestExecution.completed_calls`, an unrelated counter column of the
+    # same name.
+    completed_calls = serializers.IntegerField(
+        read_only=True,
+        help_text=(
+            "Calls with status completed, counted like every other KPI here: "
+            "soft-deleted calls included. The run-level add's 202 counts live "
+            "calls only, so the two can differ for a run with a deleted call "
+            "(TH-8057)."
+        ),
+    )
     avg_score = serializers.FloatField(read_only=True)
     avg_response = serializers.FloatField(read_only=True)
     calls_attempted = serializers.IntegerField(read_only=True)
@@ -1657,6 +1783,106 @@ class TestExecutionSerializer(serializers.ModelSerializer):
         # Calculate percentage
         percentage = (call_counts["connected_calls"] / calls_attempted) * 100
         return round(percentage, 2)
+
+
+class DebugAnalysisEvidenceSerializer(serializers.Serializer):
+    evidence_id = serializers.CharField()
+    call_execution_id = serializers.UUIDField(allow_null=True)
+    excerpt = serializers.CharField()
+
+
+class DebugAnalysisClusterSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    cluster_id = serializers.CharField()
+    title = serializers.CharField(allow_null=True)
+    error_type = serializers.CharField()
+
+
+class DebugAnalysisFindingSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    kind = serializers.CharField(allow_null=True)
+    statement = serializers.CharField()
+    recovery = serializers.CharField(allow_null=True)
+    category = serializers.CharField(allow_null=True)
+    group_label = serializers.CharField(allow_null=True)
+    fix_layer = serializers.CharField(allow_null=True)
+    confidence = serializers.CharField(allow_null=True)
+    # The authored sub-goal this finding breaks, when it breaks one.
+    goal = serializers.CharField(allow_null=True)
+    cluster = DebugAnalysisClusterSerializer(allow_null=True)
+    evidence = DebugAnalysisEvidenceSerializer(many=True)
+
+
+class DebugAnalysisCoverageSerializer(serializers.Serializer):
+    scope = serializers.CharField()
+    observed_call_count = serializers.IntegerField()
+    read_complete = serializers.BooleanField()
+
+
+class DebugAnalysisReportSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    execution_status = serializers.CharField()
+    outcome = serializers.CharField()
+    coverage = DebugAnalysisCoverageSerializer()
+    error_message = serializers.CharField(allow_null=True)
+    grouping_status = serializers.CharField()
+    recorded_at = serializers.DateTimeField()
+
+
+class DebugAnalysisWaySerializer(serializers.Serializer):
+    """One way a goal broke (a grouping cluster), or one one-off agent issue."""
+
+    id = serializers.CharField()
+    title = serializers.CharField()
+    phrase = serializers.CharField()
+    call_ids = serializers.ListField(child=serializers.UUIDField())
+
+
+class DebugAnalysisGoalSerializer(serializers.Serializer):
+    """A goal the run's evals say broke, and how it broke."""
+
+    goal = serializers.CharField()
+    label = serializers.CharField()
+    criteria = serializers.CharField(allow_null=True)
+    broken_call_ids = serializers.ListField(child=serializers.UUIDField())
+    tested_call_count = serializers.IntegerField()
+    ways = DebugAnalysisWaySerializer(many=True)
+    unexplained_call_ids = serializers.ListField(child=serializers.UUIDField())
+
+
+class DebugAnalysisSummarySerializer(serializers.Serializer):
+    measured_call_count = serializers.IntegerField()
+    broken_goal_count = serializers.IntegerField()
+    broken_call_count = serializers.IntegerField()
+    one_off_count = serializers.IntegerField()
+    # Calls our own test caller or platform broke; never counted against the agent.
+    excluded_call_ids = serializers.ListField(child=serializers.UUIDField())
+    # Calls whose own analysis failed: unread, not issue-free.
+    unanalyzed_call_ids = serializers.ListField(child=serializers.UUIDField())
+
+
+class TestExecutionDebugAnalysisResponseSerializer(serializers.Serializer):
+    test_execution_id = serializers.UUIDField()
+    status = serializers.ChoiceField(
+        choices=("not_requested", "pending", "running", "completed", "failed")
+    )
+    generation = serializers.IntegerField(allow_null=True)
+    job_id = serializers.UUIDField(allow_null=True)
+    error_message = serializers.CharField(allow_null=True)
+    report = DebugAnalysisReportSerializer(allow_null=True)
+    findings = DebugAnalysisFindingSerializer(many=True)
+    summary = DebugAnalysisSummarySerializer(allow_null=True)
+    goals = DebugAnalysisGoalSerializer(many=True)
+    one_offs = DebugAnalysisWaySerializer(many=True)
+
+
+class TestExecutionDebugAnalysisErrorSerializer(serializers.Serializer):
+    code = serializers.CharField()
+    detail = serializers.CharField()
+
+
+class TestExecutionDebugAnalysisNotFoundSerializer(serializers.Serializer):
+    detail = serializers.CharField()
 
 
 class TestExecutionStatusSerializer(serializers.Serializer):

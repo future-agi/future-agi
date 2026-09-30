@@ -216,7 +216,15 @@ export default function ErrorFeedDetailView() {
                 typography="m3"
                 fontWeight="fontWeightSemiBold"
                 color="text.primary"
-                sx={{ lineHeight: 1.35 }}
+                title={currentError.error.name}
+                sx={{
+                  lineHeight: 1.35,
+                  overflow: "hidden",
+                  display: "-webkit-box",
+                  WebkitBoxOrient: "vertical",
+                  WebkitLineClamp: 2,
+                  overflowWrap: "anywhere",
+                }}
               >
                 {currentError.error.name}
               </Typography>
@@ -241,7 +249,12 @@ export default function ErrorFeedDetailView() {
                   </Typography>
                 </Stack>
                 <ErrorStatusChip status={currentError.status} />
-                <ErrorSeverityBadge severity={currentError.severity} />
+                <ErrorSeverityBadge
+                  severity={currentError.severity}
+                  assessmentStatus={currentError.severity_assessment_status}
+                  source={currentError.severity_source}
+                  reason={currentError.severity_reason}
+                />
                 {/* Cluster badge */}
                 <Chip
                   icon={<Iconify icon="mdi:layers-outline" width={12} />}

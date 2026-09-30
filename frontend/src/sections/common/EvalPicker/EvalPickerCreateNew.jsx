@@ -125,6 +125,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     onFiltersChange,
     sourceTimeWindow,
     filterForm: localFilterForm,
+    requireInputs,
   } = useEvalPickerContext();
   const { enqueueSnackbar } = useSnackbar();
   // Fail closed while capabilities load (both flags true) so we never flash
@@ -542,6 +543,16 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       return;
     }
     if (!validate()) return;
+    if (requireInputs && Object.keys(sourceMapping || {}).length === 0) {
+      // Defensive: the mapping step normally guarantees at least one mapped
+      // input, but an eval stored with an empty mapping reads back as a
+      // result column and is never graded, so never save one here.
+      enqueueSnackbar(
+        "This evaluation has no inputs to map, so it can't run in an environment.",
+        { variant: "error" },
+      );
+      return;
+    }
     if (!draftId) {
       enqueueSnackbar("Draft not ready, please wait a moment", {
         variant: "warning",
@@ -587,6 +598,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     }
   }, [
     validate,
+    requireInputs,
     draftId,
     name,
     description,
@@ -1265,7 +1277,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   />
                 </Box>
               )}
-              <Box sx={{ flex: 1, overflow: "auto" }}>
+              <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
                 {(source === "dataset" ||
                   source === "workbench" ||
                   source === "custom" ||

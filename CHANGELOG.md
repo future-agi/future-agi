@@ -1,5 +1,262 @@
 # Changelog
 
+## [1.41.1](https://github.com/future-agi/future-agi/compare/v1.41.0...v1.41.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* **frontend:** point get-started experiment links at develop and drop unused route imports ([8fd831e](https://github.com/future-agi/future-agi/commit/8fd831e8b2e3febe1f67489c65850a2d9ef7cf51))
+* **frontend:** retire the prototype routes and repoint get-started links ([e7112f2](https://github.com/future-agi/future-agi/commit/e7112f23f8b4354bb0dd6df854e9a041d425550c))
+* **oss:** explain failed pre-flight checks and keep the launch moving ([5d11782](https://github.com/future-agi/future-agi/commit/5d117826660b3e3a1947fdcbc5156b8cc98e9733))
+* **oss:** explain failed pre-flight checks and keep the launch moving ([83a7e63](https://github.com/future-agi/future-agi/commit/83a7e631a580768707e0021dd259d3f8a2010b62))
+* **self-host:** pin a frozen build of the last community MinIO release ([43026bd](https://github.com/future-agi/future-agi/commit/43026bd5d49dc26d1a7c192d198f394f6057203f))
+* **self-host:** pin a frozen build of the last community MinIO release ([871165b](https://github.com/future-agi/future-agi/commit/871165bbf79c61d6cee7377ba65b3b2d513f1096))
+
+## [1.41.0](https://github.com/future-agi/future-agi/compare/v1.40.1...v1.41.0) (2026-09-25)
+
+
+### Features
+
+* **error-feed:** include source names in worker claims ([7e3f852](https://github.com/future-agi/future-agi/commit/7e3f85218873d293919ec301731df59b585335d8))
+* **error-feed:** include source names in worker claims ([c660166](https://github.com/future-agi/future-agi/commit/c6601663ba3aa58b486fadde5979a80c89c0df43))
+
+
+### Bug Fixes
+
+* **tracer:** batched backfill_legacy_scans command replacing 0101 data step ([d6b96fc](https://github.com/future-agi/future-agi/commit/d6b96fc0ef3060f98836f57b12524061429e3c89))
+* **tracer:** batched backfill_legacy_scans command replacing 0101 data step (main) ([a540abf](https://github.com/future-agi/future-agi/commit/a540abf87375244b0236211e356ccc6fc28d8ef7))
+
+## [1.40.1](https://github.com/future-agi/future-agi/compare/v1.40.0...v1.40.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **install:** make the first account reachable on a fresh install ([ec9ba10](https://github.com/future-agi/future-agi/commit/ec9ba10765a7a0deb222b169689db86eb8350288))
+* **install:** make the first account reachable on a fresh install ([999e70a](https://github.com/future-agi/future-agi/commit/999e70a8598de2f8593848de0733987845295f1c))
+* **release:** bump US Property Catalog image tags ([e521968](https://github.com/future-agi/future-agi/commit/e52196801db5be7791d09e460a9b520aa9f39634))
+* **release:** include US Property Catalog image tags in release bumps ([516624d](https://github.com/future-agi/future-agi/commit/516624d05e86141222e03c1f625299fc94a64f30))
+
+## [1.40.0](https://github.com/future-agi/future-agi/compare/v1.39.0...v1.40.0) (2026-09-23)
+
+
+### Features
+
+* **error-feed:** announce stored roots for Omega investigations ([db45e26](https://github.com/future-agi/future-agi/commit/db45e26991bcc37028108390c56ad6b8aa6900fa))
+* **error-feed:** assess grouped issue severity with evidence ([3db5580](https://github.com/future-agi/future-agi/commit/3db5580dbfb1c32ac316264660ab7e18b0f17435))
+* **error-feed:** backfill legacy scans in Django migrations ([0156268](https://github.com/future-agi/future-agi/commit/0156268ecaef33b1e81cc800d9d9966964008841))
+* **error-feed:** checkpoint F6 runtime for local integration testing ([138c72b](https://github.com/future-agi/future-agi/commit/138c72b6814d026ddceb1d8c1583d69f3fe28315))
+* **error-feed:** cut over trace admission to Omega ([584b726](https://github.com/future-agi/future-agi/commit/584b72639fde7a40f98ec4d9b8326f65ab72379f))
+* **error-feed:** enable grouping, scored evals, and causal breadcrumbs ([772013b](https://github.com/future-agi/future-agi/commit/772013b4cb3daa6e748adb0d22b7c949badef20b))
+* **error-feed:** integrate Omega investigation handoff ([bb5311e](https://github.com/future-agi/future-agi/commit/bb5311eb1cc43f36a39c3813a02baa7b5565aa5f))
+* **error-feed:** normalize Omega investigation reports ([a63240d](https://github.com/future-agi/future-agi/commit/a63240df846355eacfe70cbbf88d49a3f2718960))
+* **error-feed:** prepare scoped grouping snapshots and feature jobs ([4872736](https://github.com/future-agi/future-agi/commit/4872736b034866551cf102d6bb51c75c21022737))
+* **error-feed:** prepare scoped grouping snapshots and jobs (TH-7782) ([cf2c168](https://github.com/future-agi/future-agi/commit/cf2c16867e980b9eec717c9ceced75803bdb4ae6))
+* **error-feed:** publish F6 clusters and severity to the Feed (TH-7782) ([318771e](https://github.com/future-agi/future-agi/commit/318771eaa468766bd42cb0548285f3c926061677))
+* **error-feed:** read current findings in cluster RCA ([29f6f18](https://github.com/future-agi/future-agi/commit/29f6f18874172425c2eb9c32c6138e5cbe92c75e))
+* **error-feed:** read normalized investigations in Feed ([6adea8d](https://github.com/future-agi/future-agi/commit/6adea8d94efb0958ab867d3a4fba99e18753ed5d))
+* **error-feed:** render cited causal breadcrumbs from Omega roles ([f1c1e19](https://github.com/future-agi/future-agi/commit/f1c1e19dec77b05c5581b077aea3cbba5bd4a1a5))
+* **error-feed:** retain tenant-scoped usage receipts ([1c4dd73](https://github.com/future-agi/future-agi/commit/1c4dd73f25ab5cc5cf4a8106026b201a50145395))
+* **error-feed:** schedule local Omega processing on the existing stack ([987f4ed](https://github.com/future-agi/future-agi/commit/987f4edb97b759a3e9a01feebde01aef745a1d31))
+* **error-feed:** wire durable Omega investigations and grouping ([8343400](https://github.com/future-agi/future-agi/commit/83434007bb749023f709b14abad269dfff80f2bd))
+* **release:** gate deployment bumps on verified Error Feed worker images ([508b0c5](https://github.com/future-agi/future-agi/commit/508b0c555126a08668840e6de2e0159679568aaf))
+* **release:** gate deployments on verified Error Feed worker images ([5e818f2](https://github.com/future-agi/future-agi/commit/5e818f2e4f98c2c5cbe737b000be87495756c4e9))
+
+
+### Bug Fixes
+
+* **error-feed:** align causal breadcrumb tests and Feed schema ([fdd83d2](https://github.com/future-agi/future-agi/commit/fdd83d284b7cdc8e04493b205f45ef150fc31d71))
+* **error-feed:** align investigation errors with main API envelope ([e164a5a](https://github.com/future-agi/future-agi/commit/e164a5a5591fbf1e449108fd91dad08c0dc5bef4))
+* **error-feed:** align runtime contracts and stack test boundaries ([4c1ba76](https://github.com/future-agi/future-agi/commit/4c1ba76ce005fe1688694d12e81a35c4875deaeb))
+* **error-feed:** avoid revision churn on repeated severity edits ([746453b](https://github.com/future-agi/future-agi/commit/746453b7a65d72af53856b43eea8ebfe15c69973))
+* **error-feed:** derive trace status from resolved outcome ([2cb8dc6](https://github.com/future-agi/future-agi/commit/2cb8dc6460657428856d4bb62c1dce7375e97485))
+* **error-feed:** disable legacy scanner in v2 stack ([3cf494f](https://github.com/future-agi/future-agi/commit/3cf494f34d427fe2a929fef635f10794e47c8562))
+* **error-feed:** dispatch severity accounting endpoints safely ([6577d5a](https://github.com/future-agi/future-agi/commit/6577d5a9ae23dce69ecdc380ef9efb5cfe9de22f))
+* **error-feed:** enable Omega grouping by default ([60321d7](https://github.com/future-agi/future-agi/commit/60321d72b315ebc8acf76ca47feb52f0d7d5c4b2))
+* **error-feed:** fence grouping cohort claims ([3b6c0c1](https://github.com/future-agi/future-agi/commit/3b6c0c16cb1a4038233e54cc958c919e4394a691))
+* **error-feed:** fence superseded attempts and inconclusive reports ([a225d21](https://github.com/future-agi/future-agi/commit/a225d21915a6ffbb135527443d7d47eb87cb9dcc))
+* **error-feed:** gate grouping on budgets and EE deployment ([7882a12](https://github.com/future-agi/future-agi/commit/7882a12a7a800fc63489922a022edf32a3a6d90f))
+* **error-feed:** group only unresolved task failures ([c7f0c48](https://github.com/future-agi/future-agi/commit/c7f0c48bc2c089483bcf0a09ab2237e1657ffbe5))
+* **error-feed:** honor v2 sampling and stable delivery identity ([1b81dc1](https://github.com/future-agi/future-agi/commit/1b81dc1865027591ff43c0444031fdb2c3c43314))
+* **error-feed:** keep collector ingest available without Kafka ([a23f3c9](https://github.com/future-agi/future-agi/commit/a23f3c97645d3f1eed19db5af780be450864d2d1))
+* **error-feed:** keep issue details and receipts scannable ([55e8684](https://github.com/future-agi/future-agi/commit/55e86846e42479dea5cefee9c0dea0a51f82ca8f))
+* **error-feed:** keep repeated severity edits idempotent (TH-7782) ([11e6389](https://github.com/future-agi/future-agi/commit/11e6389854fad3059221a27d883ca305afd81495))
+* **error-feed:** keep scanner issue IDs compact ([2822c48](https://github.com/future-agi/future-agi/commit/2822c487fcbb228ddf2553631a6d98b266df6156))
+* **error-feed:** measure native token usage and configure budget enforcement ([1bf063b](https://github.com/future-agi/future-agi/commit/1bf063b2fd5e9f1d68f7b44f38ce0ed3f192e152))
+* **error-feed:** merge tracer migration heads ([437153d](https://github.com/future-agi/future-agi/commit/437153d71899bab74b6b781fca757aa343174d6a))
+* **error-feed:** omit legacy sweep from v2 schedules ([13da1a4](https://github.com/future-agi/future-agi/commit/13da1a46879072927a54eb9ff395d79e45e9207c))
+* **error-feed:** order feature jobs after merged tracer migrations ([ddd30fa](https://github.com/future-agi/future-agi/commit/ddd30fa443d72c9c5dae4748a91ddb558b9e028a))
+* **error-feed:** publish concise F6 issue titles ([cc3e87c](https://github.com/future-agi/future-agi/commit/cc3e87c2fc0ddc2db8410271c6fa087cb7fd1fb3))
+* **error-feed:** publish concise F6 issue titles ([7d69abd](https://github.com/future-agi/future-agi/commit/7d69abd2f2a0fb4fc1472e45d2b5e823200a6d97))
+* **error-feed:** publish evidence-backed fix layer assessments ([2a15325](https://github.com/future-agi/future-agi/commit/2a15325e2e67357cc97e8fa8ae74bedefb6c8df1))
+* **error-feed:** publish evidence-backed fix layer assessments ([aa75620](https://github.com/future-agi/future-agi/commit/aa75620a6fbdbe23952a431c472502e2857f7013))
+* **error-feed:** route v2 sampling configs to Omega ([3a95528](https://github.com/future-agi/future-agi/commit/3a95528b90364b442324c23da2d046a89a4cbb90))
+* **error-feed:** show trace graph load failures explicitly ([c399820](https://github.com/future-agi/future-agi/commit/c399820a8152f8521861fe5b30f6b3996097f11e))
+* **error-feed:** show trace graph load failures explicitly ([9df652e](https://github.com/future-agi/future-agi/commit/9df652e0c63c7f7e8da3e9ec2e6f8ff0b8eb6cfc))
+* **error-feed:** standardize grouping and severity error envelopes ([ba0f968](https://github.com/future-agi/future-agi/commit/ba0f968380f2619e4a817ec5284f0b5c08a5597d))
+* **error-feed:** use scanner IDs for Omega clusters ([86c7216](https://github.com/future-agi/future-agi/commit/86c721641dded952d958d2cb784ada22f44880ff))
+* **error-feed:** verify integration against the existing local stack ([bdd2c7b](https://github.com/future-agi/future-agi/commit/bdd2c7ba0a80eed9641b42dd575e365b16ff677a))
+* **grouping:** align checkpoint bound with worker transport ([2bd08b3](https://github.com/future-agi/future-agi/commit/2bd08b34ef97eabc900f32a485c74a3426f96228))
+* **grouping:** align checkpoint transport bound ([370874c](https://github.com/future-agi/future-agi/commit/370874c4cf6feccdb97fdeb3797f180f61d4f5ec))
+* **TH-7782:** use organization lookup for release app token ([5dd891f](https://github.com/future-agi/future-agi/commit/5dd891f553627b88c85c82d09c565d861b091299))
+* **TH-7782:** use organization lookup for release app token ([72564f4](https://github.com/future-agi/future-agi/commit/72564f4732935e6e013abf4b79db008e4a5f944e))
+* **tracer:** project Omega issue findings into cited reel steps ([63cfefc](https://github.com/future-agi/future-agi/commit/63cfefcb0413b1e7afaad7b8bfd91ac0ccbc4913))
+* **tracing:** cluster choice-scored eval failures ([be6a162](https://github.com/future-agi/future-agi/commit/be6a1621f800ed790f45c279642de0574456682e))
+* **tracing:** honor eval score thresholds ([f9871c2](https://github.com/future-agi/future-agi/commit/f9871c2b8111007d0d5e363bcdadc1cd4db40c7a))
+* **tracing:** ignore deleted eval memberships ([f592153](https://github.com/future-agi/future-agi/commit/f5921537e4c4278cff7149c502bcef591a923c4d))
+* **tracing:** resolve structured eval scores safely ([533397a](https://github.com/future-agi/future-agi/commit/533397a167063d1b264e4365bd46fc9835f5a3df))
+
+## [1.39.0](https://github.com/future-agi/future-agi/compare/v1.38.4...v1.39.0) (2026-09-21)
+
+
+### Features
+
+* **agentcc:** add Vertex provider credentials and deployment guide ([c2ce659](https://github.com/future-agi/future-agi/commit/c2ce65962140895baa051508dc2cd608ba9735fc))
+* **agentcc:** filter request logs and group analytics by application and service ([fd08c00](https://github.com/future-agi/future-agi/commit/fd08c0024bac0f604df86bf4fa1c2be6fddc1883))
+* **agentcc:** filter request logs and group analytics by application and service (TH-8004) ([a98dffd](https://github.com/future-agi/future-agi/commit/a98dffd3c14433a245b4775467c27319b570ddcc))
+* **agentcc:** route Claude Agent SDK requests to Vertex Gemini ([f9d6c50](https://github.com/future-agi/future-agi/commit/f9d6c5035e03bc2bf695201ff7603ccb1e4eab1f))
+* **agentcc:** route Claude-compatible requests to Vertex Gemini ([0622851](https://github.com/future-agi/future-agi/commit/062285197d50b39be164762bc3180da57ad7c194))
+
+
+### Bug Fixes
+
+* **agentcc:** keep a caller's Other application out of the folded tail ([b8440e5](https://github.com/future-agi/future-agi/commit/b8440e5d76314f8e42005326e4eff447fca4e3b9))
+* **agentcc:** preserve schema properties and forward resolved aliases ([99ce18b](https://github.com/future-agi/future-agi/commit/99ce18bc106326d67d37803b9df794e74f0a2e1c))
+* point every Discord link at the one working invite ([96f12d1](https://github.com/future-agi/future-agi/commit/96f12d1e227bde75d6d7a12214e48da19c0a5081))
+* point every Discord link at the one working invite ([d02df8d](https://github.com/future-agi/future-agi/commit/d02df8d96f564253344ed4849435340edd9c52c6))
+* **tests:** stabilize backend CI failure groups ([270a146](https://github.com/future-agi/future-agi/commit/270a1460ce21b560d09e5ce91fdea91c4ff04490))
+
+## [1.38.4](https://github.com/future-agi/future-agi/compare/v1.38.3...v1.38.4) (2026-09-17)
+
+
+### Bug Fixes
+
+* **eval-tasks:** gate errored/skipped requeue on terminal watermark; sniff URL type across chunks ([b40979c](https://github.com/future-agi/future-agi/commit/b40979c80e8428f853ebfa5538383aa83964edb5))
+* **eval-tasks:** stop continuous tasks re-running converged failures every poll ([a113af7](https://github.com/future-agi/future-agi/commit/a113af7aa78c1fb8cf8e6aa19f7f983a28b51f52))
+* **eval-tasks:** stop continuous tasks re-running converged failures every poll ([7c99959](https://github.com/future-agi/future-agi/commit/7c99959f98669372f8611764e83d09df4683d110))
+
+## [1.38.3](https://github.com/future-agi/future-agi/compare/v1.38.2...v1.38.3) (2026-09-15)
+
+
+### Bug Fixes
+
+* **eval-tasks:** batch changed span identities below query size limit ([cea0869](https://github.com/future-agi/future-agi/commit/cea0869da412809eb89def3fbbaab7ad00a414f8))
+* **eval-tasks:** bound remaining continuous candidate queries ([201282d](https://github.com/future-agi/future-agi/commit/201282d2d48417d2efca9c69da7a29393515d224))
+* **eval-tasks:** hotfix dense continuous and sparse historical selection ([5d9bea6](https://github.com/future-agi/future-agi/commit/5d9bea61fb9a6cd2ca64a89810d7fb3a6c498276))
+* **eval-tasks:** page dense continuous candidate windows with workflow budget ([6c27485](https://github.com/future-agi/future-agi/commit/6c274857080e651f9b285e72e75073ac1a42151c))
+* **eval-tasks:** preserve historical selection window across budget escalation ([7d404f4](https://github.com/future-agi/future-agi/commit/7d404f4d889ebae295e03deef132be119d522bed))
+* **tracer:** escalate small-limit eval task selection to the workflow budget ([6965153](https://github.com/future-agi/future-agi/commit/6965153ae9cd46e80c85572a078f386bb09d0931))
+
+## [1.38.2](https://github.com/future-agi/future-agi/compare/v1.38.1...v1.38.2) (2026-09-14)
+
+
+### Bug Fixes
+
+* **dashboards:** apply Dataset and Eval Source filters to eval metric charts ([40d950d](https://github.com/future-agi/future-agi/commit/40d950d25851b1c7286d3e8ae302d33699af0e4e))
+* **dashboards:** apply Dataset and Eval Source filters to eval metric charts (TH-7938) ([37d07d7](https://github.com/future-agi/future-agi/commit/37d07d766bac22afc8832854b72168b07460f440))
+* **dashboards:** apply Dataset and Eval Source filters to eval metric charts (TH-7938) ([09046a8](https://github.com/future-agi/future-agi/commit/09046a89d629226f35d9dbba9e0b00dcc3fc4e4e))
+* **evals:** preserve system eval binding config (TH-7897) ([2a7ced2](https://github.com/future-agi/future-agi/commit/2a7ced21559c242b6453420c549a274f8f09fb05))
+
+## [1.38.1](https://github.com/future-agi/future-agi/compare/v1.38.0...v1.38.1) (2026-09-12)
+
+
+### Bug Fixes
+
+* **ci:** pull MinIO from quay.io; Docker Hub no longer serves minio/minio ([cfdaf41](https://github.com/future-agi/future-agi/commit/cfdaf41764ea5124358bd96ac1474d146c2a938c))
+* **ci:** pull MinIO from quay.io; Docker Hub no longer serves minio/minio ([9a2b3bf](https://github.com/future-agi/future-agi/commit/9a2b3bfaf8c7ec42b7c591fab6f52daf2728f25a))
+
+## [1.38.0](https://github.com/future-agi/future-agi/compare/v1.37.2...v1.38.0) (2026-09-11)
+
+
+### Features
+
+* **admin:** show Custom Tools to staff as read-only [TH-7898] ([6ddb301](https://github.com/future-agi/future-agi/commit/6ddb30100e4f500bb6926ed54e0cf8c3b2cc4814))
+* **harness:** persist polled Daytona diagnostics ([85eb0d8](https://github.com/future-agi/future-agi/commit/85eb0d81c2ba5d3f708fe9f472116f36fe2f014a))
+* **simulate:** let the guest's Observe collector be configured separately ([20c83fd](https://github.com/future-agi/future-agi/commit/20c83fdb49c4ccdb36265873cec0e723a368f213))
+* **simulate:** merge Hosted Bundle V2 production flow into dev ([946fb1f](https://github.com/future-agi/future-agi/commit/946fb1f16e8b47f181442aa981830d6c6e136a16))
+* **simulate:** pass Observe configuration to the harness guest and allow its collector ([2e6d8eb](https://github.com/future-agi/future-agi/commit/2e6d8eb7381c4d61bad88ef81a2f61aa0ae9c0b4))
+* **simulate:** Retell outbound phone simulation on the hosted runner ([dc102c1](https://github.com/future-agi/future-agi/commit/dc102c10cbbe205ac7488340d1407791dc8aa1bb))
+* **simulate:** send the harness job's tenancy context to the guest for tracing ([77dff97](https://github.com/future-agi/future-agi/commit/77dff97819bedfcf9b07c19cfd3d48d2cc21e767))
+
+
+### Bug Fixes
+
+* bound sampled eval task selection scans ([c024254](https://github.com/future-agi/future-agi/commit/c0242548361727027fa256b41d60148610f7038a))
+* **contracts:** regenerate swagger for the admin invoice preview docstring ([#2721](https://github.com/future-agi/future-agi/issues/2721)) ([b2c38e8](https://github.com/future-agi/future-agi/commit/b2c38e8d64a2ff88b53bb68dcc51b34a610aa493))
+* **falcon-ai:** create agent evals by default when no type is given ([bea4b4c](https://github.com/future-agi/future-agi/commit/bea4b4cf32cf2a66b4ca29138780a0b08bbe788d))
+* **falcon-ai:** create agent evals by default when no type is given ([f62e77b](https://github.com/future-agi/future-agi/commit/f62e77b694aa58563af8268fc41f944514e829d8))
+* **harness:** harden Daytona diagnostics capture ([643c851](https://github.com/future-agi/future-agi/commit/643c851810211c6cad6f954cac249e84b3a8c5ec))
+* **harness:** normalize polled Daytona logs ([4ce6155](https://github.com/future-agi/future-agi/commit/4ce61559fbc5cf3e230e242deb2ede95688153f4))
+* **harness:** redact arbitrary secret aliases ([1785a84](https://github.com/future-agi/future-agi/commit/1785a84be01099c3e47e964600deed03fef65a3d))
+* **harness:** surface runtime validation cause ([b4457f3](https://github.com/future-agi/future-agi/commit/b4457f35fb85633e0d152310d532c13315dec129))
+* **observe:** attributes search, project sharing, and eval-mapping UX ([#2718](https://github.com/future-agi/future-agi/issues/2718)) ([ceb8d40](https://github.com/future-agi/future-agi/commit/ceb8d401d49886712e559b9c4e3f0764f15daaea))
+* **simulate:** align harness backend CI contracts ([04095c2](https://github.com/future-agi/future-agi/commit/04095c29dc1d8bb50d0c9aff45413aaeaf48e266))
+* **simulate:** bound wall-clock for every hosted voice job ([186cbfa](https://github.com/future-agi/future-agi/commit/186cbfa602ab5d6bbf0abcf4e449546eb12be43e))
+* **simulate:** declare resolved credential names to harness ([43be849](https://github.com/future-agi/future-agi/commit/43be84910efac548303ad2c3bfadd91d3af0494d))
+* **simulate:** derive the Observe collector host only from an explicit base url ([3d089b5](https://github.com/future-agi/future-agi/commit/3d089b570cecf246f4a3a84ecff9bdcc7fc93348))
+* **tests:** restore NLTK corpus initialization ([9b12fcf](https://github.com/future-agi/future-agi/commit/9b12fcf2812d9f80cf7ad927cf14d1732ac0cc30))
+
+## [1.37.2](https://github.com/future-agi/future-agi/compare/v1.37.1...v1.37.2) (2026-09-10)
+
+
+### Bug Fixes
+
+* **marketplace:** make the consumer heartbeat, follow Google's state, and type usage per metric ([de70acf](https://github.com/future-agi/future-agi/commit/de70acfc87adf60030badfeb4864cf22b832beac))
+* **marketplace:** make the consumer heartbeat, follow Google's state, and type usage per metric [TH-7731] ([ab66aea](https://github.com/future-agi/future-agi/commit/ab66aea398056db402f11489e5cbc4a9e98a9819))
+* **tests:** give the marketplace reconcile subscriptions a tier ([32e5cc4](https://github.com/future-agi/future-agi/commit/32e5cc49e736c854e987facd31f47e9a60029660))
+
+## [1.37.1](https://github.com/future-agi/future-agi/compare/v1.37.0...v1.37.1) (2026-09-09)
+
+
+### Bug Fixes
+
+* **accounts:** fix Marketplace runtime errors that escaped review ([cae3a2b](https://github.com/future-agi/future-agi/commit/cae3a2b58a39c97123fc36950ecccb97e4679a58))
+
+## [1.37.0](https://github.com/future-agi/future-agi/compare/v1.36.1...v1.37.0) (2026-09-09)
+
+
+### Features
+
+* **accounts:** GCP Marketplace integration [TH-7731] ([c4157b7](https://github.com/future-agi/future-agi/commit/c4157b7647fd2aaaff78b544230e7eed34d388d4))
+
+
+### Bug Fixes
+
+* **accounts:** harden Marketplace failure paths [TH-7731] ([cb68f0b](https://github.com/future-agi/future-agi/commit/cb68f0b4f42dcd405b49c54e9a89e3732f5d50ad))
+* **accounts:** resolve latest Marketplace review findings [TH-7731] ([b364723](https://github.com/future-agi/future-agi/commit/b364723f1aa6717941ebedd895237a92d38fa332))
+* **deps:** repin restrictedpython and regenerate requirements.txt for linux/py3.11 ([c24443f](https://github.com/future-agi/future-agi/commit/c24443ff85308ba4bdd87df64eeee0786ff5eff1))
+* **tracer:** apply ground truth to Observe simple evals (TH-7896) ([1f788ef](https://github.com/future-agi/future-agi/commit/1f788ef2a610a81f84916ec03c5c00af11a888ad))
+* **tracer:** apply ground truth to Observe simple evals (TH-7896) ([4c0389d](https://github.com/future-agi/future-agi/commit/4c0389d9a7cba2f4410beb85d859294e99c5e175))
+* **tracer:** unblock bin/test migrations and format the ground truth tests ([e21ff4a](https://github.com/future-agi/future-agi/commit/e21ff4ab3bba8cd62f79380328650e026f3d1842))
+
+## [1.36.1](https://github.com/future-agi/future-agi/compare/v1.36.0...v1.36.1) (2026-09-08)
+
+
+### Bug Fixes
+
+* **observe:** consolidate filtering and query optimizations ([83ffe21](https://github.com/future-agi/future-agi/commit/83ffe21dbe9a692469597ebdc42e28493a271b83))
+
+## [1.36.0](https://github.com/future-agi/future-agi/compare/v1.35.0...v1.36.0) (2026-09-08)
+
+
+### Features
+
+* **tracer:** poll Retell for voice observability instead of webhooks ([51d3edf](https://github.com/future-agi/future-agi/commit/51d3edfbec2c746a0a3e8974a995c894ceed77be))
+
+
+### Bug Fixes
+
+* **alerts:** carry the fired issue's window and filters into View Trace [TH-7792] ([aebed6c](https://github.com/future-agi/future-agi/commit/aebed6c41def527a8ac63918dc9aa488a5b298b2))
+* **catalog:** recover snapshot startup and revision ordering ([#2593](https://github.com/future-agi/future-agi/issues/2593)) ([8bf5d70](https://github.com/future-agi/future-agi/commit/8bf5d7053502bb610cba51944a149bed38f67b09))
+* **ci:** repair the disposable-domains refresh, and block two new domains ([#2584](https://github.com/future-agi/future-agi/issues/2584)) ([b269142](https://github.com/future-agi/future-agi/commit/b2691423ff699a7ea5167a2b167ec675f127a586))
+* **gateway:** harden the provider dialog and show full session IDs ([#2595](https://github.com/future-agi/future-agi/issues/2595)) ([b5b10ec](https://github.com/future-agi/future-agi/commit/b5b10ecbbb0cdd86b2364138260650d214c48214))
+* **models:** carry the region pin into the final fallback path ([ea61285](https://github.com/future-agi/future-agi/commit/ea6128560dc32c0d2397a0d801ff37c8e5b8fee5))
+* **models:** pin gemini-3.5-flash to its serving region on the direct path ([874f419](https://github.com/future-agi/future-agi/commit/874f419831e77006624e85dd1c57c5bde5703dae))
+* **tracer:** enforce the Retell deadline inside a page; never complete a bootstrap without coverage ([a61f41e](https://github.com/future-agi/future-agi/commit/a61f41e5794082f26f74882710dbf94ff32be0cb))
+* **tracer:** page-level checkpointing and bounded hydration for the Retell poll ([9315485](https://github.com/future-agi/future-agi/commit/931548504cb2ff8436f55396bd54f0e1449d3900))
+* **tracer:** poll Retell for voice observability instead of webhooks (cherry-pick of [#2556](https://github.com/future-agi/future-agi/issues/2556)) ([7de3803](https://github.com/future-agi/future-agi/commit/7de3803360339d54c9a93621878aed845f01c618))
+* **tracer:** renumber the poll_state migration to follow 0097 on main ([0a7f04c](https://github.com/future-agi/future-agi/commit/0a7f04cf51c341551f05a7f972142c7f69e29731))
+* **traces:** scope the deep-link guard to the link's own param [TH-7792] ([4f98c72](https://github.com/future-agi/future-agi/commit/4f98c72fbf12831a53a71e1c0a3be7cd5af35ce1))
+
 ## [1.35.0](https://github.com/future-agi/future-agi/compare/v1.34.1...v1.35.0) (2026-09-04)
 
 

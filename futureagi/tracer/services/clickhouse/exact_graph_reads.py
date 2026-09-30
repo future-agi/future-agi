@@ -21,11 +21,11 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from threading import Lock
 from time import monotonic
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 import structlog
@@ -62,7 +62,10 @@ from tracer.services.clickhouse.query_builders.session_filters import (
     SESSION_ID_FILTER_COLS,
     build_session_id_filter_clause,
 )
-from tracer.services.clickhouse.query_builders.user_list import UserListQueryBuilder
+from tracer.services.clickhouse.query_builders.user_list import (
+    MembershipTerm,
+    UserListQueryBuilder,
+)
 from tracer.services.clickhouse.read_budget import (
     ReadDeadlineExceeded,
     is_clickhouse_query_size_error,
@@ -80,6 +83,9 @@ from tracer.services.clickhouse.v2.query_builders.eval_metrics import (
 from tracer.services.clickhouse.v2.query_builders.filters import (
     ClickHouseFilterBuilderV2,
     rewrite_v1_sql_to_v2,
+)
+from tracer.services.clickhouse.v2.query_builders.session_list import (
+    SessionListQueryBuilderV2,
 )
 from tracer.services.clickhouse.v2.query_builders.trace_list import (
     TraceListQueryBuilderV2,
@@ -294,6 +300,16 @@ EXACT_GRAPH_READ_SETTINGS = {
 EXACT_GRAPH_TRACE_CLASSIFIER_READ_SETTINGS = {
     **EXACT_GRAPH_READ_SETTINGS,
     "max_threads": settings.EXACT_GRAPH_TRACE_CLASSIFIER_MAX_THREADS,
+}
+# The aggregate user graph is one ordered latest-state pass over a whole
+# window, not a filter-selector probe. It inherited the selector's single
+# thread from the shared dict, which a FINAL merge could not have used anyway;
+# an in-order argMax reduction can. Give it the same budget the dashboard
+# trace reader already runs at — an existing runtime setting, changed nowhere
+# — and leave every byte, memory, result and deadline ceiling untouched.
+EXACT_GRAPH_USER_READ_SETTINGS = {
+    **EXACT_GRAPH_READ_SETTINGS,
+    "max_threads": settings.DASHBOARD_TRACE_READ_MAX_THREADS,
 }
 EXACT_GRAPH_SPAN_PARTITION_READ_SETTINGS = {
     **EXACT_GRAPH_READ_SETTINGS,
@@ -2120,17 +2136,39 @@ def _row_value(row: Any, columns: list[str], key: str, default: Any = 0) -> Any:
     return row[index] if index < len(row) else default
 
 
+def _bucket_key(value: Any) -> datetime | None:
+    """Reduce an output bucket to the zero-fill range's naive-UTC ``datetime``.
+
+    The native driver returns ``DateTime('UTC')`` buckets tz-aware, untyped
+    ``DateTime`` buckets naive and ``toMonday``/``toStartOfMonth``/
+    ``toStartOfYear`` buckets as ``date``, while
+    ``BaseQueryBuilder._generate_timestamp_range`` yields naive UTC values.
+    Both sides of a bucket lookup go through this one key. An aware value is
+    converted to UTC before its tzinfo is dropped.
+    """
+
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            return value.astimezone(UTC).replace(tzinfo=None)
+        return value
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day)
+    return None
+
+
 def _add_primary_traffic(
     series: dict[str, Any], rows: list[Any], columns: list[str]
 ) -> dict[str, Any]:
-    traffic: dict[str, int] = {}
+    traffic: dict[datetime, int] = {}
     for row in rows:
-        timestamp = _row_value(row, columns, "time_bucket", None)
-        if timestamp is None:
+        key = _bucket_key(_row_value(row, columns, "time_bucket", None))
+        if key is None:
             continue
-        key = (
-            timestamp.isoformat() if hasattr(timestamp, "isoformat") else str(timestamp)
-        )
         traffic[key] = int(
             _row_value(
                 row,
@@ -2142,7 +2180,10 @@ def _add_primary_traffic(
         )
     copied = {**series}
     copied["data"] = [
-        {**point, "primary_traffic": traffic.get(point.get("timestamp"), 0)}
+        {
+            **point,
+            "primary_traffic": traffic.get(_bucket_key(point.get("timestamp")), 0),
+        }
         for point in series.get("data", [])
     ]
     return copied
@@ -2908,6 +2949,7 @@ class _SessionMembershipPlan:
     params: dict[str, Any]
     scalar_group_predicates: tuple[str, ...] = ()
     scalar_witness_predicate: str | None = None
+    relational_ctes: str = ""
 
 
 def _finite_survivor_map_ctes(
@@ -3136,7 +3178,17 @@ def _session_membership_plan(
         project_id,
         relational_filters,
     )
+    annotation_filters = []
     for leaf_index, item in enumerate(relational_filters):
+        config = item.get("filter_config") or item.get("filterConfig") or {}
+        column_type = str(config.get("col_type") or config.get("colType") or "").upper()
+        column_id = item.get("column_id") or item.get("columnId")
+        if column_type == "ANNOTATION" or (
+            column_type != "EVAL_METRIC"
+            and column_id in {"annotator", "has_annotation", "my_annotations"}
+        ):
+            annotation_filters.append(item)
+            continue
         predicate, leaf_params = compile_exact_graph_filter_predicates(
             [item],
             project_id=project_id,
@@ -3159,6 +3211,40 @@ def _session_membership_plan(
             )
             params[namespaced_name] = value
         relational_predicates.append(predicate)
+
+    # Reuse the list's finite, project-correlated Session/trace/span Score
+    # mapping. A Session Score has no trace/span FK; treating it as a trace
+    # annotation silently excludes it, even when the catalog and list agree.
+    relational_ctes, annotation_predicates, annotation_params = (
+        SessionListQueryBuilderV2(
+            project_id=project_id,
+            annotation_label_ids=annotation_label_ids,
+            bounded_internal_scan=True,
+        )._bounded_relational_membership_plan(
+            annotation_filters,
+            scope_to_request_window=True,
+            available_params={
+                "project_id": project_id,
+                "start_date": None,
+                "end_date": None,
+            },
+        )
+    )
+    for predicate in annotation_predicates:
+        # Annotation leaves have their own numbering; do not collide with an
+        # eval or other relation already compiled at the same leaf index.
+        predicate = predicate.replace("%(session_relational_", "%(session_annotation_")
+        relational_predicates.append(
+            predicate.replace("%(start_date)s", "%(snapshot_start_date)s").replace(
+                "%(end_date)s", "%(snapshot_end_date)s"
+            )
+        )
+    params.update(
+        {
+            name.replace("session_relational_", "session_annotation_", 1): value
+            for name, value in annotation_params.items()
+        }
+    )
     return _SessionMembershipPlan(
         scalar_aggregates=tuple(scalar_aggregates),
         scalar_predicates=tuple(scalar_predicates),
@@ -3166,6 +3252,7 @@ def _session_membership_plan(
         params=params,
         scalar_group_predicates=tuple(scalar_group_predicates),
         scalar_witness_predicate=scalar_witness,
+        relational_ctes=relational_ctes,
     )
 
 
@@ -3320,6 +3407,15 @@ def _session_aggregate_source_sql(
         map_name="ts_survivor_map",
     )
     membership_ctes = ""
+    if membership_plan.relational_ctes:
+        membership_ctes = f""",
+    resolved_root_sessions AS (
+        SELECT rs.project_id, rs.trace_id, {resolved_session_id} AS session_id
+        FROM ({session_root_rows}) AS rs
+        LEFT JOIN ts_survivor_map AS ts_remap
+          ON rs.trace_session_id = ts_remap.any_id
+        WHERE {resolved_session_id} IN (SELECT session_id FROM candidate_sessions)
+    ){membership_plan.relational_ctes}"""
     selected_session_predicates: list[str] = []
     if membership_plan.scalar_predicates:
         scalar_datetime_predicate, scalar_datetime_params = (
@@ -3747,17 +3843,46 @@ def _user_filter_clauses(
 
 
 def _user_membership_having(
-    filters: list[dict[str, Any]], *, project_id: str
+    filters: list[dict[str, Any]],
+    *,
+    project_id: str,
+    namespace: str = "user_member",
 ) -> tuple[tuple[str, ...], str, dict[str, Any]]:
+    """Match independent leaves across a user's complete latest-live spans.
+
+    The per-span flags, the per-user condition and the parameters of
+    ``_user_membership_parts``.
+    """
+    flags, condition, params, _terms = _user_membership_parts(
+        filters, project_id=project_id, namespace=namespace
+    )
+    return flags, condition, params
+
+
+def _user_membership_parts(
+    filters: list[dict[str, Any]],
+    *,
+    project_id: str,
+    namespace: str = "user_member",
+) -> tuple[tuple[str, ...], str, dict[str, Any], tuple[MembershipTerm, ...]]:
     """Match independent leaves across a user's complete latest-live spans.
 
     Attribute negatives follow UsersListManager's collection semantics: a
     selected typed domain must exist and no value may satisfy the positive
     complement. Missing attributes cannot satisfy a negative. Null means no
     value in that typed domain on any of the user's spans.
+
+    ``namespace`` prefixes every row-flag alias and parameter, so several
+    independently compiled leaves can share one statement.
+
+    Returns the per-span flags (``(predicate) AS alias``), the per-user
+    condition (the terms joined by AND), the parameters, and the terms
+    themselves (``MembershipTerm``), so a caller can tell an existence term
+    from an absence term without parsing the SQL.
     """
     clauses: list[str] = []
     row_predicates: list[str] = []
+    terms: list[MembershipTerm] = []
     params: dict[str, Any] = {}
     negative_ops = {
         "not_equals": "equals",
@@ -3779,9 +3904,10 @@ def _user_membership_having(
             params[new_name] = value
         return predicate
 
-    def group_match(predicate: str, comparison: str) -> str:
-        alias = f"user_member_match_{len(row_predicates)}"
+    def group_match(predicate: str, comparison: Literal["> 0", "= 0"]) -> str:
+        alias = f"{namespace}_match_{len(row_predicates)}"
         row_predicates.append(f"({predicate}) AS {alias}")
+        terms.append(MembershipTerm(alias, predicate, comparison))
         return f"countIf({alias}) {comparison}"
 
     for index, item in enumerate(filters):
@@ -3793,7 +3919,7 @@ def _user_membership_having(
             continue
         config = item.get("filter_config") or item.get("filterConfig") or {}
         operation = config.get("filter_op") or config.get("filterOp")
-        prefix = f"user_member_{index}"
+        prefix = f"{namespace}_{index}"
         # Legacy raw keys without a family still follow the Users list's
         # attribute vocabulary; declared relation/system leaves keep theirs.
         family = UserListQueryBuilder._filter_col_type(item)
@@ -3822,7 +3948,26 @@ def _user_membership_having(
             )
         else:
             clauses.append(group_match(compile_leaf(item, prefix), "> 0"))
-    return tuple(row_predicates), " AND ".join(clauses) or "1 = 1", params
+    return (
+        tuple(row_predicates),
+        " AND ".join(clauses) or "1 = 1",
+        params,
+        tuple(terms),
+    )
+
+
+def compile_user_membership_leaf(
+    item: dict[str, Any], *, project_id: str, namespace: str
+) -> tuple[tuple[str, ...], str, dict[str, Any], tuple[MembershipTerm, ...]]:
+    """The users graph's own membership SQL for one filter leaf.
+
+    ``_user_membership_parts`` for ``[item]`` under ``namespace``: the per-span
+    flags, the per-user condition over them, their parameters and the
+    condition's terms. The Users list decides native span-dimension leaves
+    with exactly this SQL so both surfaces answer the same leaf identically.
+    """
+
+    return _user_membership_parts([item], project_id=project_id, namespace=namespace)
 
 
 def _owned_user_eval_config_ids(
@@ -4553,7 +4698,7 @@ def read_exact_user_system_graph(
         query=query,
         params=params,
         started=started,
-        settings=EXACT_GRAPH_READ_SETTINGS,
+        settings=EXACT_GRAPH_USER_READ_SETTINGS,
     )
     rows = list(result.data or [])
     columns = list(result.columns or [])
@@ -4772,14 +4917,11 @@ def read_exact_session_system_graph(
         )
     rows = list(result.data or [])
     columns = list(result.columns or [])
-    values: dict[str, tuple[float, int]] = {}
+    values: dict[datetime, tuple[float, int]] = {}
     for row in rows:
-        timestamp = _row_value(row, columns, "time_bucket", None)
-        if timestamp is None:
+        key = _bucket_key(_row_value(row, columns, "time_bucket", None))
+        if key is None:
             continue
-        key = (
-            timestamp.isoformat() if hasattr(timestamp, "isoformat") else str(timestamp)
-        )
         values[key] = (
             float(_row_value(row, columns, "value", 0) or 0),
             int(_row_value(row, columns, "primary_traffic", 0) or 0),
@@ -4788,7 +4930,7 @@ def read_exact_session_system_graph(
     for timestamp in BaseQueryBuilder._generate_timestamp_range(
         start_date, end_date, interval
     ):
-        value, traffic = values.get(timestamp.isoformat(), (0.0, 0))
+        value, traffic = values.get(_bucket_key(timestamp), (0.0, 0))
         points.append(
             {
                 "timestamp": timestamp.isoformat(),

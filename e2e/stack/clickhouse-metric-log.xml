@@ -1,0 +1,11 @@
+<clickhouse>
+    <!-- Keep metrics enabled on the 3 GiB test server. Wide metric_log parts
+         allocate a buffer per column before vertical merging starts. Align the
+         thresholds, as in ClickHouse/ClickHouse#89811, without changing source
+         tables, query limits or retention. -->
+    <metric_log>
+        <!-- Preserve the default granularity and metadata setting order when
+             applying this to an existing test volume. -->
+        <settings>index_granularity = 8192, min_bytes_for_wide_part = 134217728, vertical_merge_algorithm_min_bytes_to_activate = 134217728</settings>
+    </metric_log>
+</clickhouse>

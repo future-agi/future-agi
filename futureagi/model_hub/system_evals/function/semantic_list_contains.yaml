@@ -38,7 +38,8 @@ config:
         import re
         import urllib.request
 
-        EMBED_URL = "http://serving:8080/model/v1/embed"
+        # Set by the engine's preprocessing from MODEL_SERVING_URL.
+        EMBED_URL = (kwargs.get("_model_serving_url") or "http://serving:8080").rstrip("/") + "/model/v1/embed"
         THRESHOLD = float(kwargs.get("similarity_threshold", 0.5))
         MATCH_ALL = bool(kwargs.get("match_all", False))
 

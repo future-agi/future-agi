@@ -845,6 +845,17 @@ class TestUserAlertMonitorGraphAPI:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_get_graph_projectless_monitor_is_400(
+        self, auth_client, user_alert_monitor
+    ):
+        """A monitor with no project is a config error (400), not a CH 500."""
+        user_alert_monitor.project = None
+        user_alert_monitor.save()
+        response = auth_client.get(
+            f"/tracer/user-alerts/{user_alert_monitor.id}/graph/"
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
     def test_get_graph_ch_failure_is_500_without_leak(
         self, auth_client, user_alert_monitor
     ):

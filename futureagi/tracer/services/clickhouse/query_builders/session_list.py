@@ -14,6 +14,8 @@ import re
 from datetime import datetime, timedelta
 from typing import Any
 
+from django.conf import settings
+
 from tracer.services.clickhouse.eval_logger_table import (
     eval_logger_live_state_columns,
     eval_logger_source,
@@ -24,9 +26,17 @@ from tracer.services.clickhouse.query_builders.base import (
     BaseQueryBuilder,
     _unix_microseconds,
 )
+from tracer.services.clickhouse.query_builders.filter_seed_witness import (
+    MAX_WITNESS_SLACK_HOURS,
+    witness_envelope_sql,
+)
 from tracer.services.clickhouse.query_builders.filters import (
+    BooleanMetaFilterShapeError,
     ClickHouseFilterBuilder,
+    boolean_meta_presence_condition,
     build_numeric_filter_predicate,
+    parse_boolean_meta_filter,
+    resolve_boolean_meta_value,
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     _attribute_plan,
@@ -48,6 +58,15 @@ _SESSION_FILTER_ANCHOR_TIMEOUT_MS = 900
 _SESSION_FILTER_ANCHOR_STRATA = 4
 _SESSION_FILTER_ANCHOR_MAX_BYTES = 192 * 1024 * 1024
 _USER_DETAIL_FILTER_TIMEOUT_MS = 9_500
+# The seed's witness subquery sits two levels in; its envelope lines up with
+# the ``PREWHERE`` of that subquery, not with the seed's own block.
+_SEED_WITNESS_ENVELOPE_INDENT = " " * 22
+# The binding a raised candidate slice floor moves. ``_candidate_session_ctes``
+# reads it under the ROOT scan only, ``build_candidate_cursor_page_query``
+# binds a raised floor into it, and ``candidate_slice_narrows_root_scan``
+# asks the rendered statement whether it is referenced at all. One name, so
+# the binder, the predicate and the tests cannot drift apart.
+CANDIDATE_ROOT_SCAN_FLOOR_PARAM = "candidate_root_scan_start_us"
 
 
 class SessionListQueryBuilder(BaseQueryBuilder):
@@ -100,17 +119,30 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             alias for _expression, alias in self._physical_identity_fields()
         )
 
-    def _physical_time_bounds_sql(self) -> tuple[str, str]:
+    def _physical_time_bounds_sql(
+        self,
+        *,
+        start_param: str = "start_date_us",
+        end_param: str = "end_date_us",
+    ) -> tuple[str, str]:
         return (
-            "fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')",
-            "fromUnixTimestamp64Micro(%(end_date_us)s, 'UTC')",
+            f"fromUnixTimestamp64Micro(%({start_param})s, 'UTC')",
+            f"fromUnixTimestamp64Micro(%({end_param})s, 'UTC')",
         )
 
-    def _physical_time_scope_sql(self, *, enabled: bool = True) -> str:
+    def _physical_time_scope_sql(
+        self,
+        *,
+        enabled: bool = True,
+        start_param: str = "start_date_us",
+        end_param: str = "end_date_us",
+    ) -> str:
         """Prune only complete replacement identities, never mutable leaf state."""
         if not enabled:
             return ""
-        lower, upper = self._physical_time_bounds_sql()
+        lower, upper = self._physical_time_bounds_sql(
+            start_param=start_param, end_param=end_param
+        )
         return (
             f"\n              AND toDate(start_time) BETWEEN toDate({lower}) AND toDate({upper})"
             f"\n              AND start_time >= {lower}"
@@ -123,11 +155,13 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         *,
         enabled: bool = True,
         param_prefix: str = "session_latest_time",
+        start_param: str = "start_date_us",
+        end_param: str = "end_date_us",
     ) -> str:
         """Apply the frozen native window/exclusions after version collapse."""
         clause = (
-            "\n              AND latest_start_time >= fromUnixTimestamp64Micro(%(start_date_us)s, 'UTC')"
-            "\n              AND latest_start_time < fromUnixTimestamp64Micro(%(end_date_us)s, 'UTC')"
+            f"\n              AND latest_start_time >= fromUnixTimestamp64Micro(%({start_param})s, 'UTC')"
+            f"\n              AND latest_start_time < fromUnixTimestamp64Micro(%({end_param})s, 'UTC')"
             if enabled
             else ""
         )
@@ -286,14 +320,14 @@ class SessionListQueryBuilder(BaseQueryBuilder):
     def _is_non_native_filter(item: dict[str, Any]) -> bool:
         config = item.get("filter_config") or item.get("filterConfig") or {}
         return str(config.get("col_type") or config.get("colType") or "").upper() in {
-            "SPAN_ATTRIBUTE", "EVAL_METRIC", "ANNOTATION",
+            "SPAN_ATTRIBUTE",
+            "EVAL_METRIC",
+            "ANNOTATION",
         }
 
     def _native_session_filters(self) -> list[dict[str, Any]]:
         """Keep explicit non-native sources out of name-based session routing."""
-        return [
-            item for item in self.filters if not self._is_non_native_filter(item)
-        ]
+        return [item for item in self.filters if not self._is_non_native_filter(item)]
 
     @classmethod
     def bounded_datetime_exclusion_sql(
@@ -378,6 +412,15 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         produced a finite session batch, because those sessions imply a finite
         set of tenant/window-scoped root trace IDs.  Keep this parser deliberately
         strict so malformed or newly introduced relational shapes fail closed.
+
+        The *operator* gate is deliberately narrower than the published boolean
+        vocabulary: only a literal ``equals`` is admitted here, because the
+        presence operators have no finite latest-state compiler on this lane.
+        The *value* half is not this builder's to own, so it is resolved by
+        :func:`resolve_boolean_meta_value`, the one rule the list, graph and
+        dashboard compilers already reach.  The operator is passed as the
+        literal this gate just proved, so the shared rule cannot widen what
+        this lane accepts.
         """
 
         values: list[bool] = []
@@ -396,15 +439,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             if str(filter_type or "").lower() != "boolean" or filter_op != "equals":
                 raise ValueError("invalid has_eval session filter")
             raw_value = config.get("filter_value", config.get("filterValue", missing))
-            if isinstance(raw_value, bool):
-                value = raw_value
-            elif isinstance(raw_value, str) and raw_value.strip().lower() in {
-                "true",
-                "false",
-            }:
-                value = raw_value.strip().lower() == "true"
-            else:
-                raise ValueError("invalid has_eval session filter")
+            try:
+                value = resolve_boolean_meta_value("has_eval", raw_value, "equals")
+            except BooleanMetaFilterShapeError as exc:
+                raise ValueError("invalid has_eval session filter") from exc
             values.append(value)
         return tuple(values)
 
@@ -464,11 +502,13 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             if column_id not in allowed_keys and column_type not in allowed_types:
                 raise ValueError("unsupported relational session filter")
             if column_id == "has_annotation" and column_type != "EVAL_METRIC":
-                self._FILTER_BUILDER_CLS._parse_boolean_meta_filter(
-                    "has_annotation",
-                    config.get("filter_value", config.get("filterValue")),
-                    config.get("filter_op") or config.get("filterOp"),
-                )
+                filter_op = config.get("filter_op") or config.get("filterOp")
+                if boolean_meta_presence_condition(filter_op) is None:
+                    parse_boolean_meta_filter(
+                        "has_annotation",
+                        config.get("filter_value", config.get("filterValue")),
+                        filter_op,
+                    )
                 if self.project_ids is not None:
                     if self.annotation_label_ids_by_project is None:
                         raise ValueError(
@@ -507,6 +547,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         candidate_placeholder = f"%({candidate_param})s"
         merged_params: dict[str, Any] = {}
         needs_candidate_cte = False
+        needs_session_score_cte = False
         org_scope = self.project_ids is not None
         branch_projects = self.project_ids if org_scope else [self.project_id]
         predicates_by_leaf: list[list[str]] = [[] for _ in relational_filters]
@@ -539,6 +580,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                     score_date_scope=False,
                     span_date_scope=scope_to_request_window,
                     candidate_ids_param=candidate_param,
+                    resolved_candidate_sessions_table="candidate_relational_session_traces",
                     strict_trace_project_correlation=(
                         org_scope
                         or (item.get("column_id") or item.get("columnId")) == "has_eval"
@@ -554,6 +596,9 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                     ),
                 )
                 predicate, leaf_params = filter_builder.translate([item])
+                needs_session_score_cte |= (
+                    "candidate_relational_session_traces" in predicate
+                )
                 if not predicate:
                     raise ValueError("relational session filter compiled no predicate")
 
@@ -637,6 +682,19 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             SELECT DISTINCT {candidate_project_select}toString(trace_id) AS trace_id
             FROM resolved_root_sessions
             WHERE notEmpty(toString(trace_id))
+        )"""
+        if needs_session_score_cte:
+            # Inline session Scores carry no trace/span FK. Expand them only
+            # over this page's live roots, retaining the project fence and all
+            # old/new IDs in the same bounded survivor map used by the list.
+            ctes += """,
+        candidate_relational_session_traces AS (
+            SELECT project_id, trace_id, session_id
+            FROM resolved_root_sessions
+            UNION DISTINCT
+            SELECT roots.project_id, roots.trace_id, remap.any_id AS session_id
+            FROM resolved_root_sessions AS roots
+            INNER JOIN ts_survivor_map AS remap ON roots.session_id = remap.survivor_id
         )"""
         predicates = tuple(
             "(" + " OR ".join(branches) + ")" for branches in predicates_by_leaf
@@ -841,10 +899,79 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         return None
 
     def recommended_filter_cursor_seed_batch_size(self) -> int | None:
-        return None
+        """Acquire a whole classifier schedule per seed statement.
+
+        Declining a recommendation left cursor reads on the selector's default
+        of ``page + 1``: every 26 candidates cost one seed statement plus one
+        classifier statement, and each of those classifier statements replays
+        latest state across the WHOLE request window regardless of how many
+        candidates it carries.  Measured on production's largest tenant, a
+        30-day session conjunction spent 18 statements and ~9.5 s covering 182
+        candidates - the classifier ran 8 times where 4 would have done and the
+        seed re-aggregated its slice 8 times instead of once.
+
+        This is an acquisition size only.  The seed order, the slice schedule,
+        the classifier, its own ``recommended_filter_classify_batch_size``
+        split and the per-chunk continuation checkpoint are all unchanged, so
+        the walk yields exactly the same candidates in exactly the same order
+        and publishes exactly the same page - in fewer statements.  Reuse the
+        numbered-page acquisition size rather than introduce a second one: it
+        is the batch this builder already holds in memory on every non-cursor
+        read, and the selector clamps it to ``max_candidates`` anyway.
+        """
+
+        return self.recommended_filter_seed_batch_size()
 
     def recommended_filter_max_slice_width(self) -> timedelta | None:
-        return None
+        """Let an exhausted session slice widen to the request window.
+
+        The shared selector widens a slice only after the previous, half as
+        wide one was *exhausted* - it returned fewer roots than its finite
+        seed limit.  Capping that schedule below the request width therefore
+        does not protect a dense project, which stops widening on its first
+        full slice; it only forces a sparse one to prove a twelve-month window
+        two days at a time.  Twenty-four seed reads cannot cross a year that
+        way, so the cursor hands out checkpoint pages that carry no rows, and
+        pagination ends at the page-depth limit instead of at ``has_more:
+        false``.  Doubling to the request window reaches the same history in a
+        logarithmic number of reads without changing membership, order, or the
+        exact latest-state classifier, and a wide read that exceeds its server
+        side budget is halved by ``should_retry_filter_wide_read_budget``.
+
+        Lanes constructed with a sampling salt/rate pair keep the conservative
+        shared ceiling, and there are two of them.  A genuinely sampled read
+        must: an under-full sampled slice is not evidence that the interval is
+        sparse.  The eval-task resolver
+        (``tracer/selectors/eval_tasks/row_resolver.py``) must for a different
+        reason - it always pairs salt and rate, at any rate, and reads a single
+        fully buffered page with no continuation and no valve, so one widened
+        over-budget seed there would have no checkpoint to fall back on and
+        would fail the whole task.  Widening and valve therefore switch
+        together, never apart.
+        """
+
+        if self._bounded_sampling_rate is not None:
+            return None
+        start, end = self._bounded_request_window
+        width = end - start
+        # Keep the selector's existing minimum-width contract/fallback.
+        return width if width >= timedelta(minutes=5) else None
+
+    def should_retry_filter_wide_read_budget(self) -> bool:
+        """Halve a seed slice that widened past its server-side read budget.
+
+        ``recommended_filter_max_slice_width`` lets an exhausted slice double
+        towards the request window.  The session seed aggregates raw roots per
+        slice, so one such read can still cross ``max_bytes_to_read`` when the
+        walk reaches a dense region of history.  Retrying that unpublished
+        identity-only seed on narrower adjacent slices changes neither
+        membership nor order, and without it the widened schedule would return
+        the same non-advancing checkpoint on every request.  It is off for
+        exactly the lanes that keep the shared ceiling above, so no caller can
+        receive the widening without the valve.
+        """
+
+        return self._bounded_sampling_rate is None
 
     def filter_candidate_seed_is_sampled(self) -> bool:
         return False
@@ -887,6 +1014,181 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         except (TypeError, ValueError):
             return False
         return self._bounded_root_witness_plan(plans) is not None
+
+    def filter_seed_witness_slack_hours(self) -> int | None:
+        """The hours of witness slack this seed will use, or ``None`` for none.
+
+        ``None`` means this read has no witness envelope to preserve - the
+        seed carries no attribute predicate, which is the shipped contract -
+        so a cursor minted from it carries no slack and stays byte-identical
+        to one minted before the field existed.
+
+        The lane needs a witness that is a *necessary* condition of a match,
+        which is exactly what ``supports_filter_anchor_probe`` already
+        establishes (a positive raw any-span witness, no sampling, and not the
+        exact end-user detail seed). It also asks
+        ``prefers_bounded_filter_page``, which is narrower than "this request
+        walks": the bounded walk also runs when that policy is false and no
+        candidate lane can represent the shape. Being narrower is the safe
+        direction - a shape it excludes keeps today's seed - and it means a
+        request on the candidate lane never sees an envelope. Neither does the
+        sampled internal lane, whose seed hashes the canonical public session
+        ID.
+
+        A running pagination answers with the value it was minted with, so an
+        operator turning the knob between two hops cannot move the candidacy
+        boundary under a half-published page. One asymmetry is deliberate and
+        worth stating, because it differs from the trace lane, where the
+        request *shape* decides whether an envelope exists at all: here the
+        knob does, so a token minted while the lane was OFF carries no slack,
+        is indistinguishable from a token minted before the field existed, and
+        resolves to the current setting. If that setting has since been turned
+        on, the remaining hops seed. That can only narrow candidacy, never
+        admit or duplicate a row - but the narrowing is the cross-hop omission
+        class ``_seed_witness_identity_gate`` documents, which is wider than a
+        within-request envelope, so such a flip can drop a session the already
+        published hops would have carried. Turning the knob back off only
+        widens candidacy again.
+        """
+
+        if not (
+            self.prefers_bounded_filter_page() and self.supports_filter_anchor_probe()
+        ):
+            return None
+        pinned = getattr(self, "_pinned_witness_slack_hours", None)
+        hours = (
+            pinned
+            if pinned is not None
+            else int(settings.SESSION_LIST_FILTER_SEED_WITNESS_SLACK_HOURS)
+        )
+        if hours < 0:
+            return None
+        return min(hours, MAX_WITNESS_SLACK_HOURS)
+
+    def pin_filter_seed_witness_slack_hours(self, hours: int | None) -> None:
+        """Finish a pagination with the witness slack it STARTED with.
+
+        ``None`` clears the pin and returns the builder to the runtime setting,
+        which is both the legacy behaviour and what a cursor minted before this
+        field carried resolves to. Negative values never reach here: they are
+        the setting's "no envelope" state, and a read in that state mints no
+        slack at all.
+        """
+
+        if hours is None:
+            self._pinned_witness_slack_hours = None
+            return
+        if isinstance(hours, bool) or not isinstance(hours, int):
+            raise ValueError("pinned witness slack must be whole hours")
+        if not 0 <= hours <= MAX_WITNESS_SLACK_HOURS:
+            raise ValueError("pinned witness slack is outside the supported range")
+        self._pinned_witness_slack_hours = hours
+
+    def _seed_witness_identity_gate(
+        self,
+        plans: tuple[Any, ...] | list[Any],
+        *,
+        slice_start: datetime,
+        slice_end: datetime,
+    ) -> tuple[str, dict[str, Any]]:
+        """Narrow the root seed to sessions that own a witnessing span.
+
+        The seed reads root identity and order columns only, so a raw witness
+        applied to the seed's own rows would be wrong: a qualifying attribute
+        may live on any child span, and a root that does not carry it is still
+        a root of a matching session. The gate is therefore a membership test
+        on ``trace_session_id`` - the session owns a witnessing span *anywhere*
+        - and not a predicate on the root row.
+
+        Exactness. The witness is a necessary condition of a match (the same
+        property ``build_filter_anchor_probe`` rests on), so with an unbounded
+        envelope this removes only sessions the classifier would have
+        rejected. A bounded envelope omits more than that, and more than the
+        trace lane's contract does, because a session is *discovered* by any
+        of its roots and *ranked* by its oldest one.
+
+        Inside one request the min-over-roots argument holds: the walk starts
+        at the request window's end, so every live root is still reachable and
+        the session is seeded from the slice holding the root of the trace its
+        witness sits on, which is at or before its own publication rank. A
+        continuation hop does not start there. It resumes at the rank the
+        previous page last published, ``C`` - its first slice ends at
+        ``C + 1us``, inclusive of ``C`` itself - and descends, so every root
+        above ``C`` is out of reach on that hop and every envelope the hop
+        emits ends at or below ``hour_ceil(C + 1us) + slack``: the end of the
+        hour holding ``C``, plus the slack. Because the published order key is
+        ``min`` over the live roots, a session due on that hop has its own rank
+        at or below ``C``, so the only root it is guaranteed to reach it by is
+        its oldest - while its witness may sit on a far newer trace.
+
+        The omission class is therefore: a session is dropped when no
+        witnessing span of it starts inside the envelope of any slice of that
+        hop that holds one of its roots - which, under the contract that puts
+        a witness within the slack of its own trace's root, is exactly the
+        case where every witness-bearing trace of the session is rooted above
+        the rank the page resumed from. The governing distance is the
+        session's root-to-root spread, not the witness-to-its-own-root
+        distance, and that spread can be as wide as the request window, so no
+        slack short of the window closes it. The lower edge
+        ``hour_floor(slice_start) - slack`` stays sound: a witness-bearing
+        root at or below ``C`` is reached by this hop's own descent, and the
+        contract puts its witness within the slack of it. The repair,
+        deliberately not taken here, is an asymmetric upper edge of
+        ``hour_ceil(request_end) + slack``, which widens as the walk descends
+        and costs an unmeasured share of the pruning this lane exists for.
+
+        ``test_session_seed_witness_gate.py`` pins both halves through the
+        real ``read_bounded_filter_page``: a multi-root session whose only
+        witness sits on its newest trace survives a single request, and is
+        lost by a two-hop continuation at slack 1 while slack 0 and a slack
+        wider than its root spread keep it. ``build_filter_match_query`` stays
+        unbounded and remains the authority on what is published, so nothing
+        the current contract rejects can be admitted; the gate only narrows
+        candidacy.
+
+        Physical versions and tombstones deliberately participate: the
+        subquery carries no ``_peerdb_is_deleted`` guard, so it bounds *when* a
+        witnessing row starts, never which versions count.
+
+        The envelope is derived from the whole slice rather than from the
+        keyset the seed may also carry. A keyset only removes newer roots, so
+        the wider bound is the conservative one: it can only admit candidates,
+        never omit one this statement could have published.
+        """
+
+        slack_hours = self.filter_seed_witness_slack_hours()
+        if slack_hours is None:
+            return "", {}
+        anchor = self._bounded_root_witness_plan(plans)
+        if anchor is None or not anchor.raw_witness_predicate:
+            return "", {}
+        witness = anchor.raw_witness_predicate
+        envelope, params = witness_envelope_sql(
+            root_start=slice_start,
+            root_end=slice_end,
+            slack=timedelta(hours=slack_hours),
+            # The seed selects ``max(seed_spans.start_time) AS start_time``;
+            # qualify the bound so the analyzer cannot substitute that
+            # aggregate alias back into this physical-row predicate.
+            column="witness_spans.start_time",
+            indent=_SEED_WITNESS_ENVELOPE_INDENT,
+        )
+        params.update(
+            {
+                key: value
+                for key, value in anchor.params.items()
+                if f"%({key})s" in witness
+            }
+        )
+        fragment = f"""
+              AND seed_spans.trace_session_id IN (
+                  SELECT witness_spans.trace_session_id
+                  FROM {self.TABLE} AS witness_spans
+                  PREWHERE {self.project_filter_sql()}{envelope}
+                  WHERE isNotNull(witness_spans.trace_session_id)
+                    AND ({witness})
+              )"""
+        return fragment, params
 
     def recommended_filter_query_timeout_ms(self) -> int | None:
         """Use the request's remaining wall time for public session filters.
@@ -1044,23 +1346,69 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             return None
         configs = [
             item.get("filter_config") or item.get("filterConfig") or {}
-            for item in self.filters if self._is_raw_attribute_filter(item)
+            for item in self.filters
+            if self._is_raw_attribute_filter(item)
         ]
         if not configs or any(
             (config.get("filter_type") or config.get("filterType"))
-            not in {"text", "string", "number", "boolean"} for config in configs
+            not in {"text", "string", "number", "boolean"}
+            for config in configs
         ):
             return None
         plans, residual = self._bounded_span_filter_parts()
         if (
-            residual or len(plans) != len(configs)
+            residual
+            or len(plans) != len(configs)
             or self._bounded_root_witness_plan(plans) is None
         ):
             return None
         return tuple(plans)
 
+    # The typed picker maps a positive scalar plan can witness through. A plan
+    # whose key witness names none of them compiled to JSON-only provenance,
+    # which carries no key bloom for a seed or a gate to prune on.
+    _TYPED_WITNESS_MAPS: tuple[str, ...] = (
+        "span_attr_str",
+        "span_attr_num",
+        "span_attr_bool",
+    )
+
     def prefers_bounded_filter_page(self) -> bool:
-        """Page-first policy, not an exact candidate SQL capability change."""
+        """Page-first policy, not an exact candidate SQL capability change.
+
+        A positive scalar-attribute page on the candidate lane is seeded by an
+        ANY-SPAN witness over the whole request window: one scalar subquery
+        that materialises every session owning a physical row carrying the
+        value, before the statement's root and membership scans can even be
+        planned. That cost is the witness scan's, not the value's. Measured
+        on production's high-volume tenant at twelve months, one boolean
+        ``equals`` leaf: the ``attrs_bool`` key bloom leaves 59% of the
+        window's granules, the scan alone is 238 M rows / 13.7 GB / 9.4 s on
+        the product's two threads, it yields about 1.44 M sessions, and every
+        ``IN`` set built from it is then the table. ClickHouse builds those
+        sets while PLANNING, so the statement dies at the 30 s wall as
+        ``ExceptionBeforeStart`` with zero bytes read - at 30 days, 3, 6 and
+        12 months alike, and at any boolean value, because the witness scan
+        does not shrink when the value is rare.
+
+        The bounded walk is exact for the same predicate and bounded per
+        statement: root-ordered seeds by slice, then ``build_filter_match_query``
+        replays only the seeded sessions' spans (the fused shape, two
+        ``spans`` scans) and stops at the first ordered prefix of survivors.
+        A value most sessions carry completes inside the first populated
+        slice; a rare one exhausts its budget as partial plus cursor, which is
+        what a filtered walk publishes for strings today - never a wider
+        statement.
+
+        So every plan that witnesses through a TYPED picker map takes the
+        walk, whatever the map's type. The earlier rule admitted string maps
+        only and kept numeric and boolean plans on the candidate lane as a
+        cost preference ("no numeric route is demoted merely because it lacks
+        the stronger value witness"); the measurement above is what that
+        preference cost. A plan compiled to JSON-only provenance still keeps
+        the candidate lane: it has no key bloom for a seed or a gate to prune
+        on, so the walk has nothing cheaper to offer it.
+        """
         # Native identity/aggregate predicates retain their specialized paths.
         if any(
             not self._is_raw_attribute_filter(item)
@@ -1075,11 +1423,11 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             for plan in plans
         ):
             return False
-        # Compiled storage provenance includes typed picker branches. Numeric
-        # zero/key-only plans stay on their existing path too; no numeric route
-        # is demoted merely because it lacks the stronger value witness.
+        # Compiled storage provenance includes typed picker branches; any one
+        # typed key witness is the necessary condition the seed gate and the
+        # sparse anchor probe rest on, and the classifier applies every plan.
         keys = " ".join(plan.raw_key_witness_predicate or "" for plan in plans)
-        return "span_attr_str" in keys and "span_attr_num" not in keys
+        return any(column in keys for column in self._TYPED_WITNESS_MAPS)
 
     def supports_candidate_first_page(self) -> bool:
         """Return true for the exact root-time ordered fast path.
@@ -1470,6 +1818,39 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             enabled=scope_to_request_window,
             param_prefix="session_candidate_time_exclusion",
         )
+        # A bounded candidate slice raises the floor of the ROOT scan only, and
+        # these are the bindings it moves.  Everything below that proves a
+        # session MATCHES the filter - the end-user span, the scalar-attribute
+        # spans, the raw witness - keeps the request window above, because a
+        # session is discovered by a root AND by membership evidence that any
+        # span may carry.  Narrow the second and a session whose root sits
+        # inside the slice is never discovered at all, and the exactness gate
+        # in ``selectors.session_candidate_slice`` vouches for a page that has
+        # silently lost it.  Root evidence is safe to narrow by the same token:
+        # a root the slice cannot see is a root below the floor, which puts the
+        # session's true start below every row the slice can publish.  Session
+        # aggregates (cost, tokens, traces, duration, the messages, the
+        # org-scope project count) are computed from roots too, and the FLOOR
+        # stays consistent with them for the same reason: a set it truncates
+        # belongs to a session whose true start is below it.  The CEILING does
+        # not - it drops roots ABOVE the cursor from a session that still
+        # belongs on the page - so the statement withholds it whenever one of
+        # those aggregates decides admission.  See
+        # ``page_admission_reads_the_root_set``.
+        params.setdefault(CANDIDATE_ROOT_SCAN_FLOOR_PARAM, params["start_date_us"])
+        params.setdefault("candidate_root_scan_end_us", params["end_date_us"])
+        root_span_time_scope = self._physical_time_scope_sql(
+            enabled=scope_to_request_window,
+            start_param=CANDIDATE_ROOT_SCAN_FLOOR_PARAM,
+            end_param="candidate_root_scan_end_us",
+        )
+        root_latest_time_scope = self._latest_time_scope_sql(
+            params,
+            enabled=scope_to_request_window,
+            param_prefix="session_candidate_time_exclusion",
+            start_param=CANDIDATE_ROOT_SCAN_FLOOR_PARAM,
+            end_param="candidate_root_scan_end_us",
+        )
 
         positive_session_ids = self._candidate_positive_filter_values(
             self._SESSION_ID_FILTER_COLS
@@ -1485,10 +1866,16 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             # Cost tie-break only; retain every plan for latest group membership.
             # Prefer the compiler's proven numeric value-index companion, not
             # a same-span conjunction or a new discovery scan.
-            witness_plans = sorted(root_filter_plans, key=lambda plan: not (
-                plan.raw_graph_value_witness_predicate
-                and "mapValues(span_attr_num)" in plan.raw_graph_value_witness_predicate
-            ))
+            witness_plans = sorted(
+                root_filter_plans,
+                key=lambda plan: (
+                    not (
+                        plan.raw_graph_value_witness_predicate
+                        and "mapValues(span_attr_num)"
+                        in plan.raw_graph_value_witness_predicate
+                    )
+                ),
+            )
             witness = self._bounded_root_witness_plan(witness_plans)
             if witness is not None:
                 # Complete any-span candidates, materialized once. Values only
@@ -1524,7 +1911,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         candidate_root_raw_session_ids AS (
             SELECT DISTINCT trace_session_id AS raw_session_id
             FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}{span_time_scope}
+            PREWHERE {self.project_filter_sql()}{root_span_time_scope}
             WHERE (parent_span_id IS NULL OR parent_span_id = '')
               AND isNotNull(trace_session_id)
               AND trace_session_id != toUUID('{NIL_UUID}')
@@ -1607,6 +1994,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
 
         scalar_filter_ctes = ""
         scalar_filter_membership = ""
+        combined_scalar_roots = False
         if root_filter_plans:
             # A user witness can occur on another child/root or session alias.
             # Expand the complete touched session groups, then acquire scalar
@@ -1631,18 +2019,41 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             scalar_filter_having = " AND ".join(
                 plan.grouped_match_predicate() for plan in root_filter_plans
             )
-            # Reuse the all-span replay for root order only on the separately
-            # qualified finite String page-first route. Other routes are unchanged.
+            # Reuse the all-span replay for root order on the finite String
+            # page-first route and on the user-detail scalar route. Both seed
+            # ``candidate_scalar_span_identities`` by ``trace_session_id``, and
+            # a session's roots are a subset of the spans that scan already
+            # acquires, so a second ``trace_session_id`` scan for the roots
+            # reads the same granules again for nothing. That scan is a bloom
+            # scatter whose false-positive granules grow with the number of
+            # seeded sessions, and on a high-volume tenant it was the single
+            # largest read in the user-detail Sessions statement. Root-ness is
+            # decided on the latest version here exactly as ``latest_roots``
+            # decides it, over the same identity population, and ``minIf`` sees
+            # the session's complete live root set. Other routes are unchanged.
             combined_scalar_roots = (
-                bool(candidate_session_ids) and self.project_ids is None
-                and not candidate_full_state and not include_trace_id
-                and not additional_root_ctes and not root_membership_predicates
-                and getattr(self, "prefers_bounded_filter_page", lambda: False)()
+                self.project_ids is None
+                and not candidate_full_state
+                and not include_trace_id
+                and not additional_root_ctes
+                and not root_membership_predicates
+                and (
+                    (
+                        bool(candidate_session_ids)
+                        and getattr(
+                            self, "prefers_bounded_filter_page", lambda: False
+                        )()
+                    )
+                    or bool(scalar_user_scope)
+                )
+            )
+            combined_membership = (
+                "matching_user_sessions"
+                if scalar_user_scope
+                else "candidate_filter_sessions"
             )
             if combined_scalar_roots:
-                scalar_aggregate_select += (
-                    ", argMax(tuple(parent_span_id), _peerdb_version).1 AS latest_parent_span_id"
-                )
+                scalar_aggregate_select += ", argMax(tuple(parent_span_id), _peerdb_version).1 AS latest_parent_span_id"
                 scalar_alias_select += (
                     ", latest_start_time, (isNull(latest_parent_span_id) "
                     "OR latest_parent_span_id = '') AS is_root"
@@ -1689,12 +2100,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         ),
         {"sessions" if combined_scalar_roots else "matching_scalar_sessions"} AS (
             SELECT project_id, session_id{", minIf(latest_start_time, is_root) AS session_start" if combined_scalar_roots else ""}
-            FROM resolved_candidate_scalar_spans{" WHERE session_id IN (SELECT session_id FROM candidate_filter_sessions)" if combined_scalar_roots else ""}
+            FROM resolved_candidate_scalar_spans{f" WHERE session_id IN (SELECT session_id FROM {combined_membership})" if combined_scalar_roots else ""}
             GROUP BY project_id, session_id
             HAVING {scalar_filter_having}{" AND countIf(is_root) > 0" if combined_scalar_roots else ""}
         )"""
-            if combined_scalar_roots:
-                return f"{ts_map_ctes}{candidate_session_cte}{scalar_filter_ctes}"
             if self.project_ids is not None:
                 scalar_filter_membership = (
                     "(resolved_root_sessions.project_id, session_id) IN ("
@@ -1964,6 +2373,14 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 "(SELECT session_id FROM matching_user_sessions)"
             )
 
+        if combined_scalar_roots:
+            # ``sessions`` already stands on the all-span replay above, so no
+            # root scan, root replay or relational/org tail is emitted. This
+            # return waits for the user block: on the user-detail route the
+            # scalar CTEs are seeded by ``matching_user_root_ids``, which that
+            # block declares inside ``ts_map_ctes``.
+            return f"{ts_map_ctes}{candidate_session_cte}{scalar_filter_ctes}"
+
         session_predicate = (
             f"AND {resolved_session_clause}" if resolved_session_clause else ""
         )
@@ -2031,7 +2448,9 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             # collision guard proves this aggregate has exactly one project
             # before the view consumes it.
             # Qualify input membership too: CH25 aliases are visible in WHERE.
-            org_project_evidence_select = ", any(resolved_root_sessions.project_id) AS project_id"
+            org_project_evidence_select = (
+                ", any(resolved_root_sessions.project_id) AS project_id"
+            )
         return f"""
         {ts_map_ctes}
         {candidate_session_cte}
@@ -2040,7 +2459,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         candidate_root_identities AS (
             SELECT DISTINCT {self._physical_identity_select_sql()}
             FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}{span_time_scope}
+            PREWHERE {self.project_filter_sql()}{root_span_time_scope}
             WHERE (parent_span_id IS NULL OR parent_span_id = '')
               {root_session_seed}
               {user_root_seed}
@@ -2056,7 +2475,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted
                 {latest_metric_select}
             FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}{span_time_scope}
+            PREWHERE {self.project_filter_sql()}{root_span_time_scope}
               AND ({self._physical_group_by_sql()}) IN (
                   SELECT {self._physical_identity_names_sql()}
                   FROM candidate_root_identities
@@ -2072,7 +2491,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             FROM latest_roots
             LEFT JOIN ts_survivor_map AS ts_remap
                 ON latest_trace_session_id = ts_remap.any_id
-            WHERE latest_is_deleted = 0{latest_time_scope}
+            WHERE latest_is_deleted = 0{root_latest_time_scope}
               AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
               AND isNotNull(latest_trace_session_id)
               AND latest_trace_session_id != toUUID('{NIL_UUID}')
@@ -2144,6 +2563,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         }
         _plans, residual = self._bounded_span_filter_parts()
         self._validate_bounded_relational_filters(residual)
+        witness_fragment, witness_params = self._seed_witness_identity_gate(
+            _plans, slice_start=slice_start, slice_end=slice_end
+        )
+        params.update(witness_params)
         datetime_predicate, datetime_params = self.bounded_datetime_exclusion_sql(
             self.filters,
             column="start_time",
@@ -2200,7 +2623,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
               AND seed_spans.start_time < fromUnixTimestamp64Micro(%(filter_slice_end_us)s, 'UTC'){datetime_fragment}
             WHERE (seed_spans.parent_span_id IS NULL OR seed_spans.parent_span_id = '')
               AND isNotNull(seed_spans.trace_session_id)
-              AND seed_spans.trace_session_id != toUUID('{NIL_UUID}')
+              AND seed_spans.trace_session_id != toUUID('{NIL_UUID}'){witness_fragment}
             GROUP BY seed_spans.trace_session_id
         """
         if self._bounded_sampling_rate is not None:
@@ -2375,11 +2798,73 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         """
         return query, params
 
+    def page_admission_reads_the_root_set(self) -> bool:
+        """Whether a page predicate is a function of the root SET, not of roots.
+
+        Most of this statement turns on root EXISTENCE: a session is a
+        candidate because it has a live root, and it ranks by the earliest one.
+        Some predicates are not like that.  ``duration`` is a ``dateDiff`` over
+        the min and max of a session's whole live-root set, ``total_cost`` and
+        ``total_tokens`` are sums over it, ``traces_count`` a ``uniqExact``,
+        and ``first_message``/``last_message`` an ``argMin``/``argMax`` -
+        ``_build_having_clauses`` turns any of them into a ``HAVING`` over
+        ``resolved_root_sessions``.  The org-scope identity-collision guard is
+        the same shape with its comparison in Python: ``uniqExact(project_id)``
+        over that relation, which the view refuses a page for once it exceeds
+        one.
+
+        Each of these changes VALUE when the relation loses roots, rather than
+        only losing a session that could not have been published anyway, which
+        is why the root scan's upper bound cannot be narrowed under them.  See
+        ``build_candidate_cursor_page_query``.  ``_build_having_clauses`` is
+        asked rather than re-deriving its column set here: a second copy of
+        that set is how the next sibling of this defect gets written.  The
+        throwaway ``params`` keeps the question free of side effects.
+        """
+
+        return bool(self._build_having_clauses(params={})) or (
+            self.project_ids is not None
+        )
+
+    # How ``CANDIDATE_ROOT_SCAN_FLOOR_PARAM`` renders in a statement's text:
+    # what a statement that HAS a root scan carries and a fused one does not.
+    _CANDIDATE_ROOT_SCAN_FLOOR_TOKEN = f"%({CANDIDATE_ROOT_SCAN_FLOOR_PARAM})s"
+
+    def candidate_slice_narrows_root_scan(self) -> bool:
+        """Whether a raised floor changes what the candidate statement reads.
+
+        ``build_candidate_cursor_page_query`` binds the floor into
+        ``CANDIDATE_ROOT_SCAN_FLOOR_PARAM`` and the root scan is the only scan
+        that reads it. On the user-detail scalar route there is no root scan
+        to read it: ``_candidate_session_ctes`` fuses root-ness into the
+        all-span replay that the user's own sessions seed and returns before
+        the root CTEs are emitted, so a "slice" of that statement is the
+        unsliced statement byte for byte and reads the same rows. Measured on
+        the high-volume tenant through the view's own entry point at three,
+        six and twelve months: eleven or twelve density probes and one or two
+        "slices" around the unsliced statement, every candidate statement
+        reading the same 7.1-7.4 M rows, 4.3-6.9 s of page wall for a page
+        the unsliced statement alone answered in 1.3-1.8 s warm.
+
+        The question is put to the rendered statement rather than to a copy
+        of the route condition: whichever route the builder takes, a statement
+        whose text carries the floor binding is one the floor narrows, and a
+        statement whose text does not is one it cannot. The render is Python
+        only and binds into its own copy of ``params``; the one builder state
+        it writes is ``start_date`` and ``end_date``, which
+        ``build_candidate_cursor_page_query`` re-parses from the filters on
+        every call and which the page render then sets to the same values.
+        """
+
+        query, _params = self.build_candidate_cursor_page_query()
+        return self._CANDIDATE_ROOT_SCAN_FLOOR_TOKEN in query
+
     def build_candidate_cursor_page_query(
         self,
         *,
         before_start_time: datetime | None = None,
         before_session_id: str | None = None,
+        scan_start_time: datetime | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Select an exact finite-identity cursor page in stable root order.
 
@@ -2388,6 +2873,68 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         evaluated after the keyset predicate, so the view can reconstruct an
         exact current total as ``seen_rows + remaining_count`` without an
         offset scan or a second count statement.
+
+        ``scan_start_time`` raises the floor of the ROOT scan to a newer moment
+        inside the request window. The SQL text is unchanged - only the window
+        bindings move - so this is the same statement, reading fewer roots.
+
+        IT RAISES THE FLOOR OF THE ROOT SCAN AND OF NOTHING ELSE. A session is
+        discovered by two pieces of evidence, and only one of them is a root.
+        The other - the span that proves the session matches the filter, an
+        end-user id, a scalar attribute, the raw witness - can sit on ANY span
+        in the session, so the scans that gather it keep the request window
+        (``start_date_us``/``end_date_us``). Narrow those too and a session
+        whose root is inside the slice is never discovered at all, its true
+        start is never compared against the page, and a row that belongs on the
+        page is silently replaced by one that ranks below it. Root evidence is
+        safe to narrow by exactly the inference that fails there: a root the
+        slice cannot see is a root below the floor, so that session's true
+        start is below every row the slice can publish.
+
+        A raised floor makes the statement's ``session_start`` a **candidate**
+        order rather than the canonical one: a session whose first root lies
+        below the floor keeps only the roots inside the slice, so its start is
+        inflated and it can rank anywhere. The slice is therefore a discovery
+        pass whose rows MUST be re-resolved over the whole request window
+        (``build_filter_match_query``) before publication; that two-phase
+        contract lives in ``selectors.session_candidate_slice`` and is the only
+        supported caller of this argument.
+
+        A sliced continuation ALSO narrows the ROOT scan's UPPER bound to the
+        cursor instant, and that ceiling is a cost lever rather than a
+        correctness requirement. A session the ceiling hides has no root in
+        [floor, cursor] at all, so with the floor raised its earliest root is
+        below the floor, and the gate's rule (2) already places it beneath
+        every row the slice can publish. The ceiling is a root argument too, so
+        like the floor it moves the root bindings only: membership evidence
+        above the cursor instant can be the only proof a session matches.
+
+        THE CEILING IS EXACT ONLY WHILE ADMISSION TURNS ON ROOT EXISTENCE. A
+        reviewer found the sibling of the membership defect above: some page
+        predicates are a function of the root SET rather than of root
+        existence - the ``traces_count``/``duration``/``total_cost``/
+        ``total_tokens``/message ``HAVING`` over ``resolved_root_sessions``,
+        and the org-scope ``uniqExact(project_id)`` collision guard. Truncating
+        the set ABOVE the cursor changes such a predicate's VALUE without
+        changing the session's rank: roots at cursor-10h, cursor+2h and
+        cursor+3h are three traces to ``traces_count > 2`` and one to the
+        ceiling-bounded relation, so the session fails the ``HAVING``, never
+        enters ``sessions``, and is absent from both the rows and the count -
+        while its true start sits ABOVE the floor and BELOW the cursor, exactly
+        where rule (2) claims nothing can hide. The floor cannot do this: a set
+        the floor truncates belongs to a session with a root below the floor,
+        hence a true start below every publishable row.
+
+        So the ceiling is bound to the cursor instant only when
+        ``page_admission_reads_the_root_set()`` is false, and otherwise stays
+        at the request end. Computing those aggregates over a wider relation
+        while the keyset kept the bounded one was the alternative, and it
+        cannot read fewer rows: the aggregate relation and the keyset relation
+        are the same physical scan, so widening one widens the scan and the
+        second relation only duplicates the ``argMax`` replay over rows already
+        read. The narrowing is exact for the unsliced statement too, but it is
+        applied only alongside a raised floor so the whole-window statement
+        keeps its current bindings.
         """
 
         if not self.supports_candidate_cursor_page():
@@ -2402,6 +2949,30 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             "end_date": self.end_date,
             "limit": self.page_size + 1,
         }
+        if scan_start_time is not None:
+            # Bind the floor into this statement's own params, and into the
+            # ROOT scan's bindings only. The request window stays on
+            # ``start_date_us``/``end_date_us``, which is what the membership
+            # scans inside this statement - and the full-state re-resolution of
+            # its candidates - have to read.
+            if not self.start_date <= scan_start_time < self.end_date:
+                raise ValueError("candidate scan floor must stay inside the window")
+            params[CANDIDATE_ROOT_SCAN_FLOOR_PARAM] = _unix_microseconds(
+                scan_start_time
+            )
+            if (
+                before_start_time is not None
+                and not self.page_admission_reads_the_root_set()
+            ):
+                # Half-open upper bound, so the cursor instant itself is read:
+                # a session tied on the cursor start is separated by the id
+                # tie-break in the keyset clause below, not by the scan.
+                # Withheld when a page predicate reads the root SET, because
+                # truncating the set above the cursor changes that predicate's
+                # value while leaving the session's rank where it was.
+                params["candidate_root_scan_end_us"] = (
+                    _unix_microseconds(before_start_time) + 1
+                )
         keyset_clause = ""
         if before_start_time is not None:
             params["cursor_before_start_us"] = _unix_microseconds(before_start_time)
@@ -2465,10 +3036,83 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         """
         return query, params
 
-    def build_page_metrics_query(
+    # Column carrying each attribute payload out of the fused page hydration,
+    # paired with the key the page's attribute merge reads it back under.
+    PAGE_ATTRIBUTE_ARRAY_COLUMNS: tuple[tuple[str, str], ...] = (
+        ("session_attribute_json_list", "span_attributes_raw"),
+        ("session_attribute_string_list", "span_attr_str"),
+        ("session_attribute_number_list", "span_attr_num"),
+    )
+
+    def _page_attribute_fragments(self) -> dict[str, str]:
+        """Root-span attribute SQL the fused page hydration carries.
+
+        Only the physical attribute columns differ between the legacy and the
+        CH25 span schemas, so the v2 builder overrides this fragment set and
+        inherits the rest of the statement unchanged.  The projection aliases
+        are deliberately schema-neutral: a legacy alias in an emitted SELECT
+        list is rewritten by the v2 boundary and would rename the result key.
+        """
+        return {
+            "latest": """
+                argMax(tuple(span_attributes_raw), _peerdb_version).1 AS latest_span_attributes_raw,
+                argMax(span_attr_str, _peerdb_version) AS latest_span_attr_str,
+                argMax(span_attr_num, _peerdb_version) AS latest_span_attr_num,
+            """.strip(),
+            "projection": """
+                latest_span_attributes_raw AS session_attribute_json,
+                latest_span_attr_str AS session_attribute_string,
+                latest_span_attr_num AS session_attribute_number,
+            """.strip(),
+            "present": """
+                (latest_span_attributes_raw != '{}' AND latest_span_attributes_raw != '')
+                OR length(mapKeys(latest_span_attr_str)) > 0
+                OR length(mapKeys(latest_span_attr_num)) > 0
+            """.strip(),
+            "arrays": """
+            groupArrayIf(session_attribute_json, has_span_attributes) AS session_attribute_json_list,
+            groupArrayIf(session_attribute_string, has_span_attributes) AS session_attribute_string_list,
+            groupArrayIf(session_attribute_number, has_span_attributes) AS session_attribute_number_list
+            """.strip(),
+        }
+
+    @classmethod
+    def expand_page_attribute_rows(cls, rows) -> list[dict[str, Any]]:
+        """Expand the fused hydration's attribute arrays back to root rows.
+
+        The statement reads each page root once and returns its attribute
+        payloads as parallel per-session arrays (one entry per root that
+        carries attributes, in the pre-fusion row order of a single read).
+        The page's attribute merge still consumes one dict per root, and is
+        insensitive to row order, so the arrays are unzipped here.
+        """
+        expanded: list[dict[str, Any]] = []
+        for row in rows:
+            session_id = str(row.get("session_id", ""))
+            columns = [
+                (key, list(row.get(array_column) or []))
+                for array_column, key in cls.PAGE_ATTRIBUTE_ARRAY_COLUMNS
+            ]
+            width = max((len(values) for _key, values in columns), default=0)
+            for index in range(width):
+                entry: dict[str, Any] = {"session_id": session_id}
+                for key, values in columns:
+                    if index < len(values):
+                        entry[key] = values[index]
+                expanded.append(entry)
+        return expanded
+
+    def build_page_hydration_query(
         self, session_ids: list[str]
     ) -> tuple[str, dict[str, Any]]:
-        """Hydrate aggregates for an already selected <=200-session page."""
+        """Hydrate an already selected <=200-session page in one statement.
+
+        The page aggregates, its first/last message and its root-span
+        attributes all replay the SAME page-scoped latest-state roots.  Reading
+        them once and projecting every payload from that one scan returns the
+        same rows, in the same order, with the union of the columns the three
+        separate hydrations used to return.
+        """
 
         ids = tuple(dict.fromkeys(str(value) for value in session_ids if value))
         if not ids:
@@ -2488,8 +3132,9 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         resolved_session = resolved_id_expr("latest_trace_session_id", "ts_remap")
         physical_time_scope = self._physical_time_scope_sql()
         latest_time_scope = self._latest_time_scope_sql(
-            params, param_prefix="build_page_metrics_query_latest_time"
+            params, param_prefix="build_page_hydration_query_latest_time"
         )
+        attributes = self._page_attribute_fragments()
         query = f"""
         WITH
         {ts_map_ctes},
@@ -2518,6 +3163,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 argMax(tuple(end_time), _peerdb_version).1 AS latest_end_time,
                 argMax(tuple(cost), _peerdb_version).1 AS latest_cost,
                 argMax(tuple(total_tokens), _peerdb_version).1 AS latest_total_tokens,
+                argMax(tuple(input), _peerdb_version).1 AS latest_input,
+                {attributes["latest"]}
                 argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted
             FROM {self.TABLE}
             PREWHERE {self.project_filter_sql()}{physical_time_scope}
@@ -2534,7 +3181,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 latest_start_time AS start_time,
                 latest_end_time AS end_time,
                 latest_cost AS cost,
-                latest_total_tokens AS total_tokens
+                latest_total_tokens AS total_tokens,
+                latest_input AS input,
+                {attributes["projection"]}
+                ({attributes["present"]}) AS has_span_attributes
             FROM latest_roots
             LEFT JOIN ts_survivor_map AS ts_remap
                 ON latest_trace_session_id = ts_remap.any_id
@@ -2549,7 +3199,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             dateDiff('second', min(start_time), max(end_time)) AS duration,
             sum(cost) AS total_cost,
             sum(total_tokens) AS total_tokens,
-            uniqExact(trace_id) AS traces_count
+            uniqExact(trace_id) AS traces_count,
+            argMin(input, start_time) AS first_message,
+            argMax(input, start_time) AS last_message,
+            {attributes["arrays"]}
         FROM resolved_roots
         GROUP BY session_id
         """
@@ -2726,103 +3379,6 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         """
         return query, self.params
 
-    def build_content_query(self, session_ids: list[str]) -> tuple[str, dict[str, Any]]:
-        """Fetch first/last messages for a page of session IDs.
-
-        P3b step1.5 (DESIGN §3 / id_remap_sql): ``session_ids`` are the OLD
-        curated ids emitted by the (resolved) browse ``build()``. A straddler's
-        NEW-deterministic-id spans carry ``trace_session_id = new_id``, so we
-        resolve each span's ``trace_session_id`` new→old through
-        ``trace_session_id_remap`` and BOTH filter (``IN session_ids``) and
-        ``GROUP BY`` the RESOLVED id — else the new-id spans are missed and a
-        straddler's first/last message is computed off only its old-id half.
-        Pre-flip the remap is a no-op → byte-identical (gate B).
-        """
-        ids = tuple(dict.fromkeys(str(value) for value in session_ids if value))
-        if not ids:
-            return "", {}
-        if len(ids) > 200:
-            raise ValueError("content session page exceeds bounded limit")
-        # The bounded endpoint calls this method without calling ``build`` first.
-        # Derive its exact request window here so both the raw candidate read and
-        # schema-specific latest-state replay can prune complete replacement keys.
-        content_start_date, content_end_date = self.parse_time_range(self.filters)
-        params = {
-            **self.params,
-            "content_session_ids": ids,
-            "content_start_date": content_start_date,
-            "content_end_date": content_end_date,
-        }
-        # The page contains at most 200 canonical session IDs.  Building the
-        # global survivor map here scans ``trace_session_id_remap`` twice even
-        # though hydration can only return those finite sessions.  Expand only
-        # their consolidation groups and materialize the finite map once,
-        # preserving the identical old/new -> survivor mapping while keeping
-        # the span read page-scoped.
-        # An unmapped direct-CH session still follows the explicit raw-ID arm
-        # below and ``resolved_id_expr`` falls back to that raw ID.
-        ts_map_ctes = self._candidate_survivor_map_ctes(params, ids)
-        resolved_ts = resolved_id_expr("latest_trace_session_id", "ts_remap")
-        physical_time_scope = self._physical_time_scope_sql()
-        latest_time_scope = self._latest_time_scope_sql(
-            params, param_prefix="build_content_query_latest_time"
-        )
-        query = f"""
-        WITH
-        {ts_map_ctes},
-        candidate_root_identities AS (
-            SELECT DISTINCT {self._physical_identity_select_sql()}
-            FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}{physical_time_scope}
-              AND (
-                  trace_session_id IN %(content_session_ids)s
-                  OR trace_session_id IN (
-                      SELECT any_id
-                      FROM ts_survivor_map
-                      WHERE survivor_id IN %(content_session_ids)s
-                  )
-              )
-              AND (parent_span_id IS NULL OR parent_span_id = '')
-        ),
-        latest_roots AS (
-            SELECT
-                project_id,
-                trace_id,
-                id,
-                argMax(start_time, _peerdb_version) AS latest_start_time,
-                argMax(tuple(parent_span_id), _peerdb_version).1 AS latest_parent_span_id,
-                argMax(tuple(trace_session_id), _peerdb_version).1 AS latest_trace_session_id,
-                argMax(tuple(input), _peerdb_version).1 AS latest_input,
-                argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted
-            FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}{physical_time_scope}
-              AND ({self._physical_group_by_sql()}) IN (
-                  SELECT {self._physical_identity_names_sql()}
-                  FROM candidate_root_identities
-              )
-            GROUP BY {self._physical_group_by_sql()}
-        ),
-        resolved_roots AS (
-            SELECT
-                {resolved_ts} AS session_id,
-                latest_start_time AS start_time,
-                latest_input AS input
-            FROM latest_roots
-            LEFT JOIN ts_survivor_map AS ts_remap
-                ON latest_trace_session_id = ts_remap.any_id
-            WHERE latest_is_deleted = 0{latest_time_scope}
-              AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
-              AND {resolved_ts} IN %(content_session_ids)s
-        )
-        SELECT
-            session_id,
-            argMin(input, start_time) AS first_message,
-            argMax(input, start_time) AS last_message
-        FROM resolved_roots
-        GROUP BY session_id
-        """
-        return query, params
-
     def has_having_filters(self) -> bool:
         """Return True if any filters target aggregate columns (requiring HAVING)."""
         for f in self._native_session_filters():
@@ -2952,87 +3508,6 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         )
         """
         return query, params
-
-    def build_span_attributes_query(
-        self, session_ids: list[str]
-    ) -> tuple[str, dict[str, Any]]:
-        ids = tuple(dict.fromkeys(str(value) for value in session_ids if value))
-        if not ids:
-            return "", {}
-        if len(ids) > 200:
-            raise ValueError("attribute session page exceeds bounded limit")
-
-        # The bounded endpoint does not call ``build`` before page hydration.
-        # Bind its exact request window here and apply it to both candidate
-        # acquisition and the authoritative storage-key latest-state replay.
-        attr_start_date, attr_end_date = self.parse_time_range(self.filters)
-        params = {
-            **self.params,
-            "attr_session_ids": ids,
-            "attr_start_date": attr_start_date,
-            "attr_end_date": attr_end_date,
-        }
-        physical_time_scope = self._physical_time_scope_sql()
-        latest_time_scope = self._latest_time_scope_sql(
-            params, param_prefix="session_attr_latest_time"
-        )
-        ts_map_ctes = self._candidate_survivor_map_ctes(params, ids)
-        resolved_ts = resolved_id_expr("latest_trace_session_id", "ts_remap")
-        sql = f"""
-        WITH
-        {ts_map_ctes},
-        candidate_root_identities AS (
-            SELECT DISTINCT {self._physical_identity_select_sql()}
-            FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}{physical_time_scope}
-              AND (
-                  trace_session_id IN %(attr_session_ids)s
-                  OR trace_session_id IN (
-                      SELECT any_id
-                      FROM ts_survivor_map
-                      WHERE survivor_id IN %(attr_session_ids)s
-                  )
-              )
-              AND (parent_span_id IS NULL OR parent_span_id = '')
-        ),
-        latest_roots AS (
-            SELECT
-                project_id,
-                trace_id,
-                id,
-                argMax(start_time, _peerdb_version) AS latest_start_time,
-                argMax(tuple(parent_span_id), _peerdb_version).1 AS latest_parent_span_id,
-                argMax(tuple(trace_session_id), _peerdb_version).1 AS latest_trace_session_id,
-                argMax(tuple(span_attributes_raw), _peerdb_version).1 AS latest_span_attributes_raw,
-                argMax(span_attr_str, _peerdb_version) AS latest_span_attr_str,
-                argMax(span_attr_num, _peerdb_version) AS latest_span_attr_num,
-                argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted
-            FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}{physical_time_scope}
-              AND ({self._physical_group_by_sql()}) IN (
-                  SELECT {self._physical_identity_names_sql()}
-                  FROM candidate_root_identities
-              )
-            GROUP BY {self._physical_group_by_sql()}
-        )
-        SELECT
-            {resolved_ts} AS session_id,
-            latest_span_attributes_raw AS span_attributes_raw,
-            latest_span_attr_str AS span_attr_str,
-            latest_span_attr_num AS span_attr_num
-        FROM latest_roots
-        LEFT JOIN ts_survivor_map AS ts_remap
-            ON latest_trace_session_id = ts_remap.any_id
-        WHERE latest_is_deleted = 0{latest_time_scope}
-          AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
-          AND (
-            (latest_span_attributes_raw != '{{}}' AND latest_span_attributes_raw != '')
-            OR length(mapKeys(latest_span_attr_str)) > 0
-            OR length(mapKeys(latest_span_attr_num)) > 0
-          )
-          AND {resolved_ts} IN %(attr_session_ids)s
-        """
-        return sql, params
 
     # ------------------------------------------------------------------
     # Result formatting

@@ -8,6 +8,7 @@ out of the batch, so Google redelivers it while the rest of the batch completes.
 """
 
 import asyncio
+import contextvars
 import json
 from datetime import datetime, timedelta
 
@@ -126,8 +127,12 @@ def _drain_sync(heartbeat) -> dict:
 
 
 def _failure_key(payload: dict) -> str | None:
+    from accounts.gcp_marketplace_events import ledger_key
+
     event_id = payload.get("eventId")
-    return f"{POISON_CACHE_PREFIX}:{event_id}" if event_id else None
+    if not event_id:
+        return None
+    return f"{POISON_CACHE_PREFIX}:{ledger_key(payload.get('eventType', ''), event_id)}"
 
 
 def _is_poison(payload: dict) -> bool:
@@ -186,7 +191,17 @@ async def drain_gcp_marketplace_events_activity(input=None) -> DrainResult:
         # Cloud-only. Elsewhere this would fail every five minutes for ever.
         return DrainResult(events_processed=0, had_events=False)
 
-    result = await asyncio.to_thread(_drain_sync, activity.heartbeat)
+    # _drain_sync runs on a worker thread, but activity.heartbeat must run on
+    # the activity's event loop: it schedules a task with asyncio.create_task,
+    # which raises "no running event loop" from any other thread. Hop back to
+    # the loop, carrying the activity context so heartbeat finds its activity.
+    loop = asyncio.get_running_loop()
+    ctx = contextvars.copy_context()
+
+    def heartbeat_from_thread(*details) -> None:
+        loop.call_soon_threadsafe(activity.heartbeat, *details, context=ctx)
+
+    result = await asyncio.to_thread(_drain_sync, heartbeat_from_thread)
     return DrainResult(
         events_processed=result["events_processed"],
         had_events=result["had_events"],

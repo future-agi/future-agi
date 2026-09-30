@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Block until this boot's bootstrap (bin/bootstrap.py) has finished, then exec
+# the given command.
+while [ ! -f /data/.bootstrap-ok ]; do sleep 2; done
+exec "$@"

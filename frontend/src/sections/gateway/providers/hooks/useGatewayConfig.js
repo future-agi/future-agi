@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 
+import { withApiPathPrefix } from "../utils";
+
 // The shared axios instance is created without a `timeout`, and axios defaults
 // to 0 — wait forever. A stalled gateway request therefore never rejects, so
 // React Query's isPending sticks on and the caller's UI is left disabled with
@@ -25,6 +27,19 @@ export function asRequestError(err, action) {
   );
   friendly.cause = err;
   return friendly;
+}
+
+// Returned from every config mutation's onSuccess, so the mutation (and the
+// dialog that closes on it) settles only once the config has been re-read:
+// otherwise Edit, clicked straight after Save, opens on the cached config from
+// before the save. The other keys are refreshed without waiting.
+export function refreshGatewayConfig(queryClient, ...alsoStaleKeys) {
+  alsoStaleKeys.forEach((queryKey) =>
+    queryClient.invalidateQueries({ queryKey }),
+  );
+  return queryClient.invalidateQueries({
+    queryKey: ["agentcc-gateway-config"],
+  });
 }
 
 export function useGatewayConfig(gatewayId) {
@@ -77,10 +92,8 @@ export function useUpdateProvider() {
         throw asRequestError(err, "Saving the provider");
       }
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agentcc-gateway-config"] });
-      queryClient.invalidateQueries({ queryKey: ["agentcc-provider-health"] });
-    },
+    onSuccess: () =>
+      refreshGatewayConfig(queryClient, ["agentcc-provider-health"]),
   });
 }
 
@@ -96,10 +109,8 @@ export function useRemoveProvider() {
       );
       return data.result;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agentcc-gateway-config"] });
-      queryClient.invalidateQueries({ queryKey: ["agentcc-provider-health"] });
-    },
+    onSuccess: () =>
+      refreshGatewayConfig(queryClient, ["agentcc-provider-health"]),
   });
 }
 
@@ -118,10 +129,7 @@ export function useToggleGuardrail() {
       );
       return data.result;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agentcc-gateway-config"] });
-      queryClient.invalidateQueries({ queryKey: ["agentcc-org-config"] });
-    },
+    onSuccess: () => refreshGatewayConfig(queryClient, ["agentcc-org-config"]),
   });
 }
 
@@ -140,10 +148,7 @@ export function useUpdateGuardrail() {
       );
       return data.result;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agentcc-gateway-config"] });
-      queryClient.invalidateQueries({ queryKey: ["agentcc-org-config"] });
-    },
+    onSuccess: () => refreshGatewayConfig(queryClient, ["agentcc-org-config"]),
   });
 }
 
@@ -162,9 +167,7 @@ export function useSetBudget() {
       );
       return data.result;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agentcc-gateway-config"] });
-    },
+    onSuccess: () => refreshGatewayConfig(queryClient),
   });
 }
 
@@ -180,10 +183,7 @@ export function useRemoveBudget() {
       );
       return data.result;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agentcc-gateway-config"] });
-      queryClient.invalidateQueries({ queryKey: ["agentcc-org-config"] });
-    },
+    onSuccess: () => refreshGatewayConfig(queryClient, ["agentcc-org-config"]),
   });
 }
 
@@ -199,10 +199,8 @@ export function useUpdateConfig() {
       );
       return data.result;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agentcc-gateway-config"] });
-      queryClient.invalidateQueries({ queryKey: ["agentcc-provider-health"] });
-    },
+    onSuccess: () =>
+      refreshGatewayConfig(queryClient, ["agentcc-provider-health"]),
   });
 }
 
@@ -218,19 +216,29 @@ export function useReloadConfig() {
       );
       return data.result;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["agentcc-gateway-config"] });
-      queryClient.invalidateQueries({ queryKey: ["agentcc-provider-health"] });
-    },
+    onSuccess: () =>
+      refreshGatewayConfig(queryClient, ["agentcc-provider-health"]),
   });
 }
 
 export function useFetchProviderModels() {
   return useMutation({
-    mutationFn: async ({ providerName, baseUrl, apiKey, apiFormat }) => {
-      const body = providerName
-        ? { provider_name: providerName }
-        : { base_url: baseUrl, api_key: apiKey, api_format: apiFormat };
+    mutationFn: async ({
+      providerName,
+      baseUrl,
+      apiKey,
+      apiFormat,
+      apiPathPrefix,
+    }) => {
+      // Discovery has to probe the same versioned path the proxy will use, and
+      // the prefix is an openai-format concept, so gate it the way saving does.
+      const body = withApiPathPrefix(
+        providerName
+          ? { provider_name: providerName }
+          : { base_url: baseUrl, api_key: apiKey, api_format: apiFormat },
+        apiFormat,
+        apiPathPrefix,
+      );
       try {
         const { data } = await axios.post(
           endpoints.gateway.providerCredentials.fetchModels,

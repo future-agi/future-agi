@@ -175,6 +175,7 @@ const SyntheticDataDrawer = ({
       reset();
       refreshGrid(null, true);
     },
+    meta: { errorHandled: true },
     onError: (error) => {
       enqueueSnackbar(
         getRequestErrorMessage(error, "Failed to create synthetic dataset", {

@@ -1,3 +1,4 @@
+/* eslint-disable react/prop-types */
 import { describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, userEvent } from "src/utils/test-utils";
@@ -31,6 +32,18 @@ vi.mock(
     ),
   }),
 );
+
+vi.mock("src/components/share-dialog", () => ({
+  ShareDialog: ({ open, resourceType, resourceId, fallbackShareUrl }) => (
+    <div
+      data-testid="share-dialog"
+      data-open={String(open)}
+      data-resource-type={resourceType}
+      data-resource-id={resourceId}
+      data-fallback-url={fallbackShareUrl || ""}
+    />
+  ),
+}));
 
 vi.mock("src/api/project/saved-views", () => ({
   useGetSavedViews: () => ({ data: { custom_views: [] } }),
@@ -106,5 +119,65 @@ describe("VoiceDetailDrawerV2 queue source", () => {
       "data-source-ids",
       "call-execution-1",
     );
+  });
+});
+
+describe("VoiceDetailDrawerV2 share resource", () => {
+  it("shares an Observe voice call as its trace", () => {
+    renderWithClient(
+      <VoiceDetailDrawerV2
+        data={{
+          module: "project",
+          id: "trace-1",
+          trace_id: "trace-1",
+          project_id: "project-1",
+        }}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const dialog = screen.getByTestId("share-dialog");
+    expect(dialog).toHaveAttribute("data-resource-type", "trace");
+    expect(dialog).toHaveAttribute("data-resource-id", "trace-1");
+    expect(dialog.getAttribute("data-fallback-url")).toContain(
+      "/dashboard/observe/project-1/voice/trace-1",
+    );
+  });
+
+  it("shares a simulation voice call as its call execution", () => {
+    renderWithClient(
+      <VoiceDetailDrawerV2
+        data={{
+          module: "simulate",
+          origin: "simulate",
+          id: "call-execution-1",
+          simulation_call_type: "voice",
+        }}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const dialog = screen.getByTestId("share-dialog");
+    expect(dialog).toHaveAttribute("data-resource-type", "call_execution");
+    expect(dialog).toHaveAttribute("data-resource-id", "call-execution-1");
+    expect(dialog).toHaveAttribute("data-fallback-url", "");
+  });
+
+  it("shares a simulation call by its call execution even when it has a trace", () => {
+    renderWithClient(
+      <VoiceDetailDrawerV2
+        data={{
+          module: "simulate",
+          id: "call-execution-1",
+          trace_id: "trace-9",
+          project_id: "project-1",
+        }}
+        onClose={vi.fn()}
+      />,
+    );
+
+    const dialog = screen.getByTestId("share-dialog");
+    expect(dialog).toHaveAttribute("data-resource-type", "call_execution");
+    expect(dialog).toHaveAttribute("data-resource-id", "call-execution-1");
   });
 });

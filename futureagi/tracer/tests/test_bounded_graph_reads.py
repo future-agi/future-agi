@@ -7,6 +7,8 @@ from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
+from django_redis.exceptions import ConnectionInterrupted
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from tracer.selectors.trace_filter_reads import BoundedFilterPage
 from tracer.services.clickhouse import bounded_graph_reads, graph_dispatch
@@ -21,6 +23,7 @@ from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     UnsupportedFilterShapeError,
 )
 from tracer.services.clickhouse.read_budget import ReadDeadlineExceeded
+from tracer.tests._graph_cost_stub import AffordableScanAnalytics
 from tracer.tests.test_trace_root_physical_replay import assert_coherent_classifier
 
 PROJECT_ID = "00000000-0000-4000-8000-000000000901"
@@ -421,12 +424,13 @@ def test_filtered_graph_candidates_are_finite_latest_state_samples(
         # V2 span replay resolves one physical row before the compiler's
         # aggregates. Only immutable six-part keys may restrict that source;
         # producer-time and deletion predicates belong after replacement.
-        source = classify_query.split("FROM spans FINAL", 1)[1].split(
+        assert "FINAL" not in classify_query
+        source = classify_query.split("PREWHERE", 1)[1].split(
             ") AS latest_candidate_spans", 1
         )[0]
         assert "IN %(candidate_span_identities)s" in source
         assert "candidate_start_date" not in source
-        assert "is_deleted" not in source
+        assert "is_deleted = 0" not in source
         assert len(classify_params["candidate_span_identities"][0]) == 6
         assert "latest_is_deleted = 0" in classify_query
     assert classify_params[candidate_param] in {("trace-1",), ("span-1",)}
@@ -3780,7 +3784,9 @@ def test_public_primary_graph_wrappers_use_inline_reads(
     monkeypatch.setattr(graph_dispatch, reader_name, direct_reader)
     filters = [_date_filter(), _attribute_filter("final_status", "Rejected")]
     common = {
-        "analytics": object(),
+        # The wrapper costs its scan before it picks a lane; this test is about
+        # which inline reader it then calls, so the probe gets an answer.
+        "analytics": AffordableScanAnalytics(),
         "project_id": PROJECT_ID,
         "filters": filters,
         "interval": "hour",
@@ -4762,3 +4768,365 @@ def test_graph_namespace_validation_never_exposes_parser_exception_text():
             namespace_handler
         )
         assert "str(" not in namespace_handler
+
+
+USERS_GRAPH_ORG_ID = "00000000-0000-4000-8000-000000000904"
+USERS_GRAPH_WORKSPACE_ID = "00000000-0000-4000-8000-000000000905"
+
+
+class _AffordableUsersGraphAnalytics:
+    """Answer the users graph's cost probe with a scan the wall affords.
+
+    The dispatcher now costs the read before issuing it, and a fake that
+    cannot answer that probe leaves the read UNCOSTED - which routes it to the
+    background lane and never reaches the reader these tests exercise. The
+    reader itself is patched in every test here, so no other statement is
+    ever asked of this object.
+    """
+
+    supports_per_query_read_settings = True
+
+    def __init__(self):
+        self.probes = []
+
+    def execute_ch_query(self, query, params=None, **kwargs):
+        assert "EXPLAIN ESTIMATE" in query, "only the cost probe may reach this fake"
+        self.probes.append((query, dict(params or {}), kwargs))
+        return SimpleNamespace(
+            data=[
+                {
+                    "database": "default",
+                    "table": "spans",
+                    "parts": 3,
+                    "rows": 1_000,
+                    "marks": 1,
+                }
+            ],
+            columns=["database", "table", "parts", "rows", "marks"],
+            query_time_ms=1,
+        )
+
+
+def _users_graph_snapshot_probe(monkeypatch, *, probe_result):
+    """Record snapshot traffic and answer the cache-only probe deterministically.
+
+    The real cache-only probe decorates a cold miss with ``query_refreshing``
+    false; only a running refresh carries it as true. The stub reproduces that
+    decoration so each dispatch branch is exercised by the state the cache
+    actually publishes.
+    """
+
+    calls = []
+
+    def _read_or_schedule(namespace, identity, **kwargs):
+        calls.append((namespace, identity, kwargs))
+        if kwargs.get("schedule_on_miss") is False:
+            return probe_result(kwargs["pending_payload"])
+        return {
+            **kwargs["pending_payload"],
+            "query_refreshing": True,
+            "query_refresh_failed": False,
+        }
+
+    monkeypatch.setattr(
+        graph_dispatch,
+        "read_or_schedule_exact_snapshot",
+        _read_or_schedule,
+    )
+    return calls
+
+
+def _users_graph_reader(monkeypatch, *, outcome):
+    reads = []
+
+    def _reader(**kwargs):
+        reads.append(kwargs)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return dict(outcome)
+
+    monkeypatch.setattr(graph_dispatch, "read_exact_user_system_graph", _reader)
+    return reads
+
+
+def _users_graph_complete_payload() -> dict:
+    return {
+        "metric_name": "active_users",
+        "data": [{"timestamp": START.isoformat(), "value": 3, "primary_traffic": 7}],
+        "query_complete": True,
+        "query_status": "complete",
+        "query_sampled": False,
+        "query_refreshing": False,
+        "query_refresh_failed": False,
+    }
+
+
+@pytest.mark.unit
+def test_users_graph_serves_a_cached_exact_snapshot_without_reading_clickhouse(
+    monkeypatch,
+):
+    cached = _users_graph_complete_payload()
+    calls = _users_graph_snapshot_probe(monkeypatch, probe_result=lambda _p: cached)
+    reads = _users_graph_reader(monkeypatch, outcome=ValueError("must not read"))
+
+    response = graph_dispatch.fetch_user_system_metric_graph_ch(
+        analytics=_AffordableUsersGraphAnalytics(),
+        project_id=PROJECT_ID,
+        filters=[_date_filter()],
+        interval="hour",
+        metric_id="active_users",
+        organization_id=USERS_GRAPH_ORG_ID,
+        workspace_id=USERS_GRAPH_WORKSPACE_ID,
+    )
+
+    assert reads == []
+    assert response == cached
+    assert graph_dispatch.graph_payload_is_publishable(response, allow_sampled=False)
+    assert len(calls) == 1
+    namespace, identity, options = calls[0]
+    assert namespace == "observe-user-system-graph"
+    assert identity["project_id"] == PROJECT_ID
+    assert identity["metric_id"] == "active_users"
+    assert identity["organization_id"] == USERS_GRAPH_ORG_ID
+    assert options["refresh"] is False
+    assert options["schedule_on_miss"] is False
+
+
+@pytest.mark.unit
+def test_users_graph_refresh_on_a_cached_snapshot_schedules_instead_of_reading(
+    monkeypatch,
+):
+    cached = _users_graph_complete_payload()
+    calls = _users_graph_snapshot_probe(monkeypatch, probe_result=lambda _p: cached)
+    reads = _users_graph_reader(monkeypatch, outcome=ValueError("must not read"))
+
+    response = graph_dispatch.fetch_user_system_metric_graph_ch(
+        analytics=_AffordableUsersGraphAnalytics(),
+        project_id=PROJECT_ID,
+        filters=[_date_filter()],
+        interval="hour",
+        metric_id="active_users",
+        refresh=True,
+        organization_id=USERS_GRAPH_ORG_ID,
+        workspace_id=USERS_GRAPH_WORKSPACE_ID,
+    )
+
+    assert reads == []
+    assert [options["refresh"] for _n, _i, options in calls] == [False, True]
+    # The scheduling call owns what a refresh returns: the cache keeps serving
+    # the last complete snapshot while the replacement runs. This asserts only
+    # that the refresh was scheduled and the answer stays publishable.
+    assert graph_dispatch.graph_payload_is_publishable(response, allow_sampled=False)
+
+
+@pytest.mark.unit
+def test_users_graph_running_refresh_answers_pending_without_a_statement(monkeypatch):
+    calls = _users_graph_snapshot_probe(
+        monkeypatch,
+        probe_result=lambda pending: {
+            **pending,
+            "query_refreshing": True,
+            "query_refresh_failed": False,
+        },
+    )
+    reads = _users_graph_reader(monkeypatch, outcome=ValueError("must not read"))
+
+    response = graph_dispatch.fetch_user_system_metric_graph_ch(
+        analytics=_AffordableUsersGraphAnalytics(),
+        project_id=PROJECT_ID,
+        filters=[_date_filter()],
+        interval="hour",
+        metric_id="active_users",
+        organization_id=USERS_GRAPH_ORG_ID,
+        workspace_id=USERS_GRAPH_WORKSPACE_ID,
+    )
+
+    assert reads == []
+    assert len(calls) == 1
+    assert calls[0][2]["schedule_on_miss"] is False
+    assert response["query_status"] == "pending"
+    assert response["query_complete"] is False
+    assert response["query_sampled"] is False
+    assert response["query_refreshing"] is True
+    assert response["data"] == []
+    assert graph_dispatch.graph_payload_is_publishable(response, allow_sampled=False)
+
+
+@pytest.mark.unit
+def test_users_graph_read_budget_failure_schedules_the_exact_refresh(monkeypatch):
+    calls = _users_graph_snapshot_probe(
+        monkeypatch,
+        probe_result=lambda pending: {
+            **pending,
+            "query_refreshing": False,
+            "query_refresh_failed": False,
+        },
+    )
+    reads = _users_graph_reader(
+        monkeypatch,
+        outcome=ReadDeadlineExceeded("graph read budget exhausted"),
+    )
+
+    response = graph_dispatch.fetch_user_system_metric_graph_ch(
+        analytics=_AffordableUsersGraphAnalytics(),
+        project_id=PROJECT_ID,
+        filters=[_date_filter()],
+        interval="hour",
+        metric_id="active_users",
+        organization_id=USERS_GRAPH_ORG_ID,
+        workspace_id=USERS_GRAPH_WORKSPACE_ID,
+    )
+
+    assert len(reads) == 1
+    assert [options["refresh"] for _n, _i, options in calls] == [False, True]
+    scheduled_namespace, scheduled_identity, scheduled_options = calls[-1]
+    assert scheduled_namespace == "observe-user-system-graph"
+    assert scheduled_identity["organization_id"] == USERS_GRAPH_ORG_ID
+    assert scheduled_identity["workspace_id"] == USERS_GRAPH_WORKSPACE_ID
+    assert scheduled_options.get("schedule_on_miss", True) is True
+    assert response["query_status"] == "pending"
+    assert response["query_complete"] is False
+    assert response["query_refreshing"] is True
+    assert response["data"] == []
+    assert graph_dispatch.graph_payload_is_publishable(response, allow_sampled=False)
+
+
+@pytest.mark.unit
+def test_users_graph_without_a_tenant_scope_keeps_the_degraded_response(monkeypatch):
+    calls = _users_graph_snapshot_probe(monkeypatch, probe_result=lambda p: p)
+    reads = _users_graph_reader(
+        monkeypatch,
+        outcome=ReadDeadlineExceeded("graph read budget exhausted"),
+    )
+
+    response = graph_dispatch.fetch_user_system_metric_graph_ch(
+        analytics=_AffordableUsersGraphAnalytics(),
+        project_id=PROJECT_ID,
+        filters=[_date_filter()],
+        interval="hour",
+        metric_id="active_users",
+    )
+
+    assert len(reads) == 1
+    assert calls == []
+    assert response["query_status"] == "degraded"
+    assert response["query_complete"] is False
+    assert response["query_error_code"] == "read_budget_exceeded"
+
+
+@pytest.mark.unit
+def test_users_graph_non_budget_failure_still_raises(monkeypatch):
+    _users_graph_snapshot_probe(
+        monkeypatch,
+        probe_result=lambda pending: {
+            **pending,
+            "query_refreshing": False,
+            "query_refresh_failed": False,
+        },
+    )
+    _users_graph_reader(monkeypatch, outcome=ValueError("bad filter shape"))
+
+    with pytest.raises(ValueError):
+        graph_dispatch.fetch_user_system_metric_graph_ch(
+            analytics=_AffordableUsersGraphAnalytics(),
+            project_id=PROJECT_ID,
+            filters=[_date_filter()],
+            interval="hour",
+            metric_id="active_users",
+            organization_id=USERS_GRAPH_ORG_ID,
+            workspace_id=USERS_GRAPH_WORKSPACE_ID,
+        )
+
+
+def _users_graph_scheduling_fails(monkeypatch, *, error):
+    """Answer the cache-only probe with a cold miss and fail the scheduling."""
+
+    calls = []
+
+    def _read_or_schedule(namespace, identity, **kwargs):
+        calls.append((namespace, identity, kwargs))
+        if kwargs.get("schedule_on_miss") is False:
+            return {
+                **kwargs["pending_payload"],
+                "query_refreshing": False,
+                "query_refresh_failed": False,
+            }
+        raise error
+
+    monkeypatch.setattr(
+        graph_dispatch,
+        "read_or_schedule_exact_snapshot",
+        _read_or_schedule,
+    )
+    return calls
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "error",
+    [
+        ConnectionInterrupted(connection=None),
+        RedisConnectionError("cache unavailable"),
+        ConnectionRefusedError("worker transport unavailable"),
+    ],
+    ids=lambda exc: type(exc).__name__,
+)
+def test_users_graph_scheduling_transport_failure_is_logged_and_degrades(
+    monkeypatch, error
+):
+    calls = _users_graph_scheduling_fails(monkeypatch, error=error)
+    _users_graph_reader(
+        monkeypatch,
+        outcome=ReadDeadlineExceeded("graph read budget exhausted"),
+    )
+    warning_calls = []
+    monkeypatch.setattr(
+        graph_dispatch,
+        "logger",
+        SimpleNamespace(
+            warning=lambda *args, **kwargs: warning_calls.append((args, kwargs))
+        ),
+    )
+
+    response = graph_dispatch.fetch_user_system_metric_graph_ch(
+        analytics=_AffordableUsersGraphAnalytics(),
+        project_id=PROJECT_ID,
+        filters=[_date_filter()],
+        interval="hour",
+        metric_id="active_users",
+        organization_id=USERS_GRAPH_ORG_ID,
+        workspace_id=USERS_GRAPH_WORKSPACE_ID,
+    )
+
+    assert [options["refresh"] for _n, _i, options in calls] == [False, True]
+    assert response["query_status"] == "degraded"
+    assert response["query_complete"] is False
+    assert response["query_error_code"] == "read_budget_exceeded"
+    assert len(warning_calls) == 1
+    assert warning_calls[0][0] == ("user_graph_exact_refresh_scheduling_degraded",)
+    assert warning_calls[0][1]["exc_info"] is True
+    assert warning_calls[0][1]["error_type"] == type(error).__name__
+    assert warning_calls[0][1]["metric_id"] == "active_users"
+
+
+@pytest.mark.unit
+def test_users_graph_scheduling_defect_is_not_absorbed(monkeypatch):
+    _users_graph_scheduling_fails(
+        monkeypatch,
+        error=RuntimeError("scheduler defect"),
+    )
+    _users_graph_reader(
+        monkeypatch,
+        outcome=ReadDeadlineExceeded("graph read budget exhausted"),
+    )
+
+    with pytest.raises(RuntimeError, match="scheduler defect"):
+        graph_dispatch.fetch_user_system_metric_graph_ch(
+            analytics=_AffordableUsersGraphAnalytics(),
+            project_id=PROJECT_ID,
+            filters=[_date_filter()],
+            interval="hour",
+            metric_id="active_users",
+            organization_id=USERS_GRAPH_ORG_ID,
+            workspace_id=USERS_GRAPH_WORKSPACE_ID,
+        )

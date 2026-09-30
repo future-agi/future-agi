@@ -28,7 +28,8 @@ logger = structlog.get_logger(__name__)
 # Bump whenever a release changes exact-query semantics. Cache keys are shared
 # across deployments and snapshots live for up to 30 days, so reusing the old
 # namespace could otherwise serve results computed by pre-deploy code.
-_CACHE_VERSION = 4
+# 5: session-graph and eval primary-traffic buckets are keyed by one UTC form.
+_CACHE_VERSION = 5
 # Admission is a shared resource guard, not a result contract. Preserve its
 # deployed key across semantic cache bumps so rolling workers do not each get
 # an independent allowance for the same project's expensive queries.

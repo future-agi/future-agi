@@ -28,3 +28,38 @@ def eval_has_structured_score(json_args: str) -> str:
         f"(JSONType({json_args}, '{EVAL_STRUCTURED_SCORE_KEY}') "
         f"IN {sql_str_set(EVAL_NUMERIC_JSON_TYPES)})"
     )
+
+
+def eval_output_presence_expr(json_args: str, output_type: str) -> str:
+    """Detect typed output before materialized extractors turn missing into zero."""
+    numeric = (
+        f"(JSONType({json_args}) IN {sql_str_set(EVAL_NUMERIC_JSON_TYPES)} OR "
+        f"{eval_has_structured_score(json_args)})"
+    )
+    if output_type == "SCORE":
+        return numeric
+    if output_type == "PASS_FAIL":
+        return (
+            f"({numeric} OR JSONType({json_args}) = 'Bool' OR "
+            f"lower(JSONExtractString({json_args})) IN "
+            f"{sql_str_set(EVAL_TRUTHY_OUTPUTS + EVAL_FALSY_OUTPUTS)})"
+        )
+    if output_type in ("CHOICE", "CHOICES"):
+        # The live formatter emits scored {choice: ...}/{choices: ...}
+        # objects as well as historical bare labels/lists. Inspect raw array
+        # elements: Array(String) extraction can coerce numbers into labels.
+        strings = (json_args, f"{json_args}, 'choice'")
+        arrays = (json_args, f"{json_args}, 'choices'")
+        branches = [
+            f"(JSONType({args}) = 'String' AND notEmpty(JSONExtractString({args})))"
+            for args in strings
+        ]
+        branches.extend(
+            f"(JSONType({args}) = 'Array' AND arrayExists(choice_value -> "
+            "JSONType(choice_value) = 'String' AND "
+            "notEmpty(JSONExtractString(choice_value)), "
+            f"JSONExtractArrayRaw({args})))"
+            for args in arrays
+        )
+        return "(" + " OR ".join(branches) + ")"
+    raise ValueError(f"Unsupported eval output type: {output_type}")

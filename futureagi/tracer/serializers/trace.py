@@ -15,6 +15,7 @@ from tracer.serializers.cursor_pagination import (
 from tracer.serializers.filters import (
     BOUNDED_PAGE_NUMBER_HELP_TEXT,
     JsonObjectField,
+    ObserveGraphDataRequestSerializer,
     SortParamListQueryParamField,
     StrictInputSerializer,
     bounded_filter_list_query_param_field,
@@ -292,16 +293,19 @@ class TraceObserveListMetadataSerializer(serializers.Serializer):
         r"^[0-9a-f]{64}$", required=False
     )
     query_applied_filter_count = serializers.IntegerField(required=False, min_value=0)
+    # Exactness is published on every successful list page, next to the
+    # completeness it qualifies; see tracer.services.clickhouse.
+    # list_page_contract.
+    query_exact = serializers.BooleanField(required=False)
+    ordering_exact = serializers.BooleanField(required=False)
 
 
 class TraceSessionListMetadataSerializer(TraceObserveListMetadataSerializer):
-    """Session-list page completeness plus non-exact candidate ordering."""
+    """Session-list page contract plus its non-exact candidate ordering source."""
 
-    query_exact = serializers.BooleanField(required=False)
     query_provenance = serializers.ChoiceField(
         choices=("spans_per_session_candidate",), required=False
     )
-    ordering_exact = serializers.BooleanField(required=False)
 
 
 class TraceObserveColumnConfigSerializer(serializers.Serializer):
@@ -542,7 +546,15 @@ class TraceVoiceCallListResponseSerializer(serializers.Serializer):
     )
     query_complete = serializers.BooleanField()
     query_status = serializers.ChoiceField(choices=("complete", "degraded"))
+    # Additive fields on an already-published envelope: optional in the
+    # contract so a client generated from this branch still parses a response
+    # from a backend that has not deployed it yet, matching how the same
+    # decision is expressed on the other three list endpoints. The view
+    # publishes all three on every successful page.
+    query_exact = serializers.BooleanField(required=False)
+    ordering_exact = serializers.BooleanField(required=False)
     query_error_code = serializers.CharField(required=False)
+    query_count = serializers.IntegerField(required=False, min_value=0)
     query_applied_filter_version = serializers.ChoiceField(
         choices=("canonical-json-sha256-v1",), required=False
     )
@@ -550,6 +562,24 @@ class TraceVoiceCallListResponseSerializer(serializers.Serializer):
         r"^[0-9a-f]{64}$", required=False
     )
     query_applied_filter_count = serializers.IntegerField(required=False, min_value=0)
+
+
+_DETAIL_PROJECT_ID_HELP = (
+    "Project the detail was opened from. The same id can exist in several "
+    "projects; when supplied, only that project's copy is read."
+)
+
+
+class TraceDetailQuerySerializer(serializers.Serializer):
+    """Optional project pin for the trace-detail identity.
+
+    Not strict: trace detail read no query params before the pin, so callers'
+    extra params (DRF's ``?format=json`` included) keep being ignored.
+    """
+
+    project_id = serializers.UUIDField(
+        required=False, help_text=_DETAIL_PROJECT_ID_HELP
+    )
 
 
 class TraceVoiceCallDetailQuerySerializer(StrictInputSerializer):
@@ -562,6 +592,9 @@ class TraceVoiceCallDetailQuerySerializer(StrictInputSerializer):
     traceId = serializers.UUIDField(  # noqa: N815 - public compatibility alias
         required=False,
         help_text="Legacy alias for trace_id; when both are supplied they must match.",
+    )
+    project_id = serializers.UUIDField(
+        required=False, help_text=_DETAIL_PROJECT_ID_HELP
     )
 
     def validate(self, attrs):
@@ -687,6 +720,36 @@ class TraceObserveIndexQuerySerializer(StrictInputSerializer):
     trace_id = serializers.UUIDField()
     project_id = serializers.UUIDField()
     filters = filter_list_query_param_field(required=False, default=list)
+
+
+class TraceGraphDataRequestSerializer(ObserveGraphDataRequestSerializer):
+    observe_type = serializers.ChoiceField(
+        choices=["trace", "voice"],
+        required=False,
+        default="trace",
+        help_text=(
+            "Population the graph counts: every trace, or only voice calls "
+            "(traces whose root span is a conversation), exactly as "
+            "list_voice_calls selects them."
+        ),
+    )
+    remove_simulation_calls = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text=(
+            "Voice graphs only: exclude calls placed by a simulator phone, "
+            "exactly as list_voice_calls' remove_simulation_calls does."
+        ),
+    )
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        is_voice = attrs.get("observe_type") == "voice"
+        if attrs.get("remove_simulation_calls") and not is_voice:
+            raise serializers.ValidationError(
+                {"remove_simulation_calls": "Requires observe_type 'voice'."}
+            )
+        return attrs
 
 
 class TraceAgentGraphQuerySerializer(StrictInputSerializer):
@@ -890,10 +953,22 @@ class UsersResultSerializer(serializers.Serializer):
     )
     query_exact = serializers.BooleanField(required=False)
     query_provenance = serializers.ChoiceField(
-        choices=("span_user_rollup_end_users_candidate", "physical_latest_users"),
+        choices=(
+            "span_user_rollup_end_users_candidate",
+            "physical_latest_users",
+            "matching_activity_walk",
+        ),
         required=False,
     )
     ordering_exact = serializers.BooleanField(required=False)
+    # Present only on a page the matching-activity walk serves (a span
+    # attribute or native span leaf): rows are ordered by each user's newest
+    # live span whose latest value matches the leaf the walk discovers on,
+    # newest first. With several such leaves the server chooses that leaf.
+    # Unfiltered pages keep their last-activity order and omit it.
+    ordering = serializers.ChoiceField(
+        choices=("latest_matching_activity",), required=False
+    )
     approximate_fields = serializers.ListField(
         child=serializers.ChoiceField(choices=("num_sessions",)),
         required=False,

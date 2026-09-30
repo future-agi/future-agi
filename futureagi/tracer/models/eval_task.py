@@ -41,6 +41,16 @@ class EvalTaskStatus(models.TextChoices):
     DELETED = "deleted", _("Deleted")
 
 
+# What Resume accepts, on every surface that offers it: the unpause endpoint,
+# the AI tool, and the task UIs (``isResumableTaskStatus`` in
+# ``frontend/src/sections/common/EvalsTasks/task_status.js``). FAILED is
+# resumable for the same reason PAUSED is: both leave the entries untouched and
+# exit the workflow, so a fresh run reconciles, reaps and drains whatever is
+# left. A task fails when one control activity exhausts its retry budget, so
+# without FAILED here a brief infrastructure blip strands every remaining entry.
+RESUMABLE_TASK_STATUSES = frozenset({EvalTaskStatus.PAUSED, EvalTaskStatus.FAILED})
+
+
 class EvalTask(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     project = models.ForeignKey(
@@ -69,6 +79,12 @@ class EvalTask(BaseModel):
     # pre-dates it) and advances it each pass; persisting it means a task paused
     # for longer than the late-arrival overlap still resumes without a gap.
     continuous_cursor = models.DateTimeField(blank=True, null=True)
+    # Eval-config revision (see ``reconciler._evals_revision``) that the last
+    # cursor-less full reclassification pass covered. A continuous task runs one
+    # full pass per revision; while this matches, every poll is a cheap delta.
+    reclassified_evals_revision = models.CharField(
+        max_length=64, blank=True, null=True
+    )
     evals_details = models.JSONField(default=list, blank=True, null=True)
     evals = models.ManyToManyField(
         CustomEvalConfig, related_name="eval_tasks", blank=True, null=True

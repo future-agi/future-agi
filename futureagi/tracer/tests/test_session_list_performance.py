@@ -104,10 +104,10 @@ class TestSessionListQueryPerformance:
         builder.build()
 
         session_ids = [str(uuid.uuid4()) for _ in range(30)]
-        query, params = builder.build_span_attributes_query(session_ids)
+        query, params = builder.build_page_hydration_query(session_ids)
 
         assert "LIMIT 500" not in query
-        assert params["attr_session_ids"] == tuple(session_ids)
+        assert params["candidate_session_ids"] == tuple(session_ids)
         assert "(parent_span_id IS NULL OR parent_span_id = '')" in query
 
     def test_trace_count_is_exact_in_every_session_aggregate_query(self):
@@ -294,15 +294,15 @@ class TestQueryTimeoutBudget:
         )
         builder.build()
         session_ids = [str(uuid.uuid4()) for _ in range(30)]
-        query, params = builder.build_span_attributes_query(session_ids)
+        query, params = builder.build_page_hydration_query(session_ids)
         assert "LIMIT 500" not in query
-        assert params["attr_session_ids"] == tuple(session_ids)
+        assert params["candidate_session_ids"] == tuple(session_ids)
         assert "parent_span_id IS NULL OR parent_span_id = ''" in query
         # The committed PREWHERE micro-opt became a WHERE when the query gained
         # the P3b id-remap LEFT JOIN: ClickHouse PREWHERE cannot reference a
         # joined column, and the session-id filter now matches the resolved
-        # `ts_remap.survivor_id` (see session_list.build_span_attributes_query).
+        # `ts_remap.survivor_id` (see session_list.build_page_hydration_query).
         # The query is scoped to the selected sessions and root-span filter;
         # assert the resolved session filter is applied in the WHERE.
         assert "WHERE" in query
-        assert "IN %(attr_session_ids)s" in query
+        assert "IN %(candidate_session_ids)s" in query

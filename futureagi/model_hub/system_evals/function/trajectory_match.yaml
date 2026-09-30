@@ -6,6 +6,7 @@ criteria: Measures how well an agent's actual execution trajectory matches the e
 eval_tags:
 - Agents
 - Output Validation
+- Tools
 visible_ui: true
 permissions:
   allow_edit: false

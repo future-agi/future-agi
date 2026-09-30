@@ -1,0 +1,136 @@
+{{- if .Values.serving.enabled }}
+{{- $s := .Values.serving -}}
+{{- $ctx := dict "root" . "component" "serving" -}}
+{{- $env := dict
+      "HOME" "/tmp"
+      "HF_HOME" "/models/huggingface"
+      "SENTENCE_TRANSFORMERS_HOME" "/models/sentence-transformers"
+      "TORCH_HOME" "/models/torch"
+      "NUMBA_CACHE_DIR" "/tmp/numba"
+      "MPLCONFIGDIR" "/tmp/matplotlib"
+      "OTEL_ENABLED" "false" -}}
+{{- $env = mergeOverwrite $env ($s.extraEnv | default dict) -}}
+{{- if $s.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "futureagi.component" $ctx }}-models
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- include "futureagi.storageClass" (dict "root" . "storageClass" $s.persistence.storageClass) | nindent 2 }}
+  resources:
+    requests:
+      storage: {{ $s.persistence.size }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "futureagi.component" $ctx }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  replicas: {{ $s.replicas }}
+  revisionHistoryLimit: 5
+  {{- if $s.persistence.enabled }}
+  # One ReadWriteOnce model volume: the old pod must let go of it first.
+  strategy:
+    type: Recreate
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "futureagi.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "futureagi.componentLabels" $ctx | nindent 8 }}
+        {{- with $s.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with $s.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "futureagi.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 6) }}
+      securityContext:
+        {{- include "futureagi.podSecurityContext" (dict "uid" 1000 "overrides" $s.podSecurityContext) | nindent 8 }}
+      {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $s)) "indent" 6) }}
+      containers:
+        - name: serving
+          image: {{ include "futureagi.image" (dict "root" . "image" $s.image) }}
+          imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" . "image" $s.image) }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            {{- range $name := keys $env | sortAlpha }}
+            - name: {{ $name }}
+              value: {{ get $env $name | toString | quote }}
+            {{- end }}
+          # Models load on first use; the server itself starts in seconds.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          resources:
+            {{- toYaml $s.resources | nindent 12 }}
+          securityContext:
+            {{- include "futureagi.containerSecurityContext" (dict "overrides" $s.containerSecurityContext) | nindent 12 }}
+          volumeMounts:
+            - name: models
+              mountPath: /models
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: models
+          {{- if $s.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "futureagi.component" $ctx }}-models
+          {{- else }}
+          emptyDir:
+            sizeLimit: {{ $s.persistence.size }}
+          {{- end }}
+        - name: tmp
+          emptyDir:
+            sizeLimit: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "futureagi.component" $ctx }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "futureagi.selectorLabels" $ctx | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP
+{{- end }}

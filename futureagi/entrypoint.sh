@@ -14,6 +14,9 @@ FAST_STARTUP=${FAST_STARTUP:-false}
 # data bootstrap must run as a dedicated one-shot operator job using both
 # SERVICE_TYPE=bootstrap and STARTUP_DB_MUTATION_MODE=operator. Development and
 # self-hosted compose retain the existing default startup behavior.
+# Temporal schedules are not database state: SERVICE_TYPE=temporal-schedules is
+# the one-shot job a deploy runs to create or update this release's schedules,
+# with database mutations still disabled.
 CLOUD_STARTUP=false
 case "$ENV_TYPE" in
     "prod"|"production"|"staging"|"PROD"|"PRODUCTION"|"STAGING") CLOUD_STARTUP=true ;;
@@ -185,9 +188,6 @@ export ENV_PROJECT_ROOT
 # Change to the backend directory
 cd /app/backend
 
-# Install any missing dependencies (2FA/WebAuthn added after Docker image build)
-pip install --quiet "pyotp>=2.9.0" "qrcode[pil]>=7.4" "webauthn>=2.2.0" 2>/dev/null || true
-
 # Create logs directory if it doesn't exist
 mkdir -p logs media static
 
@@ -338,6 +338,12 @@ if [ "$FAST_STARTUP" = "true" ] && [ "$NO_STARTUP_DB_MUTATIONS" = "true" ] && [ 
 fi
 
 should_register_temporal_schedules() {
+    # The registrar exists only to register, so no switch may turn it into a
+    # job that succeeds without schedules.
+    if [ "$SERVICE_TYPE" = "temporal-schedules" ]; then
+        return 0
+    fi
+
     if [ "$NO_STARTUP_DB_MUTATIONS" = "true" ]; then
         echo "NO_STARTUP_DB_MUTATIONS=true: skipping Temporal schedule registration"
         return 1
@@ -363,7 +369,13 @@ should_register_temporal_schedules() {
 }
 
 if should_register_temporal_schedules; then
-    python manage.py register_temporal_schedules || echo "WARNING: Temporal schedule registration failed (non-fatal), continuing startup..."
+    if ! python manage.py register_temporal_schedules; then
+        if [ "$SERVICE_TYPE" = "bootstrap" ] || [ "$SERVICE_TYPE" = "temporal-schedules" ]; then
+            echo "ERROR: Temporal schedule registration failed; $SERVICE_TYPE is incomplete"
+            exit 1
+        fi
+        echo "WARNING: Temporal schedule registration failed (non-fatal), continuing startup..."
+    fi
 else
     echo "Temporal schedule registration disabled for service type: $SERVICE_TYPE"
 fi
@@ -372,6 +384,11 @@ fi
 case "$SERVICE_TYPE" in
     "bootstrap")
         echo "One-shot database bootstrap completed successfully"
+        exit 0
+        ;;
+
+    "temporal-schedules")
+        echo "One-shot Temporal schedule registration completed successfully"
         exit 0
         ;;
 
@@ -630,7 +647,7 @@ case "$SERVICE_TYPE" in
 
     *)
         echo "ERROR: Unknown SERVICE_TYPE: $SERVICE_TYPE"
-        echo "Available options: bootstrap, backend, worker, beat, flower, grpc, temporal-worker"
+        echo "Available options: bootstrap, temporal-schedules, backend, worker, beat, flower, grpc, temporal-worker"
         echo "Current environment:"
         echo "  SERVICE_TYPE=$SERVICE_TYPE"
         echo "  ENV_TYPE=$ENV_TYPE"

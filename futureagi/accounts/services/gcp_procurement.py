@@ -186,14 +186,16 @@ class GCPProcurementService:
         )
 
     def approve_entitlement(
-        self, entitlement_id: str, entitlement_migrated: bool = False
+        self, entitlement_id: str, migrated_from_entitlement_id: str | None = None
     ) -> dict:
         logger.info(
             "gcp_marketplace_entitlement_approve", entitlement_id=entitlement_id
         )
         body: dict = {}
-        if entitlement_migrated:
-            body["entitlementMigrated"] = True
+        if migrated_from_entitlement_id:
+            body["entitlementMigrated"] = self.entitlement_name(
+                migrated_from_entitlement_id
+            )
         return self._write(
             self.client.providers()
             .entitlements()
@@ -275,7 +277,7 @@ class GCPProcurementService:
             "pageToken": page_token,
         }
         if account_id:
-            kwargs["filter"] = f"account={self.account_name(account_id)}"
+            kwargs["filter"] = f"account={account_id}"
         return self._read(self.client.providers().entitlements().list(**kwargs))
 
     def iter_entitlements(self, account_id: str | None = None):

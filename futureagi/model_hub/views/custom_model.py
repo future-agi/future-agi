@@ -11,6 +11,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.utils import get_request_organization
+from agentic_eval.core_evals.run_prompt.available_models import (
+    VERTEX_SDK_MISSING_MESSAGE,
+    vertex_ai_sdk_available,
+    vertex_model_requires_sdk,
+)
 from model_hub.models.api_key import ApiKey
 from model_hub.models.custom_models import CustomAIModel
 from model_hub.models.metric import Metric
@@ -43,6 +48,16 @@ from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 
 logger = structlog.get_logger(__name__)
+
+
+def _vertex_sdk_missing(provider, model_name) -> bool:
+    """A Vertex AI model litellm can only call through the ``vertexai`` SDK,
+    on an image built without it (the optional ``gcp`` extra)."""
+    return (
+        str(provider or "").strip().lower() == "vertex_ai"
+        and vertex_model_requires_sdk(model_name, "vertex_ai")
+        and not vertex_ai_sdk_available()
+    )
 
 
 def _restore_plain_key_config_for_save(ai_model):
@@ -236,6 +251,8 @@ class CustomAIModelCreateView(APIView):
                     "vertex_ai/"
                 ):
                     model_name = f"vertex_ai/{model_name}"
+                if _vertex_sdk_missing(model_provider, model_name):
+                    return self._gm.bad_request(VERTEX_SDK_MISSING_MESSAGE)
                 if (not config_json) and (not key):
                     return self._gm.bad_request(get_error_message("MISSING_JSON_KEY"))
                 if not key:
@@ -565,6 +582,8 @@ class EditCustomModel(APIView):
             model = _custom_ai_model_queryset(request).get(id=model_id)
             if not model_name:
                 model_name = model.user_model_id
+            if (key or config_json) and _vertex_sdk_missing(model.provider, model_name):
+                return self._gm.bad_request(VERTEX_SDK_MISSING_MESSAGE)
             if key or config_json:
                 try:
                     if key:
