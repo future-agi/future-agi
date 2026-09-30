@@ -18,6 +18,14 @@ import {
   renderWithClient,
 } from "./scenariosTestUtils";
 
+const { mockSnack } = vi.hoisted(() => ({ mockSnack: { calls: [] } }));
+vi.mock("notistack", () => ({
+  useSnackbar: () => ({
+    enqueueSnackbar: (message, options) => { mockSnack.calls.push({ message, options }); return "snack-key"; },
+    closeSnackbar: () => {},
+  }),
+}));
+
 // The list reads the server (fixtures) source.
 vi.mock("src/api/simulate-environments/scenarios", async () => {
   const actual = await vi.importActual("src/api/simulate-environments/scenarios");
@@ -65,6 +73,7 @@ beforeEach(() => {
   amendScenarios.mockResolvedValue({ receipts: [] });
   editScenario.mockReset();
   editScenario.mockResolvedValue({ receipts: [], revision: "", scenario: null });
+  mockSnack.calls = [];
 });
 
 describe("ScenariosStep — add", () => {
@@ -149,6 +158,44 @@ describe("ScenariosStep: direct edits", () => {
     await waitFor(() => expect(editScenario).toHaveBeenCalledTimes(1));
     expect(editScenario).toHaveBeenCalledWith("job-test", row.id, { max_turns: turns });
     expect(amendScenarios).not.toHaveBeenCalled();
+  });
+});
+
+describe("ScenariosStep — refused edits", () => {
+  const saveFirstRow = async () => {
+    renderStep();
+    await screen.findByRole("table");
+    const row = firstRow();
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit scenario" })[0]);
+    const turns = Number(row.max_turns) === 7 ? 9 : 7;
+    fireEvent.change(screen.getByRole("slider"), { target: { value: turns } });
+    fireEvent.click(screen.getByRole("button", { name: "Save scenario" }));
+  };
+
+  it("says why the server refused an edit instead of asking for a retry", async () => {
+    editScenario.mockRejectedValue({
+      error: "scenario_change_refused",
+      message: "the coordinate claims a condition the call does not carry",
+      statusCode: 409,
+    });
+    await saveFirstRow();
+
+    await waitFor(() => expect(mockSnack.calls).toHaveLength(1));
+    expect(mockSnack.calls[0]).toEqual({
+      message: "The coordinate claims a condition the call does not carry",
+      options: expect.objectContaining({ variant: "warning" }),
+    });
+  });
+
+  it("keeps the generic message for anything the server did not word for the user", async () => {
+    editScenario.mockRejectedValue({ error: "internal_error", message: "Traceback: boom", statusCode: 500 });
+    await saveFirstRow();
+
+    await waitFor(() => expect(mockSnack.calls).toHaveLength(1));
+    expect(mockSnack.calls[0]).toEqual({
+      message: "Couldn't save. Try again",
+      options: expect.objectContaining({ variant: "error" }),
+    });
   });
 });
 
