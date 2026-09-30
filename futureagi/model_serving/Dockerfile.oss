@@ -23,8 +23,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && pip install uv
 
+# Torch wheel channel, e.g. https://download.pytorch.org/whl/cpu for a CPU-only
+# image. Unset resolves torch from PyPI as before. See README.
+ARG TORCH_INDEX_URL=""
+
 COPY pyproject.toml ./
-RUN uv pip install --system .
+
+# Install torch from the channel first, then constrain the project install to
+# the build it resolved to so the resolver cannot swap it back for the PyPI
+# wheel. No --extra-index-url on the first install: uv ranks extra indexes above
+# --index-url, the opposite of pip, which would undo this.
+RUN set -eu; \
+    if [ -z "$TORCH_INDEX_URL" ]; then \
+        uv pip install --system .; \
+    else \
+        torch_req="$(sed -n 's/^[[:space:]]*"\(torch==[^"]*\)".*/\1/p' pyproject.toml)"; \
+        [ -n "$torch_req" ] || { echo "no pinned torch requirement in pyproject.toml" >&2; exit 1; }; \
+        uv pip install --system --index-url "$TORCH_INDEX_URL" "$torch_req"; \
+        uv pip freeze --system | grep '^torch==' > /tmp/torch-constraints.txt; \
+        cat /tmp/torch-constraints.txt; \
+        uv pip install --system \
+            --constraint /tmp/torch-constraints.txt \
+            --extra-index-url "$TORCH_INDEX_URL" \
+            --index-strategy unsafe-best-match \
+            .; \
+    fi
 
 COPY . .
 RUN chmod +x entrypoint.sh

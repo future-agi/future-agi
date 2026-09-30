@@ -19,6 +19,12 @@ on:
         default: 'main'
         type: choice
         options: [main, dev]
+      torch-channel:
+        description: 'Torch wheels: default = PyPI (CUDA on x86_64), cpu = CPU-only'
+        required: false
+        default: 'default'
+        type: choice
+        options: [default, cpu]
 
 permissions:
   contents: read
@@ -35,7 +41,9 @@ jobs:
       platforms: 'linux/amd64,linux/arm64'
       push-latest: false
       free-disk: false
-      cache-scope: serving
+      # Separate scope per channel; the variants share no layers past apt.
+      cache-scope: ${{ inputs.torch-channel == 'cpu' && 'serving-cpu' || 'serving' }}
+      build-args: ${{ inputs.torch-channel == 'cpu' && 'TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu' || '' }}
     secrets:
       dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
       dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}
