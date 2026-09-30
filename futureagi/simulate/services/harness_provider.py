@@ -1653,8 +1653,8 @@ class HostedHarnessProvider:
                 return Response(
                     {"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND
                 )
-            body, status_code = amend_suite(job, changes, rework=rework)
-        return Response(body, status=status_code)
+            change = amend_suite(job, changes, rework=rework)
+        return Response(change.after_commit(job), status=change.status)
 
     def extend(self, request, pk) -> Response:
         """Chat 'Add scenarios' on a finished RL environment: add ``count`` new scenarios,

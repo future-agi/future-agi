@@ -366,3 +366,69 @@ def test_changes_wait_for_the_build_and_known_scenarios(client, editable, builde
     assert (unknown.status_code, unknown.json()["error"]) == (404, "scenario_not_found")
     assert (building.status_code, building.json()["error"]) == (409, "environment_not_ready")
     assert builder == []
+
+
+@pytest.mark.django_db
+def test_an_edit_that_cannot_update_the_rows_changes_nothing(client, editable, monkeypatch):
+    def broken(*args, **kwargs):
+        raise RuntimeError("index unavailable")
+
+    monkeypatch.setattr("simulate.services.harness_scenarios.index_scenarios", broken)
+    before = dict(editable.payload["metadata"])
+    row = _row(editable)
+
+    response = client.patch(
+        f"{BASE}/{editable.id}/scenarios/{row.id}/", {"keywords": ["refund"]}, format="json"
+    )
+
+    assert response.status_code == 409, response.content
+    assert response.json()["error"] == "scenario_change_refused"
+    editable.refresh_from_db()
+    assert editable.payload["metadata"]["authoring_object_key"] == (
+        before["authoring_object_key"]
+    )
+    assert _row(editable).keywords != ["refund"]
+
+
+@pytest.mark.django_db
+def test_a_live_sandbox_that_cannot_be_reached_does_not_fail_a_saved_edit(
+    client, editable, monkeypatch
+):
+    def unreachable(*args, **kwargs):
+        raise ConnectionError("sandbox gone")
+
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
+        unreachable,
+    )
+    row = _row(editable)
+
+    response = client.patch(
+        f"{BASE}/{editable.id}/scenarios/{row.id}/", {"keywords": ["refund"]}, format="json"
+    )
+
+    assert response.status_code == 200, response.content
+    assert _row(editable).keywords == ["refund"]
+
+
+@pytest.mark.django_db
+def test_resync_rebuilds_rows_from_the_snapshot_and_never_deletes_one(editable):
+    from simulate.services.scenario_changes import resync_suite
+
+    kept = _row(editable, NAMES[0])
+    HostedHarnessScenario.all_objects.filter(id=kept.id).update(deleted=True)
+    stray = HostedHarnessScenario.all_objects.create(
+        job=editable, scenario_key="not-in-the-snapshot", name="not_in_the_snapshot"
+    )
+
+    preview = resync_suite(editable, dry_run=True)
+    assert preview["outcome"] == "dry_run"
+    assert (preview["missing_rows"], preview["extra_rows"]) == (1, 1)
+    assert HostedHarnessScenario.all_objects.get(id=kept.id).deleted is True
+
+    done = resync_suite(editable)
+
+    assert done["outcome"] == "resynced"
+    assert HostedHarnessScenario.all_objects.get(id=kept.id).deleted is False
+    assert HostedHarnessScenario.all_objects.get(id=stray.id).deleted is True
+    assert HostedHarnessScenario.all_objects.filter(job=editable).count() == 3

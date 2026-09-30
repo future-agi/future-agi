@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
+import structlog
 from django.db.models import Q, QuerySet, Value
 from django.db.models.functions import Replace
 from django.utils import timezone
 
 from simulate.models.hosted_harness import HostedHarnessJob, HostedHarnessScenario
+
+logger = structlog.get_logger(__name__)
 
 # Filter panel properties; a dotted `value` reads into that JSON column.
 FIELDS: tuple[dict[str, Any], ...] = (
@@ -695,7 +698,10 @@ def ensure_suite_indexed(job: HostedHarnessJob) -> None:
             None,
         )
     if isinstance(artefact, list) and artefact:
-        index_scenarios(job, artefact)
+        try:
+            index_scenarios(job, artefact)
+        except Exception:  # noqa: BLE001 - the list still shows what is indexed
+            logger.warning("harness_suite_backfill_failed", job_id=str(job.id), exc_info=True)
 
 
 def filtered_suite(job: HostedHarnessJob, params) -> tuple[QuerySet, QuerySet]:
