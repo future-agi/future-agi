@@ -39,5 +39,15 @@ export function useRunNewEvals() {
       // A call drawer opened from here on must not serve the old verdict.
       queryClient.invalidateQueries({ queryKey: callDetailKeyPrefix });
     },
+    // After a timeout or a server error grading may have started anyway, and
+    // the header does not poll a run it reads as completed. A 409 means the
+    // run has moved on from what the page shows. Any other 4xx is a refusal
+    // that leaves the run as it was.
+    onError: (error, { executionId }) => {
+      const status = error?.statusCode;
+      if (status == null || status >= 500 || status === 409) {
+        queryClient.invalidateQueries({ queryKey: runResultsKey(executionId) });
+      }
+    },
   });
 }

@@ -72624,7 +72624,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     RunNewEvalsResponse: {
-      required: ["message", "run_test_id", "call_execution_count"],
+      required: [
+        "message",
+        "run_test_id",
+        "call_execution_count",
+        "dispatched",
+      ],
       type: "object",
       properties: {
         message: {
@@ -72640,6 +72645,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         call_execution_count: {
           title: "Call execution count",
           type: "integer",
+        },
+        dispatched: {
+          title: "Dispatched",
+          type: "boolean",
         },
       },
     },

@@ -341,6 +341,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             EvalSelectionFull,
             EvalSelectionRefused,
             add_selected_eval,
+            regrade_mapping,
         )
         from simulate.services.harness_run_evals import queue_eval_for_finished_calls
 
@@ -393,11 +394,13 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
                 eval_config = _bound_by_name(job.run_test, wanted) or add_selected_eval(
                     job.run_test, wanted, modality
                 )
-                if not eval_config.mapping:
+                if regrade_mapping(eval_config) is None:
                     # The bind above can return a row with an empty mapping
                     # -- a harness result column, or a person's eval with no
-                    # inputs -- which has nothing to grade. It gets its own
-                    # reason before anything is stamped.
+                    # inputs. A harness suite eval can still be graded, by
+                    # the same rule a re-grade uses; anything else has
+                    # nothing to grade and gets its own reason before
+                    # anything is stamped.
                     transaction.set_rollback(True)
                     return Response(
                         {

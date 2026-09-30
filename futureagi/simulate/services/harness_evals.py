@@ -239,13 +239,13 @@ def is_regrading_a_finished_harness_run(test_execution) -> bool:
 
     A harness run in EVALUATING is being graded again after its calls
     finished; cancelling would leave the graders that have not started
-    skipping their evals, so those results would stay pending.
+    skipping their evals, so those results would stay pending. "Harness run"
+    is asked of the run test, as re-grading asks it, so the two never disagree
+    about a run whose execution has no job of its own.
     """
     if test_execution.status != TestExecution.ExecutionStatus.EVALUATING:
         return False
-    return HostedHarnessJob.no_workspace_objects.filter(
-        test_execution_id=test_execution.id
-    ).exists()
+    return is_harness_run_test(test_execution.run_test_id)
 
 
 def _visible_templates(organization, workspace):

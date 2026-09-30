@@ -76,19 +76,56 @@ describe("useRunNewEvals", () => {
     });
   });
 
-  it("refreshes nothing when the request is refused", async () => {
-    axios.post.mockRejectedValue({ statusCode: 400, message: "no" });
-    const { client, wrapper } = makeWrapper();
-    const invalidateSpy = vi.spyOn(client, "invalidateQueries");
+  it.each([400, 403])(
+    "refreshes nothing when the request is refused with a %s",
+    async (statusCode) => {
+      axios.post.mockRejectedValue({ statusCode, message: "no" });
+      const { client, wrapper } = makeWrapper();
+      const invalidateSpy = vi.spyOn(client, "invalidateQueries");
 
-    const { result } = renderHook(() => useRunNewEvals(), { wrapper });
-    result.current.mutate({
-      runTestId: "rt1",
-      executionId: "ex1",
-      evalConfigIds: ["c1", "c2"],
-    });
+      const { result } = renderHook(() => useRunNewEvals(), { wrapper });
+      result.current.mutate({
+        runTestId: "rt1",
+        executionId: "ex1",
+        evalConfigIds: ["c1", "c2"],
+      });
 
-    await waitFor(() => expect(result.current.isError).toBe(true));
-    expect(invalidateSpy).not.toHaveBeenCalled();
-  });
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(invalidateSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  // The interceptor leaves statusCode unset when no response came back.
+  it.each([
+    ["a gateway timeout", { statusCode: 504, message: "Gateway Timeout" }],
+    ["a server error", { statusCode: 500, message: "Server Error" }],
+    [
+      "a dropped connection",
+      { statusCode: undefined, message: "Network Error" },
+    ],
+    [
+      "a conflict",
+      { statusCode: 409, message: "Grading is already running on this run." },
+    ],
+  ])(
+    "refreshes the run's header after %s, since grading may be under way",
+    async (_label, error) => {
+      axios.post.mockRejectedValue(error);
+      const { client, wrapper } = makeWrapper();
+      const invalidateSpy = vi.spyOn(client, "invalidateQueries");
+
+      const { result } = renderHook(() => useRunNewEvals(), { wrapper });
+      result.current.mutate({
+        runTestId: "rt1",
+        executionId: "ex1",
+        evalConfigIds: ["c1", "c2"],
+      });
+
+      await waitFor(() => expect(result.current.isError).toBe(true));
+      expect(invalidateSpy).toHaveBeenCalledTimes(1);
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: ["simulation-run-results-v3", "ex1"],
+      });
+    },
+  );
 });

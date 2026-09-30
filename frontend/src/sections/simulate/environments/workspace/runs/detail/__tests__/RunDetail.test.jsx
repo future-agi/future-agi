@@ -488,7 +488,12 @@ describe("RunDetail", () => {
       });
       renderDetail();
 
-      for (const name of [/Add evals/, /Export/, /Run again/, /Debug failures/]) {
+      for (const name of [
+        /Run evals/,
+        /Export/,
+        /Run again/,
+        /Debug failures/,
+      ]) {
         expect(screen.getByRole("button", { name })).toBeDisabled();
       }
       // Stop stays available — it is the one action a live run needs.
@@ -500,6 +505,25 @@ describe("RunDetail", () => {
     },
   );
 
+  it("keeps the evaluations reachable while a finished run is graded again", () => {
+    useRunDetail.mockReturnValue({
+      identity: {
+        ...IDENTITY,
+        status: "running",
+        executionStatus: "evaluating",
+        stoppable: false,
+      },
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+
+    expect(screen.getByRole("button", { name: /Run evals/ })).toBeEnabled();
+    for (const name of [/Export/, /Run again/, /Debug failures/]) {
+      expect(screen.getByRole("button", { name })).toBeDisabled();
+    }
+  });
+
   it("enables the header actions once the run has finished", () => {
     useRunDetail.mockReturnValue({
       identity: IDENTITY,
@@ -508,7 +532,7 @@ describe("RunDetail", () => {
     });
     renderDetail();
 
-    for (const name of [/Add evals/, /Export/, /Run again/, /Debug failures/]) {
+    for (const name of [/Run evals/, /Export/, /Run again/, /Debug failures/]) {
       expect(screen.getByRole("button", { name })).toBeEnabled();
     }
   });

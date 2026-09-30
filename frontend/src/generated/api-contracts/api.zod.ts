@@ -44524,6 +44524,7 @@ export const SimulateRunTestsRunNewEvalsCreateResponse = zod.object({
   message: zod.string().min(1),
   run_test_id: zod.string().uuid(),
   call_execution_count: zod.number(),
+  dispatched: zod.boolean(),
 });
 
 /**

@@ -247,7 +247,9 @@ export default function RunDetail({
           onClick={() =>
             backed ? setAllEvalsOpen(true) : setAddingEvals(true)
           }
-          disabled={live}
+          // A re-grade reads as running, but its evals stay reachable so the
+          // drawer can say why they are locked until grading finishes.
+          disabled={live && executionStatus !== "evaluating"}
           startIcon={
             <Iconify
               icon={

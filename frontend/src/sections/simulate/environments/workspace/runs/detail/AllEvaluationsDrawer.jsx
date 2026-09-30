@@ -21,6 +21,7 @@ import {
   useRemoveAppliedEvaluation,
 } from "src/api/simulate-environments/environments";
 import {
+  runAnalyticsKey,
   runResultsKey,
   useRunNewEvals,
 } from "src/api/simulate-environments/runEvals";
@@ -39,7 +40,7 @@ export const HARNESS_NOTE =
 // A failed or unanswered request may still have started grading.
 const RUN_FALLBACK = "Grading may not have started. Try again.";
 const REMOVE_FALLBACK = "Couldn’t remove the evaluation. Try again.";
-const NOT_FINISHED_TOOLTIP = "Available once this run finishes.";
+const NOT_COMPLETED_TOOLTIP = "Only a completed run can be graded again.";
 const GRADING_TOOLTIP = "Available once grading finishes.";
 // A stable empty-array constant: `= []` as a hook default is a fresh
 // reference on every render, which would re-run the memos below even when
@@ -129,10 +130,10 @@ export default function AllEvaluationsDrawer({
         onSuccess: (result) => {
           setConfirming(null);
           setTicked(new Set());
-          // The endpoint answers 200 even when the async dispatch itself
-          // failed (nothing was graded and it can be retried), so that case
-          // is told apart by its own sentence, not the status code.
-          if (/dispatch failed/i.test(result?.message || "")) {
+          // A 200 can still mean grading never started and the old scores
+          // were put back. A server that predates the flag omits it, which
+          // reads as started.
+          if (result?.dispatched === false) {
             enqueueSnackbar(RUN_FALLBACK, { variant: "warning" });
             return;
           }
@@ -154,10 +155,14 @@ export default function AllEvaluationsDrawer({
     removeEval.mutate(
       { id: env?.id, evalConfigId: config.id },
       {
-        onSuccess: () =>
+        onSuccess: () => {
           queryClient.invalidateQueries({
             queryKey: runResultsKey(executionId),
-          }),
+          });
+          queryClient.invalidateQueries({
+            queryKey: runAnalyticsKey(executionId),
+          });
+        },
         onError: (e) =>
           enqueueSnackbar(refusalText(e, REMOVE_FALLBACK), {
             variant: "error",
@@ -165,6 +170,8 @@ export default function AllEvaluationsDrawer({
       },
     );
   };
+
+  const cannotRunTooltip = grading ? GRADING_TOOLTIP : NOT_COMPLETED_TOOLTIP;
 
   return (
     <SideDrawer open={open} onClose={onClose} width={520}>
@@ -243,7 +250,7 @@ export default function AllEvaluationsDrawer({
                 const runTooltip = !runnable
                   ? HARNESS_ONLY_TOOLTIP
                   : !canRun
-                    ? NOT_FINISHED_TOOLTIP
+                    ? cannotRunTooltip
                     : "";
                 return (
                   <Stack
@@ -312,7 +319,7 @@ export default function AllEvaluationsDrawer({
         </Box>
 
         <Box sx={{ p: 3, borderTop: "1px solid", borderColor: "divider" }}>
-          <Tooltip arrow title={!canRun ? NOT_FINISHED_TOOLTIP : ""}>
+          <Tooltip arrow title={!canRun ? cannotRunTooltip : ""}>
             <span style={{ display: "block" }}>
               <Button
                 fullWidth

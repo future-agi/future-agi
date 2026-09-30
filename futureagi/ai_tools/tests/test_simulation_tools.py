@@ -233,8 +233,12 @@ class TestDeleteAgentDefinitionTool:
 # ===================================================================
 
 
-def _execution_in(tool_context, status, *, hosted_job):
-    """A test execution in ``status``, optionally run by a hosted harness job."""
+def _execution_in(tool_context, status, *, hosted_job, job_runs_the_execution=True):
+    """A test execution in ``status``, optionally of a harness environment.
+
+    With ``hosted_job``, a hosted harness job owns the run test; it also ran
+    this execution unless ``job_runs_the_execution`` is off.
+    """
     from datetime import timedelta
 
     from django.utils import timezone
@@ -275,7 +279,7 @@ def _execution_in(tool_context, status, *, hosted_job):
             max_artifact_bytes=1,
             deadline_at=timezone.now() + timedelta(hours=1),
             run_test=run_test,
-            test_execution=execution,
+            test_execution=execution if job_runs_the_execution else None,
         )
     return execution
 
@@ -292,13 +296,21 @@ def cancel_dispatch():
 
 
 class TestCancelTestExecutionTool:
+    @pytest.mark.parametrize(
+        "job_runs_the_execution",
+        [True, False],
+        ids=["job-ran-this-run", "job-owns-only-the-run-test"],
+    )
     def test_refuses_to_stop_grading_on_a_finished_harness_run(
-        self, tool_context, cancel_dispatch
+        self, job_runs_the_execution, tool_context, cancel_dispatch
     ):
         from simulate.models.test_execution import TestExecution
 
         execution = _execution_in(
-            tool_context, TestExecution.ExecutionStatus.EVALUATING, hosted_job=True
+            tool_context,
+            TestExecution.ExecutionStatus.EVALUATING,
+            hosted_job=True,
+            job_runs_the_execution=job_runs_the_execution,
         )
 
         result = run_tool(
@@ -321,7 +333,7 @@ class TestCancelTestExecutionTool:
             ("pending", True),
             ("evaluating", False),
         ],
-        ids=["running-hosted", "pending-hosted", "grading-without-a-hosted-job"],
+        ids=["running-hosted", "pending-hosted", "grading-a-run-test-no-job-owns"],
     )
     def test_cancels_a_run_that_is_not_being_graded_again(
         self, status, hosted_job, tool_context, cancel_dispatch

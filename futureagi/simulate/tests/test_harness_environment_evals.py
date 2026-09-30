@@ -1218,7 +1218,14 @@ def test_run_add_returns_the_environment_refusal_and_queues_nothing(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("owner", "required_keys"),
+    [("user", ["conversation"]), ("system", ["conversation", "expected_response"])],
+    ids=["per-scenario-claim", "asks-for-more-than-the-harness-gives"],
+)
 def test_run_add_refuses_a_bound_result_column_row(
+    owner,
+    required_keys,
     env_client,
     environment,
     finished_run,
@@ -1227,15 +1234,18 @@ def test_run_add_refuses_a_bound_result_column_row(
     django_capture_on_commit_callbacks,
 ):
     """A name already bound as one of the harness's own result columns
-    (empty ``mapping``) is refused with its own reason, and nothing is
-    stamped or dispatched."""
+    (empty ``mapping``) that the platform can't grade is refused with its own
+    reason, and nothing is stamped or dispatched."""
     from simulate.services.alk_simulate_ingestion import (
         _get_or_create_harness_eval_config,
     )
 
-    template = _template("no_misselling", ["conversation"], tags=("Conversation",))
-    _call(finished_run, metadata=_graded())
+    template = _template(
+        "no_misselling", required_keys, tags=("Conversation",), owner=owner
+    )
+    call = _call(finished_run, metadata=_graded())
     _get_or_create_harness_eval_config(finished_run.run_test, template, template.name)
+    metadata_before = dict(call.call_metadata)
 
     with django_capture_on_commit_callbacks(execute=True):
         response = _run_add(
@@ -1247,6 +1257,53 @@ def test_run_add_refuses_a_bound_result_column_row(
         f"{template.name} is bound as a result column and has nothing to grade"
     )
     dispatch.assert_not_called()
+    call.refresh_from_db()
+    assert call.call_metadata == metadata_before
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "required_keys",
+    [["conversation"], ["conversation", "agent_prompt"]],
+    ids=["transcript", "transcript-and-instructions"],
+)
+def test_run_add_grades_a_bound_suite_eval_as_a_regrade_would(
+    required_keys,
+    env_client,
+    environment,
+    finished_run,
+    workspace,
+    dispatch,
+    django_capture_on_commit_callbacks,
+):
+    """A built-in suite eval the harness bound as a result column asks only
+    for what a finished call still holds, so adding it by name queues it,
+    just as grading it again on the run would."""
+    from simulate.services.alk_simulate_ingestion import (
+        _get_or_create_harness_eval_config,
+    )
+
+    template = _template(
+        "no_misselling", required_keys, tags=("Conversation",), owner="system"
+    )
+    call = _call(finished_run, metadata=_graded())
+    config = _get_or_create_harness_eval_config(
+        finished_run.run_test, template, template.name
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        response = _run_add(
+            env_client, environment, finished_run, workspace, template.name
+        )
+
+    assert response.status_code == 202, response.content
+    assert response.json()["queued"] == 1
+    dispatch.assert_called_once_with(
+        args=(str(call.id),),
+        kwargs={"eval_config_ids": [str(config.id)], "skip_existing": True},
+    )
+    config.refresh_from_db()
+    assert config.mapping == {}
 
 
 @pytest.mark.django_db

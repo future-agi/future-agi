@@ -21123,6 +21123,7 @@ export interface RunNewEvalsResponseApi {
   message: string;
   run_test_id: string;
   call_execution_count: number;
+  dispatched: boolean;
 }
 
 export interface RunTestScenarioItemResponseApi {

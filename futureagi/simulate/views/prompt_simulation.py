@@ -40,6 +40,7 @@ from simulate.utils.scenario_completeness import check_scenarios_incomplete
 from simulate.views.run_test import (
     _bounded_run_test_list_read,
     _run_test_read_queryset,
+    _run_test_response_data,
 )
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
@@ -289,9 +290,8 @@ class PromptSimulationListCreateView(APIView):
                 )
 
                 # Serialize and return
-                response_serializer = RunTestSerializer(run_test)
                 return self.gm.success_response(
-                    response_serializer.data, status=status.HTTP_201_CREATED
+                    _run_test_response_data(run_test), status=status.HTTP_201_CREATED
                 )
 
         except Exception as e:
@@ -433,8 +433,7 @@ class PromptSimulationDetailView(APIView):
                 prompt_template_id=str(prompt_template_id),
             )
 
-            serializer = RunTestSerializer(run_test)
-            return self.gm.success_response(serializer.data)
+            return self.gm.success_response(_run_test_response_data(run_test))
 
         except Http404:
             return self.gm.not_found("Simulation or related resource not found")

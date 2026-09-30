@@ -131598,7 +131598,8 @@
             "required": [
                 "message",
                 "run_test_id",
-                "call_execution_count"
+                "call_execution_count",
+                "dispatched"
             ],
             "type": "object",
             "properties": {
@@ -131615,6 +131616,10 @@
                 "call_execution_count": {
                     "title": "Call execution count",
                     "type": "integer"
+                },
+                "dispatched": {
+                    "title": "Dispatched",
+                    "type": "boolean"
                 }
             }
         },

@@ -1313,6 +1313,56 @@ class TestRunTestRuntimeContracts:
 
 @pytest.mark.integration
 @pytest.mark.api
+class TestRunTestUpdateResponseQueries:
+    """PATCH /simulate/run-tests/<run_test_id>/ answers with the full run test."""
+
+    @staticmethod
+    def _bind_evals(run_test, template, count):
+        for _ in range(count):
+            SimulateEvalConfig.objects.create(
+                name=f"Word count {uuid4().hex[:6]}",
+                eval_template=template,
+                run_test=run_test,
+                config={},
+                mapping={"text": "transcript"},
+            )
+
+    def test_the_update_response_costs_the_same_however_many_evals_it_lists(
+        self, auth_client, run_test_with_v10_scenario, word_count_eval_template
+    ):
+        run_test = run_test_with_v10_scenario
+
+        def update_and_count(name):
+            with CaptureQueriesContext(connection) as queries:
+                response = auth_client.patch(
+                    f"/simulate/run-tests/{run_test.id}/",
+                    {"name": name},
+                    format="json",
+                )
+            assert response.status_code == status.HTTP_200_OK, response.content
+            return len(queries), response.json()
+
+        # The first request of a process also records deployment telemetry.
+        update_and_count("Warm")
+
+        self._bind_evals(run_test, word_count_eval_template, 1)
+        with_one, body = update_and_count("With one eval")
+        assert body["name"] == "With one eval"
+        assert len(body["simulate_eval_configs_detail"]) == 1
+
+        self._bind_evals(run_test, word_count_eval_template, 4)
+        with_five, body = update_and_count("With five evals")
+        assert body["name"] == "With five evals"
+        assert len(body["simulate_eval_configs_detail"]) == 5
+        assert {item["eval_type"] for item in body["evals_detail"]} == {
+            word_count_eval_template.eval_type
+        }
+
+        assert with_five == with_one
+
+
+@pytest.mark.integration
+@pytest.mark.api
 class TestRunTestDetailView:
     """Functional tests for GET /simulate/run-tests/<run_test_id>/."""
 
