@@ -13,6 +13,7 @@ const DraggableColResizer = ({
   minWidth = 80,
   maxWidth = 800,
   height = 24,
+  sx,
 }) => {
   const dragStateRef = useRef(null);
 
@@ -67,17 +68,20 @@ const DraggableColResizer = ({
   return (
     <Box
       onMouseDown={handleMouseDown}
-      sx={{
-        width: "4px",
-        height,
-        flexShrink: 0,
-        cursor: "col-resize",
-        mx: 0.25,
-        borderRadius: 0.5,
-        transition: "background-color 120ms",
-        "&:hover": { backgroundColor: "primary.main" },
-        "&:active": { backgroundColor: "primary.dark" },
-      }}
+      sx={[
+        {
+          width: "4px",
+          height,
+          flexShrink: 0,
+          cursor: "col-resize",
+          mx: 0.25,
+          borderRadius: 0.5,
+          transition: "background-color 120ms",
+          "&:hover": { backgroundColor: "primary.main" },
+          "&:active": { backgroundColor: "primary.dark" },
+        },
+        ...(Array.isArray(sx) ? sx : [sx]),
+      ]}
     />
   );
 };
@@ -90,6 +94,7 @@ DraggableColResizer.propTypes = {
   minWidth: PropTypes.number,
   maxWidth: PropTypes.number,
   height: PropTypes.number,
+  sx: PropTypes.oneOfType([PropTypes.object, PropTypes.array, PropTypes.func]),
 };
 
 export default DraggableColResizer;

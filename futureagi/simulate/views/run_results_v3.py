@@ -381,6 +381,7 @@ class FunctionCallSerializer(serializers.Serializer):
     result = serializers.JSONField(required=False)
     output = serializers.JSONField(required=False)
     duration_ms = serializers.FloatField(required=False)
+    start_time_ms = serializers.IntegerField(required=False)
 
     class Meta:
         ref_name = "SimulateRunV3FunctionCall"

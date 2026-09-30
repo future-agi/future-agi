@@ -10,8 +10,6 @@ import { ShareDialog } from "src/components/share-dialog";
 import { useCallDetail } from "src/api/simulate-environments/runDetail";
 
 import { BUILD_TONES } from "../../../buildEnvironment/buildTones";
-import ComingSoonChip from "../../../components/ComingSoonChip";
-import EmptyState from "../../../components/EmptyState";
 import ChatTranscriptPane from "./ChatTranscriptPane";
 import { Meta, Cell, Attr } from "./chatDrawerCells";
 
@@ -44,7 +42,7 @@ function RemovedChip() {
 // CallDrawer over REAL call-detail data. The left pane is the transcript (with
 // tool calls inline); the right pane is the measurement — meta chips, the
 // failed-eval banner and the Analytics / Evals / Messages / Attributes tabs.
-// Checklist and Graph have no real endpoint yet, so they are deferred seams.
+// Checklist and Graph are left out until they have a real feed.
 // Prev/next call, the same controls and ↑/↓ keys as the voice drawer header.
 function NavArrow({ icon, label, onClick, disabled }) {
   return (
@@ -89,7 +87,6 @@ export default function ChatCallDrawer({
   hasPrev = false,
   hasNext = false,
 }) {
-  const [pane, setPane] = useState("transcript");
   const [shareOpen, setShareOpen] = useState(false);
   useEffect(() => {
     if (shareOpen) return undefined;
@@ -172,26 +169,20 @@ export default function ChatCallDrawer({
         {/* left: the artifact */}
         <Stack sx={{ flex: 1.15, minWidth: 0, borderRight: { md: "1px solid" }, borderColor: { md: "divider" } }}>
           <CustomTabs
-            value={pane}
-            onChange={(_, v) => setPane(v)}
+            value="transcript"
             sx={{ px: 1, borderBottom: "1px solid", borderColor: "divider", minHeight: 40 }}
           >
             <Tab value="transcript" label="Transcript" sx={{ minHeight: 40 }} />
-            <Tab value="checklist" label="Checklist" sx={{ minHeight: 40 }} />
-            <Tab value="graph" label="Graph" sx={{ minHeight: 40 }} />
           </CustomTabs>
 
           <Box {...ownsArrowKeys} sx={{ flex: 1, minHeight: 0, overflow: "auto", outline: "none" }}>
-            {pane === "transcript" &&
-              (isLoading && turns.length === 0 ? (
-                <Stack alignItems="center" sx={{ py: 6 }}>
-                  <CircularProgress size={20} />
-                </Stack>
-              ) : (
-                <ChatTranscriptPane turns={turns} />
-              ))}
-            {pane === "checklist" && <DeferredPane label="Sub-goal checklist" />}
-            {pane === "graph" && <DeferredPane label="Conversation graph" />}
+            {isLoading && turns.length === 0 ? (
+              <Stack alignItems="center" sx={{ py: 6 }}>
+                <CircularProgress size={20} />
+              </Stack>
+            ) : (
+              <ChatTranscriptPane turns={turns} />
+            )}
           </Box>
         </Stack>
 
@@ -331,22 +322,3 @@ ChatCallDrawer.propTypes = {
   hasPrev: PropTypes.bool,
   hasNext: PropTypes.bool,
 };
-
-// A deferred left-pane tab: the checklist and graph have no real feed yet, so
-// this is an honest "coming soon" seam rather than mock-fed content.
-function DeferredPane({ label }) {
-  return (
-    <Box sx={{ p: 2 }}>
-      <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-        <Typography sx={{ typography: "s2", fontWeight: 700 }}>{label}</Typography>
-        <ComingSoonChip />
-      </Stack>
-      <EmptyState
-        icon="solar:checklist-minimalistic-linear"
-        title="Not available yet"
-        body="This view needs a backend feed that isn't wired yet. The transcript, analytics and evals are live."
-      />
-    </Box>
-  );
-}
-DeferredPane.propTypes = { label: PropTypes.string };
