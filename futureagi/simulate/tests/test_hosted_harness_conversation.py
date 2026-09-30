@@ -1492,3 +1492,99 @@ def test_a_chat_on_an_older_run_cannot_publish_over_later_edits(
 
     environment.refresh_from_db()
     assert environment.payload["metadata"]["authoring_object_key"] == edited_key
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "failure, attempt, told",
+    [
+        (
+            HostedHarnessError(
+                "conversation_checkpoint_stale", "stale", status_code=409
+            ),
+            1,
+            "changed while",
+        ),
+        (
+            HostedHarnessError(
+                "conversation_checkpoint_invalid", "bad", status_code=422
+            ),
+            1,
+            "1 to 200",
+        ),
+        (RuntimeError("storage down"), 4, "could not be saved"),
+        (RuntimeError("storage down"), None, "could not be saved"),
+    ],
+)
+def test_a_turn_that_cannot_publish_tells_the_chat_once(
+    user, workspace, storage, monkeypatch, failure, attempt, told
+):
+    from types import SimpleNamespace
+
+    from simulate.services import hosted_harness_conversation as service
+    from simulate.tasks import hosted_harness_conversation as tasks
+    from simulate.tests.test_harness_amend_archive import _run_environment
+    from tfc.logging.temporal import context
+
+    environment = _run_environment(user, workspace, "chat-not-published")
+    conversation, _command, _ = enqueue_message(
+        environment, content="Add a PIN scenario", client_request_id="not-published"
+    )
+
+    def refuse(*_args):
+        raise failure
+
+    monkeypatch.setattr(service, "promote_turn_checkpoint", refuse)
+    monkeypatch.setattr(
+        context,
+        "try_activity_info",
+        lambda: None if attempt is None else SimpleNamespace(attempt=attempt),
+    )
+    promote = tasks.promote_hosted_harness_conversation_checkpoint._original_func
+
+    assert promote(str(conversation.id), 7) == ""
+    assert promote(str(conversation.id), 7) == ""
+
+    replies = conversation.messages.filter(role="assistant")
+    assert [(m.state, told in m.content) for m in replies] == [("failed", True)]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "failure",
+    [
+        RuntimeError("storage down"),
+        HostedHarnessError(
+            "conversation_workspace_not_ready", "later", status_code=409, retryable=True
+        ),
+    ],
+)
+def test_a_retryable_publish_failure_retries_before_telling_the_chat(
+    user, workspace, storage, monkeypatch, failure
+):
+    from types import SimpleNamespace
+
+    from simulate.services import hosted_harness_conversation as service
+    from simulate.tasks import hosted_harness_conversation as tasks
+    from simulate.tests.test_harness_amend_archive import _run_environment
+    from tfc.logging.temporal import context
+
+    environment = _run_environment(user, workspace, "chat-publish-retry")
+    conversation, _command, _ = enqueue_message(
+        environment, content="Add a PIN scenario", client_request_id="publish-retry"
+    )
+
+    def refuse(*_args):
+        raise failure
+
+    monkeypatch.setattr(service, "promote_turn_checkpoint", refuse)
+    monkeypatch.setattr(
+        context, "try_activity_info", lambda: SimpleNamespace(attempt=3)
+    )
+
+    with pytest.raises(type(failure)):
+        tasks.promote_hosted_harness_conversation_checkpoint._original_func(
+            str(conversation.id), 7
+        )
+
+    assert not conversation.messages.filter(role="assistant").exists()
