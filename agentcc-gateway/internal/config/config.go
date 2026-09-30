@@ -539,7 +539,7 @@ type StreamingGuardrailConfig struct {
 // GuardrailRuleConfig defines a single guardrail rule.
 type GuardrailRuleConfig struct {
 	Name      string                 `yaml:"name" json:"name"`
-	Stage     string                 `yaml:"stage" json:"stage"`   // "pre" or "post"
+	Stage     string                 `yaml:"stage" json:"stage"`   // "pre", "post" or "both"
 	Mode      string                 `yaml:"mode" json:"mode"`     // "sync" or "async"
 	Action    string                 `yaml:"action" json:"action"` // "block", "warn", "log"
 	Threshold float64                `yaml:"threshold" json:"threshold"`

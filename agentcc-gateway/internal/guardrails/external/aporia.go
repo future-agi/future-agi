@@ -20,6 +20,7 @@ type aporiaAdapter struct {
 type aporiaRequest struct {
 	Messages         []aporiaMessage `json:"messages"`
 	ValidationTarget string          `json:"validation_target"`
+	Response         string          `json:"response,omitempty"`
 }
 
 type aporiaMessage struct {
@@ -28,8 +29,8 @@ type aporiaMessage struct {
 }
 
 type aporiaResponse struct {
-	Action   string          `json:"action"`
-	Explain  []aporiaExplain `json:"explain_log"`
+	Action  string          `json:"action"`
+	Explain []aporiaExplain `json:"explain_log"`
 }
 
 type aporiaExplain struct {
@@ -48,13 +49,28 @@ func newAporiaAdapter(cfg map[string]interface{}) *aporiaAdapter {
 }
 
 func (a *aporiaAdapter) buildRequest(ctx context.Context, text string) (*http.Request, error) {
-	url := fmt.Sprintf("%s/%s/validate", strings.TrimRight(a.endpoint, "/"), a.projectID)
-	payload := aporiaRequest{
+	return a.validate(ctx, aporiaRequest{
 		Messages: []aporiaMessage{
 			{Role: "user", Content: text},
 		},
 		ValidationTarget: "prompt",
-	}
+	})
+}
+
+// buildOutputRequest validates model output: Aporia takes it in response and
+// the prompt it answers in messages, a required field.
+func (a *aporiaAdapter) buildOutputRequest(ctx context.Context, prompt, output string) (*http.Request, error) {
+	return a.validate(ctx, aporiaRequest{
+		Messages: []aporiaMessage{
+			{Role: "user", Content: prompt},
+		},
+		ValidationTarget: "response",
+		Response:         output,
+	})
+}
+
+func (a *aporiaAdapter) validate(ctx context.Context, payload aporiaRequest) (*http.Request, error) {
+	url := fmt.Sprintf("%s/%s/validate", strings.TrimRight(a.endpoint, "/"), a.projectID)
 	return makeJSONRequest(ctx, url, payload, map[string]string{
 		"X-Aporia-Api-Key": a.apiKey,
 	})
@@ -87,7 +103,7 @@ func (a *aporiaAdapter) parseResponse(body []byte) *guardrails.CheckResult {
 		Score:   1.0,
 		Message: msg,
 		Details: map[string]interface{}{
-			"action":     resp.Action,
+			"action":      resp.Action,
 			"explain_log": resp.Explain,
 		},
 	}

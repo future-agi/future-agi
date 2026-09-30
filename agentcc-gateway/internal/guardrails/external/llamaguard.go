@@ -43,12 +43,23 @@ func newLlamaGuardAdapter(cfg map[string]interface{}) *llamaGuardAdapter {
 }
 
 func (a *llamaGuardAdapter) buildRequest(ctx context.Context, text string) (*http.Request, error) {
+	return a.classify(ctx, llamaGuardMessage{Role: "user", Content: text})
+}
+
+// buildOutputRequest classifies model output. Llama Guard judges the last turn
+// of the conversation, and judging a response needs its prompt as context.
+func (a *llamaGuardAdapter) buildOutputRequest(ctx context.Context, prompt, output string) (*http.Request, error) {
+	return a.classify(ctx,
+		llamaGuardMessage{Role: "user", Content: prompt},
+		llamaGuardMessage{Role: "assistant", Content: output},
+	)
+}
+
+func (a *llamaGuardAdapter) classify(ctx context.Context, messages ...llamaGuardMessage) (*http.Request, error) {
 	url := strings.TrimRight(a.endpoint, "/") + "/v1/chat/completions"
 	payload := llamaGuardRequest{
-		Model: a.model,
-		Messages: []llamaGuardMessage{
-			{Role: "user", Content: text},
-		},
+		Model:    a.model,
+		Messages: messages,
 	}
 	headers := map[string]string{}
 	if a.apiKey != "" {

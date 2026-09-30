@@ -45,8 +45,18 @@ func newPangeaAdapter(cfg map[string]interface{}) *pangeaAdapter {
 }
 
 func (a *pangeaAdapter) buildRequest(ctx context.Context, text string) (*http.Request, error) {
+	return a.guard(ctx, "pangea_prompt_guard", text)
+}
+
+// buildOutputRequest guards model output with Pangea's built-in recipe for
+// LLM responses.
+func (a *pangeaAdapter) buildOutputRequest(ctx context.Context, _, output string) (*http.Request, error) {
+	return a.guard(ctx, "pangea_llm_response_guard", output)
+}
+
+func (a *pangeaAdapter) guard(ctx context.Context, recipe, text string) (*http.Request, error) {
 	url := fmt.Sprintf("https://ai-guard.%s/v1beta/text/guard", a.domain)
-	payload := pangeaRequest{Text: text, Recipe: "pangea_prompt_guard"}
+	payload := pangeaRequest{Text: text, Recipe: recipe}
 	return makeJSONRequest(ctx, url, payload, map[string]string{
 		"Authorization": "Bearer " + a.token,
 	})

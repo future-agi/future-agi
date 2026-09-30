@@ -56,11 +56,21 @@ func newBedrockAdapter(cfg map[string]interface{}) *bedrockAdapter {
 }
 
 func (a *bedrockAdapter) buildRequest(ctx context.Context, text string) (*http.Request, error) {
+	return a.apply(ctx, "INPUT", text)
+}
+
+// buildOutputRequest sends model output as source OUTPUT, which ApplyGuardrail
+// evaluates against the guardrail's output policies.
+func (a *bedrockAdapter) buildOutputRequest(ctx context.Context, _, output string) (*http.Request, error) {
+	return a.apply(ctx, "OUTPUT", output)
+}
+
+func (a *bedrockAdapter) apply(ctx context.Context, source, text string) (*http.Request, error) {
 	url := fmt.Sprintf("%s/guardrail/%s/version/%s/apply",
 		strings.TrimRight(a.endpoint, "/"), a.guardrailID, a.guardrailVersion)
 
 	payload := bedrockRequest{
-		Source: "INPUT",
+		Source: source,
 		Content: []bedrockContent{
 			{Text: bedrockText{Text: text}},
 		},

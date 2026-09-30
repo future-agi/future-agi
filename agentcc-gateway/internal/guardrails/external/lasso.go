@@ -32,9 +32,9 @@ type lassoMessage struct {
 }
 
 type lassoResponse struct {
-	ViolationsDetected bool                       `json:"violations_detected"`
-	Deputies           map[string]bool            `json:"deputies"`
-	Findings           map[string][]lassoFinding  `json:"findings"`
+	ViolationsDetected bool                      `json:"violations_detected"`
+	Deputies           map[string]bool           `json:"deputies"`
+	Findings           map[string][]lassoFinding `json:"findings"`
 }
 
 type lassoFinding struct {
@@ -57,13 +57,21 @@ func newLassoAdapter(cfg map[string]interface{}) *lassoAdapter {
 	}
 }
 
-// Lasso uses "lasso-api-key" header (not Authorization: Bearer).
 func (a *lassoAdapter) buildRequest(ctx context.Context, text string) (*http.Request, error) {
+	return a.classify(ctx, "PROMPT", lassoMessage{Role: "user", Content: text})
+}
+
+// buildOutputRequest classifies model output as a COMPLETION, the message type
+// Lasso uses for the assistant's reply.
+func (a *lassoAdapter) buildOutputRequest(ctx context.Context, _, output string) (*http.Request, error) {
+	return a.classify(ctx, "COMPLETION", lassoMessage{Role: "assistant", Content: output})
+}
+
+// Lasso uses "lasso-api-key" header (not Authorization: Bearer).
+func (a *lassoAdapter) classify(ctx context.Context, messageType string, msg lassoMessage) (*http.Request, error) {
 	payload := lassoRequest{
-		Messages: []lassoMessage{
-			{Role: "user", Content: text},
-		},
-		MessageType: "PROMPT",
+		Messages:    []lassoMessage{msg},
+		MessageType: messageType,
 	}
 	if a.userID != "" {
 		payload.UserID = a.userID

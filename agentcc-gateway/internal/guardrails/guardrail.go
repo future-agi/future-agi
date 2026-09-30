@@ -2,6 +2,7 @@ package guardrails
 
 import (
 	"context"
+	"strings"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
@@ -15,6 +16,20 @@ const (
 	// StagePost runs after the provider call.
 	StagePost
 )
+
+// parseStages maps a configured stage ("pre", "post" or "both", any case) to
+// the stages it names. It returns nil for an empty or unknown value.
+func parseStages(s string) []Stage {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "pre":
+		return []Stage{StagePre}
+	case "post":
+		return []Stage{StagePost}
+	case "both":
+		return []Stage{StagePre, StagePost}
+	}
+	return nil
+}
 
 // Action defines what happens when a guardrail triggers.
 type Action int
@@ -52,6 +67,14 @@ type Guardrail interface {
 	Stage() Stage
 	// Check evaluates input and returns a result.
 	Check(ctx context.Context, input *CheckInput) *CheckResult
+}
+
+// StageConfigurable is implemented by guardrails that can check either the
+// request or the model's response. An org check runs one of them at its
+// configured stage when SupportsStage accepts every stage named; every other
+// guardrail runs at its Stage().
+type StageConfigurable interface {
+	SupportsStage(Stage) bool
 }
 
 // TriggeredGuardrail records a guardrail that was triggered during execution.
