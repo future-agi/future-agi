@@ -46759,8 +46759,20 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
     age: zod.string().min(1),
     traits: zod.array(zod.string().min(1)),
   }),
-  sub_goals: zod.array(zod.string().min(1)),
-  outcome: zod.enum(["passed", "failed", "error", "inconclusive"]),
+  sub_goal_results: zod.array(
+    zod.object({
+      name: zod.string().min(1),
+      passed: zod.boolean().nullable(),
+    }),
+  ),
+  outcome: zod.enum([
+    "queued",
+    "in_progress",
+    "passed",
+    "failed",
+    "inconclusive",
+    "error",
+  ]),
   cost_breakdown_cents: zod.object({
     stt: zod.number(),
     llm: zod.number(),
@@ -46992,6 +47004,8 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
     }),
     use_case_risk: zod.array(
       zod.object({
+        queued: zod.number(),
+        in_progress: zod.number(),
         scenario: zod.string().min(1),
         passed: zod.number(),
         failed: zod.number(),
@@ -47026,6 +47040,8 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
   summary: zod.object({
     total: zod.number(),
     outcomes: zod.object({
+      queued: zod.number(),
+      in_progress: zod.number(),
       passed: zod.number(),
       failed: zod.number(),
       error: zod.number(),
@@ -47081,6 +47097,8 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
     zod.object({
       total: zod.number(),
       outcomes: zod.object({
+        queued: zod.number(),
+        in_progress: zod.number(),
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
@@ -47151,6 +47169,8 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
     }),
     rows: zod.array(
       zod.object({
+        queued: zod.number(),
+        in_progress: zod.number(),
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
@@ -47166,6 +47186,8 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
   }),
   turn_distribution: zod.array(
     zod.object({
+      queued: zod.number(),
+      in_progress: zod.number(),
       passed: zod.number(),
       failed: zod.number(),
       error: zod.number(),
@@ -47268,6 +47290,8 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
     zod.object({
       total: zod.number(),
       outcomes: zod.object({
+        queued: zod.number(),
+        in_progress: zod.number(),
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
@@ -47324,6 +47348,8 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
     zod.object({
       total: zod.number(),
       outcomes: zod.object({
+        queued: zod.number(),
+        in_progress: zod.number(),
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
@@ -47380,6 +47406,8 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
     zod.object({
       total: zod.number(),
       outcomes: zod.object({
+        queued: zod.number(),
+        in_progress: zod.number(),
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
@@ -47518,6 +47546,8 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
     summary: zod.object({
       total: zod.number(),
       outcomes: zod.object({
+        queued: zod.number(),
+        in_progress: zod.number(),
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),
@@ -47572,6 +47602,8 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
   summary: zod.object({
     total: zod.number(),
     outcomes: zod.object({
+      queued: zod.number(),
+      in_progress: zod.number(),
       passed: zod.number(),
       failed: zod.number(),
       error: zod.number(),
@@ -47641,11 +47673,23 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
         age: zod.string().min(1),
         traits: zod.array(zod.string().min(1)),
       }),
-      sub_goals: zod.array(zod.string().min(1)),
+      sub_goal_results: zod.array(
+        zod.object({
+          name: zod.string().min(1),
+          passed: zod.boolean().nullable(),
+        }),
+      ),
       harness_outcome_status: zod.string().min(1),
       source_scenario_key: zod.string().min(1),
       trial_index: zod.number(),
-      outcome: zod.enum(["passed", "failed", "error", "inconclusive"]),
+      outcome: zod.enum([
+        "queued",
+        "in_progress",
+        "passed",
+        "failed",
+        "inconclusive",
+        "error",
+      ]),
       execution_status: zod.string().min(1),
       modality: zod.string().min(1),
       provider: zod.string().min(1),
@@ -47684,6 +47728,8 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
     zod.object({
       total: zod.number(),
       outcomes: zod.object({
+        queued: zod.number(),
+        in_progress: zod.number(),
         passed: zod.number(),
         failed: zod.number(),
         error: zod.number(),

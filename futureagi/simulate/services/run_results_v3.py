@@ -9,14 +9,25 @@ from collections import defaultdict
 from typing import Any
 
 from django.core.cache import cache
+from django.db.models import Case, IntegerField, Q, Value, When
 
 from model_hub.models.develop_dataset import Cell
 from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
+from simulate.models.hosted_harness import HostedHarnessScenario
 from simulate.services.run_results_v3_scoring import (
     judge_stored_eval,
     resolve_eval_scoring_spec,
 )
 from simulate.utils.eval_summary import iter_live_eval_outputs
+
+OUTCOME_LABELS = {
+    "queued": "Queued",
+    "in_progress": "In progress",
+    "passed": "Passed",
+    "failed": "Failed",
+    "inconclusive": "Inconclusive",
+    "error": "Error",
+}
 
 
 def _number(value: Any) -> float | None:
@@ -66,6 +77,16 @@ def call_outcome(
 ) -> str:
     metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
     harness_outcome = str(metadata.get("harness_outcome_status") or "").lower()
+    if call.status in {
+        CallExecution.CallStatus.PENDING,
+        CallExecution.CallStatus.REGISTERED,
+    }:
+        return "queued"
+    if call.status in {
+        CallExecution.CallStatus.ONGOING,
+        CallExecution.CallStatus.ANALYZING,
+    }:
+        return "in_progress"
     if harness_outcome in {"error", "errored", "cancelled", "canceled"}:
         return "error"
     if call.status in {
@@ -188,11 +209,60 @@ def _row_dimensions(calls: list[CallExecution]) -> dict[str, dict[str, Any]]:
     dimensions: dict[str, dict[str, Any]] = defaultdict(dict)
     cells = Cell.all_objects.filter(
         row_id__in=row_ids,
-        column__name__in=["persona", "use_case", "goal", "outcome", "situation"],
+        column__name__in=[
+            "persona",
+            "use_case",
+            "goal",
+            "outcome",
+            "situation",
+            "branch",
+            "conversation_branch",
+        ],
     ).select_related("column")
     for cell in cells:
         dimensions[str(cell.row_id)][cell.column.name] = cell.value
     return dimensions
+
+
+def _authored_branches(
+    execution: TestExecution, calls: list[CallExecution]
+) -> dict[str, str]:
+    source_keys: dict[str, str | None] = {}
+    for call in calls:
+        metadata = call.call_metadata if isinstance(call.call_metadata, dict) else {}
+        key = metadata.get("harness_scenario_key")
+        source_keys[str(call.id)] = (
+            key if isinstance(key, str) and key.strip() else None
+        )
+    keys = set(source_keys.values()) - {None}
+    own_run = Q(job__test_execution=execution)
+    own_environment = Q(job__simulation_runs__test_execution=execution)
+    scenarios = (
+        HostedHarnessScenario.no_workspace_objects.filter(
+            Q(call_execution_id__in=[call.id for call in calls])
+            | ((own_run | own_environment) & Q(scenario_key__in=keys))
+        )
+        .annotate(
+            match_rank=Case(
+                When(own_run, then=Value(0)),
+                default=Value(1),
+                output_field=IntegerField(),
+            )
+        )
+        .order_by("match_rank", "-created_at")
+        .values("call_execution_id", "scenario_key", "branch")
+    )
+    linked, by_key = {}, {}
+    for scenario in scenarios:
+        if scenario["call_execution_id"]:
+            linked.setdefault(str(scenario["call_execution_id"]), scenario["branch"])
+        by_key.setdefault(scenario["scenario_key"], scenario["branch"])
+    return {
+        str(call.id): linked.get(
+            str(call.id), by_key.get(source_keys[str(call.id)], "")
+        )
+        for call in calls
+    }
 
 
 def eval_rows(
@@ -308,6 +378,7 @@ def build_call_rows(
         ).select_related("eval_template")
     }
     dimensions = _row_dimensions(calls)
+    authored_branches = _authored_branches(execution, calls)
     rows = []
     harness_columns: dict[str, str] = {}
     for call in calls:
@@ -341,16 +412,27 @@ def build_call_rows(
         receipt = metadata.get("hosted_harness_receipt")
         receipt = receipt if isinstance(receipt, dict) else {}
         raw_sub_goals = receipt.get("sub_goals") or metadata.get("sub_goals") or []
-        sub_goals = [
-            str(item.get("name") if isinstance(item, dict) else item)
-            for item in raw_sub_goals
-            if (item.get("name") if isinstance(item, dict) else item)
-        ]
+        sub_goal_results = []
+        for item in raw_sub_goals:
+            name = item.get("name") if isinstance(item, dict) else item
+            if not name:
+                continue
+            held = item.get("held") if isinstance(item, dict) else None
+            sub_goal_results.append(
+                {
+                    "name": str(name),
+                    "passed": held if isinstance(held, bool) else None,
+                }
+            )
         ideal_outcome = row_data.get("outcome") or row_dimensions.get("outcome")
         situation = row_data.get("situation") or row_dimensions.get("situation")
         conversation_branch = (
-            receipt.get("scenario_key")
+            authored_branches.get(str(call.id))
             or metadata.get("conversation_branch")
+            or row_data.get("conversation_branch")
+            or row_data.get("branch")
+            or row_dimensions.get("conversation_branch")
+            or row_dimensions.get("branch")
             or scenario_metadata.get("conversation_branch")
         )
         metrics = call.conversation_metrics_data or {}
@@ -376,7 +458,7 @@ def build_call_rows(
                 ),
                 "persona": persona,
                 "persona_details": persona_details,
-                "sub_goals": sub_goals,
+                "sub_goal_results": sub_goal_results,
                 "outcome": call_outcome(call, live_eval_configs),
                 "execution_status": call.status,
                 "harness_outcome_status": metadata.get("harness_outcome_status"),

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "src/utils/test-utils";
 
 import TraceTable from "../TraceTable";
 
@@ -122,44 +122,57 @@ describe("TraceTable — sticky header and group rows", () => {
   });
 });
 
-describe("TraceTable — call status column", () => {
-  const withStatus = (id, executionStatus) => ({ ...row(id), executionStatus });
-  const statusGroups = [
-    {
-      label: "A",
-      count: 3,
-      rows: [
-        withStatus("s1", "pending"),
-        withStatus("s2", "ongoing"),
-        withStatus("s3", "completed"),
-      ],
-      agg: {},
-    },
-  ];
-
-  it("sits between Run details and Persona", () => {
-    render(table());
+describe("TraceTable — outcome labels", () => {
+  it("shows the outcome under Run details without a lifecycle status column", () => {
+    render(table({ activeCallId: "a1" }));
     const heads = [...document.querySelectorAll("thead th")].map((th) =>
       th.textContent.trim(),
     );
-    expect(heads.slice(0, 3)).toEqual(["Run details", "Status", "Persona"]);
+    expect(heads.slice(0, 2)).toEqual(["Run details", "Persona"]);
+    expect(heads).not.toContain("Status");
+    expect(within(activeRow()).getByText("Passed")).toBeInTheDocument();
   });
+});
 
-  it("shows each call's lifecycle status", () => {
-    render(table({ groups: statusGroups, activeCallId: "s1" }));
-    expect(screen.getByText("Pending")).toBeInTheDocument();
-    expect(screen.getByText("Running")).toBeInTheDocument();
-    expect(screen.getByText("Completed")).toBeInTheDocument();
-  });
-
-  it("summarises how many calls in the group have completed", () => {
-    render(table({ groups: statusGroups }));
-    expect(screen.getByText("1/3 completed")).toBeInTheDocument();
-  });
-
-  it("shows no completed count while only some of the group's calls are loaded", () => {
-    render(table({ groups: [{ ...statusGroups[0], count: 25 }] }));
-    expect(screen.queryByText(/completed$/)).toBeNull();
+describe("TraceTable — sub-goal verdicts", () => {
+  it("shows the exact verdict beside each sub-goal under Run details", () => {
+    render(
+      table({
+        groups: [
+          {
+            ...group("A", ["a1"]),
+            rows: [
+              {
+                ...row("a1"),
+                status: "failed",
+                subGoalResults: [
+                  { name: "Verify identity", passed: true },
+                  { name: "Create refund", passed: false },
+                  { name: "Send confirmation", passed: null },
+                ],
+              },
+            ],
+          },
+        ],
+        activeCallId: "a1",
+      }),
+    );
+    const details = within(activeRow()).getByText("Scenario a1").closest("td");
+    for (const [name, verdict] of [
+      ["Verify identity", "Passed"],
+      ["Create refund", "Failed"],
+      ["Send confirmation", "Inconclusive"],
+    ]) {
+      const result = within(details).getByText(name).parentElement;
+      if (verdict === "Inconclusive") {
+        expect(within(result).getByText(verdict)).toBeInTheDocument();
+      } else {
+        expect(
+          within(result).getByRole("img", { name: verdict }),
+        ).toBeInTheDocument();
+        expect(within(result).queryByText(verdict)).not.toBeInTheDocument();
+      }
+    }
   });
 });
 

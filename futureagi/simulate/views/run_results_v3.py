@@ -21,7 +21,9 @@ from rest_framework.views import APIView
 from simulate.models import CallExecution, TestExecution
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
+from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
+    OUTCOME_LABELS,
     build_call_rows,
     build_evaluation_catalog,
     function_calls,
@@ -98,23 +100,12 @@ class RunCallFiltersSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     f"Filter '{field}' must be a list of strings."
                 )
-        invalid_statuses = set(value.get("status", [])) - {
-            "passed",
-            "failed",
-            "error",
-            "inconclusive",
-        }
+        invalid_statuses = set(value.get("status", [])) - set(OUTCOME_LABELS)
         if invalid_statuses:
             raise serializers.ValidationError(
                 f"Unsupported statuses: {', '.join(sorted(invalid_statuses))}."
             )
-        invalid_goal_outcomes = set(value.get("goal_outcome", [])) - {
-            "passed",
-            "failed",
-            "error",
-            "escalated",
-            "inconclusive",
-        }
+        invalid_goal_outcomes = set(value.get("goal_outcome", [])) - set(GOAL_OUTCOMES)
         if invalid_goal_outcomes:
             raise serializers.ValidationError(
                 "Unsupported goal outcomes: "
@@ -161,6 +152,8 @@ class TotalMetricStatsSerializer(MetricStatsSerializer):
 
 
 class OutcomeCountsSerializer(serializers.Serializer):
+    queued = serializers.IntegerField()
+    in_progress = serializers.IntegerField()
     passed = serializers.IntegerField()
     failed = serializers.IntegerField()
     error = serializers.IntegerField()
@@ -224,6 +217,11 @@ class CostBreakdownSerializer(serializers.Serializer):
     customer = serializers.FloatField(allow_null=True)
 
 
+class SubGoalResultSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    passed = serializers.BooleanField(allow_null=True)
+
+
 class RunCallSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     scenario = serializers.CharField()
@@ -233,13 +231,11 @@ class RunCallSerializer(serializers.Serializer):
     conversation_branch = serializers.CharField(allow_null=True)
     persona = serializers.CharField(allow_null=True)
     persona_details = PersonaDetailsSerializer(allow_null=True)
-    sub_goals = serializers.ListField(child=serializers.CharField())
+    sub_goal_results = SubGoalResultSerializer(many=True)
     harness_outcome_status = serializers.CharField(allow_null=True)
     source_scenario_key = serializers.CharField(allow_null=True)
     trial_index = serializers.IntegerField(allow_null=True)
-    outcome = serializers.ChoiceField(
-        choices=["passed", "failed", "error", "inconclusive"]
-    )
+    outcome = serializers.ChoiceField(choices=list(OUTCOME_LABELS))
     execution_status = serializers.CharField()
     modality = serializers.CharField()
     provider = serializers.CharField(allow_null=True)
@@ -439,10 +435,8 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     conversation_branch = serializers.CharField(allow_null=True)
     persona = serializers.CharField(allow_null=True)
     persona_details = PersonaDetailsSerializer(allow_null=True)
-    sub_goals = serializers.ListField(child=serializers.CharField())
-    outcome = serializers.ChoiceField(
-        choices=["passed", "failed", "error", "inconclusive"]
-    )
+    sub_goal_results = SubGoalResultSerializer(many=True)
+    outcome = serializers.ChoiceField(choices=list(OUTCOME_LABELS))
     cost_breakdown_cents = CostBreakdownSerializer()
     evaluations = EvaluationResultSerializer(many=True)
     function_calls = FunctionCallSerializer(many=True)
@@ -456,7 +450,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
             "conversation_branch",
             "persona",
             "persona_details",
-            "sub_goals",
+            "sub_goal_results",
             "outcome",
             "cost_breakdown_cents",
             "evaluations",
@@ -554,7 +548,7 @@ class RunCallsV3View(APIView):
         elif execution.status == TestExecution.ExecutionStatus.COMPLETED:
             version = execution.completed_at or execution.updated_at
             facets_cache_key = (
-                f"simulate:v3:facets:{execution.id}:{version.timestamp()}"
+                f"simulate:v3:facets:outcomes-v2:{execution.id}:{version.timestamp()}"
             )
         response = {
             "execution": _execution_payload(execution, execution_summary),
@@ -602,7 +596,7 @@ def build_call_execution_detail(
             "conversation_branch": normalized["conversation_branch"],
             "persona": normalized["persona"],
             "persona_details": normalized["persona_details"],
-            "sub_goals": normalized["sub_goals"],
+            "sub_goal_results": normalized["sub_goal_results"],
             "outcome": normalized["outcome"],
             "cost_breakdown_cents": normalized["cost_breakdown_cents"],
             "evaluations": normalized["evaluations"],
@@ -704,7 +698,7 @@ def _csv_rows(
                     row["goal"],
                     row["ideal_outcome"],
                     row["conversation_branch"],
-                    ", ".join(row["sub_goals"]),
+                    ", ".join(goal["name"] for goal in row["sub_goal_results"]),
                     row["persona"],
                     row["outcome"],
                     row["execution_status"],

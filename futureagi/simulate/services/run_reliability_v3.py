@@ -8,6 +8,8 @@ from typing import Any
 
 from django.db.models import QuerySet
 
+from simulate.services.run_results_v3 import OUTCOME_LABELS
+
 _Z = 1.96
 
 
@@ -61,7 +63,7 @@ def scenario_clustered_interval(
 def build_reliability(queryset: QuerySet, trials: int) -> dict[str, Any]:
     """Group trial verdicts by the scenario they repeated."""
     counts: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"passed": 0, "failed": 0, "error": 0, "inconclusive": 0}
+        lambda: dict.fromkeys(OUTCOME_LABELS, 0)
     )
     labels: dict[str, str] = {}
     for scenario_key, scenario_label, outcome in (
