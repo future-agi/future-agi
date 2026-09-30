@@ -37,6 +37,9 @@ import PagedScenarioViews from "./PagedScenarioViews";
 // carries this on its tooltip while locked.
 const LOCK_TOOLTIP = "Fork this environment to edit.";
 
+// Refusals whose message is written for the person editing.
+const REFUSALS_SHOWN = new Set(["scenario_change_refused", "scenario_suite_changed", "environment_not_ready"]);
+
 // The add CTA. Rendered in two places (header when the list is populated, and
 // the empty placeholder), so it lives here as one node. Disabled with a
 // coming-soon tooltip for now — the drawer it opens is built and wired, just
@@ -237,6 +240,17 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
     enqueueSnackbar(successLabel, { variant: "success", autoHideDuration: 4000 });
   };
 
+  // A refusal the server words for the user (a gate, a moved suite, a build still
+  // running) says why; anything else stays a generic retry.
+  const refusedOr = (error, fallback) => {
+    const said = REFUSALS_SHOWN.has(error?.error) && error?.message;
+    if (said) {
+      enqueueSnackbar(said.charAt(0).toUpperCase() + said.slice(1), { variant: "warning", autoHideDuration: 8000 });
+    } else {
+      enqueueSnackbar(fallback, { variant: "error" });
+    }
+  };
+
   // Row trash → confirm, then remove that one scenario by its row id.
   const removeScenario = (id) => {
     if (!pageData.rows.some((r) => r.id === id)) return;
@@ -313,9 +327,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
           ids.length === 1 ? "Deleted 1 scenario" : `Deleted ${ids.length} scenarios`,
         );
       },
-      onError: () => {
-        enqueueSnackbar("Couldn't delete. Try again", { variant: "error" });
-      },
+      onError: (error) => refusedOr(error, "Couldn't delete. Try again"),
     });
   };
 
@@ -340,9 +352,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
         body[change.field] = change.value;
       }
     }
-    const failed = () => {
-      enqueueSnackbar("Couldn't save. Try again", { variant: "error" });
-    };
+    const failed = (error) => refusedOr(error, "Couldn't save. Try again");
     if (Object.keys(body).length && scenarioId) {
       editById.mutate(
         { scenarioId, body },
