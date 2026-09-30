@@ -692,6 +692,21 @@ class TestRunResultsV3Views:
         passed_call.avg_agent_latency_ms = 240
         passed_call.cost_cents = 12
         passed_call.save()
+        from simulate.models import HostedHarnessScenario
+        from simulate.services.hosted_harness import create_hosted_job
+        from simulate.tests.test_hosted_harness_channels import _payload
+
+        job, _ = create_hosted_job(
+            test_execution.run_test.organization,
+            _payload(),
+            idempotency_key="analytics-branch",
+        )
+        HostedHarnessScenario.no_workspace_objects.create(
+            job=job,
+            scenario_key="routine-return",
+            branch="Caller returns an unopened item",
+            call_execution=passed_call,
+        )
 
         response = auth_client.get(
             f"/simulate/v3/test-executions/{test_execution.id}/calls/",
@@ -713,7 +728,7 @@ class TestRunResultsV3Views:
         assert row["sub_goals"] == ["identity_verified"]
         assert row["scenario_details"] == "Caller needs help with a return."
         assert row["ideal_outcome"] == "Return is completed"
-        assert row["conversation_branch"] == "routine-return"
+        assert row["conversation_branch"] == "Caller returns an unopened item"
         assert row["source_scenario_key"] == "routine-return"
         assert row["trial_index"] == 2
         assert row["outcome"] == "passed"

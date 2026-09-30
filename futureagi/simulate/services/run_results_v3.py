@@ -12,6 +12,7 @@ from django.core.cache import cache
 
 from model_hub.models.develop_dataset import Cell
 from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
+from simulate.services.harness_scenarios import authored_scenarios_for_calls
 from simulate.utils.eval_summary import iter_live_eval_outputs
 
 
@@ -267,6 +268,15 @@ def build_call_rows(
         columns = catalog if columns is None else columns
         live_eval_ids = catalog_live_ids if live_eval_ids is None else live_eval_ids
     dimensions = _row_dimensions(calls)
+    authored = (
+        authored_scenarios_for_calls(execution.run_test_id, calls)
+        if any(
+            (call.call_metadata or {}).get("harness_scenario_key")
+            or (call.call_metadata or {}).get("hosted_harness_receipt")
+            for call in calls
+        )
+        else {}
+    )
     rows = []
     harness_columns: dict[str, str] = {}
     for call in calls:
@@ -307,8 +317,10 @@ def build_call_rows(
         ]
         ideal_outcome = row_data.get("outcome") or row_dimensions.get("outcome")
         situation = row_data.get("situation") or row_dimensions.get("situation")
+        # A hosted call's branch is its authored scenario's; the receipt key is a routing id.
+        authored_scenario = authored.get(call.id)
         conversation_branch = (
-            receipt.get("scenario_key")
+            (authored_scenario.branch if authored_scenario is not None else None)
             or metadata.get("conversation_branch")
             or scenario_metadata.get("conversation_branch")
         )

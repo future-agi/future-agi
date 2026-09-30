@@ -7,7 +7,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from simulate.models import AgentDefinition, HostedHarnessJob
+from simulate.models import AgentDefinition, HostedHarnessJob, HostedHarnessScenario
 from simulate.serializers.harness_environment import (
     HarnessEnvironmentAddEvaluationSerializer,
     HarnessEnvironmentAvailableEvalsSerializer,
@@ -17,6 +17,11 @@ from simulate.serializers.harness_environment import (
     HarnessEnvironmentRenameSerializer,
     HarnessEnvironmentRunEvaluationQueuedSerializer,
     HarnessEnvironmentToolCallEvaluationSerializer,
+    HarnessScenarioCoverageQuerySerializer,
+    HarnessScenarioCoverageResponseSerializer,
+    HarnessScenarioListQuerySerializer,
+    HarnessScenarioListResponseSerializer,
+    HarnessScenarioRowSerializer,
 )
 from simulate.serializers.harness_job import (
     HarnessRunCreateResponseSerializer,
@@ -32,6 +37,13 @@ from simulate.services.harness_provider import (
     get_harness_provider,
     request_organization,
     scope_jobs,
+)
+from simulate.services.harness_scenarios import (
+    ensure_suite_indexed,
+    filtered_suite,
+    scenario_page,
+    scenario_row,
+    suite_coverage,
 )
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.pagination import ExtendedPageNumberPagination
@@ -196,6 +208,67 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             )
         delete_environment(job)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @validated_request(
+        query_serializer=HarnessScenarioListQuerySerializer,
+        responses={200: HarnessScenarioListResponseSerializer},
+    )
+    @action(detail=True, methods=["get"], url_path="scenarios")
+    def scenarios(self, request, pk=None):
+        """One page of the environment's scenarios, each identified by its row id."""
+        job = self._job(request, pk)
+        if job is None:
+            return Response(
+                {"detail": "Environment not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        ensure_suite_indexed(job)
+        filtered, offerable = filtered_suite(job, request.query_params)
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(filtered, request, view=self)
+        rows, details = scenario_page(
+            job, page or [], filtered, offerable, request.query_params.get("group_by")
+        )
+        response = paginator.get_paginated_response(rows)
+        response.data.update(details)
+        return response
+
+    @validated_request(
+        query_serializer=HarnessScenarioCoverageQuerySerializer,
+        responses={200: HarnessScenarioCoverageResponseSerializer},
+    )
+    @action(detail=True, methods=["get"], url_path="scenarios/coverage")
+    def scenario_coverage(self, request, pk=None):
+        job = self._job(request, pk)
+        if job is None:
+            return Response(
+                {"detail": "Environment not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response(suite_coverage(job, request.query_params))
+
+    @swagger_auto_schema(responses={200: HarnessScenarioRowSerializer})
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"scenarios/(?P<scenario_id>[0-9a-fA-F-]{36})",
+    )
+    def scenario_detail(self, request, pk=None, scenario_id=None):
+        job = self._job(request, pk)
+        identifier = _uuid_or_none(scenario_id)
+        row = (
+            HostedHarnessScenario.no_workspace_objects.filter(job=job, id=identifier)
+            .select_related("scenario", "call_execution")
+            .first()
+            if job is not None and identifier is not None
+            else None
+        )
+        if row is None:
+            return Response(
+                {"detail": "Scenario not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response(scenario_row(row))
 
     @validated_request(
         request_serializer=HarnessRunCreateSerializer,
