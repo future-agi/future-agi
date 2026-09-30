@@ -139,7 +139,11 @@ from simulate.serializers.test_execution import (
 
 # Import Temporal activities (using @temporal_activity drop-in decorator)
 from simulate.services.agent_definition import resolve_api_key_for_version
-from simulate.services.harness_evals import is_harness_run_test, regrade_mapping
+from simulate.services.harness_evals import (
+    is_harness_run_test,
+    is_regrading_a_finished_harness_run,
+    regrade_mapping,
+)
 from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
@@ -1378,7 +1382,7 @@ class TestExecutionCancelView(APIView):
                     "Either run_test_id or test_execution_id must be provided"
                 )
 
-            if self._is_regrading_a_finished_harness_run(test_execution):
+            if is_regrading_a_finished_harness_run(test_execution):
                 return self.gm.custom_error_response(
                     status.HTTP_409_CONFLICT,
                     "Grading can't be stopped. It finishes on its own.",
@@ -1423,21 +1427,6 @@ class TestExecutionCancelView(APIView):
             return self.gm.internal_server_error_response(
                 f"Failed to cancel test: {str(e)}"
             )
-
-    @staticmethod
-    def _is_regrading_a_finished_harness_run(test_execution) -> bool:
-        """Whether this is a finished harness run whose evals are being graded again.
-
-        Grading again is only accepted once the hosted job has ended, so
-        nothing would ever complete a cancel: the run would sit in CANCELLING
-        for good, with the graders that had not started skipping their evals
-        and leaving them pending.
-        """
-        if test_execution.status != TestExecution.ExecutionStatus.EVALUATING:
-            return False
-        return HostedHarnessJob.no_workspace_objects.filter(
-            test_execution_id=test_execution.id
-        ).exists()
 
     def _cancel_with_temporal(self, test_execution) -> dict:
         """Cancel test execution via Temporal workflow, with DB fallback.
@@ -8201,6 +8190,31 @@ class RunNewEvalsOnTestExecutionView(APIView):
                     "No test executions found to run evaluations on."
                 )
 
+            harness_run = is_harness_run_test(run_test.id)
+            # The execution turns COMPLETED at the last call's ingest, but
+            # teardown later writes the job's end state onto it, which would
+            # overwrite EVALUATING mid-grade. Teardown commits the job and the
+            # run together, so asking this before the status check means the
+            # status read sees whatever teardown wrote.
+            if (
+                harness_run
+                and HostedHarnessJob.no_workspace_objects.filter(
+                    test_execution__in=test_executions
+                )
+                .exclude(
+                    state__in=(
+                        HostedHarnessJob.State.COMPLETED,
+                        HostedHarnessJob.State.FAILED,
+                        HostedHarnessJob.State.CANCELED,
+                    )
+                )
+                .exists()
+            ):
+                return self._gm.custom_error_response(
+                    status.HTTP_409_CONFLICT,
+                    "This run is still finishing. Try again in a moment.",
+                )
+
             # Validate that all test executions have COMPLETED status
             non_completed_executions = test_executions.exclude(
                 status=TestExecution.ExecutionStatus.COMPLETED
@@ -8228,27 +8242,7 @@ class RunNewEvalsOnTestExecutionView(APIView):
             # keeps its empty mapping so later harness runs treat it exactly
             # as before. Any other run grades every config as it always has.
             mapping_overrides = {}
-            if is_harness_run_test(run_test.id):
-                # The execution turns COMPLETED at the last call's ingest, but
-                # teardown later writes the job's end state onto it, which
-                # would overwrite EVALUATING mid-grade.
-                if (
-                    HostedHarnessJob.no_workspace_objects.filter(
-                        test_execution__in=test_executions
-                    )
-                    .exclude(
-                        state__in=(
-                            HostedHarnessJob.State.COMPLETED,
-                            HostedHarnessJob.State.FAILED,
-                            HostedHarnessJob.State.CANCELED,
-                        )
-                    )
-                    .exists()
-                ):
-                    return self._gm.custom_error_response(
-                        status.HTTP_409_CONFLICT,
-                        "This run is still finishing. Try again in a moment.",
-                    )
+            if harness_run:
                 for eval_config in eval_configs.select_related("eval_template"):
                     regrade = regrade_mapping(eval_config)
                     if regrade is None:

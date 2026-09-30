@@ -18,7 +18,12 @@ from django.db.models import Q
 
 from model_hub.models.choices import OwnerChoices
 from model_hub.models.evals_metric import EvalTemplate
-from simulate.models import HostedHarnessJob, RunTest, SimulateEvalConfig
+from simulate.models import (
+    HostedHarnessJob,
+    RunTest,
+    SimulateEvalConfig,
+    TestExecution,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -223,6 +228,20 @@ def harness_run_test_ids(run_test_ids) -> set:
         .order_by()
         .values_list("run_test_id", flat=True)
     )
+
+
+def is_regrading_a_finished_harness_run(test_execution) -> bool:
+    """Whether a harness run's evals are being graded again after its calls finished.
+
+    A harness run in EVALUATING is being graded again after its calls
+    finished; cancelling would leave the graders that have not started
+    skipping their evals, so those results would stay pending.
+    """
+    if test_execution.status != TestExecution.ExecutionStatus.EVALUATING:
+        return False
+    return HostedHarnessJob.no_workspace_objects.filter(
+        test_execution_id=test_execution.id
+    ).exists()
 
 
 def _visible_templates(organization, workspace):

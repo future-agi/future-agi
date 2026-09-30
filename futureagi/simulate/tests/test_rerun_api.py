@@ -8,7 +8,7 @@ Tests cover:
 
 import uuid
 from datetime import timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from django.test import override_settings
@@ -1330,6 +1330,53 @@ class TestTestExecutionRuntimeContracts:
         assert job.state == job_state
         assert job.cancel_requested_at is None
 
+    @patch("simulate.views.run_test.TestExecutor")
+    def test_cancel_stops_a_running_hosted_harness_run(
+        self, mock_test_executor, auth_client, test_execution
+    ):
+        mock_test_executor.return_value.cancel_test.return_value = {
+            "success": True,
+            "message": "Cancellation initiated",
+            "test_execution_id": str(test_execution.id),
+        }
+        self._hosted_job_for(test_execution, HostedHarnessJob.State.RUNNING)
+        test_execution.status = TestExecution.ExecutionStatus.RUNNING
+        test_execution.save(update_fields=["status"])
+
+        response = auth_client.post(
+            f"/simulate/test-executions/{test_execution.id}/cancel/",
+            {},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_test_executor.return_value.cancel_test.assert_called_once()
+        test_execution.refresh_from_db()
+        assert test_execution.status == TestExecution.ExecutionStatus.CANCELLING
+
+    @patch("simulate.views.run_test.TestExecutor")
+    def test_cancel_stops_grading_on_a_run_with_no_hosted_job(
+        self, mock_test_executor, auth_client, test_execution
+    ):
+        mock_test_executor.return_value.cancel_test.return_value = {
+            "success": True,
+            "message": "Cancellation initiated",
+            "test_execution_id": str(test_execution.id),
+        }
+        test_execution.status = TestExecution.ExecutionStatus.EVALUATING
+        test_execution.save(update_fields=["status"])
+
+        response = auth_client.post(
+            f"/simulate/test-executions/{test_execution.id}/cancel/",
+            {},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_test_executor.return_value.cancel_test.assert_called_once()
+        test_execution.refresh_from_db()
+        assert test_execution.status == TestExecution.ExecutionStatus.CANCELLING
+
     def test_eval_summary_refresh_rejects_unknown_fields(
         self, auth_client, test_execution
     ):
@@ -1799,6 +1846,166 @@ class TestTestExecutionRuntimeContracts:
         assert test_execution.status == TestExecution.ExecutionStatus.COMPLETED
         assert call_execution.eval_outputs == outputs_before
         assert run_test.enable_tool_evaluation is False
+
+    @pytest.mark.parametrize(
+        "execution_status",
+        [
+            TestExecution.ExecutionStatus.COMPLETED,
+            TestExecution.ExecutionStatus.RUNNING,
+        ],
+        ids=["over-the-harness-only-refusal", "over-the-not-completed-refusal"],
+    )
+    @patch("simulate.views.run_test.run_new_evals_on_call_executions_task.apply_async")
+    def test_run_new_evals_says_still_finishing_before_any_other_refusal(
+        self,
+        mock_apply_async,
+        execution_status,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+        organization,
+    ):
+        self._hosted_job_for(test_execution, HostedHarnessJob.State.CLEANING_UP)
+        test_execution.status = execution_status
+        test_execution.save(update_fields=["status"])
+        template = EvalTemplate.objects.create(
+            name="harness_claim_while_job_live",
+            config={"required_keys": ["conversation"], "output": "Pass/Fail"},
+            owner="user",
+            organization=organization,
+        )
+        harness_only = SimulateEvalConfig.objects.create(
+            name="Harness claim",
+            eval_template=template,
+            run_test=run_test,
+            config={},
+            mapping={},
+        )
+
+        response = auth_client.post(
+            f"/simulate/run-tests/{run_test.id}/run-new-evals/",
+            {
+                "test_execution_ids": [str(test_execution.id)],
+                "eval_config_ids": [str(harness_only.id)],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+        assert response.data["message"] == (
+            "This run is still finishing. Try again in a moment."
+        )
+        mock_apply_async.assert_not_called()
+        test_execution.refresh_from_db()
+        assert test_execution.status == execution_status
+
+    @pytest.mark.parametrize(
+        "job_state",
+        [
+            HostedHarnessJob.State.COMPLETED,
+            HostedHarnessJob.State.FAILED,
+            HostedHarnessJob.State.CANCELED,
+        ],
+    )
+    @patch("simulate.views.run_test.run_new_evals_on_call_executions_task.apply_async")
+    def test_run_new_evals_regrades_a_harness_run_whose_job_has_ended(
+        self,
+        mock_apply_async,
+        job_state,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+    ):
+        self._hosted_job_for(test_execution, job_state)
+        template = EvalTemplate.objects.create(
+            name="suite_eval_job_ended",
+            config={"required_keys": ["conversation"], "output": "Pass/Fail"},
+            owner="system",
+        )
+        cfg = SimulateEvalConfig.objects.create(
+            name="Task completion",
+            eval_template=template,
+            run_test=run_test,
+            config={},
+            mapping={},
+        )
+
+        response = auth_client.post(
+            f"/simulate/run-tests/{run_test.id}/run-new-evals/",
+            {
+                "test_execution_ids": [str(test_execution.id)],
+                "eval_config_ids": [str(cfg.id)],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_apply_async.assert_called_once_with(
+            args=([str(call_execution.id)], [str(cfg.id)]),
+            kwargs={"mapping_overrides": {str(cfg.id): {"conversation": "transcript"}}},
+        )
+        test_execution.refresh_from_db()
+        assert test_execution.status == TestExecution.ExecutionStatus.EVALUATING
+
+    @patch("simulate.views.run_test.run_new_evals_on_call_executions_task.apply_async")
+    def test_run_new_evals_sees_the_status_teardown_wrote_with_the_job_end(
+        self,
+        mock_apply_async,
+        auth_client,
+        run_test,
+        test_execution,
+        call_execution,
+    ):
+        """Teardown commits the job's end state and the run's status together,
+        so a job that reads as ended must be followed by a status read that
+        sees the run's new status."""
+        self._hosted_job_for(test_execution, HostedHarnessJob.State.FAILED)
+        template = EvalTemplate.objects.create(
+            name="suite_eval_teardown_race",
+            config={"required_keys": ["conversation"], "output": "Pass/Fail"},
+            owner="system",
+        )
+        cfg = SimulateEvalConfig.objects.create(
+            name="Task completion",
+            eval_template=template,
+            run_test=run_test,
+            config={},
+            mapping={},
+        )
+        jobs = HostedHarnessJob.no_workspace_objects
+        real_filter = jobs.filter
+
+        def teardown_commits_during_the_job_read():
+            TestExecution.objects.filter(id=test_execution.id).update(
+                status=TestExecution.ExecutionStatus.FAILED
+            )
+            return False
+
+        def job_filter(*args, **kwargs):
+            if "test_execution__in" not in kwargs:
+                return real_filter(*args, **kwargs)
+            job_read = MagicMock()
+            job_read.exclude.return_value.exists.side_effect = (
+                teardown_commits_during_the_job_read
+            )
+            return job_read
+
+        with patch.object(jobs, "filter", side_effect=job_filter):
+            response = auth_client.post(
+                f"/simulate/run-tests/{run_test.id}/run-new-evals/",
+                {
+                    "test_execution_ids": [str(test_execution.id)],
+                    "eval_config_ids": [str(cfg.id)],
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        mock_apply_async.assert_not_called()
+        test_execution.refresh_from_db()
+        assert test_execution.status == TestExecution.ExecutionStatus.FAILED
 
     @patch("simulate.views.run_test.run_new_evals_on_call_executions_task.apply_async")
     def test_run_new_evals_keeps_the_old_dispatch_shape_for_mapped_evals(
