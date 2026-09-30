@@ -1,7 +1,8 @@
 # Tag-triggered release: builds every platform image at the pushed vX.Y.Z
 # tag, then fans out (ee overlay dispatch, deployment values-bump PR, docs
-# changelog dispatch). Pre-release tags (-suffix) never reach this workflow
-# (release-please only cuts bare vX.Y.Z; the guard job double-checks).
+# changelog dispatch, the Helm chart: helm-release.yml). Pre-release tags
+# (-suffix) never reach this workflow (release-please only cuts bare vX.Y.Z;
+# the guard job double-checks).
 #
 # Every image builds through build-image-multiarch.yml: linux/amd64 and
 # linux/arm64 on native runners (the CUDA serving variant and the simulation
@@ -502,6 +503,30 @@ jobs:
             -F 'client_payload[version]'="${VERSION}" \
             -F 'client_payload[release_url]'="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${VERSION}" \
             -F 'client_payload[release_body_b64]'="${body_b64}"
+
+  # The Helm chart of this release (deploy/helm/futureagi) at
+  # oci://ghcr.io/future-agi/charts/futureagi, once every image it deploys is
+  # published: build (frontend, agentcc-gateway, serving, fi-collector),
+  # backend (backend, workers, bootstrap) and code-executor. Add a job here
+  # when the chart deploys another image. helm-release.yml packages it with
+  # those images' digests, installs it on kind, then pushes, signs and attests
+  # it. If it fails the images stay published; rerun helm-release.yml from the
+  # tag.
+  helm-chart:
+    needs: [guard, build, backend, code-executor]
+    if: github.event_name == 'push'
+    permissions:
+      contents: write # Release assets
+      packages: write # ghcr.io/future-agi/charts
+      id-token: write # cosign keyless, provenance attestation
+      attestations: write
+    uses: ./.github/workflows/helm-release.yml
+    with:
+      version: ${{ needs.guard.outputs.version }}
+    # Only what it uses: authenticated Docker Hub pulls in the kind smoke.
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 
   # Every image of this release next to its budget, in one table for the
   # release notes. Each image was already checked before its tags moved; this

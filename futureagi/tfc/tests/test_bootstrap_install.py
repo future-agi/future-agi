@@ -84,6 +84,7 @@ def recorded_steps(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     monkeypatch.setattr(
         command, "call", lambda name, log, **options: steps.append(name)
     )
+    monkeypatch.setattr(command, "first_admin", lambda log: steps.append("first admin"))
     return steps
 
 
@@ -99,6 +100,7 @@ def test_runs_every_step_in_order(local_operator, recorded_steps) -> None:
         "search attributes",
         "cdc",
         "register_temporal_schedules",
+        "first admin",
     ]
 
 
@@ -110,6 +112,9 @@ def test_the_standalone_bootstrap_runs_the_same_steps_in_the_same_order(
 ) -> None:
     call_command("bootstrap_install")
     job = list(recorded_steps)
+    # The first admin is the Helm chart's (bootstrap.admin); a Standalone
+    # install creates its own with ./bin/install's create_user.
+    assert job.pop() == "first admin"
     recorded_steps.clear()
     spec = importlib.util.spec_from_file_location(
         "standalone_bootstrap", STANDALONE_BOOTSTRAP
@@ -140,7 +145,7 @@ def test_property_catalog_can_be_skipped(local_operator, recorded_steps) -> None
     call_command("bootstrap_install", "--skip-property-catalog")
 
     assert "catalog" not in recorded_steps
-    assert recorded_steps[-1] == "register_temporal_schedules"
+    assert recorded_steps[-2:] == ["register_temporal_schedules", "first admin"]
 
 
 @pytest.mark.parametrize(
@@ -178,7 +183,7 @@ def test_hosted_env_type_runs_as_an_operator_job(
 
     call_command("bootstrap_install")
 
-    assert recorded_steps[-1] == "register_temporal_schedules"
+    assert recorded_steps[-2:] == ["register_temporal_schedules", "first admin"]
 
 
 @pytest.mark.xfail(
@@ -966,7 +971,7 @@ def test_the_job_retries_search_attributes_until_temporal_serves(
         "(RuntimeError: Temporal not serving yet); retrying in 5s"
     ) in lines
     assert "[bootstrap] eval-task search attributes already registered" in lines
-    assert recorded_steps[-2:] == ["cdc", "register_temporal_schedules"]
+    assert recorded_steps[-3:] == ["cdc", "register_temporal_schedules", "first admin"]
 
     # Out of attempts: the Job fails before change data capture, without
     # sleeping after its last attempt.
@@ -1030,3 +1035,136 @@ def test_change_data_capture_retries_transient_failures_and_logs_the_result(
         'change data capture: {"mode": "outbox", "ready": true, '
         '"run": "00000000-0000-0000-0000-000000000007"}',
     ]
+
+
+class _Users:
+    """Stands in for the user model's manager: remembers existing emails."""
+
+    def __init__(self, existing=()):
+        self.existing = {email.lower() for email in existing}
+        self.objects = self
+
+    def filter(self, email__iexact):
+        return SimpleNamespace(exists=lambda: email__iexact.lower() in self.existing)
+
+
+@pytest.fixture
+def signups(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    """The sign-ups create_owner_account makes, with no user in the way."""
+    created: list[dict] = []
+    monkeypatch.setattr("accounts.utils.User", _Users())
+    monkeypatch.setattr("accounts.utils.first_signup", created.append)
+    return created
+
+
+ADMIN_ENV = {
+    "FAGI_ADMIN_EMAIL": " Owner@Example.com ",
+    "FAGI_ADMIN_NAME": "Owner",
+    "FAGI_ADMIN_PASSWORD": "long-enough-1",
+}
+
+
+def test_first_admin_is_created_once_from_the_environment(monkeypatch, signups) -> None:
+    monkeypatch.setattr("django.contrib.auth.get_user_model", lambda: _Users())
+    logs: list[str] = []
+
+    command.first_admin(logs.append, env=ADMIN_ENV)
+
+    assert signups == [
+        {
+            "email": "Owner@Example.com",
+            "full_name": "Owner",
+            "password": "long-enough-1",
+            "allow_email": True,
+        }
+    ]
+    assert logs == ["first admin Owner@Example.com created"]
+
+
+def test_an_existing_first_admin_is_left_unchanged(monkeypatch, signups) -> None:
+    monkeypatch.setattr(
+        "django.contrib.auth.get_user_model", lambda: _Users(["owner@example.com"])
+    )
+    logs: list[str] = []
+
+    command.first_admin(logs.append, env=ADMIN_ENV)
+
+    assert signups == []
+    assert logs == ["first admin Owner@Example.com already exists: left unchanged"]
+
+
+def test_no_first_admin_without_an_email(signups) -> None:
+    command.first_admin(lambda line: None, env={"FAGI_ADMIN_PASSWORD": "long-enough-1"})
+
+    assert signups == []
+
+
+@pytest.mark.parametrize(
+    ("overrides", "reason"),
+    [
+        ({"FAGI_ADMIN_NAME": ""}, "all required"),
+        ({"FAGI_ADMIN_PASSWORD": "short"}, "too short"),
+        # Long enough, but AUTH_PASSWORD_VALIDATORS reject them.
+        ({"FAGI_ADMIN_PASSWORD": "password"}, "too common"),
+        ({"FAGI_ADMIN_PASSWORD": "qwertyuiop"}, "too common"),
+        ({"FAGI_ADMIN_PASSWORD": "12345678"}, "entirely numeric"),
+    ],
+)
+def test_first_admin_needs_a_name_and_a_password_the_validators_accept(
+    monkeypatch, signups, overrides, reason
+) -> None:
+    monkeypatch.setattr("django.contrib.auth.get_user_model", lambda: _Users())
+
+    with pytest.raises(command.BootstrapError, match=reason) as refused:
+        command.first_admin(lambda line: None, env={**ADMIN_ENV, **overrides})
+    assert "bootstrap.admin.existingSecret" in str(refused.value)
+    assert signups == []
+
+
+@pytest.mark.parametrize("email", ["owner", "owner@example"])
+def test_first_admin_refuses_a_malformed_email_with_guidance(
+    monkeypatch, signups, email
+) -> None:
+    monkeypatch.setattr("django.contrib.auth.get_user_model", lambda: _Users())
+
+    with pytest.raises(command.BootstrapError, match="valid email") as refused:
+        command.first_admin(
+            lambda line: None, env={**ADMIN_ENV, "FAGI_ADMIN_EMAIL": email}
+        )
+    assert "bootstrap.admin.existingSecret" in str(refused.value)
+    assert signups == []
+
+
+@pytest.mark.django_db
+def test_first_admin_signs_up_the_owner_once_against_the_real_user_model() -> None:
+    from accounts.models import User
+
+    env = {**ADMIN_ENV, "FAGI_ADMIN_PASSWORD": "Bootstrap-Passw0rd!"}
+    logs: list[str] = []
+
+    command.first_admin(logs.append, env=env)
+    command.first_admin(
+        logs.append, env={**env, "FAGI_ADMIN_PASSWORD": "Changed-Passw0rd!"}
+    )
+
+    owner = User.objects.get(email="owner@example.com")
+    assert owner.name == "Owner"
+    assert owner.organization_role == "Owner"
+    assert owner.is_active
+    assert owner.check_password("Bootstrap-Passw0rd!")
+    assert User.objects.filter(email__iexact="owner@example.com").count() == 1
+    assert logs == [
+        "first admin Owner@Example.com created",
+        "first admin Owner@Example.com already exists: left unchanged",
+    ]
+
+
+@pytest.mark.django_db
+def test_a_password_the_validators_reject_fails_the_job_with_guidance() -> None:
+    from accounts.models import User
+
+    with pytest.raises(command.BootstrapError, match="too common"):
+        command.first_admin(
+            lambda line: None, env={**ADMIN_ENV, "FAGI_ADMIN_PASSWORD": "password"}
+        )
+    assert not User.objects.filter(email__iexact="owner@example.com").exists()

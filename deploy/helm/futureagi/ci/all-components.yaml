@@ -90,6 +90,10 @@ fiCollector:
 agentccGateway:
   autoscaling:
     enabled: true
+  # redis.external.tls is on and the gateway has no Redis TLS: it gets a
+  # plain Redis of its own.
+  extraEnv:
+    AGENTCC_REDIS_ADDRESS: gateway-redis.cache.svc:6379
   gcpCredentials:
     existingSecret: futureagi-vertex
   extraEnvFrom:
@@ -103,6 +107,8 @@ codeExecutor:
   enabled: true
 bootstrap:
   propertyCatalog: false
+  # Empty: no TTL.
+  ttlSecondsAfterFinished: ""
   serviceAccount:
     create: false
     name: futureagi-migrator
@@ -115,6 +121,7 @@ networkPolicy:
 serviceAccount:
   annotations:
     example.com/owner: platform
+  automountServiceAccountToken: true
 nodeSelector:
   kubernetes.io/os: linux
 tolerations:

@@ -67,8 +67,45 @@ app.kubernetes.io/part-of: futureagi
 
 {{/* =====================================================================
 Images: dict "root" $ "image" <image values> ["fallback" <image values>]
+["digestKey" <key of image.digests>]
 Future AGI images fall back to image.tag, then the chart's appVersion.
+
+Digest precedence: the component's own image.digest; else the digest stamped
+into image.digests.<digestKey> by the release packaging, but only when
+image.pinDigests is on, the resolved tag is the chart's appVersion and the
+repository is the published one. So `--set image.tag=...` or another
+repository path never pairs another image with the release's digest. The
+registry is not compared: a mirror (image.registry, global.imageRegistry)
+keeps the digest, as `crane copy` and `oras copy -r` do; a different build
+pushed under the same repository path needs image.pinDigests=false or its own
+image.digest. An image without a digestKey (a bundled datastore) takes the
+digest in futureagi.datastorePins for its exact repository:tag, under the
+same switch.
 ===================================================================== */}}
+
+{{/* Published repository of each image.digests key. */}}
+{{- define "futureagi.publishedRepositories" -}}
+{{- toJson (dict
+      "backend" "futureagi/future-agi"
+      "frontend" "futureagi/frontend"
+      "fiCollector" "futureagi/fi-collector"
+      "agentccGateway" "futureagi/agentcc-gateway"
+      "serving" "futureagi/serving"
+      "codeExecutor" "futureagi/code-executor") -}}
+{{- end -}}
+
+{{/* Digests of the bundled datastore images the chart was tested with, by
+repository:tag. A bundled datastore image without its own image.digest runs
+pinned only on exactly this repository and tag (and while image.pinDigests is
+on): another tag or repository runs by tag. Keep the tags in step with
+values.yaml; hack/rendered_checks.py fails when the default render is not
+pinned. */}}
+{{- define "futureagi.datastorePins" -}}
+{{- toJson (dict
+      "library/postgres:16.15-trixie" "sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54"
+      "library/redis:7.4.11-alpine" "sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499"
+      "coollabsio/minio:RELEASE.2025-10-15T17-29-55Z" "sha256:69b55a1c1c5dc285ce04db96689f5b2102317fc77a50680a1874ca6efd1c87f9") -}}
+{{- end -}}
 
 {{- define "futureagi.image" -}}
 {{- $root := .root -}}
@@ -81,6 +118,16 @@ Future AGI images fall back to image.tag, then the chart's appVersion.
 {{- $repository := $img.repository | default $fallback.repository -}}
 {{- $tag := $img.tag | default $fallback.tag | default $root.Values.image.tag | default $root.Chart.AppVersion | toString -}}
 {{- $digest := $img.digest | default $fallback.digest -}}
+{{- if and (not $digest) .digestKey $root.Values.image.pinDigests -}}
+{{- $stamped := get ($root.Values.image.digests | default dict) .digestKey | default "" -}}
+{{- $published := get (include "futureagi.publishedRepositories" $root | fromJson) .digestKey | default "" -}}
+{{- if and $stamped (eq $tag (toString $root.Chart.AppVersion)) (eq $repository $published) -}}
+{{- $digest = $stamped -}}
+{{- end -}}
+{{- end -}}
+{{- if and (not $digest) (not .digestKey) $root.Values.image.pinDigests -}}
+{{- $digest = get (include "futureagi.datastorePins" $root | fromJson) (printf "%s:%s" $repository $tag) | default "" -}}
+{{- end -}}
 {{- $ref := printf "%s:%s" $repository $tag -}}
 {{- if $registry -}}
 {{- $ref = printf "%s/%s" (trimSuffix "/" $registry) $ref -}}
@@ -113,6 +160,13 @@ Service accounts and secrets
 {{- else -}}
 {{- .Values.serviceAccount.name | default "default" -}}
 {{- end -}}
+{{- end -}}
+
+{{/* automountServiceAccountToken of the pods that run as the chart's
+ServiceAccount (serviceAccount.automountServiceAccountToken). The code sandbox
+never mounts it: it runs untrusted code. */}}
+{{- define "futureagi.automountServiceAccountToken" -}}
+{{- if .Values.serviceAccount.automountServiceAccountToken }}true{{ else }}false{{ end -}}
 {{- end -}}
 
 {{- define "futureagi.bootstrapServiceAccountName" -}}
@@ -310,11 +364,32 @@ Public URLs
 {{- printf "%s://%s" $scheme .host -}}
 {{- end -}}
 
+{{/* Hostname of one Gateway API route: dict "root" $ "route" app|api|otlp.
+app and api fall back to the ingress hosts, otlp to the API host. */}}
+{{- define "futureagi.gatewayApi.host" -}}
+{{- $v := .root.Values -}}
+{{- $g := $v.gatewayApi -}}
+{{- $app := $g.app.host | default $v.ingress.app.host -}}
+{{- $api := $g.api.host | default $v.ingress.api.host -}}
+{{- if eq .route "app" -}}{{ $app }}
+{{- else if eq .route "api" -}}{{ $api }}
+{{- else -}}{{ $g.otlp.host | default $api }}
+{{- end -}}
+{{- end -}}
+
+{{/* URL of a Gateway API host: https when gatewayApi.tls. */}}
+{{- define "futureagi.gatewayApi.url" -}}
+{{- $host := include "futureagi.gatewayApi.host" . -}}
+{{- if $host -}}{{ printf "%s://%s" (ternary "https" "http" (ne (toString .root.Values.gatewayApi.tls) "false")) $host }}{{- end -}}
+{{- end -}}
+
 {{- define "futureagi.url.app" -}}
 {{- if .Values.urls.app -}}
 {{- trimSuffix "/" .Values.urls.app -}}
 {{- else if and .Values.ingress.enabled .Values.ingress.app.host -}}
 {{- include "futureagi.hostUrl" (dict "root" . "host" .Values.ingress.app.host) -}}
+{{- else if .Values.gatewayApi.enabled -}}
+{{- include "futureagi.gatewayApi.url" (dict "root" . "route" "app") -}}
 {{- end -}}
 {{- end -}}
 
@@ -323,6 +398,8 @@ Public URLs
 {{- trimSuffix "/" .Values.urls.api -}}
 {{- else if and .Values.ingress.enabled .Values.ingress.api.host -}}
 {{- include "futureagi.hostUrl" (dict "root" . "host" .Values.ingress.api.host) -}}
+{{- else if .Values.gatewayApi.enabled -}}
+{{- include "futureagi.gatewayApi.url" (dict "root" . "route" "api") -}}
 {{- end -}}
 {{- end -}}
 
@@ -332,6 +409,8 @@ Public URLs
 {{- else if and .Values.ingress.enabled .Values.ingress.otlp.enabled -}}
 {{- $host := .Values.ingress.otlp.host | default .Values.ingress.api.host -}}
 {{- if $host -}}{{- include "futureagi.hostUrl" (dict "root" . "host" $host) -}}{{- end -}}
+{{- else if and .Values.gatewayApi.enabled .Values.gatewayApi.otlp.enabled -}}
+{{- include "futureagi.gatewayApi.url" (dict "root" . "route" "otlp") -}}
 {{- end -}}
 {{- end -}}
 
@@ -350,59 +429,106 @@ Without a public one, the port-forward to localhost:4318 the notes print. */}}
 {{- else if and (eq .Values.objectStorage.mode "external") .Values.objectStorage.external.endpoint -}}
 {{- trimSuffix "/" .Values.objectStorage.external.endpoint -}}
 {{- else -}}
-http://localhost:9005
+{{- include "futureagi.url.objectsLocal" . -}}
 {{- end -}}
+{{- end -}}
+
+{{/* The bundled object storage on this machine: its LoadBalancer or NodePort
+download port, or the local end of the port-forward the install notes print. */}}
+{{- define "futureagi.url.objectsLocal" -}}
+{{- printf "http://localhost:%v" (dig "bundled" "service" "downloadPort" 9005 .Values.objectStorage) -}}
+{{- end -}}
+
+{{/* "true" when a URL points at this machine (a port-forward): localhost,
+*.localhost or a loopback address. */}}
+{{- define "futureagi.isLocalUrl" -}}
+{{- $host := (urlParse .).hostname | default "" | lower -}}
+{{- if or (has $host (list "localhost" "127.0.0.1" "::1" "0.0.0.0")) (hasSuffix ".localhost" $host) -}}true{{- end -}}
+{{- end -}}
+
+{{/* scheme://host[:port] of a URL: a CORS origin. */}}
+{{- define "futureagi.urlOrigin" -}}
+{{- $u := urlParse . -}}
+{{- printf "%s://%s" $u.scheme $u.host -}}
 {{- end -}}
 
 {{/* Host part of a URL (APP_URL is a bare host). */}}
 {{- define "futureagi.urlHost" -}}
-{{- $u := urlParse . -}}
-{{- $u.host -}}
+{{- /* host[:port] of a URL, login dropped. No urlParse: it fails on a login
+with an unescaped '#' or '%', which the schema accepts. The login ends at the
+last '@' before the path. */ -}}
+{{- $rest := regexReplaceAll "^[A-Za-z][A-Za-z0-9+.-]*://" (toString .) "" -}}
+{{- $rest = regexReplaceAll "^[^/]*@" $rest "" -}}
+{{- regexFind "^[^/?#]*" $rest -}}
 {{- end -}}
 
 {{/* =====================================================================
 Pod settings
 ===================================================================== */}}
 
-{{/* Security contexts: dict "defaults" <map> "overrides" <map>. */}}
-{{- define "futureagi.mergeYaml" -}}
-{{- toYaml (mergeOverwrite (deepCopy .defaults) (.overrides | default dict)) -}}
-{{- end -}}
-
+{{/* dict "root" $ "uid" <n> ["overrides" <map>]. On OpenShift (see
+futureagi.openshift.adapt) the IDs and the seccomp profile are left out, so
+the restricted-v2 SCC assigns them. */}}
 {{- define "futureagi.podSecurityContext" -}}
 {{- $defaults := dict "runAsNonRoot" true "runAsUser" (int .uid) "runAsGroup" (int .uid) "fsGroup" (int .uid) "seccompProfile" (dict "type" "RuntimeDefault") -}}
-{{- include "futureagi.mergeYaml" (dict "defaults" $defaults "overrides" .overrides) -}}
+{{- $ctx := mergeOverwrite (deepCopy $defaults) (.overrides | default dict) -}}
+{{- if and .root (include "futureagi.openshift.adapt" .root) -}}
+{{- $ctx = omit $ctx "runAsUser" "runAsGroup" "fsGroup" "seccompProfile" -}}
+{{- end -}}
+{{- toYaml $ctx -}}
 {{- end -}}
 
+{{/* dict "root" $ ["overrides" <map>] ["readOnly" false]. */}}
 {{- define "futureagi.containerSecurityContext" -}}
 {{- $defaults := dict "allowPrivilegeEscalation" false "readOnlyRootFilesystem" (ne (toString .readOnly) "false") "capabilities" (dict "drop" (list "ALL")) -}}
-{{- include "futureagi.mergeYaml" (dict "defaults" $defaults "overrides" .overrides) -}}
+{{- $ctx := mergeOverwrite (deepCopy $defaults) (.overrides | default dict) -}}
+{{- if and .root (include "futureagi.openshift.adapt" .root) -}}
+{{- $ctx = omit $ctx "runAsUser" "runAsGroup" "seccompProfile" -}}
+{{- end -}}
+{{- toYaml $ctx -}}
 {{- end -}}
 
 {{/* nodeSelector, tolerations, affinity, spread and priority for one pod:
-dict "root" $ "values" <component values> ["spread" true]. */}}
+dict "root" $ "values" <component values> ["fallback" <values>] ["spread" true]
+["component" <selector component>] ["multi" true].
+Each setting: the component's, else the fallback's (worker.* for a queue),
+else the top-level one. Spread: an explicit list, whose entries get the
+component's labelSelector when they have none, else topologySpread.preset
+when the component can run more than one replica ("multi"). */}}
 {{- define "futureagi.scheduling" -}}
 {{- $root := .root -}}
 {{- $c := .values -}}
-{{- with ($c.nodeSelector | default $root.Values.nodeSelector) }}
+{{- $f := .fallback | default dict -}}
+{{- with ($c.nodeSelector | default $f.nodeSelector | default $root.Values.nodeSelector) }}
 nodeSelector:
   {{- toYaml . | nindent 2 }}
 {{- end }}
-{{- with ($c.tolerations | default $root.Values.tolerations) }}
+{{- with ($c.tolerations | default $f.tolerations | default $root.Values.tolerations) }}
 tolerations:
   {{- toYaml . | nindent 2 }}
 {{- end }}
-{{- with ($c.affinity | default $root.Values.affinity) }}
+{{- with ($c.affinity | default $f.affinity | default $root.Values.affinity) }}
 affinity:
   {{- toYaml . | nindent 2 }}
 {{- end }}
 {{- if .spread }}
-{{- with ($c.topologySpreadConstraints | default $root.Values.topologySpreadConstraints) }}
+{{- $spread := $c.topologySpreadConstraints | default $f.topologySpreadConstraints | default $root.Values.topologySpreadConstraints | default list -}}
+{{- if and $spread .component -}}
+{{- $selector := include "futureagi.selectorLabels" (dict "root" $root "component" .component) | fromYaml -}}
+{{- $filled := list -}}
+{{- range $spread }}
+{{- $filled = append $filled (ternary . (merge (dict "labelSelector" (dict "matchLabels" $selector)) .) (hasKey . "labelSelector")) -}}
+{{- end }}
+{{- $spread = $filled -}}
+{{- else if and .component .multi -}}
+{{- $spread = include "futureagi.topologySpreadPreset" (dict "root" $root "component" .component) | fromYamlArray -}}
+{{- end }}
+{{- with $spread }}
 topologySpreadConstraints:
   {{- toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
-{{- with $root.Values.priorityClassName }}
+{{- with ($c.priorityClassName | default $f.priorityClassName | default $root.Values.priorityClassName) }}
 priorityClassName: {{ . }}
 {{- end }}
 {{- end -}}

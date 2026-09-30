@@ -5,7 +5,7 @@
 {{- $public := list "backend" "frontend" "fi-collector" -}}
 {{- /* Reached only by this release's pods. */ -}}
 {{- $internal := list "serving" -}}
-{{- if eq $v.agentccGateway.service.type "ClusterIP" -}}
+{{- if and (eq $v.agentccGateway.service.type "ClusterIP") (not (and $v.gatewayApi.enabled $v.gatewayApi.llmGateway.enabled)) -}}
 {{- $internal = append $internal "agentcc-gateway" -}}
 {{- else -}}
 {{- $public = append $public "agentcc-gateway" -}}
@@ -16,7 +16,7 @@
 {{- end -}}
 {{- end -}}
 {{- if eq $v.objectStorage.mode "bundled" -}}
-{{- if and $v.ingress.enabled $v.ingress.objects.host -}}
+{{- if or (and $v.ingress.enabled $v.ingress.objects.host) (ne (dig "bundled" "service" "type" "ClusterIP" $v.objectStorage) "ClusterIP") -}}
 {{- $public = append $public "minio" -}}
 {{- else -}}
 {{- $internal = append $internal "minio" -}}
@@ -75,6 +75,7 @@ collector's admin port stays internal). */ -}}
 {{- if ne $v.frontend.service.type "ClusterIP" }}{{ $_ := set $exposed "frontend" (list "http") }}{{ end -}}
 {{- if ne $v.fiCollector.service.type "ClusterIP" }}{{ $_ := set $exposed "fi-collector" (list "otlp-grpc" "otlp-http") }}{{ end -}}
 {{- if ne $v.agentccGateway.service.type "ClusterIP" }}{{ $_ := set $exposed "agentcc-gateway" (list "http") }}{{ end -}}
+{{- if and (eq $v.objectStorage.mode "bundled") (ne (dig "bundled" "service" "type" "ClusterIP" $v.objectStorage) "ClusterIP") }}{{ $_ := set $exposed "minio" (list "s3") }}{{ end -}}
 {{- range $component, $ports := $exposed }}
 ---
 apiVersion: networking.k8s.io/v1

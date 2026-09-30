@@ -8,6 +8,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+  {{- include "futureagi.block" (dict "text" (include "futureagi.workloadAnnotations" $) "indent" 2) }}
 spec:
   replicas: {{ $e.replicas }}
   revisionHistoryLimit: 5
@@ -34,7 +35,7 @@ spec:
       {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $e)) "indent" 6) }}
       containers:
         - name: code-executor
-          image: {{ include "futureagi.image" (dict "root" . "image" $e.image) }}
+          image: {{ include "futureagi.image" (dict "root" . "image" $e.image "digestKey" "codeExecutor") }}
           imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" . "image" $e.image) }}
           ports:
             - name: http

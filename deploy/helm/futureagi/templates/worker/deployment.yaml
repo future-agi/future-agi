@@ -7,24 +7,33 @@ Temporal workers, all from the backend image:
 {{- $root := . -}}
 {{- $w := .Values.worker -}}
 {{- $workers := list -}}
+{{- /* The all-queues worker leaves the dedicated queues to their own
+Deployments (worker.allQueues.excludeDedicatedQueues). */ -}}
+{{- $excluded := $w.allQueues.excludedQueues | default list -}}
+{{- if $w.allQueues.excludeDedicatedQueues -}}
+{{- range $w.queues }}{{ $excluded = append $excluded (toString .name) }}{{ end -}}
+{{- end -}}
 {{- if $w.allQueues.enabled -}}
 {{- $workers = append $workers (dict
       "suffix" "worker"
       "replicas" $w.allQueues.replicas
       "autoscaling" $w.allQueues.autoscaling
       "resources" $w.allQueues.resources
+      "values" dict
       "args" (list "--all-queues")
       "env" (dict
         "TEMPORAL_ALL_QUEUES" "true"
-        "TEMPORAL_EXCLUDED_QUEUES" (join "," $w.allQueues.excludedQueues)
+        "TEMPORAL_EXCLUDED_QUEUES" ($excluded | uniq | join ",")
         "TEMPORAL_MAX_CONCURRENT_ACTIVITIES" (toString $w.allQueues.maxConcurrentActivities)
         "TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS" (toString $w.allQueues.maxConcurrentWorkflowTasks))) -}}
 {{- end -}}
 {{- if $w.exactAggregation.enabled -}}
+{{- /* Single slot, single replica, never autoscaled: the admission boundary. */ -}}
 {{- $workers = append $workers (dict
       "suffix" "worker-exact-aggregation"
       "replicas" 1
       "resources" $w.exactAggregation.resources
+      "values" dict
       "args" (list "--task-queue" "exact_aggregation")
       "env" (dict
         "TEMPORAL_ALL_QUEUES" "false"
@@ -41,10 +50,18 @@ Temporal workers, all from the backend image:
       "TEMPORAL_TASK_QUEUE" (toString $q.name)
       "TEMPORAL_MAX_CONCURRENT_ACTIVITIES" (toString ($q.maxConcurrentActivities | default 50))
       "TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS" (toString ($q.maxConcurrentWorkflowTasks | default 50)) -}}
+{{- /* A queue's autoscaling fills its gaps from worker.allQueues.autoscaling. */ -}}
+{{- $autoscaling := dict -}}
+{{- if and $q.autoscaling $q.autoscaling.enabled -}}
+{{- $autoscaling = deepCopy $w.allQueues.autoscaling -}}
+{{- range $key, $value := $q.autoscaling }}{{ $_ := set $autoscaling $key $value }}{{ end -}}
+{{- end -}}
 {{- $workers = append $workers (dict
       "suffix" (printf "worker-%s" (include "futureagi.queueSlug" (toString $q.name)))
       "replicas" ($q.replicas | default 1)
+      "autoscaling" $autoscaling
       "resources" ($q.resources | default $w.allQueues.resources)
+      "values" $q
       "image" ($q.image | default dict)
       "args" (list "--task-queue" (toString $q.name))
       "env" $env
@@ -58,10 +75,23 @@ post-install hooks. */ -}}
 {{- $bootstrapJob := include "futureagi.component" (dict "root" $root "component" "bootstrap") -}}
 {{- range $spec := $workers }}
 {{- $ctx := dict "root" $root "component" $spec.suffix -}}
-{{- $image := include "futureagi.image" (dict "root" $root "image" ($spec.image | default $w.image) "fallback" (ternary $root.Values.backend.image $w.image (empty $spec.image))) -}}
+{{- /* A queue image with its own repository (e.g. the simulation runner) falls
+back to worker.image only; one without fills its gaps from worker.image, then
+backend.image. */ -}}
+{{- $queueImage := $spec.image | default dict -}}
+{{- $imageArgs := dict "root" $root "image" (merge (dict) $queueImage $w.image) "fallback" $root.Values.backend.image "digestKey" "backend" -}}
+{{- if $queueImage.repository -}}
+{{- $imageArgs = dict "root" $root "image" $queueImage "fallback" $w.image "digestKey" "backend" -}}
+{{- end -}}
+{{- $image := include "futureagi.image" $imageArgs -}}
+{{- $v := $spec.values -}}
+{{- $graceful := int ($v.gracefulShutdownSeconds | default $w.gracefulShutdownSeconds) -}}
+{{- $preStop := int (ternary $v.preStopSleepSeconds $w.preStopSleepSeconds (hasKey $v "preStopSleepSeconds")) -}}
+{{- $pdb := deepCopy $w.pdb -}}
+{{- range $key, $value := ($v.pdb | default dict) }}{{ $_ := set $pdb $key $value }}{{ end -}}
 {{- $component := merge (dict
       "SERVICE_TYPE" "temporal-worker"
-      "TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT" (toString $w.gracefulShutdownSeconds)) $spec.env -}}
+      "TEMPORAL_GRACEFUL_SHUTDOWN_TIMEOUT" (toString $graceful)) $spec.env -}}
 {{- /* A queue's extraEnv wins over worker.extraEnv, and both over the chart. */ -}}
 {{- $overrides := merge (dict) ($spec.extraEnv | default dict) ($w.extraEnv | default dict) }}
 ---
@@ -72,6 +102,7 @@ metadata:
   namespace: {{ $root.Release.Namespace }}
   labels:
     {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+  {{- include "futureagi.block" (dict "text" (include "futureagi.workloadAnnotations" $) "indent" 2) }}
 spec:
   {{- if not (and $spec.autoscaling $spec.autoscaling.enabled) }}
   replicas: {{ $spec.replicas }}
@@ -84,27 +115,28 @@ spec:
     metadata:
       labels:
         {{- include "futureagi.componentLabels" $ctx | nindent 8 }}
-        {{- with $w.podLabels }}
+        {{- with merge (dict) ($v.podLabels | default dict) ($w.podLabels | default dict) }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
       annotations:
         checksum/secrets: {{ include "futureagi.secretsChecksum" $root }}
-        {{- with $w.podAnnotations }}
+        {{- with merge (dict) ($v.podAnnotations | default dict) ($w.podAnnotations | default dict) }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
       serviceAccountName: {{ include "futureagi.serviceAccountName" $root }}
-      automountServiceAccountToken: false
+      automountServiceAccountToken: {{ include "futureagi.automountServiceAccountToken" $root }}
       {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" $root) "indent" 6) }}
-      # A stopping worker finishes its running activities first.
-      terminationGracePeriodSeconds: {{ add $w.gracefulShutdownSeconds 30 }}
+      # The preStop sleep, then the running activities finish (graceful
+      # shutdown), plus a 30 s margin.
+      terminationGracePeriodSeconds: {{ add $preStop $graceful 30 }}
       securityContext:
-        {{- include "futureagi.podSecurityContext" (dict "uid" 1000 "overrides" $w.podSecurityContext) | nindent 8 }}
-      {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" $root "values" $w "spread" true)) "indent" 6) }}
+        {{- include "futureagi.podSecurityContext" (dict "root" $ "uid" 1000 "overrides" $w.podSecurityContext) | nindent 8 }}
+      {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" $root "values" $v "fallback" $w "spread" true "component" $spec.suffix "multi" (include "futureagi.multiReplica" $spec))) "indent" 6) }}
       containers:
         - name: worker
           image: {{ $image }}
-          imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" $root "image" $w.image "fallback" $root.Values.backend.image) }}
+          imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" $root "image" (merge (dict) $queueImage $w.image) "fallback" $root.Values.backend.image) }}
           # No HTTP endpoint: Kubernetes restarts the pod when the process exits.
           {{- if $waitForSchema }}
           command:
@@ -123,6 +155,7 @@ spec:
           {{- end }}
           args:
             {{- toYaml $spec.args | nindent 12 }}
+          {{- include "futureagi.block" (dict "text" (include "futureagi.preStop" (dict "root" $root "seconds" $preStop)) "indent" 10) }}
           env:
             {{- include "futureagi.env.python" (dict "root" $root "component" $component "overrides" $overrides) | trim | nindent 12 }}
           {{- with $root.Values.config.extraEnvFrom }}
@@ -132,7 +165,7 @@ spec:
           resources:
             {{- toYaml $spec.resources | nindent 12 }}
           securityContext:
-            {{- include "futureagi.containerSecurityContext" (dict "overrides" $w.containerSecurityContext) | nindent 12 }}
+            {{- include "futureagi.containerSecurityContext" (dict "root" $ "overrides" $w.containerSecurityContext) | nindent 12 }}
           volumeMounts:
             {{- include "futureagi.python.volumeMounts" $root | trim | nindent 12 }}
             {{- with $w.extraVolumeMounts }}
@@ -147,8 +180,8 @@ spec:
 ---
 {{ include "futureagi.hpa" (dict "root" $root "component" $spec.suffix "name" (include "futureagi.component" $ctx) "autoscaling" $spec.autoscaling) }}
 {{- end }}
-{{- if $w.pdb.enabled }}
+{{- if $pdb.enabled }}
 ---
-{{ include "futureagi.pdb" (dict "root" $root "component" $spec.suffix "name" (include "futureagi.component" $ctx) "pdb" $w.pdb) }}
+{{ include "futureagi.pdb" (dict "root" $root "component" $spec.suffix "name" (include "futureagi.component" $ctx) "pdb" $pdb) }}
 {{- end }}
 {{- end }}
