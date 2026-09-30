@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 
 // The wrapper owns the network hook; feed it a fixed set of mapped tasks.
@@ -88,7 +88,7 @@ const groupsFor = (tasks, groupBy = "goal") => {
   const labels = {
     passed: "Passed",
     failed: "Failed",
-    error: "Errored",
+    error: "Error",
   };
   return [...grouped].map(([key, rows]) => ({
     label: labels[key] || key,
@@ -178,6 +178,33 @@ describe("RunTraceTable", () => {
     });
   });
 
+  it.each([
+    ["queued", "Queued"],
+    ["in_progress", "In progress"],
+    ["passed", "Passed"],
+    ["failed", "Failed"],
+    ["inconclusive", "Inconclusive"],
+    ["error", "Error"],
+  ])("uses the %s outcome for both row labels and filtering", async (outcome, label) => {
+    const user = userEvent.setup();
+    useRunCalls.mockReturnValue({
+      tasks: [{ ...TASKS[0], status: outcome }],
+      columns: COLUMNS,
+      groups: groupsFor([{ ...TASKS[0], status: outcome }]),
+      facets: { status: [{ value: outcome, count: 1 }] },
+      count: 1,
+      totalPages: 1,
+      isLoading: false,
+    });
+    renderTable({ activeCallId: TASKS[0].id });
+    expect(screen.getAllByText(label)).toHaveLength(2);
+    await user.click(screen.getByRole("button", { name: label }));
+    expect(useRunCalls).toHaveBeenLastCalledWith(
+      "ex1",
+      expect.objectContaining({ filters: { status: [outcome] } }),
+    );
+  });
+
   it("renders the real calls, grouped by scenario, with the eval column", async () => {
     const user = userEvent.setup();
     renderTable();
@@ -233,7 +260,7 @@ describe("RunTraceTable", () => {
       groupBy: "status",
     });
 
-    await user.click(screen.getByRole("button", { name: "Failing" }));
+    await user.click(screen.getByRole("button", { name: "Failed" }));
     expect(onQueryChange).toHaveBeenLastCalledWith({
       ...base,
       groupBy: "status",
@@ -291,7 +318,7 @@ describe("RunTraceTable", () => {
     expect(screen.getByText("Refund a double charge")).toBeInTheDocument();
     // The chip is translated into an API filter; the server result replaces
     // the rendered rows.
-    await user.click(screen.getByRole("button", { name: "Failing" }));
+    await user.click(screen.getByRole("button", { name: "Failed" }));
 
     expect(screen.queryByText("Refund a double charge")).toBeNull();
     expect(screen.getByText("Escalate to a human")).toBeInTheDocument();
@@ -301,7 +328,7 @@ describe("RunTraceTable", () => {
       expect.objectContaining({ filters: { status: ["failed"] } }),
     );
 
-    await user.click(screen.getByRole("button", { name: "Errored" }));
+    await user.click(screen.getByRole("button", { name: "Error" }));
     expect(screen.queryByText("Escalate to a human")).toBeNull();
     expect(screen.getByText("Handle a timeout")).toBeInTheDocument();
     expect(useRunCalls).toHaveBeenLastCalledWith(
@@ -337,7 +364,7 @@ describe("RunTraceTable", () => {
     const user = userEvent.setup();
     renderTable({ initialFilters: { callExecutionId: ["t1", "t2"] } });
 
-    await user.click(screen.getByRole("button", { name: "Failing" }));
+    await user.click(screen.getByRole("button", { name: "Failed" }));
 
     expect(useRunCalls).toHaveBeenLastCalledWith(
       "ex1",
@@ -433,9 +460,9 @@ describe("RunTraceTable", () => {
       expect.objectContaining({ groupBy: "status" }),
     );
 
-    expect(screen.getByText("Passed")).toBeInTheDocument();
-    expect(screen.getByText("Failed")).toBeInTheDocument();
-    expect(screen.getAllByText("Errored")).not.toHaveLength(0);
+    expect(screen.getAllByText("Passed")).not.toHaveLength(0);
+    expect(screen.getAllByText("Failed")).not.toHaveLength(0);
+    expect(screen.getAllByText("Error")).not.toHaveLength(0);
   });
 
   it("offers the Scenarios tab's axes plus Status and requests the chosen one", async () => {

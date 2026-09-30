@@ -52163,7 +52163,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "conversation_branch",
         "persona",
         "persona_details",
-        "sub_goals",
+        "sub_goal_results",
         "outcome",
         "cost_breakdown_cents",
         "evaluations",
@@ -52597,17 +52597,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
         persona_details: {
           $ref: "#/definitions/PersonaDetails",
         },
-        sub_goals: {
+        sub_goal_results: {
           type: "array",
           items: {
-            type: "string",
-            minLength: 1,
+            $ref: "#/definitions/SubGoalResult",
           },
         },
         outcome: {
           title: "Outcome",
           type: "string",
-          enum: ["passed", "failed", "error", "inconclusive"],
+          enum: [
+            "queued",
+            "in_progress",
+            "passed",
+            "failed",
+            "inconclusive",
+            "error",
+          ],
         },
         cost_breakdown_cents: {
           $ref: "#/definitions/CostBreakdown",
@@ -85126,6 +85132,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SubGoalResult: {
+      required: ["name", "passed"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        passed: {
+          title: "Passed",
+          type: "boolean",
+          "x-nullable": true,
+        },
+      },
+    },
     CallTranscript: {
       required: ["content"],
       type: "object",
@@ -98467,9 +98489,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     TurnDistribution: {
-      required: ["passed", "failed", "error", "inconclusive", "turn_count"],
+      required: [
+        "queued",
+        "in_progress",
+        "passed",
+        "failed",
+        "error",
+        "inconclusive",
+        "turn_count",
+      ],
       type: "object",
       properties: {
+        queued: {
+          title: "Queued",
+          type: "integer",
+        },
+        in_progress: {
+          title: "In progress",
+          type: "integer",
+        },
         passed: {
           title: "Passed",
           type: "integer",
@@ -98518,7 +98556,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "conversation_branch",
         "persona",
         "persona_details",
-        "sub_goals",
+        "sub_goal_results",
         "harness_outcome_status",
         "source_scenario_key",
         "trial_index",
@@ -98583,11 +98621,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         persona_details: {
           $ref: "#/definitions/PersonaDetails",
         },
-        sub_goals: {
+        sub_goal_results: {
           type: "array",
           items: {
-            type: "string",
-            minLength: 1,
+            $ref: "#/definitions/SubGoalResult",
           },
         },
         harness_outcome_status: {
@@ -98610,7 +98647,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         outcome: {
           title: "Outcome",
           type: "string",
-          enum: ["passed", "failed", "error", "inconclusive"],
+          enum: [
+            "queued",
+            "in_progress",
+            "passed",
+            "failed",
+            "inconclusive",
+            "error",
+          ],
         },
         execution_status: {
           title: "Execution status",
@@ -111591,9 +111635,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     OutcomeCounts: {
-      required: ["passed", "failed", "error", "inconclusive"],
+      required: [
+        "queued",
+        "in_progress",
+        "passed",
+        "failed",
+        "error",
+        "inconclusive",
+      ],
       type: "object",
       properties: {
+        queued: {
+          title: "Queued",
+          type: "integer",
+        },
+        in_progress: {
+          title: "In progress",
+          type: "integer",
+        },
         passed: {
           title: "Passed",
           type: "integer",
@@ -111719,6 +111778,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     ReliabilityRow: {
       required: [
+        "queued",
+        "in_progress",
         "passed",
         "failed",
         "error",
@@ -111732,6 +111793,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
       ],
       type: "object",
       properties: {
+        queued: {
+          title: "Queued",
+          type: "integer",
+        },
+        in_progress: {
+          title: "In progress",
+          type: "integer",
+        },
         passed: {
           title: "Passed",
           type: "integer",
@@ -112154,9 +112223,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     RunDashboardRisk: {
-      required: ["scenario", "passed", "failed", "error", "inconclusive"],
+      required: [
+        "queued",
+        "in_progress",
+        "scenario",
+        "passed",
+        "failed",
+        "error",
+        "inconclusive",
+      ],
       type: "object",
       properties: {
+        queued: {
+          title: "Queued",
+          type: "integer",
+        },
+        in_progress: {
+          title: "In progress",
+          type: "integer",
+        },
         scenario: {
           title: "Scenario",
           type: "string",

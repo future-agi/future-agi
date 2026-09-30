@@ -309,3 +309,35 @@ def test_sql_scoring_matches_python(
     )
     assert bool(actual_passed) == (expected.outcome == "passed")
     assert bool(actual_failed) == (expected.outcome == "failed")
+
+
+@pytest.mark.parametrize(
+    "execution_status,expected",
+    [
+        ("pending", "queued"),
+        ("queued", "queued"),
+        ("ongoing", "in_progress"),
+        ("analyzing", "in_progress"),
+        ("completed", "inconclusive"),
+        ("failed", "error"),
+        ("cancelled", "error"),
+    ],
+)
+def test_call_outcome_distinguishes_lifecycle_from_terminal_verdict(
+    execution_status, expected
+):
+    call = SimpleNamespace(call_metadata={}, status=execution_status, eval_outputs={})
+    assert call_outcome(call, {}) == expected
+
+
+@pytest.mark.parametrize(
+    "execution_status", ["pending", "queued", "ongoing", "analyzing"]
+)
+def test_active_call_ignores_previous_harness_verdict(execution_status):
+    call = SimpleNamespace(
+        call_metadata={"harness_outcome_status": "error"},
+        status=execution_status,
+        eval_outputs={},
+    )
+    expected = "queued" if execution_status in {"pending", "queued"} else "in_progress"
+    assert call_outcome(call, {}) == expected

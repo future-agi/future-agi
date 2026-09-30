@@ -468,6 +468,14 @@ export type ${jsonAlias} = JsonValueApi;`,
       );
     }
 
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export interface SubGoalResultApi {",
+      "passed: boolean;",
+      "passed: boolean | null;",
+      "SubGoalResultApi.passed nullable",
+    );
+
     const columnConfigNullableFields = [
       ["group_by?: string;", "group_by?: string | null;"],
       ["output_type?: string;", "output_type?: string | null;"],
@@ -760,6 +768,19 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         '"next_cursor": zod.string().min(1),',
         '"next_cursor": zod.string().min(1).nullable(),',
         `${responseName}.next_cursor nullable`,
+      );
+    }
+
+    for (const responseName of [
+      "SimulateV3CallExecutionDetailResponse",
+      "SimulateV3TestExecutionCallsResponse",
+    ]) {
+      zod = assertReplaceRegexInNamedBlock(
+        zod,
+        `export const ${responseName} = zod.object({`,
+        /("sub_goal_results": zod\.array\(zod\.object\(\{[\s\S]*?"passed": )zod\.boolean\(\)/,
+        "$1zod.boolean().nullable()",
+        `${responseName}.sub_goal_results.passed nullable`,
       );
     }
 

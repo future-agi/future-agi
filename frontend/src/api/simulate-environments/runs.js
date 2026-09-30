@@ -6,6 +6,7 @@ import {
   STOPPABLE_STATUSES,
   TERMINAL_STATUSES,
 } from "src/sections/common/simulation/constants/statusStyles";
+import { runStateFor } from "src/sections/simulate/environments/workspace/runs/runs.constants";
 import { MOCK_RUNS } from "./_fixtures/runs";
 
 // The Runs tab's data source. For a real completed harness job the env carries
@@ -31,16 +32,6 @@ export function listRunTestExecutions(runTestId) {
 // and order (kept out of this pure mapper). `executionId` mirrors `id` so a row
 // click routes into the
 // reused product execution detail.
-const RUN_STATE = {
-  Pending: "queued",
-  Running: "running",
-  Evaluating: "running",
-  Cancelling: "cancelling",
-  Completed: "finished",
-  Failed: "failed",
-  Cancelled: "cancelled",
-};
-
 export function executionToRun(raw) {
   const total =
     raw?.total_calls ?? raw?.total_chats ?? raw?.calls_attempted ?? raw?.calls ?? 0;
@@ -72,7 +63,7 @@ export function executionToRun(raw) {
     status,
     // The run's lifecycle for the Status column — `status` above is a verdict
     // (passed/failed), this is where the run is (queued/running/completed).
-    runState: RUN_STATE[raw?.status] ?? status,
+    runState: runStateFor(raw?.status) ?? status,
     // Only a run that hasn't finished and isn't already stopping can be stopped.
     stoppable: STOPPABLE_STATUSES.includes(raw?.status),
     startedAt: raw?.start_time ?? null,

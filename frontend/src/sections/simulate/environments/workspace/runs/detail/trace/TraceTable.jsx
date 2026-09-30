@@ -26,9 +26,7 @@ import {
   numCellSx,
   bodyCellSx,
   runOutcome,
-  CALL_STATUS_CHIPS,
 } from "./traceTable.constants";
-import StatusChip from "../../StatusChip";
 import { MetricValue, Score, Field, UnscoredEval } from "./traceCells";
 import TraceGroupHeaderRow from "./TraceGroupHeaderRow";
 
@@ -211,24 +209,54 @@ export default function TraceTable({
                   </>
                 )}
               </Stack>
+              {t.subGoalResults?.length > 0 && (
+                <Stack spacing={0.5} sx={{ mt: 1 }}>
+                  {t.subGoalResults.map((goal) => {
+                    const verdict = runOutcome(
+                      goal.passed === true
+                        ? "passed"
+                        : goal.passed === false
+                          ? "failed"
+                          : "inconclusive",
+                    );
+                    return (
+                      <Stack
+                        key={goal.name}
+                        direction="row"
+                        alignItems="center"
+                        spacing={0.75}
+                      >
+                        <Typography
+                          sx={{ typography: "s3", color: "text.secondary" }}
+                        >
+                          {goal.name}
+                        </Typography>
+                        {goal.passed == null ? (
+                          <Typography
+                            sx={{ typography: "s3", color: verdict.color }}
+                          >
+                            {verdict.label}
+                          </Typography>
+                        ) : (
+                          <Box
+                            role="img"
+                            aria-label={verdict.label}
+                            title={verdict.label}
+                            sx={{ display: "flex", color: verdict.color }}
+                          >
+                            <Iconify
+                              icon={goal.passed ? "mdi:check" : "mdi:close"}
+                              width={16}
+                              aria-hidden="true"
+                            />
+                          </Box>
+                        )}
+                      </Stack>
+                    );
+                  })}
+                </Stack>
+              )}
             </Box>
-          </TableCell>
-        )}
-
-        {show("status") && (
-          <TableCell sx={bodyCellSx} onClick={() => onOpen(t)}>
-            {CALL_STATUS_CHIPS[t.executionStatus] ? (
-              <Box sx={{ display: "inline-flex" }}>
-                <StatusChip
-                  status={CALL_STATUS_CHIPS[t.executionStatus].chip}
-                  label={CALL_STATUS_CHIPS[t.executionStatus].label}
-                />
-              </Box>
-            ) : (
-              <Typography sx={{ typography: "s3", color: "text.disabled" }}>
-                -
-              </Typography>
-            )}
           </TableCell>
         )}
 
@@ -390,11 +418,6 @@ export default function TraceTable({
               {show("callDetails") && (
                 <TableCell sx={{ ...headCellSx, width: 200 }}>
                   Run details
-                </TableCell>
-              )}
-              {show("status") && (
-                <TableCell sx={{ ...headCellSx, width: 120 }}>
-                  Status
                 </TableCell>
               )}
               {show("persona") && (

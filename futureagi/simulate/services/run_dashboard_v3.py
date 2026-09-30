@@ -37,6 +37,15 @@ from simulate.services.run_results_v3_expressions import (
 
 CHART_BUCKETS = 100
 NOT_REPORTED = "Not reported"
+GOAL_OUTCOMES = (
+    "queued",
+    "in_progress",
+    "passed",
+    "failed",
+    "error",
+    "escalated",
+    "inconclusive",
+)
 CALLER_END_REASONS = (
     "customer_end_call",
     "customer-ended-call",
@@ -151,7 +160,7 @@ def _breakdown(
             }
         )
     order = {
-        "goal_outcome": ["passed", "failed", "error", "escalated", "inconclusive"],
+        "goal_outcome": GOAL_OUTCOMES,
     }.get(key)
     if order:
         by_label = {segment["label"]: segment for segment in segments}
@@ -704,6 +713,8 @@ def build_run_dashboard(
         "use_case_risk": [
             {
                 "scenario": row["scenario"],
+                "queued": row["outcomes"]["queued"],
+                "in_progress": row["outcomes"]["in_progress"],
                 "passed": row["outcomes"]["passed"],
                 "failed": row["outcomes"]["failed"],
                 "error": row["outcomes"]["error"],
