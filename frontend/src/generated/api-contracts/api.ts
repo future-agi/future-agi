@@ -607,7 +607,11 @@ import type {
   HarnessRunCreateApi,
   HarnessRunCreateResponseApi,
   HarnessScenarioAmendApi,
+  HarnessScenarioChangeResponseApi,
   HarnessScenarioCoverageResponseApi,
+  HarnessScenarioDeleteApi,
+  HarnessScenarioEditApi,
+  HarnessScenarioErrorApi,
   HarnessScenarioListResponseApi,
   HarnessScenarioOperationApi,
   HarnessScenarioOperationResponseApi,
@@ -59064,6 +59068,72 @@ export const simulateApiHarnessEnvironmentsScenariosScenarioCoverage = async (
   );
 };
 
+export type simulateApiHarnessEnvironmentsScenariosRemoveScenariosResponse200 =
+  {
+    data: HarnessScenarioChangeResponseApi;
+    status: 200;
+  };
+
+export type simulateApiHarnessEnvironmentsScenariosRemoveScenariosResponse404 =
+  {
+    data: HarnessScenarioErrorApi;
+    status: 404;
+  };
+
+export type simulateApiHarnessEnvironmentsScenariosRemoveScenariosResponse409 =
+  {
+    data: HarnessScenarioErrorApi;
+    status: 409;
+  };
+
+export type simulateApiHarnessEnvironmentsScenariosRemoveScenariosResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 404 | 409>;
+  };
+
+export type simulateApiHarnessEnvironmentsScenariosRemoveScenariosResponseSuccess =
+  simulateApiHarnessEnvironmentsScenariosRemoveScenariosResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsScenariosRemoveScenariosResponseError =
+  (
+    | simulateApiHarnessEnvironmentsScenariosRemoveScenariosResponse404
+    | simulateApiHarnessEnvironmentsScenariosRemoveScenariosResponse409
+    | simulateApiHarnessEnvironmentsScenariosRemoveScenariosResponseDefault
+  ) & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsScenariosRemoveScenariosResponse =
+  | simulateApiHarnessEnvironmentsScenariosRemoveScenariosResponseSuccess
+  | simulateApiHarnessEnvironmentsScenariosRemoveScenariosResponseError;
+
+export const getSimulateApiHarnessEnvironmentsScenariosRemoveScenariosUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/scenarios/delete/`;
+};
+
+/**
+ * Remove several scenarios at once.
+ */
+export const simulateApiHarnessEnvironmentsScenariosRemoveScenarios = async (
+  id: string,
+  harnessScenarioDeleteApi: HarnessScenarioDeleteApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsScenariosRemoveScenariosResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsScenariosRemoveScenariosResponse>(
+    getSimulateApiHarnessEnvironmentsScenariosRemoveScenariosUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessScenarioDeleteApi),
+    },
+  );
+};
+
 export type simulateApiHarnessEnvironmentsScenarioDetailResponse200 = {
   data: HarnessScenarioRowApi;
   status: 200;
@@ -59116,6 +59186,137 @@ export const simulateApiHarnessEnvironmentsScenarioDetail = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsScenariosPartialUpdateResponse200 = {
+  data: HarnessScenarioChangeResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsScenariosPartialUpdateResponse400 = {
+  data: HarnessScenarioErrorApi;
+  status: 400;
+};
+
+export type simulateApiHarnessEnvironmentsScenariosPartialUpdateResponse404 = {
+  data: HarnessScenarioErrorApi;
+  status: 404;
+};
+
+export type simulateApiHarnessEnvironmentsScenariosPartialUpdateResponse409 = {
+  data: HarnessScenarioErrorApi;
+  status: 409;
+};
+
+export type simulateApiHarnessEnvironmentsScenariosPartialUpdateResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 409>;
+  };
+
+export type simulateApiHarnessEnvironmentsScenariosPartialUpdateResponseSuccess =
+  simulateApiHarnessEnvironmentsScenariosPartialUpdateResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsScenariosPartialUpdateResponseError =
+  (
+    | simulateApiHarnessEnvironmentsScenariosPartialUpdateResponse400
+    | simulateApiHarnessEnvironmentsScenariosPartialUpdateResponse404
+    | simulateApiHarnessEnvironmentsScenariosPartialUpdateResponse409
+    | simulateApiHarnessEnvironmentsScenariosPartialUpdateResponseDefault
+  ) & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsScenariosPartialUpdateResponse =
+  | simulateApiHarnessEnvironmentsScenariosPartialUpdateResponseSuccess
+  | simulateApiHarnessEnvironmentsScenariosPartialUpdateResponseError;
+
+export const getSimulateApiHarnessEnvironmentsScenariosPartialUpdateUrl = (
+  id: string,
+  scenarioId: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/scenarios/${scenarioId}/`;
+};
+
+/**
+ * Replace a scenario's directly editable fields; nothing is re-proved.
+ */
+export const simulateApiHarnessEnvironmentsScenariosPartialUpdate = async (
+  id: string,
+  scenarioId: string,
+  harnessScenarioEditApi: HarnessScenarioEditApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsScenariosPartialUpdateResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsScenariosPartialUpdateResponse>(
+    getSimulateApiHarnessEnvironmentsScenariosPartialUpdateUrl(id, scenarioId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessScenarioEditApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsScenariosDeleteResponse200 = {
+  data: HarnessScenarioChangeResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsScenariosDeleteResponse404 = {
+  data: HarnessScenarioErrorApi;
+  status: 404;
+};
+
+export type simulateApiHarnessEnvironmentsScenariosDeleteResponse409 = {
+  data: HarnessScenarioErrorApi;
+  status: 409;
+};
+
+export type simulateApiHarnessEnvironmentsScenariosDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404 | 409>;
+};
+
+export type simulateApiHarnessEnvironmentsScenariosDeleteResponseSuccess =
+  simulateApiHarnessEnvironmentsScenariosDeleteResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsScenariosDeleteResponseError = (
+  | simulateApiHarnessEnvironmentsScenariosDeleteResponse404
+  | simulateApiHarnessEnvironmentsScenariosDeleteResponse409
+  | simulateApiHarnessEnvironmentsScenariosDeleteResponseDefault
+) & {
+  headers: Headers;
+};
+
+export type simulateApiHarnessEnvironmentsScenariosDeleteResponse =
+  | simulateApiHarnessEnvironmentsScenariosDeleteResponseSuccess
+  | simulateApiHarnessEnvironmentsScenariosDeleteResponseError;
+
+export const getSimulateApiHarnessEnvironmentsScenariosDeleteUrl = (
+  id: string,
+  scenarioId: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/scenarios/${scenarioId}/`;
+};
+
+/**
+ * Remove one scenario; runs that used it keep it in their history.
+ */
+export const simulateApiHarnessEnvironmentsScenariosDelete = async (
+  id: string,
+  scenarioId: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsScenariosDeleteResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsScenariosDeleteResponse>(
+    getSimulateApiHarnessEnvironmentsScenariosDeleteUrl(id, scenarioId),
+    {
+      ...options,
+      method: "DELETE",
     },
   );
 };

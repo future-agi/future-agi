@@ -500,3 +500,37 @@ class HarnessScenarioCoverageResponseSerializer(serializers.Serializer):
     axes = serializers.ListField(child=serializers.CharField())
     axis_labels = serializers.DictField()
     level_labels = serializers.DictField()
+
+
+class HarnessScenarioEditSerializer(serializers.Serializer):
+    """Fields replaced directly, without re-proving the scenario.
+
+    Which of them a suite takes, and their allowed values, follow the list response's
+    ``scenario_editing`` contract; the service refuses anything outside it.
+    """
+
+    max_turns = serializers.IntegerField(required=False, min_value=1, max_value=200)
+    background_noise = serializers.CharField(required=False)
+    keywords = serializers.ListField(
+        child=serializers.CharField(max_length=100), required=False, max_length=50
+    )
+    persona = serializers.DictField(required=False)
+    expected_revision = serializers.CharField(required=False, allow_blank=True)
+
+
+class HarnessScenarioDeleteSerializer(serializers.Serializer):
+    scenario_ids = serializers.ListField(
+        child=serializers.UUIDField(), min_length=1, max_length=1000
+    )
+    expected_revision = serializers.CharField(required=False, allow_blank=True)
+
+
+class HarnessScenarioChangeResponseSerializer(serializers.Serializer):
+    receipts = serializers.ListField(child=serializers.DictField())
+    revision = serializers.CharField(allow_blank=True)
+    scenario = HarnessScenarioRowSerializer(allow_null=True)
+
+
+class HarnessScenarioErrorSerializer(serializers.Serializer):
+    error = serializers.CharField()
+    message = serializers.CharField()

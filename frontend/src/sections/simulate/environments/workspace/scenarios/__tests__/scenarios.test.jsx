@@ -40,12 +40,15 @@ vi.mock("src/api/simulate-environments/scenarios", async () => {
     ...actual,
     listScenarios: vi.fn(),
     amendScenarios: vi.fn(),
+    deleteScenarios: vi.fn(),
     // Mock coverage too so CoverageMatrix does not fire a real (failing) request
     // that spams the axios auth-redirect interceptor on every render.
     scenarioCoverage: vi.fn(async () => ({ axes: [], per_axis: [], rows: [], columns: [], cells: [] })),
   };
 });
-const { listScenarios, amendScenarios } = await import("src/api/simulate-environments/scenarios");
+const { listScenarios, amendScenarios, deleteScenarios } = await import(
+  "src/api/simulate-environments/scenarios"
+);
 const { queryScenarioFixture, resetScenarioFixture } = await import(
   "src/api/simulate-environments/_fixtures/scenariosFixtures"
 );
@@ -72,6 +75,8 @@ beforeEach(() => {
   );
   amendScenarios.mockReset();
   amendScenarios.mockResolvedValue({ receipts: [] });
+  deleteScenarios.mockReset();
+  deleteScenarios.mockResolvedValue({ receipts: [], revision: "", scenario: null });
 });
 
 describe("ScenariosStep", () => {
@@ -166,10 +171,10 @@ describe("ScenariosStep", () => {
     expect(screen.getAllByText(aName).length).toBeGreaterThan(0);
   });
 
-  it("removes a scenario through a confirmed amend drop by name", async () => {
+  it("removes a scenario through a confirmed delete by its row id", async () => {
     renderStep();
     await screen.findByRole("table");
-    const firstName = defaultView().results[0].name;
+    const firstId = defaultView().results[0].id;
     const removes = screen.getAllByRole("button", {
       name: "Remove from this environment",
     });
@@ -179,11 +184,9 @@ describe("ScenariosStep", () => {
     expect(screen.getByText("Delete scenarios?")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
-    await waitFor(() => expect(amendScenarios).toHaveBeenCalledTimes(1));
-    expect(amendScenarios).toHaveBeenCalledWith("job-test", {
-      rework: true,
-      changes: [{ op: "drop", scenarios: [firstName] }],
-    });
+    await waitFor(() => expect(deleteScenarios).toHaveBeenCalledTimes(1));
+    expect(deleteScenarios).toHaveBeenCalledWith("job-test", [firstId]);
+    expect(amendScenarios).not.toHaveBeenCalled();
   });
 
   it("shows the empty placeholder with a disabled (coming-soon) Add when there are no scenarios", async () => {
@@ -215,10 +218,9 @@ describe("ScenariosStep — bulk selection", () => {
     expect(getScenarioSelection().ids).toEqual([firstRowId()]);
   });
 
-  it("bulk-deletes the selected rows through a confirmed amend drop (no undo)", async () => {
+  it("bulk-deletes the selected rows by row id after a confirm (no undo)", async () => {
     renderStep();
     await screen.findByRole("table");
-    const firstName = defaultView().results[0].name;
     selectFirstRow();
 
     fireEvent.click(screen.getByRole("button", { name: "Delete selected scenarios" }));
@@ -226,12 +228,9 @@ describe("ScenariosStep — bulk selection", () => {
     expect(screen.getByText("Delete scenarios?")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
-    await waitFor(() => expect(amendScenarios).toHaveBeenCalledTimes(1));
-    // include-mode: the drop names the picked row (resolved server-side by name).
-    expect(amendScenarios).toHaveBeenCalledWith("job-test", {
-      rework: true,
-      changes: [{ op: "drop", scenarios: [firstName] }],
-    });
+    await waitFor(() => expect(deleteScenarios).toHaveBeenCalledTimes(1));
+    // include-mode: the delete carries the picked row's id.
+    expect(deleteScenarios).toHaveBeenCalledWith("job-test", [firstRowId()]);
     // The selection clears on success and the bus empties.
     await waitFor(() => expect(getScenarioSelection().ids).toEqual([]));
   });

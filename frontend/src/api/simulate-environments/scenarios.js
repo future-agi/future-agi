@@ -65,6 +65,26 @@ export const listScenarios = async (jobId, params = {}) => {
   ).data;
 };
 
+const scenarioPath = (jobId, scenarioId) =>
+  apiPath("/simulate/api/harness-environments/{id}/scenarios/{scenario_id}/", {
+    id: jobId,
+    scenario_id: scenarioId,
+  });
+const scenariosDeletePath = (jobId) =>
+  apiPath("/simulate/api/harness-environments/{id}/scenarios/delete/", {
+    id: jobId,
+  });
+
+// Replace a scenario's directly editable fields (by row id); nothing is re-proved.
+// The response is { receipts, revision, scenario }.
+export const editScenario = async (jobId, scenarioId, body) =>
+  (await axios.patch(scenarioPath(jobId, scenarioId), body)).data;
+
+// Remove scenarios by row id; the rows stay for the runs that used them.
+export const deleteScenarios = async (jobId, scenarioIds) =>
+  (await axios.post(scenariosDeletePath(jobId), { scenario_ids: scenarioIds }))
+    .data;
+
 // Amend one job's scenarios — edit (set_field / set_persona) and delete/bulk
 // delete (drop). The body is { rework, changes:[...] }; the response is
 // { receipts:[{ scenario, outcome, why }] }. There is no create route.
