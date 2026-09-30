@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { alpha } from "@mui/material/styles";
 import {
   Box, Stack, Typography, Table, TableBody, TableCell, TableHead, TableRow,
@@ -7,9 +7,11 @@ import {
 } from "@mui/material";
 
 import Iconify from "src/components/iconify";
+import DraggableColResizer from "src/components/draggable-col-resizer";
+import { getStorage, setStorage } from "src/hooks/use-local-storage";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import { ClampCell, SubTasksCell, TruncTooltip } from "./ScenarioTableCells";
-import { SCENARIOS_COPY } from "./scenarios.constants";
+import { ROW_HEIGHTS, SCENARIOS_COPY } from "./scenarios.constants";
 import { GROUP_SHAPE, SCENARIO_SHAPE } from "./scenarios.shapes";
 
 // A seeded-from-template env is read-only until forked; every mutating control
@@ -20,6 +22,29 @@ const LOCK_TOOLTIP = "Fork this environment to edit.";
 // Height of the sticky column-header row (size="small" + s3 type ≈ 28.5px).
 // The group headers pin at this offset so they rest just under it, not on top.
 const HEAD_OFFSET = 28;
+
+const WIDTHS_KEY = "simulate:scenario-table:column-widths";
+const DEFAULT_WIDTHS = { Scenario: 280, Persona: 200, Situation: 320, "Sub-goals": 260, "Ideal outcome": 320 };
+const FIXED_WIDTHS = { select: 48, "#": 44, "": 96 };
+const FILLER = "filler";
+const edgeLine = (color) => ({ backgroundColor: "transparent", "&::after": { bgcolor: color } });
+const RESIZE_HANDLE_SX = {
+  position: "absolute", top: 0, right: 0, bottom: 0,
+  width: 6, height: "auto", mx: 0, borderRadius: 0,
+  "&::after": {
+    content: '""', position: "absolute", top: 0, bottom: 0, right: 0, width: "1px",
+    bgcolor: "transparent", transition: "background-color 120ms",
+  },
+  "&:hover": edgeLine("border.hover"),
+  "&:active": edgeLine("border.active"),
+};
+
+function readWidths() {
+  const saved = getStorage(WIDTHS_KEY) || {};
+  return Object.fromEntries(
+    Object.entries(DEFAULT_WIDTHS).map(([key, width]) => [key, Number(saved[key]) > 0 ? Number(saved[key]) : width]),
+  );
+}
 
 // Neutral white-on-selected checkbox — no primary colour, keeps the table's
 // monochrome treatment.
@@ -33,7 +58,22 @@ const selectableCheckboxSx = {
 // The per-row edit pencil opens the scenario editor through onEdit. Stripped
 // from the source: the twin-seed override icon (twinSeedPrompt) — twin-only, not
 // on either entry path.
-export default function ScenarioTable({ rows, groups, onEdit, onRemove, onHideGroup, selectedIds, onSelectionChange, selection, pageIds, onTogglePage, locked = false }) {
+export default function ScenarioTable({ rows, groups, onEdit, onRemove, onHideGroup, selectedIds, onSelectionChange, selection, pageIds, onTogglePage, locked = false, rowHeight = "Short" }) {
+  const limits = ROW_HEIGHTS[rowHeight] || ROW_HEIGHTS.Short;
+  const [widths, setWidths] = useState(readWidths);
+  const widthsRef = useRef(widths);
+  widthsRef.current = widths;
+  const resizeHandlers = useMemo(
+    () => Object.fromEntries(
+      Object.keys(DEFAULT_WIDTHS).map((key) => [key, {
+        onResize: (next) => setWidths((prev) => ({ ...prev, [key]: next })),
+        getCurrentWidth: () => widthsRef.current[key],
+      }]),
+    ),
+    [],
+  );
+  const saveWidths = useCallback(() => setStorage(WIDTHS_KEY, widthsRef.current), []);
+
   // Two shapes come in: pre-grouped (list-view mirror) or a flat rows array.
   // Memoised so the flat fallback doesn't allocate a fresh array each render
   // (which would re-run the selection-sync effect below every render).
@@ -103,8 +143,10 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onHideGr
   // fork gate would only refuse.
   const columns = [
     ...(locked ? [] : ["select"]),
-    "#", "Scenario", "Persona", "Situation", "Sub-goals", "Ideal outcome", "",
+    "#", "Scenario", "Persona", "Situation", "Sub-goals", "Ideal outcome", FILLER, "",
   ];
+  const widthOf = (h) => widths[h] ?? FIXED_WIDTHS[h] ?? 0;
+  const tableWidth = columns.reduce((sum, h) => sum + widthOf(h), 0);
 
   return (
     // No own scroll wrapper: the parent (PagedScenarioViews) owns the scroll
@@ -116,13 +158,14 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onHideGr
       // Separate borders (spacing 0) so the sticky <thead> cells actually pin —
       // position:sticky on table-header cells is broken under the default
       // border-collapse:collapse. Spacing 0 keeps the collapsed look.
-      sx={{ minWidth: 1400, borderCollapse: "separate", borderSpacing: 0 }}
+      sx={{ tableLayout: "fixed", width: "100%", minWidth: tableWidth, borderCollapse: "separate", borderSpacing: 0 }}
     >
         <TableHead>
-          <TableRow>
+          <TableRow sx={{ "&:last-of-type .MuiTableCell-root": { borderColor: "divider" } }}>
             {columns.map((h, i) => {
               const isActions = i === columns.length - 1;
               const isSelect = h === "select";
+              const resize = resizeHandlers[h];
               return (
                 <TableCell
                   key={h || i}
@@ -138,8 +181,9 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onHideGr
                     // the columns stay labelled while the rows scroll. The group
                     // headers (in the body) pin just below it (top = HEAD_OFFSET).
                     position: "sticky", top: 0, zIndex: 3,
-                    ...(h === "#" && { width: 44 }),
-                    ...(isSelect && { width: 44, pl: 1.5 }),
+                    ...(h !== FILLER && { width: widthOf(h) }),
+                    ...(!isActions && h !== FILLER && { borderRight: "1px solid" }),
+                    ...(isSelect && { "&.MuiTableCell-paddingCheckbox": { width: FIXED_WIDTHS.select } }),
                     ...(isActions && {
                       // The top-right corner: sticky on both axes, above all.
                       right: 0, zIndex: 4,
@@ -156,7 +200,19 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onHideGr
                       onChange={toggleAll}
                       sx={selectableCheckboxSx}
                     />
-                  ) : h}
+                  ) : resize ? (
+                    <>
+                      <Box sx={{ overflow: "hidden", textOverflow: "ellipsis" }}>{h}</Box>
+                      <DraggableColResizer
+                        onResize={resize.onResize}
+                        getCurrentWidth={resize.getCurrentWidth}
+                        onResizeEnd={saveWidths}
+                        minWidth={120}
+                        maxWidth={800}
+                        sx={RESIZE_HANDLE_SX}
+                      />
+                    </>
+                  ) : h === FILLER ? null : h}
                 </TableCell>
               );
             })}
@@ -242,7 +298,7 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onHideGr
                       {idx}
                     </TableCell>
 
-                    <TableCell sx={{ maxWidth: 280, verticalAlign: "top" }}>
+                    <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
                       <Stack direction="row" alignItems="center" spacing={0.75}>
                         <TruncTooltip title={row.name || row.title}>
                           <Typography noWrap sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}>{row.name || row.title}</Typography>
@@ -260,7 +316,7 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onHideGr
                       </TruncTooltip>
                     </TableCell>
 
-                    <TableCell sx={{ maxWidth: 200, verticalAlign: "top" }}>
+                    <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
                       <TruncTooltip title={p?.name || ""}>
                         <Typography noWrap sx={{ typography: "s2" }}>{p?.name}</Typography>
                       </TruncTooltip>
@@ -269,17 +325,19 @@ export default function ScenarioTable({ rows, groups, onEdit, onRemove, onHideGr
                       )}
                     </TableCell>
 
-                    <TableCell sx={{ maxWidth: 320, verticalAlign: "top" }}>
-                      <ClampCell text={situationText} />
+                    <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
+                      <ClampCell text={situationText} lines={limits.lines} />
                     </TableCell>
 
-                    <TableCell sx={{ maxWidth: 260, verticalAlign: "top" }}>
-                      <SubTasksCell subTasks={subTasks} />
+                    <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
+                      <SubTasksCell subTasks={subTasks} limit={limits.subTasks} />
                     </TableCell>
 
-                    <TableCell sx={{ maxWidth: 320, verticalAlign: "top" }}>
-                      <ClampCell text={idealOutcomeText} />
+                    <TableCell sx={{ overflow: "hidden", verticalAlign: "top" }}>
+                      <ClampCell text={idealOutcomeText} lines={limits.lines} />
                     </TableCell>
+
+                    <TableCell />
 
                     <TableCell
                       align="right"
@@ -334,4 +392,5 @@ ScenarioTable.propTypes = {
   pageIds: PropTypes.arrayOf(PropTypes.string),
   onTogglePage: PropTypes.func,
   locked: PropTypes.bool,
+  rowHeight: PropTypes.oneOf(Object.keys(ROW_HEIGHTS)),
 };

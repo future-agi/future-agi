@@ -64,7 +64,7 @@ export default function VersionBar({ env, envState }) {
 
       <Tooltip arrow title={versionBar.scenariosTooltip}>
         <Typography sx={{ typography: "s3", color: "text.subtitle", cursor: "default" }}>
-          {versionBar.scenariosShared(envV.scenarios)}
+          {versionBar.scenariosShared(envState?.scenarios?.length ?? 0)}
         </Typography>
       </Tooltip>
     </Stack>

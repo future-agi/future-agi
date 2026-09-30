@@ -10,6 +10,7 @@ import { useRunsSummary } from "./useRunsSummary";
 import SummaryGraph from "./SummaryGraph";
 import SummaryLegend from "./SummaryLegend";
 import SummaryTable from "./SummaryTable";
+import { countCoveredScenarios } from "./summaryData";
 
 // The Runs tab: every run of the environment as one summary — the eval-score
 // trend graph over the runs table. Choosing a winner is a later phase,
@@ -22,7 +23,7 @@ const DEFAULT_SHOWN_EVALS = 5;
 
 export default function RunsSummary({ env, envState, onOpenRun, onGo }) {
   const { rows, rowsChrono, evals, series, isLoading } = useRunsSummary(env, envState);
-  const scenarioCount = envState.scenarios?.length ?? 0;
+  const scenarioCount = countCoveredScenarios(rows, envState.scenarios?.length ?? 0);
 
   // Which eval lines to draw. Until the user picks, the first five; the last
   // one cannot be unticked (an empty chart reads as a bug, not a choice).
