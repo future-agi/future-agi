@@ -382,7 +382,12 @@ def ensure_conversation(job: HostedHarnessJob) -> HostedHarnessConversation:
 
 def environment_authoring_revision(job: HostedHarnessJob) -> str:
     """Revision of the authored files currently accepted by the environment."""
-    environment = job.environment if job.environment_id else job
+    return snapshot_revision(job.environment if job.environment_id else job)
+
+
+def snapshot_revision(job: HostedHarnessJob) -> str:
+    """Revision of the authored snapshot this job replays: a Run's own pinned copy."""
+    environment = job
     metadata = (environment.payload or {}).get("metadata") or {}
     revision = str(metadata.get("authoring_revision") or "")
     if revision:
@@ -415,7 +420,8 @@ def enqueue_message(
     reply_to: uuid.UUID | None = None,
     payload: dict[str, Any] | None = None,
 ) -> tuple[HostedHarnessConversation, HostedHarnessConversationMessage, bool]:
-    expected_revision = environment_authoring_revision(job)
+    # A chat edits the snapshot its job replays, which for a Run is the Run's pinned copy.
+    expected_revision = snapshot_revision(job)
     supplied_payload = {"command_kind": kind, **(payload or {})}
     with transaction.atomic():
         conversation = (
@@ -1136,7 +1142,7 @@ def promote_latest_checkpoint(
     expected_revision = (
         str((command.payload or {}).get("_environment_revision") or "")
         if command is not None
-        else environment_authoring_revision(conversation.job)
+        else snapshot_revision(conversation.job)
     )
     return promote_conversation_checkpoint(
         conversation,
@@ -1237,13 +1243,21 @@ def promote_conversation_checkpoint(
                 status_code=409,
             )
         basis = checkpoint_basis or expected_revision
-        if basis != current_revision:
+        # A later turn in the same workspace still carries the basis it was loaded from; it is
+        # current when nothing but this conversation's own last publish has changed since.
+        continues_own_publish = bool(
+            published.get("basis")
+            and published.get("basis") == basis
+            and published.get("content_revision") == current_revision
+        )
+        if basis != current_revision and not continues_own_publish:
             stale_revision = current_revision
         else:
             checkpoints[conversation_id] = {
                 "digest": digest,
                 "sequence": sequence,
                 "content_revision": content_revision,
+                "basis": basis,
             }
             if content_revision == current_revision:
                 metadata["conversation_checkpoints"] = checkpoints
