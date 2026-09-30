@@ -66,8 +66,8 @@ nvidia = sorted(d.metadata['Name'] for d in md.distributions() if d.metadata['Na
 print('torch', torch.__version__, 'cuda', torch.version.cuda, 'nvidia/triton:', nvidia); \
 assert backend != 'cpu' or (torch.version.cuda is None and not nvidia), 'CPU build pulled CUDA packages'; \
 assert not backend.startswith('cu') or torch.version.cuda is not None, backend + ' build installed a CPU-only torch'"
-RUN find /usr/local/lib/python3.11/site-packages -mindepth 1 -type d -name tests -prune -exec rm -rf {} + \
-    && find /usr/local/lib/python3.11/site-packages -type f -name '*.pyi' -delete
+# Keep .pyi stubs: librosa (lazy_loader) reads librosa/__init__.pyi at import time.
+RUN find /usr/local/lib/python3.11/site-packages -mindepth 1 -type d -name tests -prune -exec rm -rf {} +
 
 # --------------- runtime stage ---------------
 FROM ${PYTHON_IMAGE}
