@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1055,
+  endpointCount: 1058,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28223,6 +28223,111 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    "/simulate/api/harness-environments/{id}/scenarios/": {
+      get: {
+        operationId: "simulate_api_harness-environments_scenarios",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          page: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 1000,
+            },
+          },
+          search: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          ordering: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          group_by: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessScenarioListResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/scenarios/coverage/": {
+      get: {
+        operationId:
+          "simulate_api_harness-environments_scenarios_scenario_coverage",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          search: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          row_axis: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          col_axis: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessScenarioCoverageResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/scenarios/{scenario_id}/": {
+      get: {
+        operationId: "simulate_api_harness-environments_scenario_detail",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessScenarioRow",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/api/harness-jobs/": {
       get: {
         operationId: "simulate_api_harness-jobs_list",
@@ -63143,6 +63248,198 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessScenarioCoverageResponse: {
+      required: [
+        "per_axis",
+        "row_axis",
+        "row_axis_label",
+        "col_axis",
+        "col_axis_label",
+        "rows",
+        "columns",
+        "cells",
+        "axes",
+        "axis_labels",
+        "level_labels",
+      ],
+      type: "object",
+      properties: {
+        per_axis: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        row_axis: {
+          title: "Row axis",
+          type: "string",
+          minLength: 1,
+        },
+        row_axis_label: {
+          title: "Row axis label",
+          type: "string",
+          minLength: 1,
+        },
+        col_axis: {
+          title: "Col axis",
+          type: "string",
+          minLength: 1,
+        },
+        col_axis_label: {
+          title: "Col axis label",
+          type: "string",
+          minLength: 1,
+        },
+        rows: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        columns: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        cells: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        axes: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        axis_labels: {
+          title: "Axis labels",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        level_labels: {
+          title: "Level labels",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+      },
+    },
+    HarnessScenarioListResponse: {
+      required: [
+        "count",
+        "next",
+        "previous",
+        "total_pages",
+        "current_page",
+        "results",
+        "groups",
+        "group_by",
+        "fields",
+        "scenario_editing",
+        "groupings",
+        "level_labels",
+      ],
+      type: "object",
+      properties: {
+        count: {
+          title: "Count",
+          type: "integer",
+        },
+        next: {
+          title: "Next",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        previous: {
+          title: "Previous",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        total_pages: {
+          title: "Total pages",
+          type: "integer",
+        },
+        current_page: {
+          title: "Current page",
+          type: "integer",
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessScenarioRow",
+          },
+        },
+        groups: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        group_by: {
+          title: "Group by",
+          type: "string",
+        },
+        fields: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        scenario_editing: {
+          title: "Scenario editing",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        groupings: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: {
+              type: "string",
+              "x-nullable": true,
+            },
+          },
+        },
+        level_labels: {
+          title: "Level labels",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+      },
+    },
     HarnessScenarioOperation: {
       required: ["operation"],
       type: "object",
@@ -63217,6 +63514,125 @@ export const OPENAPI_CONTRACT = Object.freeze({
       properties: {
         result: {
           $ref: "#/definitions/HarnessScenarioOperationResult",
+        },
+      },
+    },
+    HarnessScenarioRow: {
+      required: [
+        "id",
+        "scenario_id",
+        "scenario_key",
+        "number",
+        "name",
+        "use_case",
+        "instruction",
+        "branch",
+        "tests",
+        "persona",
+        "coverage",
+        "sub_goals",
+        "keywords",
+        "background_noise",
+        "max_turns",
+        "status",
+        "call_execution_id",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        scenario_id: {
+          title: "Scenario id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        scenario_key: {
+          title: "Scenario key",
+          type: "string",
+          minLength: 1,
+        },
+        number: {
+          title: "Number",
+          type: "integer",
+          "x-nullable": true,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+        },
+        use_case: {
+          title: "Use case",
+          type: "string",
+        },
+        instruction: {
+          title: "Instruction",
+          type: "string",
+        },
+        branch: {
+          title: "Branch",
+          type: "string",
+        },
+        tests: {
+          title: "Tests",
+          type: "string",
+        },
+        persona: {
+          title: "Persona",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        coverage: {
+          title: "Coverage",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        sub_goals: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        keywords: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+        background_noise: {
+          title: "Background noise",
+          type: "string",
+        },
+        max_turns: {
+          title: "Max turns",
+          type: "integer",
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        call_execution_id: {
+          title: "Call execution id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        group: {
+          title: "Group",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
         },
       },
     },

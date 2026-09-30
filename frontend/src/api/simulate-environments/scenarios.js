@@ -25,9 +25,11 @@ const sampleEmulator = () => import("./_fixtures/scenariosFixtures");
  */
 
 const scenariosPath = (jobId) =>
-  apiPath("/simulate/api/harness-jobs/{id}/scenarios/", { id: jobId });
+  apiPath("/simulate/api/harness-environments/{id}/scenarios/", { id: jobId });
 export const scenariosCoveragePath = (jobId) =>
-  apiPath("/simulate/api/harness-jobs/{id}/scenarios/coverage/", { id: jobId });
+  apiPath("/simulate/api/harness-environments/{id}/scenarios/coverage/", {
+    id: jobId,
+  });
 export const scenariosAmendPath = (jobId) =>
   apiPath("/simulate/api/harness-jobs/{id}/scenarios/amend/", { id: jobId });
 

@@ -35973,6 +35973,140 @@ export const SimulateApiHarnessEnvironmentsRunsAddRunEvaluationBody =
   });
 
 /**
+ * One page of the environment's scenarios, each identified by its row id.
+ */
+export const SimulateApiHarnessEnvironmentsScenariosParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsScenariosQueryLimitMax = 1000;
+
+export const SimulateApiHarnessEnvironmentsScenariosQueryParams = zod.object({
+  page: zod.number().min(1).optional(),
+  limit: zod
+    .number()
+    .min(1)
+    .max(simulateApiHarnessEnvironmentsScenariosQueryLimitMax)
+    .optional(),
+  search: zod.string().optional(),
+  ordering: zod.string().optional(),
+  group_by: zod.string().optional(),
+});
+
+export const SimulateApiHarnessEnvironmentsScenariosResponse = zod.object({
+  count: zod.number(),
+  next: zod.string().min(1),
+  previous: zod.string().min(1),
+  total_pages: zod.number(),
+  current_page: zod.number(),
+  results: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      scenario_id: zod.string().uuid(),
+      scenario_key: zod.string().min(1),
+      number: zod.number(),
+      name: zod.string(),
+      use_case: zod.string(),
+      instruction: zod.string(),
+      branch: zod.string(),
+      tests: zod.string(),
+      persona: zod.record(zod.string(), zod.string()),
+      coverage: zod.record(zod.string(), zod.string()),
+      sub_goals: zod.array(zod.object({}).passthrough()),
+      keywords: zod.array(zod.object({}).passthrough()),
+      background_noise: zod.string(),
+      max_turns: zod.number(),
+      status: zod.string().min(1),
+      call_execution_id: zod.string().uuid(),
+      group: zod.string().min(1).optional(),
+    }),
+  ),
+  groups: zod.array(zod.record(zod.string(), zod.string())),
+  group_by: zod.string(),
+  fields: zod.array(zod.record(zod.string(), zod.string())),
+  scenario_editing: zod.record(zod.string(), zod.string()),
+  groupings: zod.array(zod.record(zod.string(), zod.string())),
+  level_labels: zod.record(zod.string(), zod.string()),
+});
+
+/**
+ * An environment is the job that built it (the world itself lives in object
+storage, addressed from the job's metadata), so these endpoints project the
+same rows the harness-jobs API serves. They exist separately because the
+list needs a row, not a run: the jobs list returns every event, receipt and
+stage-output payload for up to a hundred jobs, which is a detail document
+repeated a hundred times.
+
+Running and grading a simulation are deliberately not here. ``run`` starts
+one and returns 202; progress is read from the job.
+ * @summary The environments surface: list, delete, and start a simulation.
+ */
+export const SimulateApiHarnessEnvironmentsScenariosScenarioCoverageParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const SimulateApiHarnessEnvironmentsScenariosScenarioCoverageQueryParams =
+  zod.object({
+    search: zod.string().optional(),
+    row_axis: zod.string().optional(),
+    col_axis: zod.string().optional(),
+  });
+
+export const SimulateApiHarnessEnvironmentsScenariosScenarioCoverageResponse =
+  zod.object({
+    per_axis: zod.array(zod.record(zod.string(), zod.string())),
+    row_axis: zod.string().min(1),
+    row_axis_label: zod.string().min(1),
+    col_axis: zod.string().min(1),
+    col_axis_label: zod.string().min(1),
+    rows: zod.array(zod.object({}).passthrough()),
+    columns: zod.array(zod.object({}).passthrough()),
+    cells: zod.array(zod.record(zod.string(), zod.string())),
+    axes: zod.array(zod.string().min(1)),
+    axis_labels: zod.record(zod.string(), zod.string()),
+    level_labels: zod.record(zod.string(), zod.string()),
+  });
+
+/**
+ * An environment is the job that built it (the world itself lives in object
+storage, addressed from the job's metadata), so these endpoints project the
+same rows the harness-jobs API serves. They exist separately because the
+list needs a row, not a run: the jobs list returns every event, receipt and
+stage-output payload for up to a hundred jobs, which is a detail document
+repeated a hundred times.
+
+Running and grading a simulation are deliberately not here. ``run`` starts
+one and returns 202; progress is read from the job.
+ * @summary The environments surface: list, delete, and start a simulation.
+ */
+export const SimulateApiHarnessEnvironmentsScenarioDetailParams = zod.object({
+  id: zod.string(),
+  scenario_id: zod.string(),
+});
+
+export const SimulateApiHarnessEnvironmentsScenarioDetailResponse = zod.object({
+  id: zod.string().uuid(),
+  scenario_id: zod.string().uuid(),
+  scenario_key: zod.string().min(1),
+  number: zod.number(),
+  name: zod.string(),
+  use_case: zod.string(),
+  instruction: zod.string(),
+  branch: zod.string(),
+  tests: zod.string(),
+  persona: zod.record(zod.string(), zod.string()),
+  coverage: zod.record(zod.string(), zod.string()),
+  sub_goals: zod.array(zod.object({}).passthrough()),
+  keywords: zod.array(zod.object({}).passthrough()),
+  background_noise: zod.string(),
+  max_turns: zod.number(),
+  status: zod.string().min(1),
+  call_execution_id: zod.string().uuid(),
+  group: zod.string().min(1).optional(),
+});
+
+/**
  * Validates the v1.6 request contract and delegates execution to the public backend selected by
 ``settings.HARNESS_PROVIDER`` (``hosted`` or ``sandbox``). The hosted backend independently
 selects its managed sandbox runtime.

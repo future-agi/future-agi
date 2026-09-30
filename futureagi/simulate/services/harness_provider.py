@@ -27,6 +27,12 @@ from simulate.models import (
     HostedHarnessStageOutput,
     TestExecution,
 )
+from simulate.services.harness_scenarios import (
+    EDITABLE_BEHAVIOUR_FIELDS,
+    EDITABLE_PERSONA_FIELDS,
+    EDITABLE_TEXT_FIELDS,
+    editing_contract,
+)
 from simulate.services.hosted_harness_conversation import serialize_conversation
 from tfc.utils.api_errors import build_error_envelope
 
@@ -1708,158 +1714,44 @@ class HostedHarnessProvider:
         return serialize_job(child)
 
     # Editable fields; all but `tests` are refused when the caller declines a re-proof.
-    _DESCRIPTIVE_FIELDS = frozenset({"tests"})
-    _BEHAVIOURAL_FIELDS = frozenset({"max_turns", "background_noise", "keywords"})
-    _PERSONA_FIELDS = frozenset(
-        {
-            "personality",
-            "communication_style",
-            "accent",
-            "languages",
-            "occupation",
-            "location",
-        }
-    )
+    _DESCRIPTIVE_FIELDS = EDITABLE_TEXT_FIELDS
+    _BEHAVIOURAL_FIELDS = EDITABLE_BEHAVIOUR_FIELDS
+    _PERSONA_FIELDS = EDITABLE_PERSONA_FIELDS
 
     def _editing_contract(self, spoken: bool = True) -> dict[str, Any]:
-        """Which fields an amend will take, and which of them cannot be taken without a re-proof."""
-        from simulate.models.agent_definition import AgentDefinition
-        from simulate.models.persona import Persona
-        from simulate.services.harness_scenarios import NOISE_LABELS
-
-        # A call has no turn budget; a chat has no accent or room behind the caller.
-        behavioural = self._BEHAVIOURAL_FIELDS - (
-            {"max_turns"} if spoken else {"background_noise"}
-        )
-        persona = self._PERSONA_FIELDS - (set() if spoken else {"accent"})
-        vocabulary = {
-            "personality": Persona.PersonalityChoices,
-            "communication_style": Persona.CommunicationStyleChoices,
-            "accent": Persona.AccentChoices,
-            "languages": AgentDefinition.LanguageChoices,
-            "occupation": Persona.ProfessionChoices,
-            "location": Persona.LocationChoices,
-        }
-        return {
-            "editable_fields": sorted(self._DESCRIPTIVE_FIELDS | behavioural),
-            "persona_fields": sorted(persona),
-            "persona_choices": {
-                field: (
-                    list(vocabulary[field].labels)
-                    if field == "languages"
-                    else [value for value, _ in vocabulary[field].choices]
-                )
-                for field in sorted(persona)
-            },
-            "noise_choices": (
-                [bed for bed in NOISE_LABELS if bed != "present"] if spoken else []
-            ),
-            "rework_fields": sorted(behavioural | persona),
-        }
+        return editing_contract(spoken)
 
     def list_scenarios(self, request, pk) -> Response:
         """One page of a run's authored scenarios, in the order they were written."""
+        from simulate.services.harness_scenarios import (
+            ensure_suite_indexed,
+            filtered_suite,
+            scenario_page,
+        )
         from tfc.utils.pagination import ExtendedPageNumberPagination
 
         job = _scoped_job(request, pk)
         if job is None:
             return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
-
-        from simulate.services.harness_scenarios import (
-            apply_filters,
-            apply_ordering,
-            apply_search,
-            field_catalogue,
-            group_counts,
-            grouped,
-            index_scenarios,
-            scenario_row,
-        )
-
-        queryset = HostedHarnessScenario.no_workspace_objects.filter(
-            job=job
-        ).select_related("scenario", "call_execution")
-        if not queryset.filter(number__isnull=False).exists():
-            # Runs from before indexing: index from the stage output or the unpacked archive.
-            artefact = (
-                HostedHarnessStageOutput.no_workspace_objects.filter(
-                    job=job, kind="scenarios"
-                )
-                .values_list("data", flat=True)
-                .first()
-            )
-            if not artefact:
-                artefact = next(
-                    (
-                        one.get("data")
-                        for one in (job.stage_outputs or [])
-                        if isinstance(one, dict) and one.get("kind") == "scenarios"
-                    ),
-                    None,
-                )
-            if isinstance(artefact, list) and artefact:
-                index_scenarios(job, artefact)
-                queryset = HostedHarnessScenario.no_workspace_objects.filter(
-                    job=job
-                ).select_related("scenario", "call_execution")
-        # Filter choices are counted before filtering, or picking one value would hide the others.
-        queryset = apply_search(queryset, request.query_params.get("search", ""))
-        offerable = queryset
-        queryset = apply_filters(queryset, request.query_params)
-        queryset = apply_ordering(queryset, request.query_params.get("ordering", ""))
-
+        ensure_suite_indexed(job)
+        filtered, offerable = filtered_suite(job, request.query_params)
         paginator = ExtendedPageNumberPagination()
-        page = paginator.paginate_queryset(queryset, request)
-        from simulate.services.harness_scenarios import DEFAULT_GROUP_BY
-
-        asked = request.query_params.get("group_by")
-        group_by = DEFAULT_GROUP_BY if asked is None else asked
-        rows = grouped([scenario_row(one) for one in page or []], group_by)
+        page = paginator.paginate_queryset(filtered, request)
+        rows, details = scenario_page(
+            job, page or [], filtered, offerable, request.query_params.get("group_by")
+        )
         response = paginator.get_paginated_response(rows)
-        response.data["groups"] = group_counts(rows, queryset, group_by)
-        response.data["group_by"] = group_by
-        from simulate.services.harness_environment import AGENT_TYPE_VOICE, agent_type
-
-        spoken = agent_type(job) == AGENT_TYPE_VOICE
-        response.data["fields"] = field_catalogue(offerable, spoken=spoken)
-        response.data["scenario_editing"] = self._editing_contract(spoken)
-        from simulate.services.harness_scenarios import GROUPINGS
-
-        response.data["groupings"] = [
-            dict(one) for one in GROUPINGS if spoken or one["value"] != "accent"
-        ]
-        from simulate.services.harness_scenarios import level_labels_for
-
-        response.data["level_labels"] = level_labels_for(rows, response.data["fields"])
+        response.data.update(details)
         return response
 
     def scenario_coverage(self, request, pk) -> Response:
         """The suite's coverage grid, over the filtered suite rather than a page."""
+        from simulate.services.harness_scenarios import suite_coverage
+
         job = _scoped_job(request, pk)
         if job is None:
             return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
-
-        from simulate.services.harness_scenarios import (
-            DEFAULT_COL_AXIS,
-            DEFAULT_ROW_AXIS,
-            apply_filters,
-            apply_search,
-            coverage_grid,
-        )
-
-        queryset = HostedHarnessScenario.no_workspace_objects.filter(job=job)
-        queryset = apply_search(queryset, request.query_params.get("search", ""))
-        queryset = apply_filters(queryset, request.query_params)
-        from simulate.services.harness_environment import AGENT_TYPE_VOICE, agent_type
-
-        return Response(
-            coverage_grid(
-                queryset,
-                request.query_params.get("row_axis") or DEFAULT_ROW_AXIS,
-                request.query_params.get("col_axis") or DEFAULT_COL_AXIS,
-                spoken=agent_type(job) == AGENT_TYPE_VOICE,
-            )
-        )
+        return Response(suite_coverage(job, request.query_params))
 
     def amend_scenarios(self, request, pk) -> Response:
         """Edit a finished run's authored suite, one receipt per requested change."""

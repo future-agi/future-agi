@@ -607,8 +607,11 @@ import type {
   HarnessRunCreateApi,
   HarnessRunCreateResponseApi,
   HarnessScenarioAmendApi,
+  HarnessScenarioCoverageResponseApi,
+  HarnessScenarioListResponseApi,
   HarnessScenarioOperationApi,
   HarnessScenarioOperationResponseApi,
+  HarnessScenarioRowApi,
   HarnessSecretFileUploadResponseApi,
   HarnessSecretValuesApi,
   HarnessSourceUploadResponseApi,
@@ -1126,6 +1129,8 @@ import type {
   SimulateApiHarnessConversationsCommandsParams,
   SimulateApiHarnessConversationsSessionStoreParams,
   SimulateApiHarnessEnvironmentsListParams,
+  SimulateApiHarnessEnvironmentsScenariosParams,
+  SimulateApiHarnessEnvironmentsScenariosScenarioCoverageParams,
   SimulateApiHarnessJobsSecretFileUploadBody,
   SimulateApiHarnessJobsSourceUploadBody,
   SimulateApiLivekitWebhookCreateBody,
@@ -58918,6 +58923,199 @@ export const simulateApiHarnessEnvironmentsRunsAddRunEvaluation = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(harnessEnvironmentAddEvaluationApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsScenariosResponse200 = {
+  data: HarnessScenarioListResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsScenariosResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsScenariosResponseSuccess =
+  simulateApiHarnessEnvironmentsScenariosResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsScenariosResponseError =
+  simulateApiHarnessEnvironmentsScenariosResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsScenariosResponse =
+  | simulateApiHarnessEnvironmentsScenariosResponseSuccess
+  | simulateApiHarnessEnvironmentsScenariosResponseError;
+
+export const getSimulateApiHarnessEnvironmentsScenariosUrl = (
+  id: string,
+  params?: SimulateApiHarnessEnvironmentsScenariosParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-environments/${id}/scenarios/?${stringifiedParams}`
+    : `/simulate/api/harness-environments/${id}/scenarios/`;
+};
+
+/**
+ * One page of the environment's scenarios, each identified by its row id.
+ */
+export const simulateApiHarnessEnvironmentsScenarios = async (
+  id: string,
+  params?: SimulateApiHarnessEnvironmentsScenariosParams,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsScenariosResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsScenariosResponse>(
+    getSimulateApiHarnessEnvironmentsScenariosUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsScenariosScenarioCoverageResponse200 =
+  {
+    data: HarnessScenarioCoverageResponseApi;
+    status: 200;
+  };
+
+export type simulateApiHarnessEnvironmentsScenariosScenarioCoverageResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200>;
+  };
+
+export type simulateApiHarnessEnvironmentsScenariosScenarioCoverageResponseSuccess =
+  simulateApiHarnessEnvironmentsScenariosScenarioCoverageResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsScenariosScenarioCoverageResponseError =
+  simulateApiHarnessEnvironmentsScenariosScenarioCoverageResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsScenariosScenarioCoverageResponse =
+  | simulateApiHarnessEnvironmentsScenariosScenarioCoverageResponseSuccess
+  | simulateApiHarnessEnvironmentsScenariosScenarioCoverageResponseError;
+
+export const getSimulateApiHarnessEnvironmentsScenariosScenarioCoverageUrl = (
+  id: string,
+  params?: SimulateApiHarnessEnvironmentsScenariosScenarioCoverageParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-environments/${id}/scenarios/coverage/?${stringifiedParams}`
+    : `/simulate/api/harness-environments/${id}/scenarios/coverage/`;
+};
+
+/**
+ * An environment is the job that built it (the world itself lives in object
+storage, addressed from the job's metadata), so these endpoints project the
+same rows the harness-jobs API serves. They exist separately because the
+list needs a row, not a run: the jobs list returns every event, receipt and
+stage-output payload for up to a hundred jobs, which is a detail document
+repeated a hundred times.
+
+Running and grading a simulation are deliberately not here. ``run`` starts
+one and returns 202; progress is read from the job.
+ * @summary The environments surface: list, delete, and start a simulation.
+ */
+export const simulateApiHarnessEnvironmentsScenariosScenarioCoverage = async (
+  id: string,
+  params?: SimulateApiHarnessEnvironmentsScenariosScenarioCoverageParams,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsScenariosScenarioCoverageResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsScenariosScenarioCoverageResponse>(
+    getSimulateApiHarnessEnvironmentsScenariosScenarioCoverageUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsScenarioDetailResponse200 = {
+  data: HarnessScenarioRowApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsScenarioDetailResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsScenarioDetailResponseSuccess =
+  simulateApiHarnessEnvironmentsScenarioDetailResponse200 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsScenarioDetailResponseError =
+  simulateApiHarnessEnvironmentsScenarioDetailResponseDefault & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsScenarioDetailResponse =
+  | simulateApiHarnessEnvironmentsScenarioDetailResponseSuccess
+  | simulateApiHarnessEnvironmentsScenarioDetailResponseError;
+
+export const getSimulateApiHarnessEnvironmentsScenarioDetailUrl = (
+  id: string,
+  scenarioId: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/scenarios/${scenarioId}/`;
+};
+
+/**
+ * An environment is the job that built it (the world itself lives in object
+storage, addressed from the job's metadata), so these endpoints project the
+same rows the harness-jobs API serves. They exist separately because the
+list needs a row, not a run: the jobs list returns every event, receipt and
+stage-output payload for up to a hundred jobs, which is a detail document
+repeated a hundred times.
+
+Running and grading a simulation are deliberately not here. ``run`` starts
+one and returns 202; progress is read from the job.
+ * @summary The environments surface: list, delete, and start a simulation.
+ */
+export const simulateApiHarnessEnvironmentsScenarioDetail = async (
+  id: string,
+  scenarioId: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsScenarioDetailResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsScenarioDetailResponse>(
+    getSimulateApiHarnessEnvironmentsScenarioDetailUrl(id, scenarioId),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };

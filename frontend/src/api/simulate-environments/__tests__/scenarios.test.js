@@ -392,8 +392,8 @@ describe("scenarios.js — live routes are in the generated contract", () => {
   // that schema was adopted apiPath() threw for all three, so the live Scenarios
   // tab could not issue a single request. These assert the surface carries them.
   it.each([
-    ["/simulate/api/harness-jobs/{id}/scenarios/", "get"],
-    ["/simulate/api/harness-jobs/{id}/scenarios/coverage/", "get"],
+    ["/simulate/api/harness-environments/{id}/scenarios/", "get"],
+    ["/simulate/api/harness-environments/{id}/scenarios/coverage/", "get"],
     ["/simulate/api/harness-jobs/{id}/scenarios/amend/", "post"],
   ])("registers %s (%s)", (template, method) => {
     expect(isContractedApiPath(template)).toBe(true);
@@ -402,7 +402,7 @@ describe("scenarios.js — live routes are in the generated contract", () => {
 
   it("resolves the coverage and amend path helpers without throwing", () => {
     expect(scenariosCoveragePath("job-1")).toBe(
-      "/simulate/api/harness-jobs/job-1/scenarios/coverage/",
+      "/simulate/api/harness-environments/job-1/scenarios/coverage/",
     );
     expect(scenariosAmendPath("job-1")).toBe(
       "/simulate/api/harness-jobs/job-1/scenarios/amend/",
