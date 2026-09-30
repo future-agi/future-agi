@@ -318,3 +318,30 @@ describe("TraceTable — metric cells while the call runs", () => {
     });
   });
 });
+
+describe("TraceTable — persona cell", () => {
+  it("shows a persona that has no name but has other fields", () => {
+    render(
+      <TraceTable
+        groups={[
+          {
+            label: "A",
+            count: 1,
+            rows: [
+              {
+                ...row("x1"),
+                personaDetails: { name: null, voice: "Indian male", age: "50-60", traits: ["Anxious"] },
+              },
+            ],
+            agg: {},
+          },
+        ]}
+        evals={[]}
+        onOpen={vi.fn()}
+        activeCallId="x1"
+      />,
+    );
+    expect(screen.getByText("Indian male")).toBeInTheDocument();
+    expect(screen.getByText("Anxious")).toBeInTheDocument();
+  });
+});

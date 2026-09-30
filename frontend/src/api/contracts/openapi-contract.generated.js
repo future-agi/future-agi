@@ -85835,6 +85835,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Duration ms",
           type: "number",
         },
+        start_time_ms: {
+          title: "Start time ms",
+          type: "integer",
+        },
       },
     },
     CallTranscript: {
