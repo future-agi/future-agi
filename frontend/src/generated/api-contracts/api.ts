@@ -607,6 +607,8 @@ import type {
   HarnessRunCreateApi,
   HarnessRunCreateResponseApi,
   HarnessScenarioAmendApi,
+  HarnessScenarioChangeQueuedApi,
+  HarnessScenarioChangeRequestApi,
   HarnessScenarioChangeResponseApi,
   HarnessScenarioCoverageResponseApi,
   HarnessScenarioDeleteApi,
@@ -58990,6 +58992,86 @@ export const simulateApiHarnessEnvironmentsScenarios = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsScenariosChangeScenariosResponse202 =
+  {
+    data: HarnessScenarioChangeQueuedApi;
+    status: 202;
+  };
+
+export type simulateApiHarnessEnvironmentsScenariosChangeScenariosResponse400 =
+  {
+    data: HarnessScenarioErrorApi;
+    status: 400;
+  };
+
+export type simulateApiHarnessEnvironmentsScenariosChangeScenariosResponse404 =
+  {
+    data: HarnessScenarioErrorApi;
+    status: 404;
+  };
+
+export type simulateApiHarnessEnvironmentsScenariosChangeScenariosResponse409 =
+  {
+    data: HarnessScenarioErrorApi;
+    status: 409;
+  };
+
+export type simulateApiHarnessEnvironmentsScenariosChangeScenariosResponse503 =
+  {
+    data: HarnessScenarioErrorApi;
+    status: 503;
+  };
+
+export type simulateApiHarnessEnvironmentsScenariosChangeScenariosResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 202 | 400 | 404 | 409 | 503>;
+  };
+
+export type simulateApiHarnessEnvironmentsScenariosChangeScenariosResponseSuccess =
+  simulateApiHarnessEnvironmentsScenariosChangeScenariosResponse202 & {
+    headers: Headers;
+  };
+export type simulateApiHarnessEnvironmentsScenariosChangeScenariosResponseError =
+  (
+    | simulateApiHarnessEnvironmentsScenariosChangeScenariosResponse400
+    | simulateApiHarnessEnvironmentsScenariosChangeScenariosResponse404
+    | simulateApiHarnessEnvironmentsScenariosChangeScenariosResponse409
+    | simulateApiHarnessEnvironmentsScenariosChangeScenariosResponse503
+    | simulateApiHarnessEnvironmentsScenariosChangeScenariosResponseDefault
+  ) & {
+    headers: Headers;
+  };
+
+export type simulateApiHarnessEnvironmentsScenariosChangeScenariosResponse =
+  | simulateApiHarnessEnvironmentsScenariosChangeScenariosResponseSuccess
+  | simulateApiHarnessEnvironmentsScenariosChangeScenariosResponseError;
+
+export const getSimulateApiHarnessEnvironmentsScenariosChangeScenariosUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/scenarios/changes/`;
+};
+
+/**
+ * Revise scenarios or add new ones through the builder agent, which re-proves them.
+ */
+export const simulateApiHarnessEnvironmentsScenariosChangeScenarios = async (
+  id: string,
+  harnessScenarioChangeRequestApi: HarnessScenarioChangeRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsScenariosChangeScenariosResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsScenariosChangeScenariosResponse>(
+    getSimulateApiHarnessEnvironmentsScenariosChangeScenariosUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessScenarioChangeRequestApi),
     },
   );
 };

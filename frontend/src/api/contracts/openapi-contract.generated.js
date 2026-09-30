@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1059,
+  endpointCount: 1060,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -28267,6 +28267,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessScenarioListResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/scenarios/changes/": {
+      post: {
+        operationId:
+          "simulate_api_harness-environments_scenarios_change_scenarios",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessScenarioChangeRequest",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/HarnessScenarioChangeQueued",
+          },
+          400: {
+            $ref: "#/definitions/HarnessScenarioError",
+          },
+          404: {
+            $ref: "#/definitions/HarnessScenarioError",
+          },
+          409: {
+            $ref: "#/definitions/HarnessScenarioError",
+          },
+          503: {
+            $ref: "#/definitions/HarnessScenarioError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -63319,6 +63351,104 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Rework",
           type: "boolean",
           default: true,
+        },
+      },
+    },
+    HarnessScenarioChangeQueued: {
+      required: [
+        "conversation_id",
+        "job_id",
+        "state",
+        "stage",
+        "active_invocation_id",
+        "blocking_input",
+        "messages",
+        "events",
+        "event_watermark",
+        "runtime",
+      ],
+      type: "object",
+      properties: {
+        conversation_id: {
+          title: "Conversation id",
+          type: "string",
+          format: "uuid",
+        },
+        job_id: {
+          title: "Job id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+        stage: {
+          title: "Stage",
+          type: "string",
+          minLength: 1,
+        },
+        active_invocation_id: {
+          title: "Active invocation id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        blocking_input: {
+          title: "Blocking input",
+          type: "object",
+          "x-nullable": true,
+        },
+        messages: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessConversationMessage",
+          },
+        },
+        events: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessConversationEventRead",
+          },
+        },
+        event_watermark: {
+          title: "Event watermark",
+          type: "integer",
+          minimum: 0,
+        },
+        runtime: {
+          $ref: "#/definitions/HarnessConversationRuntime",
+        },
+      },
+    },
+    HarnessScenarioChangeRequest: {
+      required: ["kind"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["revise", "add"],
+        },
+        instruction: {
+          title: "Instruction",
+          type: "string",
+          maxLength: 4000,
+        },
+        scenario_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          maxItems: 50,
+        },
+        count: {
+          title: "Count",
+          type: "integer",
+          maximum: 50,
+          minimum: 1,
         },
       },
     },

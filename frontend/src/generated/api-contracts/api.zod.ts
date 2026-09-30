@@ -36030,6 +36030,42 @@ export const SimulateApiHarnessEnvironmentsScenariosResponse = zod.object({
 });
 
 /**
+ * Revise scenarios or add new ones through the builder agent, which re-proves them.
+ */
+export const SimulateApiHarnessEnvironmentsScenariosChangeScenariosParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const simulateApiHarnessEnvironmentsScenariosChangeScenariosBodyInstructionMax = 4000;
+
+export const simulateApiHarnessEnvironmentsScenariosChangeScenariosBodyScenarioIdsMax = 50;
+
+export const simulateApiHarnessEnvironmentsScenariosChangeScenariosBodyCountMax = 50;
+
+export const SimulateApiHarnessEnvironmentsScenariosChangeScenariosBody =
+  zod.object({
+    kind: zod.enum(["revise", "add"]),
+    instruction: zod
+      .string()
+      .max(
+        simulateApiHarnessEnvironmentsScenariosChangeScenariosBodyInstructionMax,
+      )
+      .optional(),
+    scenario_ids: zod
+      .array(zod.string().uuid())
+      .max(
+        simulateApiHarnessEnvironmentsScenariosChangeScenariosBodyScenarioIdsMax,
+      )
+      .optional(),
+    count: zod
+      .number()
+      .min(1)
+      .max(simulateApiHarnessEnvironmentsScenariosChangeScenariosBodyCountMax)
+      .optional(),
+  });
+
+/**
  * An environment is the job that built it (the world itself lives in object
 storage, addressed from the job's metadata), so these endpoints project the
 same rows the harness-jobs API serves. They exist separately because the

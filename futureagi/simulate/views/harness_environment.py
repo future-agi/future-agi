@@ -17,6 +17,7 @@ from simulate.serializers.harness_environment import (
     HarnessEnvironmentRenameSerializer,
     HarnessEnvironmentRunEvaluationQueuedSerializer,
     HarnessEnvironmentToolCallEvaluationSerializer,
+    HarnessScenarioChangeQueuedSerializer,
     HarnessScenarioChangeRequestSerializer,
     HarnessScenarioChangeResponseSerializer,
     HarnessScenarioCoverageQuerySerializer,
@@ -31,9 +32,6 @@ from simulate.serializers.harness_environment import (
 from simulate.serializers.harness_job import (
     HarnessRunCreateResponseSerializer,
     HarnessRunCreateSerializer,
-)
-from simulate.serializers.hosted_harness_conversation import (
-    HarnessConversationReadSerializer,
 )
 from simulate.services.harness_environment import (
     annotate_for_list,
@@ -382,7 +380,7 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
     @validated_request(
         request_serializer=HarnessScenarioChangeRequestSerializer,
         responses={
-            202: HarnessConversationReadSerializer,
+            202: HarnessScenarioChangeQueuedSerializer,
             400: HarnessScenarioErrorSerializer,
             404: HarnessScenarioErrorSerializer,
             409: HarnessScenarioErrorSerializer,

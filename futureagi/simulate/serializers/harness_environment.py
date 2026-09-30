@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
+from simulate.serializers.hosted_harness_conversation import (
+    HarnessConversationReadSerializer,
+)
 from simulate.services.harness_environment import (
     AGENT_TYPE_CHAT,
     AGENT_TYPE_VOICE,
@@ -565,3 +568,7 @@ class HarnessScenarioChangeRequestSerializer(serializers.Serializer):
         elif not attrs.get("count"):
             raise serializers.ValidationError({"count": "say how many to add"})
         return attrs
+
+
+class HarnessScenarioChangeQueuedSerializer(HarnessConversationReadSerializer):
+    """The builder conversation the change was queued on."""
