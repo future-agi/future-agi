@@ -394,7 +394,7 @@ TLS proxy (Caddy/nginx)
 
 Set `VITE_HOST_API=/api` and let the proxy do the routing. Backend doesn't need CORS for cross-origin since SPA calls same origin.
 
-On Kubernetes, use the [Helm chart](helm/futureagi/README.md) instead: it covers ingress, TLS, external datastores and secrets.
+On Kubernetes, use the [Helm chart](helm/futureagi/README.md) instead (`helm install futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z`, signed and published with every release): it covers the Gateway API and Ingress, TLS, external datastores, secrets, upgrades and backups.
 
 ## Reverse proxy + TLS
 

@@ -9,7 +9,7 @@
       "NUMBA_CACHE_DIR" "/tmp/numba"
       "MPLCONFIGDIR" "/tmp/matplotlib"
       "OTEL_ENABLED" "false" -}}
-{{- $env = mergeOverwrite $env ($s.extraEnv | default dict) -}}
+{{- $env = mergeOverwrite $env (include "futureagi.env.platform" (dict "root" . "kind" "serving") | fromYaml) ($s.extraEnv | default dict) -}}
 {{- if $s.persistence.enabled }}
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -33,6 +33,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "futureagi.componentLabels" $ctx | nindent 4 }}
+  {{- include "futureagi.block" (dict "text" (include "futureagi.workloadAnnotations" $) "indent" 2) }}
 spec:
   replicas: {{ $s.replicas }}
   revisionHistoryLimit: 5
@@ -57,14 +58,14 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "futureagi.serviceAccountName" . }}
-      automountServiceAccountToken: false
+      automountServiceAccountToken: {{ include "futureagi.automountServiceAccountToken" . }}
       {{- include "futureagi.block" (dict "text" (include "futureagi.imagePullSecrets" .) "indent" 6) }}
       securityContext:
-        {{- include "futureagi.podSecurityContext" (dict "uid" 1000 "overrides" $s.podSecurityContext) | nindent 8 }}
+        {{- include "futureagi.podSecurityContext" (dict "root" $ "uid" 1000 "overrides" $s.podSecurityContext) | nindent 8 }}
       {{- include "futureagi.block" (dict "text" (include "futureagi.scheduling" (dict "root" . "values" $s)) "indent" 6) }}
       containers:
         - name: serving
-          image: {{ include "futureagi.image" (dict "root" . "image" $s.image) }}
+          image: {{ include "futureagi.image" (dict "root" . "image" $s.image "digestKey" "serving") }}
           imagePullPolicy: {{ include "futureagi.imagePullPolicy" (dict "root" . "image" $s.image) }}
           ports:
             - name: http
@@ -98,12 +99,13 @@ spec:
           resources:
             {{- toYaml $s.resources | nindent 12 }}
           securityContext:
-            {{- include "futureagi.containerSecurityContext" (dict "overrides" $s.containerSecurityContext) | nindent 12 }}
+            {{- include "futureagi.containerSecurityContext" (dict "root" $ "overrides" $s.containerSecurityContext) | nindent 12 }}
           volumeMounts:
             - name: models
               mountPath: /models
             - name: tmp
               mountPath: /tmp
+            {{- include "futureagi.block" (dict "text" (include "futureagi.caBundle.volumeMount" $) "indent" 12) }}
       volumes:
         - name: models
           {{- if $s.persistence.enabled }}
@@ -116,6 +118,7 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 2Gi
+        {{- include "futureagi.block" (dict "text" (include "futureagi.caBundle.volume" $) "indent" 8) }}
 ---
 apiVersion: v1
 kind: Service

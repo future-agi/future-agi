@@ -1,5 +1,8 @@
-# Public UI, API and OTLP/HTTP endpoints behind an ingress controller, with
-# TLS from cert-manager. Layer it over external.yaml (or bundled.yaml):
+# Legacy: public UI, API and OTLP/HTTP endpoints behind ingress-nginx, with
+# TLS from cert-manager. ingress-nginx was retired upstream in March 2026:
+# prefer examples/gateway-api.yaml (Gateway API), or
+# examples/ingress-traefik.yaml for Traefik (k3s's default controller).
+# Layer it over external.yaml (or bundled.yaml):
 #
 #   helm install futureagi deploy/helm/futureagi \
 #     -f deploy/helm/futureagi/examples/external.yaml \
@@ -29,6 +32,12 @@ ingress:
     host: api.futureagi.example.com
   otlp:
     enabled: true
+  # WebSockets (/ws/) on their own Ingress, so they are not cut after 600 s.
+  websocket:
+    enabled: true
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "86400"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "86400"
 config:
   allowedHosts: api.futureagi.example.com
   corsAllowedOrigins: https://futureagi.example.com

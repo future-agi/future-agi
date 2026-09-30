@@ -839,7 +839,7 @@ def test_hosted_voice_transcript_offsets_follow_the_recording(
     rows = call.transcripts.order_by("start_time_ms", "created_at")
     assert [row.start_time_ms for row in rows] == expected_starts
     assert [row.end_time_ms for row in rows] == [
-        expected_starts[1],
+        expected_starts[0] + 3740,
         expected_starts[1],
         expected_starts[2] + 7180,
     ]

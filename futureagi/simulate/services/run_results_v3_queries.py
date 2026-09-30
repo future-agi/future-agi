@@ -101,6 +101,25 @@ def _eval_measured_q(eval_id: str) -> Q:
     return ~Q(In(Lower(Trim(status)), ["pending", "skipped", "error"]))
 
 
+def _object_score(eval_id: str):
+    """A choice-scored eval's numeric `score` key, or NULL when it isn't a JSON number."""
+    inner = _json_value("eval_outputs", eval_id, "output", "score")
+    is_number = Exact(
+        Func(inner, function="jsonb_typeof", output_field=TextField()),
+        Value("number"),
+    )
+    return Case(
+        When(
+            is_number,
+            then=Cast(
+                _json_text("eval_outputs", eval_id, "output", "score"), FloatField()
+            ),
+        ),
+        default=None,
+        output_field=FloatField(),
+    )
+
+
 def _eval_score(eval_id: str):
     numeric = _safe_json_float("eval_outputs", eval_id, "output")
     numeric_type = Exact(
@@ -111,6 +130,7 @@ def _eval_score(eval_id: str):
         ),
         Value("number"),
     )
+    object_score = _object_score(eval_id)
     return Case(
         When(~_eval_measured_q(eval_id), then=Value(None, output_field=FloatField())),
         When(
@@ -133,7 +153,13 @@ def _eval_score(eval_id: str):
                 output_field=FloatField(),
             ),
         ),
-        default=None,
+        default=Case(
+            When(
+                GreaterThan(object_score, Value(1.0)), then=object_score / Value(100.0)
+            ),
+            default=object_score,
+            output_field=FloatField(),
+        ),
         output_field=FloatField(),
     )
 
@@ -634,15 +660,20 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
             "id", filter=Q(eval_outputs__has_key=eval_id)
         )
         output_type_key = f"eval_outputs__{eval_id}__output_type"
+        # Choice-scored evals keep their number at output.score, whatever output_type they carry.
         evaluation_expressions[f"score_{eval_id}"] = Avg(
-            Case(
-                When(
-                    **{
-                        output_type_key: "score",
-                        "then": _safe_json_float("eval_outputs", eval_id, "output"),
-                    }
+            Coalesce(
+                Case(
+                    When(
+                        **{
+                            output_type_key: "score",
+                            "then": _safe_json_float("eval_outputs", eval_id, "output"),
+                        }
+                    ),
+                    default=None,
+                    output_field=FloatField(),
                 ),
-                default=None,
+                _object_score(eval_id),
                 output_field=FloatField(),
             )
         )

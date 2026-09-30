@@ -20,10 +20,7 @@ post-freeze consistency pass, see §2) + §5.4a (two-tier scan,
 `[::1]` now in the degrade tier — SATISFIED, see §7);
 `c2-replication-admission.md` v1.3 (§1 pipeline stages, §5 catch rules, §6
 writer side; its ledger-shape divergence is RESOLVED in this doc's favor,
-decision D7, see §2; `port_not_consumable` terminal in C2 too);
-`c3-call-affinity.md` v0.4 (§2.1 submit-time admission dependency — the
-serializer flag-AND-digest enforcement is this doc's decision D12,
-satisfied by §4/§5 below).
+decision D7, see §2; `port_not_consumable` terminal in C2 too).
 **Amends:** `outbound-channels.md` `parallelism_degraded` reason set (v1.4
 lists two members); `hosted-execution-seams.md:906` (`"effective": 1`
 verbatim → `1 ≤ effective < requested`); `hosted-execution-seams.md` §5
@@ -409,12 +406,8 @@ preflight/readiness call compares the registered snapshot digest
 (`settings.ALK_DAYTONA_SNAPSHOT_DIGEST`, already in the preflight response —
 `harness_provider.py:325–336`) against the same allowlist and reports
 `parallelism_enabled` (§5) — it informs the FE; `register_attempt` enforces.
-This satisfies `c3-call-affinity.md` v0.4 §2.1's SIBLING AMENDMENT REQUIRED:
-C3 v0.4 asks only that the flag-AND-digest gate be enforced at submit-time
-admission on BOTH the FE and direct-API paths (its residual was that the
-clamp had been flag-only); decision D12 pins exactly that (flag AND digest,
-at the register_attempt chokepoint), so the C3 §2.1 dependency is SATISFIED
-against v0.4 text — no further C3 change needed.
+Decision D12 requires the flag-AND-digest gate at submit-time admission on
+both the FE and direct-API paths, at the `register_attempt` chokepoint.
 
 **Dockerfile-mode limitation** — same note as pin (i): dockerfile-mode dev
 guests carry no meaningful digest (`register_attempt` stamps
@@ -492,9 +485,7 @@ SINGLE shared admission guard, not a per-locus reimplementation:
   guard SKIPS the digest half and W>1 requires the FLAG ONLY. This is
   explicitly DEV-ONLY: production is always the snapshot lane, where the
   guard ALWAYS requires BOTH flag and digest (an empty/unset digest fails
-  closed, pin ii). This satisfies the dockerfile-mode flag-only carve-out
-  that `c3-call-affinity.md` v0.4 §9 already references as accepted
-  ("C4 accepts a dockerfile-mode dev carve-out — flag-only — as dev-only").
+  closed, pin ii). The dockerfile-mode flag-only carve-out remains dev-only.
 - **FE transport**: the preflight/readiness response
   (`harness_provider.py:325–336`) gains a `parallelism_enabled` boolean
   (Track E) reflecting flag AND digest-allowlist state (pin ii). The FE reads

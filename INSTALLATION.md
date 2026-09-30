@@ -224,8 +224,8 @@ literal placeholder `CHANGEME-set-by-bin-install`).
 | Architecture | `linux/amd64` or `linux/arm64` | same | See the Apple Silicon note below |
 
 The optional `ml` profile (model serving) adds a large image and a few GB of
-memory once its models load. **Helm** needs Kubernetes 1.27+ and Helm 3.10+;
-an evaluation install with bundled datastores wants about 4 CPUs and 8 GiB
+memory once its models load. **Helm** needs Kubernetes 1.27+ and Helm 3.10+
+or Helm 4; an evaluation install with bundled datastores wants about 4 CPUs and 8 GiB
 free and a default StorageClass. See the
 [chart's requirements](deploy/helm/futureagi/README.md#requirements).
 
@@ -282,10 +282,10 @@ application code.
 | | **Standalone** (default) | **Distributed** (at scale) | **Helm** (Distributed on Kubernetes) |
 | --- | --- | --- | --- |
 | Runs on | One Docker host | One Docker host | A Kubernetes cluster |
-| Install | `./bin/install` | `./bin/install --distributed` | `helm install futureagi deploy/helm/futureagi ...` |
-| Files | `docker-compose.yml` | `docker-compose.distributed.yml` | [`deploy/helm/futureagi`](deploy/helm/futureagi/README.md) |
+| Install | `./bin/install` | `./bin/install --distributed` | `helm install futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z ...` |
+| Files | `docker-compose.yml` | `docker-compose.distributed.yml` | [`deploy/helm/futureagi`](deploy/helm/futureagi/README.md), published signed to GHCR with every release |
 | Containers | 3: `app`, `postgres`, `clickhouse` (+1 per optional profile) | 31: 22 services and 9 one-shot jobs (`all` profile: +10) | One Deployment per service and a bootstrap Job; datastores external (default) or bundled |
-| Hardware | 2 vCPU, 4 GB (3 GB minimum); idles at about 1 GB | 4+ vCPU, 12–16 GB (6 GB minimum) | Evaluation: about 4 CPUs and 8 GiB free. Production: per service, see [Sizing](deploy/helm/futureagi/README.md#sizing) |
+| Hardware | 2 vCPU, 4 GB (3 GB minimum); idles at about 1 GB | 4+ vCPU, 12–16 GB (6 GB minimum) | Evaluation: about 4 CPUs and 8 GiB free. Production: per service, see [Sizing presets](deploy/helm/futureagi/README.md#sizing-presets) |
 | Workflow engine | Temporal dev server (SQLite) inside `app`; the worker runs in the API process | Temporal server on Postgres; one all-queue worker, per-queue workers with the `all` profile | Your Temporal (or a bundled dev server); all-queue worker plus optional per-queue Deployments |
 | Postgres → ClickHouse sync | In-process outbox | PeerDB | In-process outbox |
 | Observed-attribute suggestions in filters, widgets and tasks | On: the collector writes them directly | On: through Kafka | On: the collector writes them directly |
@@ -424,14 +424,19 @@ The chart in [`deploy/helm/futureagi`](deploy/helm/futureagi/README.md) runs
 the Distributed setup on Kubernetes: one Deployment per service, with the
 same images, and a bootstrap Job that migrates and seeds on every install and
 upgrade. Postgres changes reach ClickHouse through the outbox, as in
-Standalone, so there is no PeerDB.
+Standalone, so there is no PeerDB. The same chart installs the open-source
+and the Enterprise edition.
 
-An evaluation install, with every datastore in the cluster:
+Every release publishes the chart to GitHub Container Registry as
+`oci://ghcr.io/future-agi/charts/futureagi`, version `X.Y.Z` (the platform
+release without the `v`). An evaluation install, with every datastore in the
+cluster:
 
 ```bash
-helm install futureagi deploy/helm/futureagi \
-  -f deploy/helm/futureagi/examples/bundled.yaml \
-  --namespace futureagi --create-namespace --timeout 20m
+VERSION=X.Y.Z
+helm install futureagi oci://ghcr.io/future-agi/charts/futureagi --version "$VERSION" \
+  --namespace futureagi --create-namespace --timeout 20m \
+  -f https://raw.githubusercontent.com/future-agi/future-agi/v$VERSION/deploy/helm/futureagi/examples/bundled.yaml
 
 kubectl -n futureagi port-forward svc/futureagi-frontend 3000:80 &
 kubectl -n futureagi port-forward svc/futureagi-backend 8000:8000 &
@@ -441,25 +446,45 @@ kubectl -n futureagi exec -it deploy/futureagi-backend -c backend -- python mana
 ```
 
 Then open <http://localhost:3000>. SDKs on this machine send traces with
-`FI_BASE_URL=http://localhost:4318`, as in the README's Quickstart.
+`FI_BASE_URL=http://localhost:4318`, as in the README's Quickstart. On Docker
+Desktop, k3s or OrbStack, `examples/local.yaml` publishes the same ports on
+localhost without port-forwards.
 
-Until a published release contains the chart's bootstrap command (none does
-yet), add `--set image.registry=<registry> --set image.tag=<tag>` for
-images built from this checkout and pushed where the cluster can pull them;
-otherwise the bootstrap job fails with `Unknown command: 'bootstrap_install'`.
-See the [chart README](deploy/helm/futureagi/README.md).
+Verify the chart before you install it: it is signed keylessly by the
+release workflow and carries a build provenance attestation. The chart
+README's [Verify](deploy/helm/futureagi/README.md#verify) section has the
+commands.
 
-For production, start from
-`examples/external.yaml` (your own Postgres, ClickHouse, Redis, Temporal and
-S3-compatible storage) and `examples/ingress.yaml`; bundled datastores are for
-evaluation only (one replica, no backups).
+Until a release that contains the chart ships, the registry has no versions.
+Install from this checkout instead, with images built from the same branch
+and pushed where the cluster can pull them:
+
+```bash
+helm install futureagi deploy/helm/futureagi \
+  -f deploy/helm/futureagi/examples/bundled.yaml \
+  --set image.registry=<registry> --set image.tag=<tag> \
+  --namespace futureagi --create-namespace --timeout 20m
+```
+
+No image published before this chart contains its bootstrap command, so
+with those the bootstrap job fails with `Unknown command: 'bootstrap_install'`.
+
+For production, start from `examples/external.yaml` (your own Postgres,
+ClickHouse, Redis, Temporal and S3-compatible storage) or a cloud example
+(`examples/cloud/`), add a size (`examples/sizes/`) and a way in
+(`examples/gateway-api.yaml`, or an Ingress example); bundled datastores are
+for evaluation only (one replica, no backups). The examples ship inside the
+chart: `helm pull oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z --untar`.
+For the Enterprise edition, add `--set edition=ee` and a license from a
+Secret (`license.existingSecret`); see `examples/enterprise.yaml`.
 
 Application settings: every key in the [configuration reference](https://docs.futureagi.com/docs/self-hosting/configuration/reference)
 marked **H** can be set through the chart. Most have a named value; any other
 goes in `config.extraEnv` (secrets in `secrets.extra`, or your own Secrets and
 ConfigMaps through `config.extraEnvFrom`). Telemetry is `config.telemetry`.
-The [chart README](deploy/helm/futureagi/README.md) covers upgrades, secrets,
-ingress, sizing, security, GitOps and troubleshooting, and lists every value.
+The [chart README](deploy/helm/futureagi/README.md) covers verification, the
+external datastore contract, sizing, exposure, Enterprise, secrets, upgrades,
+backups, GitOps, security and troubleshooting, and lists every value.
 
 ### Development (hot reload)
 
@@ -960,9 +985,10 @@ Re-running the installer keeps your `.env` secrets, adds new keys from
 `.env.example`, stays on the setup `.env` records, pulls the new images and
 waits for the stack to be ready. Migrations run automatically on start.
 
-On Helm: `helm upgrade futureagi deploy/helm/futureagi --namespace futureagi -f my-values.yaml --timeout 20m`;
+On Helm: `helm upgrade futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z --namespace futureagi -f my-values.yaml --timeout 20m`,
+always with your values file (never `--reuse-values` across versions);
 the bootstrap Job migrates before any Deployment is rolled. See the
-[chart README](deploy/helm/futureagi/README.md#upgrade).
+[chart README](deploy/helm/futureagi/README.md#upgrading).
 
 > **Upgrading from a release where `docker-compose.yml` was the Distributed
 > stack.** The root `docker-compose.yml` is now Standalone, and the old
