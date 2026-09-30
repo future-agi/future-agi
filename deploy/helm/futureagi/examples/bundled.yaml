@@ -7,7 +7,7 @@
 #     -f deploy/helm/futureagi/examples/bundled.yaml --timeout 20m
 #
 # Until a published release contains `manage.py bootstrap_install` (none up to
-# v1.41.1 does), add --set image.registry=... --set image.tag=... for images
+# v1.42.0 does), add --set image.registry=... --set image.tag=... for images
 # built from the same checkout as the chart.
 #
 # Then open the UI through port-forwards (see the notes Helm prints):
