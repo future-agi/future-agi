@@ -300,6 +300,7 @@ def provision_alk_sim_run_test(
     agent_name: str | None = None,
     description: str = "",
     modality: str = "text",
+    enable_tool_evaluation: bool = False,
 ) -> tuple[RunTest, list[Scenarios], AgentDefinition]:
     """Stand up a modality-correct RunTest for an SDK-first run, two ways.
 
@@ -313,6 +314,11 @@ def provision_alk_sim_run_test(
       the platform's native dataset model: a scenario suite is one dataset and
       every conversation case is one datapoint.
 
+    ``enable_tool_evaluation`` starts the run test with the tool-call judge on.
+    Defaults to off, since it costs an extra judge per call. A v3 environment
+    leaves it off here and turns it on later through
+    ``PUT /simulate/api/harness-environments/{id}/evaluations/tool-call/``.
+
     One CallExecution is created per dataset row at batch time, so keep the row
     count (== persona count, or the reused scenarios' rows) equal to the
     conversations the run posts per execution; extras leave dangling PENDING rows.
@@ -320,6 +326,11 @@ def provision_alk_sim_run_test(
     from django.db import transaction
 
     with transaction.atomic():
+        # Resolved before the agent definition so a bad scenario id is still
+        # the first thing reported (everything here is inside one
+        # transaction, so the ordering buys error precedence, not less
+        # rollback).
+        scenarios: list[Scenarios] = []
         if scenario_ids:
             scenarios = list(
                 Scenarios.objects.filter(
@@ -335,14 +346,29 @@ def provision_alk_sim_run_test(
                 raise ALKSimulateIngestionError(
                     f"scenario(s) not found: {', '.join(missing)}"
                 )
-            agent_definition = _provision_agent_definition(
-                organization,
-                agent_definition_id,
-                agent_name,
-                description,
-                modality,
-                workspace,
+
+        agent_definition = _provision_agent_definition(
+            organization,
+            agent_definition_id,
+            agent_name,
+            description,
+            modality,
+            workspace,
+        )
+        # Both provisioning shapes refuse the same thing on the same terms, so
+        # the refusal is stated once, here, rather than once per shape: a voice
+        # agent with no version yet exposes no credentials for the tool-call
+        # judge to read, so the switch cannot be honoured for it.
+        if (
+            enable_tool_evaluation
+            and agent_definition.agent_type == AgentDefinition.AgentTypeChoices.VOICE
+            and agent_definition.latest_version is None
+        ):
+            raise ALKSimulateIngestionError(
+                "Tool-call evaluation is not available for a voice environment yet"
             )
+
+        if scenario_ids:
             simulator_agent = next(
                 (s.simulator_agent for s in scenarios if s.simulator_agent), None
             )
@@ -363,18 +389,10 @@ def provision_alk_sim_run_test(
                 simulator_agent=simulator_agent,
                 organization=organization,
                 workspace=workspace,
+                enable_tool_evaluation=enable_tool_evaluation,
             )
             run_test.scenarios.set(scenarios)
             return run_test, scenarios, agent_definition
-
-        agent_definition = _provision_agent_definition(
-            organization,
-            agent_definition_id,
-            agent_name,
-            description,
-            modality,
-            workspace,
-        )
 
         scenarios = _create_persona_scenarios(
             organization,
@@ -391,6 +409,7 @@ def provision_alk_sim_run_test(
             agent_definition=agent_definition,
             organization=organization,
             workspace=workspace,
+            enable_tool_evaluation=enable_tool_evaluation,
         )
         run_test.scenarios.set(scenarios)
 
@@ -519,6 +538,15 @@ def _build_persona_scenario_dataset(
         )
         for col_name, data_type in column_specs
     }
+    # The dotted-path walker's no-context branch reads only `column_order`;
+    # without it `scenario_columns.situation.value` resolves to an empty
+    # string on every harness call, silently.
+    dataset.column_order = [
+        str(columns[col_name].id) for col_name, _type in column_specs
+    ]
+    # `updated_at` alongside the field that actually changed: a save that
+    # omits it leaves `updated_at` silently stale on a row that did change.
+    dataset.save(update_fields=["column_order", "updated_at"])
     rows = _append_persona_dataset_rows(dataset, personas, columns=columns)
     return dataset, rows
 
@@ -854,6 +882,8 @@ def ingest_alk_sim_result(
     Idempotent for evaluation dispatch: a second call updates fields but does
     not dispatch a second evaluation (guarded by `call_metadata['eval_started']`).
     """
+    from simulate.services.harness_evals import _tool_evaluation_on
+
     if call_execution.simulation_call_type not in (
         CallExecution.SimulationCallType.VOICE,
         CallExecution.SimulationCallType.TEXT,
@@ -879,7 +909,15 @@ def ingest_alk_sim_result(
         call_metadata = call_execution.call_metadata or {}
         # Dispatched only once the row is COMPLETED, with the config ids chosen at provision.
         selected_eval_config_ids = _selected_eval_config_ids(call_execution)
-        if "harness_evaluations" in call_metadata and not selected_eval_config_ids:
+        # The tool-call judge switch is independent of the eval catalogue, so
+        # a switched-on run test must still take the dispatch arm below even
+        # with no catalogue eval selected.
+        run_test_id = getattr(call_execution.test_execution, "run_test_id", None)
+        if (
+            "harness_evaluations" in call_metadata
+            and not selected_eval_config_ids
+            and not _tool_evaluation_on(run_test_id)
+        ):
             # An ALK harness result already contains the execution-backed
             # checks. Starting the platform evaluator as well leaves the call
             # permanently `eval_started` when no platform eval templates are
@@ -890,8 +928,18 @@ def ingest_alk_sim_result(
             call_execution.call_metadata = call_metadata
             call_execution.save(update_fields=["call_metadata"])
         else:
+            # A harness receipt's selection must reach the dispatcher
+            # unchanged -- `[]` stays `[]`, never widened to `None` ("every
+            # config on the run test") -- so a switch-driven dispatch cannot
+            # re-grade a harness result column. A non-harness ALK run keeps
+            # its pre-existing `or None` fallback.
             eval_dispatched = _dispatch_evaluations_once(
-                call_execution, eval_config_ids=selected_eval_config_ids or None
+                call_execution,
+                eval_config_ids=(
+                    selected_eval_config_ids
+                    if "harness_evaluations" in call_metadata
+                    else (selected_eval_config_ids or None)
+                ),
             )
 
     _roll_up_external_execution(call_execution.test_execution_id)
@@ -1008,6 +1056,11 @@ def _roll_up_external_execution(test_execution_id) -> None:
 def _build_expected_call_executions(
     test_execution: TestExecution,
 ) -> list[CallExecution]:
+    execution_manifest = list(
+        (test_execution.execution_metadata or {}).get("harness_executions") or []
+    )
+    if execution_manifest:
+        return _build_manifest_call_executions(test_execution, execution_manifest)
     run_test = test_execution.run_test
     agent_definition = run_test.agent_definition
     selected_version = test_execution.agent_version or agent_definition.latest_version
@@ -1069,10 +1122,80 @@ def _build_expected_call_executions(
     return expected_calls
 
 
-def _call_execution_key(call_execution: CallExecution) -> tuple[str, str | None]:
+def _build_manifest_call_executions(
+    test_execution: TestExecution,
+    execution_manifest: list[dict[str, Any]],
+) -> list[CallExecution]:
+    """Build exactly the immutable scenario/trial rows frozen by the environment Run."""
+
+    run_test = test_execution.run_test
+    agent_definition = run_test.agent_definition
+    selected_version = test_execution.agent_version or agent_definition.latest_version
+    call_type = (
+        getattr(agent_definition, "agent_type", None)
+        or CallExecution.SimulationCallType.VOICE
+    )
+    scenario_ids = {
+        str(entry["scenario_id"])
+        for entry in execution_manifest
+        if entry.get("scenario_id")
+    }
+    scenarios = {
+        str(scenario.id): scenario
+        for scenario in Scenarios.objects.select_related(
+            "simulator_agent", "dataset", "agent_definition"
+        ).filter(id__in=scenario_ids, deleted=False)
+    }
+    if len(scenarios) != len(scenario_ids):
+        raise ALKSimulateIngestionError(
+            "a selected harness scenario is no longer available"
+        )
+
+    test_executor = TestExecutor(initialize_voice_service=False)
+    expected: list[CallExecution] = []
+    for entry in execution_manifest:
+        scenario = scenarios[str(entry["scenario_id"])]
+        simulator_agent = _resolve_simulator_agent(scenario, run_test, selected_version)
+        base_prompt = simulator_agent.prompt
+        row_id = entry.get("dataset_row_id")
+        row_data_info = (
+            test_executor._get_row_data_and_generate_prompt(
+                row_id=row_id,
+                base_prompt=base_prompt,
+                agent_version=selected_version,
+            )
+            if row_id
+            else None
+        )
+        call = _build_call_execution(
+            test_execution=test_execution,
+            scenario=scenario,
+            agent_definition=agent_definition,
+            selected_version=selected_version,
+            simulator_agent=simulator_agent,
+            base_prompt=base_prompt,
+            row_id=row_id,
+            row_data_info=row_data_info,
+            call_type=call_type,
+        )
+        call.call_metadata.update(
+            {
+                "harness_execution_key": entry["execution_key"],
+                "harness_scenario_key": entry["scenario_key"],
+                "harness_trial_index": entry["trial_index"],
+            }
+        )
+        expected.append(call)
+    return expected
+
+
+def _call_execution_key(call_execution: CallExecution) -> tuple[str, ...]:
+    execution_key = (call_execution.call_metadata or {}).get("harness_execution_key")
+    if execution_key:
+        return ("harness", str(execution_key))
     return (
         str(call_execution.scenario_id),
-        str(call_execution.row_id) if call_execution.row_id else None,
+        str(call_execution.row_id) if call_execution.row_id else "",
     )
 
 
@@ -1216,9 +1339,8 @@ def _apply_payload(call_execution: CallExecution, payload: dict[str, Any]) -> No
         merged.update(incoming)
         call_execution.call_metadata = merged
 
-    _apply_harness_evaluation_outputs(call_execution)
-
     segments = payload.get("transcript") or []
+    _apply_harness_evaluation_outputs(call_execution, transcript_segments=segments)
     is_text = (
         call_execution.simulation_call_type == CallExecution.SimulationCallType.TEXT
     )
@@ -1592,7 +1714,25 @@ def _coerce_token(value) -> int | None:
         return None
 
 
-def _apply_harness_evaluation_outputs(call_execution: CallExecution) -> None:
+def _render_harness_transcript(segments: list[dict[str, Any]]) -> str:
+    """Render the submitted conversation as stable localizer input."""
+    lines = []
+    for segment in segments:
+        if not isinstance(segment, dict):
+            continue
+        content = str(segment.get("content") or "").strip()
+        if not content:
+            continue
+        speaker = str(segment.get("speaker_role") or "unknown").strip().lower()
+        lines.append(f"{speaker}: {content}")
+    return "\n".join(lines)
+
+
+def _apply_harness_evaluation_outputs(
+    call_execution: CallExecution,
+    *,
+    transcript_segments: list[dict[str, Any]] | None = None,
+) -> None:
     """Normalize execution-backed harness checks into the platform eval shape.
 
     The harness has already run these checks; executing the platform evaluator a
@@ -1617,6 +1757,7 @@ def _apply_harness_evaluation_outputs(call_execution: CallExecution) -> None:
             continue
         kind = str(evaluation.get("kind") or "checkpoint").strip()[:50]
         template = _resolve_harness_eval_template(run_test, evaluation, name)
+        config = None
         if template is not None:
             config = _get_or_create_harness_eval_config(run_test, template, name)
             output_id = str(config.id)
@@ -1648,6 +1789,27 @@ def _apply_harness_evaluation_outputs(call_execution: CallExecution) -> None:
             "kind": kind,
             "platform_template": str(evaluation.get("platform_template") or "")[:2000],
         }
+        # Harness judgements are already computed and therefore bypass the
+        # platform evaluator. Explicitly create the same durable localizer task
+        # that the native evaluator would create; merely setting
+        # SimulateEvalConfig.error_localizer does not dispatch one. The task's
+        # deterministic (call, config) source ID keeps result retries idempotent.
+        if config is not None and config.error_localizer:
+            transcript = _render_harness_transcript(transcript_segments or [])
+            if transcript:
+                from model_hub.tasks.user_evaluation import (
+                    trigger_error_localization_for_simulate,
+                )
+
+                trigger_error_localization_for_simulate(
+                    eval_template=template,
+                    call_execution=call_execution,
+                    eval_config=config,
+                    value=output,
+                    mapping={"transcript": transcript},
+                    eval_explanation=str(evaluation.get("reason") or "")[:10000],
+                    log_id=None,
+                )
     call_execution.eval_outputs = outputs
 
 
@@ -1703,6 +1865,7 @@ def _get_or_create_harness_eval_config(
             "run_test": run_test,
             "filters": {},
             "model": template.model,
+            "error_localizer": True,
         },
     )
     return config

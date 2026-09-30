@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -18,6 +19,9 @@ type ShadowFlusher struct {
 	webhookSecret string
 	interval      time.Duration
 	client        *http.Client
+
+	stop     chan struct{} // Close closes it to end Run
+	stopOnce sync.Once
 }
 
 // shadowFlushPayload is the JSON body sent to the Django webhook.
@@ -36,10 +40,12 @@ func NewShadowFlusher(store *ShadowStore, webhookURL, webhookSecret string, inte
 		webhookSecret: webhookSecret,
 		interval:      interval,
 		client:        &http.Client{Timeout: 15 * time.Second},
+		stop:          make(chan struct{}),
 	}
 }
 
-// Run starts the flusher loop. It blocks until ctx is cancelled.
+// Run starts the flusher loop. It blocks until ctx is cancelled or Close is
+// called.
 func (f *ShadowFlusher) Run(ctx context.Context) {
 	ticker := time.NewTicker(f.interval)
 	defer ticker.Stop()
@@ -53,16 +59,28 @@ func (f *ShadowFlusher) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			// Final flush before shutdown.
-			f.flush()
+			f.flush(context.Background())
 			slog.Info("shadow flusher stopped")
 			return
+		case <-f.stop:
+			return // Close makes the last flush
 		case <-ticker.C:
-			f.flush()
+			f.flush(context.Background())
 		}
 	}
 }
 
-func (f *ShadowFlusher) flush() {
+// Close stops Run and sends the results still buffered, giving up when ctx
+// ends. By design it does not wait for a periodic flush that is already
+// sending, which only the client's 15s timeout bounds, and it has no time of
+// its own: when the caller's ctx is spent, the buffered results are lost.
+func (f *ShadowFlusher) Close(ctx context.Context) {
+	f.stopOnce.Do(func() { close(f.stop) })
+	f.flush(ctx)
+	slog.Info("shadow flusher stopped")
+}
+
+func (f *ShadowFlusher) flush(ctx context.Context) {
 	results := f.store.DrainAll()
 	if len(results) == 0 {
 		return
@@ -78,7 +96,7 @@ func (f *ShadowFlusher) flush() {
 		return
 	}
 
-	req, err := http.NewRequest("POST", f.webhookURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.webhookURL, bytes.NewReader(body))
 	if err != nil {
 		slog.Error("shadow flusher: create request failed", "error", err)
 		return

@@ -18,6 +18,13 @@ class HarnessIngressResponseSerializer(serializers.Serializer):
     url = serializers.URLField()
     expires_in_seconds = serializers.IntegerField(min_value=60, max_value=86400)
 
+class HarnessIngressProxyRequestSerializer(serializers.Serializer):
+    """Accept arbitrary callback payloads while keeping the relay in the API contract."""
+
+    payload = serializers.JSONField(required=False)
+
+    def to_internal_value(self, data):
+        return {"payload": data}
 
 def _reject_non_finite(value: float) -> None:
     # FloatField min/max never reject NaN/inf: every comparison with NaN is

@@ -125,8 +125,97 @@ def extract_object_key(file_url: str, bucket_name: str) -> str:
     return file_url.split(f"{bucket_name}/", 1)[1]
 
 
+ANONYMOUS_READ_ACTION = "s3:GetObject"
+
+# Buckets whose anonymous policy this process has already checked.
+_checked_bucket_policies: set[str] = set()
+
+
+def _anonymous_read_statement(bucket_name: str) -> dict:
+    """Anyone may download an object by its URL, and do nothing else.
+
+    Stored files reach browsers as plain object URLs (get_object_url), so
+    anonymous reads are needed. Uploads, overwrites, deletes and listings all
+    go through the backend's own credentials.
+    """
+    return {
+        "Effect": "Allow",
+        "Principal": {"AWS": ["*"]},
+        "Action": [ANONYMOUS_READ_ACTION],
+        "Resource": [f"arn:aws:s3:::{bucket_name}/*"],
+    }
+
+
+def _is_anonymous(principal) -> bool:
+    if principal == "*":
+        return True
+    if isinstance(principal, dict):
+        aws = principal.get("AWS")
+        return aws == "*" or (isinstance(aws, list) and "*" in aws)
+    return False
+
+
+def _restrict_anonymous_access(policy: dict, bucket_name: str) -> dict | None:
+    """The policy with anonymous access cut down to object reads, or None if it
+    already grants nothing more. Statements for named principals are kept."""
+    statements = policy.get("Statement") or []
+    if isinstance(statements, dict):
+        statements = [statements]
+    kept, too_broad = [], False
+    for statement in statements:
+        if statement.get("Effect") == "Allow" and _is_anonymous(
+            statement.get("Principal")
+        ):
+            actions = statement.get("Action") or []
+            if isinstance(actions, str):
+                actions = [actions]
+            if any(action != ANONYMOUS_READ_ACTION for action in actions):
+                too_broad = True
+                continue
+        kept.append(statement)
+    if not too_broad:
+        return None
+    if not any(
+        statement.get("Effect") == "Allow" and _is_anonymous(statement.get("Principal"))
+        for statement in kept
+    ):
+        kept.append(_anonymous_read_statement(bucket_name))
+    return {**policy, "Statement": kept}
+
+
+def _tighten_existing_bucket_policy(client: Minio, bucket_name: str) -> None:
+    """Buckets created by earlier releases let anyone list, overwrite and delete
+    every object. Cut that back to reads once per process; never fail the caller."""
+    try:
+        current = client.get_bucket_policy(bucket_name)
+    except Exception as exc:  # NoSuchBucketPolicy, or a policy we may not read
+        logger.debug(
+            "storage_bucket_policy_unreadable", bucket=bucket_name, error=str(exc)
+        )
+        return
+    try:
+        restricted = _restrict_anonymous_access(json.loads(current), bucket_name)
+    except (TypeError, ValueError, AttributeError):
+        return
+    if restricted is None:
+        return
+    try:
+        client.set_bucket_policy(bucket_name, json.dumps(restricted))
+    except Exception as exc:
+        logger.warning(
+            "storage_bucket_policy_tighten_failed", bucket=bucket_name, error=str(exc)
+        )
+        return
+    logger.warning(
+        "storage_bucket_policy_tightened",
+        bucket=bucket_name,
+        detail="anonymous access is now limited to reading objects by URL",
+    )
+
+
 def ensure_bucket(client: Minio, bucket_name: str) -> None:
-    """Create bucket with public policy if it doesn't exist. Policy only applies on S3/MinIO."""
+    """Create the bucket if needed, readable (not writable or listable) by URL.
+    Policy only applies on S3/MinIO."""
     if STORAGE_BACKEND == "gcs":
         # GCS buckets are pre-created via Terraform with IAM — skip
         return
@@ -134,16 +223,12 @@ def ensure_bucket(client: Minio, bucket_name: str) -> None:
         client.make_bucket(bucket_name)
         policy = {
             "Version": "2012-10-17",
-            "Statement": [
-                {
-                    "Effect": "Allow",
-                    "Principal": "*",
-                    "Action": "s3:*",
-                    "Resource": [
-                        f"arn:aws:s3:::{bucket_name}",
-                        f"arn:aws:s3:::{bucket_name}/*",
-                    ],
-                }
-            ],
+            "Statement": [_anonymous_read_statement(bucket_name)],
         }
         client.set_bucket_policy(bucket_name, json.dumps(policy))
+        _checked_bucket_policies.add(bucket_name)
+        return
+    # Only the bundled MinIO: an operator's own S3 bucket policy is theirs.
+    if STORAGE_BACKEND == "minio" and bucket_name not in _checked_bucket_policies:
+        _checked_bucket_policies.add(bucket_name)
+        _tighten_existing_bucket_policy(client, bucket_name)

@@ -1145,11 +1145,14 @@ const TracingTestMode = React.forwardRef(
     const sessionFirstTraceId =
       sessionDetailQuery.data?.response?.[0]?.trace_id || null;
 
+    // The same trace id can exist in several projects; rows come from the
+    // selected project, so every trace-keyed detail read pins to it.
     const sessionFirstTraceSpansQuery = useQuery({
-      queryKey: ["picker-trace-spans", sessionFirstTraceId],
+      queryKey: ["picker-trace-spans", sessionFirstTraceId, selectedProjectId],
       queryFn: async () => {
         const resp = await axios.get(
           endpoints.project.getTrace(sessionFirstTraceId),
+          { params: { project_id: selectedProjectId } },
         );
         const r = resp.data?.result || {};
         return {
@@ -1210,7 +1213,10 @@ const TracingTestMode = React.forwardRef(
             try {
               const { data } = await axios.get(
                 endpoints.project.getVoiceCallDetail,
-                { params: { trace_id: traceId }, signal: controller.signal },
+                {
+                  params: { trace_id: traceId, project_id: selectedProjectId },
+                  signal: controller.signal,
+                },
               );
               const voiceResult = parseVoiceCallDetailResponse(data);
               // Spread row-list fields first as a fallback so we never
@@ -1238,7 +1244,10 @@ const TracingTestMode = React.forwardRef(
             // This returns all observation spans with full attributes (including spanAttributes).
             const { data } = await axios.get(
               endpoints.project.getTrace(traceId),
-              { signal: controller.signal },
+              {
+                params: { project_id: selectedProjectId },
+                signal: controller.signal,
+              },
             );
             const traceResult = data?.result;
 

@@ -1,0 +1,59 @@
+# CI only: user overrides layered over examples/bundled.yaml. The chart's own
+# wiring must survive them, and none of them may restart a bundled datastore
+# (hack/rendered_checks.py compares this render with the bundled one).
+image:
+  # A chart upgrade.
+  tag: v9.9.9
+secrets:
+  llm:
+    openaiApiKey: sk-ci
+  extra:
+    RECAPTCHA_SECRET_KEY: recaptcha-ci
+config:
+  recaptcha: true
+  extraEnv:
+    REDIS_PASSWORD: override-ci
+urls:
+  otlp: https://otlp.futureagi.example.com
+worker:
+  queues:
+    - name: tasks_s
+      extraEnv:
+        OPENAI_API_KEY: sk-queue-ci
+        TEMPORAL_MAX_CONCURRENT_ACTIVITIES: "7"
+backend:
+  service:
+    type: NodePort
+agentccGateway:
+  config:
+    server:
+      port: 9090
+  service:
+    type: LoadBalancer
+networkPolicy:
+  enabled: true
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx
+# A CA bundle for postgres.external.sslMode=verify-full.
+bootstrap:
+  extraVolumes:
+    - name: pg-ca
+      secret:
+        secretName: pg-ca
+  extraVolumeMounts:
+    - name: pg-ca
+      mountPath: /etc/pg-ca
+      readOnly: true
+fiCollector:
+  extraEnv:
+    PGSSLROOTCERT: /etc/pg-ca/ca.crt
+  extraVolumes:
+    - name: pg-ca
+      secret:
+        secretName: pg-ca
+  extraVolumeMounts:
+    - name: pg-ca
+      mountPath: /etc/pg-ca
+      readOnly: true

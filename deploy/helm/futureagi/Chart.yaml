@@ -1,0 +1,26 @@
+apiVersion: v2
+name: futureagi
+description: >-
+  Future AGI on Kubernetes: the Distributed setup (one Deployment per service,
+  Temporal workers, fi-collector, agentcc-gateway) with external datastores,
+  or bundled single-replica ones for evaluation.
+type: application
+# The chart is released with the platform: release-please rewrites both
+# marked lines in every release PR (release-please-config.json, extra-files),
+# and helm-ci.yml fails when they drift from .release-please-manifest.json.
+version: 1.41.1 # x-release-please-version
+# Default tag of every Future AGI image (image.tag overrides it).
+appVersion: "v1.41.1" # x-release-please-version
+kubeVersion: ">=1.27.0-0"
+home: https://futureagi.com
+sources:
+  - https://github.com/future-agi/future-agi
+keywords:
+  - llm
+  - evaluation
+  - observability
+  - opentelemetry
+  - tracing
+maintainers:
+  - name: Future AGI
+    url: https://github.com/future-agi/future-agi

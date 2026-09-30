@@ -42,6 +42,7 @@ from rest_framework.viewsets import ModelViewSet
 
 from model_hub.models.score import Score
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import ApiErrorCode
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
@@ -57,21 +58,23 @@ from tracer.selectors.trace_filter_reads import (
     CURSOR_REQUIRED_MESSAGE,
     PAGE_DEPTH_EXCEEDED_CODE,
     PAGE_DEPTH_EXCEEDED_MESSAGE,
+    bounded_filter_floor_order,
     bounded_numbered_page_depth_exceeded,
     long_filtered_read_requires_cursor,
     numbered_page_depth_exceeded,
 )
 from tracer.serializers.filters import (
     ObserveGraphDataQuerySerializer,
-    ObserveGraphDataRequestSerializer,
     ObserveGraphDataResponseSerializer,
     PageDepthExceededErrorSerializer,
 )
 from tracer.serializers.trace import (
     TraceAgentGraphQuerySerializer,
     TraceAgentGraphResponseSerializer,
+    TraceDetailQuerySerializer,
     TraceDetailResponseSerializer,
     TraceExportQuerySerializer,
+    TraceGraphDataRequestSerializer,
     TraceIndexQuerySerializer,
     TraceListQuerySerializer,
     TraceNavigationResponseSerializer,
@@ -108,6 +111,7 @@ from tracer.services.clickhouse.graph_dispatch import (
 )
 from tracer.services.clickhouse.list_cursor import (
     ListCursorError,
+    bounded_chunk_complete,
     cursor_page_metadata,
     cursor_scope_for_request,
     decode_list_cursor,
@@ -115,8 +119,11 @@ from tracer.services.clickhouse.list_cursor import (
     exact_total_explicitly_required,
     frozen_window_filter,
     list_cursor_boundary_fingerprint,
+    pin_filter_seed_witness_slack,
+    read_filter_seed_witness_slack,
     snapshot_cursor_supported,
 )
+from tracer.services.clickhouse.list_page_contract import list_page_exactness
 from tracer.services.clickhouse.list_request_deadline import bounded_list_request
 from tracer.services.clickhouse.page_dedup import paginate_deduped
 from tracer.services.clickhouse.query_builders.base import NIL_UUID
@@ -125,6 +132,10 @@ from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
 )
 from tracer.services.clickhouse.query_builders.user_list import (
     UnsupportedBoundedUserListQuery,
+)
+from tracer.services.clickhouse.query_builders.voice_call_list import (
+    VOICE_CALL_ROOT_FILTER,
+    VOICE_CALL_SIMULATOR_EXCLUSION_FILTER,
 )
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
 from tracer.services.clickhouse.read_budget import (
@@ -163,6 +174,7 @@ from tracer.services.users_list_manager import USER_EXPORT_PAGE_SIZE, UsersListM
 from tracer.utils.annotations import (
     build_annotation_subqueries as _build_annotation_subqueries_impl,
 )
+from tracer.utils.attribute_accessor import span_raw_log
 from tracer.utils.bounded_csv import (
     BOUNDED_EXPORT_PAGE_SIZE,
     bounded_page_csv_response,
@@ -197,6 +209,11 @@ ERROR_RESPONSES = {
 TRACE_LIST_WALL_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 TRACE_LIST_CANDIDATE_DEADLINE_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
 TRACE_LIST_ENRICHMENT_TIMEOUT_MS = settings.INTERACTIVE_ANALYTICS_DEFAULT_WALL_MS
+# A cursor page of the observe trace list stops acquiring rows here and
+# publishes the rows found so far plus a resumable checkpoint. Numbered pages,
+# the prototype list and voice lanes cannot resume, so they keep the candidate
+# deadline above; hydration stays under the request wall.
+TRACE_LIST_PAGE_WALL_MS = settings.TRACE_LIST_PAGE_WALL_MS
 # Page-local content/attribute hydration is exact but can still make ClickHouse
 # read a wide part when a caller requests the serializer's 500-row maximum.
 # High-volume qualification showed 100 identities remain below the locked
@@ -215,8 +232,23 @@ TRACE_LIST_ENRICHMENT_MAX_WORKERS = settings.TRACE_LIST_ENRICHMENT_MAX_WORKERS
 # still placing a hard ceiling on Python memory and the subsequent CH IN set.
 # Pages above this bound fail closed (503); they are never silently truncated.
 TRACE_LIST_ANNOTATION_SCORE_SPAN_LIMIT = settings.TRACE_LIST_ANNOTATION_SCORE_SPAN_LIMIT
+# WHICH KNOB BINDS. The selector merges its own _READ_SETTINGS (whose
+# max_threads is FILTER_SELECTOR_MAX_THREADS, still 1) UNDER whatever the
+# caller passes as read_settings, so on this path the dict below is what
+# reaches ClickHouse - FILTER_SELECTOR_MAX_THREADS is a different spec and does
+# not bind here. Verified server-side against system.query_log: every seed
+# statement of a measured read reported Settings['max_threads'] = the value
+# below. Two phases pin themselves lower regardless and are unaffected: root /
+# population time discovery clamp to 1, and the density probe to 1.
+#
+# Two workers, not one. Measured on the same statements at both settings: a
+# dense four-hour bounded-witness seed ran 3.8 s at one worker and 1.76 s at
+# two, and the heavy statement of a frozen-END read went ~11.0 s to 5.27 s with
+# byte-identical reads. One worker was leaving the interactive list read a
+# factor of two slower for no safety the byte and memory caps below do not
+# already provide.
 TRACE_LIST_READ_SETTINGS = {
-    "max_threads": 1,
+    "max_threads": 2,
     "max_block_size": settings.OBSERVABILITY_LIST_MAX_BLOCK_SIZE,
     "max_memory_usage": settings.OBSERVABILITY_LIST_MAX_MEMORY_BYTES,
     "max_bytes_to_read": settings.OBSERVABILITY_LIST_MAX_BYTES,
@@ -388,10 +420,29 @@ def _trace_list_cursor_order_for_partial_page(
 ) -> tuple[Any, ...]:
     """Return a public boundary for a progressed empty transport page."""
 
+    # Guarded for a missing page exactly as the span list's is: this function
+    # asked for rows before it asked the page anything until the floor was
+    # added, and a caller without a bounded page must not start crashing on it.
+    if bounded_page is not None and bounded_page.has_more and rows:
+        return _trace_list_cursor_order_for_row(rows[-1], org_scope=org_scope)
+    floor = (
+        bounded_page.continuation_published_order_floor
+        if bounded_page is not None
+        else None
+    )
+    if floor is not None:
+        return bounded_filter_floor_order(
+            floor, lowest_components=2 if org_scope else 1
+        )
     if rows:
         return _trace_list_cursor_order_for_row(rows[-1], org_scope=org_scope)
     if cursor_state is not None:
         return tuple(cursor_state.order)
+    if bounded_page is None:
+        raise ValueError("trace cursor page has no row and no checkpoint")
+    # A checkpoint the reader could not name in result order: the pre-floor
+    # expression of the scan position, reached only on a first page with no
+    # rows and a keyset whose token is not the one this list publishes.
     checkpoint_time = (
         bounded_page.continuation_before_start_time
         or bounded_page.continuation_slice_end
@@ -1984,7 +2035,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
     def perform_destroy(self, instance):
         _soft_delete_trace_tree([instance])
 
-    @swagger_auto_schema(
+    @validated_request(
+        query_serializer=TraceDetailQuerySerializer,
         responses={
             200: TraceDetailResponseSerializer,
             **ERROR_RESPONSES,
@@ -1994,6 +2046,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
     def retrieve(self, request, *args, **kwargs):
         """
         Retrieve a trace by its ID.
+
+        Query params:
+        - project_id (optional) — the project the trace was opened from.
         """
         from tracer.services.clickhouse.v2.trace_detail_reads import (
             TraceDetailReadUnavailable,
@@ -2010,6 +2065,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 request=request,
                 pk=trace_id,
                 analytics=V2AnalyticsQueryService(),
+                project_id=getattr(request, "validated_query_data", {}).get(
+                    "project_id"
+                ),
             )
             return self._gm.success_response(handler.fetch())
         except Trace.DoesNotExist:
@@ -2090,18 +2148,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             or mono.get("assistant_url")
         )
 
-    @staticmethod
-    def _coerce_raw_log(value):
-        """raw_log rides in span attributes as a JSON string (collector path) or a
-        dict (legacy PG+CDC). Return a dict either way so process_raw_logs can
-        recompute status/duration/recording_available/transcript from it."""
-        if isinstance(value, str):
-            try:
-                return json.loads(value) or {}
-            except (json.JSONDecodeError, TypeError):
-                return {}
-        return value or {}
-
     def populate_call_logs_result(
         self, qs, eval_configs, annotation_labels=None, *, detail_mode=False
     ):
@@ -2153,7 +2199,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             recording = self._build_recording_dict(attrs)
 
             # Raw provider payload if present (collector ships it as JSON string)
-            raw_log = self._coerce_raw_log(attrs.get("raw_log"))
+            raw_log = span_raw_log(attrs)
             provider = trace.provider or "vapi"
 
             processed_log = ObservabilityService.process_raw_logs(
@@ -2703,7 +2749,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
     @bounded_graph_action_request(resource="trace_graph")
     @validated_request(
         query_serializer=ObserveGraphDataQuerySerializer,
-        request_serializer=ObserveGraphDataRequestSerializer,
+        request_serializer=TraceGraphDataRequestSerializer,
         responses={
             200: ObserveGraphDataResponseSerializer,
             400: ApiErrorResponseSerializer,
@@ -2747,6 +2793,16 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
             filters = graph_execution_filters(filters)
             filter_combinator = body.get("filter_combinator", "and")
+            observe_type = body.get("observe_type", "trace")
+            evidence_filters = filters
+            if observe_type == "voice":
+                # A voice call is a trace whose canonical root is a
+                # conversation span. Apply the voice list's own private root
+                # leaf so the chart counts the list's population.
+                filters = [*filters, VOICE_CALL_ROOT_FILTER]
+                if body.get("remove_simulation_calls"):
+                    # The list's "exclude simulation calls" toggle.
+                    filters.append(VOICE_CALL_SIMULATOR_EXCLUSION_FILTER)
             interval = body["interval"]
             req_data_config = body["req_data_config"]
             try:
@@ -2854,8 +2910,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 graph.update(
                     graph_query_evidence(
                         project_id=project_id,
-                        observe_type="trace",
-                        filters=filters,
+                        observe_type=observe_type,
+                        filters=evidence_filters,
                     )
                 )
                 graph = enforce_exact_graph_data_contract(graph)
@@ -3549,7 +3605,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             503: ApiErrorResponseSerializer,
         },
     )
-    @action(detail=False, methods=["get", "post"])
+    @action(detail=False, methods=["get", "post"], pagination_class=None)
     def list_traces_of_session(self, request, *args, **kwargs):
         """
         List traces filtered by project ID with optimized queries.
@@ -3843,6 +3899,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         Query params:
         - trace_id or legacy traceId (required) — UUID of the voice call trace.
+        - project_id (optional) — the project the call was opened from.
         """
         trace_id = ""
         try:
@@ -3851,12 +3908,18 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             # Scope the ClickHouse identity read up front.  The exact reader
             # resolves latest span versions/tombstones inside only these
             # authorized projects, so a colliding public trace id cannot select
-            # another tenant via an arbitrary LIMIT 1.
+            # another tenant via an arbitrary LIMIT 1.  A project_id pins the
+            # read to the project the call was opened from; outside the
+            # caller's scope it resolves like a missing trace.
+            project_scope = _project_queryset_for_request(request)
+            pinned_project_id = request.validated_query_data.get("project_id")
+            if pinned_project_id:
+                project_scope = project_scope.filter(id=pinned_project_id)
             project_ids = [
                 str(project_id)
-                for project_id in _project_queryset_for_request(request)
-                .values_list("id", flat=True)
-                .order_by("id")[:4097]
+                for project_id in project_scope.values_list("id", flat=True).order_by(
+                    "id"
+                )[:4097]
             ]
             eval_configs_by_project: dict[str, list[CustomEvalConfig]] = {}
 
@@ -3962,7 +4025,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # fi.simulator.call_execution_id and similar keys.
         eval_attrs = span_attrs.get("eval_attributes", {}) or {}
 
-        raw_log = self._coerce_raw_log(span_attrs.get("raw_log"))
+        root_span_id = str(row.get("span_id", row.get("id", "")))
+        raw_log = span_raw_log(span_attrs, span_id=root_span_id)
         metadata_raw = row.get("metadata_json") or "{}"
         try:
             metadata = (
@@ -3997,7 +4061,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         recording = self._build_recording_dict(attr_str)
 
         # Build observation_span array — root span first
-        root_span_id = str(row.get("span_id", row.get("id", "")))
         observation_span = [
             {
                 "id": root_span_id,
@@ -4634,6 +4697,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             annotation_label_ids_by_project=annotation_label_ids_by_project,
             filter_combinator=filter_combinator,
         )
+        pin_filter_seed_witness_slack(builder, cursor_state)
         requires_cursor = builder.requires_cursor_for_long_filtered_read()
         if requires_cursor and not cursor_supported:
             # A long filtered request must never escape to the legacy broad
@@ -4679,8 +4743,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "Trace filter cannot be evaluated by the bounded list reader"
             )
         try:
+            # Only a cursor page can stop early and still resume exactly, so
+            # only a cursor page runs its acquisition at the page wall.
             candidate_deadline_ms = read_deadline.remaining_ms(
-                TRACE_LIST_CANDIDATE_DEADLINE_MS
+                TRACE_LIST_PAGE_WALL_MS
+                if cursor_enabled
+                else TRACE_LIST_CANDIDATE_DEADLINE_MS
             )
         except ReadDeadlineExceeded:
             return self._gm.custom_error_response(
@@ -5492,6 +5560,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 org_scope=org_scope,
             )
             next_cursor = encode_list_cursor(
+                witness_slack_hours=read_filter_seed_witness_slack(builder),
                 resource="observe_traces",
                 scope=cursor_scope,
                 query=cursor_query,
@@ -5545,13 +5614,16 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
             # ``bounded_page.complete`` describes whether this one transport
             # read exhausted/proved the whole requested window.  A signed
-            # cursor checkpoint is a different, exact public contract: every
-            # returned row was latest-state classified in canonical order and
-            # the token resumes at the first unclassified position.  Reporting
-            # that safe chunk as ``degraded`` made the UI show a query failure
-            # even though no sampled or unproven row was exposed.  Totals stay
-            # explicitly lower-bound until the cursor chain is exhausted.
-            public_chunk_complete = bounded_page.complete or cursor_has_more
+            # cursor checkpoint that carries classified rows is a different,
+            # exact public contract, so it is published as a complete chunk;
+            # a checkpoint that proved no row keeps the selector's degraded
+            # status instead of presenting an unsearched window as empty.
+            # Totals stay explicitly lower-bound until the chain is exhausted.
+            public_chunk_complete = bounded_chunk_complete(
+                read_complete=bounded_page.complete,
+                cursor_has_more=cursor_has_more,
+                published_rows=len(bounded_page.rows),
+            )
             metadata.update(
                 {
                     "total_rows_is_lower_bound": total_rows_is_lower_bound,
@@ -5567,6 +5639,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     "query_count": query_count,
                     "query_rows_returned": query_rows_returned,
                     "query_result_payload_bytes": query_result_payload_bytes,
+                    **list_page_exactness(complete=public_chunk_complete),
                 }
             )
         if bounded_page is None or bounded_page.complete or cursor_has_more:
@@ -5745,6 +5818,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             remove_simulation_calls=sim_flag,
             annotation_label_ids=annotation_label_ids,
         )
+        pin_filter_seed_witness_slack(builder, cursor_state)
         voice_request_start, voice_request_end = builder.parse_time_range(filters)
         requires_cursor = long_filtered_read_requires_cursor(
             filters,
@@ -5899,6 +5973,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # one service. No broad FINAL scan is used.
         page_rows = result.data
         attrs_map = {}
+        # Statements issued past the selector, counted where they are made so
+        # the published ``query_count`` is the page's real ClickHouse cost.
+        content_query_attempts = 0
+        eval_query_attempts = 0
         if page_rows:
             normalized_root_identities = [
                 builder.bounded_filter_page_hydration_identity(row) for row in page_rows
@@ -5917,7 +5995,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     code="service_unavailable",
                 )
 
-            content_query_attempts = 0
             content_batch_size = settings.VOICE_CONTENT_MAX_BATCH_SIZE
 
             def hydrate_content_batch(
@@ -6044,6 +6121,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             if eval_query:
                 try:
                     eval_timeout_ms = read_deadline.remaining_ms(1_500)
+                    eval_query_attempts += 1
                     eval_result = analytics.execute_ch_query(
                         eval_query,
                         eval_params,
@@ -6130,13 +6208,14 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             span_attrs = attr_row.get("span_attributes") or {}
             provider = attr_row.get("provider") or provider
 
-            # Post-filter simulator calls in Python (can't do in CH without OOM)
+            raw_log = span_raw_log(span_attrs, span_id=span_id)
+            # Parity backstop: simulator_call_sql already dropped these in
+            # ClickHouse when Phase 1 selected the page.
             if sim_flag and VoiceCallListQueryBuilderV2.is_simulator_call(
-                span_attrs, provider
+                raw_log, provider
             ):
                 continue
 
-            raw_log = self._coerce_raw_log(span_attrs.get("raw_log"))
             voice_metrics = self._extract_voice_turn_and_talk_metrics(
                 span_attrs, raw_log
             )
@@ -6357,6 +6436,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         ):
             window_start, window_end = builder.parse_time_range(filters)
             next_cursor = encode_list_cursor(
+                witness_slack_hours=read_filter_seed_witness_slack(builder),
                 resource="voice_calls",
                 scope=cursor_scope,
                 query=cursor_query,
@@ -6392,13 +6472,21 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 ),
             )
             cursor_has_more = True
-        # A nonterminal cursor chunk is still an exact public result: every
-        # row is latest-state classified and the signed token resumes at the
-        # first unclassified root. Keep totals lower-bound until exhaustion,
-        # but do not expose the selector's internal finite-scan stop as a data
-        # error. Numbered allow_sampled compatibility retains its degraded
-        # metadata below because it has no exact continuation contract.
-        public_chunk_complete = bounded_page.complete or cursor_has_more
+        # A nonterminal cursor chunk that published rows is still an exact
+        # public result: every row is latest-state classified and the signed
+        # token resumes at the first unclassified root. Keep totals
+        # lower-bound until exhaustion, but do not expose the selector's
+        # internal finite-scan stop as a data error. A checkpoint that proved
+        # no row is not an answer and keeps its degraded status. Numbered
+        # allow_sampled compatibility retains its degraded metadata below
+        # because it has no exact continuation contract. Simulator calls are
+        # dropped from ``results`` after classification, so the published list
+        # -- not the selector's own rows -- is what the caller actually sees.
+        public_chunk_complete = bounded_chunk_complete(
+            read_complete=bounded_page.complete,
+            cursor_has_more=cursor_has_more,
+            published_rows=len(results),
+        )
         response_data = {
             "count": total_count,
             "count_is_lower_bound": (
@@ -6415,6 +6503,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "query_status": (
                 "complete" if public_chunk_complete else bounded_page.status
             ),
+            "query_count": (
+                bounded_page.query_count + content_query_attempts + eval_query_attempts
+            ),
+            **list_page_exactness(complete=public_chunk_complete),
         }
         if include_export_fields:
             response_data["_export_eval_names"] = sorted(
@@ -6922,6 +7014,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     "query_count": bounded_page.query_count,
                     "query_rows_returned": bounded_page.rows_returned,
                     "query_result_payload_bytes": bounded_page.result_payload_bytes,
+                    **list_page_exactness(complete=bounded_page.complete),
                 }
             )
         if metadata.get(
@@ -7107,9 +7200,12 @@ class UsersView(APIView):
                 # Finish the finite cursor read before publishing HTTP 200.
                 # Read-budget/ClickHouse failures can then remain sanitized
                 # retryable responses instead of header-only CSV downloads.
+                # The export is not a list page: it keeps filling its bounded
+                # page instead of stopping at the cursor page wall.
                 cursor_read = manager.list_cursor_payload(
                     page_size=USER_EXPORT_PAGE_SIZE,
                     cursor=None,
+                    page_wall=False,
                 )
                 response = StreamingHttpResponse(
                     manager.iter_export_csv(cursor_read=cursor_read),
@@ -7175,6 +7271,15 @@ class UsersView(APIView):
                 status.HTTP_400_BAD_REQUEST, str(exc), code=exc.code
             )
         except UnsupportedBoundedUserListQuery:
+            if not query_data.get("sort_params"):
+                # Raw-span, eval/annotation and derived-metric filters decide
+                # membership after the page is read, so a numbered OFFSET page
+                # cannot be exact. The cursor contract (the UI's) serves them.
+                return self._gm.custom_error_response(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    get_error_message("USER_FILTER_REQUIRES_CURSOR"),
+                    code=ApiErrorCode.USER_FILTER_REQUIRES_CURSOR,
+                )
             # A globally sorted page over a derived metric requires evaluating
             # every matching user before LIMIT.  The bounded cursor path cannot
             # preserve that contract, so fail explicitly instead of leaking a
@@ -7223,13 +7328,13 @@ class GetUserCodeExampleView(APIView):
                 return self._gm.bad_request("Project type must be 'observe'.")
 
         code_example = f"""import openai
-from fi_instrumentation import using_attributes
+from fi_instrumentation import FITracer, register, using_attributes
+from fi_instrumentation.fi_types import ProjectType
 from traceai_openai import OpenAIInstrumentor
 
 trace_provider = register(
     project_type=ProjectType.OBSERVE,
     project_name="{project_name}",
-    session_name="new-session",
 )
 
 tracer = FITracer(trace_provider.get_tracer(__name__))

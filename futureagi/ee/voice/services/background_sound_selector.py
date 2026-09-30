@@ -49,11 +49,11 @@ Replace BG_XX with the actual ID from the list above. Include nothing else in yo
 
 def _extract_bg_id(response: str) -> Optional[str]:
     """Extract BG_XX ID from LLM response using pattern matching."""
-    match = re.search(r"SELECTED:\s*(BG_\d+)", response, re.IGNORECASE)
+    match = re.search(r"SELECTED:\s*(BG_[A-Z0-9]+(?:_[A-Z0-9]+)*)", response, re.IGNORECASE)
     if match:
         return match.group(1).upper()
 
-    match = re.search(r"\b(BG_\d+)\b", response, re.IGNORECASE)
+    match = re.search(r"\b(BG_[A-Z0-9]+(?:_[A-Z0-9]+)*)\b", response, re.IGNORECASE)
     if match:
         return match.group(1).upper()
 

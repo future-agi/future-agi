@@ -54,3 +54,14 @@ export const prodTracing = {
     applicationID: prodAppID,
   },
 };
+
+// The tracing config for this build's environment, or null without a license
+// key and application ID. Without them the agent sends nothing, but it still
+// wraps fetch, XHR and history on every page, so it is not started at all. The
+// published images are built without them.
+export const newRelicTracing = (environment) => {
+  const tracing = { production: prodTracing, dev: devTracing }[environment];
+  return tracing?.info.licenseKey && tracing.info.applicationID
+    ? tracing
+    : null;
+};

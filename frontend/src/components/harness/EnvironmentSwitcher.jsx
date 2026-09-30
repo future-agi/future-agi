@@ -42,7 +42,7 @@ export default function EnvironmentSwitcher({
   const close = () => setAnchorEl(null);
 
   const current = jobs.find((item) => item.job?.job_id === currentJobId);
-  const label = environmentName(current?.job, currentName || "RL environment");
+  const label = environmentName(current?.job, currentName || "environment");
 
   // A cold load of a detail URL can leave the list request unresolved or failed. Without
   // environments to switch between, a dropdown would open onto nothing but the create row,
@@ -71,7 +71,7 @@ export default function EnvironmentSwitcher({
         variant="outlined"
         color="inherit"
         onClick={(event) => setAnchorEl(event.currentTarget)}
-        aria-label="Switch RL environment"
+        aria-label="Switch environment"
         endIcon={<Iconify icon="eva:chevron-down-fill" width={18} />}
         sx={{
           borderColor: "divider",
@@ -155,7 +155,7 @@ export default function EnvironmentSwitcher({
           >
             <Iconify icon="mingcute:add-line" width={ICON_SIZE} />
             <Typography variant="body2" fontWeight={600}>
-              Create RL environment
+              Create environment
             </Typography>
           </MenuItem>
         )}

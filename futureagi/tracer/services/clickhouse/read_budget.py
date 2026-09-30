@@ -41,6 +41,10 @@ _TRANSIENT_CLICKHOUSE_ERROR_CODES = {
     ErrorCodes.SHARD_HAS_NO_CONNECTIONS,
 }
 
+# An INSERT refused while merges are behind: back-pressure, like the read
+# budget codes, not a fault in the rows.
+_WRITE_BACKPRESSURE_ERROR_CODES = {ErrorCodes.TOO_MANY_PARTS}
+
 # Code 386 (NO_COMMON_TYPE) has appeared on customer-facing browse/value APIs
 # when heterogeneous production values reach a ClickHouse comparison.  It is
 # not a timeout and must not be treated as one inside selectors, but at the HTTP
@@ -75,6 +79,15 @@ def _clickhouse_connect_error_code(exc: Exception) -> int | None:
     return int(match.group(1)) if match else None
 
 
+def _clickhouse_error_code(exc: Exception) -> int | None:
+    """The server error code of either driver's exception; None otherwise."""
+    if isinstance(exc, ClickHouseError):
+        return getattr(exc, "code", None)
+    if isinstance(exc, ClickHouseConnectDatabaseError):
+        return _clickhouse_connect_error_code(exc)
+    return None
+
+
 class ReadDeadlineExceeded(TimeoutError):
     """A request-owned read pipeline exhausted its single wall deadline."""
 
@@ -85,12 +98,20 @@ class ReadDeadline:
 
     total_ms: int
     started: float
+    # Whether a statement under this deadline also asks the server to stop at
+    # it (``server_execution_cap_ms``). Off by default: application reads keep
+    # the no-abort policy and use the deadline for admission only.
+    enforce_on_server: bool = False
 
     @classmethod
-    def start(cls, total_ms: int) -> "ReadDeadline":
+    def start(cls, total_ms: int, *, enforce_on_server: bool = False) -> "ReadDeadline":
         if total_ms <= 0:
             raise ValueError("read deadline must be positive")
-        return cls(total_ms=int(total_ms), started=time.monotonic())
+        return cls(
+            total_ms=int(total_ms),
+            started=time.monotonic(),
+            enforce_on_server=enforce_on_server,
+        )
 
     def elapsed_ms(self) -> float:
         return (time.monotonic() - self.started) * 1000
@@ -115,11 +136,21 @@ def is_read_budget_error(exc: Exception) -> bool:
 
     if isinstance(exc, (ReadDeadlineExceeded, ClickHouseSocketTimeoutError)):
         return True
-    if isinstance(exc, ClickHouseError):
-        return getattr(exc, "code", None) in _READ_BUDGET_ERROR_CODES
-    if isinstance(exc, ClickHouseConnectDatabaseError):
-        return _clickhouse_connect_error_code(exc) in _READ_BUDGET_ERROR_CODES
-    return False
+    return _clickhouse_error_code(exc) in _READ_BUDGET_ERROR_CODES
+
+
+def is_clickhouse_overload_error(exc: Exception) -> bool:
+    """Return whether ClickHouse refused a statement for capacity, not content.
+
+    The read-budget codes (memory, timeouts, too many queries) plus
+    TOO_MANY_PARTS. The same statement can succeed later unchanged, so a
+    writer must retry it rather than split it or blame its rows.
+    """
+
+    return (
+        is_read_budget_error(exc)
+        or _clickhouse_error_code(exc) in _WRITE_BACKPRESSURE_ERROR_CODES
+    )
 
 
 def is_clickhouse_query_size_error(exc: Exception) -> bool:
@@ -131,13 +162,7 @@ def is_clickhouse_query_size_error(exc: Exception) -> bool:
     syntax errors remain programming failures and fail closed.
     """
 
-    if isinstance(exc, ClickHouseError):
-        code = getattr(exc, "code", None)
-    elif isinstance(exc, ClickHouseConnectDatabaseError):
-        code = _clickhouse_connect_error_code(exc)
-    else:
-        return False
-    return code == ErrorCodes.SYNTAX_ERROR and bool(
+    return _clickhouse_error_code(exc) == ErrorCodes.SYNTAX_ERROR and bool(
         _CLICKHOUSE_MAX_QUERY_SIZE_RE.search(str(exc))
     )
 
@@ -153,7 +178,13 @@ def is_clickhouse_query_error(exc: Exception) -> bool:
     :func:`is_read_budget_error`.
     """
 
-    if isinstance(exc, (ClickHouseNetworkError, ClickHouseSocketTimeoutError)):
+    # The native driver's socket reader raises a bare EOFError, neither wrapped
+    # nor an OSError, when the server closes the connection mid-response. Only
+    # the bare exception qualifies: a coded error raised while one is being
+    # handled is still judged by its code below.
+    if isinstance(
+        exc, (ClickHouseNetworkError, ClickHouseSocketTimeoutError, EOFError)
+    ):
         return True
     if isinstance(exc, ClickHouseError):
         return getattr(exc, "code", None) in _TRANSIENT_CLICKHOUSE_ERROR_CODES
@@ -185,10 +216,8 @@ def is_clickhouse_api_read_unavailable_error(exc: Exception) -> bool:
     identifiers/tables, arbitrary runtime errors, and untyped message text.
     """
 
-    if is_read_budget_error(exc) or is_clickhouse_query_error(exc):
-        return True
-    if isinstance(exc, ClickHouseError):
-        return getattr(exc, "code", None) in _API_READ_UNAVAILABLE_ERROR_CODES
-    if isinstance(exc, ClickHouseConnectDatabaseError):
-        return _clickhouse_connect_error_code(exc) in _API_READ_UNAVAILABLE_ERROR_CODES
-    return False
+    return (
+        is_read_budget_error(exc)
+        or is_clickhouse_query_error(exc)
+        or _clickhouse_error_code(exc) in _API_READ_UNAVAILABLE_ERROR_CODES
+    )

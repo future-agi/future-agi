@@ -1,0 +1,14 @@
+# Not part of the packaged chart.
+.DS_Store
+.git/
+.gitignore
+*.swp
+*.bak
+*.tmp
+*.orig
+*~
+.idea/
+.vscode/
+# Maintenance script and CI value sets (examples/ ships: the README uses it).
+hack/
+ci/
