@@ -441,6 +441,9 @@ def enqueue_message(
             **supplied_payload,
             "_environment_revision": expected_revision,
         }
+        in_scope = _scenarios_in_scope(job, supplied_payload.get("scenario_ids"))
+        if in_scope:
+            command_payload["_scenarios_in_scope"] = in_scope
         existing = conversation.messages.filter(
             client_request_id=client_request_id
         ).first()
@@ -758,7 +761,7 @@ def pending_commands(
                     "_environment_revision", ""
                 ),
                 "payload": {
-                    "content": message.content,
+                    "content": _command_content(message),
                     "reply_to": str(message.reply_to) if message.reply_to else None,
                     **{
                         key: value
@@ -1603,3 +1606,106 @@ def _logical_stage(stage: str) -> str:
     }:
         return "run"
     return "reception"
+
+
+def check_builder_workspace(job: HostedHarnessJob) -> None:
+    """Refuse a builder message when a finished job has no workspace to restore."""
+    terminal_states = {
+        HostedHarnessJob.State.COMPLETED,
+        HostedHarnessJob.State.FAILED,
+        HostedHarnessJob.State.CANCELED,
+    }
+    if job.state not in terminal_states:
+        return
+    conversation = (
+        HostedHarnessConversation.no_workspace_objects.filter(job=job)
+        .only("latest_workspace_object_key", "state")
+        .first()
+    )
+    metadata = (job.payload or {}).get("metadata") or {}
+    has_archive = bool(
+        metadata.get("authoring_object_key")
+        or getattr(conversation, "latest_workspace_object_key", None)
+    )
+    files_gone = (
+        getattr(conversation, "state", None) == HostedHarnessConversation.State.RETIRED
+    )
+    if files_gone or (job.state == HostedHarnessJob.State.COMPLETED and not has_archive):
+        raise HostedHarnessError(
+            "conversation_workspace_not_ready",
+            (
+                "This environment's saved files are no longer available; "
+                "rebuild it to chat."
+                if files_gone
+                else "This completed run has no saved authoring workspace to restore."
+            ),
+            status_code=409,
+        )
+
+
+def send_builder_message(
+    job: HostedHarnessJob,
+    *,
+    content: str,
+    client_request_id: str,
+    base_url: str,
+    kind: str = "user_message",
+    reply_to: uuid.UUID | None = None,
+    payload: dict[str, Any] | None = None,
+) -> HostedHarnessConversation:
+    """Queue one builder message and make sure a runtime will pick it up."""
+    from simulate.tasks.hosted_harness_conversation import (
+        schedule_conversation_runtime,
+    )
+
+    conversation, _message, _created = enqueue_message(
+        job,
+        content=content,
+        client_request_id=client_request_id,
+        kind=kind,
+        reply_to=reply_to,
+        payload=payload,
+    )
+    try:
+        schedule_conversation_runtime(str(conversation.id), base_url)
+    except Exception as exc:  # noqa: BLE001 - the message is saved; the caller may retry
+        raise HostedHarnessError(
+            "conversation_scheduler_unavailable",
+            "The message was saved but its runtime could not be scheduled",
+            status_code=503,
+            retryable=True,
+        ) from exc
+    conversation.refresh_from_db()
+    return conversation
+
+
+def _scenarios_in_scope(job: HostedHarnessJob, scenario_ids: Any) -> list[dict[str, str]]:
+    """The selected scenarios a message is about, resolved from the row ids the UI sends."""
+    from simulate.models import HostedHarnessScenario
+
+    if not isinstance(scenario_ids, list) or not scenario_ids:
+        return []
+    ids = []
+    for value in scenario_ids[:200]:
+        try:
+            ids.append(uuid.UUID(str(value)))
+        except (TypeError, ValueError):
+            continue
+    environment = job.environment if job.environment_id else job
+    return [
+        {"name": name or key, "scenario_key": key}
+        for key, name in HostedHarnessScenario.no_workspace_objects.filter(
+            job=environment, id__in=ids
+        )
+        .order_by("number")
+        .values_list("scenario_key", "name")
+    ]
+
+
+def _command_content(message: HostedHarnessConversationMessage) -> str:
+    """The message as the builder agent reads it, naming any scenarios the person selected."""
+    in_scope = (message.payload or {}).get("_scenarios_in_scope") or []
+    if not in_scope:
+        return message.content
+    named = "; ".join(f"{one['name']} ({one['scenario_key']})" for one in in_scope)
+    return f"{message.content}\n\nThis message is about these scenarios: {named}."

@@ -17,6 +17,7 @@ from simulate.serializers.harness_environment import (
     HarnessEnvironmentRenameSerializer,
     HarnessEnvironmentRunEvaluationQueuedSerializer,
     HarnessEnvironmentToolCallEvaluationSerializer,
+    HarnessScenarioChangeRequestSerializer,
     HarnessScenarioChangeResponseSerializer,
     HarnessScenarioCoverageQuerySerializer,
     HarnessScenarioCoverageResponseSerializer,
@@ -30,6 +31,9 @@ from simulate.serializers.harness_environment import (
 from simulate.serializers.harness_job import (
     HarnessRunCreateResponseSerializer,
     HarnessRunCreateSerializer,
+)
+from simulate.serializers.hosted_harness_conversation import (
+    HarnessConversationReadSerializer,
 )
 from simulate.services.harness_environment import (
     annotate_for_list,
@@ -53,6 +57,7 @@ from simulate.services.scenario_changes import (
     ScenarioChangeRefused,
     delete_scenarios,
     edit_scenario,
+    request_scenario_change,
 )
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.pagination import ExtendedPageNumberPagination
@@ -373,6 +378,52 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
             )
         except ScenarioChangeRefused as refused:
             return _refused(refused)
+
+    @validated_request(
+        request_serializer=HarnessScenarioChangeRequestSerializer,
+        responses={
+            202: HarnessConversationReadSerializer,
+            400: HarnessScenarioErrorSerializer,
+            404: HarnessScenarioErrorSerializer,
+            409: HarnessScenarioErrorSerializer,
+            503: HarnessScenarioErrorSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="scenarios/changes")
+    def change_scenarios(self, request, pk=None):
+        """Revise scenarios or add new ones through the builder agent, which re-proves them."""
+        import hashlib
+        import uuid as uuid_module
+
+        from simulate.services.hosted_harness import HostedHarnessError
+        from simulate.services.hosted_harness_conversation import (
+            serialize_conversation,
+        )
+        from simulate.services.hosted_harness_ingress import _public_base_url
+
+        job = self._job(request, pk)
+        if job is None:
+            return _refused(
+                ScenarioChangeRefused("scenario_not_found", "environment not found", 404)
+            )
+        key = request.headers.get("Idempotency-Key") or uuid_module.uuid4().hex
+        data = request.validated_data
+        try:
+            conversation = request_scenario_change(
+                job,
+                kind=data["kind"],
+                instruction=data.get("instruction") or "",
+                scenario_ids=data.get("scenario_ids") or [],
+                count=data.get("count"),
+                client_request_id="change-" + hashlib.sha256(key.encode()).hexdigest()[:40],
+                base_url=_public_base_url(request),
+            )
+        except HostedHarnessError as exc:
+            return _refused(ScenarioChangeRefused(exc.code, exc.message, exc.status_code))
+        except ScenarioChangeRefused as refused:
+            return _refused(refused)
+        return Response(serialize_conversation(conversation), status=status.HTTP_202_ACCEPTED)
 
     @validated_request(
         request_serializer=HarnessRunCreateSerializer,

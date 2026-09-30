@@ -519,3 +519,62 @@ def delete_scenarios(
             *amend_suite(job, [{"op": "drop", "scenarios": keys}], rework=True)
         )
         return {"receipts": receipts, "revision": _revision(job), "scenario": None}
+
+
+def request_scenario_change(
+    environment: HostedHarnessJob,
+    *,
+    kind: str,
+    instruction: str,
+    scenario_ids: list,
+    count: int | None,
+    client_request_id: str,
+    base_url: str,
+):
+    """Hand a change that needs re-proving to the environment's builder agent.
+
+    The agent rewrites and re-proves the scenarios in its chat workspace; when the turn
+    finishes, the chat publish makes the result the environment's new snapshot.
+    """
+    from simulate.services.hosted_harness import HostedHarnessError
+    from simulate.services.hosted_harness_conversation import (
+        check_builder_workspace,
+        send_builder_message,
+    )
+
+    if environment.state != HostedHarnessJob.State.COMPLETED:
+        raise ScenarioChangeRefused(
+            "environment_not_ready", "scenarios can be changed once the build finishes"
+        )
+    instruction = (instruction or "").strip()
+    if kind == "revise":
+        found = HostedHarnessScenario.no_workspace_objects.filter(
+            job=environment, id__in=scenario_ids
+        ).count()
+        if found != len(set(scenario_ids)):
+            raise ScenarioChangeRefused("scenario_not_found", "scenario not found", 404)
+        content = (
+            "Revise the selected scenarios as follows, re-prove each one, "
+            f"and save the suite: {instruction}"
+        )
+    else:
+        guidance = f" {instruction}" if instruction else ""
+        content = (
+            f"Add exactly {count} new scenario{'s' if count != 1 else ''} to this suite."
+            f"{guidance} Keep every existing scenario as it is, prove each new one, "
+            "then save the suite."
+        )
+    try:
+        check_builder_workspace(environment)
+        return send_builder_message(
+            environment,
+            content=content,
+            client_request_id=client_request_id,
+            base_url=base_url,
+            payload={
+                "change_kind": kind,
+                "scenario_ids": [str(one) for one in scenario_ids],
+            },
+        )
+    except HostedHarnessError as exc:
+        raise ScenarioChangeRefused(exc.code, exc.message, exc.status_code) from exc

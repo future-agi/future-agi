@@ -534,3 +534,34 @@ class HarnessScenarioChangeResponseSerializer(serializers.Serializer):
 class HarnessScenarioErrorSerializer(serializers.Serializer):
     error = serializers.CharField()
     message = serializers.CharField()
+
+
+class HarnessScenarioChangeRequestSerializer(serializers.Serializer):
+    """A change the builder agent carries out and re-proves.
+
+    ``revise`` names the scenarios and says what to change (the passes-when line, the
+    situation, anything proved). ``add`` asks for new scenarios, optionally steered.
+    """
+
+    kind = serializers.ChoiceField(choices=["revise", "add"])
+    instruction = serializers.CharField(
+        required=False, allow_blank=True, max_length=4000
+    )
+    scenario_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, max_length=50
+    )
+    count = serializers.IntegerField(required=False, min_value=1, max_value=50)
+
+    def validate(self, attrs):
+        if attrs["kind"] == "revise":
+            if not attrs.get("scenario_ids"):
+                raise serializers.ValidationError(
+                    {"scenario_ids": "name the scenarios to revise"}
+                )
+            if not (attrs.get("instruction") or "").strip():
+                raise serializers.ValidationError(
+                    {"instruction": "say what should change"}
+                )
+        elif not attrs.get("count"):
+            raise serializers.ValidationError({"count": "say how many to add"})
+        return attrs

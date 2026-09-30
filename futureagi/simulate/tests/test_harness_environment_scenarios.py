@@ -259,3 +259,110 @@ def test_changes_address_environments_only(client, editable):
     )
 
     assert response.status_code == 404
+
+
+@pytest.fixture
+def builder(settings, monkeypatch):
+    settings.HARNESS_PUBLIC_BASE_URL = "https://platform.example"
+    scheduled = []
+    monkeypatch.setattr(
+        "simulate.tasks.hosted_harness_conversation.schedule_conversation_runtime",
+        lambda conversation_id, base_url: scheduled.append(conversation_id),
+    )
+    return scheduled
+
+
+@pytest.mark.django_db
+def test_a_revision_is_handed_to_the_builder_naming_the_selected_scenarios(
+    client, editable, builder
+):
+    from simulate.services.hosted_harness_conversation import pending_commands
+
+    row = _row(editable)
+    response = client.post(
+        f"{BASE}/{editable.id}/scenarios/changes/",
+        {
+            "kind": "revise",
+            "scenario_ids": [str(row.id)],
+            "instruction": "the agent must read the booking back before confirming",
+        },
+        format="json",
+        HTTP_IDEMPOTENCY_KEY="revise-once",
+    )
+    again = client.post(
+        f"{BASE}/{editable.id}/scenarios/changes/",
+        {
+            "kind": "revise",
+            "scenario_ids": [str(row.id)],
+            "instruction": "the agent must read the booking back before confirming",
+        },
+        format="json",
+        HTTP_IDEMPOTENCY_KEY="revise-once",
+    )
+
+    assert response.status_code == 202, response.content
+    assert again.status_code == 202
+    assert len(builder) == 2
+    from simulate.models import HostedHarnessConversation
+
+    conversation = HostedHarnessConversation.no_workspace_objects.get(job=editable)
+    commands = pending_commands(conversation, after=0)["commands"]
+    assert len(commands) == 1
+    content = commands[0]["payload"]["content"]
+    assert "re-prove" in content and "read the booking back" in content
+    assert f"{row.name} ({row.scenario_key})" in content
+
+
+@pytest.mark.django_db
+def test_adding_asks_the_builder_for_that_many_new_scenarios(client, editable, builder):
+    from simulate.models import HostedHarnessConversation
+    from simulate.services.hosted_harness_conversation import pending_commands
+
+    response = client.post(
+        f"{BASE}/{editable.id}/scenarios/changes/",
+        {"kind": "add", "count": 3, "instruction": "callers booking for a friend"},
+        format="json",
+    )
+
+    assert response.status_code == 202, response.content
+    conversation = HostedHarnessConversation.no_workspace_objects.get(job=editable)
+    content = pending_commands(conversation, after=0)["commands"][0]["payload"]["content"]
+    assert content.startswith("Add exactly 3 new scenarios to this suite.")
+    assert "Keep every existing scenario as it is" in content
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"kind": "revise", "instruction": "change it"},
+        {"kind": "revise", "scenario_ids": ["00000000-0000-0000-0000-000000000000"]},
+        {"kind": "add"},
+    ],
+)
+def test_an_incomplete_change_is_refused(client, editable, builder, body):
+    response = client.post(f"{BASE}/{editable.id}/scenarios/changes/", body, format="json")
+
+    assert response.status_code == 400, response.content
+    assert builder == []
+
+
+@pytest.mark.django_db
+def test_changes_wait_for_the_build_and_known_scenarios(client, editable, builder):
+    from simulate.models import HostedHarnessJob
+
+    unknown = client.post(
+        f"{BASE}/{editable.id}/scenarios/changes/",
+        {"kind": "revise", "scenario_ids": [str(uuid.uuid4())], "instruction": "x"},
+        format="json",
+    )
+    HostedHarnessJob.no_workspace_objects.filter(id=editable.id).update(
+        state=HostedHarnessJob.State.RUNNING
+    )
+    building = client.post(
+        f"{BASE}/{editable.id}/scenarios/changes/", {"kind": "add", "count": 1}, format="json"
+    )
+
+    assert (unknown.status_code, unknown.json()["error"]) == (404, "scenario_not_found")
+    assert (building.status_code, building.json()["error"]) == (409, "environment_not_ready")
+    assert builder == []
