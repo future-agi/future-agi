@@ -4403,14 +4403,17 @@ describe("voice-call property parity", () => {
     });
 
     await waitFor(() =>
-      expect(onApply).toHaveBeenLastCalledWith([
-        expect.objectContaining({
-          field: "cost_cents",
-          fieldCategory: "attribute",
-          apiColType: "SPAN_ATTRIBUTE",
-          value: "12.2",
-        }),
-      ]),
+      expect(onApply).toHaveBeenLastCalledWith(
+        [
+          expect.objectContaining({
+            field: "cost_cents",
+            fieldCategory: "attribute",
+            apiColType: "SPAN_ATTRIBUTE",
+            value: "12.2",
+          }),
+        ],
+        "and",
+      ),
     );
     document.body.removeChild(anchorEl);
   });
@@ -5552,6 +5555,7 @@ describe("filter-value picker bounded-read UX", () => {
               value: ["example-trace"],
             }),
           ]),
+          "and",
         ),
       );
       document.body.removeChild(anchorEl);
@@ -5651,6 +5655,7 @@ describe("filter-value picker bounded-read UX", () => {
               value: ["example-user"],
             }),
           ]),
+          "and",
         ),
       );
       document.body.removeChild(anchorEl);

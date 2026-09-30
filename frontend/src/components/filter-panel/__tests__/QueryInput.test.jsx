@@ -61,13 +61,16 @@ describe("QueryInput explicit values", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1));
-    expect(onApply).toHaveBeenLastCalledWith([
-      {
-        field: "final_status",
-        operator: "contains",
-        value: "Rechazado",
-      },
-    ]);
+    expect(onApply).toHaveBeenLastCalledWith(
+      [
+        {
+          field: "final_status",
+          operator: "contains",
+          value: "Rechazado",
+        },
+      ],
+      "and",
+    );
   });
 
   it("commits the exact option even when an earlier suggestion is fuzzy", async () => {
@@ -93,13 +96,16 @@ describe("QueryInput explicit values", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1));
-    expect(onApply).toHaveBeenLastCalledWith([
-      {
-        field: "final_status",
-        operator: "contains",
-        value: "Rechazado",
-      },
-    ]);
+    expect(onApply).toHaveBeenLastCalledWith(
+      [
+        {
+          field: "final_status",
+          operator: "contains",
+          value: "Rechazado",
+        },
+      ],
+      "and",
+    );
   });
 
   it.each([
@@ -125,13 +131,16 @@ describe("QueryInput explicit values", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1));
-    expect(onApply).toHaveBeenLastCalledWith([
-      {
-        field: "custom_value",
-        operator: "contains",
-        value: optionValue,
-      },
-    ]);
+    expect(onApply).toHaveBeenLastCalledWith(
+      [
+        {
+          field: "custom_value",
+          operator: "contains",
+          value: optionValue,
+        },
+      ],
+      "and",
+    );
   });
 
   it("preserves the selected ClickHouse storage family", async () => {
@@ -154,14 +163,17 @@ describe("QueryInput explicit values", () => {
     fireEvent.click(await utils.findByText("number one"));
 
     await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1));
-    expect(onApply).toHaveBeenLastCalledWith([
-      {
-        field: "custom_value",
-        operator: "contains",
-        value: 1,
-        valueTypes: ["number"],
-      },
-    ]);
+    expect(onApply).toHaveBeenLastCalledWith(
+      [
+        {
+          field: "custom_value",
+          operator: "contains",
+          value: 1,
+          valueTypes: ["number"],
+        },
+      ],
+      "and",
+    );
   });
 
   it("keeps an annotation choice value distinct from its display label", async () => {
@@ -187,13 +199,16 @@ describe("QueryInput explicit values", () => {
     fireEvent.click(await utils.findByText("Customer refund requested"));
 
     await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1));
-    expect(onApply).toHaveBeenLastCalledWith([
-      {
-        field: "annotation-label",
-        operator: "equals",
-        value: "customer_refund",
-      },
-    ]);
+    expect(onApply).toHaveBeenLastCalledWith(
+      [
+        {
+          field: "annotation-label",
+          operator: "equals",
+          value: "customer_refund",
+        },
+      ],
+      "and",
+    );
   });
 
   it("allows an exact stored-only annotation value beside configured choices", async () => {
@@ -217,13 +232,16 @@ describe("QueryInput explicit values", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1));
-    expect(onApply).toHaveBeenLastCalledWith([
-      {
-        field: "annotation-label",
-        operator: "equals",
-        value: "historical-only",
-      },
-    ]);
+    expect(onApply).toHaveBeenLastCalledWith(
+      [
+        {
+          field: "annotation-label",
+          operator: "equals",
+          value: "historical-only",
+        },
+      ],
+      "and",
+    );
   });
 
   it("requests server search and the next value page", async () => {
