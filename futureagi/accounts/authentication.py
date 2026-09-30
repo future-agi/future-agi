@@ -14,6 +14,8 @@ from django.core.cache import cache
 from django.db import DatabaseError, IntegrityError, InterfaceError, OperationalError
 from django.http import JsonResponse
 from django.utils import timezone
+from django_redis.exceptions import ConnectionInterrupted
+from redis.exceptions import RedisError
 from rest_framework import status
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import (
@@ -41,6 +43,11 @@ from tfc.utils.api_errors import (
 )
 
 logger = structlog.get_logger(__name__)
+
+# django-redis wraps socket/client failures in ConnectionInterrupted, which is
+# not a RedisError. Treat both as a cache miss so auth can fall through to the
+# database instead of returning 401 for a valid token.
+_AUTH_CACHE_TRANSPORT_ERRORS = (ConnectionInterrupted, RedisError)
 
 # Rate limiting settings with defaults
 MAX_LOGIN_ATTEMPTS_PER_HOUR: int = getattr(settings, "MAX_LOGIN_ATTEMPTS_PER_HOUR", 10)
@@ -169,8 +176,14 @@ class APIKeyAuthentication(BaseAuthentication):
                 # Set workspace context after JWT authentication
                 self._set_workspace_context(request, user)
                 return user, token
-            except (PermissionDenied, DatabaseError, InterfaceError):
-                raise  # Authorization denials and database failures are not bad tokens.
+            except (
+                PermissionDenied,
+                DatabaseError,
+                InterfaceError,
+                ConnectionInterrupted,
+                RedisError,
+            ):
+                raise  # Authz denials, DB, and Redis transport failures are not bad tokens.
             except Exception as e:
                 traceback.print_exc()
                 raise AuthenticationFailed(f"Invalid Token parsed: {e}") from e
@@ -875,6 +888,33 @@ def decrypt_message(encrypted_message: str) -> dict[str, Any]:
         raise AuthenticationFailed("Invalid token format") from ex
 
 
+def _read_auth_token_cache(cache_key: str) -> Any:
+    """Return cached token payload, or None on miss / Redis transport failure."""
+    try:
+        return cache.get(cache_key)
+    except _AUTH_CACHE_TRANSPORT_ERRORS:
+        logger.warning(
+            "auth_token_cache_get_failed",
+            cache_key=cache_key,
+            exc_info=True,
+        )
+        return None
+
+
+def _write_auth_token_cache(
+    cache_key: str, value: dict[str, Any], *, timeout: int
+) -> None:
+    """Best-effort cache write; Redis failures must not reject a valid token."""
+    try:
+        cache.set(cache_key, value, timeout=timeout)
+    except _AUTH_CACHE_TRANSPORT_ERRORS:
+        logger.warning(
+            "auth_token_cache_set_failed",
+            cache_key=cache_key,
+            exc_info=True,
+        )
+
+
 def decode_token(token: str):
     try:
         if not token:
@@ -883,7 +923,8 @@ def decode_token(token: str):
         decrypted_token_obj = decrypt_message(token)
         user_id = decrypted_token_obj.get("user_id")
         token_id = decrypted_token_obj.get("id")
-        cache_data = cache.get(f"access_token_{token_id}")
+        cache_key = f"access_token_{token_id}"
+        cache_data = _read_auth_token_cache(cache_key)
 
         if cache_data:
             user = cache_data.get("user")
@@ -891,8 +932,8 @@ def decode_token(token: str):
             # Ensure organization is loaded to prevent sync-in-async errors later.
             if "organization" not in user._state.fields_cache:
                 user = User.objects.select_related("organization").get(pk=user.pk)
-            cache.set(
-                f"access_token_{token_id}",
+            _write_auth_token_cache(
+                cache_key,
                 {"token": token, "user": user},
                 timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
             )
@@ -933,7 +974,7 @@ def decode_token(token: str):
         auth_token_obj.last_used_at = timezone.now()
         auth_token_obj.save()
 
-        cache.set(
+        _write_auth_token_cache(
             f"access_token_{auth_token_obj.id}",
             {"token": token, "user": user},
             timeout=AUTH_TOKEN_EXPIRATION_TIME_IN_MINUTES * 60,
@@ -941,7 +982,7 @@ def decode_token(token: str):
 
         return user, token
 
-    except (DatabaseError, InterfaceError):
+    except (DatabaseError, InterfaceError, ConnectionInterrupted, RedisError):
         raise
     except Exception as e:
         raise AuthenticationFailed(f"Invalid Token parsed: {e}") from e
