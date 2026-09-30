@@ -33,10 +33,10 @@ config:
         if not text.strip():
             return {"score": 1.0, "reason": "Empty text, no PII"}
         patterns = {
-            "ssn": (r"\b\d{3}-\d{2}-\d{4}\b", "SSN"),
+            "ssn": (r"\b(?!000|666|9\d\d)\d{3}-(?!00)\d{2}-(?!0000)\d{4}\b", "SSN"),
             "credit_card": (r"\b(?:\d{4}[-\s]?){3}\d{4}\b", "Credit Card"),
             "phone": (r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b", "Phone"),
-            "email": (r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", "Email"),
+            "email": (r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b", "Email"),
             "ip_address": (r"\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b", "IP"),
         }
         dt = kwargs.get("detect_types")
@@ -50,9 +50,15 @@ config:
         active = {k: v for k, v in patterns.items() if k in dt}
         if not active:
             return {"score": 0.0, "reason": "detect_types must include at least one supported type"}
+        def _luhn(s):
+            d = [int(c) for c in s if c.isdigit()]
+            if len(d) < 13: return False
+            return (sum(d[-1::-2]) + sum(sum(divmod(2 * x, 10)) for x in d[-2::-2])) % 10 == 0
         found = []
         for ptype, (pat, label) in active.items():
             matches = re.findall(pat, text)
+            if ptype == "credit_card":
+                matches = [m for m in matches if _luhn(m)]
             if matches:
                 found.append(f"{label}: {len(matches)}")
         if found:

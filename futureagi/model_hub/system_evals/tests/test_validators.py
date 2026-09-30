@@ -357,3 +357,24 @@ def test_meteor_one_empty_reports_missing():
     r = _meteor_full_path("the cat sat", "")
     assert r["score"] == 0.0
     assert "missing" in r["reason"].lower()
+
+
+# ---------------------------------------------------------------------------
+# regex_pii_detection
+# ---------------------------------------------------------------------------
+
+
+def test_regex_pii_detection():
+    ev = _load_eval("regex_pii_detection")
+    for pii in [
+        "SSN is 123-45-6789", "Card: 4111-1111-1111-1111",
+        "Reach user@example.com", "IP 192.168.1.1", "Call 555-123-4567",
+    ]:
+        assert ev(None, pii, None, None)["score"] == 0.0
+
+    for clean in [
+        "Clean message", "", "000-12-3456", "666-12-3456", "900-12-3456",
+        "123-00-4567", "123-45-0000", "Order 1234 5678 9012 3456",
+        "UUID 9999888877776666", "bad@example.c|m",
+    ]:
+        assert ev(None, clean, None, None)["score"] == 1.0
