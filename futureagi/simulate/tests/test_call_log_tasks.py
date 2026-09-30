@@ -49,7 +49,9 @@ def keep_test_db_connection_open():
     transaction connection open while exercising the helper directly."""
     with (
         patch("ee.voice.tasks.call_log_tasks.close_old_connections", return_value=None),
-        patch("tfc.temporal.drop_in.decorator.close_old_connections", return_value=None),
+        patch(
+            "tfc.temporal.drop_in.decorator.close_old_connections", return_value=None
+        ),
     ):
         yield
 
@@ -541,3 +543,43 @@ class TestCallExecutionDetailView:
         payload = response.json()
         assert payload["provider"] == "livekit"
         assert payload["attributes"]["raw_log"]["room_sid"] == "RM_test"
+
+    def test_reads_livekit_call_without_recording_or_vapi_key(
+        self, auth_client, call_execution, monkeypatch
+    ):
+        monkeypatch.delenv("VAPI_API_KEY", raising=False)
+        call_execution.provider_call_data = {"livekit": {"room_sid": "RM_test"}}
+        call_execution.save(update_fields=["provider_call_data"])
+
+        response = auth_client.get(self.URL_TEMPLATE.format(call_execution.id))
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["provider"] == "livekit"
+        assert response.json()["recordings"] == {}
+
+    def test_reads_stored_vapi_recordings_without_vapi_key(
+        self, auth_client, call_execution, monkeypatch
+    ):
+        monkeypatch.delenv("VAPI_API_KEY", raising=False)
+        call_execution.provider_call_data = {
+            "vapi": {
+                "artifact": {
+                    "recording": {
+                        "stereoUrl": "https://example.com/stereo.wav",
+                        "mono": {"combinedUrl": "https://example.com/combined.wav"},
+                    }
+                }
+            }
+        }
+        call_execution.save(update_fields=["provider_call_data"])
+
+        response = auth_client.get(self.URL_TEMPLATE.format(call_execution.id))
+
+        assert response.status_code == status.HTTP_200_OK
+        assert (
+            response.json()["recordings"]["stereo"] == "https://example.com/stereo.wav"
+        )
+        assert (
+            response.json()["recordings"]["combined"]
+            == "https://example.com/combined.wav"
+        )

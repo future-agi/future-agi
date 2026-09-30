@@ -7,7 +7,7 @@
 ### ALERT-E2E-001 — a fired alert opens the traces from that fire’s own window
 
 **Goal:** An on-call engineer opens a fired alert and lands on the traces from that fire’s own time window  
-**Spec:** `flows/alerts/view-trace-scoping.spec.ts:44`  
+**Spec:** `flows/alerts/view-trace-scoping.spec.ts:45`  
 **Tags:** —
 
 **User steps:**

@@ -1,3 +1,5 @@
+import uuid
+
 import structlog
 from django.core.exceptions import ValidationError
 from django.db import DatabaseError, models
@@ -10,6 +12,12 @@ from rest_framework.viewsets import ModelViewSet
 
 from accounts.models.user import User
 from accounts.utils import get_request_organization
+from tfc.middleware.workspace_context import (
+    get_current_organization,
+    get_current_user,
+    get_current_workspace,
+    set_workspace_context,
+)
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.shared_link import (
@@ -36,6 +44,7 @@ SUPPORTED_SHARED_RESOURCE_TYPES = {
     ResourceType.TRACE.value,
     ResourceType.DASHBOARD.value,
     ResourceType.PROJECT.value,
+    ResourceType.CALL_EXECUTION.value,
 }
 
 
@@ -111,13 +120,7 @@ class SharedLinkViewSet(BaseModelViewSetMixin, ModelViewSet):
         # Add ACL entries if provided
         emails = data.get("emails", [])
         for email in emails:
-            user = User.objects.filter(email=email).first()
-            SharedLinkAccess.objects.create(
-                shared_link=link,
-                email=email,
-                user=user,
-                granted_by=request.user,
-            )
+            _grant_access(link, email, request.user)
 
         return self._gm.success_response(
             SharedLinkDetailSerializer(link, context={"request": request}).data,
@@ -155,12 +158,7 @@ class SharedLinkViewSet(BaseModelViewSetMixin, ModelViewSet):
 
         created = []
         for email in serializer.validated_data["emails"]:
-            user = User.objects.filter(email=email).first()
-            obj, was_created = SharedLinkAccess.objects.get_or_create(
-                shared_link=link,
-                email=email,
-                defaults={"user": user, "granted_by": request.user},
-            )
+            obj, was_created = _grant_access(link, email, request.user)
             if was_created:
                 created.append(SharedLinkAccessSerializer(obj).data)
 
@@ -234,7 +232,7 @@ def resolve_shared_link(request, token):
                 code="not_authenticated",
             )
         has_access = link.access_list.filter(
-            email=request.user.email, deleted=False
+            email__iexact=request.user.email, deleted=False
         ).exists()
         # Also allow the creator
         if not has_access and request.user != link.created_by:
@@ -267,19 +265,20 @@ def _resolve_resource(link):
             from tracer.services.clickhouse.v2 import get_reader
             from tracer.services.clickhouse.v2.span_reader import CHSpanReader
 
-            trace = _get_shared_trace(
-                link.resource_id,
+            trace_id = str(uuid.UUID(str(link.resource_id)))
+            project_id = _get_shared_trace_project_id(
+                trace_id,
                 link.organization,
                 link.workspace,
             )
-            if not trace:
+            if not project_id:
                 return None
 
             # Spans read from CH 25.3. The reader returns CHSpan dataclasses;
             # `to_django_dict()` shapes them like ObservationSpanSerializer
             # output so the tree-building below stays unchanged.
             with get_reader() as reader:
-                ch_spans = reader.list_by_trace(str(trace.id))
+                ch_spans = reader.list_by_trace(trace_id, project_id=project_id)
             spans_data = [CHSpanReader.to_django_dict(s) for s in ch_spans]
 
             # Build tree structure (parent→children)
@@ -290,7 +289,7 @@ def _resolve_resource(link):
                 span_map[s["id"]] = entry
 
             for s in spans_data:
-                parent_id = s.get("parent_observation_id")
+                parent_id = s.get("parent_span_id")
                 entry = span_map[s["id"]]
                 if parent_id and parent_id in span_map:
                     span_map[parent_id]["children"].append(entry)
@@ -298,16 +297,7 @@ def _resolve_resource(link):
                     roots.append(entry)
 
             return {
-                "trace": {
-                    "id": str(trace.id),
-                    "name": trace.name,
-                    "project_id": str(trace.project_id),
-                    "input": trace.input,
-                    "output": trace.output,
-                    "metadata": trace.metadata,
-                    "tags": trace.tags,
-                    "created_at": str(trace.created_at) if trace.created_at else None,
-                },
+                "trace": _shared_trace_header(trace_id, project_id, roots),
                 "observation_spans": roots,
                 "summary": {
                     "total_spans": len(spans_data),
@@ -338,6 +328,9 @@ def _resolve_resource(link):
                 return None
             return _serialize_shared_project(project)
 
+        elif link.resource_type == ResourceType.CALL_EXECUTION.value:
+            return _in_link_workspace(link, _resolve_shared_call_execution, link)
+
         # Extend for other resource types as needed
         return None
 
@@ -346,20 +339,84 @@ def _resolve_resource(link):
         return None
 
 
+def _resolve_shared_call_execution(link):
+    from simulate.views.run_results_v3 import build_call_execution_detail
+
+    call = _get_shared_call_execution(
+        link.resource_id,
+        link.organization,
+        link.workspace,
+    )
+    if not call:
+        return None
+    return build_call_execution_detail(call, workspace=link.workspace)
+
+
+def _in_link_workspace(link, build, *args):
+    """Run ``build`` scoped to the link's workspace, not the viewer's."""
+    previous = (
+        get_current_workspace(),
+        get_current_organization(),
+        get_current_user(),
+    )
+    set_workspace_context(workspace=link.workspace, organization=link.organization)
+    try:
+        return build(*args)
+    finally:
+        set_workspace_context(
+            workspace=previous[0], organization=previous[1], user=previous[2]
+        )
+
+
+def _grant_access(link, email, granted_by):
+    """Add ``email`` to the link's ACL; returns ``(entry, newly_granted)``.
+
+    A removed entry is soft-deleted, and the (link, email) unique constraint
+    still counts it, so re-inviting restores that row instead of inserting.
+    """
+    user = User.objects.filter(email=email).first()
+    entry = SharedLinkAccess.all_objects.filter(
+        shared_link=link, email__iexact=email
+    ).first()
+    if entry is None:
+        entry = SharedLinkAccess.objects.create(
+            shared_link=link, email=email, user=user, granted_by=granted_by
+        )
+        return entry, True
+    if not entry.deleted:
+        return entry, False
+    entry.deleted = False
+    entry.deleted_at = None
+    entry.user = user
+    entry.granted_by = granted_by
+    entry.save(update_fields=["deleted", "deleted_at", "user", "granted_by"])
+    return entry, True
+
+
 def _get_shared_link_by_token(token):
-    return SharedLink.objects.get(token=token, deleted=False)
+    # The token alone identifies the link; the viewer's own workspace must not
+    # hide it (access is checked after lookup).
+    return SharedLink.no_workspace_objects.get(token=token, deleted=False)
 
 
 def _shared_resource_exists(resource_type, resource_id, organization, workspace):
     try:
         if resource_type == ResourceType.TRACE.value:
-            return _get_shared_trace(resource_id, organization, workspace) is not None
+            return (
+                _get_shared_trace_project_id(resource_id, organization, workspace)
+                is not None
+            )
         if resource_type == ResourceType.DASHBOARD.value:
             return (
                 _get_shared_dashboard(resource_id, organization, workspace) is not None
             )
         if resource_type == ResourceType.PROJECT.value:
             return _get_shared_project(resource_id, organization, workspace) is not None
+        if resource_type == ResourceType.CALL_EXECUTION.value:
+            return (
+                _get_shared_call_execution(resource_id, organization, workspace)
+                is not None
+            )
     except (TypeError, ValueError, ValidationError):
         return False
     return False
@@ -382,18 +439,72 @@ def _workspace_scope_q(workspace, lookup):
     return models.Q(**{lookup: workspace})
 
 
-def _get_shared_trace(resource_id, organization, workspace):
+def _get_shared_trace_project_id(resource_id, organization, workspace):
+    """The trace's project id when its spans live in the org and workspace.
+
+    Collector traces only reach ClickHouse, so the spans decide whether the
+    trace exists, as in the trace drawer.
+    """
+    from tracer.models.project import Project
+    from tracer.services.clickhouse.v2.query_service import V2AnalyticsQueryService
+    from tracer.services.clickhouse.v2.trace_detail_reads import (
+        TraceDetailReadBuilder,
+    )
+
+    trace_id = str(uuid.UUID(str(resource_id)))
+    project_ids = [
+        str(project_id)
+        for project_id in Project.no_workspace_objects.filter(organization=organization)
+        .filter(_workspace_scope_q(workspace, "workspace"))
+        .values_list("id", flat=True)
+    ]
+    if not project_ids:
+        return None
+    query, params = TraceDetailReadBuilder(
+        project_ids=project_ids, trace_id=trace_id
+    ).build_identity_query()
+    rows = V2AnalyticsQueryService().execute_ch_query(query, params).data or []
+    live_projects = {
+        str(row["project_id"]) for row in rows if not row.get("latest_is_deleted")
+    }
+    return live_projects.pop() if len(live_projects) == 1 else None
+
+
+def _shared_trace_header(trace_id, project_id, roots):
+    """The Postgres trace row when there is one, else the root span."""
+    from django.db.utils import ProgrammingError
+
     from tracer.models.trace import Trace
 
-    return (
-        Trace.no_workspace_objects.filter(
-            id=resource_id,
-            project__organization=organization,
-        )
-        .filter(_workspace_scope_q(workspace, "project__workspace"))
-        .select_related("project")
-        .first()
-    )
+    try:
+        trace = Trace.no_workspace_objects.filter(
+            id=trace_id, project_id=project_id
+        ).first()
+    except ProgrammingError:
+        trace = None
+    if trace is not None:
+        return {
+            "id": str(trace.id),
+            "name": trace.name,
+            "project_id": str(trace.project_id),
+            "input": trace.input,
+            "output": trace.output,
+            "metadata": trace.metadata,
+            "tags": trace.tags,
+            "created_at": str(trace.created_at) if trace.created_at else None,
+        }
+    root = roots[0]["observation_span"] if roots else {}
+    start_time = root.get("start_time")
+    return {
+        "id": trace_id,
+        "name": root.get("name"),
+        "project_id": project_id,
+        "input": root.get("input"),
+        "output": root.get("output"),
+        "metadata": root.get("metadata") or {},
+        "tags": root.get("tags") or [],
+        "created_at": str(start_time) if start_time else None,
+    }
 
 
 def _get_shared_dashboard(resource_id, organization, workspace):
@@ -418,6 +529,28 @@ def _get_shared_project(resource_id, organization, workspace):
             organization=organization,
         )
         .filter(_workspace_scope_q(workspace, "workspace"))
+        .first()
+    )
+
+
+def _get_shared_call_execution(resource_id, organization, workspace):
+    from simulate.models import CallExecution
+
+    return (
+        CallExecution.no_workspace_objects.filter(
+            id=resource_id,
+            test_execution__deleted=False,
+            test_execution__run_test__organization=organization,
+            test_execution__run_test__deleted=False,
+        )
+        .filter(_workspace_scope_q(workspace, "test_execution__run_test__workspace"))
+        .select_related(
+            "scenario",
+            "test_execution__run_test",
+            "test_execution__agent_definition",
+            "test_execution__simulator_agent",
+        )
+        .prefetch_related("transcripts", "chat_messages", "snapshots")
         .first()
     )
 

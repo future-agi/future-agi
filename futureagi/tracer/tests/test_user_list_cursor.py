@@ -678,9 +678,11 @@ def test_positive_text_attribute_filter_walks_matching_activity_not_the_seed():
             server_execution_cap_ms=None,
         ):
             # A slice asks the server to stop it at half of what is left of
-            # the analytics wall; nothing else in this page sends a cap.
+            # the analytics wall, the tail estimate at half the probe wall,
+            # and the tail existence statement at what the estimate left of
+            # it.
             assert (server_execution_cap_ms is not None) == (
-                "AS raw_end_user_id" in query
+                "AS raw_end_user_id" in query or "AS witnessed" in query
             ), query
             if query.lstrip().startswith("EXPLAIN ESTIMATE"):
                 # The estimate table for a tail the blooms exclude entirely:

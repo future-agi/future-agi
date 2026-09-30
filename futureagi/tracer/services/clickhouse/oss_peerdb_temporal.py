@@ -106,7 +106,10 @@ class _Deadline:
         return remaining
 
     def rpc_timeout(self):
-        return timedelta(seconds=min(10, self.remaining()))
+        timeout = timedelta(seconds=min(10, self.remaining()))
+        if not timeout:
+            raise TimeoutError
+        return timeout
 
     async def pause(self):
         await asyncio.sleep(min(_POLL_INTERVAL, self.remaining()))

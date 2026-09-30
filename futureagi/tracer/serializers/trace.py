@@ -961,9 +961,11 @@ class UsersResultSerializer(serializers.Serializer):
         required=False,
     )
     ordering_exact = serializers.BooleanField(required=False)
-    # Present only on a span-attribute-filtered page: rows are ordered by each
-    # user's newest live span whose latest value matches the filter, newest
-    # first. Unfiltered pages keep their last-activity order and omit it.
+    # Present only on a page the matching-activity walk serves (a span
+    # attribute or native span leaf): rows are ordered by each user's newest
+    # live span whose latest value matches the leaf the walk discovers on,
+    # newest first. With several such leaves the server chooses that leaf.
+    # Unfiltered pages keep their last-activity order and omit it.
     ordering = serializers.ChoiceField(
         choices=("latest_matching_activity",), required=False
     )

@@ -1,4 +1,4 @@
-package generated
+package generated_test
 
 import (
 	"encoding/json"
@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	gatewayadmin "github.com/futureagi/agentcc-gateway/internal/contracts/generated"
 	"github.com/futureagi/agentcc-gateway/internal/tenant"
 )
 
@@ -16,7 +17,7 @@ func TestOrgConfigContractRoundTripsIntoGatewayTenantConfig(t *testing.T) {
 		t.Fatalf("read fixture: %v", err)
 	}
 
-	var contract OrgConfig
+	var contract gatewayadmin.OrgConfig
 	if err := json.Unmarshal(body, &contract); err != nil {
 		t.Fatalf("decode generated contract DTO: %v", err)
 	}

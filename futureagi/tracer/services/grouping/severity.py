@@ -167,7 +167,10 @@ def _current(job: TraceGroupingSeverityJob) -> bool:
         and not issue.scope.deleted
         and issue.revision == job.issue_revision
         and issue.cluster.severity_source != "manual"
-        and _eligible_project(issue.scope.project_id)
+        and _eligible_project(
+            issue.scope.project_id,
+            simulation=issue.cluster.target_type == "simulation",
+        )
     )
 
 

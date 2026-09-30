@@ -856,6 +856,9 @@ err_dict = {
     "ERROR_AUDIO_UPLOAD": ["Audio upload failed. Try again."],
     "FAILED_TO_RERUN_OPERATION": ["Unable to rerun operation. Please try again."],
     "MONITOR_NOT_FOUND": ["Alert Monitor not found for the provided ID."],
+    "MONITOR_PROJECT_REQUIRED": [
+        "This alert is not linked to a project. Link it to a project to evaluate it."
+    ],
     "MISSING_OPERATION_TYPE": ["Operation type is required."],
     "INVALID_PYTHON_CODE_CONFIGURATION": ["Invalid Python code configuration."],
     "INVALID_JSON_EXTRACTION_CONFIGURATION": ["Invalid JSON extraction configuration."],
@@ -1336,6 +1339,9 @@ LOGIN_ERROR_CODES = {
     ],
     "LOGIN_UNEXPECTED_ERROR": [
         "An unexpected error occurred during login. Please try again."
+    ],
+    "LOGIN_SERVICE_UNAVAILABLE": [
+        "Sign-in is temporarily unavailable. Please try again in a moment."
     ],
     "LOGIN_PASSWORD_RESET_RATE_LIMITED": [
         "Too many password reset requests. Please try again later."

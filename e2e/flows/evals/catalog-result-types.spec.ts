@@ -547,7 +547,8 @@ test('EVAL-E2E-003: typed executed evaluations retain exact native results and r
       await page.getByPlaceholder('Search evals...', { exact: true }).fill(f.name);
       const name = page.getByText(f.name, { exact: true });
       await check(name).toBeVisible({ timeout: UI_READY });
-      const row = name.locator('xpath=..'); // EvalsTabView: name Typography is a direct row child.
+      // EvalsTabView row > name cell (also holds the "Removed" chip) > name Typography.
+      const row = name.locator('xpath=../..');
       const labels = expected ? (expected.output_str_list.length ? expected.output_str_list
         : [expected.output_bool !== null ? (expected.output_bool ? 'Pass' : 'Fail') : `${expected.output_float! * 100}%`]) : ['Error'];
       for (const label of labels) {

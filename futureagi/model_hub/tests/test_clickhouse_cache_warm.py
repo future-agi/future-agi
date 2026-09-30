@@ -293,3 +293,81 @@ def test_appconfig_exposes_no_implicit_database_bootstrap_hooks():
     assert not hasattr(ModelHubConfig, "_ensure_analytics_schema")
     assert not hasattr(ModelHubConfig, "check_and_create_clickhouse_tables")
     assert not hasattr(ModelHubConfig, "_warm_ch_cache")
+
+
+def _hosted_schedule_registrar(monkeypatch, service_type="temporal-schedules"):
+    # The production chart's application env: mutation-free, not the operator.
+    monkeypatch.setenv("ENV_TYPE", "prod")
+    monkeypatch.setenv("CLOUD_DEPLOYMENT", "US")
+    monkeypatch.setenv("NO_STARTUP_DB_MUTATIONS", "true")
+    monkeypatch.setenv("STARTUP_DB_MUTATION_MODE", "disabled")
+    monkeypatch.setenv("SERVICE_TYPE", service_type)
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [["manage.py"], ["/app/backend/manage.py"], ["python", "-m", "django"]],
+)
+def test_hosted_schedule_registrar_may_register_schedules(monkeypatch, prefix):
+    _hosted_schedule_registrar(monkeypatch)
+    argv = [*prefix, "register_temporal_schedules"]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    assert explicit_management_mutation_authorized(argv) is True
+    ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--delete-all"],
+        ["--cleanup-orphans"],
+        ["--model-hub-only"],
+        ["--pause", "sweep-stranded-eval-tasks"],
+        ["--unpause", "sweep-stranded-eval-tasks"],
+        ["--trigger", "sweep-stranded-eval-tasks"],
+        ["--settings=other.settings"],
+    ],
+)
+def test_schedule_registrar_cannot_delete_pause_or_narrow_schedules(
+    monkeypatch, options
+):
+    _hosted_schedule_registrar(monkeypatch)
+    argv = ["manage.py", "register_temporal_schedules", *options]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    assert explicit_management_mutation_authorized(argv) is False
+    with pytest.raises(RuntimeError, match="^register_temporal_schedules is disabled"):
+        ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+
+
+@pytest.mark.parametrize("action", ["--pause", "--unpause"])
+def test_hosted_operator_job_may_pause_or_unpause_a_schedule(monkeypatch, action):
+    # Registration keeps a schedule's paused state, so this is how an operator
+    # turns one off or back on for good.
+    _hosted_schedule_registrar(monkeypatch, "bootstrap")
+    monkeypatch.setenv("STARTUP_DB_MUTATION_MODE", "operator")
+    argv = ["manage.py", "register_temporal_schedules", action, "recover-stale-work"]
+    monkeypatch.setattr(sys, "argv", argv)
+
+    assert explicit_management_mutation_authorized(argv) is True
+    ModelHubConfig("model_hub", sys.modules["model_hub"]).ready()
+
+
+@pytest.mark.parametrize(
+    "command", ["migrate", "seed_system_evals", "createcachetable", "shell"]
+)
+def test_schedule_registrar_grants_no_database_command(monkeypatch, command):
+    _hosted_schedule_registrar(monkeypatch)
+
+    assert explicit_management_mutation_authorized(["manage.py", command]) is False
+
+
+@pytest.mark.parametrize("service_type", ["backend", "temporal-worker", "worker"])
+def test_hosted_application_processes_still_cannot_register_schedules(
+    monkeypatch, service_type
+):
+    _hosted_schedule_registrar(monkeypatch, service_type)
+    argv = ["manage.py", "register_temporal_schedules"]
+
+    assert explicit_management_mutation_authorized(argv) is False

@@ -127,7 +127,8 @@ def test_standalone_main_branch_keeps_full_hour_replay_and_candidate_contract(fu
         else {"candidate_trace_ids_param": "trace_ids"}
     )
     sql, params, _ = _source(**scope)
-    assert sql.count("SELECT * FROM spans FINAL") == 2
+    # ``*`` omits MATERIALIZED columns: the snapshot names trace_name.
+    assert sql.count("SELECT *, trace_name FROM spans FINAL") == 2
     snapshot = _cte(sql, "candidate_user_spans")
     physical, fenced = snapshot.split(") AS physical", 1)
     physical = physical.split("FROM spans FINAL PREWHERE", 1)[1]

@@ -43,6 +43,13 @@ OPERATOR_STARTUP_MUTATION_COMMANDS = frozenset(
 OPERATOR_STARTUP_MUTATION_MODE = "operator"
 OPERATOR_STARTUP_SERVICE_TYPE = "bootstrap"
 
+# Temporal schedules are not database state, so every deploy may sync them
+# without the operator's database authority. The registrar may run only the
+# bare registration: no option can delete or narrow the schedule set, so a
+# schedule this release does not define is never touched.
+SCHEDULE_REGISTRAR_SERVICE_TYPE = "temporal-schedules"
+SCHEDULE_REGISTRATION_COMMAND = "register_temporal_schedules"
+
 
 def startup_db_mutations_disabled() -> bool:
     """Return whether implicit AppConfig database mutations are disabled.
@@ -120,18 +127,32 @@ def operator_startup_mutation_authorized(argv: list[str]) -> bool:
     )
 
 
+def schedule_registration_authorized(argv: list[str]) -> bool:
+    """Authorize the one-shot schedule registrar's closed command line."""
+
+    command = _management_command(argv)
+    return (
+        os.getenv("SERVICE_TYPE") == SCHEDULE_REGISTRAR_SERVICE_TYPE
+        and command == SCHEDULE_REGISTRATION_COMMAND
+        and not argv[argv.index(command) + 1 :]
+    )
+
+
 def explicit_management_mutation_authorized(argv: list[str]) -> bool:
     """Authorize one allowlisted explicit command, never an AppConfig hook.
 
-    Hosted deployments require the dedicated operator/bootstrap pair. Local
-    and self-hosted entrypoints preserve their documented migration workflow
-    only when they explicitly export ``NO_STARTUP_DB_MUTATIONS=false``.
+    Hosted deployments require the dedicated operator/bootstrap pair, except
+    the schedule registrar's bare registration. Local and self-hosted
+    entrypoints preserve their documented migration workflow only when they
+    explicitly export ``NO_STARTUP_DB_MUTATIONS=false``.
     """
 
     command = _management_command(argv)
     if command not in OPERATOR_STARTUP_MUTATION_COMMANDS:
         return False
-    if operator_startup_mutation_authorized(argv):
+    if operator_startup_mutation_authorized(argv) or schedule_registration_authorized(
+        argv
+    ):
         return True
     return (
         os.getenv("NO_STARTUP_DB_MUTATIONS") == "false"

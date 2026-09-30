@@ -252,3 +252,6 @@ docker-compose.override.yml
 
 # (The private repo's own .gitignore now lives inside futureagi/ee/cloud/,
 # which is already ignored above — no separate rule needed.)
+
+# Local ALK wheel, copied to the build context for the dev simulation-runner image
+agent_learning_kit-*.whl

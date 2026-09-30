@@ -271,6 +271,14 @@ class EmbeddingManager:
     def get_syn_embedding(self):
         return model_manager.syn_data_model
 
+    def text_embeddings_available(self) -> bool:
+        """Whether model serving answers its health check, i.e. text can be embedded.
+
+        data_formatter logs and swallows embedding errors, so callers that must
+        not report success without vectors ask this first.
+        """
+        return get_serving_client().health_check()
+
     def get_image_query_embedding(self, type, query):
         if type == "image":
             model = model_manager.image_model

@@ -8,6 +8,7 @@ import traceback
 from contextlib import ExitStack, contextmanager
 from datetime import timedelta
 from functools import wraps
+from types import SimpleNamespace
 from urllib.parse import urlencode
 
 import structlog
@@ -36,6 +37,8 @@ from simulate.models import (
     CallExecution,
     CallLogEntry,
     ChatMessageModel,
+    HostedHarnessJob,
+    HostedHarnessReceipt,
     RunTest,
     Scenarios,
     SimulateEvalConfig,
@@ -2065,6 +2068,21 @@ class RunTestKPIsView(APIView):
             # Prepare response
             kpi_data = {
                 "total_calls": total_calls,
+                # The run's COMPLETED-status call count, for both modalities.
+                # `connected_calls` above is not a stand-in: on a chat run it is
+                # this same column, but on a voice run it is
+                # `connected_voice_calls` (`duration_seconds > 0`) -- a
+                # different filter. `total_calls` counts every status and is a
+                # different number too.
+                #
+                # Known limit: this query has no `deleted = false` clause, so
+                # this count, unlike every other KPI here, counts a
+                # soft-deleted call -- while the run-level add's own 202
+                # (`harness_run_evals.py::queue_eval_for_finished_calls`)
+                # selects through `CallExecution.objects`, which is filtered to
+                # live rows, so the two can disagree by exactly a run's
+                # soft-deleted calls.
+                "completed_calls": metrics.get("completed_calls", 0) or 0,
                 "avg_score": avg_score,
                 "avg_response": avg_response,
                 "calls_attempted": calls_attempted,
@@ -2264,6 +2282,21 @@ class RunTestCallExecutionsView(APIView):
                 for snapshot in snapshots:
                     snapshots_dict[str(snapshot.id)] = snapshot
 
+            # One config map for the whole page, not one query per row: union
+            # every eval id this page's call-execution and snapshot rows
+            # reference into a single ``build_eval_configs_map`` call, then
+            # reuse the result below. ``build_eval_configs_map`` only reads
+            # ``call_execution.eval_outputs``, so a duck-typed
+            # ``SimpleNamespace`` holding the union is enough.
+            merged_eval_outputs = {}
+            for call_exec in call_executions_dict.values():
+                merged_eval_outputs.update(call_exec.eval_outputs or {})
+            for snapshot in snapshots_dict.values():
+                merged_eval_outputs.update(snapshot.eval_outputs or {})
+            page_eval_configs_map = build_eval_configs_map(
+                SimpleNamespace(eval_outputs=merged_eval_outputs)
+            )
+
             # Process items in original order
             for item in paginated_items:
                 (
@@ -2278,7 +2311,18 @@ class RunTestCallExecutionsView(APIView):
                 if item_type == "call_execution":
                     call_exec = call_executions_dict.get(str(item_id))
                     if call_exec:
-                        serializer = CallExecutionDetailSerializer(call_exec)
+                        # Same map the call-details view builds, so a removed
+                        # eval's verdict gets the "removed" key here too.
+                        # ``mark_removed_only`` keeps every other effect of
+                        # passing ``eval_configs`` switched off, so this
+                        # surface's shape stays unchanged except for that key.
+                        serializer = CallExecutionDetailSerializer(
+                            call_exec,
+                            context={
+                                "eval_configs": page_eval_configs_map,
+                                "mark_removed_only": True,
+                            },
+                        )
                         call_data = serializer.data
                         call_data["is_snapshot"] = False
                         # Remove rerun_snapshots since we're flattening
@@ -2289,7 +2333,13 @@ class RunTestCallExecutionsView(APIView):
                 else:  # snapshot
                     snapshot = snapshots_dict.get(str(item_id))
                     if snapshot:
-                        # Get the original call execution for context
+                        # Get the original call execution for the non-eval
+                        # keys _convert_snapshot_to_call_execution reads
+                        # (scenario, customer_name, ...). No eval_configs
+                        # context here: this serializer call's own
+                        # eval_outputs/eval_metrics are discarded below --
+                        # the snapshot's own eval_outputs is marked
+                        # separately, from the page-level map above.
                         original_call_exec = snapshot.call_execution
                         serializer = CallExecutionDetailSerializer(original_call_exec)
                         original_data = serializer.data
@@ -2298,6 +2348,7 @@ class RunTestCallExecutionsView(APIView):
                         snapshot_data = self._convert_snapshot_to_call_execution(
                             CallExecutionSnapshotSerializer(snapshot).data,
                             original_data,
+                            page_eval_configs_map,
                         )
                         results.append(snapshot_data)
 
@@ -2350,8 +2401,17 @@ class RunTestCallExecutionsView(APIView):
                 f"Failed to retrieve call executions: {str(e)}"
             )
 
-    def _convert_snapshot_to_call_execution(self, snapshot, original_call_exec):
-        """Convert a snapshot to call execution format for API response"""
+    def _convert_snapshot_to_call_execution(
+        self, snapshot, original_call_exec, eval_configs_map
+    ):
+        """Convert a snapshot to call execution format for API response.
+
+        ``eval_configs_map`` is the page-level map built once in ``get`` --
+        a snapshot has no dedicated serializer method for ``eval_outputs``,
+        so the removed marker is stamped here, directly on the snapshot's own
+        raw stored shape (not the same shape ``CallExecutionDetailSerializer``
+        returns for a live call execution's ``eval_outputs`` -- pre-existing).
+        """
         # Create a call execution object from snapshot data
         snapshot_as_call_exec = {
             # Use snapshot ID as the call execution ID
@@ -2367,7 +2427,9 @@ class RunTestCallExecutionsView(APIView):
             "audio_url": snapshot.get("recording_url"),
             "customer_name": snapshot.get("customer_number")
             or original_call_exec["customer_name"],
-            "eval_outputs": snapshot.get("eval_outputs", {}),
+            "eval_outputs": self._mark_removed_evals(
+                snapshot.get("eval_outputs", {}), eval_configs_map
+            ),
             "eval_metrics": {},  # Will be populated by serializer
             "scenario_columns": original_call_exec["scenario_columns"],
             "error_localizer_tasks": [],  # Snapshots don't have error localizer tasks
@@ -2405,6 +2467,29 @@ class RunTestCallExecutionsView(APIView):
         }
 
         return snapshot_as_call_exec
+
+    @staticmethod
+    def _mark_removed_evals(eval_outputs, eval_configs_map):
+        """Copy of ``eval_outputs`` with ``"removed": True`` stamped on any
+        row whose config was soft-deleted. Never mutates the stored dict --
+        mirrors ``CallExecutionDetailSerializer.get_eval_outputs``'s marker,
+        applied here because a snapshot row has no serializer method of its
+        own for this field.
+
+        Each row is deep-copied, not shallow-copied: a shallow ``dict(...)``
+        would share any nested dict/list with the caller's stored object, so
+        a later in-place edit of the returned row could reach back into it.
+        """
+        if not eval_outputs:
+            return eval_outputs
+        marked = {}
+        for eval_id, eval_data in eval_outputs.items():
+            if isinstance(eval_data, dict):
+                eval_data = copy.deepcopy(eval_data)
+                if getattr(eval_configs_map.get(eval_id), "deleted", False):
+                    eval_data["removed"] = True
+            marked[eval_id] = eval_data
+        return marked
 
 
 class TestExecutionDetailView(APIView):
@@ -2475,10 +2560,25 @@ class TestExecutionDetailView(APIView):
                 .prefetch_related("transcripts", "snapshots", "chat_messages")
             ).order_by("created_at")
 
-            # Get eval configs for filtering
-            eval_configs = SimulateEvalConfig.objects.filter(
-                run_test=test_execution.run_test, deleted=False
+            # ``all_objects``: an eval removed from the environment keeps its
+            # stored verdicts and its column on this surface, marked rather
+            # than hidden. ``select_related`` covers the template reads in
+            # ``build_eval_column`` and in the row serializer's
+            # ``template_type`` lookup.
+            all_eval_configs = list(
+                SimulateEvalConfig.all_objects.filter(
+                    run_test=test_execution.run_test
+                ).select_related("eval_template")
             )
+            all_eval_configs_map = {
+                str(config.id): config for config in all_eval_configs
+            }
+            # The live-only view. The list builds a fresh column order; the map
+            # is only what grouping is handed, an argument it accepts and never
+            # reads. Filters deliberately resolve against every config instead.
+            eval_configs = [
+                config for config in all_eval_configs if not config.deleted
+            ]
             eval_configs_map = {str(config.id): config for config in eval_configs}
 
             # Get scenarios for dynamic columns
@@ -2586,9 +2686,11 @@ class TestExecutionDetailView(APIView):
                             and eval_output.get("source") == "harness"
                         ):
                             harness_eval_outputs.setdefault(str(eval_id), eval_output)
+            # Reconciled against every config the run test has ever had, so a
+            # removed eval keeps its column and the table can draw it marked.
             column_order, eval_columns_changed = reconcile_eval_column_order(
                 column_order=column_order,
-                eval_configs=eval_configs,
+                eval_configs=all_eval_configs,
                 evaluated_eval_ids=evaluated_eval_ids,
                 harness_eval_outputs=harness_eval_outputs,
             )
@@ -2717,13 +2819,15 @@ class TestExecutionDetailView(APIView):
             # Apply search
             call_executions = self.utils._apply_search(call_executions, search_query)
 
-            # Apply filters
+            # Apply filters. Resolved against every config the run test has
+            # ever had, so a removed eval's column filters like a live one
+            # instead of matching nothing.
             if filters:
                 call_executions = self.utils._apply_filters(
                     call_executions,
                     filters,
                     error_messages,
-                    eval_configs_map,
+                    all_eval_configs_map,
                     column_order=column_order,
                 )
 
@@ -2889,7 +2993,12 @@ class TestExecutionDetailView(APIView):
                 paginated_calls,
                 many=True,
                 context={
-                    "eval_configs": eval_configs_map,
+                    # Includes removed configs, so the serializer's own marker
+                    # stamps their verdicts instead of dropping the rows.
+                    # Deliberately no ``mark_removed_only``: this surface
+                    # already resolves ``template_type``, the config-name
+                    # fallback and the error-localizer flag for live evals.
+                    "eval_configs": all_eval_configs_map,
                     "scenarios": scenarios_map,
                     "row_session_id_map": row_session_id_map,
                     "rows_map": rows_map,
@@ -2905,15 +3014,16 @@ class TestExecutionDetailView(APIView):
                 call_executions_serializer.data
             )
 
-            # Add column order and metadata to response. Drop evaluation
-            # columns whose config was soft-deleted from the run test —
-            # column_order is persisted and is not pruned on eval delete.
+            # Add column order and metadata to response. An evaluation column
+            # survives while its config still exists, removed or not, or while
+            # a harness row carries it; one whose config is gone entirely is
+            # dropped, since column_order is persisted and pruned nowhere else.
             response_data = paginated_response.data
             response_data["column_order"] = [
                 col
                 for col in column_order
                 if col.get("type") != "evaluation"
-                or str(col.get("id")) in eval_configs_map
+                or str(col.get("id")) in all_eval_configs_map
                 or str(col.get("id")) in harness_eval_outputs
             ]
             response_data["error_messages"] = error_messages
@@ -5527,6 +5637,15 @@ class RunTestExecutionsView(APIView):
                             calls__status=CallExecution.CallStatus.REGISTERED
                         ),
                     ),
+                    _failed_calls=Count(
+                        "calls",
+                        filter=models.Q(
+                            calls__status__in=(
+                                CallExecution.CallStatus.FAILED,
+                                CallExecution.CallStatus.CANCELLED,
+                            )
+                        ),
+                    ),
                     _connected_calls=Count(
                         "calls",
                         filter=models.Q(calls__duration_seconds__gt=0),
@@ -5596,6 +5715,24 @@ class RunTestExecutionsView(APIView):
 
             # Batch fetch agent turn counts for all executions in one query
             execution_ids = [te.id for te in result_page]
+            hosted_jobs = {
+                job.test_execution_id: job.id
+                for job in HostedHarnessJob.no_workspace_objects.filter(
+                    test_execution_id__in=execution_ids
+                ).only("id", "test_execution_id")
+            }
+            outcome_counts = {}
+            if hosted_jobs:
+                for row in (
+                    HostedHarnessReceipt.no_workspace_objects.filter(
+                        job_id__in=hosted_jobs.values()
+                    )
+                    .values("job_id", "status")
+                    .annotate(count=Count("id"))
+                ):
+                    outcome_counts.setdefault(row["job_id"], {})[row["status"]] = row[
+                        "count"
+                    ]
             agent_turn_counts = {}
             chat_duration_map = {}
             if execution_ids:
@@ -5650,6 +5787,7 @@ class RunTestExecutionsView(APIView):
                 total_calls = test_execution._total_calls or 0
                 completed_calls = test_execution._completed_calls or 0
                 pending_calls = test_execution._pending_calls or 0
+                failed_calls = test_execution._failed_calls or 0
                 queued_calls = test_execution._queued_calls or 0
                 connected_calls = test_execution._connected_calls or 0
                 avg_response_time_ms = test_execution._avg_response_time_ms
@@ -5787,6 +5925,49 @@ class RunTestExecutionsView(APIView):
                         "agent_type": agent_type,
                         "total_number_of_fagi_agent_turns": total_number_of_fagi_agent_turns,
                         "source_type": run_test.source_type,
+                        "scenario_keys": list(
+                            (test_execution.execution_metadata or {}).get(
+                                "selected_scenario_keys"
+                            )
+                            or []
+                        ),
+                        "selected_scenarios": test_execution.total_scenarios,
+                        "trials": test_execution.trials,
+                        "total_calls": total_calls,
+                        "completed_calls": completed_calls,
+                        "failed_calls": failed_calls,
+                        "pending_calls": max(
+                            total_calls - completed_calls - failed_calls, 0
+                        ),
+                        "completed_at": (
+                            test_execution.completed_at.isoformat()
+                            if test_execution.completed_at
+                            else None
+                        ),
+                        "outcome_passed": (
+                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
+                                "passed", 0
+                            )
+                            if test_execution.id in hosted_jobs
+                            else None
+                        ),
+                        "outcome_failed": (
+                            sum(
+                                outcome_counts.get(
+                                    hosted_jobs[test_execution.id], {}
+                                ).get(status, 0)
+                                for status in ("failed", "errored")
+                            )
+                            if test_execution.id in hosted_jobs
+                            else None
+                        ),
+                        "outcome_skipped": (
+                            outcome_counts.get(hosted_jobs[test_execution.id], {}).get(
+                                "skipped", 0
+                            )
+                            if test_execution.id in hosted_jobs
+                            else None
+                        ),
                     }
                 )
 

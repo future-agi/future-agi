@@ -76,10 +76,14 @@ function extractVoiceData(resourceData) {
 /**
  * Read-only voice call view rendered by SharedView. Reuses the same
  * TranscriptView / VoiceAudioBridge / CallDetailsBar components as the
- * authenticated voice drawer so shared links feel consistent.
+ * authenticated voice drawer so shared links feel consistent. `voiceData`
+ * skips trace extraction for callers that already hold drawer-shaped data.
  */
-const SharedVoiceView = ({ resourceData }) => {
-  const data = useMemo(() => extractVoiceData(resourceData), [resourceData]);
+const SharedVoiceView = ({ resourceData, voiceData }) => {
+  const data = useMemo(
+    () => voiceData || extractVoiceData(resourceData),
+    [voiceData, resourceData],
+  );
 
   if (!data) {
     return (
@@ -181,6 +185,7 @@ const SharedVoiceView = ({ resourceData }) => {
 
 SharedVoiceView.propTypes = {
   resourceData: PropTypes.object,
+  voiceData: PropTypes.object,
 };
 
 export default SharedVoiceView;

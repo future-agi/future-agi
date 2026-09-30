@@ -101,7 +101,12 @@ def test_entrypoint_cloud_deployment_defaults_to_mutation_free(cloud_deployment)
 
 @pytest.mark.parametrize(
     ("service_type", "mutation_mode"),
-    [("backend", "disabled"), ("backend", "operator"), ("bootstrap", "disabled")],
+    [
+        ("backend", "disabled"),
+        ("backend", "operator"),
+        ("bootstrap", "disabled"),
+        ("temporal-schedules", "disabled"),
+    ],
 )
 def test_entrypoint_hosted_false_requires_dedicated_operator_job(
     service_type, mutation_mode
@@ -299,3 +304,78 @@ def test_single_bootstrap_registrar_cannot_succeed_without_schedules(
         == calls
     )
     assert ("CONTINUED" in completed.stdout) == (exit_code == 0)
+
+
+def _run_schedule_registrar(
+    *, guard: str, result: int = 0, register: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run registration and the service dispatch exactly as the image does."""
+    source = ENTRYPOINT.read_text()
+    block = source[source.index("should_register_temporal_schedules()") :]
+    register_line = (
+        "" if register is None else f"REGISTER_TEMPORAL_SCHEDULES={register}\n"
+    )
+    return subprocess.run(
+        ["bash"],
+        input=(
+            f"set -e\nSERVICE_TYPE=temporal-schedules\nENV_TYPE=prod\n"
+            f"NO_STARTUP_DB_MUTATIONS={guard}\n{register_line}"
+            f'python() {{ echo "SCHEDULE_CALL:$*"; return {result}; }}\n'
+            f"{block}\n"
+        ),
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize("guard", ["true", "false"])
+@pytest.mark.parametrize("register", [None, "true", "false"])
+def test_schedule_registrar_registers_every_deploy_without_db_mutations(
+    guard, register
+):
+    # Production pods run with NO_STARTUP_DB_MUTATIONS=true, which is why
+    # sweep-stranded-eval-tasks (v1.41.2) was never created there. The
+    # one-shot registrar must register regardless, and exactly once.
+    completed = _run_schedule_registrar(guard=guard, register=register)
+
+    assert completed.returncode == 0, completed.stdout
+    assert completed.stdout.count("SCHEDULE_CALL:") == 1
+    assert "SCHEDULE_CALL:manage.py register_temporal_schedules\n" in completed.stdout
+    assert "Temporal schedule registration completed" in completed.stdout
+    assert "Unknown SERVICE_TYPE" not in completed.stdout
+
+
+def test_schedule_registrar_fails_the_job_when_registration_fails():
+    completed = _run_schedule_registrar(guard="true", result=7)
+
+    assert completed.returncode == 1
+    assert "Temporal schedule registration failed" in completed.stdout
+    assert "Temporal schedule registration completed" not in completed.stdout
+
+
+@pytest.mark.parametrize("guard", ["true", "false"])
+def test_schedule_registrar_startup_touches_no_database(guard):
+    completed = subprocess.run(
+        ["bash"],
+        input=(
+            "FAST_STARTUP=false\n"
+            f"NO_STARTUP_DB_MUTATIONS={guard}\n"
+            "SERVICE_TYPE=temporal-schedules\n"
+            "ENV_TYPE=prod\n"
+            'wait_for_db() { echo "DB:wait_for_db"; }\n'
+            'collect_static() { echo "DB:collect_static"; }\n'
+            'validate_django() { echo "DB:validate_django"; }\n'
+            'create_cache_table() { echo "DB:create_cache_table"; }\n'
+            'run_migrations() { echo "DB:run_migrations"; }\n'
+            'python() { echo "DB:python $*"; }\n'
+            f"{_startup_source()}\n"
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert "DB:" not in completed.stdout
