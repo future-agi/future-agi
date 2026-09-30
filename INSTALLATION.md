@@ -1037,6 +1037,30 @@ asks. Unless you want that (see [Reset a password](#reset-a-password)), delete
 the line from your `.env` and run `docker compose up -d`. `./bin/install`
 warns while the line is there.
 
+**Upgrading: gateway guardrails now run.** The guardrails set up in the
+dashboard (Gateway > Guardrails) run from this release on: the gateway config
+of earlier releases left them off, although the dashboard showed them as on.
+After the upgrade, a check set to block refuses the requests it matches. A
+check that calls a service (Future AGI Eval, a third-party provider such as
+Lakera Guard, a webhook) triggers on every request while that call fails,
+whatever the Fail Open switch says: set to block, it refuses them all. So
+turn such checks off before upgrading, and back on one at a time afterwards,
+checking that requests still go through. Future AGI Eval at its default Base
+URL (Future AGI Cloud's) calls this install's API, not Cloud.
+
+A gateway config of your own (`AGENTCC_CONFIG_PATH`) needs these lines, which
+copies of an older example lack:
+
+```yaml
+guardrails:
+  enabled: true
+```
+
+Add them and run `docker compose restart app` (Distributed:
+`agentcc-gateway`). On Helm, an `agentccGateway.existingConfigMap` needs them
+too; then restart the gateway:
+`kubectl -n futureagi rollout restart deployment/futureagi-agentcc-gateway`.
+
 **Pinning versions.** In Standalone, `FUTURE_AGI_VERSION` tags the app image.
 In Distributed each image is versioned on its own: `FUTURE_AGI_VERSION` for
 the backend and workers, `FRONTEND_VERSION`, `AGENTCC_GATEWAY_VERSION`,

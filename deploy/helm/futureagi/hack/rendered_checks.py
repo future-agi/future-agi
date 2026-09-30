@@ -750,6 +750,17 @@ def check_render(name: str, docs: list[dict]) -> list[str]:
                         f"{name}: gateway containerPort {port} differs from server.port"
                     )
 
+    # Without guardrails.enabled the gateway skips the guardrails set up in the
+    # dashboard, which still shows them as on.
+    for config_map in (d for d in docs if d["kind"] == "ConfigMap"):
+        if component(config_map) == "agentcc-gateway":
+            config = yaml.safe_load(config_map["data"]["config.yaml"])
+            if (config.get("guardrails") or {}).get("enabled") is not True:
+                failed.append(
+                    f"{name}: the gateway config leaves guardrails off, so the "
+                    "guardrails set up in the dashboard never run"
+                )
+
     # The collector writes observed attributes (property suggestions) into the
     # index the bootstrap job provisions: its database, as its writer.
     by_component = {component(d): pod_spec(d)["containers"][0] for d in workloads}

@@ -409,6 +409,21 @@ def test_the_gateway_loads_keys_from_the_app_and_sends_it_request_logs() -> None
     assert backend["AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS"] == private
 
 
+def test_the_gateway_sends_future_agi_eval_to_the_app() -> None:
+    """A Future AGI Eval guardrail at the dashboard's default Base URL (Future
+    AGI Cloud's) calls the app instead, as on Helm: otherwise the gateway posts
+    the prompts it checks to Cloud."""
+    gateway = _programs()["gateway"]["environment"]
+    assert 'FI_BASE_URL="http://127.0.0.1:8000"' in gateway
+    # Only the gateway's: the API reads the name for its simulation runs.
+    app = _compose(STANDALONE_COMPOSE)["services"]["app"]["environment"]
+    assert "FI_BASE_URL" not in app
+
+    distributed = _compose(DISTRIBUTED_COMPOSE)["services"]
+    gateway = distributed["agentcc-gateway"]["environment"]
+    assert gateway["FI_BASE_URL"] == gateway["AGENTCC_CONTROL_PLANE_URL"]
+
+
 @pytest.mark.parametrize("configured", ["", "from-dot-env"])
 def test_start_makes_a_webhook_secret_only_when_none_is_set(
     tmp_path, configured

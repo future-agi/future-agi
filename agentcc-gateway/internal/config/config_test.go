@@ -325,6 +325,23 @@ otel:
 	}
 }
 
+// Standalone and Distributed run the gateway on config.example.yaml unless
+// AGENTCC_CONFIG_PATH names another file. With guardrails off, the guardrails
+// set up in the dashboard never run while the dashboard shows them as on.
+func TestExampleConfigEnablesGuardrails(t *testing.T) {
+	cfg, err := Load(filepath.Join("..", "..", "config.example.yaml"))
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if !cfg.Guardrails.Enabled {
+		t.Error("guardrails.enabled = false, want true")
+	}
+	// A rule here would apply to every org of a default install.
+	if len(cfg.Guardrails.Rules) != 0 {
+		t.Errorf("guardrails.rules = %v, want none", cfg.Guardrails.Rules)
+	}
+}
+
 func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("AGENTCC_PORT", "3000")
 	t.Setenv("AGENTCC_LOG_LEVEL", "warn")

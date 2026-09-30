@@ -563,6 +563,10 @@ services:
       # https://docs.futureagi.com/docs/self-hosting/configuration/reference#application-behaviour
       AGENTCC_SYNC_INTERVAL: ${AGENTCC_SYNC_INTERVAL:-60s}
       AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS: ${AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS:-false}
+      # A Future AGI Eval guardrail whose Base URL is Future AGI Cloud's (the
+      # dashboard's default) calls the backend instead, as on Helm, rather
+      # than sending the prompts it checks to Cloud.
+      FI_BASE_URL: http://backend
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GOOGLE_API_KEY:-}
