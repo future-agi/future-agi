@@ -186,7 +186,7 @@ never resolved.
 - At contract time no such rule existed anywhere; the consumer now carries
   the blocker-#24 guard (`agent_name_not_world_unique`: parallelism > 1 plus
   a `LIVEKIT_AGENT_NAME` lacking EITHER `{{WORLD_INDEX}}` OR `{{JOB_ID}}`
-  fails preflight — `c3-call-affinity.md` v0.4 §2.1) —
+  fails preflight) —
   pending merge and §2e table amendment. At W>1 with a static agent name, every world's
   agent registers under the SAME LiveKit identity and dispatch lands on an
   arbitrary world's agent — silent cross-world evidence contamination, no
@@ -208,15 +208,15 @@ never resolved.
   `{{JOB_ID}}` cross-contaminates dispatches ACROSS concurrent jobs even
   when it is world-unique. At requested W>1 the now-landing
   `agent_name_not_world_unique` guard REJECTS any `LIVEKIT_AGENT_NAME`
-  template lacking EITHER placeholder (`c3-call-affinity.md` v0.4 §2.1 —
-  the guard was widened from WORLD_INDEX-only to require both).
+  template lacking EITHER placeholder (the guard was widened from
+  WORLD_INDEX-only to require both).
 - Worker-knob env identity (pointer, not re-legislated here): a conformant
   LiveKit-worker process MUST also read the harness-set worker knobs —
   `FI_LOAD_THRESHOLD`, `FI_NUM_IDLE_PROCESSES`, and `FI_WORKER_HEALTH_PORT` —
   into its `WorkerOptions` (livekit-agents 1.7.1 exposes no env/CLI override,
   so the agent code must do the reading). The mandate, values, and the
-  per-process scope are owned by `c1-world-port-model.md` v1.3 §3/§4 (and
-  `c3-call-affinity.md` v0.4 §5); see them for the normative rule.
+  per-process scope are owned by `c1-world-port-model.md` v1.3 §3/§4;
+  see them for the normative rule.
 
 ### 2.8 Secrets — what the guards actually catch (LIVE-PROVEN, corrected)
 - The agent process declares `secret_purposes: ["target_provider"]` when it

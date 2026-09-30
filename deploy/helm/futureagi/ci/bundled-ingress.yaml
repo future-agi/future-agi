@@ -8,3 +8,7 @@ ingress:
         - futureagi.example.com
         - api.futureagi.example.com
         - files.futureagi.example.com
+# Several gateway replicas: auto turns the gateway's Redis on (database 4).
+agentccGateway:
+  autoscaling:
+    enabled: true

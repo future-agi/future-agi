@@ -433,6 +433,19 @@ class TestRunResultsV3Views:
             (75, "ERROR", None),
             ("Failed", "skipped", None),
             ("NaN", "completed", None),
+            ({"score": 1.0, "choice": "always"}, "completed", 1),
+            ({"score": 0.4, "choice": "sometimes"}, None, 0.4),
+            ({"score": 80, "choice": "mostly"}, "completed", 0.8),
+            ({"score": 1, "choice": "always"}, "completed", 1),
+            ({"score": 0, "choice": "never"}, "completed", 0),
+            ({"choice": "always"}, "completed", None),
+            ({"score": "high", "choice": "x"}, "completed", None),
+            ({"score": "0.8", "choice": "x"}, "completed", None),
+            ({"score": True, "choice": "x"}, "completed", None),
+            ({"score": None, "choice": "x"}, "completed", None),
+            ({"score": {"value": 1}, "choice": "x"}, "completed", None),
+            ({"score": 0.5, "choices": ["a", "b"]}, "completed", 0.5),
+            ({"score": 1.0, "choice": "always"}, "error", None),
         ],
     )
     def test_group_evaluation_scores_match_rows(
@@ -451,7 +464,7 @@ class TestRunResultsV3Views:
                 "source": "harness",
                 "name": "Native evaluation",
                 "output": value,
-                "output_type": "Pass/Fail",
+                "output_type": "choices" if isinstance(value, dict) else "Pass/Fail",
             }
         }
         if eval_status is not None:
@@ -471,6 +484,43 @@ class TestRunResultsV3Views:
         assert aggregate == {
             "scored": int(expected is not None),
             "score_sum": expected or 0,
+        }
+
+    def test_configured_choices_eval_scores_rows_and_groups(
+        self,
+        auth_client,
+        test_execution,
+        analytics_call_executions,
+        score_eval_config,
+    ):
+        score_id = str(score_eval_config.id)
+        call = analytics_call_executions[0]
+        call.call_metadata = {"use_case": "Configured choices"}
+        call.eval_outputs = {
+            score_id: {
+                "name": "Accuracy Score",
+                "output": {"score": 1.0, "choice": "always"},
+                "output_type": "choices",
+                "status": "completed",
+            }
+        }
+        call.save(update_fields=["call_metadata", "eval_outputs"])
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/calls/",
+            {
+                "group_by": "goal",
+                "filters": json.dumps({"goal": ["Configured choices"]}),
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        entry = next(
+            e for e in body["results"][0]["evaluations"] if e["id"] == score_id
+        )
+        assert entry["score"] == 1
+        assert body["groups"][0]["aggregates"]["evaluations"][score_id] == {
+            "scored": 1,
+            "score_sum": 1,
         }
 
     def test_group_aggregates_cover_all_filtered_pages(
@@ -525,6 +575,82 @@ class TestRunResultsV3Views:
                 },
             },
         }
+
+    @pytest.mark.parametrize(
+        "outputs,expected",
+        [
+            pytest.param(
+                [
+                    {"output": {"score": 0.6, "choice": "x"}, "output_type": "score"},
+                    {"output": {"score": 1.0, "choice": "y"}, "output_type": "choices"},
+                    {
+                        "output": {"score": "high", "choice": "z"},
+                        "output_type": "choices",
+                    },
+                ],
+                0.8,
+                id="choice-score-objects",
+            ),
+            pytest.param(
+                [
+                    {"output": 0.2, "output_type": "score"},
+                    {"output": {"score": 0.6, "choice": "x"}, "output_type": "score"},
+                ],
+                0.4,
+                id="plain-and-object-together",
+            ),
+            pytest.param(
+                [
+                    {"output": {"score": 0.3, "choice": "x"}, "output_type": "numeric"},
+                    {
+                        "output": {"score": 0.5, "choice": "y"},
+                        "output_type": "Pass/Fail",
+                    },
+                ],
+                0.4,
+                id="object-under-any-output-type",
+            ),
+            pytest.param(
+                [{"output": {"score": 80, "choice": "x"}, "output_type": "choices"}],
+                80,
+                id="object-above-one-not-scaled",
+            ),
+            pytest.param(
+                [{"output": "0.8", "output_type": "score"}],
+                0.8,
+                id="plain-text-number-kept",
+            ),
+            pytest.param(
+                [
+                    {"output": 0.7, "output_type": "choices"},
+                    {"output": 0.2, "output_type": "score"},
+                ],
+                0.2,
+                id="plain-number-outside-score-type-ignored",
+            ),
+        ],
+    )
+    def test_analytics_average_score(
+        self,
+        auth_client,
+        test_execution,
+        analytics_call_executions,
+        score_eval_config,
+        outputs,
+        expected,
+    ):
+        score_id = str(score_eval_config.id)
+        for call, output in zip(analytics_call_executions, outputs, strict=False):
+            call.eval_outputs = {score_id: {"name": "Accuracy Score", **output}}
+            call.save(update_fields=["eval_outputs"])
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/analytics/"
+        )
+        assert response.status_code == 200
+        entry = next(
+            row for row in response.json()["evaluations"] if row["id"] == score_id
+        )
+        assert entry["average_score"] == pytest.approx(expected)
 
     def test_calls_returns_normalized_rows_groups_and_facets(
         self, auth_client, test_execution, analytics_call_executions
