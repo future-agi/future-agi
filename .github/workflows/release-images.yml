@@ -679,11 +679,9 @@ jobs:
           # Only the active GCP regions are bumped by the pipeline; us/aws is the
           # decommissioned AWS deployment and is intentionally left untouched.
           # shellcheck disable=SC2086
-          bump eu/gcp/deployment/values.yaml  $COMMON_PATHS .fiCollector.image.tag
-          # Property Catalog is US-only and reuses collector/backend images.
-          # Keep both pins aligned; chart validation rejects mixed versions.
+          bump eu/gcp/deployment/values.yaml  $COMMON_PATHS
           # shellcheck disable=SC2086
-          bump us/gcp/deployment/values.yaml  $COMMON_PATHS .fiCollector.image.tag .propertyCatalog.image.tag .propertyCatalog.lifecycle.image.tag
+          bump us/gcp/deployment/values.yaml  $COMMON_PATHS
           for region in eu us; do
             file="$region/gcp/deployment/values.yaml"
             # Keep regional mirror repositories. The pinned bytes come from
