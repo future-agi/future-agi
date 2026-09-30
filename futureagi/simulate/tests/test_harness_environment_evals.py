@@ -2210,3 +2210,71 @@ def test_clear_queued_stamps_finds_the_stamp_when_the_config_id_is_a_uuid(enviro
     assert call_execution.call_metadata[EVAL_QUEUED_KEY] == {
         "other": "2026-01-01T00:00:00+00:00"
     }
+
+
+@pytest.mark.django_db
+def test_a_harness_eval_a_person_removed_comes_back_when_the_harness_grades_it_again(
+    env_client, environment, workspace
+):
+    """Removing a harness-reported eval soft deletes its row, whose id is
+    fixed by the run, the template and the name. The next ingest must bring
+    that row back rather than insert the same id a second time."""
+    from simulate.services.alk_simulate_ingestion import (
+        _get_or_create_harness_eval_config,
+    )
+
+    template = _template("booking_created", ["conversation"])
+    config = _get_or_create_harness_eval_config(
+        environment.run_test, template, "booking_created"
+    )
+    remove = env_client.delete(
+        f"{ENVIRONMENTS}/{environment.id}/evaluations/{config.id}/",
+        HTTP_X_WORKSPACE_ID=str(workspace.id),
+    )
+    assert remove.status_code == 204, remove.content
+    assert not SimulateEvalConfig.objects.filter(id=config.id).exists()
+
+    revived = _get_or_create_harness_eval_config(
+        environment.run_test, template, "booking_created"
+    )
+
+    assert revived.id == config.id
+    assert revived.deleted is False
+    assert revived.deleted_at is None
+    stored = SimulateEvalConfig.objects.get(id=config.id)
+    assert stored.deleted_at is None
+    assert stored.mapping == {}
+    assert stored.name == "booking_created"
+    assert (
+        SimulateEvalConfig.all_objects.filter(
+            run_test=environment.run_test, eval_template=template
+        ).count()
+        == 1
+    )
+
+
+@pytest.mark.django_db
+def test_a_harness_eval_never_removed_is_returned_untouched(environment):
+    """Finding a live row must not write to it."""
+    from simulate.services.alk_simulate_ingestion import (
+        _get_or_create_harness_eval_config,
+    )
+
+    template = _template("booking_created", ["conversation"])
+    config = _get_or_create_harness_eval_config(
+        environment.run_test, template, "booking_created"
+    )
+
+    again = _get_or_create_harness_eval_config(
+        environment.run_test, template, "booking_created"
+    )
+
+    assert again.id == config.id
+    assert again.deleted is False
+    assert again.updated_at == config.updated_at
+    assert (
+        SimulateEvalConfig.all_objects.filter(
+            run_test=environment.run_test, eval_template=template
+        ).count()
+        == 1
+    )

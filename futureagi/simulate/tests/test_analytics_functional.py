@@ -1291,6 +1291,51 @@ class TestRunResultsV3Views:
         evaluations = {item["id"]: item for item in row["evaluations"]}
         assert evaluations[str(new_config.id)]["score"] == 0.75
 
+    def test_catalog_lists_configs_added_or_renamed_after_a_warm_load(
+        self,
+        test_execution,
+        run_test,
+        score_template,
+        pass_fail_eval_config,
+        score_eval_config,
+    ):
+        """The CSV header and run analytics read the catalog alone, so a
+        config added or renamed after the run completed must show there,
+        newest first, before any call has an output for it."""
+        from simulate.services.run_results_v3 import build_evaluation_catalog
+
+        now = timezone.now()
+        SimulateEvalConfig.objects.filter(pk=pass_fail_eval_config.pk).update(
+            created_at=now - timedelta(minutes=2)
+        )
+        SimulateEvalConfig.objects.filter(pk=score_eval_config.pk).update(
+            created_at=now - timedelta(minutes=1)
+        )
+        warm, _ = build_evaluation_catalog(test_execution)
+        assert warm == [
+            {"id": str(score_eval_config.id), "name": "Accuracy Score"},
+            {"id": str(pass_fail_eval_config.id), "name": "Quality Gate"},
+        ]
+
+        new_config = SimulateEvalConfig.objects.create(
+            name="Bonus Score", eval_template=score_template, run_test=run_test
+        )
+        pass_fail_eval_config.name = "Quality Gate v2"
+        pass_fail_eval_config.save(update_fields=["name"])
+
+        columns, live_eval_ids = build_evaluation_catalog(test_execution)
+
+        assert columns == [
+            {"id": str(new_config.id), "name": "Bonus Score"},
+            {"id": str(score_eval_config.id), "name": "Accuracy Score"},
+            {"id": str(pass_fail_eval_config.id), "name": "Quality Gate v2"},
+        ]
+        assert live_eval_ids == {
+            str(new_config.id),
+            str(score_eval_config.id),
+            str(pass_fail_eval_config.id),
+        }
+
     def test_eval_removed_after_completion_disappears_on_next_load(
         self,
         auth_client,
@@ -1381,13 +1426,12 @@ class TestRunResultsV3Views:
     ):
         """A harness output keyed by a still-live config id must not create a
         second column, the configured name must win over the harness name,
-        and among harness-only ids the first name seen must win."""
+        and among harness-only ids the name on the oldest call must win,
+        however recently another call was saved."""
         from simulate.services.run_results_v3 import build_evaluation_catalog
 
         config_id = str(score_eval_config.id)
         calls = analytics_call_executions
-        # calls[0]: a harness output that collides with the live config id,
-        # plus a harness-only id ("policy-check") named "Name A" here.
         calls[0].eval_outputs = {
             config_id: {
                 "source": "harness",
@@ -1403,9 +1447,6 @@ class TestRunResultsV3Views:
             },
         }
         calls[0].save(update_fields=["eval_outputs"])
-        # calls[1]: the same harness-only id under a different name. Force
-        # it to be scanned before calls[0] (the scan orders by -updated_at)
-        # so it is the "first seen" occurrence.
         calls[1].eval_outputs = {
             "policy-check": {
                 "source": "harness",
@@ -1416,7 +1457,8 @@ class TestRunResultsV3Views:
         }
         calls[1].save(update_fields=["eval_outputs"])
         CallExecution.objects.filter(pk=calls[1].pk).update(
-            updated_at=timezone.now() + timedelta(minutes=1)
+            created_at=calls[0].created_at - timedelta(minutes=1),
+            updated_at=calls[0].updated_at - timedelta(minutes=1),
         )
 
         columns, live_eval_ids = build_evaluation_catalog(test_execution)
@@ -1428,13 +1470,21 @@ class TestRunResultsV3Views:
         assert [column["id"] for column in columns].count(config_id) == 1
         assert live_eval_ids == {config_id}
 
+    @pytest.mark.parametrize(
+        "in_flight_status",
+        [
+            TestExecution.ExecutionStatus.RUNNING,
+            TestExecution.ExecutionStatus.EVALUATING,
+        ],
+    )
     def test_rerun_computes_fresh_harness_columns_and_rotates_the_cache_key(
-        self, test_execution, analytics_call_executions
+        self, test_execution, analytics_call_executions, in_flight_status
     ):
         """A rerun must not surface the previous attempt's harness columns:
-        the scan must be fresh while the run is not completed, and the
-        completed-run cache key must rotate so a new attempt is never
-        masked by the old one."""
+        the scan must be fresh while the run is running or evaluating (an
+        evaluating rerun still carries the previous attempt's completed_at),
+        and the completed-run cache key must rotate so a new attempt is
+        never masked by the old one."""
         from simulate.services.run_results_v3 import build_evaluation_catalog
 
         call = analytics_call_executions[0]
@@ -1447,15 +1497,18 @@ class TestRunResultsV3Views:
             }
         }
         call.save(update_fields=["eval_outputs"])
-        original_completed_at = test_execution.completed_at or timezone.now()
+        # A whole second, so the bump below stays inside it: a key that kept
+        # only whole seconds would then fail to rotate.
+        original_completed_at = (test_execution.completed_at or timezone.now()).replace(
+            microsecond=0
+        )
         test_execution.completed_at = original_completed_at
         test_execution.save(update_fields=["completed_at"])
 
         warm, _ = build_evaluation_catalog(test_execution)
         assert {column["id"] for column in warm} == {"attempt-a"}
 
-        # Rerun starts: status flips to RUNNING and the harness output changes.
-        test_execution.status = TestExecution.ExecutionStatus.RUNNING
+        test_execution.status = in_flight_status
         test_execution.save(update_fields=["status"])
         call.eval_outputs = {
             "attempt-b": {
@@ -1467,17 +1520,49 @@ class TestRunResultsV3Views:
         }
         call.save(update_fields=["eval_outputs"])
 
-        while_running, _ = build_evaluation_catalog(test_execution)
-        assert {column["id"] for column in while_running} == {"attempt-b"}
+        while_in_flight, _ = build_evaluation_catalog(test_execution)
+        assert {column["id"] for column in while_in_flight} == {"attempt-b"}
 
-        # Rerun completes with a new completed_at: the cache key rotates,
-        # so the catalog reflects the new attempt only.
         test_execution.status = TestExecution.ExecutionStatus.COMPLETED
-        test_execution.completed_at = original_completed_at + timedelta(seconds=1)
+        test_execution.completed_at = original_completed_at + timedelta(
+            milliseconds=300
+        )
         test_execution.save(update_fields=["status", "completed_at"])
 
         rerun_catalog, _ = build_evaluation_catalog(test_execution)
         assert {column["id"] for column in rerun_catalog} == {"attempt-b"}
+
+    def test_a_value_under_the_harness_key_that_is_not_a_list_is_rescanned(
+        self, test_execution, analytics_call_executions
+    ):
+        """Whatever else sits under the harness-columns key, the table gets
+        the columns a fresh scan finds rather than an error."""
+        from django.core.cache import cache
+
+        from simulate.services.run_results_v3 import build_evaluation_catalog
+
+        call = analytics_call_executions[0]
+        call.eval_outputs = {
+            "attempt-a": {
+                "source": "harness",
+                "name": "Attempt A",
+                "output": "Passed",
+                "output_type": "Pass/Fail",
+            }
+        }
+        call.save(update_fields=["eval_outputs"])
+        test_execution.status = TestExecution.ExecutionStatus.COMPLETED
+        test_execution.completed_at = timezone.now()
+        test_execution.save(update_fields=["status", "completed_at"])
+        cache.set(
+            "simulate:v3:harness-eval-columns:"
+            f"{test_execution.id}:{test_execution.completed_at.timestamp()}",
+            ([], []),
+        )
+
+        columns, _ = build_evaluation_catalog(test_execution)
+
+        assert "attempt-a" in {column["id"] for column in columns}
 
 
 # ============================================================================

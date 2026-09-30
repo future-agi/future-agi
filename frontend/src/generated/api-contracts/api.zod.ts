@@ -31519,7 +31519,7 @@ export const simulateAgentDefinitionsCreateCreateBodyObservabilityEnabledDefault
   false;
 export const simulateAgentDefinitionsCreateCreateBodyLivekitUrlMax = 500;
 
-export const simulateAgentDefinitionsCreateCreateBodyLivekitMaxConcurrencyMax = 5;
+export const simulateAgentDefinitionsCreateCreateBodyLivekitMaxConcurrencyMax = 25;
 
 export const SimulateAgentDefinitionsCreateCreateBody = zod.object({
   agent_name: zod
@@ -31738,7 +31738,7 @@ export const simulateAgentDefinitionsEditUpdateBodyAgentNameMax = 255;
 
 export const simulateAgentDefinitionsEditUpdateBodyLivekitUrlMax = 500;
 
-export const simulateAgentDefinitionsEditUpdateBodyLivekitMaxConcurrencyMax = 5;
+export const simulateAgentDefinitionsEditUpdateBodyLivekitMaxConcurrencyMax = 25;
 
 export const SimulateAgentDefinitionsEditUpdateBody = zod.object({
   agent_name: zod
@@ -31994,7 +31994,7 @@ export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitApiSecretMax
 
 export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitAgentNameMax = 255;
 
-export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitMaxConcurrencyMax = 5;
+export const simulateAgentDefinitionsVersionsCreateCreateBodyLivekitMaxConcurrencyMax = 25;
 
 export const simulateAgentDefinitionsVersionsCreateCreateBodyCommitMessageDefault = ``;
 export const simulateAgentDefinitionsVersionsCreateCreateBodyObservabilityEnabledDefault =
@@ -35862,8 +35862,9 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
  * Soft-delete only. The verdicts an eval already produced live on the call
 executions and in their receipts, not on this row, so a hard delete would
 leave past runs showing scores for something the environment no longer
-lists. Removing it stops future scenarios being graded by it and leaves
-the history it already wrote intact.
+lists. Removing an eval someone added stops future scenarios being
+graded by it and leaves the history it already wrote intact. An eval the
+harness reported itself comes back the next time the harness grades it.
  * @summary Stop running one eval against this environment.
  */
 export const SimulateApiHarnessEnvironmentsRemoveEvaluationParams = zod.object({
@@ -40063,6 +40064,8 @@ export const SimulateApiRunTestsListResponseItem = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
       }),
     )
     .optional(),
@@ -40141,6 +40144,8 @@ export const SimulateApiRunTestsListResponseItem = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
       }),
     )
     .optional(),
@@ -41595,6 +41600,8 @@ export const SimulatePromptTemplatesSimulationsListResponse = zod.object({
                 status: zod.string().min(1).optional(),
                 eval_group: zod.string().min(1).optional(),
                 template_id: zod.string().uuid().optional(),
+                eval_type: zod.string().min(1).optional(),
+                regradable: zod.boolean().optional(),
               }),
             )
             .optional(),
@@ -41675,6 +41682,8 @@ export const SimulatePromptTemplatesSimulationsListResponse = zod.object({
                 status: zod.string().min(1).optional(),
                 eval_group: zod.string().min(1).optional(),
                 template_id: zod.string().uuid().optional(),
+                eval_type: zod.string().min(1).optional(),
+                regradable: zod.boolean().optional(),
               }),
             )
             .optional(),
@@ -42040,6 +42049,8 @@ export const SimulatePromptTemplatesSimulationsReadResponse = zod.object({
           status: zod.string().min(1).optional(),
           eval_group: zod.string().min(1).optional(),
           template_id: zod.string().uuid().optional(),
+          eval_type: zod.string().min(1).optional(),
+          regradable: zod.boolean().optional(),
         }),
       )
       .optional(),
@@ -42118,6 +42129,8 @@ export const SimulatePromptTemplatesSimulationsReadResponse = zod.object({
           status: zod.string().min(1).optional(),
           eval_group: zod.string().min(1).optional(),
           template_id: zod.string().uuid().optional(),
+          eval_type: zod.string().min(1).optional(),
+          regradable: zod.boolean().optional(),
         }),
       )
       .optional(),
@@ -42316,6 +42329,8 @@ export const SimulatePromptTemplatesSimulationsPartialUpdateResponse =
             status: zod.string().min(1).optional(),
             eval_group: zod.string().min(1).optional(),
             template_id: zod.string().uuid().optional(),
+            eval_type: zod.string().min(1).optional(),
+            regradable: zod.boolean().optional(),
           }),
         )
         .optional(),
@@ -42394,6 +42409,8 @@ export const SimulatePromptTemplatesSimulationsPartialUpdateResponse =
             status: zod.string().min(1).optional(),
             eval_group: zod.string().min(1).optional(),
             template_id: zod.string().uuid().optional(),
+            eval_type: zod.string().min(1).optional(),
+            regradable: zod.boolean().optional(),
           }),
         )
         .optional(),
@@ -42659,6 +42676,8 @@ export const SimulateRunTestsListResponse = zod.object({
               status: zod.string().min(1).optional(),
               eval_group: zod.string().min(1).optional(),
               template_id: zod.string().uuid().optional(),
+              eval_type: zod.string().min(1).optional(),
+              regradable: zod.boolean().optional(),
             }),
           )
           .optional(),
@@ -42737,6 +42756,8 @@ export const SimulateRunTestsListResponse = zod.object({
               status: zod.string().min(1).optional(),
               eval_group: zod.string().min(1).optional(),
               template_id: zod.string().uuid().optional(),
+              eval_type: zod.string().min(1).optional(),
+              regradable: zod.boolean().optional(),
             }),
           )
           .optional(),
@@ -43099,6 +43120,8 @@ export const SimulateRunTestsReadResponse = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
       }),
     )
     .optional(),
@@ -43175,6 +43198,8 @@ export const SimulateRunTestsReadResponse = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
       }),
     )
     .optional(),
@@ -43359,6 +43384,8 @@ export const SimulateRunTestsPartialUpdateResponse = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
       }),
     )
     .optional(),
@@ -43437,6 +43464,8 @@ export const SimulateRunTestsPartialUpdateResponse = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
       }),
     )
     .optional(),
@@ -43689,6 +43718,8 @@ export const SimulateRunTestsComponentsPartialUpdateResponse = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
       }),
     )
     .optional(),
@@ -43767,6 +43798,8 @@ export const SimulateRunTestsComponentsPartialUpdateResponse = zod.object({
         status: zod.string().min(1).optional(),
         eval_group: zod.string().min(1).optional(),
         template_id: zod.string().uuid().optional(),
+        eval_type: zod.string().min(1).optional(),
+        regradable: zod.boolean().optional(),
       }),
     )
     .optional(),

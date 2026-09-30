@@ -109,6 +109,7 @@ from simulate.serializers.response.test_execution import (
 from simulate.serializers.run_test import (
     RunTestListSummarySerializer,
     RunTestSerializer,
+    harness_run_tests_context,
 )
 from simulate.serializers.test_execution import (
     AllActiveTestsSerializer,
@@ -138,6 +139,7 @@ from simulate.serializers.test_execution import (
 
 # Import Temporal activities (using @temporal_activity drop-in decorator)
 from simulate.services.agent_definition import resolve_api_key_for_version
+from simulate.services.harness_evals import is_harness_run_test, regrade_mapping
 from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
@@ -574,10 +576,14 @@ class RunTestListView(APIView):
             result_page = paginator.paginate_queryset(run_tests, request)
 
             # Serialize the data
-            serializer_class = (
-                RunTestListSummarySerializer if summary else RunTestSerializer
-            )
-            serializer = serializer_class(result_page, many=True)
+            if summary:
+                serializer = RunTestListSummarySerializer(result_page, many=True)
+            else:
+                serializer = RunTestSerializer(
+                    result_page,
+                    many=True,
+                    context=harness_run_tests_context(result_page),
+                )
 
             # Return paginated response
             return paginator.get_paginated_response(serializer.data)
@@ -1330,6 +1336,7 @@ class TestExecutionCancelView(APIView):
             200: CancelTestExecutionResponseSerializer,
             400: ErrorResponseSerializer,
             404: ErrorResponseSerializer,
+            409: ErrorResponseSerializer,
             500: ErrorResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -1371,6 +1378,12 @@ class TestExecutionCancelView(APIView):
                     "Either run_test_id or test_execution_id must be provided"
                 )
 
+            if self._is_regrading_a_finished_harness_run(test_execution):
+                return self.gm.custom_error_response(
+                    status.HTTP_409_CONFLICT,
+                    "Grading can't be stopped. It finishes on its own.",
+                )
+
             test_execution.status = TestExecution.ExecutionStatus.CANCELLING
             test_execution.save()
 
@@ -1410,6 +1423,21 @@ class TestExecutionCancelView(APIView):
             return self.gm.internal_server_error_response(
                 f"Failed to cancel test: {str(e)}"
             )
+
+    @staticmethod
+    def _is_regrading_a_finished_harness_run(test_execution) -> bool:
+        """Whether this is a finished harness run whose evals are being graded again.
+
+        Grading again is only accepted once the hosted job has ended, so
+        nothing would ever complete a cancel: the run would sit in CANCELLING
+        for good, with the graders that had not started skipping their evals
+        and leaving them pending.
+        """
+        if test_execution.status != TestExecution.ExecutionStatus.EVALUATING:
+            return False
+        return HostedHarnessJob.no_workspace_objects.filter(
+            test_execution_id=test_execution.id
+        ).exists()
 
     def _cancel_with_temporal(self, test_execution) -> dict:
         """Cancel test execution via Temporal workflow, with DB fallback.
@@ -1635,10 +1663,14 @@ class RunTestAPIView(APIView):
             result_page = paginator.paginate_queryset(run_tests, request)
 
             # Serialize the data
-            serializer_class = (
-                RunTestListSummarySerializer if summary else RunTestSerializer
-            )
-            serializer = serializer_class(result_page, many=True)
+            if summary:
+                serializer = RunTestListSummarySerializer(result_page, many=True)
+            else:
+                serializer = RunTestSerializer(
+                    result_page,
+                    many=True,
+                    context=harness_run_tests_context(result_page),
+                )
 
             # Return paginated response
             return paginator.get_paginated_response(serializer.data)
@@ -8117,6 +8149,7 @@ class RunNewEvalsOnTestExecutionView(APIView):
             400: EvalErrorResponseSerializer,
             401: "Unauthorized",
             404: EvalErrorResponseSerializer,
+            409: EvalErrorResponseSerializer,
             500: EvalErrorResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -8149,14 +8182,6 @@ class RunNewEvalsOnTestExecutionView(APIView):
             enable_tool_evaluation = request.validated_data.get(
                 "enable_tool_evaluation"
             )
-
-            # Update run_test.enable_tool_evaluation if provided
-            if enable_tool_evaluation is not None:
-                run_test.enable_tool_evaluation = enable_tool_evaluation
-                run_test.save(update_fields=["enable_tool_evaluation"])
-                logger.info(
-                    f"Updated enable_tool_evaluation to {enable_tool_evaluation} for run test {run_test.id}"
-                )
 
             # Get test executions to run evaluations on
             if select_all:
@@ -8194,6 +8219,53 @@ class RunNewEvalsOnTestExecutionView(APIView):
             if eval_configs.count() != len(eval_config_ids):
                 return self._gm.bad_request(
                     "One or more eval configs not found or do not belong to this run test."
+                )
+
+            # On a harness run, a result column the platform can't grade
+            # would be marked pending and never scored, so the whole request
+            # is refused before anything is written. A harness suite eval is
+            # graded with a mapping made for this dispatch only; its config
+            # keeps its empty mapping so later harness runs treat it exactly
+            # as before. Any other run grades every config as it always has.
+            mapping_overrides = {}
+            if is_harness_run_test(run_test.id):
+                # The execution turns COMPLETED at the last call's ingest, but
+                # teardown later writes the job's end state onto it, which
+                # would overwrite EVALUATING mid-grade.
+                if (
+                    HostedHarnessJob.no_workspace_objects.filter(
+                        test_execution__in=test_executions
+                    )
+                    .exclude(
+                        state__in=(
+                            HostedHarnessJob.State.COMPLETED,
+                            HostedHarnessJob.State.FAILED,
+                            HostedHarnessJob.State.CANCELED,
+                        )
+                    )
+                    .exists()
+                ):
+                    return self._gm.custom_error_response(
+                        status.HTTP_409_CONFLICT,
+                        "This run is still finishing. Try again in a moment.",
+                    )
+                for eval_config in eval_configs.select_related("eval_template"):
+                    regrade = regrade_mapping(eval_config)
+                    if regrade is None:
+                        return self._gm.bad_request(
+                            f"{eval_config.name or 'This evaluation'} is scored by "
+                            "the harness during the call. Only rerunning the call "
+                            "refreshes it."
+                        )
+                    if regrade != eval_config.mapping:
+                        mapping_overrides[str(eval_config.id)] = regrade
+
+            # Update run_test.enable_tool_evaluation if provided
+            if enable_tool_evaluation is not None:
+                run_test.enable_tool_evaluation = enable_tool_evaluation
+                run_test.save(update_fields=["enable_tool_evaluation"])
+                logger.info(
+                    f"Updated enable_tool_evaluation to {enable_tool_evaluation} for run test {run_test.id}"
                 )
 
             # Collect all call execution IDs from the selected test executions
@@ -8314,6 +8386,11 @@ class RunNewEvalsOnTestExecutionView(APIView):
                 id__in=call_execution_ids
             )
             call_executions_list = []
+            # What each call held for these evals before the placeholders, so
+            # a failed dispatch can put back a score (a harness one included)
+            # instead of leaving it pending until a retry succeeds.
+            no_output = object()
+            previous_outputs = {}
             for call_execution in call_executions_to_update:
                 # Provider-agnostic eval flags live in call_metadata
                 call_execution.call_metadata = call_execution.call_metadata or {}
@@ -8323,6 +8400,13 @@ class RunNewEvalsOnTestExecutionView(APIView):
                 # Initialize eval_outputs for the new eval configs
                 if not call_execution.eval_outputs:
                     call_execution.eval_outputs = {}
+
+                previous_outputs[call_execution.id] = {
+                    str(eval_config.id): call_execution.eval_outputs.get(
+                        str(eval_config.id), no_output
+                    )
+                    for eval_config in eval_configs
+                }
 
                 # Set placeholder values for each eval config that will be run
                 for eval_config in eval_configs:
@@ -8345,9 +8429,12 @@ class RunNewEvalsOnTestExecutionView(APIView):
             # backend is unavailable, keep the persisted pending state and let
             # the caller retry instead of failing the API request after mutation.
             try:
-                task = run_new_evals_on_call_executions_task.apply_async(
-                    args=(call_execution_ids, eval_config_ids_str),
-                )
+                dispatch = {"args": (call_execution_ids, eval_config_ids_str)}
+                # Sent only when set, so every other dispatch keeps the exact
+                # shape queued jobs and not-yet-updated workers expect.
+                if mapping_overrides:
+                    dispatch["kwargs"] = {"mapping_overrides": mapping_overrides}
+                task = run_new_evals_on_call_executions_task.apply_async(**dispatch)
                 task_id = task.id
                 message = (
                     "New evaluations dispatched successfully. "
@@ -8367,9 +8454,16 @@ class RunNewEvalsOnTestExecutionView(APIView):
                     call_execution.call_metadata["eval_dispatch_failed"] = str(
                         dispatch_error
                     )
+                    for config_id, previous in previous_outputs[
+                        call_execution.id
+                    ].items():
+                        if previous is no_output:
+                            call_execution.eval_outputs.pop(config_id, None)
+                        else:
+                            call_execution.eval_outputs[config_id] = previous
                 if call_executions_list:
                     CallExecution.objects.bulk_update(
-                        call_executions_list, ["call_metadata"]
+                        call_executions_list, ["call_metadata", "eval_outputs"]
                     )
                 failed_test_executions = list(
                     TestExecution.objects.filter(id__in=updated_test_executions)
@@ -8391,7 +8485,7 @@ class RunNewEvalsOnTestExecutionView(APIView):
                         ["status", "picked_up_by_executor", "execution_metadata"],
                     )
                 message = (
-                    "New evaluations marked pending; async dispatch failed "
+                    "New evaluations may not have started; async dispatch failed "
                     "and can be retried."
                 )
                 logger.exception(

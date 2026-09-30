@@ -58732,8 +58732,9 @@ export const getSimulateApiHarnessEnvironmentsRemoveEvaluationUrl = (
  * Soft-delete only. The verdicts an eval already produced live on the call
 executions and in their receipts, not on this row, so a hard delete would
 leave past runs showing scores for something the environment no longer
-lists. Removing it stops future scenarios being graded by it and leaves
-the history it already wrote intact.
+lists. Removing an eval someone added stops future scenarios being
+graded by it and leaves the history it already wrote intact. An eval the
+harness reported itself comes back the next time the harness grades it.
  * @summary Stop running one eval against this environment.
  */
 export const simulateApiHarnessEnvironmentsRemoveEvaluation = async (
@@ -64707,6 +64708,11 @@ export type simulateRunTestsRunNewEvalsCreateResponse404 = {
   status: 404;
 };
 
+export type simulateRunTestsRunNewEvalsCreateResponse409 = {
+  data: EvalErrorResponseApi;
+  status: 409;
+};
+
 export type simulateRunTestsRunNewEvalsCreateResponse500 = {
   data: EvalErrorResponseApi;
   status: 500;
@@ -64714,7 +64720,7 @@ export type simulateRunTestsRunNewEvalsCreateResponse500 = {
 
 export type simulateRunTestsRunNewEvalsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 404 | 409 | 500>;
 };
 
 export type simulateRunTestsRunNewEvalsCreateResponseSuccess =
@@ -64725,6 +64731,7 @@ export type simulateRunTestsRunNewEvalsCreateResponseError = (
   | simulateRunTestsRunNewEvalsCreateResponse400
   | simulateRunTestsRunNewEvalsCreateResponse401
   | simulateRunTestsRunNewEvalsCreateResponse404
+  | simulateRunTestsRunNewEvalsCreateResponse409
   | simulateRunTestsRunNewEvalsCreateResponse500
   | simulateRunTestsRunNewEvalsCreateResponseDefault
 ) & {
@@ -65945,6 +65952,11 @@ export type simulateTestExecutionsCancelCreateResponse404 = {
   status: 404;
 };
 
+export type simulateTestExecutionsCancelCreateResponse409 = {
+  data: ErrorResponseApi;
+  status: 409;
+};
+
 export type simulateTestExecutionsCancelCreateResponse500 = {
   data: ErrorResponseApi;
   status: 500;
@@ -65952,7 +65964,7 @@ export type simulateTestExecutionsCancelCreateResponse500 = {
 
 export type simulateTestExecutionsCancelCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 409 | 500>;
 };
 
 export type simulateTestExecutionsCancelCreateResponseSuccess =
@@ -65962,6 +65974,7 @@ export type simulateTestExecutionsCancelCreateResponseSuccess =
 export type simulateTestExecutionsCancelCreateResponseError = (
   | simulateTestExecutionsCancelCreateResponse400
   | simulateTestExecutionsCancelCreateResponse404
+  | simulateTestExecutionsCancelCreateResponse409
   | simulateTestExecutionsCancelCreateResponse500
   | simulateTestExecutionsCancelCreateResponseDefault
 ) & {

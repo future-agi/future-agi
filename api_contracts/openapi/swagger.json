@@ -50680,7 +50680,7 @@
             "delete": {
                 "operationId": "simulate_api_harness-environments_remove_evaluation",
                 "summary": "Stop running one eval against this environment.",
-                "description": "Soft-delete only. The verdicts an eval already produced live on the call\nexecutions and in their receipts, not on this row, so a hard delete would\nleave past runs showing scores for something the environment no longer\nlists. Removing it stops future scenarios being graded by it and leaves\nthe history it already wrote intact.",
+                "description": "Soft-delete only. The verdicts an eval already produced live on the call\nexecutions and in their receipts, not on this row, so a hard delete would\nleave past runs showing scores for something the environment no longer\nlists. Removing an eval someone added stops future scenarios being\ngraded by it and leaves the history it already wrote intact. An eval the\nharness reported itself comes back the next time the harness grades it.",
                 "parameters": [],
                 "responses": {
                     "204": {
@@ -55854,6 +55854,12 @@
                             "$ref": "#/definitions/EvalErrorResponse"
                         }
                     },
+                    "409": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/EvalErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "",
                         "schema": {
@@ -56944,6 +56950,12 @@
                         }
                     },
                     "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "409": {
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ErrorResponse"
@@ -118631,7 +118643,7 @@
                 "livekit_max_concurrency": {
                     "title": "Livekit max concurrency",
                     "type": "integer",
-                    "maximum": 5,
+                    "maximum": 25,
                     "minimum": 1,
                     "x-nullable": true
                 }
@@ -119050,7 +119062,7 @@
                 "livekit_max_concurrency": {
                     "title": "Livekit max concurrency",
                     "type": "integer",
-                    "maximum": 5,
+                    "maximum": 25,
                     "minimum": 1,
                     "x-nullable": true
                 }
@@ -119287,7 +119299,7 @@
                 "livekit_max_concurrency": {
                     "title": "Livekit max concurrency",
                     "type": "integer",
-                    "maximum": 5,
+                    "maximum": 25,
                     "minimum": 1
                 },
                 "commit_message": {
@@ -127692,6 +127704,17 @@
                     "format": "uuid",
                     "readOnly": true,
                     "x-nullable": true
+                },
+                "eval_type": {
+                    "title": "Eval type",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "regradable": {
+                    "title": "Regradable",
+                    "type": "boolean",
+                    "readOnly": true
                 }
             }
         },
@@ -130347,6 +130370,17 @@
                     "title": "Template id",
                     "type": "string",
                     "format": "uuid",
+                    "readOnly": true
+                },
+                "eval_type": {
+                    "title": "Eval type",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
+                },
+                "regradable": {
+                    "title": "Regradable",
+                    "type": "boolean",
                     "readOnly": true
                 }
             }

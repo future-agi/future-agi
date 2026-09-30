@@ -15403,7 +15403,7 @@ export interface AgentDefinitionCreateRequestApi {
   livekit_config_json?: AgentDefinitionCreateRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 5
+   * @maximum 25
    */
   livekit_max_concurrency?: number;
 }
@@ -15644,7 +15644,7 @@ export interface AgentDefinitionEditRequestApi {
   livekit_config_json?: AgentDefinitionEditRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 5
+   * @maximum 25
    */
   livekit_max_concurrency?: number;
 }
@@ -15757,7 +15757,7 @@ export interface AgentVersionCreateRequestApi {
   livekit_config_json?: AgentVersionCreateRequestApiLivekitConfigJson;
   /**
    * @minimum 1
-   * @maximum 5
+   * @maximum 25
    */
   livekit_max_concurrency?: number;
   commit_message?: string;
@@ -19661,6 +19661,9 @@ export interface SimulateEvalConfigResponseApi {
   /** @minLength 1 */
   readonly eval_group?: string;
   readonly template_id?: string;
+  /** @minLength 1 */
+  readonly eval_type?: string;
+  readonly regradable?: boolean;
 }
 
 export interface RunTestResponseApi {
@@ -20716,6 +20719,9 @@ export interface EvalConfigResponseApi {
   status?: EvalConfigResponseApiStatus;
   readonly eval_group?: string;
   readonly template_id?: string;
+  /** @minLength 1 */
+  readonly eval_type?: string;
+  readonly regradable?: boolean;
 }
 
 export interface AddEvalConfigsResponseApi {

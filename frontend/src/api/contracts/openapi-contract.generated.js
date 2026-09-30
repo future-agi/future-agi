@@ -30856,6 +30856,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           404: {
             $ref: "#/definitions/EvalErrorResponse",
           },
+          409: {
+            $ref: "#/definitions/EvalErrorResponse",
+          },
           500: {
             $ref: "#/definitions/EvalErrorResponse",
           },
@@ -31464,6 +31467,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/ErrorResponse",
           },
           404: {
+            $ref: "#/definitions/ErrorResponse",
+          },
+          409: {
             $ref: "#/definitions/ErrorResponse",
           },
           500: {
@@ -46830,7 +46836,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         livekit_max_concurrency: {
           title: "Livekit max concurrency",
           type: "integer",
-          maximum: 5,
+          maximum: 25,
           minimum: 1,
           "x-nullable": true,
         },
@@ -46984,7 +46990,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         livekit_max_concurrency: {
           title: "Livekit max concurrency",
           type: "integer",
-          maximum: 5,
+          maximum: 25,
           minimum: 1,
           "x-nullable": true,
         },
@@ -47975,7 +47981,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         livekit_max_concurrency: {
           title: "Livekit max concurrency",
           type: "integer",
-          maximum: 5,
+          maximum: 25,
           minimum: 1,
         },
         commit_message: {
@@ -82737,6 +82743,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
           readOnly: true,
         },
+        eval_type: {
+          title: "Eval type",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        regradable: {
+          title: "Regradable",
+          type: "boolean",
+          readOnly: true,
+        },
       },
     },
     AddQueueItem: {
@@ -98877,6 +98894,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
           readOnly: true,
           "x-nullable": true,
+        },
+        eval_type: {
+          title: "Eval type",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        regradable: {
+          title: "Regradable",
+          type: "boolean",
+          readOnly: true,
         },
       },
     },

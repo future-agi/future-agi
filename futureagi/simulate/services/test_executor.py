@@ -4174,6 +4174,7 @@ class TestExecutor:
         eval_config_ids=None,
         skip_existing=False,
         skip_status_update=False,
+        mapping_overrides=None,
     ):
         """
         Run evaluations from SimulateEvalConfig for a completed call execution
@@ -4184,6 +4185,8 @@ class TestExecutor:
             skip_existing: If True, skip evaluations that already exist for this call execution
             skip_status_update: If True, do not transition status to COMPLETED. Used when
                 the caller (e.g. Temporal workflow) manages the status transition itself.
+            mapping_overrides: Optional {config id: mapping} used instead of a
+                config's own mapping, for this dispatch only.
 
         Known gap: the ``skip_existing`` guard reads ``eval_outputs`` from the
         in-memory snapshot taken by ``call_execution.refresh_from_db()``
@@ -4328,8 +4331,10 @@ class TestExecutor:
                         TestExecution.ExecutionStatus.CANCELLED,
                         TestExecution.ExecutionStatus.CANCELLING,
                     ]:
+                        override = (mapping_overrides or {}).get(str(eval_config.id))
+                        extra = {"mapping_override": override} if override else {}
                         self._run_single_simulate_evaluation(
-                            eval_config, call_execution, transcript_data
+                            eval_config, call_execution, transcript_data, **extra
                         )
                         logger.info(
                             f"Successfully ran evaluation {eval_config.name} ({eval_config.id}) "
@@ -4801,7 +4806,11 @@ class TestExecutor:
         return transcript_data
 
     def _run_single_simulate_evaluation(
-        self, eval_config, call_execution: CallExecution, transcript_data
+        self,
+        eval_config,
+        call_execution: CallExecution,
+        transcript_data,
+        mapping_override=None,
     ):
         """
         Run a single SimulateEvalConfig evaluation
@@ -4810,6 +4819,8 @@ class TestExecutor:
             eval_config: SimulateEvalConfig instance
             call_execution: CallExecution instance
             transcript_data: dict with transcript and voice_recording data
+            mapping_override: Optional mapping used instead of the config's
+                own for this call; the config itself is not changed.
         """
         try:
             close_old_connections()
@@ -4818,7 +4829,8 @@ class TestExecutor:
             eval_template = eval_config.eval_template
 
             # Prepare mapping with transcript and voice_recording data
-            mapping = eval_config.mapping.copy() if eval_config.mapping else {}
+            source_mapping = mapping_override or eval_config.mapping
+            mapping = source_mapping.copy() if source_mapping else {}
 
             # Replace mapping values with actual data
             updated_mapping = {}
@@ -5129,7 +5141,10 @@ class TestExecutor:
                         )
 
                 eval_config.status = StatusType.COMPLETED.value
-                eval_config.save()
+                # Only the status: this instance was loaded before grading
+                # began, so a full save would write back a removal or rename
+                # made while the eval was running.
+                eval_config.save(update_fields=["status", "updated_at"])
 
                 logger.info(f"Successfully completed evaluation {eval_config.id}")
             else:
@@ -5157,7 +5172,7 @@ class TestExecutor:
             call_execution.save(update_fields=["eval_outputs"])
 
             eval_config.status = StatusType.FAILED.value
-            eval_config.save()
+            eval_config.save(update_fields=["status", "updated_at"])
             raise
 
     def _aggregate_tool_columns_to_test_execution(self, test_execution):
@@ -5731,7 +5746,10 @@ class TestExecutor:
     queue="tasks_xl",
 )
 def _run_simulate_evaluations_task(
-    call_execution_id, eval_config_ids=None, skip_existing=False
+    call_execution_id,
+    eval_config_ids=None,
+    skip_existing=False,
+    mapping_overrides=None,
 ):
     """
     Temporal activity to run simulate evaluations for a call execution.
@@ -5740,6 +5758,8 @@ def _run_simulate_evaluations_task(
         call_execution_id: CallExecution ID to run evaluations on
         eval_config_ids: Optional list of specific eval config IDs to run. If None, runs all configs for the run_test
         skip_existing: If True, skip evaluations that already exist for this call execution
+        mapping_overrides: Optional {config id: mapping} for this dispatch only.
+            Defaults to None so a job queued before it existed still runs.
     """
     try:
         close_old_connections()
@@ -5756,9 +5776,13 @@ def _run_simulate_evaluations_task(
         # evaluations fail when, for example, Vapi credentials are absent for
         # a LiveKit, Retell, chat, or connect-only run.
         test_executor = TestExecutor(initialize_voice_service=False)
-        test_executor._run_simulate_evaluations(
-            call_execution, eval_config_ids=eval_config_ids, skip_existing=skip_existing
-        )
+        run_kwargs = {
+            "eval_config_ids": eval_config_ids,
+            "skip_existing": skip_existing,
+        }
+        if mapping_overrides:
+            run_kwargs["mapping_overrides"] = mapping_overrides
+        test_executor._run_simulate_evaluations(call_execution, **run_kwargs)
         return True
     except Exception as e:
         logger.error(
@@ -5776,7 +5800,9 @@ def _run_simulate_evaluations_task(
     retry_delay=300,
     queue="tasks_xl",
 )
-def run_new_evals_on_call_executions_task(call_execution_ids, eval_config_ids):
+def run_new_evals_on_call_executions_task(
+    call_execution_ids, eval_config_ids, mapping_overrides=None
+):
     """
     Temporal activity to dispatch individual evaluation tasks for multiple call executions.
     This task spawns individual tasks for each call execution to enable parallel processing.
@@ -5784,6 +5810,8 @@ def run_new_evals_on_call_executions_task(call_execution_ids, eval_config_ids):
     Args:
         call_execution_ids: List of CallExecution IDs to run evaluations on
         eval_config_ids: List of SimulateEvalConfig IDs to run
+        mapping_overrides: Optional {config id: mapping} for this dispatch only.
+            Defaults to None so a job queued before it existed still runs.
 
     Returns:
         dict: Summary of dispatched tasks
@@ -5817,9 +5845,15 @@ def run_new_evals_on_call_executions_task(call_execution_ids, eval_config_ids):
         for call_execution in call_executions:
             try:
                 # Use the unified _run_simulate_evaluations_task with skip_existing=False to overwrite
+                task_kwargs = {
+                    "eval_config_ids": eval_config_ids,
+                    "skip_existing": False,
+                }
+                if mapping_overrides:
+                    task_kwargs["mapping_overrides"] = mapping_overrides
                 task = _run_simulate_evaluations_task.apply_async(
                     args=(str(call_execution.id),),
-                    kwargs={"eval_config_ids": eval_config_ids, "skip_existing": False},
+                    kwargs=task_kwargs,
                 )
                 results["dispatched_tasks"].append(
                     {"call_execution_id": str(call_execution.id), "task_id": task.id}

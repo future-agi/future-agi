@@ -415,6 +415,53 @@ class TestEvalConfigStatusPersistence:
         ec.refresh_from_db()
         assert ec.status == StatusType.FAILED.value
 
+    @staticmethod
+    def _removed_mid_grade(ec):
+        """Remove and rename the eval while its grader is running, as the
+        drawer's remove button and a rename can."""
+        SimulateEvalConfig.objects.filter(id=ec.id).update(
+            deleted=True, name="Renamed mid-grade"
+        )
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_a_finished_grade_keeps_a_removal_made_while_it_ran(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        ec = _make_eval({"x": "call.transcript"}, run_test, eval_template)
+
+        def grade_while_removed(*args, **kwargs):
+            self._removed_mid_grade(ec)
+            return _SUCCESS_STUB
+
+        mock_run.side_effect = grade_while_removed
+
+        _run(ec, call_execution, transcript_data)
+
+        stored = SimulateEvalConfig.all_objects.get(id=ec.id)
+        assert stored.deleted is True
+        assert stored.name == "Renamed mid-grade"
+        assert stored.status == StatusType.COMPLETED.value
+
+    @patch("simulate.services.test_executor.run_eval_func")
+    def test_a_failed_grade_keeps_a_removal_made_while_it_ran(
+        self, mock_run, run_test, call_execution, transcript_data, eval_template
+    ):
+        ec = _make_eval({"x": "call.transcript"}, run_test, eval_template)
+
+        def fail_while_removed(*args, **kwargs):
+            self._removed_mid_grade(ec)
+            raise RuntimeError("boom")
+
+        mock_run.side_effect = fail_while_removed
+
+        with pytest.raises(RuntimeError):
+            _run(ec, call_execution, transcript_data)
+
+        stored = SimulateEvalConfig.all_objects.get(id=ec.id)
+        assert stored.deleted is True
+        assert stored.name == "Renamed mid-grade"
+        assert stored.status == StatusType.FAILED.value
+
 
 @pytest.mark.django_db
 @patch("simulate.services.test_executor.close_old_connections", lambda: None)
@@ -2681,3 +2728,125 @@ class TestToolEvaluationGate:
 
         assert tool_calls
         assert tool_calls[0]["result"] is not None
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+@patch("simulate.services.test_executor.run_eval_func")
+def test_a_one_off_mapping_grades_a_config_whose_own_mapping_is_empty(
+    mock_run, run_test, call_execution, transcript_data, eval_template
+):
+    mock_run.return_value = _SUCCESS_STUB
+    cfg = _make_eval({}, run_test, eval_template)
+
+    TestExecutor()._run_single_simulate_evaluation(
+        cfg,
+        call_execution,
+        transcript_data,
+        mapping_override={"conversation": "transcript", "agent_prompt": "agent_prompt"},
+    )
+
+    assert mock_run.call_args.kwargs["mappings"] == {
+        "conversation": "Hello. Yes, order 123 shipped.",
+        "agent_prompt": "You are a helpful agent.",
+    }
+    cfg.refresh_from_db()
+    assert cfg.mapping == {}
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+@patch("simulate.services.test_executor.decide_processing_skip", lambda **_: _NoSkip)
+@patch.object(TestExecutor, "_get_call_transcript_data")
+@patch.object(TestExecutor, "_run_single_simulate_evaluation")
+def test_each_config_gets_only_its_own_override(
+    mock_single,
+    mock_transcript,
+    run_test,
+    call_execution,
+    transcript_data,
+    eval_template,
+):
+    _no_tool_eval(run_test)
+    mock_transcript.return_value = transcript_data
+    suite = _make_eval({}, run_test, eval_template)
+    mapped = _make_eval({"conversation": "call.transcript"}, run_test, eval_template)
+    override = {"conversation": "transcript"}
+
+    TestExecutor()._run_simulate_evaluations(
+        call_execution,
+        eval_config_ids=[str(suite.id), str(mapped.id)],
+        mapping_overrides={str(suite.id): override},
+    )
+
+    calls = {c.args[0].id: c for c in mock_single.call_args_list}
+    assert calls[suite.id].kwargs == {"mapping_override": override}
+    assert calls[mapped.id].kwargs == {}
+
+
+@pytest.mark.parametrize(
+    ("mapping_overrides", "expected_kwargs"),
+    [
+        (None, {"eval_config_ids": ["cfg"], "skip_existing": False}),
+        (
+            {"cfg": {"conversation": "transcript"}},
+            {
+                "eval_config_ids": ["cfg"],
+                "skip_existing": False,
+                "mapping_overrides": {"cfg": {"conversation": "transcript"}},
+            },
+        ),
+    ],
+    ids=["old-shape", "with-override"],
+)
+def test_the_eval_task_forwards_mapping_overrides_only_when_set(
+    mapping_overrides, expected_kwargs
+):
+    call = SimpleNamespace(id="call-id")
+    task_kwargs = {"eval_config_ids": ["cfg"]}
+    if mapping_overrides is not None:
+        task_kwargs["mapping_overrides"] = mapping_overrides
+
+    with (
+        patch("simulate.services.test_executor.close_old_connections", lambda: None),
+        patch(
+            "simulate.services.test_executor.CallExecution.objects.select_related"
+        ) as selected,
+        patch("simulate.services.test_executor.TestExecutor") as executor_cls,
+    ):
+        selected.return_value.get.return_value = call
+
+        assert (
+            _run_simulate_evaluations_task._original_func("call-id", **task_kwargs)
+            is True
+        )
+
+    executor_cls.return_value._run_simulate_evaluations.assert_called_once_with(
+        call, **expected_kwargs
+    )
+
+
+@pytest.mark.django_db
+@patch("simulate.services.test_executor.close_old_connections", lambda: None)
+@pytest.mark.parametrize("with_override", [False, True])
+def test_the_bulk_task_forwards_mapping_overrides_only_when_set(
+    with_override, run_test, call_execution, eval_template
+):
+    from simulate.services.test_executor import run_new_evals_on_call_executions_task
+
+    cfg = _make_eval({}, run_test, eval_template)
+    overrides = {str(cfg.id): {"conversation": "transcript"}}
+
+    with patch(
+        "simulate.services.test_executor._run_simulate_evaluations_task.apply_async"
+    ) as spy:
+        run_new_evals_on_call_executions_task._original_func(
+            [str(call_execution.id)],
+            [str(cfg.id)],
+            **({"mapping_overrides": overrides} if with_override else {}),
+        )
+
+    expected = {"eval_config_ids": [str(cfg.id)], "skip_existing": False}
+    if with_override:
+        expected["mapping_overrides"] = overrides
+    spy.assert_called_once_with(args=(str(call_execution.id),), kwargs=expected)

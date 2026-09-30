@@ -30,6 +30,8 @@ import {
  * @property {?string} finishedAt   ISO finish time — GAP: the executions row
  *                                   carries no end time, so this is null.
  * @property {"passed"|"failed"|"running"|"cancelling"|"cancelled"} status  Run-level outcome.
+ * @property {?string} executionStatus  The execution's own status
+ *                                   (`completed`, `evaluating`, …).
  */
 
 /**
@@ -204,6 +206,8 @@ export function useRunDetail(runTestId, executionId, { envName } = {}) {
                   ? "passed"
                   : "failed",
       stoppable: STOPPABLE_EXECUTION_STATUSES.has(execution.status),
+      // Evals can only be graded again once the execution is `completed`.
+      executionStatus: execution.status ?? null,
       scenarioIds: execution.selected_scenario_keys?.length
         ? execution.selected_scenario_keys
         : undefined,

@@ -31,7 +31,10 @@ from simulate.serializers.requests.run_test import (
     CreatePromptSimulationSerializer,
     PromptSimulationListQuerySerializer,
 )
-from simulate.serializers.run_test import RunTestSerializer
+from simulate.serializers.run_test import (
+    RunTestSerializer,
+    harness_run_tests_context,
+)
 from simulate.services.test_executor import TestExecutor
 from simulate.utils.scenario_completeness import check_scenarios_incomplete
 from simulate.views.run_test import (
@@ -116,10 +119,14 @@ class PromptSimulationListCreateView(APIView):
             # Pagination
             total_count = run_tests.count()
             offset = (page - 1) * limit
-            run_tests = run_tests[offset : offset + limit]
+            run_tests = list(run_tests[offset : offset + limit])
 
             # Serialize
-            serializer = RunTestSerializer(run_tests, many=True)
+            serializer = RunTestSerializer(
+                run_tests,
+                many=True,
+                context=harness_run_tests_context(run_tests),
+            )
 
             return self.gm.success_response(
                 {

@@ -12,8 +12,9 @@ export const ACTIVE_EXECUTION_STATUSES = new Set([
   "evaluating",
 ]);
 
-// The subset a user can still stop — `cancelling` is already on its way out.
-export const STOPPABLE_EXECUTION_STATUSES = new Set(["pending", "running", "evaluating"]);
+// The subset a user can still stop — `cancelling` is already on its way out,
+// and grading (`evaluating`) finishes on its own.
+export const STOPPABLE_EXECUTION_STATUSES = new Set(["pending", "running"]);
 
 // Stable hook for the pulsing dot so callers (and tests) can target it without
 // depending on emotion's generated class name.

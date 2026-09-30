@@ -229,8 +229,8 @@ def build_evaluation_catalog(
             f"simulate:v3:harness-eval-columns:{execution.id}:{version.timestamp()}"
         )
         harness_columns = cache.get(harness_cache_key)
-        # A value under this key that isn't a list can only be a leftover
-        # from an incompatible key shape; treat it as a miss, not a crash.
+        # Treat any non-list value as a miss so a key collision can never
+        # crash the table.
         if not isinstance(harness_columns, list):
             harness_columns = None
 
@@ -240,8 +240,12 @@ def build_evaluation_catalog(
         seen = set()
         harness_columns = []
         # The catalog is execution-wide so columns never vary by page or filter.
-        outputs = CallExecution.objects.filter(test_execution=execution).values_list(
-            "eval_outputs", flat=True
+        # Oldest call first: saving a call must not reorder the columns, so a
+        # cached scan and a fresh one always agree.
+        outputs = (
+            CallExecution.objects.filter(test_execution=execution)
+            .order_by("created_at", "id")
+            .values_list("eval_outputs", flat=True)
         )
         for eval_outputs in outputs:
             if not isinstance(eval_outputs, dict):

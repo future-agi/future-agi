@@ -437,8 +437,9 @@ class HarnessEnvironmentViewSet(viewsets.ViewSet):
         Soft-delete only. The verdicts an eval already produced live on the call
         executions and in their receipts, not on this row, so a hard delete would
         leave past runs showing scores for something the environment no longer
-        lists. Removing it stops future scenarios being graded by it and leaves
-        the history it already wrote intact.
+        lists. Removing an eval someone added stops future scenarios being
+        graded by it and leaves the history it already wrote intact. An eval the
+        harness reported itself comes back the next time the harness grades it.
         """
         from simulate.models.eval_config import SimulateEvalConfig
 
