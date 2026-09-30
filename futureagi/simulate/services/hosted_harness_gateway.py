@@ -72,6 +72,7 @@ from simulate.services.hosted_sandbox import (
     SandboxProviderUnavailableError,
     get_sandbox_provider,
 )
+from simulate.utils.scenario_keys import canonical_scenario_key
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import ensure_bucket, get_storage_client
 
@@ -4720,25 +4721,25 @@ def authoring_basis(body: bytes) -> str:
 _SEALED_ARCHIVE_ROOTS = frozenset({"environment-bundle", "generic-harness"})
 
 
-def _scenario_token(value: object) -> str:
-    """One spelling for a scenario's folder, name and key, which older outputs wrote differently."""
-    return Path(str(value or "").strip()).name.lower().replace("-", "_")
-
-
 def _suite_tokens(suite: list[dict]) -> set[str]:
     return {
         token
         for one in suite
-        for field in ("name", "scenario_key", "folder")
-        if (token := _scenario_token(one.get(field)))
+        for value in (
+            one.get("name"),
+            one.get("scenario_key"),
+            Path(str(one.get("folder") or "")).name,
+        )
+        if (token := canonical_scenario_key(value))
     }
 
 
 def _document_tokens(folder: str, document: object) -> set[str]:
-    tokens = {_scenario_token(folder)}
+    tokens = {canonical_scenario_key(folder)}
     if isinstance(document, dict):
         tokens |= {
-            _scenario_token(document.get(field)) for field in ("name", "scenario_key")
+            canonical_scenario_key(document.get(field))
+            for field in ("name", "scenario_key")
         }
     return tokens - {""}
 
@@ -4756,7 +4757,10 @@ def _edit_for(folder: str, document: object, suite: list[dict]) -> dict | None:
         (
             one
             for one in suite
-            if {_scenario_token(one.get(field)) for field in ("name", "scenario_key")}
+            if {
+                canonical_scenario_key(one.get(field))
+                for field in ("name", "scenario_key")
+            }
             & own
         ),
         None,
@@ -5026,7 +5030,9 @@ def _rewritten_authoring_archive(body: bytes, suite: list[dict]) -> bytes | None
         *(_document_tokens(folder, documents.get(folder)) for folder in kept)
     )
     if folders and any(
-        not {_scenario_token(one.get(field)) for field in ("name", "scenario_key")}
+        not {
+            canonical_scenario_key(one.get(field)) for field in ("name", "scenario_key")
+        }
         & held
         for one in suite
     ):
