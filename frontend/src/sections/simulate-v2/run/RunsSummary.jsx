@@ -5,7 +5,7 @@ import { alpha, useTheme } from "@mui/material/styles";
 import ReactApexChart from "../components/SafeApexChart";
 import {
   Box, Stack, Typography, Button, Checkbox, Popover, Tooltip, IconButton,
-  TextField, MenuItem, ListItemText, Chip,
+  TextField, Menu, MenuItem, ListItemText, ListItemIcon, Chip,
 } from "@mui/material";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { statusStyles } from "src/sections/common/simulation";
@@ -1172,10 +1172,36 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
                         ? "#EA580C"
                         : r.id === baselineId ? "primary.main" : "transparent",
                       bgcolor: picked ? (t) => alpha(t.palette.primary.main, 0.05) : "transparent",
-                      "&:hover": { bgcolor: "action.hover", "& .row-open": { opacity: 1 } },
+                      /* `relative` for the overlaid RunRowMenu. `.row-menu` fades
+                         in with `.row-open`; both stay visible when the menu is
+                         open so the row doesn't flicker while the user reads it. */
+                      position: "relative",
+                      "&:hover": {
+                        bgcolor: "action.hover",
+                        "& .row-open": { opacity: 1 },
+                        "& .row-menu": { opacity: 1 },
+                      },
                     }}
                     onClick={() => navigate(paths.dashboard.simulate.simulationRun(env.id, r.id))}
                   >
+                    {/* Row menu — release, delete. Overlaid on the right of the
+                        row on hover so the grid columns stay comparable across
+                        rows. Only for finished, non-trial runs (this branch),
+                        so trials of a self improvement can't be released. */}
+                    {r.status !== "queued" && (
+                      <RunRowMenu
+                        run={r}
+                        isReleased={envState.releases?.[0]?.version === r.agentVersion}
+                        onRelease={() => release({
+                          version: r.agentVersion,
+                          runId: r.id,
+                          at: new Date().toISOString(),
+                          gate: "manual",
+                        })}
+                        onUnrelease={() => release({ version: null, runId: null, at: new Date().toISOString(), gate: "manual" })}
+                        onDelete={() => { setSelected([r.id]); setDeleting(true); }}
+                      />
+                    )}
                     {/* The whole cell toggles. An 18px box inside a row that
                         navigates is a target you have to aim at, and missing it
                         opens the run instead of selecting it. */}
@@ -1415,8 +1441,6 @@ export default function RunsSummary({ env, envState, onGo, onStart }) {
         baseline={baseline}
         scenarioCount={envState.scenarios.length}
         initial={winner?.weights}
-        released={envState.releases?.[0]?.version}
-        onRelease={(entry) => { release(entry); setPickingWinner(false); }}
         onApply={(w) => { patch({ winner: w }); setPickingWinner(false); }}
       />
 
@@ -1544,6 +1568,90 @@ const RUN_CHIP_STYLES = {
   ...statusStyles,
   Running: statusStyles.Pending,
   Queued: statusStyles.Running,
+};
+
+/**
+ * Per-row kebab. Overlaid on the right edge of the row on hover.
+ *
+ * "Mark as released" writes the run's agent version to `envState.releases` and
+ * makes it the default baseline for later runs; a matching "Unrelease" clears
+ * it. Delete opens the same confirm dialog the multi-select bar uses.
+ */
+function RunRowMenu({ run, isReleased, onRelease, onUnrelease, onDelete }) {
+  const [anchor, setAnchor] = useState(null);
+  const stop = (e) => { e.stopPropagation(); };
+  return (
+    <>
+      <IconButton
+        size="small"
+        className="row-menu"
+        onClick={(e) => { e.stopPropagation(); setAnchor(e.currentTarget); }}
+        onMouseDown={stop}
+        aria-label="Run actions"
+        sx={{
+          position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", zIndex: 2,
+          p: 0.5, borderRadius: 0.75,
+          bgcolor: "background.paper",
+          border: "1px solid", borderColor: "divider",
+          opacity: anchor ? 1 : 0, transition: "opacity .12s ease",
+        }}
+      >
+        <Iconify icon="solar:menu-dots-bold" width={14} sx={{ color: "text.subtitle" }} />
+      </IconButton>
+      <Menu
+        anchorEl={anchor}
+        open={!!anchor}
+        onClose={() => setAnchor(null)}
+        onClick={stop}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
+        slotProps={{ paper: { sx: { minWidth: 220 } } }}
+      >
+        {isReleased ? (
+          <MenuItem
+            onClick={(e) => { stop(e); setAnchor(null); onUnrelease(); }}
+            sx={{ typography: "s2", gap: 1 }}
+          >
+            <ListItemIcon sx={{ minWidth: "0 !important", mr: 0 }}>
+              <Iconify icon="solar:archive-linear" width={16} />
+            </ListItemIcon>
+            <ListItemText primary={`Unrelease agent ${run.agentVersion}`} primaryTypographyProps={{ typography: "s2" }} />
+          </MenuItem>
+        ) : (
+          <MenuItem
+            onClick={(e) => { stop(e); setAnchor(null); onRelease(); }}
+            sx={{ typography: "s2", gap: 1 }}
+          >
+            <ListItemIcon sx={{ minWidth: "0 !important", mr: 0 }}>
+              <Iconify icon="solar:rocket-2-linear" width={16} sx={{ color: "#16A34A" }} />
+            </ListItemIcon>
+            <ListItemText
+              primary={`Mark agent ${run.agentVersion} as released`}
+              secondary="Sets the baseline for later runs and shows Live on this row."
+              primaryTypographyProps={{ typography: "s2" }}
+              secondaryTypographyProps={{ typography: "s3", color: "text.subtitle" }}
+            />
+          </MenuItem>
+        )}
+        <MenuItem
+          onClick={(e) => { stop(e); setAnchor(null); onDelete(); }}
+          sx={{ typography: "s2", gap: 1, color: "#DC2626" }}
+        >
+          <ListItemIcon sx={{ minWidth: "0 !important", mr: 0 }}>
+            <Iconify icon="solar:trash-bin-trash-linear" width={16} sx={{ color: "#DC2626" }} />
+          </ListItemIcon>
+          <ListItemText primary="Delete run" primaryTypographyProps={{ typography: "s2", color: "#DC2626" }} />
+        </MenuItem>
+      </Menu>
+    </>
+  );
+}
+RunRowMenu.propTypes = {
+  run: PropTypes.object,
+  isReleased: PropTypes.bool,
+  onRelease: PropTypes.func,
+  onUnrelease: PropTypes.func,
+  onDelete: PropTypes.func,
 };
 
 function StatusCell({ status }) {

@@ -5,6 +5,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { alpha, useTheme } from "@mui/material/styles";
 import {
   Box, Stack, Typography, Button, IconButton, Tab, Checkbox, Tooltip, Drawer,
+  Popover, MenuItem, ListItemIcon, ListItemText,
 } from "@mui/material";
 import SideDrawer from "../components/SideDrawer";
 import { FilterPanel } from "src/components/filter-panel";
@@ -70,6 +71,25 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
   const [rescoringEval, setRescoringEval] = useState(null); // evalId currently re-scoring
 
   /*
+    Adhoc evals: an evaluation applied to a subset of this run's scenarios
+    without re-running the calls. New columns appear in the trace table;
+    only the scenarios that were selected at the time carry a score, and
+    the rest show "—" with a tooltip explaining why.
+
+    Kept as component state — this is a scratchpad on the run view rather
+    than a permanent change to the environment. Same reason the "adhoc"
+    marker travels on the eval descriptor: it changes how the column reads
+    (only these N were scored) but nothing outside this screen.
+  */
+  const [adhocEvals, setAdhocEvals] = useState([]);
+  /* Which scenarios the user had selected when they picked "Run evals on
+     these" — captured then, not read from `selected` later, so opening the
+     drawer doesn't strand the answer to "on which scenarios?". */
+  const [adhocIds, setAdhocIds] = useState([]);
+  const [addingAdhocEvals, setAddingAdhocEvals] = useState(false);
+  const [rerunAnchor, setRerunAnchor] = useState(null);
+
+  /*
     A run always measures something — a scenario can't have run without
     at least one grader firing against it. But the `evals` prop reflects
     what the env has applied *now*, which is empty for seeded envs (and
@@ -93,8 +113,35 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
       });
     });
     const all = byId.size ? [...byId.values()] : evals;
-    return all.filter((e) => !deletedEvals.has(e.id));
-  }, [tasks, evals, deletedEvals]);
+    const known = all.filter((e) => !deletedEvals.has(e.id));
+    /* Adhoc columns. Fold them in after the known columns, marked with
+       adhoc + the set of task ids that were included, so the cell renderer
+       can tell an unscored row apart from a missing result. Multiple adhoc
+       runs of the same eval merge their coverage. */
+    if (adhocEvals.length) {
+      const knownIds = new Set(known.map((e) => e.id));
+      const byAdhocId = new Map();
+      adhocEvals.forEach((ae) => {
+        if (knownIds.has(ae.id) || deletedEvals.has(ae.id)) return;
+        const existing = byAdhocId.get(ae.id);
+        const includedIds = new Set([...(existing?.includedIds || []), ...ae.taskIds]);
+        const results = new Map(existing?.results || []);
+        Object.entries(ae.results).forEach(([tid, r]) => results.set(tid, r));
+        const kn = getEval(ae.id);
+        byAdhocId.set(ae.id, {
+          id: ae.id,
+          name: ae.name || kn?.name || ae.id,
+          icon: ae.icon || kn?.icon || "solar:shield-check-linear",
+          adhoc: true,
+          adhocRanAt: ae.ranAt,
+          includedIds,
+          results,
+        });
+      });
+      known.push(...byAdhocId.values());
+    }
+    return known;
+  }, [tasks, evals, deletedEvals, adhocEvals]);
 
   const rerunEvalColumn = (e) => {
     setRescoringEval(e.id);
@@ -401,10 +448,47 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
   /* Table view of the shown rows with any re-run eval columns re-scored to
      fresh values. Only the re-run column's cells change; everything else is
      the original run. */
-  const tableShown = useMemo(
-    () => (Object.keys(evalRescore).length ? shown.map((t) => rescoreTaskEvals(t, evalRescore)) : shown),
-    [shown, evalRescore],
-  );
+  const tableShown = useMemo(() => {
+    let out = Object.keys(evalRescore).length ? shown.map((t) => rescoreTaskEvals(t, evalRescore)) : shown;
+    /* Fold adhoc results into each task's evalResults so aggregates
+       (group headers, filters, chart) treat them just like any other
+       eval — only the cells that lack a result show the "not part of
+       this eval run" tooltip. */
+    if (adhocEvals.length) {
+      const byTask = new Map(); // taskId -> extra evalResults[]
+      adhocEvals.forEach((ae) => {
+        const kn = getEval(ae.id);
+        ae.taskIds.forEach((tid) => {
+          const cell = ae.results?.[tid];
+          if (!cell) return;
+          const arr = byTask.get(tid) || [];
+          arr.push({
+            id: ae.id,
+            name: ae.name || kn?.name || ae.id,
+            color: kn?.color,
+            score: cell.score,
+            passed: cell.passed,
+            reason: cell.reason,
+            threshold: cell.threshold,
+          });
+          byTask.set(tid, arr);
+        });
+      });
+      if (byTask.size) {
+        out = out.map((t) => {
+          const extras = byTask.get(t.id);
+          if (!extras) return t;
+          /* Replace an existing adhoc result for the same eval id rather
+             than double-counting when the user re-runs the same eval on
+             the same row. */
+          const seen = new Set(extras.map((r) => r.id));
+          const base = (t.evalResults || []).filter((r) => !seen.has(r.id));
+          return { ...t, evalResults: [...base, ...extras] };
+        });
+      }
+    }
+    return out;
+  }, [shown, evalRescore, adhocEvals]);
 
   /* What will actually render as groups. Failure groupings (sub-goal / pattern)
      have no bucket for passed/unmeasured tasks, so they drop out — used to
@@ -721,10 +805,17 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
                     >
                       Clear
                     </Button>
+                    {/* Re-run opens a small popover with two choices: rerun
+                        the calls (a new simulation), or score these scenarios
+                        against new evals without re-running the calls. The
+                        second one is the cheap version — no LLM cost — and it
+                        is the one people reach for when they added a grader
+                        after the fact. */}
                     <Button
                       variant="contained" color="primary" size="small"
-                      onClick={() => rerun([...selected])}
+                      onClick={(e) => setRerunAnchor(e.currentTarget)}
                       startIcon={<Iconify icon="solar:refresh-bold" width={15} />}
+                      endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={12} />}
                       sx={{ typography: "s2", fontWeight: 700 }}
                     >
                       Re-run {selected.size}
@@ -733,7 +824,7 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
                 ) : (
                   <Stack direction="row" alignItems="center" spacing={1.5}>
                     <StatusFilterChips value={statusChip} counts={statusCounts} onChange={setStatusChip} blocked={incompatibleChips} />
-                    <TraceColumnsPicker value={visibleColumns} onChange={setVisibleColumns} />
+                    <TraceColumnsPicker value={visibleColumns} onChange={setVisibleColumns} evals={shownEvals} />
                   </Stack>
                 )
               }
@@ -829,6 +920,109 @@ export default function RunResults({ env, runId, tasks, stats, evals, stage, see
           rerun();
         }}
       />
+
+      {/*
+        Adhoc evals — pick graders to score just the scenarios that were
+        selected on the run screen. The picker filters out evals that are
+        already columns (there's no point re-scoring a column that has
+        every row filled), and adding them stays local to this run.
+      */}
+      <AddEvalsDrawer
+        open={addingAdhocEvals}
+        onClose={() => setAddingAdhocEvals(false)}
+        env={env}
+        envState={envState}
+        existingIds={shownEvals.map((e) => e.id)}
+        onAdd={(added) => {
+          const now = new Date().toISOString();
+          const additions = added.map((ev) => {
+            const known = getEval(ev.id);
+            const results = {};
+            adhocIds.forEach((tid) => {
+              /* Deterministic per (task, eval, run) so the numbers don't
+                 shuffle on every re-render but do refresh across separate
+                 adhoc runs of the same eval. */
+              let h = 0;
+              const key = `${tid}:${ev.id}:${now}`;
+              for (let i = 0; i < key.length; i += 1) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+              const score = Math.round((0.55 + (h % 45) / 100) * 100) / 100;
+              const threshold = 0.8;
+              results[tid] = {
+                score,
+                passed: score >= threshold,
+                reason: score >= threshold
+                  ? "Met the configured threshold."
+                  : `Scored ${Math.round(score * 100)} against a threshold of ${Math.round(threshold * 100)}.`,
+                threshold,
+              };
+            });
+            return {
+              id: ev.id,
+              name: ev.name || known?.name || ev.id,
+              icon: ev.icon || known?.icon,
+              ranAt: now,
+              taskIds: adhocIds.slice(),
+              results,
+            };
+          });
+          setAdhocEvals((prev) => [...prev, ...additions]);
+          setAddingAdhocEvals(false);
+          setSelected(new Set());
+          setAdhocIds([]);
+        }}
+      />
+
+      {/* ── re-run chooser ── */}
+      <Popover
+        open={!!rerunAnchor}
+        anchorEl={rerunAnchor}
+        onClose={() => setRerunAnchor(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
+        slotProps={{ paper: { sx: { mt: 0.75, minWidth: 340, borderRadius: 1.25 } } }}
+      >
+        <Box sx={{ px: 2, pt: 1.75, pb: 1 }}>
+          <Typography sx={{ typography: "s3", fontWeight: 700, color: "text.subtitle", textTransform: "uppercase", letterSpacing: 0.4 }}>
+            Re-run {selected.size} scenario{selected.size === 1 ? "" : "s"}
+          </Typography>
+        </Box>
+        <MenuItem
+          onClick={() => {
+            const ids = [...selected];
+            setRerunAnchor(null);
+            rerun(ids);
+          }}
+          sx={{ alignItems: "flex-start", gap: 0.75, py: 1.25 }}
+        >
+          <ListItemIcon sx={{ minWidth: "0 !important", mt: "3px" }}>
+            <Iconify icon="solar:refresh-bold" width={16} sx={{ color: "text.primary" }} />
+          </ListItemIcon>
+          <ListItemText
+            primary="Run as a new simulation"
+            secondary="Makes the calls again with the current agent and env, and records a new run."
+            primaryTypographyProps={{ typography: "s2", fontWeight: 700 }}
+            secondaryTypographyProps={{ typography: "s3", color: "text.subtitle", sx: { whiteSpace: "normal" } }}
+          />
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            setAdhocIds([...selected]);
+            setRerunAnchor(null);
+            setAddingAdhocEvals(true);
+          }}
+          sx={{ alignItems: "flex-start", gap: 0.75, py: 1.25 }}
+        >
+          <ListItemIcon sx={{ minWidth: "0 !important", mt: "3px" }}>
+            <Iconify icon="solar:checklist-minimalistic-linear" width={16} sx={{ color: "text.primary" }} />
+          </ListItemIcon>
+          <ListItemText
+            primary="Run evals on these scenarios"
+            secondary="No calls are made — pick graders and score just these rows. Adds columns to this table."
+            primaryTypographyProps={{ typography: "s2", fontWeight: 700 }}
+            secondaryTypographyProps={{ typography: "s3", color: "text.subtitle", sx: { whiteSpace: "normal" } }}
+          />
+        </MenuItem>
+      </Popover>
 
       {/* ── trace drawer ── */}
       {/*

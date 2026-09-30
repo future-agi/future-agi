@@ -333,28 +333,9 @@ export default function CompareActions({
         onClose={() => setActionsAnchor(null)}
         slotProps={{ paper: { sx: { width: 260 } } }}
       >
-        <ActionItem
-          icon="solar:refresh-circle-linear"
-          label={selectedCount ? `Re-run ${selectedCount} scenario${selectedCount === 1 ? "" : "s"}` : "Re-run selected scenarios"}
-          disabled={!selectedCount}
-          onClick={() => { setActionsAnchor(null); onRerun(); }}
-        />
-        {/* The third replay mode. A grader change does not need the calls made
-            again — the evidence is already recorded, and re-running would cost
-            money and change the sample. */}
-        <ActionItem
-          icon="solar:checklist-minimalistic-linear"
-          label={selectedCount ? `Re-grade ${selectedCount} scenario${selectedCount === 1 ? "" : "s"}` : "Re-grade from recorded evidence"}
-          disabled={!selectedCount}
-          onClick={() => { setActionsAnchor(null); onRegrade(); }}
-        />
-        <ActionItem
-          icon="solar:magic-stick-3-linear"
-          label="Send selected to Self improve"
-          disabled={!selectedCount}
-          onClick={() => { setActionsAnchor(null); onOptimize(); }}
-        />
-        <Divider sx={{ my: 0.5 }} />
+        {/* Selection-driven actions (re-run, re-grade, send to Self improve)
+            were removed with the row checkboxes — this screen is for reading
+            the comparison, and those actions live on the runs list. */}
         <ActionItem
           icon="solar:download-minimalistic-linear"
           label="Export comparison"

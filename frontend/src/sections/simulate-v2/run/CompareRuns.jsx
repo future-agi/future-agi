@@ -296,9 +296,18 @@ export default function CompareRuns() {
           are looking at; the second says what you can do to it. */}
       <Box sx={{ borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}>
         <Stack direction="row" alignItems="center" spacing={1.5} sx={{ px: 2, pt: 1.5, pb: 1 }}>
-          <IconButton size="small" onClick={back}>
-            <Iconify icon="eva:arrow-ios-back-fill" width={18} sx={{ color: "text.subtitle" }} />
-          </IconButton>
+          {/* Back is a labelled button rather than a bare arrow — the previous
+              icon-only affordance was easy to miss, and this screen is a
+              detour off the Runs list. */}
+          <Button
+            size="small"
+            onClick={back}
+            startIcon={<Iconify icon="eva:arrow-ios-back-fill" width={16} />}
+            sx={{ typography: "s2", fontWeight: 600, color: "text.secondary", flexShrink: 0, minWidth: 0, px: 1 }}
+          >
+            Back to runs
+          </Button>
+          <Box sx={{ height: 20, width: "1px", bgcolor: "divider", flexShrink: 0 }} />
           <Box minWidth={0}>
             <Typography noWrap sx={{ typography: "m2", fontWeight: 600 }}>{env.name}</Typography>
             {/* The claim this screen rests on, stated only as far as it is
@@ -707,7 +716,9 @@ function TableView({ groups, view, rowPad, selected, onToggle, onOpen, evals }) 
   const scorersColWidth = showScorers ? evals.length * 92 + (evals.length - 1) * 10 : 0;
   /* System metrics before evals — matches the single-run traces table,
      where evals live at the far right of the row. */
-  const gridTemplate = `36px 260px 1fr ${metricColWidth ? `${metricColWidth}px ` : ""}${scorersColWidth ? `${scorersColWidth}px` : ""}`.trim();
+  /* No checkbox column — this screen is for reading a comparison, not for
+     picking scenarios. Bulk actions live on the runs list. */
+  const gridTemplate = `260px 1fr ${metricColWidth ? `${metricColWidth}px ` : ""}${scorersColWidth ? `${scorersColWidth}px` : ""}`.trim();
 
   return (
     <>
@@ -719,7 +730,6 @@ function TableView({ groups, view, rowPad, selected, onToggle, onOpen, evals }) 
           px: 2.5, py: 1, borderBottom: "1px solid", borderColor: "divider",
         }}
       >
-        <Box />
         <ColHead>Scenario</ColHead>
         <ColHead>{view.diff ? "What changed against the baseline" : "What each run did with it"}</ColHead>
         {metricBits.length > 0 && (
@@ -773,13 +783,6 @@ function TableView({ groups, view, rowPad, selected, onToggle, onOpen, evals }) 
                 }}
                 onClick={() => onOpen(row)}
               >
-                <Box
-                  sx={{ display: "flex", alignItems: "flex-start", pt: 0.25 }}
-                  onClick={(e) => { e.stopPropagation(); onToggle(row.id); }}
-                >
-                  <Checkbox size="small" checked={selected.includes(row.id)} readOnly tabIndex={-1} sx={{ p: 0.5, pointerEvents: "none", ...neutralCheckboxSx }} />
-                </Box>
-
                 <Box minWidth={0}>
                   <Stack direction="row" alignItems="center" spacing={0.75}>
                     {row.fixed && <Movement kind="fixed" />}

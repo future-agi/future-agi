@@ -72,7 +72,7 @@ export const TRACE_COLUMNS = [
      row's identity — its status/duration/id — reads before any of the
      optional scenario-detail columns. */
   { key: "callDetails", label: "Run details",          defaultOn: true,  width: 150, group: "Run details" },
-  { key: "persona",     label: "Persona",              defaultOn: false, width: 210, group: "Scenario details" },
+  { key: "persona",     label: "Persona",              defaultOn: true,  width: 210, group: "Scenario details" },
   { key: "scenario",    label: "Scenario",             defaultOn: false, width: 300, group: "Scenario details" },
   { key: "expected",    label: "Ideal outcome",        defaultOn: false, width: 300, group: "Scenario details" },
   { key: "branch",      label: "Conversation branch", defaultOn: false, width: 260, group: "Scenario details" },
@@ -80,8 +80,15 @@ export const TRACE_COLUMNS = [
   { key: "turns",       label: "Turns",                defaultOn: true,  width: 92,  group: "System metrics" },
   { key: "latency",     label: "Latency",              defaultOn: true,  width: 96,  group: "System metrics" },
   { key: "tokens",      label: "Tokens",               defaultOn: true,  width: 96,  group: "System metrics" },
-  { key: "evals",       label: "Evaluations",         defaultOn: true,               group: "Evaluations" },
 ];
+
+/* Each eval is its own column. Stored as an exclusion marker on the
+   visibility Set (`eval:<id>:hidden`), so a new eval added later defaults
+   to visible without touching the stored state. */
+const HIDDEN_EVAL = (id) => `eval:${id}:hidden`;
+export const isEvalHidden = (columns, evalId) => columns?.has(HIDDEN_EVAL(evalId));
+export const visibleEvals = (columns, evals) =>
+  (evals || []).filter((e) => !isEvalHidden(columns, e.id));
 
 export const defaultTraceColumns = () =>
   new Set(TRACE_COLUMNS.filter((c) => c.defaultOn).map((c) => c.key));
@@ -92,22 +99,45 @@ export const defaultTraceColumns = () =>
   columns render as disabled ticks so the reader understands why they
   can't be turned off.
 */
-export function TraceColumnsPicker({ value, onChange }) {
+export function TraceColumnsPicker({ value, onChange, evals = [] }) {
   const [anchor, setAnchor] = useState(null);
-  const shownCount = TRACE_COLUMNS.filter((c) => value.has(c.key)).length;
+  /* Base columns are inclusion (ticked = shown); eval columns are exclusion
+     (a marker means hidden), so the shown-count sums both correctly. */
+  const shownBase = TRACE_COLUMNS.filter((c) => value.has(c.key)).length;
+  const shownEvals = evals.filter((e) => !value.has(HIDDEN_EVAL(e.id))).length;
+  const totalCols = TRACE_COLUMNS.length + evals.length;
+  const shownCount = shownBase + shownEvals;
   const toggle = (key) => {
     const next = new Set(value);
     if (next.has(key)) next.delete(key); else next.add(key);
     onChange(next);
   };
+  const toggleEval = (id) => {
+    const key = HIDDEN_EVAL(id);
+    const next = new Set(value);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    onChange(next);
+  };
   /* Bucket into sections in declaration order so the menu reads
-     scenario → run → system → evals, top-to-bottom. */
+     run → scenario → system → evals, top-to-bottom. Evals live in
+     their own section that lists each applied grader individually. */
   const sections = TRACE_COLUMNS.reduce((acc, c) => {
     const last = acc[acc.length - 1];
     if (last && last.name === c.group) last.items.push(c);
     else acc.push({ name: c.group, items: [c] });
     return acc;
   }, []);
+  if (evals.length) {
+    sections.push({
+      name: "Evaluations",
+      items: evals.map((e) => ({
+        key: `eval:${e.id}`,
+        label: e.name || e.id,
+        checked: !value.has(HIDDEN_EVAL(e.id)),
+        onToggle: () => toggleEval(e.id),
+      })),
+    });
+  }
   return (
     <>
       <Button
@@ -125,7 +155,7 @@ export function TraceColumnsPicker({ value, onChange }) {
       >
         Columns
         <Box component="span" sx={{ mx: 0.5, color: "text.subtitle", fontWeight: 400 }}>·</Box>
-        <Box component="span" sx={{ color: "text.subtitle" }}>{shownCount}/{TRACE_COLUMNS.length}</Box>
+        <Box component="span" sx={{ color: "text.subtitle" }}>{shownCount}/{totalCols}</Box>
       </Button>
       <Menu
         anchorEl={anchor} open={!!anchor} onClose={() => setAnchor(null)}
@@ -143,14 +173,20 @@ export function TraceColumnsPicker({ value, onChange }) {
           >
             {section.name}
           </Typography>,
-          ...section.items.map((c) => (
-            <MenuItem key={c.key} onClick={() => toggle(c.key)} sx={{ py: 0.5 }}>
-              <ListItemIcon sx={{ minWidth: 32 }}>
-                <Checkbox size="small" checked={value.has(c.key)} sx={{ p: 0, ...neutralCheckboxSx }} />
-              </ListItemIcon>
-              <ListItemText primary={c.label} primaryTypographyProps={{ typography: "s2" }} />
-            </MenuItem>
-          )),
+          ...section.items.map((c) => {
+            /* Base columns use `value.has(key)` (inclusion); eval columns
+               come pre-computed with `checked` + `onToggle`. */
+            const checked = c.onToggle ? c.checked : value.has(c.key);
+            const onClick = c.onToggle || (() => toggle(c.key));
+            return (
+              <MenuItem key={c.key} onClick={onClick} sx={{ py: 0.5 }}>
+                <ListItemIcon sx={{ minWidth: 32 }}>
+                  <Checkbox size="small" checked={checked} sx={{ p: 0, ...neutralCheckboxSx }} />
+                </ListItemIcon>
+                <ListItemText primary={c.label} primaryTypographyProps={{ typography: "s2" }} />
+              </MenuItem>
+            );
+          }),
         ])}
         <Divider sx={{ my: 0.5 }} />
         <MenuItem onClick={() => onChange(defaultTraceColumns())} sx={{ py: 0.5 }}>
@@ -166,6 +202,7 @@ export function TraceColumnsPicker({ value, onChange }) {
 TraceColumnsPicker.propTypes = {
   value: PropTypes.instanceOf(Set).isRequired,
   onChange: PropTypes.func.isRequired,
+  evals: PropTypes.array,
 };
 
 export const GROUPINGS = [
@@ -197,6 +234,31 @@ const failSubGoalOf = (task, env) => {
   const idx = Math.min(subs.length - 1, Math.floor((failAt / stepCount) * subs.length));
   return subs[idx].label;
 };
+
+/*
+  Per-sub-goal outcome for the Run details cell — binary, matching prod:
+  each sub-goal is either met (✓) or failed (✗). Prod scores every
+  sub-goal independently; here the mock has one crux, so a failed task
+  marks only that sub-goal as failed and the others as met.
+*/
+function subGoalStatuses(task, env) {
+  if (!task || task.status === "unmeasured") return [];
+  const subs = subTasksFor(task, env);
+  if (!subs.length) return [];
+  if (task.status === "passed" || task.status === "flaky") {
+    return subs.map((s) => ({ id: s.id, label: s.label, status: "passed" }));
+  }
+  const stepCount = (task.steps || []).length;
+  const failAt = typeof task.failStep === "number" ? task.failStep : null;
+  const failIdx = failAt == null || stepCount === 0
+    ? subs.length - 1
+    : Math.min(subs.length - 1, Math.floor((failAt / stepCount) * subs.length));
+  return subs.map((s, i) => ({
+    id: s.id,
+    label: s.label,
+    status: i === failIdx ? "failed" : "passed",
+  }));
+}
 
 /*
   Standalone group-by picker, so callers (the run header, a compare
@@ -310,7 +372,9 @@ export default function TraceTable({
      table is usable in older callers that don't wire a picker. */
   const visible = columns || defaultTraceColumns();
   const show = (key) => visible.has(key);
-  const showEvals = show("evals");
+  /* Which evals to render, in order. Any not explicitly hidden shows. */
+  const shownEvals = useMemo(() => visibleEvals(visible, evals), [visible, evals]);
+  const showEvals = shownEvals.length > 0;
 
   const allOn = tasks.length > 0 && tasks.every((t) => selected.has(t.id));
   const someOn = tasks.some((t) => selected.has(t.id)) && !allOn;
@@ -409,7 +473,7 @@ export default function TraceTable({
   */
   const dataColKeys = ["callDetails", "persona", "scenario", "expected", "branch", "csat", "turns", "latency", "tokens"];
   const visibleDataCols = dataColKeys.filter((k) => show(k)).length;
-  const totalColSpan = 1 + visibleDataCols + (showEvals ? evals.length : 0);
+  const totalColSpan = 1 + visibleDataCols + shownEvals.length;
 
   /* Lazy-prime with all group labels so groups start collapsed. */
   const collapsedSet = collapsed ?? new Set(groups.map((g) => g.label));
@@ -474,6 +538,7 @@ export default function TraceTable({
                   {((t.durationMs || 0) / 1000).toFixed(1)}s
                 </Typography>
               </Stack>
+              <SubGoalsSummary task={t} env={env} />
             </Box>
           </TableCell>
         );
@@ -547,7 +612,7 @@ export default function TraceTable({
         </TableCell>
       )}
 
-      {showEvals && evals.map((e) => {
+      {shownEvals.map((e) => {
         const r = t.evalResults?.find((x) => x.id === e.id);
         const rescoring = rescoringEvalId === e.id;
         return (
@@ -560,7 +625,19 @@ export default function TraceTable({
               <Box sx={{ p: 2, display: "flex", justifyContent: "center" }}>
                 <Iconify icon="solar:refresh-linear" width={14} sx={{ color: "text.disabled", animation: "tt-spin 0.8s linear infinite", "@keyframes tt-spin": { to: { transform: "rotate(360deg)" } } }} />
               </Box>
-            ) : r ? <Score result={r} /> : <Box sx={{ p: 2, typography: "s2", color: "text.disabled" }}>—</Box>}
+            ) : r ? <Score result={r} /> : (
+              /* Missing on an adhoc column means this row wasn't in that
+                 eval's re-run. Say so on hover; on the original run's
+                 columns "—" is just "no result" and doesn't need a note. */
+              e.adhoc ? (
+                <Tooltip
+                  arrow
+                  title={`${e.name} was run on the other scenarios you selected — not on this one. Select this row and re-run the eval to score it.`}
+                >
+                  <Box sx={{ p: 2, typography: "s2", color: "text.disabled", cursor: "help" }}>—</Box>
+                </Tooltip>
+              ) : <Box sx={{ p: 2, typography: "s2", color: "text.disabled" }}>—</Box>
+            )}
           </TableCell>
         );
       })}
@@ -632,10 +709,15 @@ export default function TraceTable({
               {show("turns") && <TableCell sx={{ ...headCell, width: 92 }}>Turns</TableCell>}
               {show("latency") && <TableCell sx={{ ...headCell, width: 96 }}>Latency</TableCell>}
               {show("tokens") && <TableCell sx={{ ...headCell, width: 96 }}>Tokens</TableCell>}
-              {showEvals && evals.map((e) => (
+              {shownEvals.map((e) => (
                 <TableCell key={e.id} sx={{ ...headCell, width: 150 }}>
                   <EvalHeadCell
                     name={e.name}
+                    /* A column scoped to only the N scenarios the user
+                       picked. Marked in the header so a row of "—"s reads
+                       as "not part of this eval run" rather than "this
+                       scenario failed the grader". */
+                    partial={e.adhoc ? e.includedIds?.size : 0}
                     rescoring={rescoringEvalId === e.id}
                     onEdit={onEditEval ? () => onEditEval(e) : null}
                     onRerun={onRerunEval ? () => onRerunEval(e) : null}
@@ -656,7 +738,7 @@ export default function TraceTable({
                   colspan={totalColSpan}
                   show={show}
                   showEvals={showEvals}
-                  evals={evals}
+                  evals={shownEvals}
                   selected={selected}
                   onToggleGroup={(rows) => {
                     /* Group checkbox behaves like the header select-all:
@@ -859,7 +941,9 @@ function GroupHeaderRow({ group, collapsed, onToggle, show, showEvals, evals, se
       {show("turns")   && numCell(a.turns, "", "turns")}
       {show("latency") && numCell(a.latency, "ms", "latency")}
       {show("tokens")  && numCell(a.tokens)}
-      {showEvals && evals.map((e) => {
+      {/* `evals` here is the caller's shownEvals — GroupHeaderRow lives in
+         its own scope and doesn't see the outer shownEvals binding. */}
+      {evals.map((e) => {
         const ea = a.evals?.[e.id];
         if (!ea || !ea.total) {
           return (
@@ -914,7 +998,7 @@ GroupHeaderRow.propTypes = {
    column only: re-run just this eval (re-score its cells, no full simulation)
    or delete the whole column. The trigger appears on hover so the header stays
    clean. */
-function EvalHeadCell({ name, onEdit, onRerun, onDelete, rescoring }) {
+function EvalHeadCell({ name, partial, onEdit, onRerun, onDelete, rescoring }) {
   const [anchor, setAnchor] = useState(null);
   const hasActions = !!(onEdit || onRerun || onDelete);
   return (
@@ -923,6 +1007,23 @@ function EvalHeadCell({ name, onEdit, onRerun, onDelete, rescoring }) {
       sx={{ "&:hover .eval-col-actions": { opacity: 1 } }}
     >
       <Typography noWrap sx={{ typography: "s2", fontWeight: 500, color: "text.secondary", minWidth: 0 }}>{name}</Typography>
+      {partial > 0 && (
+        <Tooltip arrow title={`Scored on ${partial} scenario${partial === 1 ? "" : "s"} you re-ran this eval on. The other rows show "—".`}>
+          <Box
+            sx={{
+              display: "inline-flex", alignItems: "center",
+              px: 0.5, height: 15, borderRadius: 0.5, flexShrink: 0,
+              border: (t) => `1px solid ${alpha("#7857FC", 0.4)}`,
+              color: "#7857FC",
+              bgcolor: (t) => alpha("#7857FC", t.palette.mode === "dark" ? 0.14 : 0.08),
+            }}
+          >
+            <Typography sx={{ typography: "s3", fontWeight: 700, letterSpacing: 0.3 }}>
+              {partial}
+            </Typography>
+          </Box>
+        </Tooltip>
+      )}
       {rescoring && (
         <Iconify icon="solar:refresh-linear" width={12} sx={{ color: "text.subtitle", flexShrink: 0, animation: "tt-spin 0.8s linear infinite", "@keyframes tt-spin": { to: { transform: "rotate(360deg)" } } }} />
       )}
@@ -972,7 +1073,8 @@ function EvalHeadCell({ name, onEdit, onRerun, onDelete, rescoring }) {
   );
 }
 EvalHeadCell.propTypes = {
-  name: PropTypes.string, onEdit: PropTypes.func, onRerun: PropTypes.func, onDelete: PropTypes.func, rescoring: PropTypes.bool,
+  name: PropTypes.string, partial: PropTypes.number,
+  onEdit: PropTypes.func, onRerun: PropTypes.func, onDelete: PropTypes.func, rescoring: PropTypes.bool,
 };
 
 /*
@@ -1067,6 +1169,42 @@ function MetricValue({ metric, value, suffix = "" }) {
   );
 }
 MetricValue.propTypes = { metric: PropTypes.string, value: PropTypes.any, suffix: PropTypes.string };
+
+/**
+ * Sub-goals list for the Run details cell — matches prod exactly.
+ *
+ * Every sub-goal named as it is (snake_case kept), in the scenario's
+ * order, with a small tick or cross on the right:
+ *
+ *   maintains_warm_confident_tone      ✓
+ *   maintains_spoken_turn_length       ✗
+ *   uses_approved_filler_phrase        ✓
+ *   rephrases_with_conversational_...  ✓
+ */
+function SubGoalsSummary({ task, env }) {
+  const rows = subGoalStatuses(task, env);
+  if (rows.length === 0) return null;
+  return (
+    <Stack spacing={0.125} sx={{ mt: 0.75 }}>
+      {rows.map((r, i) => (
+        <Stack key={r.id || i} direction="row" alignItems="center" spacing={0.5}>
+          <Typography
+            noWrap
+            sx={{ typography: "s3", color: "text.secondary" }}
+          >
+            {r.label}
+          </Typography>
+          {r.status === "passed" ? (
+            <Iconify icon="mdi:check" width={12} sx={{ color: "#16A34A", flexShrink: 0 }} />
+          ) : (
+            <Iconify icon="mdi:close" width={12} sx={{ color: "#DC2626", flexShrink: 0 }} />
+          )}
+        </Stack>
+      ))}
+    </Stack>
+  );
+}
+SubGoalsSummary.propTypes = { task: PropTypes.object, env: PropTypes.object };
 
 function Field({ icon, label, value }) {
   if (value == null || value === "") return null;
