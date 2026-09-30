@@ -88,7 +88,7 @@ func New(cfg map[string]interface{}) *PIIGuardrail {
 	return g
 }
 
-func (g *PIIGuardrail) Name() string           { return "pii-detection" }
+func (g *PIIGuardrail) Name() string            { return "pii-detection" }
 func (g *PIIGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check scans messages for PII and returns a result.
@@ -140,8 +140,7 @@ func (g *PIIGuardrail) Check(ctx context.Context, input *guardrails.CheckInput) 
 
 		// Apply remediation (mutate message content in-place).
 		if g.remediation != RemediationBlock {
-			remediated := applyRemediation(text, detections, g.remediation)
-			msg.Content = marshalContentString(remediated)
+			msg.Content = g.remediateContent(msg.Content, text, detections)
 		}
 	}
 
@@ -236,6 +235,46 @@ func extractContentText(raw json.RawMessage) (string, bool) {
 func marshalContentString(s string) json.RawMessage {
 	b, _ := json.Marshal(s)
 	return b
+}
+
+// remediateContent returns raw with its PII replaced. text and detections come
+// from extractContentText. For an array of content parts only the text of each
+// text part is rewritten, so images and other parts still reach the provider.
+// If PII is still found afterwards (a match that spans two parts, or a part
+// this loop cannot read), the whole content is replaced as plain text instead.
+func (g *PIIGuardrail) remediateContent(raw json.RawMessage, text string, detections []Detection) json.RawMessage {
+	var parts []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &parts); err != nil {
+		return marshalContentString(applyRemediation(text, detections, g.remediation))
+	}
+
+	changed := false
+	for _, part := range parts {
+		var partType, partText string
+		if json.Unmarshal(part["type"], &partType) != nil || partType != "text" {
+			continue
+		}
+		if json.Unmarshal(part["text"], &partText) != nil {
+			continue
+		}
+		// detections are offsets into the joined text, so match each part again.
+		if found := g.detect(partText); len(found) > 0 {
+			part["text"] = marshalContentString(applyRemediation(partText, found, g.remediation))
+			changed = true
+		}
+	}
+	out := raw
+	if changed {
+		if b, err := json.Marshal(parts); err == nil {
+			out = b
+		}
+	}
+	// Detected PII must never reach the provider, even at the cost of the
+	// non-text parts.
+	if rest, ok := extractContentText(out); ok && len(g.detect(rest)) > 0 {
+		return marshalContentString(applyRemediation(text, detections, g.remediation))
+	}
+	return out
 }
 
 // applyRemediation replaces all detections in text with remediated values.
