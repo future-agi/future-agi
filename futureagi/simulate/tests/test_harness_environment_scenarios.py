@@ -3,7 +3,7 @@ import uuid
 import pytest
 from rest_framework.test import APIClient
 
-from simulate.models import HostedHarnessScenario
+from simulate.models import HostedHarnessJob, HostedHarnessScenario
 from simulate.services.harness_scenarios import index_scenarios
 from simulate.services.hosted_harness import create_selected_harness_run
 from simulate.tests.test_harness_amend_archive import NAMES, _key, _run_environment
@@ -123,11 +123,12 @@ def editable(environment, storage):  # noqa: F811
             for name in NAMES[:2]
         ],
     )
-    storage.objects[environment.payload["metadata"]["authoring_object_key"]] = _archive(
-        names=NAMES[:2]
-    )
+    key = f"harness-authoring/{environment.organization_id}/{environment.id}.tar.gz"
+    storage.objects[key] = _archive(names=NAMES[:2])
+    payload = environment.payload
+    payload["metadata"]["authoring_object_key"] = key
     HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
-        state=HostedHarnessJob.State.COMPLETED
+        state=HostedHarnessJob.State.COMPLETED, payload=payload
     )
     environment.refresh_from_db()
     return environment
@@ -432,3 +433,27 @@ def test_resync_rebuilds_rows_from_the_snapshot_and_never_deletes_one(editable):
     assert HostedHarnessScenario.all_objects.get(id=kept.id).deleted is False
     assert HostedHarnessScenario.all_objects.get(id=stray.id).deleted is True
     assert HostedHarnessScenario.all_objects.filter(job=editable).count() == 3
+
+
+def test_resync_leaves_a_job_that_replays_another_jobs_snapshot(editable):
+    from simulate.services.scenario_changes import resync_suite
+
+    borrower = HostedHarnessJob.no_workspace_objects.get(id=editable.id)
+    borrower.pk, borrower.run_id, borrower.idempotency_key = (
+        uuid.uuid4(),
+        uuid.uuid4(),
+        "borrower",
+    )
+    borrower.save()
+    HostedHarnessScenario.all_objects.create(
+        job=borrower, scenario_key="only-one", name="only_one"
+    )
+
+    report = resync_suite(borrower)
+
+    assert report["outcome"] == "skipped"
+    assert list(
+        HostedHarnessScenario.all_objects.filter(job=borrower).values_list(
+            "scenario_key", flat=True
+        )
+    ) == ["only-one"]

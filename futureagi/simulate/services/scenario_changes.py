@@ -666,6 +666,12 @@ def resync_suite(
     }
     if not object_key:
         return {**report, "outcome": "skipped", "why": "no snapshot"}
+    if f"/{environment.id}" not in object_key:
+        return {
+            **report,
+            "outcome": "skipped",
+            "why": "snapshot belongs to another job",
+        }
     body = _authoring_archive_for(environment)
     if body is None:
         return {**report, "outcome": "skipped", "why": "snapshot not readable"}
