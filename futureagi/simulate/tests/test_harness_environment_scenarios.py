@@ -249,6 +249,37 @@ def test_deleting_hides_scenarios_and_keeps_their_rows(client, editable):
 
 
 @pytest.mark.django_db
+def test_the_last_scenario_cannot_be_deleted(client, editable):
+    first, second = _row(editable, NAMES[0]), _row(editable, NAMES[1])
+
+    response = client.post(
+        f"{BASE}/{editable.id}/scenarios/delete/",
+        {"scenario_ids": [str(first.id), str(second.id)]},
+        format="json",
+    )
+
+    assert response.status_code == 200, response.content
+    outcomes = sorted(receipt["outcome"] for receipt in response.json()["receipts"])
+    assert outcomes == ["applied", "refused"]
+    listed = client.get(f"{BASE}/{editable.id}/scenarios/").json()["results"]
+    assert len(listed) == 1
+
+
+def test_a_whole_name_is_never_read_as_numbers():
+    from simulate.services.scenario_changes import scenarios_meant
+
+    suite = [
+        {"name": "Guest cancels"},
+        {"name": "Caller gives 2 dates"},
+        {"name": "Refund", "scenario_key": "refund plan 1"},
+    ]
+
+    assert scenarios_meant("Caller gives 2 dates", suite) == ["Caller gives 2 dates"]
+    assert scenarios_meant(["refund plan 1"], suite) == ["Refund"]
+    assert scenarios_meant("1, 2", suite) == ["Guest cancels", "Caller gives 2 dates"]
+
+
+@pytest.mark.django_db
 def test_changes_address_environments_only(client, editable):
     row = _row(editable)
     run, _ = create_selected_harness_run(
@@ -457,3 +488,22 @@ def test_resync_leaves_a_job_that_replays_another_jobs_snapshot(editable):
             "scenario_key", flat=True
         )
     ) == ["only-one"]
+
+
+@pytest.mark.django_db
+def test_adding_past_the_suite_limit_is_refused(client, editable, builder):
+    HostedHarnessScenario.all_objects.bulk_create(
+        HostedHarnessScenario(
+            job=editable, scenario_key=f"extra-{n}", name=f"extra_{n}"
+        )
+        for n in range(170)
+    )
+
+    response = client.post(
+        f"{BASE}/{editable.id}/scenarios/changes/",
+        {"kind": "add", "count": 40, "instruction": "more"},
+        format="json",
+    )
+
+    assert (response.status_code, response.json()["error"]) == (400, "suite_too_large")
+    assert builder == []

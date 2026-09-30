@@ -36,6 +36,9 @@ _ORDINAL_WORDS = {
 }
 
 
+MAX_SUITE_SCENARIOS = 200
+
+
 def scenarios_meant(
     said: Any, suite: list[dict], numbering: dict[int, str] | None = None
 ) -> list[str]:
@@ -63,6 +66,14 @@ def scenarios_meant(
             found.append(name)
 
     for piece in said if isinstance(said, (list, tuple)) else [said]:
+        # A whole name or key is exact; only free text is split into numbers and ranges.
+        whole = str(piece or "").strip()
+        if whole in known:
+            take(whole)
+            continue
+        if whole in keys:
+            take(keys[whole])
+            continue
         for part in re.split(r"[,\s]+(?:and\s+)?", str(piece or "").strip()):
             part = part.strip().strip(".")
             if not part:
@@ -229,6 +240,15 @@ def _amend(job: HostedHarnessJob, changes: list[dict[str, Any]], rework: bool):
                         "scenario": name,
                         "outcome": "refused",
                         "why": "dropping a scenario changes the suite, so it needs a re-proof",
+                    }
+                )
+                continue
+            if len(suite) == 1:
+                receipts.append(
+                    {
+                        "scenario": name,
+                        "outcome": "refused",
+                        "why": "an environment needs at least one scenario",
                     }
                 )
                 continue
@@ -593,6 +613,16 @@ def request_scenario_change(
             f"and save the suite: {instruction}"
         )
     else:
+        live = HostedHarnessScenario.no_workspace_objects.filter(
+            job=environment
+        ).count()
+        if live + (count or 0) > MAX_SUITE_SCENARIOS:
+            raise ScenarioChangeRefused(
+                "suite_too_large",
+                f"an environment holds at most {MAX_SUITE_SCENARIOS} scenarios; "
+                f"it has {live}",
+                400,
+            )
         guidance = f" {instruction}" if instruction else ""
         content = (
             f"Add exactly {count} new scenario{'s' if count != 1 else ''} to this suite."
