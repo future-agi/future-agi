@@ -1499,6 +1499,10 @@ class Workflows(unittest.TestCase):
     def test_every_release_image_builds_through_the_multiarch_workflow(self):
         self.assertFalse((WORKFLOWS / "build-image.yml").exists())
         jobs = yaml_jobs(WORKFLOWS / "release-images.yml")
+        # The Helm chart is no image: helm-release.yml publishes it once the
+        # images it deploys are published.
+        chart = jobs.pop("helm-chart")
+        self.assertEqual(chart["uses"], "./.github/workflows/helm-release.yml")
         for name, job in jobs.items():
             if "uses" in job:
                 with self.subTest(job=name):

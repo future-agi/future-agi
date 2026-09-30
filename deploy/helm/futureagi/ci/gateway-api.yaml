@@ -1,0 +1,14 @@
+# CI only: the optional Gateway API routes, over examples/bundled.yaml and
+# examples/gateway-api.yaml, with NetworkPolicies on, and the GKE
+# HealthCheckPolicies for every routed Service (the LLM gateway's included).
+gatewayApi:
+  annotations:
+    example.com/route: futureagi
+  gke:
+    healthChecks:
+      enabled: true
+  llmGateway:
+    enabled: true
+    host: llm.futureagi.example.com
+networkPolicy:
+  enabled: true
