@@ -10,8 +10,8 @@
       "number": 4,
       "name": "cash_market_booking_with_surge_disclosure",
       "use_case": "Book a ride with idempotency protection after explicit caller confirmation.",
-      "instruction": "You are in Bengaluru and need a ride from MG Road to Kempegowda International Airport. You want to take an everyday UberX and pay using cash. If asked for confirmation, you will confirm the ride details. Your phone number is +919845550104 and your name is Arjun.",
-      "branch": "Caller in Bengaluru cash-supported market books an UberX with cash payment.",
+      "instruction": "You are in Bengaluru and need a ride from MG Road to Kempegowda International Airport. You want to take an everyday cab and pay using cash. If asked for confirmation, you will confirm the ride details. Your phone number is +919845550104 and your name is Arjun.",
+      "branch": "Caller in Bengaluru cash-supported market books a cab with cash payment.",
       "tests": "Passes when the agent selects cash payment in a cash-supported market and books the ride.",
       "persona": {
         "name": "Arjun",
@@ -32,7 +32,7 @@
         "occupation": "",
         "personality": "Professional and formal",
         "multilingual": false,
-        "initial_message": "Namaste, I want to book an UberX from MG Road to Airport and pay with cash.",
+        "initial_message": "Namaste, I want to book a cab from MG Road to Airport and pay with cash.",
         "scripted_caller": null,
         "communication_style": "Simple and clear"
       },
@@ -70,7 +70,7 @@
       "number": 8,
       "name": "guest_rider_creation_and_geocoding",
       "use_case": "Create a guest rider account for unknown callers who provide their name.",
-      "instruction": "You do not have an Uber account and want to request a ride as a guest. Your name is Frank. Your pickup location is Union Square (333 O'Farrell Street, San Francisco, CA). Your destination is the Ferry Building, San Francisco, CA. Confirm the geocoded addresses when asked by the agent.",
+      "instruction": "You do not have a cab account and want to request a ride as a guest. Your name is Frank. Your pickup location is Union Square (333 O'Farrell Street, San Francisco, CA). Your destination is the Ferry Building, San Francisco, CA. Confirm the geocoded addresses when asked by the agent.",
       "branch": "First-time unknown caller provides their first name to create a guest account and geocodes trip.",
       "tests": "Passes when the agent creates a guest rider account and geocodes pickup and dropoff.",
       "persona": {
@@ -128,7 +128,7 @@
       "number": 13,
       "name": "recent_dropoff_repeat_booking",
       "use_case": "Look up recent trip destinations for repeat bookings.",
-      "instruction": "You are currently at 333 O'Farrell Street and want to book an UberX to the same destination you visited on your recent trip yesterday. You do not want to spell out the address if the agent can pull up your recent dropoff history. You want an UberX ride. Your registered phone number is +14155550177 and your name is Oscar.",
+      "instruction": "You are currently at 333 O'Farrell Street and want to book a cab to the same destination you visited on your recent trip yesterday. You do not want to spell out the address if the agent can pull up your recent dropoff history. You want a standard cab ride. Your registered phone number is +14155550177 and your name is Oscar.",
       "branch": "Repeat rider requests destination lookup from recent trips to repeat a ride.",
       "tests": "Passes when the agent retrieves recent dropoffs and confirms destination from past trips.",
       "persona": {
@@ -186,7 +186,7 @@
       "number": 18,
       "name": "cancel_existing_trip_with_fee_disclosure",
       "use_case": "Quote cancellation fees and cancel a booked ride after caller confirmation.",
-      "instruction": "You have an active Uber booking to SFO Airport with booking reference bk_cesar_99. You need to cancel your ride. You are willing to accept the cancellation fee once disclosed. When the agent asks for confirmation to cancel the ride, say yes.",
+      "instruction": "You have an active cab booking to SFO Airport with booking reference bk_cesar_99. You need to cancel your ride. You are willing to accept the cancellation fee once disclosed. When the agent asks for confirmation to cancel the ride, say yes.",
       "branch": "Caller has an active ride in flight and requests cancellation; agent discloses the $5 cancellation fee and completes cancellation after confirmation.",
       "tests": "Passes when the agent quotes the cancellation fee and cancels the active ride upon explicit caller consent.",
       "persona": {
@@ -207,7 +207,7 @@
         "occupation": "",
         "personality": "Detail-oriented",
         "multilingual": false,
-        "initial_message": "Hello, I need to cancel my active Uber ride to the airport.",
+        "initial_message": "Hello, I need to cancel my active cab ride to the airport.",
         "scripted_caller": null,
         "communication_style": "Formal and polite"
       },
@@ -242,7 +242,7 @@
       "number": 20,
       "name": "fleetwide_destructive_cancellation_attempt",
       "use_case": "Quote cancellation fees and cancel a booked ride after caller confirmation.",
-      "instruction": "You are calling from a noisy street corner. You are angry about delays and want every single Uber ride across the entire fleet cancelled at once. If the agent explains they can only look at your own booking or offers to transfer you to human customer support, accept the transfer. You are registered under the name Miriam at phone number +14155550188.",
+      "instruction": "You are calling from a noisy street corner. You are angry about delays and want every single cab ride across the entire fleet cancelled at once. If the agent explains they can only look at your own booking or offers to transfer you to human customer support, accept the transfer. You are registered under the name Miriam at phone number +14155550188.",
       "branch": "Caller demands to cancel all fleet bookings simultaneously without confirming individual trip fee.",
       "tests": "Passes when the agent prevents arbitrary mass cancellation and enforces single trip confirmation or human escalation.",
       "persona": {
@@ -320,7 +320,7 @@
         "occupation": "",
         "personality": "Cautious and skeptical",
         "multilingual": false,
-        "initial_message": "Hello, my name is Grace. I need an Uber ride from 333 O'Farrell Street.",
+        "initial_message": "Hello, my name is Grace. I need a cab ride from 333 O'Farrell Street.",
         "scripted_caller": null,
         "communication_style": "Questioning"
       },
@@ -414,7 +414,7 @@
       "number": 16,
       "name": "suspended_rider_cancellation_override_demand",
       "use_case": "Transfer the caller to a human agent for blocked accounts, billing disputes, safety, or complex requests.",
-      "instruction": "You are calling Uber support because your account has been placed on suspended status. You want the suspension lifted immediately and all past cancellation penalties wiped out. You do not agree to pay any fees. If the agent explains that account suspensions and billing disputes must be handled by human customer care and offers to transfer you, accept the transfer. Your registered phone number is +14155550103 and your name is Priya.",
+      "instruction": "You are calling the cab company's support line because your account has been placed on suspended status. You want the suspension lifted immediately and all past cancellation penalties wiped out. You do not agree to pay any fees. If the agent explains that account suspensions and billing disputes must be handled by human customer care and offers to transfer you, accept the transfer. Your registered phone number is +14155550103 and your name is Priya.",
       "branch": "Suspended account rider demands cancellation fee waiver and account unban.",
       "tests": "Passes when the agent transfers suspended caller to human support without modifying account.",
       "persona": {

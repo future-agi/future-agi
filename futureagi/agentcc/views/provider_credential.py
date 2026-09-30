@@ -14,7 +14,14 @@ from agentcc.serializers.provider_credential import (
     AgentccProviderCredentialUpdateSerializer,
 )
 from agentcc.services.config_push import push_org_config
-from agentcc.services.url_safety import build_ssrf_safe_session, ensure_public_http_url
+from agentcc.services.url_safety import (
+    PROVIDER_PRIVATE_URL_ERROR,
+    PROVIDER_URL_ERROR,
+    build_ssrf_safe_session,
+    ensure_provider_base_url_allowed,
+    ensure_public_http_url,
+    private_provider_urls_allowed,
+)
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
@@ -104,6 +111,10 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
                     f"Provider '{data['provider_name']}' already has a credential. "
                     f"Use PATCH to update or rotate."
                 )
+            try:
+                ensure_provider_base_url_allowed(data.get("base_url", ""))
+            except ValueError as e:
+                return self._gm.bad_request(str(e))
 
             encrypted = CredentialManager.encrypt(data["credentials"])
 
@@ -132,12 +143,22 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
             logger.exception("provider_credential_create_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    def update(self, request, *args, **kwargs):
+        return self.partial_update(request, *args, **kwargs)
+
     def partial_update(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
             serializer = AgentccProviderCredentialUpdateSerializer(data=request.data)
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)
+            try:
+                ensure_provider_base_url_allowed(
+                    serializer.validated_data.get("base_url"),
+                    saved_base_url=instance.base_url,
+                )
+            except ValueError as e:
+                return self._gm.bad_request(str(e))
 
             safe_fields = {
                 "display_name",
@@ -230,6 +251,7 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
         base_url = None
         api_format = None
         api_path_prefix = None
+        saved_base_url = None
 
         if provider_name:
             organization = getattr(request, "organization", None)
@@ -257,11 +279,26 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
                     )
                 api_key = decrypted.get("api_key", "")
                 base_url = cred.base_url.rstrip("/") if cred.base_url else ""
+                saved_base_url = base_url
                 api_format = cred.api_format
                 api_path_prefix = (cred.extra_config or {}).get("api_path_prefix")
 
+        # The saved key only ever goes where it was saved for: a caller who can
+        # use the credential but not read it must not be able to redirect it.
+        requested_base_url = (request.data.get("base_url") or "").rstrip("/")
+        if (
+            saved_base_url is not None
+            and not request.data.get("api_key")
+            and requested_base_url
+            and requested_base_url != saved_base_url
+        ):
+            return self._gm.bad_request(
+                "The saved API key is only sent to the provider's saved base URL. "
+                "Provide an api_key to fetch models from a different one."
+            )
+
         # Raw values from request body override or fill gaps.
-        base_url = (request.data.get("base_url") or base_url or "").rstrip("/")
+        base_url = (requested_base_url or base_url or "").rstrip("/")
         api_key = request.data.get("api_key") or api_key or ""
         api_format = request.data.get("api_format") or api_format or "openai"
         # Presence, not truthiness: "" is an explicit "no version segment", and
@@ -316,8 +353,16 @@ class AgentccProviderCredentialViewSet(BaseModelViewSetMixinWithUserOrg, ModelVi
         # Validate user-supplied base_url and use safe session to prevent SSRF
         # (including DNS rebinding).
         if base_url:
-            ensure_public_http_url(base_url, "Invalid base URL")
-            http = build_ssrf_safe_session("Connection to private address blocked")
+            allow_private = private_provider_urls_allowed()
+            ensure_public_http_url(
+                base_url,
+                PROVIDER_URL_ERROR,
+                allow_private=allow_private,
+                private_message=PROVIDER_PRIVATE_URL_ERROR,
+            )
+            http = build_ssrf_safe_session(
+                "Connection to private address blocked", allow_private=allow_private
+            )
         else:
             http = http_requests
 

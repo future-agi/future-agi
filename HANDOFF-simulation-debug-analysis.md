@@ -1,6 +1,6 @@
 # Handoff: simulation "Debug failures" (Omega)
 
-Updated 2026-09-28. Built for the Uber pilot. This file is meant for whoever (and whatever agent)
+Updated 2026-09-28. Built for the cab pilot. This file is meant for whoever (and whatever agent)
 picks this up next. It is harness-neutral: every step is a plain shell command or a file path.
 Delete this file before the branch goes up for review.
 
@@ -146,7 +146,7 @@ Kartik set these rules. They are binding, so don't relitigate them:
 Prerequisites: the §6 setup, **the §5.3 PIN fix in the E2B template**, and working evals. Check that
 `eval_outputs` are non-null before trusting anything.
 
-1. Run a hosted simulation of about 10–20 calls on the Uber env and wait for `completed`.
+1. Run a hosted simulation of about 10–20 calls on the cab-booking env and wait for `completed`.
 2. If any evals errored, rerun only the evals:
    `POST /simulate/test-executions/{id}/rerun-calls/` with
    `{"rerun_type":"eval_only","call_execution_ids":[…]}`.
@@ -318,7 +318,7 @@ Why those numbers need care:
 ### 5.5 Product decisions pending (Kartik)
 
 - **The greeting card is eval noise.**
-  - Every call opens with "This Uber call is being recorded." That line comes from the phone layer;
+  - Every call opens with a branded "this call is being recorded" line from the phone layer;
     it isn't in the agent prompt.
   - The `exact_greeting` judge flips on word-identical openings: 29 pass / 10 fail on run
     `a047827f` and 29 / 3 on `4683acb5`. The drawer currently shows 8 of 39.

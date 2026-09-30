@@ -4,12 +4,13 @@ import hashlib
 import json
 import logging
 import tempfile
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, BinaryIO
 from uuid import UUID
 
 from django.db import IntegrityError, transaction
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from simulate.models import (
     AgentDefinition,
@@ -1213,6 +1214,13 @@ def _read_hosted_tool_trace(artifact: HostedHarnessArtifact) -> list[dict[str, A
             response.release_conn()
 
 
+def _epoch_seconds(value: Any) -> float | None:
+    """Epoch seconds for a datetime or ISO string; None when it can't be read."""
+    if isinstance(value, str):
+        value = parse_datetime(value)
+    return value.timestamp() if isinstance(value, datetime) else None
+
+
 def _ingest_hosted_transcript(
     call: CallExecution, artifact: HostedHarnessArtifact
 ) -> None:
@@ -1285,17 +1293,42 @@ def _ingest_hosted_transcript(
         if isinstance(messages, list):
             # The v2 transcript carries absolute speech timing
             # (``started_speaking_at`` / ``stopped_speaking_at`` in epoch
-            # seconds).  Anchor to the earliest turn so CallTranscript stores
-            # real per-turn offsets in ms: conversation metrics (talk ratio,
-            # WPM, agent latency, interruptions) are all derived from these and
-            # collapse to zero when every turn shares the row index.
+            # seconds).  Store them as per-turn offsets in ms: conversation
+            # metrics (talk ratio, WPM, agent latency, interruptions) are all
+            # derived from these and collapse to zero when every turn shares
+            # the row index.
+            #
+            # The offsets are measured from where the recording begins, so the
+            # drawer's transcript highlight follows playback. The runner reports
+            # that point as ``recording_offset_ms``: how long the recording ran
+            # before the first word. Without it, the call start is the anchor
+            # (the recorder attaches after the call starts, so this lands
+            # late), and a call start after the first word (clock skew) falls
+            # back to that word.
             speech_starts = [
                 message["started_speaking_at"]
                 for message in messages
                 if isinstance(message, dict)
                 and isinstance(message.get("started_speaking_at"), (int, float))
             ]
-            base_time = min(speech_starts) if speech_starts else None
+            first_speech = min(speech_starts) if speech_starts else None
+            recording_offset = (
+                payload.get("recording_offset_ms")
+                if isinstance(payload, dict)
+                else None
+            )
+            call_start = _epoch_seconds(call.started_at)
+            if first_speech is not None and isinstance(recording_offset, (int, float)):
+                base_time = first_speech - max(0.0, float(recording_offset)) / 1000
+            elif (
+                first_speech is not None
+                and call_start is not None
+                and call_start <= first_speech
+            ):
+                base_time = call_start
+            else:
+                base_time = first_speech
+            previous_end_ms = 0
             valid_roles = {
                 choice for choice, _label in CallTranscript.SpeakerRole.choices
             }
@@ -1315,6 +1348,13 @@ def _ingest_hosted_transcript(
                         if isinstance(stopped, (int, float))
                         else start_ms
                     )
+                    previous_end_ms = end_ms
+                elif base_time is not None:
+                    # An untimed message in a timed transcript (e.g. the second
+                    # half of a greeting) sits where the turn before it ended,
+                    # not at its row index near the start of the call.
+                    start_ms = previous_end_ms
+                    end_ms = previous_end_ms
                 else:
                     # Older guests emit no timing; preserve turn order only.
                     start_ms = index

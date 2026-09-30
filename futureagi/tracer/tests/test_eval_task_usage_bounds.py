@@ -31,7 +31,7 @@ from tracer.views.eval_task import (
     _compute_span_aggregation,
     _ensure_usage_aggregation_json_bounded,
     _parse_usage_json_preview,
-    _terminal_usage_queryset,
+    _successful_usage_queryset,
     _usage_logs_page_metadata,
 )
 
@@ -392,7 +392,7 @@ def test_usage_aggregations_exclude_nonterminal_errored_and_skipped_rows():
     assert set(by_span) == {str(completed_span_id)}
 
 
-def test_usage_chart_counts_only_completed_and_errored_lifecycle_rows():
+def test_usage_chart_counts_only_completed_rows():
     created_at = datetime(2026, 8, 12, tzinfo=UTC)
     rows = [
         {
@@ -423,9 +423,9 @@ def test_usage_chart_counts_only_completed_and_errored_lifecycle_rows():
 
     [bucket] = _aggregate_usage_chart_rows(rows, timedelta(minutes=5))
 
-    assert bucket["calls"] == 2
+    assert bucket["calls"] == 1
     assert bucket["pass_count"] == 1
-    assert bucket["fail_count"] == 1
+    assert bucket["fail_count"] == 0
 
 
 def test_usage_endpoint_does_not_widen_empty_period_or_iterate_log_queryset():
@@ -552,14 +552,16 @@ def test_aggregation_candidate_query_is_terminal_span_only_without_span_join():
     assert "LIMIT 5001" in query
 
 
-def test_usage_querysets_defensively_keep_only_terminal_result_rows():
+def test_usage_querysets_keep_only_successful_result_rows():
     from tracer.models.observation_span import EvalLogger
 
-    terminal_query = str(_terminal_usage_queryset(EvalLogger.objects.all()).query)
+    success_query = str(_successful_usage_queryset(EvalLogger.objects.all()).query)
     logs_query = str(_bounded_usage_logs_queryset(EvalLogger.objects.all()).query)
 
-    for query in (terminal_query, logs_query):
-        assert 'status" IN (completed, errored)' in query
+    for query in (success_query, logs_query):
+        assert '"status" = completed' in query
+        assert 'NOT "tracer_eval_logger"."error"' in query
+        assert "errored" not in query
 
 
 def test_aggregation_json_preflight_fails_before_oversized_hydration():

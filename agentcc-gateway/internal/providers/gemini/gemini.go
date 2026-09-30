@@ -49,6 +49,7 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 		MaxIdleConnsPerHost: poolSize,
 		IdleConnTimeout:     90 * time.Second,
 		ForceAttemptHTTP2:   true,
+		DialContext:         cfg.DialContext,
 	}
 
 	baseURL := strings.TrimRight(cfg.BaseURL, "/")

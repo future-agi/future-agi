@@ -6,6 +6,7 @@ import { Box, Stack, Typography, Collapse } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import { SCENARIO_SHAPE } from "./scenarios.shapes";
+import { normaliseSubTasks } from "./scenarioEditor.constants";
 
 // A scenario, in full — the expanded body of a list-view row.
 //
@@ -28,7 +29,7 @@ export default function ScenarioDetail({ row, defaultOpen = false }) {
   const s = row;
   if (!s) return null;
 
-  const steps = row.subTasks || [];
+  const steps = normaliseSubTasks(row.subTasks);
 
   return (
     <Box>
@@ -86,7 +87,7 @@ export default function ScenarioDetail({ row, defaultOpen = false }) {
             <Section title={`Sub-goals: the moves that settle it (${steps.length})`}>
               <Stack spacing={0.75}>
                 {steps.map((st, i) => (
-                  <Stack key={st.id || i} direction="row" spacing={1.25} alignItems="flex-start">
+                  <Stack key={st.id} direction="row" spacing={1.25} alignItems="flex-start">
                     <Box
                       sx={{
                         width: 18, height: 18, borderRadius: "50%", flexShrink: 0, mt: "1px",

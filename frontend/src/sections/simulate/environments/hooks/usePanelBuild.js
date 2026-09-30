@@ -94,7 +94,11 @@ export default function usePanelBuild() {
 
   const commitBuild = useCallback(() => {
     if (!prepared || !preflight.data?.ready_to_submit || !preflight.data?.credentials || committing) return;
-    const draft = parallelismEnabled ? prepared : { ...prepared, parallelism: 1 };
+    const agentName = preflight.data.credentials.probe?.find((p) => p.ok && p.target_name)?.target_name;
+    const draft = {
+      ...(parallelismEnabled ? prepared : { ...prepared, parallelism: 1 }),
+      ...(agentName ? { agentName } : {}),
+    };
     // Keep the passing draft in the persisted slot so the panel form rehydrates
     // on a back-navigation; the create call below is what actually builds it.
     setDraft(draft);

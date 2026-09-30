@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import { Box, Stack, Tooltip, Typography } from "@mui/material";
 
 import { SUB_TASK_SHAPE } from "./scenarios.shapes";
+import { normaliseSubTasks } from "./scenarioEditor.constants";
 
 // Attach a tooltip to a truncated line so hovering reveals the full value. Kept
 // thin — the tooltip lives at the row level, not per-Typography, so the same
@@ -48,19 +49,6 @@ export function ClampCell({ text }) {
   );
 }
 ClampCell.propTypes = { text: PropTypes.string };
-
-// Accepts both shapes callers pass: [{ id, label }] and plain-string arrays.
-// Coerces to a common { id, label } up front so no caller renders bare numbers
-// with the label missing.
-function normaliseSubTasks(subTasks) {
-  return (subTasks || [])
-    .map((st, i) => {
-      if (typeof st === "string") return { id: `st-${i}`, label: st };
-      if (!st) return null;
-      return { id: st.id || `st-${i}`, label: st.label || st.text || st.title || "" };
-    })
-    .filter((st) => st && st.label);
-}
 
 // Sub-tasks column body: up to 3 inline, anything past that summarised as
 // "+ N more". Hovering the row reveals the full numbered list.

@@ -92,13 +92,12 @@ describe("build pipeline constants", () => {
 });
 
 describe("build stage constants", () => {
-  it("labels the building tabs in rail order (Overview first, Settings last)", () => {
+  it("labels the building tabs in rail order, without Runs (a building env has none)", () => {
     expect(BUILDING_TABS.map((t) => t.label)).toEqual([
       "Overview",
       "Contract",
       "Scenarios",
       "Evaluations",
-      "Runs",
       "Settings",
     ]);
   });

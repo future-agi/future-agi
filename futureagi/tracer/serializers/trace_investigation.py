@@ -88,8 +88,10 @@ class InvestigationLimitsSerializer(serializers.Serializer):
 
 class InvestigationClaimSerializer(serializers.Serializer):
     organization_id = serializers.UUIDField()
+    organization_name = serializers.CharField(required=False)
     workspace_id = serializers.UUIDField(allow_null=True)
     project_id = serializers.UUIDField()
+    project_name = serializers.CharField(required=False)
     job_id = serializers.UUIDField()
     workload_type = serializers.ChoiceField(
         choices=("trace", "simulation_test_execution"), required=False

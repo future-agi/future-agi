@@ -411,8 +411,10 @@ def _claim_payload(attempt: TraceInvestigationAttempt, token: str) -> dict[str, 
     job = attempt.job
     claim = {
         "organization_id": job.organization_id,
+        "organization_name": job.organization.display_name or job.organization.name,
         "workspace_id": job.workspace_id,
         "project_id": job.project_id,
+        "project_name": job.project.name,
         "job_id": job.id,
         "generation": attempt.generation,
         "attempt_id": attempt.id,

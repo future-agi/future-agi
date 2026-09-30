@@ -478,6 +478,41 @@ describe("RunDetail", () => {
     ).toBeNull();
   });
 
+  it.each(["running", "cancelling"])(
+    "disables the header actions while the run is %s",
+    (status) => {
+      useRunDetail.mockReturnValue({
+        identity: { ...IDENTITY, status, stoppable: status === "running" },
+        stats: STATS,
+        isLoading: false,
+      });
+      renderDetail();
+
+      for (const name of [/Add evals/, /Export/, /Run again/, /Debug failures/]) {
+        expect(screen.getByRole("button", { name })).toBeDisabled();
+      }
+      // Stop stays available — it is the one action a live run needs.
+      if (status === "running") {
+        expect(
+          screen.getByRole("button", { name: "Stop simulation" }),
+        ).toBeEnabled();
+      }
+    },
+  );
+
+  it("enables the header actions once the run has finished", () => {
+    useRunDetail.mockReturnValue({
+      identity: IDENTITY,
+      stats: STATS,
+      isLoading: false,
+    });
+    renderDetail();
+
+    for (const name of [/Add evals/, /Export/, /Run again/, /Debug failures/]) {
+      expect(screen.getByRole("button", { name })).toBeEnabled();
+    }
+  });
+
   it("shows terminal execution failure despite partial call success", () => {
     useRunDetail.mockReturnValue({
       identity: { ...IDENTITY, status: "failed" },

@@ -4944,6 +4944,12 @@
                             "$ref": "#/definitions/AccountsErrorResponse"
                         }
                     },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AccountsErrorResponse"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -15560,7 +15566,7 @@
             "get": {
                 "operationId": "api_setup-checks_list",
                 "summary": "Public infrastructure probe for the OSS first-run setup screen.",
-                "description": "Returns ``{\"status\": \"ok\"|\"issues\", \"mode\": ..., \"checks\": [...]}``. No auth —\nit runs before any account exists. Self-hosted only: on cloud and EE the\nroute answers 404, so neither the internal service topology nor the outbound\nprobes it triggers are reachable by an anonymous caller.",
+                "description": "Returns ``{\"status\": \"ok\"|\"issues\", \"mode\": ..., \"setup\":\n\"standalone\"|\"distributed\"|\"helm\", \"collector_http_url\": ...,\n\"account_exists\": true|false, \"checks\": [...]}``. No auth — it runs\nbefore anyone can sign in. Self-hosted only:\non cloud and EE the route answers 404, so neither the internal service\ntopology nor the outbound probes it triggers are reachable by an\nanonymous caller.",
                 "parameters": [],
                 "responses": {
                     "200": {
@@ -18754,7 +18760,7 @@
         "/model-hub/annotation-queues/for-source/": {
             "get": {
                 "operationId": "model-hub_annotation-queues_for_source",
-                "description": "Find annotation queues for a given source that the current user can annotate.\nIncludes queues where:\n- The source is a queue item AND the user is an annotator in that queue\n  (regardless of whether the item is explicitly assigned to them)\n\nQuery params:\n  - source_type, source_id  (single source)\n  - OR sources (JSON array of {source_type, source_id} objects for multi-source lookup)",
+                "description": "Find annotation queues for a given source that the current user can annotate.\nIncludes queues where:\n- The source is a queue item AND the user is an annotator in that queue\n  (regardless of whether the item is explicitly assigned to them)\n\nQuery params:\n  - source_type, source_id  (single source)\n  - OR sources (JSON array of {source_type, source_id} objects for multi-source lookup)\n  - project_id (optional): the project a trace / span drawer shows",
                 "parameters": [
                     {
                         "name": "page",
@@ -18795,6 +18801,15 @@
                         "in": "query",
                         "required": false,
                         "type": "string"
+                    },
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "description": "Tracer project the trace / span was opened from. The same id can exist in several projects; when supplied, only that project's queue items are listed.",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid",
+                        "x-nullable": true
                     }
                 ],
                 "responses": {
@@ -27232,6 +27247,12 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DatasetLimitCheckFailedError"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -27596,6 +27617,12 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DatasetLimitCheckFailedError"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -27860,6 +27887,12 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DatasetLimitCheckFailedError"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -27933,6 +27966,12 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DatasetLimitCheckFailedError"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -27997,6 +28036,12 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DatasetLimitCheckFailedError"
                         }
                     },
                     "default": {
@@ -28065,6 +28110,12 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DatasetLimitCheckFailedError"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -28131,6 +28182,12 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DatasetLimitCheckFailedError"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -28195,6 +28252,12 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/ModelHubErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DatasetLimitCheckFailedError"
                         }
                     },
                     "default": {
@@ -31272,6 +31335,12 @@
                             "$ref": "#/definitions/ModelHubErrorResponse"
                         }
                     },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DatasetLimitCheckFailedError"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -33311,7 +33380,7 @@
             "get": {
                 "operationId": "model-hub_eval-templates_usage_list",
                 "summary": "GET /model-hub/eval-templates/<id>/usage/",
-                "description": "Returns usage stats, chart data, and the paginated usage table.\nQuery params: page (0-based), page_size, period\n(30m|6h|1d|7d|30d|90d|180d|365d), optional start_date/end_date pair\n(overrides period — sent by the FE for Today / Yesterday / Custom).\n\nThe response is rendered through\n``EvalUsageStatsResponseResultSerializer(instance=...).data`` at the\nboundary so shape drift surfaces here instead of shipping silently.",
+                "description": "Returns usage stats, chart data, and the paginated usage table.\nQuery params: page (0-based), page_size, period\n(30m|6h|1d|7d|30d|90d|180d|365d), optional start_date/end_date pair\n(overrides period — sent by the FE for Today / Yesterday / Custom).\n\nThe response is rendered through\n``EvalUsageStatsResponseResultSerializer(instance=...).data`` at the\nboundary so shape drift surfaces here instead of shipping silently.\n\nCounts and lists only successful runs from the usage ledger\n(``APICallLog`` rows with status ``success``), from every source: tasks,\nplayground, composites, datasets and experiments. Errored and skipped runs\nare not usage but stay in the eval logs (task logs, template eval logs);\nan in-flight run counts once it succeeds. ``error_count`` is therefore 0\nand ``pass_rate`` 100 whenever there are runs; both remain for\ncompatibility.",
                 "parameters": [
                     {
                         "name": "page",
@@ -45802,6 +45871,15 @@
                         "required": true,
                         "type": "string",
                         "minLength": 1
+                    },
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "description": "Tracer project the trace / span was opened from. The same id can exist in several projects; when supplied, only that project's scores are listed.",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid",
+                        "x-nullable": true
                     }
                 ],
                 "responses": {
@@ -59832,6 +59910,12 @@
                             "$ref": "#/definitions/ObserveDataset"
                         }
                     },
+                    "503": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/DatasetLimitCheckFailedError"
+                        }
+                    },
                     "default": {
                         "description": "Default error response",
                         "schema": {
@@ -68978,7 +69062,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/ObserveGraphDataRequest"
+                            "$ref": "#/definitions/TraceGraphDataRequest"
                         }
                     },
                     {
@@ -69913,7 +69997,7 @@
             "get": {
                 "operationId": "tracer_trace_voice_call_detail",
                 "summary": "Return the heavy / detail-only fields for a single voice call.",
-                "description": "Query params:\n- trace_id or legacy traceId (required) — UUID of the voice call trace.",
+                "description": "Query params:\n- trace_id or legacy traceId (required) — UUID of the voice call trace.\n- project_id (optional) — the project the call was opened from.",
                 "parameters": [
                     {
                         "name": "trace_id",
@@ -69927,6 +70011,14 @@
                         "name": "traceId",
                         "in": "query",
                         "description": "Legacy alias for trace_id; when both are supplied they must match.",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "description": "Project the detail was opened from. The same id can exist in several projects; when supplied, only that project's copy is read.",
                         "required": false,
                         "type": "string",
                         "format": "uuid"
@@ -69981,8 +70073,18 @@
         "/tracer/trace/{id}/": {
             "get": {
                 "operationId": "tracer_trace_read",
-                "description": "Retrieve a trace by its ID.",
-                "parameters": [],
+                "summary": "Retrieve a trace by its ID.",
+                "description": "Query params:\n- project_id (optional) — the project the trace was opened from.",
+                "parameters": [
+                    {
+                        "name": "project_id",
+                        "in": "query",
+                        "description": "Project the detail was opened from. The same id can exist in several projects; when supplied, only that project's copy is read.",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "",
@@ -70017,7 +70119,9 @@
                 },
                 "tags": [
                     "tracer"
-                ]
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "put": {
                 "operationId": "tracer_trace_update",
@@ -86415,9 +86519,11 @@
                 "name",
                 "owner",
                 "key_hash",
+                "key_prefix",
                 "models",
                 "providers",
-                "metadata"
+                "metadata",
+                "expires_at"
             ],
             "type": "object",
             "properties": {
@@ -86440,6 +86546,10 @@
                     "type": "string",
                     "minLength": 1
                 },
+                "key_prefix": {
+                    "title": "Key prefix",
+                    "type": "string"
+                },
                 "models": {
                     "type": "array",
                     "items": {
@@ -86461,6 +86571,12 @@
                         "type": "string",
                         "x-nullable": true
                     }
+                },
+                "expires_at": {
+                    "title": "Expires at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
                 }
             }
         },
@@ -90298,7 +90414,9 @@
                 "label",
                 "status",
                 "required",
-                "detail"
+                "detail",
+                "fix",
+                "docs_url"
             ],
             "type": "object",
             "properties": {
@@ -90329,6 +90447,14 @@
                 "detail": {
                     "title": "Detail",
                     "type": "string"
+                },
+                "fix": {
+                    "title": "Fix",
+                    "type": "string"
+                },
+                "docs_url": {
+                    "title": "Docs url",
+                    "type": "string"
                 }
             }
         },
@@ -90336,6 +90462,9 @@
             "required": [
                 "status",
                 "mode",
+                "setup",
+                "collector_http_url",
+                "account_exists",
                 "checks"
             ],
             "type": "object",
@@ -90355,6 +90484,24 @@
                         "live",
                         "experiment"
                     ]
+                },
+                "setup": {
+                    "title": "Setup",
+                    "type": "string",
+                    "enum": [
+                        "standalone",
+                        "distributed",
+                        "helm"
+                    ]
+                },
+                "collector_http_url": {
+                    "title": "Collector http url",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "account_exists": {
+                    "title": "Account exists",
+                    "type": "boolean"
                 },
                 "checks": {
                     "type": "array",
@@ -101851,6 +101998,81 @@
                 }
             }
         },
+        "DatasetLimitCheckFailedError": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "type": {
+                    "title": "Type",
+                    "type": "string",
+                    "enum": [
+                        "validation_error",
+                        "authentication_error",
+                        "payment_required",
+                        "entitlement_error",
+                        "permission_error",
+                        "not_found",
+                        "conflict",
+                        "client_error",
+                        "rate_limit",
+                        "server_error",
+                        "service_unavailable",
+                        "timeout",
+                        "api_error"
+                    ],
+                    "x-nullable": true
+                },
+                "code": {
+                    "title": "Code",
+                    "type": "string",
+                    "enum": [
+                        "dataset_limit_check_failed"
+                    ]
+                },
+                "detail": {
+                    "title": "Detail",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "attr": {
+                    "title": "Attr",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "details": {
+                    "title": "Details",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
+                }
+            }
+        },
         "ExtractEntitiesRequest": {
             "required": [
                 "column_id",
@@ -108127,14 +108349,17 @@
                 },
                 "success_count": {
                     "title": "Success count",
+                    "description": "Deprecated compatibility field. Usage counts only successful runs, so this always equals runs_period.",
                     "type": "integer"
                 },
                 "error_count": {
                     "title": "Error count",
+                    "description": "Deprecated compatibility field. Usage counts only successful runs, so this is always 0; failed runs stay in the eval logs.",
                     "type": "integer"
                 },
                 "pass_rate": {
                     "title": "Pass rate",
+                    "description": "Deprecated compatibility field. Usage counts only successful runs, so this is 100 when runs_period is above 0, otherwise 0.",
                     "type": "number"
                 }
             }
@@ -116272,6 +116497,13 @@
                 },
                 "queue_item_id": {
                     "title": "Queue item id",
+                    "type": "string",
+                    "format": "uuid",
+                    "x-nullable": true
+                },
+                "project_id": {
+                    "title": "Project id",
+                    "description": "Tracer project the trace / span was opened from. The same id can exist in several projects; when supplied, the score is written to that project's copy.",
                     "type": "string",
                     "format": "uuid",
                     "x-nullable": true
@@ -137104,6 +137336,15 @@
                         "name": {
                             "type": "string"
                         },
+                        "metric_statistic": {
+                            "type": "string",
+                            "enum": [
+                                "count",
+                                "sum",
+                                "mean",
+                                "percentage"
+                            ]
+                        },
                         "data": {
                             "type": "array",
                             "items": {
@@ -137179,6 +137420,15 @@
                                 },
                                 "name": {
                                     "type": "string"
+                                },
+                                "metric_statistic": {
+                                    "type": "string",
+                                    "enum": [
+                                        "count",
+                                        "sum",
+                                        "mean",
+                                        "percentage"
+                                    ]
                                 },
                                 "data": {
                                     "type": "array",
@@ -137337,6 +137587,18 @@
                                         "additionalProperties": true
                                     }
                                 },
+                                "system_metric_statistics": {
+                                    "type": "object",
+                                    "additionalProperties": {
+                                        "type": "string",
+                                        "enum": [
+                                            "count",
+                                            "sum",
+                                            "mean",
+                                            "percentage"
+                                        ]
+                                    }
+                                },
                                 "query_complete": {
                                     "type": "boolean"
                                 },
@@ -137392,6 +137654,15 @@
                                     },
                                     "name": {
                                         "type": "string"
+                                    },
+                                    "metric_statistic": {
+                                        "type": "string",
+                                        "enum": [
+                                            "count",
+                                            "sum",
+                                            "mean",
+                                            "percentage"
+                                        ]
                                     },
                                     "data": {
                                         "type": "array",
@@ -139621,16 +139892,19 @@
                 },
                 "success_count": {
                     "title": "Success count",
+                    "description": "Deprecated compatibility field. Usage counts only successful runs, so this always equals runs_period.",
                     "type": "integer",
                     "minimum": 0
                 },
                 "error_count": {
                     "title": "Error count",
+                    "description": "Deprecated compatibility field. Usage counts only successful runs, so this is always 0; failed runs stay in the task logs.",
                     "type": "integer",
                     "minimum": 0
                 },
                 "pass_rate": {
                     "title": "Pass rate",
+                    "description": "Deprecated compatibility field. Usage counts only successful runs, so this is 100 when runs_period is above 0, otherwise 0.",
                     "type": "number",
                     "maximum": 100,
                     "minimum": 0
@@ -142897,6 +143171,11 @@
                     "type": "string",
                     "format": "uuid"
                 },
+                "organization_name": {
+                    "title": "Organization name",
+                    "type": "string",
+                    "minLength": 1
+                },
                 "workspace_id": {
                     "title": "Workspace id",
                     "type": "string",
@@ -142907,6 +143186,11 @@
                     "title": "Project id",
                     "type": "string",
                     "format": "uuid"
+                },
+                "project_name": {
+                    "title": "Project name",
+                    "type": "string",
+                    "minLength": 1
                 },
                 "job_id": {
                     "title": "Job id",
@@ -144882,6 +145166,7 @@
                 },
                 "property": {
                     "title": "Property",
+                    "description": "Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency.",
                     "type": "string",
                     "default": "average"
                 },
@@ -144976,6 +145261,17 @@
                 "name": {
                     "title": "Name",
                     "type": "string"
+                },
+                "metric_statistic": {
+                    "title": "Metric statistic",
+                    "description": "Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.",
+                    "type": "string",
+                    "enum": [
+                        "count",
+                        "sum",
+                        "mean",
+                        "percentage"
+                    ]
                 },
                 "data": {
                     "description": "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
@@ -146005,6 +146301,20 @@
                     "type": "object",
                     "x-json-value": true,
                     "description": "Any valid JSON value."
+                },
+                "system_metric_statistics": {
+                    "title": "System metric statistics",
+                    "description": "Statistic of each ``system_metrics`` series per bucket, e.g. {\"latency\": \"mean\", \"tokens\": \"sum\", \"cost\": \"mean\", \"traffic\": \"count\"}. Latency is always the mean (avg) span latency.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "enum": [
+                            "count",
+                            "sum",
+                            "mean",
+                            "percentage"
+                        ]
+                    }
                 },
                 "evaluations": {
                     "title": "Evaluations",
@@ -148526,6 +148836,7 @@
                 },
                 "property": {
                     "title": "Property",
+                    "description": "Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency.",
                     "type": "string",
                     "default": "average"
                 },
@@ -148596,6 +148907,17 @@
                 "name": {
                     "title": "Name",
                     "type": "string"
+                },
+                "metric_statistic": {
+                    "title": "Metric statistic",
+                    "description": "Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.",
+                    "type": "string",
+                    "enum": [
+                        "count",
+                        "sum",
+                        "mean",
+                        "percentage"
+                    ]
                 },
                 "data": {
                     "description": "Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.",
@@ -149678,6 +150000,188 @@
                 "refresh": {
                     "title": "Refresh",
                     "description": "Recompute and atomically replace the last exact graph snapshot.",
+                    "type": "boolean",
+                    "default": false
+                }
+            }
+        },
+        "TraceGraphDataRequest": {
+            "required": [
+                "project_id",
+                "req_data_config"
+            ],
+            "type": "object",
+            "properties": {
+                "project_id": {
+                    "title": "Project id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "filters": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "column_id": {
+                                "type": "string",
+                                "description": "Column or attribute id to filter on."
+                            },
+                            "property_id": {
+                                "type": "string",
+                                "description": "Optional stable namespaced Property Registry identity."
+                            },
+                            "display_name": {
+                                "type": "string",
+                                "description": "Optional UI label for chips and saved views."
+                            },
+                            "source": {
+                                "type": "string",
+                                "description": "Optional source surface for mixed-source filters, for example traces, datasets, or simulation."
+                            },
+                            "output_type": {
+                                "type": "string",
+                                "description": "Optional metric output type metadata used by eval and annotation filters."
+                            },
+                            "filter_config": {
+                                "type": "object",
+                                "properties": {
+                                    "filter_type": {
+                                        "type": "string",
+                                        "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map."
+                                    },
+                                    "filter_op": {
+                                        "type": "string",
+                                        "description": "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null."
+                                    },
+                                    "filter_value": {
+                                        "description": "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type."
+                                    },
+                                    "col_type": {
+                                        "type": "string",
+                                        "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                                    },
+                                    "attribute_value_types": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "string",
+                                            "enum": [
+                                                "string",
+                                                "number",
+                                                "boolean"
+                                            ],
+                                            "x-nullable": true
+                                        },
+                                        "description": "Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values."
+                                    }
+                                },
+                                "required": [
+                                    "filter_type",
+                                    "filter_op"
+                                ],
+                                "additionalProperties": false
+                            }
+                        },
+                        "required": [
+                            "column_id",
+                            "filter_config"
+                        ],
+                        "additionalProperties": false
+                    },
+                    "default": [],
+                    "description": "On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result.",
+                    "x-boundedDatetimeOperators": [
+                        "between",
+                        "equals",
+                        "greater_than",
+                        "greater_than_or_equal",
+                        "is_not_null",
+                        "is_null",
+                        "less_than",
+                        "less_than_or_equal",
+                        "not_between",
+                        "not_equals"
+                    ]
+                },
+                "interval": {
+                    "title": "Interval",
+                    "type": "string",
+                    "enum": [
+                        "hour",
+                        "day",
+                        "week",
+                        "month"
+                    ],
+                    "default": "day"
+                },
+                "property": {
+                    "title": "Property",
+                    "description": "Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency.",
+                    "type": "string",
+                    "default": "average"
+                },
+                "req_data_config": {
+                    "title": "Req data config",
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string"
+                        },
+                        "type": {
+                            "type": "string",
+                            "enum": [
+                                "SYSTEM_METRIC",
+                                "EVAL",
+                                "ANNOTATION"
+                            ]
+                        },
+                        "output_type": {
+                            "type": "string"
+                        },
+                        "eval_output_type": {
+                            "type": "string"
+                        },
+                        "choices": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "value": {},
+                        "filter_op": {
+                            "type": "string"
+                        },
+                        "filter_value": {},
+                        "property_id": {
+                            "type": "string",
+                            "description": "Stable Property Registry identity."
+                        },
+                        "source": {
+                            "type": "string",
+                            "enum": [
+                                "traces",
+                                "sessions"
+                            ]
+                        }
+                    },
+                    "required": [
+                        "id",
+                        "type"
+                    ],
+                    "additionalProperties": false
+                },
+                "observe_type": {
+                    "title": "Observe type",
+                    "description": "Population the graph counts: every trace, or only voice calls (traces whose root span is a conversation), exactly as list_voice_calls selects them.",
+                    "type": "string",
+                    "enum": [
+                        "trace",
+                        "voice"
+                    ],
+                    "default": "trace"
+                },
+                "remove_simulation_calls": {
+                    "title": "Remove simulation calls",
+                    "description": "Voice graphs only: exclude calls placed by a simulator phone, exactly as list_voice_calls' remove_simulation_calls does.",
                     "type": "boolean",
                     "default": false
                 }

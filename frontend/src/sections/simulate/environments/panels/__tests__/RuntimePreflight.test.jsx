@@ -29,6 +29,13 @@ describe("RuntimePreflight", () => {
     expect(screen.getByRole("button", { name: /Checking source and credentials/ })).toBeDisabled();
   });
 
+  it("renders Run preflight as the theme's filled primary button, like Run simulation", () => {
+    render(<RuntimePreflight status="idle" canRun onRun={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Run preflight" })).toHaveClass(
+      "MuiButton-containedPrimary",
+    );
+  });
+
   it("shows the server error and allows a retry", () => {
     const onRun = vi.fn();
     render(<RuntimePreflight status="error" onRun={onRun} error={{ response: { data: { detail: "Source archive unavailable" } } }} />);

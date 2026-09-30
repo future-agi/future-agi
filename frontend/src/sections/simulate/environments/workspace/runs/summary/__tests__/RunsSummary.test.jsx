@@ -42,8 +42,8 @@ const RUNS = [
 const env = { id: "env-1", name: "Refund Support", version: "v3" };
 const envState = { scenarios: Array.from({ length: 20 }, (_, i) => ({ id: `s${i}` })) };
 
-function renderSummary(props = {}, runs = RUNS) {
-  useEnvironmentRuns.mockReturnValue({ runs, isLoading: false });
+function renderSummary(props = {}, runs = RUNS, isLoading = false) {
+  useEnvironmentRuns.mockReturnValue({ runs, isLoading });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
@@ -54,6 +54,12 @@ function renderSummary(props = {}, runs = RUNS) {
 
 describe("RunsSummary", () => {
   beforeEach(() => useEnvironmentRuns.mockReset());
+
+  it("shows a spinner, not an empty summary, while the runs load", () => {
+    renderSummary({}, [], true);
+    expect(screen.getByRole("progressbar")).toBeInTheDocument();
+    expect(screen.queryByText("Simulations summary")).toBeNull();
+  });
 
   it("heads the summary with the run and scenario counts", () => {
     renderSummary();
@@ -81,6 +87,12 @@ describe("RunsSummary", () => {
     // Tokens / Cost / Said not done / Mean return have no backend field, so they
     // render a dashed cell with no "Dummy" tag.
     expect(screen.queryByText("Dummy")).toBeNull();
+  });
+
+  it("shows no run-compare checkboxes or compare hint in the runs table", () => {
+    renderSummary();
+    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+    expect(screen.queryByText(/compare them/)).toBeNull();
   });
 
   it("defers Choose winner behind a disabled 'coming soon' control", () => {
@@ -190,6 +202,39 @@ describe("RunsSummary", () => {
       { name: "Task success", data: [49] },
       { name: "Policy adherence", data: [28] },
     ]);
+  });
+
+  describe("graph eval selection", () => {
+    const SEVEN = ["e1", "e2", "e3", "e4", "e5", "e6", "e7"];
+    const manyEvals = [
+      {
+        ...RUNS[1],
+        scores: Object.fromEntries(SEVEN.map((k, i) => [k, 10 * (i + 1)])),
+      },
+    ];
+
+    it("draws only the first five evals by default", () => {
+      renderSummary({}, manyEvals);
+      expect(lastChart().series.map((x) => x.name)).toEqual([
+        "E1", "E2", "E3", "E4", "E5",
+      ]);
+      expect(screen.getByText("5 of 7 evals")).toBeInTheDocument();
+    });
+
+    it("draws every eval when there are five or fewer", () => {
+      renderSummary();
+      expect(lastChart().series).toHaveLength(2);
+      expect(screen.getByText("All 2 evals")).toBeInTheDocument();
+    });
+
+    it("keeps the user's pick once they change it", () => {
+      renderSummary({}, manyEvals);
+      fireEvent.mouseDown(screen.getByRole("combobox"));
+      fireEvent.click(screen.getByRole("option", { name: /E7/ }));
+      expect(lastChart().series.map((x) => x.name)).toEqual([
+        "E1", "E2", "E3", "E4", "E5", "E7",
+      ]);
+    });
   });
 
   it("pins the runs table's header, since the table scrolls under a fixed graph", () => {

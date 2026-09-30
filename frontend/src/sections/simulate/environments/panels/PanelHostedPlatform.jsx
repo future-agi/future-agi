@@ -179,6 +179,7 @@ export default function PanelHostedPlatform() {
                 required
                 placeholder={chosen.idPlaceholder}
                 value={id} onChange={set("id")}
+                autoComplete="new-password"
                 mono
               />
               <Field
@@ -187,7 +188,7 @@ export default function PanelHostedPlatform() {
                 placeholder="sk-…"
                 value={key} onChange={set("key")}
                 type="password"
-                autoComplete="off"
+                autoComplete="new-password"
                 mono
                 helper="Stored encrypted; used only to invoke the agent on your behalf."
               />

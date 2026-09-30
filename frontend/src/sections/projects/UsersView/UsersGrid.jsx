@@ -575,6 +575,11 @@ const UsersGrid = React.memo(
               // Keep existing rows and the exact signed checkpoint. The user
               // can explicitly retry without seeing a false empty or error
               // state, and the client never drains an unbounded cursor chain.
+              // A paused first page has not established whether this query
+              // has users, so a previous query's confirmed-empty result must
+              // not bring the empty screen back over the Continue search
+              // control.
+              if (pageNumber === 0) setHasData(null);
               setReadError(null);
               setContinuationNotice(true);
               finishRequest();

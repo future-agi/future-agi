@@ -1,10 +1,9 @@
 import PropTypes from "prop-types";
 import { alpha } from "@mui/material/styles";
 import {
-  Box, Stack, Typography, Checkbox, Table, TableHead, TableBody,
+  Box, Stack, Typography, Table, TableHead, TableBody,
   TableRow, TableCell,
 } from "@mui/material";
-import CustomTooltip from "src/components/tooltip";
 import { fDateTime, formatDuration } from "src/utils/format-time";
 import { runColor } from "../runs.constants";
 import StatusChip from "../StatusChip";
@@ -15,9 +14,7 @@ const DASH = "-";
 
 // The run comparison table. Real columns (pass, avg duration) plus the derived
 // eval columns render live values; the columns with no backend field yet show a
-// plain dashed cell. Selecting runs to compare is a later phase, so the
-// checkboxes are present (for parity with the design) but disabled behind a
-// "coming soon" tooltip.
+// plain dashed cell.
 export default function SummaryTable({ rows, evals, onOpenRun }) {
   return (
     // The card no longer clips (the graph tooltip must escape it), so clip the
@@ -39,13 +36,6 @@ export default function SummaryTable({ rows, evals, onOpenRun }) {
       <Table stickyHeader size="small" sx={{ minWidth: 720 }}>
         <TableHead>
           <TableRow sx={{ "& th": { border: 0, py: 1, typography: "s3", color: "text.subtitle", whiteSpace: "nowrap" } }}>
-            <TableCell padding="checkbox">
-              <CustomTooltip show arrow size="small" title="Comparing runs is coming soon">
-                <span>
-                  <Checkbox size="small" disabled sx={{ p: 0.5 }} />
-                </span>
-              </CustomTooltip>
-            </TableCell>
             <TableCell>Run</TableCell>
             <TableCell>Status</TableCell>
             <TableCell align="right">Scenarios</TableCell>
@@ -98,14 +88,6 @@ function SummaryRow({ row, evals, onOpenRun }) {
         "& td": { border: 0, borderTop: "1px solid", borderColor: "divider", py: 1.25, whiteSpace: "nowrap" },
       }}
     >
-      <TableCell padding="checkbox">
-        <CustomTooltip show arrow size="small" title="Comparing runs is coming soon">
-          <span>
-            <Checkbox size="small" disabled sx={{ p: 0.5 }} onClick={(e) => e.stopPropagation()} />
-          </span>
-        </CustomTooltip>
-      </TableCell>
-
       <TableCell>
         <Stack direction="row" alignItems="center" spacing={1.25} sx={{ minWidth: 0 }}>
           <Box

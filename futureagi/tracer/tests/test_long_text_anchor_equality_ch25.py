@@ -307,3 +307,85 @@ def test_bounded_anchor_returns_the_same_rows_as_no_hint_at_all(
     assert hinted_ids == sorted(f"trace-{index:03d}" for index in matching)
     assert hinted_ids == plain_ids
     assert hinted.complete == plain.complete
+
+
+# Five "k"s spell this 1,005-byte value 32 ways, 32,160 bytes: past the
+# companion budget, so the legacy ASCII-bloom witness now stands down where it
+# used to list every Kelvin-sign spelling. The long "xyzw" runs keep the anchor.
+KELVIN_VALUE = ("k" + "xyzw" * 50) * 5
+_LEGACY_BLOOM = "hasAny(arrayMap(x -> lower(x), mapValues(attrs_string))"
+# Matches stored as the value, in upper case, and with some or all "k"s as
+# U+212A KELVIN SIGN, which ``lowerUTF8`` makes "k" and ASCII ``lower()`` does
+# not: the spellings the witness exists to enumerate. The Kelvin rows sit in
+# granules of their own, so a witness missing their spelling would drop them.
+KELVIN_MATCHES = {
+    0: KELVIN_VALUE,
+    21: KELVIN_VALUE.upper(),
+    42: KELVIN_VALUE.replace("k", "\N{KELVIN SIGN}", 2),
+    75: KELVIN_VALUE.replace("k", "\N{KELVIN SIGN}"),
+}
+
+
+def _insert_kelvin_rows(ch_client, table) -> None:
+    rows = [
+        _row(index, KELVIN_MATCHES[index])
+        if index in KELVIN_MATCHES
+        else _row(index, KELVIN_VALUE[:-1] + "q" if index % 2 else DECOY_VALUE)
+        for index in range(90)
+    ]
+    ch_client.execute(f"INSERT INTO {table} VALUES", rows)
+
+
+def _page_ids(page) -> list[str]:
+    return sorted(item["trace_id"] for item in page.rows)
+
+
+def test_declining_the_kelvin_witness_returns_the_same_rows(
+    ch_client, anchor_span_table, monkeypatch
+):
+    """The spelling witness only prunes; declining it cannot lose a row."""
+
+    _insert_kelvin_rows(ch_client, anchor_span_table)
+
+    declined_statements: list[str] = []
+    declined = _page(ch_client, anchor_span_table, KELVIN_VALUE, declined_statements)
+    assert any("indexHint(arrayStringConcat" in sql for sql in declined_statements)
+    assert not any(_LEGACY_BLOOM in sql for sql in declined_statements)
+
+    # The pre-bound shape: every spelling listed for the ASCII bloom.
+    monkeypatch.setattr(
+        latest_filter_predicates, "_MAX_INDEX_COMPANION_VALUE_UTF8_BYTES", 1 << 40
+    )
+    listed_statements: list[str] = []
+    listed = _page(ch_client, anchor_span_table, KELVIN_VALUE, listed_statements)
+    assert any(_LEGACY_BLOOM in sql for sql in listed_statements)
+
+    expected = sorted(f"trace-{index:03d}" for index in KELVIN_MATCHES)
+    assert _page_ids(declined) == expected
+    assert _page_ids(listed) == expected
+    assert declined.complete and listed.complete
+
+
+def test_kelvin_rows_are_lost_to_a_witness_missing_their_spelling(
+    ch_client, anchor_span_table, monkeypatch
+):
+    """Negative control: the table really prunes on the ASCII bloom."""
+
+    _insert_kelvin_rows(ch_client, anchor_span_table)
+
+    def plain_spelling_only(*, normalized_values, params, index):
+        params[f"latest_filter_legacy_index_{index}_0"] = normalized_values[0]
+        return (
+            "hasAny(arrayMap(x -> lower(x), mapValues(span_attr_str)), "
+            f"[%(latest_filter_legacy_index_{index}_0)s])"
+        )
+
+    monkeypatch.setattr(
+        latest_filter_predicates,
+        "_legacy_ascii_lower_bloom_predicate",
+        plain_spelling_only,
+    )
+    statements: list[str] = []
+    partial = _page(ch_client, anchor_span_table, KELVIN_VALUE, statements)
+    assert any(_LEGACY_BLOOM in sql for sql in statements)
+    assert _page_ids(partial) == ["trace-000", "trace-021"]

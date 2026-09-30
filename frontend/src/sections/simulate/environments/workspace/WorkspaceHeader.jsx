@@ -21,7 +21,6 @@ import SurfaceIcon from "../components/SurfaceIcon";
 import LivePill from "./LivePill";
 import RenameEnvironmentDialog from "./RenameEnvironmentDialog";
 import TrialsPicker from "./scenarios/TrialsPicker";
-import RunConfigDialog from "./scenarios/RunConfigDialog";
 // EnvVersionPin renders a mock "env v3" version from a fixture fallback
 // (_fixtures/versions.js) — there is no real version field in the environments
 // contract yet. Hidden in the header until the contract exposes one.
@@ -51,11 +50,11 @@ export default function WorkspaceHeader({
   const navigate = useNavigate();
   const [renameOpen, setRenameOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  // Run configuration: the header's Repeats pill (k for a run-all) and the
-  // modal the Run button opens. A scenario selection on the Scenarios tab takes
-  // over the primary Run, so the header yields these while one is active.
+  // Run configuration: the header's Repeats pill sets k, and Run starts a
+  // run-all over every scenario × k straight away. A scenario selection on the
+  // Scenarios tab takes over the primary Run, so the header yields while one is
+  // active.
   const [headerTrials, setHeaderTrials] = useState(1);
-  const [runConfigOpen, setRunConfigOpen] = useState(false);
   const scenarioCount = envState?.scenarios?.length ?? 0;
   // Cancel is offered only while the build is actually running (not once it has
   // failed/canceled). CancelBuildControl self-hides otherwise.
@@ -144,7 +143,7 @@ export default function WorkspaceHeader({
                 color="primary"
                 size="small"
                 disabled={!canRun}
-                onClick={() => setRunConfigOpen(true)}
+                onClick={() => onStartRun?.(undefined, headerTrials)}
                 startIcon={<Iconify icon="solar:play-bold" width={15} />}
                 sx={{ typography: "s2", fontWeight: "fontWeightBold" }}
               >
@@ -207,17 +206,6 @@ export default function WorkspaceHeader({
           }
         />
       )}
-
-      {/* Run-all config: pick repeats, see the estimate, then start a run over
-          every scenario × k. Runs via the parent's scoped-run target (no ids =
-          all); trials ride ?trials=k (honoured once the live-run route lands). */}
-      <RunConfigDialog
-        open={runConfigOpen}
-        onClose={() => setRunConfigOpen(false)}
-        scenarioCount={scenarioCount}
-        defaultTrials={headerTrials}
-        onConfirm={(k) => { setHeaderTrials(k); onStartRun?.(undefined, k); }}
-      />
     </Stack>
   );
 }

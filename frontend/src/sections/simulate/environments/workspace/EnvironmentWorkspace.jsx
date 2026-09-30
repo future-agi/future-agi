@@ -331,11 +331,11 @@ export default function EnvironmentWorkspace() {
   // the console freezes until it goes Live. SystemBanners reads the same value.
   const envLive = env.buildStatus === BUILD_STATUS.READY;
 
-  // The tab count, the "no evals" gap and the Runs pre-flight tile read the
+  // The tab count, the "no evals" gap and the Runs summary read the
   // applied eval set. For a backed env that set is the detail's
   // evaluations.selected
   // (what the Evals panel shows), not the client store — so overlay it here so
-  // the badge, the gap and the pre-flight count all match the panel and clear
+  // the badge, the gap and the Runs summary all match the panel and clear
   // after an add. Scenarios/runs keep their existing sources.
   const backedSelected = evalDetailQuery.data?.evaluations?.selected;
   const serverEnvState =

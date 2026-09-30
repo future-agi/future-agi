@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"os"
 	"path/filepath"
@@ -342,6 +343,66 @@ func TestLoadFromEnv(t *testing.T) {
 	}
 	if cfg.Admin.Token != "secret123" {
 		t.Errorf("admin token = %q, want %q", cfg.Admin.Token, "secret123")
+	}
+}
+
+// The values are shared with the backend's test, which reads the same
+// variable: an unparseable one keeps the safe default in both.
+func TestLoadFromEnv_AllowPrivateProviderURLs(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "api_contracts", "gateway", "provider-url-policy.json"))
+	if err != nil {
+		t.Fatalf("reading the shared URL policy cases: %v", err)
+	}
+	var policy struct {
+		OptInEnv []struct {
+			Value   string `json:"value"`
+			Allowed bool   `json:"allowed"`
+		} `json:"opt_in_env"`
+	}
+	if err := json.Unmarshal(raw, &policy); err != nil {
+		t.Fatalf("parsing the shared URL policy cases: %v", err)
+	}
+	for _, tt := range policy.OptInEnv {
+		t.Run(tt.Value, func(t *testing.T) {
+			t.Setenv(EnvAllowPrivateProviderURLs, tt.Value)
+			cfg, err := Load("")
+			if err != nil {
+				t.Fatalf("Load error: %v", err)
+			}
+			if cfg.OrgProviders.AllowPrivateURLs != tt.Allowed {
+				t.Errorf("AllowPrivateURLs = %v, want %v", cfg.OrgProviders.AllowPrivateURLs, tt.Allowed)
+			}
+		})
+	}
+}
+
+// A gateway given the control-plane URL reloads Django's keys on start and,
+// with an interval, keeps them in step; the shared admin token authenticates
+// those calls unless a separate control-plane token is set.
+func TestLoadFromEnv_ControlPlaneSync(t *testing.T) {
+	t.Setenv("AGENTCC_CONTROL_PLANE_URL", "http://backend:8000")
+	t.Setenv("AGENTCC_SYNC_ON_STARTUP", "true")
+	t.Setenv("AGENTCC_SYNC_INTERVAL", "30s")
+	t.Setenv("AGENTCC_ADMIN_TOKEN", "shared-admin-token")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if !cfg.ControlPlane.SyncOnStartup || cfg.ControlPlane.SyncInterval != 30*time.Second {
+		t.Errorf("sync_on_startup = %v, sync_interval = %v, want true, 30s", cfg.ControlPlane.SyncOnStartup, cfg.ControlPlane.SyncInterval)
+	}
+	if cfg.ControlPlane.AdminToken != "shared-admin-token" {
+		t.Errorf("control plane token = %q, want the admin token", cfg.ControlPlane.AdminToken)
+	}
+
+	t.Setenv("AGENTCC_CONTROL_PLANE_TOKEN", "separate-token")
+	cfg, err = Load("")
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if cfg.ControlPlane.AdminToken != "separate-token" {
+		t.Errorf("control plane token = %q, want the explicit one", cfg.ControlPlane.AdminToken)
 	}
 }
 

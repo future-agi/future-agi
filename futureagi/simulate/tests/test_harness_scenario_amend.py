@@ -204,6 +204,19 @@ class TestScenarioNumbersSurviveADeletion:
         assert scenarios_meant("3-4", left, by_number) == ["three", "four"]
 
 
+def test_a_row_key_finds_an_older_suite_that_has_only_names():
+    from simulate.services.harness_provider import scenarios_meant
+
+    suite = [{"name": "rachel_surge_comfort_booking"}, {"name": "dana_book_cab"}]
+    assert scenarios_meant("rachel-surge-comfort-booking", suite) == [
+        "rachel_surge_comfort_booking"
+    ]
+    assert scenarios_meant(
+        ["dana-book-cab", "Rachel_Surge_Comfort_Booking"], suite
+    ) == ["dana_book_cab", "rachel_surge_comfort_booking"]
+    assert scenarios_meant("unknown-scenario", suite) == []
+
+
 def test_a_short_suite_on_a_poll_never_deletes_a_row(user, workspace):
     from simulate.models import HostedHarnessScenario
     from simulate.services.harness_scenarios import index_scenarios
@@ -221,3 +234,87 @@ def test_a_scenario_with_no_attack_reads_as_no_attack_on_every_attack_axis():
     assert level_label("none") == "No attack"
     assert level_label("absent") == "No attack"
     assert level_label("prompt_injection") == "Injected instruction"
+
+
+def _gate_refusing(name):
+    """The harness gates, failing `name` as a scenario written under older rules would."""
+    import importlib.util
+    import sys
+    import types
+
+    gate = types.ModuleType("fi.alk.harness.scenario")
+    gate.Scenario = types.SimpleNamespace(model_validate=lambda one: one)
+    gate.scenario_edit_problems = lambda one: (
+        ["breaks a newer rule"] if one.get("name") == name else []
+    )
+    modules = {"fi.alk.harness.scenario": gate}
+    for parent in ("fi", "fi.alk", "fi.alk.harness"):
+        try:
+            present = (
+                parent in sys.modules or importlib.util.find_spec(parent) is not None
+            )
+        except ModuleNotFoundError:
+            present = False
+        if not present:
+            modules[parent] = types.ModuleType(parent)
+    return patch.dict(sys.modules, modules)
+
+
+def _amend_with_gate(user, job, refusing, changes):
+    with _gate_refusing(refusing), patch(
+        "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
+        return_value=False,
+    ), patch(
+        "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
+        return_value=None,
+    ):
+        return _post(user, job, changes)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"op": "drop", "scenario": "one"},
+        {"op": "set_field", "scenario": "one", "field": "tests", "value": "reworded"},
+    ],
+)
+def test_an_older_neighbour_does_not_block_a_drop_or_an_edit(user, workspace, change):
+    job = _job(user, workspace, SUITE)
+    response = _amend_with_gate(user, job, "two", [change])
+    assert response.status_code == 200, response.content
+    assert [one["outcome"] for one in response.json()["receipts"]] == ["applied"]
+
+
+def test_an_edit_that_breaks_the_gates_is_still_refused(user, workspace):
+    job = _job(user, workspace, SUITE)
+    response = _amend_with_gate(
+        user,
+        job,
+        "one",
+        [{"op": "set_field", "scenario": "one", "field": "tests", "value": "reworded"}],
+    )
+    assert response.json()["receipts"][0]["outcome"] == "refused"
+    output = HostedHarnessStageOutput.no_workspace_objects.get(job=job, kind="scenarios")
+    assert output.data[0]["tests"] == "the agent holds the line"
+
+
+def test_an_archive_that_cannot_take_the_edit_leaves_everything_unchanged(
+    user, workspace
+):
+    from simulate.services.hosted_harness_gateway import AuthoringArchiveKept
+
+    job = _job(user, workspace, SUITE)
+    with patch(
+        "simulate.services.hosted_harness_gateway.push_scenarios_into_live_sandbox",
+        return_value=False,
+    ) as pushed, patch(
+        "simulate.services.hosted_harness_gateway.rewrite_authoring_scenarios",
+        side_effect=AuthoringArchiveKept("the change would lose files a run needs"),
+    ):
+        response = _post(user, job, [{"op": "drop", "scenario": "two"}])
+    receipt = response.json()["receipts"][0]
+    assert receipt["outcome"] == "refused"
+    assert "nothing changed" in receipt["why"]
+    output = HostedHarnessStageOutput.no_workspace_objects.get(job=job, kind="scenarios")
+    assert [one["name"] for one in output.data] == ["one", "two"]
+    pushed.assert_not_called()

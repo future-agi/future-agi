@@ -60,7 +60,7 @@ StatusDot.propTypes = {
   live: PropTypes.bool,
 };
 
-export default function StatusChip({ status }) {
+export default function StatusChip({ status, label }) {
   const meta = STATUS_META[status] || STATUS_META.queued;
   return (
     <Stack
@@ -79,10 +79,14 @@ export default function StatusChip({ status }) {
     >
       <StatusDot status={status} size={6} />
       <Typography sx={{ typography: "s3", fontWeight: "fontWeightSemiBold" }}>
-        {meta.label}
+        {label ?? meta.label}
       </Typography>
     </Stack>
   );
 }
 
-StatusChip.propTypes = { status: PropTypes.string };
+StatusChip.propTypes = {
+  status: PropTypes.string,
+  // Overrides the status's own label, for a caller whose vocabulary differs.
+  label: PropTypes.string,
+};

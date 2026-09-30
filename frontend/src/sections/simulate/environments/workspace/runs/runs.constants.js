@@ -68,65 +68,6 @@ export const runColor = (ordinal) => {
   return RUN_COLORS[(Math.max(1, n) - 1) % RUN_COLORS.length];
 };
 
-// Pre-flight estimate model. Ported verbatim from the designer's RunsPanel:
-// duration grows with the scenario count (floored so a tiny suite still reads
-// as a couple of minutes), concurrency is fixed, cost is a flat per-scenario
-// rate. Kept as named constants so the arithmetic is not buried inline.
-export const MINUTES_PER_SCENARIO = 0.7;
-export const MIN_DURATION_MINUTES = 2;
-export const RUN_CONCURRENCY = 4;
-export const COST_PER_SCENARIO = 0.08;
-
-export const estimatedMinutes = (count) =>
-  Math.max(MIN_DURATION_MINUTES, Math.ceil(count * MINUTES_PER_SCENARIO));
-
-export const estimatedCost = (count) => (count * COST_PER_SCENARIO).toFixed(2);
-
-// The colour a pre-flight item's status line takes: green when satisfied, amber
-// when satisfied-but-worth-a-look (an optional slot left empty), red when it
-// blocks the run.
-export const PREFLIGHT_STATE_COLORS = {
-  ok: BUILD_TONES.green,
-  warn: BUILD_TONES.amber,
-  blocked: BUILD_TONES.red,
-};
-
 // The pass bar's two segments — the share that passed vs. the share that did
 // not — so the row carries no raw hex.
 export const PASS_BAR_COLORS = { passed: BUILD_TONES.green, failed: BUILD_TONES.red };
-
-// Copy for the Runs tab. Held here (not inline) so the panel, the rows and the
-// tests share one source of truth.
-export const RUNS_COPY = {
-  title: "Run simulation",
-  subtitle: (name) => `Every task runs in its own clean copy of ${name}.`,
-  preflight: "Pre-flight",
-  start: "Start simulation",
-  fix: "Fix",
-  labels: {
-    environment: "Environment",
-    agent: "Agent",
-    scenarios: "Scenarios",
-    evals: "Evals",
-  },
-  agentConnected: "Connected agent",
-  agentNotConnected: "Not connected",
-  connectionVerified: "Connection verified",
-  required: "Required",
-  optional: "Optional",
-  tasks: (n) => `${n} tasks`,
-  critical: (n) => `${n} critical`,
-  applied: (n) => `${n} applied`,
-  estimate: {
-    duration: "Est. duration",
-    concurrency: "Concurrency",
-    cost: "Est. cost",
-    parallel: `${RUN_CONCURRENCY} parallel`,
-  },
-  history: (n) => `Run history (${n})`,
-  started: "Started",
-  empty: {
-    title: "No runs yet",
-    body: "Start a simulation above and you'll be able to watch every task execute live.",
-  },
-};

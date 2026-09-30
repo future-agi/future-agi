@@ -11,7 +11,8 @@ export default function RuntimePreflight({ status = "idle", canRun = false, onRu
     return (
       <Stack spacing={0.75}>
         <Button
-          variant="outlined"
+          variant="contained"
+          color="primary"
           size="small"
           disabled={!canRun || running}
           onClick={onRun}

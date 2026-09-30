@@ -213,9 +213,13 @@ function platformPayload(draft, name) {
   // direction rather than whatever the toggle last held.
   const callDirection =
     connector === PREFLIGHT_CONNECTOR.PHONE ? "inbound" : draft.callDirection;
+  const base = envelope(draft, name);
+  // The provider's own name for the agent (read back by preflight) labels the
+  // environment; `name`/`authoring_key` keep the ID as the stable identity.
+  if (draft.agentName) base.metadata.agent_name = draft.agentName;
   return {
     payload: {
-      ...envelope(draft, name),
+      ...base,
       agent: {
         connector,
         mode: "connect_only",

@@ -31,6 +31,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -101,6 +102,11 @@ type Writer struct {
 func New(cfg Config) (*Writer, error) {
 	if cfg.URL == "" {
 		return nil, fmt.Errorf("chwriter: URL is required")
+	}
+	// Fail here rather than on every batch. Leave the URL and the parse error
+	// out: url.Error echoes the URL verbatim, password included.
+	if _, err := url.Parse(cfg.URL); err != nil {
+		return nil, fmt.Errorf("chwriter: URL cannot be parsed (not shown: it may hold a password)")
 	}
 	if cfg.Database == "" {
 		cfg.Database = "default"

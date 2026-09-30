@@ -351,6 +351,7 @@ import type {
   DatasetEvalStatsResponseApi,
   DatasetExplanationSummaryResponseApi,
   DatasetJsonSchemaResponseApi,
+  DatasetLimitCheckFailedErrorApi,
   DatasetListResponseApi,
   DatasetMultipleStaticColumnsRequestApi,
   DatasetNamesResponseApi,
@@ -1232,6 +1233,7 @@ import type {
   TraceErrorTaskResponseApi,
   TraceErrorTaskUpdateRequestApi,
   TraceErrorTaskUpdateResponseApi,
+  TraceGraphDataRequestApi,
   TraceIndexQueryApi,
   TraceListQueryApi,
   TraceNavigationResponseApi,
@@ -1342,6 +1344,7 @@ import type {
   TracerTraceListTracesOfSessionParams,
   TracerTraceListTracesParams,
   TracerTraceListVoiceCallsParams,
+  TracerTraceReadParams,
   TracerTraceSessionGetSessionFilterValuesParams,
   TracerTraceSessionGetSessionGraphDataParams,
   TracerTraceSessionGetTraceSessionExportDataParams,
@@ -7075,9 +7078,14 @@ export type accountsTokenCreateResponse500 = {
   status: 500;
 };
 
+export type accountsTokenCreateResponse503 = {
+  data: AccountsErrorResponseApi;
+  status: 503;
+};
+
 export type accountsTokenCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500 | 503>;
 };
 
 export type accountsTokenCreateResponseSuccess =
@@ -7090,6 +7098,7 @@ export type accountsTokenCreateResponseError = (
   | accountsTokenCreateResponse403
   | accountsTokenCreateResponse404
   | accountsTokenCreateResponse500
+  | accountsTokenCreateResponse503
   | accountsTokenCreateResponseDefault
 ) & {
   headers: Headers;
@@ -19144,10 +19153,13 @@ export const getApiSetupChecksListUrl = () => {
 };
 
 /**
- * Returns ``{"status": "ok"|"issues", "mode": ..., "checks": [...]}``. No auth —
-it runs before any account exists. Self-hosted only: on cloud and EE the
-route answers 404, so neither the internal service topology nor the outbound
-probes it triggers are reachable by an anonymous caller.
+ * Returns ``{"status": "ok"|"issues", "mode": ..., "setup":
+"standalone"|"distributed"|"helm", "collector_http_url": ...,
+"account_exists": true|false, "checks": [...]}``. No auth — it runs
+before anyone can sign in. Self-hosted only:
+on cloud and EE the route answers 404, so neither the internal service
+topology nor the outbound probes it triggers are reachable by an
+anonymous caller.
  * @summary Public infrastructure probe for the OSS first-run setup screen.
  */
 export const apiSetupChecksList = async (
@@ -23166,6 +23178,7 @@ Includes queues where:
 Query params:
   - source_type, source_id  (single source)
   - OR sources (JSON array of {source_type, source_id} objects for multi-source lookup)
+  - project_id (optional): the project a trace / span drawer shows
  */
 export const modelHubAnnotationQueuesForSource = async (
   params?: ModelHubAnnotationQueuesForSourceParams,
@@ -32676,9 +32689,14 @@ export type modelHubDatasetsDuplicateCreateResponse500 = {
   status: 500;
 };
 
+export type modelHubDatasetsDuplicateCreateResponse503 = {
+  data: DatasetLimitCheckFailedErrorApi;
+  status: 503;
+};
+
 export type modelHubDatasetsDuplicateCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDatasetsDuplicateCreateResponseSuccess =
@@ -32691,6 +32709,7 @@ export type modelHubDatasetsDuplicateCreateResponseError = (
   | modelHubDatasetsDuplicateCreateResponse404
   | modelHubDatasetsDuplicateCreateResponse409
   | modelHubDatasetsDuplicateCreateResponse500
+  | modelHubDatasetsDuplicateCreateResponse503
   | modelHubDatasetsDuplicateCreateResponseDefault
 ) & {
   headers: Headers;
@@ -33051,9 +33070,14 @@ export type modelHubDevelopsAddAsNewCreateResponse500 = {
   status: 500;
 };
 
+export type modelHubDevelopsAddAsNewCreateResponse503 = {
+  data: DatasetLimitCheckFailedErrorApi;
+  status: 503;
+};
+
 export type modelHubDevelopsAddAsNewCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDevelopsAddAsNewCreateResponseSuccess =
@@ -33066,6 +33090,7 @@ export type modelHubDevelopsAddAsNewCreateResponseError = (
   | modelHubDevelopsAddAsNewCreateResponse404
   | modelHubDevelopsAddAsNewCreateResponse409
   | modelHubDevelopsAddAsNewCreateResponse500
+  | modelHubDevelopsAddAsNewCreateResponse503
   | modelHubDevelopsAddAsNewCreateResponseDefault
 ) & {
   headers: Headers;
@@ -33343,9 +33368,14 @@ export type modelHubDevelopsCloneDatasetCreateResponse500 = {
   status: 500;
 };
 
+export type modelHubDevelopsCloneDatasetCreateResponse503 = {
+  data: DatasetLimitCheckFailedErrorApi;
+  status: 503;
+};
+
 export type modelHubDevelopsCloneDatasetCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDevelopsCloneDatasetCreateResponseSuccess =
@@ -33358,6 +33388,7 @@ export type modelHubDevelopsCloneDatasetCreateResponseError = (
   | modelHubDevelopsCloneDatasetCreateResponse404
   | modelHubDevelopsCloneDatasetCreateResponse409
   | modelHubDevelopsCloneDatasetCreateResponse500
+  | modelHubDevelopsCloneDatasetCreateResponse503
   | modelHubDevelopsCloneDatasetCreateResponseDefault
 ) & {
   headers: Headers;
@@ -33417,10 +33448,15 @@ export type modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponse500 = {
   status: 500;
 };
 
+export type modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponse503 = {
+  data: DatasetLimitCheckFailedErrorApi;
+  status: 503;
+};
+
 export type modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+    status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
   };
 
 export type modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponseSuccess =
@@ -33433,6 +33469,7 @@ export type modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponseError = (
   | modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponse404
   | modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponse409
   | modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponse500
+  | modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponse503
   | modelHubDevelopsCreateDatasetFromHuggingfaceCreateResponseDefault
 ) & {
   headers: Headers;
@@ -33491,9 +33528,14 @@ export type modelHubDevelopsCreateDatasetFromLocalFileCreateResponse500 = {
   status: 500;
 };
 
+export type modelHubDevelopsCreateDatasetFromLocalFileCreateResponse503 = {
+  data: DatasetLimitCheckFailedErrorApi;
+  status: 503;
+};
+
 export type modelHubDevelopsCreateDatasetFromLocalFileCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDevelopsCreateDatasetFromLocalFileCreateResponseSuccess =
@@ -33506,6 +33548,7 @@ export type modelHubDevelopsCreateDatasetFromLocalFileCreateResponseError = (
   | modelHubDevelopsCreateDatasetFromLocalFileCreateResponse404
   | modelHubDevelopsCreateDatasetFromLocalFileCreateResponse409
   | modelHubDevelopsCreateDatasetFromLocalFileCreateResponse500
+  | modelHubDevelopsCreateDatasetFromLocalFileCreateResponse503
   | modelHubDevelopsCreateDatasetFromLocalFileCreateResponseDefault
 ) & {
   headers: Headers;
@@ -33564,9 +33607,14 @@ export type modelHubDevelopsCreateDatasetManuallyCreateResponse500 = {
   status: 500;
 };
 
+export type modelHubDevelopsCreateDatasetManuallyCreateResponse503 = {
+  data: DatasetLimitCheckFailedErrorApi;
+  status: 503;
+};
+
 export type modelHubDevelopsCreateDatasetManuallyCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDevelopsCreateDatasetManuallyCreateResponseSuccess =
@@ -33579,6 +33627,7 @@ export type modelHubDevelopsCreateDatasetManuallyCreateResponseError = (
   | modelHubDevelopsCreateDatasetManuallyCreateResponse404
   | modelHubDevelopsCreateDatasetManuallyCreateResponse409
   | modelHubDevelopsCreateDatasetManuallyCreateResponse500
+  | modelHubDevelopsCreateDatasetManuallyCreateResponse503
   | modelHubDevelopsCreateDatasetManuallyCreateResponseDefault
 ) & {
   headers: Headers;
@@ -33637,9 +33686,14 @@ export type modelHubDevelopsCreateEmptyDatasetCreateResponse500 = {
   status: 500;
 };
 
+export type modelHubDevelopsCreateEmptyDatasetCreateResponse503 = {
+  data: DatasetLimitCheckFailedErrorApi;
+  status: 503;
+};
+
 export type modelHubDevelopsCreateEmptyDatasetCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDevelopsCreateEmptyDatasetCreateResponseSuccess =
@@ -33652,6 +33706,7 @@ export type modelHubDevelopsCreateEmptyDatasetCreateResponseError = (
   | modelHubDevelopsCreateEmptyDatasetCreateResponse404
   | modelHubDevelopsCreateEmptyDatasetCreateResponse409
   | modelHubDevelopsCreateEmptyDatasetCreateResponse500
+  | modelHubDevelopsCreateEmptyDatasetCreateResponse503
   | modelHubDevelopsCreateEmptyDatasetCreateResponseDefault
 ) & {
   headers: Headers;
@@ -33710,9 +33765,14 @@ export type modelHubDevelopsCreateSyntheticDatasetCreateResponse500 = {
   status: 500;
 };
 
+export type modelHubDevelopsCreateSyntheticDatasetCreateResponse503 = {
+  data: DatasetLimitCheckFailedErrorApi;
+  status: 503;
+};
+
 export type modelHubDevelopsCreateSyntheticDatasetCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDevelopsCreateSyntheticDatasetCreateResponseSuccess =
@@ -33725,6 +33785,7 @@ export type modelHubDevelopsCreateSyntheticDatasetCreateResponseError = (
   | modelHubDevelopsCreateSyntheticDatasetCreateResponse404
   | modelHubDevelopsCreateSyntheticDatasetCreateResponse409
   | modelHubDevelopsCreateSyntheticDatasetCreateResponse500
+  | modelHubDevelopsCreateSyntheticDatasetCreateResponse503
   | modelHubDevelopsCreateSyntheticDatasetCreateResponseDefault
 ) & {
   headers: Headers;
@@ -37018,9 +37079,14 @@ export type modelHubDevelopsCreateDatasetCreateResponse500 = {
   status: 500;
 };
 
+export type modelHubDevelopsCreateDatasetCreateResponse503 = {
+  data: DatasetLimitCheckFailedErrorApi;
+  status: 503;
+};
+
 export type modelHubDevelopsCreateDatasetCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>;
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500 | 503>;
 };
 
 export type modelHubDevelopsCreateDatasetCreateResponseSuccess =
@@ -37033,6 +37099,7 @@ export type modelHubDevelopsCreateDatasetCreateResponseError = (
   | modelHubDevelopsCreateDatasetCreateResponse404
   | modelHubDevelopsCreateDatasetCreateResponse409
   | modelHubDevelopsCreateDatasetCreateResponse500
+  | modelHubDevelopsCreateDatasetCreateResponse503
   | modelHubDevelopsCreateDatasetCreateResponseDefault
 ) & {
   headers: Headers;
@@ -39564,6 +39631,14 @@ Query params: page (0-based), page_size, period
 The response is rendered through
 ``EvalUsageStatsResponseResultSerializer(instance=...).data`` at the
 boundary so shape drift surfaces here instead of shipping silently.
+
+Counts and lists only successful runs from the usage ledger
+(``APICallLog`` rows with status ``success``), from every source: tasks,
+playground, composites, datasets and experiments. Errored and skipped runs
+are not usage but stay in the eval logs (task logs, template eval logs);
+an in-flight run counts once it succeeds. ``error_count`` is therefore 0
+and ``pass_rate`` 100 whenever there are runs; both remain for
+compatibility.
  * @summary GET /model-hub/eval-templates/<id>/usage/
  */
 export const modelHubEvalTemplatesUsageList = async (
@@ -69160,19 +69235,26 @@ export type tracerDatasetAddToNewDatasetResponse201 = {
   status: 201;
 };
 
+export type tracerDatasetAddToNewDatasetResponse503 = {
+  data: DatasetLimitCheckFailedErrorApi;
+  status: 503;
+};
+
 export type tracerDatasetAddToNewDatasetResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 201 | 503>;
 };
 
 export type tracerDatasetAddToNewDatasetResponseSuccess =
   tracerDatasetAddToNewDatasetResponse201 & {
     headers: Headers;
   };
-export type tracerDatasetAddToNewDatasetResponseError =
-  tracerDatasetAddToNewDatasetResponseDefault & {
-    headers: Headers;
-  };
+export type tracerDatasetAddToNewDatasetResponseError = (
+  | tracerDatasetAddToNewDatasetResponse503
+  | tracerDatasetAddToNewDatasetResponseDefault
+) & {
+  headers: Headers;
+};
 
 export type tracerDatasetAddToNewDatasetResponse =
   | tracerDatasetAddToNewDatasetResponseSuccess
@@ -79351,7 +79433,7 @@ export const getTracerTraceGetGraphMethodsUrl = (
  * Fetch data for the observe graph with optimized queries
  */
 export const tracerTraceGetGraphMethods = async (
-  observeGraphDataRequestApi: ObserveGraphDataRequestApi,
+  traceGraphDataRequestApi: TraceGraphDataRequestApi,
   params?: TracerTraceGetGraphMethodsParams,
   options?: RequestInit,
 ): Promise<tracerTraceGetGraphMethodsResponse> => {
@@ -79361,7 +79443,7 @@ export const tracerTraceGetGraphMethods = async (
       ...options,
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
-      body: JSON.stringify(observeGraphDataRequestApi),
+      body: JSON.stringify(traceGraphDataRequestApi),
     },
   );
 };
@@ -80265,6 +80347,7 @@ export const getTracerTraceVoiceCallDetailUrl = (
 /**
  * Query params:
 - trace_id or legacy traceId (required) — UUID of the voice call trace.
+- project_id (optional) — the project the call was opened from.
  * @summary Return the heavy / detail-only fields for a single voice call.
  */
 export const tracerTraceVoiceCallDetail = async (
@@ -80321,21 +80404,46 @@ export type tracerTraceReadResponse =
   | tracerTraceReadResponseSuccess
   | tracerTraceReadResponseError;
 
-export const getTracerTraceReadUrl = (id: string) => {
-  return `/tracer/trace/${id}/`;
+export const getTracerTraceReadUrl = (
+  id: string,
+  params?: TracerTraceReadParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/trace/${id}/?${stringifiedParams}`
+    : `/tracer/trace/${id}/`;
 };
 
 /**
- * Retrieve a trace by its ID.
+ * Query params:
+- project_id (optional) — the project the trace was opened from.
+ * @summary Retrieve a trace by its ID.
  */
 export const tracerTraceRead = async (
   id: string,
+  params?: TracerTraceReadParams,
   options?: RequestInit,
 ): Promise<tracerTraceReadResponse> => {
-  return apiMutator<tracerTraceReadResponse>(getTracerTraceReadUrl(id), {
-    ...options,
-    method: "GET",
-  });
+  return apiMutator<tracerTraceReadResponse>(
+    getTracerTraceReadUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
 };
 
 export type tracerTraceUpdateResponse200 = {

@@ -73,7 +73,7 @@ The chain, each link code-verified:
 
 1. Platform-authored bundles render a job- and world-unique agent name.
    The multi-component path hardcodes the literal
-   `uber-voice-booking-{{JOB_ID}}-w{{WORLD_INDEX}}` via `setdefault`
+   `cab-voice-booking-{{JOB_ID}}-w{{WORLD_INDEX}}` via `setdefault`
    (`bundle_author_v2.py:646-649`); the single-component path derives the
    prefix from `root.name` and direct-assigns the same
    `-{{JOB_ID}}-w{{WORLD_INDEX}}` suffix (`:749-751`).
@@ -147,7 +147,7 @@ and, on the shared server, cross-job — contamination.
   arbitrary worker ACROSS JOBS, and the ack passes (a same-named agent
   joins); prevention is the only defense (§1). The platform-authored
   multi-component path already complies (literal
-  `uber-voice-booking-{{JOB_ID}}-w{{WORLD_INDEX}}`,
+  `cab-voice-booking-{{JOB_ID}}-w{{WORLD_INDEX}}`,
   `bundle_author_v2.py:646-649`), as does the single-component path
   (`:749-751`). The world half is specified at
   `bundle-producer-contract.md` §2.7; the guard is **ABSENT at ALK

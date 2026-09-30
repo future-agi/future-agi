@@ -130,6 +130,9 @@ _SOURCE_BY_KEY_VOICE = {
     # offered eval asks for `output` on voice, so no stored mapping migrates.
     "output": "transcript",
     "text": "transcript",
+    # An eval that reads speech from `conversation` and the text record from
+    # `transcript` (action_confirmation_gating) gets both on a voice run.
+    "transcript": "transcript",
     "agent_prompt": "agent_prompt",
     "system_prompt": "agent_prompt",
     # A simulated call has no retrieval context, so the agent's own
@@ -143,6 +146,7 @@ _SOURCE_BY_KEY_TEXT = {
     "conversation": "transcript",
     "output": "transcript",
     "text": "transcript",
+    "transcript": "transcript",
     "agent_prompt": "agent_prompt",
     "system_prompt": "agent_prompt",
     "context": "agent_prompt",

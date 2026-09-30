@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import PropTypes from "prop-types";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -11,10 +11,9 @@ import useWorkspaceTab from "../helpers/useWorkspaceTab";
 import { gapsByTab, counts } from "../helpers/workspaceGaps";
 
 // The five tab bodies are exercised in their own suites — here they are markers
-// so the switch is what's under test. The two that read the eval set echo the
-// names they were handed, because which state each one gets is the wiring
-// under test: a backed environment's real applied evals overlaid on the store,
-// not the raw store.
+// so the switch is what's under test. The Overview echoes the eval names it was
+// handed, because which state it gets is the wiring under test: a backed
+// environment's real applied evals overlaid on the store, not the raw store.
 function echoEvals(label, envState) {
   return `${label}:${(envState?.evals || []).map((e) => e.name || e.id).join(",")}`;
 }
@@ -35,11 +34,17 @@ vi.mock("../overview/OverviewPanel", () => ({ default: OverviewPanelStub }));
 vi.mock("../contract/RlContractPanel", () => ({ default: () => <div>contract-body</div> }));
 vi.mock("../scenarios/ScenariosStep", () => ({ default: () => <div>scenarios-body</div> }));
 vi.mock("../evals/EvalsStep", () => ({ default: () => <div>evals-body</div> }));
-function RunsPanelStub({ envState }) {
-  return <div>{echoEvals("runs-body", envState)}</div>;
-}
-RunsPanelStub.propTypes = { envState: PropTypes.object };
-vi.mock("../runs/RunsPanel", () => ({ default: RunsPanelStub }));
+vi.mock("../runs/summary/RunsSummary", () => ({ default: () => <div>runs-body</div> }));
+
+// The real runs hook by default; the loading cases override it.
+vi.mock("src/api/simulate-environments/runs", async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, useEnvironmentRuns: vi.fn(actual.useEnvironmentRuns) };
+});
+const runsApi = await import("src/api/simulate-environments/runs");
+const { useEnvironmentRuns: realUseEnvironmentRuns } = await vi.importActual(
+  "src/api/simulate-environments/runs",
+);
 
 const ENV = { id: "env-1", name: "Refund Copilot", surface: "voice" };
 
@@ -72,11 +77,43 @@ function renderPanels(props = {}) {
 }
 
 describe("WorkspacePanels", () => {
-  it("renders all workspace tabs with Overview first and Settings last", () => {
-    renderPanels();
+  afterEach(() => runsApi.useEnvironmentRuns.mockImplementation(realUseEnvironmentRuns));
+
+  it("renders all workspace tabs with Overview first and Settings last once a run exists", () => {
+    renderPanels({ envState: baseEnvState({ runs: [{ id: "r1" }] }) });
     ["Overview", "Contract", "Scenarios", "Evaluations", "Runs", "Settings"].forEach((label) => {
       expect(screen.getByRole("tab", { name: new RegExp(label) })).toBeInTheDocument();
     });
+  });
+
+  it("hides the Runs tab until the environment has a run", () => {
+    renderPanels();
+    expect(screen.queryByRole("tab", { name: /Runs/ })).toBeNull();
+    ["Overview", "Contract", "Scenarios", "Evaluations", "Settings"].forEach((label) => {
+      expect(screen.getByRole("tab", { name: new RegExp(label) })).toBeInTheDocument();
+    });
+  });
+
+  it("falls back to the Overview for ?tab=runs while there are no runs", () => {
+    renderPanels({ tab: "runs" });
+    expect(screen.getByText(/^overview-body:/)).toBeInTheDocument();
+    expect(screen.queryByText("runs-body")).toBeNull();
+  });
+
+  // A ?tab=runs deep link lands before the run list does. Keeping the tab
+  // while it loads stops the page bouncing to the Overview and back.
+  it("keeps the Runs tab for ?tab=runs while the runs are loading", () => {
+    runsApi.useEnvironmentRuns.mockReturnValue({ runs: [], isLoading: true });
+    renderPanels({ tab: "runs" });
+    expect(screen.getByRole("tab", { name: /Runs/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("runs-body")).toBeInTheDocument();
+    expect(screen.queryByText(/^overview-body:/)).toBeNull();
+  });
+
+  it("does not show the Runs tab on other tabs while the runs are loading", () => {
+    runsApi.useEnvironmentRuns.mockReturnValue({ runs: [], isLoading: true });
+    renderPanels({ tab: "overview" });
+    expect(screen.queryByRole("tab", { name: /Runs/ })).toBeNull();
   });
 
   it("badges scenarios/evals from counts and runs from the live executions", () => {
@@ -130,22 +167,6 @@ describe("WorkspacePanels", () => {
 
     await user.click(screen.getByRole("tab", { name: /Contract/ }));
     expect(onTabChange).toHaveBeenCalledWith("contract");
-  });
-
-  it("hands the Runs panel the badge state, so the pre-flight count matches the tab", () => {
-    renderPanels({
-      tab: "runs",
-      envState: baseEnvState({ evals: [{ id: "stale-store-eval" }] }),
-      serverEnvState: baseEnvState({
-        evals: [{ id: "cfg-1", name: "no_misselling" }],
-      }),
-    });
-    expect(screen.getByText("runs-body:no_misselling")).toBeInTheDocument();
-  });
-
-  it("falls back to envState when no badge state is passed (the build page)", () => {
-    renderPanels({ tab: "runs", envState: baseEnvState({ evals: [{ id: "e1" }] }) });
-    expect(screen.getByText("runs-body:e1")).toBeInTheDocument();
   });
 
   // The Overview's next-steps checklist counts applied evals for its "Add

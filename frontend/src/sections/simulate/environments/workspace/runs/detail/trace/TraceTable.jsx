@@ -26,8 +26,10 @@ import {
   numCellSx,
   bodyCellSx,
   runOutcome,
+  CALL_STATUS_CHIPS,
 } from "./traceTable.constants";
-import { MetricValue, Score, Field } from "./traceCells";
+import StatusChip from "../../StatusChip";
+import { MetricValue, Score, Field, UnscoredEval } from "./traceCells";
 import TraceGroupHeaderRow from "./TraceGroupHeaderRow";
 
 // The theme hides every border on a table's last row, which here is the head
@@ -55,6 +57,9 @@ const lastRowDividersSx = {
 // The free-text columns stay narrow so a collapsed table (one count per group)
 // doesn't stretch; long text is cut at four lines — the drawer has the rest.
 const TEXT_COL_WIDTH = { long: 260, short: 200 };
+// A call still in flight — its eval cells can only be waiting. `analyzing`
+// is a finished conversation whose evals are grading (the chat path).
+const LIVE_CALL_STATUSES = new Set(["pending", "queued", "ongoing", "analyzing"]);
 const textCellSx = (width) => ({
   ...bodyCellSx,
   width,
@@ -127,6 +132,7 @@ export default function TraceTable({
 
   const renderRow = (t) => {
     const outcome = runOutcome(t.status);
+    const callLive = LIVE_CALL_STATUSES.has(t.executionStatus);
     const active = t.id === activeCallId;
     return (
       <TableRow
@@ -209,6 +215,23 @@ export default function TraceTable({
           </TableCell>
         )}
 
+        {show("status") && (
+          <TableCell sx={bodyCellSx} onClick={() => onOpen(t)}>
+            {CALL_STATUS_CHIPS[t.executionStatus] ? (
+              <Box sx={{ display: "inline-flex" }}>
+                <StatusChip
+                  status={CALL_STATUS_CHIPS[t.executionStatus].chip}
+                  label={CALL_STATUS_CHIPS[t.executionStatus].label}
+                />
+              </Box>
+            ) : (
+              <Typography sx={{ typography: "s3", color: "text.disabled" }}>
+                -
+              </Typography>
+            )}
+          </TableCell>
+        )}
+
         {show("persona") && (
           <TableCell sx={bodyCellSx} onClick={() => onOpen(t)}>
             {t.personaDetails?.name ? (
@@ -271,22 +294,22 @@ export default function TraceTable({
 
         {show("csat") && (
           <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
-            <MetricValue metric="csat" value={t.csat} />
+            <MetricValue metric="csat" value={t.csat} loading={callLive} />
           </TableCell>
         )}
         {show("turns") && (
           <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
-            <MetricValue metric="turns" value={t.turns} />
+            <MetricValue metric="turns" value={t.turns} loading={callLive} />
           </TableCell>
         )}
         {show("latency") && (
           <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
-            <MetricValue metric="latency" value={t.latencyMs} suffix="ms" />
+            <MetricValue metric="latency" value={t.latencyMs} suffix="ms" loading={callLive} />
           </TableCell>
         )}
         {show("tokens") && (
           <TableCell sx={numCellSx} onClick={() => onOpen(t)}>
-            <MetricValue metric="tokens" value={t.tokens} />
+            <MetricValue metric="tokens" value={t.tokens} loading={callLive} />
           </TableCell>
         )}
 
@@ -299,12 +322,14 @@ export default function TraceTable({
                 sx={{ ...bodyCellSx, p: 0, position: "relative" }}
                 onClick={() => onOpen(t)}
               >
-                {r ? (
+                {r?.score != null || r?.label ? (
                   <Score result={r} />
                 ) : (
-                  <Box sx={{ p: 2, typography: "s2", color: "text.disabled" }}>
-                    -
-                  </Box>
+                  <UnscoredEval
+                    result={r}
+                    callLive={callLive}
+                    callStatus={t.executionStatus}
+                  />
                 )}
               </TableCell>
             );
@@ -365,6 +390,11 @@ export default function TraceTable({
               {show("callDetails") && (
                 <TableCell sx={{ ...headCellSx, width: 200 }}>
                   Run details
+                </TableCell>
+              )}
+              {show("status") && (
+                <TableCell sx={{ ...headCellSx, width: 120 }}>
+                  Status
                 </TableCell>
               )}
               {show("persona") && (

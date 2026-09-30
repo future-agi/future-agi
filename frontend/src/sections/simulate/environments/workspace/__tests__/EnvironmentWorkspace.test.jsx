@@ -200,7 +200,7 @@ describe("EnvironmentWorkspace route shell", () => {
     });
   });
 
-  it("renders a seeded client env: name, Live pill and the five tabs", async () => {
+  it("renders a seeded client env: name, Live pill and its tabs, without Runs before a run", async () => {
     seedClientEnv(TEMPLATE, {
       ...emptyEnvState(),
       agent: { name: "Support agent" },
@@ -214,12 +214,13 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(await screen.findByText("Refund Copilot", { selector: "p" }))
       .toBeInTheDocument();
     expect(screen.getByText("Ready")).toBeInTheDocument();
-    ["Overview", "Contract", "Scenarios", "Evaluations", "Runs", "Settings"].forEach((label) =>
+    ["Overview", "Contract", "Scenarios", "Evaluations", "Settings"].forEach((label) =>
       expect(screen.getByRole("tab", { name: new RegExp(label) })).toBeInTheDocument(),
     );
+    expect(screen.queryByRole("tab", { name: /Runs/ })).toBeNull();
   });
 
-  it("opens the Runs tab from ?tab=runs", async () => {
+  it("lands ?tab=runs on the Overview while the env has no runs", async () => {
     seedClientEnv(TEMPLATE, {
       ...emptyEnvState(),
       agent: { name: "Support agent" },
@@ -228,11 +229,12 @@ describe("EnvironmentWorkspace route shell", () => {
 
     renderWorkspace("/dashboard/simulate/environments/env-1?tab=runs");
 
-    expect(await screen.findByText("Pre-flight")).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /Runs/ })).toHaveAttribute(
+    expect(await screen.findByRole("tab", { name: /Overview/ })).toHaveAttribute(
       "aria-selected",
       "true",
     );
+    expect(screen.queryByRole("tab", { name: /Runs/ })).toBeNull();
+    expect(screen.queryByText("Pre-flight")).toBeNull();
   });
 
   it("shows the not-found state for an unknown id", async () => {

@@ -979,6 +979,15 @@ def scenarios_meant(
     keys = {
         str(one.get("scenario_key") or ""): str(one.get("name") or "") for one in suite
     }
+    from simulate.services.hosted_harness_gateway import _scenario_token
+
+    # Older suites carry no scenario_key, so a row's hyphenated key must still find its name.
+    loose = {
+        _scenario_token(label): str(one.get("name") or "")
+        for one in suite
+        for label in (one.get("name"), one.get("scenario_key"))
+        if label
+    }
     found: list[str] = []
 
     def take(name: str) -> None:
@@ -995,6 +1004,9 @@ def scenarios_meant(
                 continue
             if part in keys:
                 take(keys[part])
+                continue
+            if _scenario_token(part) in loose:
+                take(loose[_scenario_token(part)])
                 continue
             span = re.fullmatch(r"(\d+)\s*(?:-|–|to|through)\s*(\d+)", part)
             if span:
@@ -1511,7 +1523,7 @@ class HostedHarnessProvider:
         if job.state in terminal_states:
             conversation = (
                 HostedHarnessConversation.no_workspace_objects.filter(job=job)
-                .only("latest_workspace_object_key")
+                .only("latest_workspace_object_key", "state")
                 .first()
             )
             metadata = (job.payload or {}).get("metadata") or {}
@@ -1519,11 +1531,22 @@ class HostedHarnessProvider:
                 metadata.get("authoring_object_key")
                 or getattr(conversation, "latest_workspace_object_key", None)
             )
-            if job.state == HostedHarnessJob.State.COMPLETED and not has_archive:
+            files_gone = (
+                getattr(conversation, "state", None)
+                == HostedHarnessConversation.State.RETIRED
+            )
+            if files_gone or (
+                job.state == HostedHarnessJob.State.COMPLETED and not has_archive
+            ):
                 return Response(
                     {
                         "error": "conversation_workspace_not_ready",
-                        "message": "This completed run has no saved authoring workspace to restore.",
+                        "message": (
+                            "This environment's saved files are no longer available; "
+                            "rebuild it to chat."
+                            if files_gone
+                            else "This completed run has no saved authoring workspace to restore."
+                        ),
                         "retryable": False,
                     },
                     status=status.HTTP_409_CONFLICT,
@@ -1841,8 +1864,10 @@ class HostedHarnessProvider:
     def amend_scenarios(self, request, pk) -> Response:
         """Edit a finished run's authored suite, one receipt per requested change."""
         from simulate.services.hosted_harness_gateway import (
+            AuthoringArchiveKept,
             push_scenarios_into_live_sandbox,
             rewrite_authoring_scenarios,
+            rewrite_conversation_scenarios,
         )
 
         changes = request.validated_data["changes"]
@@ -1892,6 +1917,7 @@ class HostedHarnessProvider:
             by_name = {str(one.get("name") or ""): one for one in suite}
             receipts = []
             touched = False
+            changed: set[str] = set()
             # One change may name many scenarios; each gets its own receipt.
             spread = []
             for change in changes:
@@ -1969,6 +1995,7 @@ class HostedHarnessProvider:
                         continue
                     target[field] = change.get("value")
                     touched = True
+                    changed.add(name)
                     receipts.append(
                         {
                             "scenario": name,
@@ -2008,6 +2035,7 @@ class HostedHarnessProvider:
                     )
                     target["persona"] = persona
                     touched = True
+                    changed.add(name)
                     receipts.append(
                         {
                             "scenario": name,
@@ -2023,8 +2051,8 @@ class HostedHarnessProvider:
                         "why": f"unknown change {op!r}",
                     }
                 )
-            # Edits pass the same gates as a written scenario.
-            if touched:
+            # Only the scenarios this amend changed pass the gates again.
+            if changed:
                 try:
                     from fi.alk.harness.scenario import Scenario, scenario_edit_problems
                 except (
@@ -2033,7 +2061,11 @@ class HostedHarnessProvider:
                     scenario_edit_problems = None
 
                 rejected = []
-                for one in suite if scenario_edit_problems else ():
+                for one in (
+                    [one for one in suite if str(one.get("name") or "") in changed]
+                    if scenario_edit_problems
+                    else ()
+                ):
                     try:
                         problems = scenario_edit_problems(Scenario.model_validate(one))
                     except Exception:  # noqa: BLE001 - a document we cannot read is the edit's fault
@@ -2061,6 +2093,25 @@ class HostedHarnessProvider:
                         }
                     )
             if touched:
+                # The archive a run replays changes first; if it cannot, nothing changes.
+                try:
+                    rewrite_authoring_scenarios(job, suite)
+                    rewrite_conversation_scenarios(job, suite)
+                except AuthoringArchiveKept as kept:
+                    return Response(
+                        {
+                            "receipts": [
+                                {
+                                    **one,
+                                    "outcome": "refused",
+                                    "why": f"nothing changed: {kept}",
+                                }
+                                if one.get("outcome") == "applied"
+                                else one
+                                for one in receipts
+                            ]
+                        }
+                    )
                 if output is not None:
                     output.data = suite
                     output.summary = f"{len(suite)} pre-authored scenarios"
@@ -2084,7 +2135,6 @@ class HostedHarnessProvider:
                         job.id,
                         exc_info=True,
                     )
-                rewrite_authoring_scenarios(job, suite)
                 delivered = push_scenarios_into_live_sandbox(job, suite)
                 if delivered:
                     receipts = [

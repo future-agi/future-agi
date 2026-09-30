@@ -117,7 +117,10 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
         // Keep the current rows painted while their same-query replacement is
         // fetched. Calling the parent refresh callback directly bypasses each
         // grid's preserve-rows path and makes the whole table flash black.
-        // Exact aggregations remain an explicit reload-only operation.
+        // Auto refresh never touches exact aggregations. They recompute on an
+        // explicit Reload, and (for the Observe system-metric charts and the
+        // Agent Graph) in the background when a visit is served an old
+        // snapshot of a still-open window; see read_or_schedule_exact_snapshot.
         window.dispatchEvent(
           new CustomEvent(OBSERVE_LIST_REFRESH_EVENT, {
             detail: { observeId },
@@ -192,6 +195,10 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
         handleAggregationRefreshState,
       );
   }, [observeId]);
+
+  const reloadLabel = isAggregationRefreshing
+    ? "Reload rows (charts are refreshing)"
+    : "Reload data";
 
   const { data: projectList, isLoading: isLoadingProjects } = useProjectList();
 
@@ -553,19 +560,14 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
             {/* Reload */}
             <CustomTooltip
               show
-              title={
-                isAggregationRefreshing ? "Refreshing data" : "Reload data"
-              }
+              title={reloadLabel}
               arrow
               size="small"
               type="black"
             >
               <ObserveIconButton
                 size="small"
-                aria-label={
-                  isAggregationRefreshing ? "Refreshing data" : "Reload data"
-                }
-                disabled={isAggregationRefreshing}
+                aria-label={reloadLabel}
                 onClick={() => {
                   // Use refreshData from LLMTracingView if available
                   refreshData?.({ includeAggregations: false });
@@ -574,11 +576,17 @@ const ObserveHeader = ({ text, refreshData, resetFilters }) => {
                   queryClient.invalidateQueries({
                     queryKey: ["observe-projects"],
                   });
-                  // Dispatch a custom event that the grid can listen to
+                  // While an exact aggregation refreshes (often a visit's
+                  // background revalidation), Reload stays available for the
+                  // rows: it sends the list-only event, and the charts keep
+                  // polling the refresh already under way.
                   window.dispatchEvent(
-                    new CustomEvent("observe-refresh", {
-                      detail: { observeId },
-                    }),
+                    new CustomEvent(
+                      isAggregationRefreshing
+                        ? OBSERVE_LIST_REFRESH_EVENT
+                        : "observe-refresh",
+                      { detail: { observeId } },
+                    ),
                   );
                 }}
               >

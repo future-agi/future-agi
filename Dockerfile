@@ -2,18 +2,30 @@ FROM futureagi/future-agi-base:v1.0.4
 
 ENV NLTK_DATA=/usr/local/share/nltk_data
 
-COPY futureagi/ .
-
 # The application source can advance independently of the shared base image.
 # Keep small import-critical additions explicit here so every service built
 # from this Dockerfile (backend and queue workers alike) has the same runtime.
+# Installed before the source copy, so a source change reuses this layer.
 RUN pip install --no-cache-dir \
     "daytona==0.207.0" \
     "httpx-ws==0.7.2" \
     "urllib3>=2.1" \
     "e2b==2.37.1" \
     "claude-agent-sdk==0.2.139" \
-    "aiohttp>=3.13.3"
+    "aiohttp>=3.13.3" \
+    "granian[uvloop,reload]==2.8.3" \
+    "channels-redis==4.3.0" \
+    "asgiref==3.11.0"
+# daytona, httpx-ws and e2b mirror the `sandbox` extra of
+# futureagi/pyproject.toml and claude-agent-sdk its `localizer` extra;
+# aiohttp, granian, channels-redis and asgiref mirror futureagi/requirements.txt
+# until a future-agi-base rebuilt from it (v1.0.5) replaces v1.0.4.
+# deploy/tests/test_image_standards.py compares the pins.
+# granian>=2.7.1 fixes granian#798. channels-redis (CHANNEL_LAYER_BACKEND=redis)
+# needs asgiref>=3.9.1; pinning it stops pip from replacing the base's 3.8.1
+# with whatever is latest.
+
+COPY futureagi/ .
 
 # The gRPC import path loads the EE trace scanner, which requires these corpora.
 # Pin both the nltk_data revision and archive checksums for reproducible images.

@@ -78,11 +78,10 @@ class LinearTeamsResponseSerializer(serializers.Serializer):
 
 def _cluster_url(cluster_id: str) -> str:
     """Absolute URL to the cluster's detail page in the Future AGI app."""
-    app_url = getattr(settings, "APP_URL", None)
-    scheme = getattr(settings, "ssl", "https://")
+    app_url = getattr(settings, "APP_BASE_URL", "")
     if not app_url:
         return ""
-    return f"{scheme}{app_url}/dashboard/error-feed/{cluster_id}"
+    return f"{app_url}/dashboard/error-feed/{cluster_id}"
 
 
 def _build_issue_description(cluster: TraceErrorGroup, trace_id: str | None) -> str:

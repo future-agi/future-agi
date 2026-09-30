@@ -73,8 +73,13 @@ function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection
           bgcolor: "background.neutral",
           borderBottom: "1px solid", borderColor: "divider",
           borderTop: "1px solid", borderTopColor: "divider",
+          // The header is sticky, so rows scroll under it: tint on top of the
+          // solid background rather than replacing it with a see-through one.
           "&:hover": {
-            bgcolor: (t) => alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05),
+            backgroundImage: (t) => {
+              const tint = alpha(t.palette.text.primary, t.palette.mode === "dark" ? 0.08 : 0.05);
+              return `linear-gradient(${tint}, ${tint})`;
+            },
           },
         }}
       >

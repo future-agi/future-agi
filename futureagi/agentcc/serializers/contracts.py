@@ -442,9 +442,11 @@ class APIKeyBulkItemSerializer(serializers.Serializer):
     name = serializers.CharField()
     owner = serializers.CharField(allow_blank=True)
     key_hash = serializers.CharField()
+    key_prefix = serializers.CharField(allow_blank=True)
     models = serializers.ListField(child=serializers.CharField())
     providers = serializers.ListField(child=serializers.CharField())
     metadata = serializers.DictField()
+    expires_at = serializers.DateTimeField(allow_null=True)
 
 
 class APIKeyBulkResponseSerializer(serializers.Serializer):

@@ -21,6 +21,9 @@ function liveEvalCell(col, data) {
     passed: data.passed ?? stored?.passed ?? null,
     label: typeof data.value === "string" ? data.value : (stored?.label ?? null),
     reason: data.reason || "",
+    // "completed", "failed", "error", "skipped" or "pending" — lets an
+    // unscored cell say why.
+    status: String(data.status || "completed").toLowerCase(),
     threshold: 0.5,
     removed: data.removed === true,
   };

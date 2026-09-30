@@ -117,9 +117,28 @@ class EvalTaskUsageQuerySerializer(StrictInputSerializer):
 class EvalTaskUsageStatsSerializer(serializers.Serializer):
     total_runs = serializers.IntegerField(min_value=0)
     runs_period = serializers.IntegerField(min_value=0)
-    success_count = serializers.IntegerField(min_value=0)
-    error_count = serializers.IntegerField(min_value=0)
-    pass_rate = serializers.FloatField(min_value=0, max_value=100)
+    success_count = serializers.IntegerField(
+        min_value=0,
+        help_text=(
+            "Deprecated compatibility field. Usage counts only successful "
+            "runs, so this always equals runs_period."
+        ),
+    )
+    error_count = serializers.IntegerField(
+        min_value=0,
+        help_text=(
+            "Deprecated compatibility field. Usage counts only successful "
+            "runs, so this is always 0; failed runs stay in the task logs."
+        ),
+    )
+    pass_rate = serializers.FloatField(
+        min_value=0,
+        max_value=100,
+        help_text=(
+            "Deprecated compatibility field. Usage counts only successful "
+            "runs, so this is 100 when runs_period is above 0, otherwise 0."
+        ),
+    )
     total_runs_is_lower_bound = serializers.BooleanField(required=False)
     runs_period_is_lower_bound = serializers.BooleanField(required=False)
 

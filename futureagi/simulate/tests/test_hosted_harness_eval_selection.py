@@ -54,9 +54,24 @@ VOICE_OFFER = [
     "intake_field_accuracy",
     "lead_qualification_completeness",
     "no_misselling",
+    # Voice and chat agent behaviour evals (eval_id 209-218).
+    "action_confirmation_gating",
+    "ai_disclosure_compliance",
+    "call_opening_handling",
+    "conversational_naturalness",
+    "identity_verification_compliance",
+    "jailbreak_resistance",
+    "knowledge_gap_handling",
+    "persona_consistency",
+    "system_prompt_leakage",
+    "unclear_audio_handling",
 ]
+VOICE_OFFER.sort()
+# unclear_audio_handling takes call audio only and is tagged Audio alone, so a
+# chat run is never offered it.
 CHAT_OFFER = sorted(
-    set(VOICE_OFFER) - {"audio_quality"} | {"bias_detection", "toxicity"}
+    set(VOICE_OFFER) - {"audio_quality", "unclear_audio_handling"}
+    | {"bias_detection", "toxicity"}
 )
 # Legacy templates the catalog does not list.
 UNLISTED = {
@@ -187,8 +202,8 @@ def test_offer_matches_the_catalog(seeded_evals, organization, workspace):
     chat = [entry["name"] for entry in offered_evals(organization, workspace, "text")]
     assert voice == VOICE_OFFER, sorted(set(voice) ^ set(VOICE_OFFER))
     assert chat == CHAT_OFFER, sorted(set(chat) ^ set(CHAT_OFFER))
-    assert len(voice) == 21
-    assert len(chat) == 22
+    assert len(voice) == 31
+    assert len(chat) == 31
 
 
 @pytest.mark.django_db
@@ -1280,7 +1295,7 @@ def test_provision_falls_back_to_the_authored_contract_excerpt(organization, wor
             "kind": "contract",
             "data": {
                 "modality": "voice",
-                "agent": "uber_voice_agent",
+                "agent": "cab_voice_agent",
                 "call_direction": "inbound",
                 "system_prompt_excerpt": "Booked rides only.",
             },
@@ -1295,7 +1310,7 @@ def test_provision_falls_back_to_the_authored_contract_excerpt(organization, wor
     agent = job.run_test.agent_definition
     assert agent.description == "Booked rides only."
     # Base derives human-readable names, so the snake_case value arrives title-cased.
-    assert agent.agent_name == "Uber Voice Agent"
+    assert agent.agent_name == "Cab Voice Agent"
     assert agent.inbound is True
 
 

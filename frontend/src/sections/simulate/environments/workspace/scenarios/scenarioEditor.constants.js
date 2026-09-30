@@ -78,6 +78,14 @@ export const deriveNoise = (persona) => {
 export const subTaskLabel = (s) =>
   typeof s === "string" ? s : (s?.label || s?.text || s?.title || "");
 
+// The same sub-goals as { id, label } for display, empty ones dropped. The
+// table cell and the list view both render from this, so they can't disagree
+// about which shapes they understand.
+export const normaliseSubTasks = (subTasks) =>
+  (subTasks || [])
+    .map((st, i) => ({ id: st?.id || `st-${i}`, label: subTaskLabel(st) }))
+    .filter((st) => st.label);
+
 export const subTasksToText = (subTasks) =>
   (subTasks || []).map(subTaskLabel).filter(Boolean).join("\n");
 

@@ -9,7 +9,7 @@ import OverviewPanel from "./overview/OverviewPanel";
 import RlContractPanel from "./contract/RlContractPanel";
 import ScenariosStep from "./scenarios/ScenariosStep";
 import EvalsStep from "./evals/EvalsStep";
-import RunsPanel from "./runs/RunsPanel";
+import RunsSummary from "./runs/summary/RunsSummary";
 import SettingsPanel from "./settings/SettingsPanel";
 import WorkspaceTabLabel from "./WorkspaceTabLabel";
 import { WORKSPACE_TABS } from "./workspace.constants";
@@ -33,9 +33,9 @@ export default function WorkspacePanels({
   // (`evaluations.selected` off the environment detail) overlaid, exactly as
   // EnvironmentWorkspace already computes it for the tab badges and the setup
   // gaps. Every panel that counts or names applied evals reads this one, so
-  // the tab badge, the Overview checklist and the Runs pre-flight tile all
-  // agree with the Evaluations tab. It defaults to `envState` for the build
-  // page, which has no backend detail to overlay yet.
+  // the tab badge and the Overview checklist agree with the Evaluations tab.
+  // It defaults to `envState` for the build page, which has no backend detail
+  // to overlay yet.
   serverEnvState = envState,
   patch,
   tab,
@@ -53,15 +53,21 @@ export default function WorkspacePanels({
   canRun = false,
 }) {
   const navigate = useNavigate();
-  const { runs } = useEnvironmentRuns(env, envState);
+  const { runs, isLoading: runsLoading } = useEnvironmentRuns(env, envState);
+
+  // Runs appears once the environment has a run. While the list is still
+  // loading, a deep link to ?tab=runs keeps the tab so it does not bounce to
+  // the Overview and back.
+  const showRuns = runs.length > 0 || (runsLoading && tab === "runs");
+  const tabs = showRuns ? WORKSPACE_TABS : WORKSPACE_TABS.filter((t) => t.id !== "runs");
 
   // Default landing is the Overview, which is also the first tab in the rail.
   const current =
-    WORKSPACE_TABS.find((t) => t.id === tab) ||
-    WORKSPACE_TABS.find((t) => t.id === "overview");
+    tabs.find((t) => t.id === tab) ||
+    tabs.find((t) => t.id === "overview");
 
   const go = (tabId) => {
-    if (!WORKSPACE_TABS.some((t) => t.id === tabId)) return;
+    if (!tabs.some((t) => t.id === tabId)) return;
     onTabChange(tabId);
   };
 
@@ -89,19 +95,9 @@ export default function WorkspacePanels({
       case "evals":
         return <EvalsStep env={env} envState={envState} patch={patch} onGo={go} locked={locked} backed={backed} onFork={onFork} />;
       case "runs":
-        return (
-          // The pre-flight "evals applied" tile counts and names the server's
-          // `evaluations.selected` on a backed env — the same list the
-          // Evaluations tab renders — so it is handed the overlaid state.
-          <RunsPanel
-            env={env}
-            envState={serverEnvState}
-            runs={runs}
-            onStart={() => onStartRun?.(undefined, 1)}
-            onOpenRun={openRun}
-            onGo={go}
-          />
-        );
+        // The summary's eval columns come from the runs' own scores, so it
+        // only needs the store for its scenario count.
+        return <RunsSummary env={env} envState={envState} onOpenRun={openRun} onGo={go} />;
       case "settings":
         return <SettingsPanel env={env} locked={locked} backed={backed} />;
       default:
@@ -109,9 +105,8 @@ export default function WorkspacePanels({
           // The next-steps checklist's "Add evaluations" step and its CTA
           // count read `envState.evals`. On a backed env that set is the
           // server's, not the client store's, so the Overview gets the same
-          // overlaid state the tab badge and the Runs tile do — otherwise it
-          // can offer "Add evaluations (0)" while the Evaluations tab lists
-          // eight.
+          // overlaid state the tab badge does — otherwise it can offer
+          // "Add evaluations (0)" while the Evaluations tab lists eight.
           <OverviewPanel
             env={env}
             envState={serverEnvState}
@@ -138,7 +133,7 @@ export default function WorkspacePanels({
           scrollButtons={false}
           sx={ENV_TABS_SX}
         >
-          {WORKSPACE_TABS.map((t) => (
+          {tabs.map((t) => (
             <Tab
               key={t.id}
               value={t.id}

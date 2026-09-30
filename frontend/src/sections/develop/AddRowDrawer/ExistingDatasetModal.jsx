@@ -351,6 +351,7 @@ const ExistingDatasetModal = ({
           navigate(`/dashboard/develop/${createdDatasetId}?tab=data`);
         }
       },
+      meta: { errorHandled: true },
       onError: (error) => {
         enqueueSnackbar(
           getRequestErrorMessage(error, "Failed to add dataset", {

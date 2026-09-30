@@ -1,0 +1,28 @@
+# Small: a team trying Future AGI for real, up to a few million spans a day.
+# One replica of each component with the chart's default resources; layer it
+# over your datastore values (external.yaml or a cloud/ example):
+#
+#   helm install futureagi oci://ghcr.io/future-agi/charts/futureagi --version X.Y.Z \
+#     -f external.yaml -f sizes/small.yaml --timeout 20m
+#
+# About 3 CPUs and 8 GiB requested in the release, datastores not included.
+backend:
+  replicas: 1
+  granian:
+    workers: 2
+  resources:
+    requests: {cpu: 500m, memory: 1536Mi}
+    limits: {cpu: "2", memory: 3Gi}
+worker:
+  allQueues:
+    replicas: 1
+    maxConcurrentActivities: 50
+    resources:
+      requests: {cpu: 500m, memory: 2Gi}
+      limits: {cpu: "2", memory: 4Gi}
+frontend:
+  replicas: 1
+fiCollector:
+  replicas: 1
+agentccGateway:
+  replicas: 1

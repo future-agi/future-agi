@@ -1,3 +1,5 @@
+import { WORKSPACE_TABS } from "../workspace/workspace.constants";
+
 // Build-stage copy for the deriving hero, the building tab rail and the builder
 // console. Strings ported verbatim from the designer's DerivedPanels.jsx
 // (deriving labels + tab rail) and AssistantConsole.jsx.
@@ -22,10 +24,10 @@ export const DERIVING_LABEL = {
   readingSource: "reading source…",
 };
 
-// The tab rail on the building pane. It re-exports the workspace tabs so the
-// muted loading rail and the live workspace rail always show the same five
-// labels (including Runs); the building pane just renders them pointer-dead.
-export { WORKSPACE_TABS as BUILDING_TABS } from "../workspace/workspace.constants";
+// The tab rail on the building pane: the workspace tabs, rendered pointer-dead.
+// Runs is left out — the workspace only shows it once a run exists, and an
+// environment that is still building (or failed to build) has none.
+export const BUILDING_TABS = WORKSPACE_TABS.filter((t) => t.id !== "runs");
 
 export const CONSOLE_COPY = {
   working: "Working on your last message…",

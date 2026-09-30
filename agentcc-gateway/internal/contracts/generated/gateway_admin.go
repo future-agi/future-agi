@@ -511,6 +511,27 @@ type KeyListResponse struct {
 	Data   []*KeyResponse `json:"data,omitempty"`
 }
 
+type SyncedKey struct {
+	ID        string            `json:"id"`
+	Name      *string           `json:"name,omitempty"`
+	Owner     *string           `json:"owner,omitempty"`
+	KeyHash   string            `json:"key_hash"`
+	KeyPrefix *string           `json:"key_prefix,omitempty"`
+	Models    []string          `json:"models,omitempty"`
+	Providers []string          `json:"providers,omitempty"`
+	Metadata  map[string]string `json:"metadata,omitempty"`
+	ExpiresAt *string           `json:"expires_at,omitempty"`
+}
+
+type ImportKeysRequest struct {
+	Keys []*SyncedKey `json:"keys"`
+}
+
+type ImportKeysResponse struct {
+	Received int `json:"received"`
+	Loaded   int `json:"loaded"`
+}
+
 type StatusResponse struct {
 	Status  *string `json:"status,omitempty"`
 	OrgID   *string `json:"org_id,omitempty"`

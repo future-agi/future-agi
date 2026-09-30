@@ -183,7 +183,9 @@ def eval_rows(call: CallExecution, live_eval_ids: set[str]) -> list[dict[str, An
             "skipped",
             "error",
         }
-        numeric = _number(value) if measured else None
+        # choice-scored evals store {"score": ...}; other evals store the number directly.
+        source = value.get("score") if isinstance(value, dict) else value
+        numeric = _number(source) if measured else None
         verdict = _truth_value(data)
         score = numeric
         if verdict is not None:
