@@ -10,7 +10,6 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import JSONRenderer
 from rest_framework.views import APIView
 
-logger = structlog.get_logger(__name__)
 from analytics.utils import (
     MixpanelEvents,
     MixpanelTypes,
@@ -36,6 +35,7 @@ from model_hub.utils.utils import (
     get_data_type_huggingface,
     load_hf_dataset_with_retries,
 )
+from model_hub.views.utils.dataset_limit import dataset_add_refusal
 from model_hub.views.utils.hugginface import (
     get_huggingface_dataset_info,
     process_huggingface_dataset,
@@ -43,6 +43,7 @@ from model_hub.views.utils.hugginface import (
 from model_hub.views.utils.utils import get_recommendations
 from tfc.settings.settings import HUGGINGFACE_API_TOKEN
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import DatasetLimitCheckFailedErrorSerializer
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
@@ -55,6 +56,8 @@ try:
 except ImportError:
     ROW_LIMIT_REACHED_MESSAGE = None
     log_and_deduct_cost_for_resource_request = None
+
+logger = structlog.get_logger(__name__)
 
 
 class GetHuggingFaceDatasetConfigView(APIView):
@@ -155,6 +158,7 @@ class CreateDatasetFromHuggingFaceView(CreateAPIView):
         responses={
             200: DatasetCreateStartedResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
+            503: DatasetLimitCheckFailedErrorSerializer,
         },
         reject_unknown_fields=True,
     )
@@ -264,14 +268,9 @@ class CreateDatasetFromHuggingFaceView(CreateAPIView):
                             api_call_type=APICallTypeChoices.DATASET_ADD.value,
                             workspace=request.workspace,
                         )
-                        if (
-                            call_log_row_entry is None
-                            or call_log_row_entry.status
-                            == APICallStatusChoices.RESOURCE_LIMIT.value
-                        ):
-                            return self._gm.too_many_requests(
-                                get_error_message("DATASET_CREATE_LIMIT_REACHED")
-                            )
+                        refusal = dataset_add_refusal(call_log_row_entry)
+                        if refusal is not None:
+                            return refusal
                         call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                         call_log_row_entry.save()
 

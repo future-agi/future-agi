@@ -1,10 +1,13 @@
 package config
 
 import (
+	"context"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"log/slog"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -42,6 +45,7 @@ type Config struct {
 	Cluster       ClusterConfig             `yaml:"cluster" json:"cluster"`
 	Edge          EdgeConfig                `yaml:"edge" json:"edge"`
 	ControlPlane  ControlPlaneConfig        `yaml:"control_plane" json:"control_plane"`
+	OrgProviders  OrgProvidersConfig        `yaml:"org_providers" json:"org_providers"`
 	CORS          CORSConfig                `yaml:"cors" json:"cors"`
 	Assistants    AssistantsConfig          `yaml:"assistants" json:"assistants"`
 	MCP           MCPConfig                 `yaml:"mcp" json:"mcp"`
@@ -315,6 +319,7 @@ type KeyGuardrailOverride struct {
 type ServerConfig struct {
 	Port                  int           `yaml:"port" json:"port"`
 	Host                  string        `yaml:"host" json:"host"`
+	ReadHeaderTimeout     time.Duration `yaml:"read_header_timeout" json:"read_header_timeout"`
 	ReadTimeout           time.Duration `yaml:"read_timeout" json:"read_timeout"`
 	WriteTimeout          time.Duration `yaml:"write_timeout" json:"write_timeout"`
 	IdleTimeout           time.Duration `yaml:"idle_timeout" json:"idle_timeout"`
@@ -362,6 +367,11 @@ type ProviderConfig struct {
 	CredentialsFile    string `yaml:"credentials_file" json:"-"`
 	ServiceAccountJSON string `yaml:"service_account_json" json:"-"`
 	AWSSessionToken    string `yaml:"aws_session_token" json:"-"`
+
+	// DialContext, when set, opens the provider's upstream connections in
+	// place of the default dialer. Set by the gateway, not in config.yaml: org
+	// providers use it to check every address they connect to.
+	DialContext func(ctx context.Context, network, addr string) (net.Conn, error) `yaml:"-" json:"-"`
 }
 
 type LoggingConfig struct {
@@ -912,6 +922,23 @@ type ControlPlaneConfig struct {
 	SyncInterval  time.Duration `yaml:"sync_interval" json:"sync_interval"`     // periodic re-sync (0 = disabled)
 }
 
+// EnvAllowPrivateProviderURLs names the env var behind
+// OrgProvidersConfig.AllowPrivateURLs. The Django backend reads the same name
+// for model discovery and saving providers, so one setting covers both.
+const EnvAllowPrivateProviderURLs = "AGENTCC_ALLOW_PRIVATE_PROVIDER_URLS"
+
+// OrgProvidersConfig governs the providers orgs configure through the control
+// plane (not the ones in this file's providers section, which are trusted).
+type OrgProvidersConfig struct {
+	// AllowPrivateURLs lets an org provider's base_url point at private and
+	// LAN addresses (RFC 1918, 100.64.0.0/10, fc00::/7, and host names such
+	// as Docker service names that resolve to them): a local Ollama or vLLM.
+	// Off by default, since on a shared gateway it lets any org reach
+	// internal hosts. Loopback, link-local, cloud metadata, multicast and
+	// unspecified addresses stay refused regardless.
+	AllowPrivateURLs bool `yaml:"allow_private_urls" json:"allow_private_urls"`
+}
+
 // EdgeRegionConfig defines a backend region for edge routing.
 type EdgeRegionConfig struct {
 	Name    string `yaml:"name" json:"name"`
@@ -951,7 +978,8 @@ func DefaultConfig() *Config {
 		Server: ServerConfig{
 			Port:                  8080,
 			Host:                  "0.0.0.0",
-			ReadTimeout:           5 * time.Second,
+			ReadHeaderTimeout:     5 * time.Second,
+			ReadTimeout:           60 * time.Second,
 			WriteTimeout:          300 * time.Second,
 			IdleTimeout:           120 * time.Second,
 			ShutdownTimeout:       30 * time.Second,
@@ -1024,6 +1052,13 @@ func Load(path string) (*Config, error) {
 
 	loadFromEnv(cfg)
 
+	// The control plane checks the gateway's calls against the same shared
+	// admin token (Django's AGENTCC_ADMIN_TOKEN), so a gateway told only the
+	// one token can still sync keys and org configs.
+	if cfg.ControlPlane.URL != "" && cfg.ControlPlane.AdminToken == "" {
+		cfg.ControlPlane.AdminToken = cfg.Admin.Token
+	}
+
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("config validation: %w", err)
 	}
@@ -1089,8 +1124,22 @@ func loadFromEnv(cfg *Config) {
 	if v := os.Getenv("AGENTCC_SYNC_ON_STARTUP"); v != "" {
 		cfg.ControlPlane.SyncOnStartup = v == "true" || v == "1"
 	}
+	if v := os.Getenv("AGENTCC_SYNC_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.ControlPlane.SyncInterval = d
+		}
+	}
 	if v := os.Getenv("AGENTCC_WEBHOOK_SECRET"); v != "" {
 		cfg.ControlPlane.WebhookSecret = v
+	}
+	if v := os.Getenv(EnvAllowPrivateProviderURLs); v != "" {
+		// Read as the backend reads it, so " true" or "TRUE" opts in both.
+		if allow, err := strconv.ParseBool(strings.ToLower(strings.TrimSpace(v))); err == nil {
+			cfg.OrgProviders.AllowPrivateURLs = allow
+		} else {
+			slog.Warn("ignoring unrecognised value; expected true or false",
+				"env", EnvAllowPrivateProviderURLs, "value", v)
+		}
 	}
 
 	// Auth env overrides. Evaluate the explicit toggle first, then let a present
@@ -1144,6 +1193,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Server.ReadTimeout <= 0 {
 		return fmt.Errorf("server.read_timeout must be positive")
+	}
+	if c.Server.ReadHeaderTimeout <= 0 {
+		return fmt.Errorf("server.read_header_timeout must be positive")
 	}
 	if c.Server.WriteTimeout <= 0 {
 		return fmt.Errorf("server.write_timeout must be positive")

@@ -292,6 +292,7 @@ export default function JwtLoginView() {
             );
             break;
 
+          case LOGIN_ERROR_CODES.SERVICE_UNAVAILABLE:
           case LOGIN_ERROR_CODES.UNEXPECTED_ERROR:
           default:
             setErrorMsg(

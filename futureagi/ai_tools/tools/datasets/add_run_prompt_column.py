@@ -314,10 +314,18 @@ class AddRunPromptColumnTool(BaseTool):
                 from model_hub.tasks.run_prompt import process_prompts_single
 
                 run_prompter.status = StatusType.RUNNING.value
-                run_prompter.save(update_fields=["status"])
+                RunPrompter.objects.filter(
+                    id=run_prompter.id, updated_at=run_prompter.updated_at
+                ).update(status=StatusType.RUNNING.value)
 
                 process_prompts_single.apply_async(
-                    args=({"type": "not_started", "prompt_id": str(run_prompter.id)},)
+                    args=(
+                        {
+                            "type": "not_started",
+                            "prompt_id": str(run_prompter.id),
+                            "revision": run_prompter.updated_at.isoformat(),
+                        },
+                    )
                 )
                 workflow_started = True
             except Exception as e:
@@ -326,9 +334,7 @@ class AddRunPromptColumnTool(BaseTool):
                     run_prompter_id=str(run_prompter.id),
                     error=str(e),
                 )
-                # Fallback: mark as not_started, will be picked up by polling
-                run_prompter.status = StatusType.NOT_STARTED.value
-                run_prompter.save(update_fields=["status"])
+                # Dispatch may have succeeded; leave recovery to the worker or sweep.
 
         info = key_value_block(
             [
@@ -354,9 +360,7 @@ class AddRunPromptColumnTool(BaseTool):
             if workflow_started:
                 content += "\n\n_Prompt execution started. Results will appear in the new column as each row is processed._"
             else:
-                content += (
-                    "\n\n_Prompt execution queued. It will be picked up shortly._"
-                )
+                content += "\n\n_Could not confirm execution started. Check the run status before retrying._"
         else:
             content += "\n\n_Column created but not running. Trigger execution from the dashboard._"
 

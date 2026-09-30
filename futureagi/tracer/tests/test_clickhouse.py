@@ -7473,13 +7473,13 @@ class TestVoiceCallListQueryBuilder:
         # Python-side filter still works on raw_log / from_number.
         assert (
             VoiceCallListQueryBuilder.is_simulator_call(
-                {"raw_log": {"customer": {"number": "+18568806998"}}}, "vapi"
+                {"customer": {"number": "+18568806998"}}, "vapi"
             )
             is True
         )
         assert (
             VoiceCallListQueryBuilder.is_simulator_call(
-                {"raw_log": {"from_number": "+18568806998"}}, "retell"
+                {"from_number": "+18568806998"}, "retell"
             )
             is True
         )
@@ -8371,8 +8371,8 @@ class TestVoiceCallListQueryBuilderComprehensive:
         assert builder._build_simulation_filter() == ""
         # Each phone number is still recognised as a simulator call in Python.
         for phone in VAPI_PHONE_NUMBERS:
-            span_attrs = {"raw_log": {"customer": {"number": phone}}}
-            assert VoiceCallListQueryBuilder.is_simulator_call(span_attrs, "vapi"), (
+            raw_log = {"customer": {"number": phone}}
+            assert VoiceCallListQueryBuilder.is_simulator_call(raw_log, "vapi"), (
                 f"Missing phone number: {phone}"
             )
 
@@ -8394,10 +8394,10 @@ class TestVoiceCallListQueryBuilderComprehensive:
         # SQL no longer references raw_log / JSONExtract for simulation.
         assert "JSONExtractString" not in query
         assert "raw_log" not in query
-        # Python path still reads raw_log from span_attrs correctly.
+        # Python path still reads the parsed raw_log correctly.
         assert (
             VoiceCallListQueryBuilder.is_simulator_call(
-                {"raw_log": {"customer": {"number": "+18568806998"}}}, "vapi"
+                {"customer": {"number": "+18568806998"}}, "vapi"
             )
             is True
         )
@@ -8418,13 +8418,13 @@ class TestVoiceCallListQueryBuilderComprehensive:
         # Python path does.
         assert (
             VoiceCallListQueryBuilder.is_simulator_call(
-                {"raw_log": {"from_number": "+18568806998"}}, "retell"
+                {"from_number": "+18568806998"}, "retell"
             )
             is True
         )
         assert (
             VoiceCallListQueryBuilder.is_simulator_call(
-                {"raw_log": {"from_number": "+19998887777"}}, "retell"
+                {"from_number": "+19998887777"}, "retell"
             )
             is False
         )
@@ -8445,7 +8445,7 @@ class TestVoiceCallListQueryBuilderComprehensive:
         # Non-simulator call is not treated as a simulator.
         assert (
             VoiceCallListQueryBuilder.is_simulator_call(
-                {"raw_log": {"customer": {"number": "+19998887777"}}}, "vapi"
+                {"customer": {"number": "+19998887777"}}, "vapi"
             )
             is False
         )

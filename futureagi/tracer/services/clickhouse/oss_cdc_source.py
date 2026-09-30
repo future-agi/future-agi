@@ -26,6 +26,7 @@ _UDT_TYPES = {
     "text": "String",
     "jsonb": "String",
     "bool": "Bool",
+    "int2": "Int16",  # PeerDB v0.36.9: Int2OID -> QValueKindInt16 -> Int16
     "int4": "Int32",
     "int8": "Int64",
     "float8": "Float64",
@@ -197,6 +198,8 @@ def _mapped_type(row):
         generated,
         _,
     ) = row
+    # Name only validated identifiers, never the reported type/domain text.
+    where = f"{table}.{name}: " if _identifier(table) and _identifier(name) else ""
     if (
         udt_schema != "pg_catalog"
         or not isinstance(udt, str)
@@ -204,7 +207,9 @@ def _mapped_type(row):
         or generated != "NEVER"
         or nullable not in ("YES", "NO")
     ):
-        raise SourceError("unsupported source type, domain, generation or nullability")
+        raise SourceError(
+            f"{where}unsupported source type, domain, generation or nullability"
+        )
     if udt == "numeric":
         if (
             type(precision) is not int
@@ -212,16 +217,16 @@ def _mapped_type(row):
             or not 1 <= precision <= 76
             or not 0 <= scale <= min(38, precision)
         ):
-            raise SourceError("unsupported source decimal precision or scale")
+            raise SourceError(f"{where}unsupported source decimal precision or scale")
         result = f"Decimal({precision},{scale})"
     else:
         result = _UDT_TYPES.get(udt)
         if result is None:
-            raise SourceError("unsupported source builtin type")
+            raise SourceError(f"{where}unsupported source builtin type")
     if nullable == "YES":
         if result == "Array(String)":
             if (table, name) != ("simulate_agent_definition", "languages"):
-                raise SourceError("unqualified nullable source array")
+                raise SourceError(f"{where}unqualified nullable source array")
         else:
             result = f"Nullable({result})"
     return result

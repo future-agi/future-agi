@@ -2,6 +2,7 @@ import json
 import time
 import traceback
 from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import asdict
 from datetime import UTC, datetime
 
@@ -20,6 +21,7 @@ from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from common.utils.data_injection import normalize as _di_normalize
 from model_hub.models.choices import StatusType
 from model_hub.models.evals_metric import EvalTemplate
+from model_hub.utils.eval_input_validation import is_empty_value
 from model_hub.utils.eval_mapping import require_mapping_paths
 from sdk.utils.helpers import _get_api_call_type
 from tfc.constants.api_calls import APICallStatusChoices
@@ -35,6 +37,7 @@ from tracer.models.observation_span import (
 )
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
+from tracer.utils.attribute_accessor import span_raw_log
 from tracer.utils.helper import (
     FieldConfig,
     get_default_project_version_config,
@@ -149,6 +152,49 @@ def _walk_raw_log(raw_log: dict, path: str):
 
 # Sentinel: ``None`` is a legitimate stored value, so we can't use it for "miss".
 _MISSING = object()
+
+
+def _voice_call_log(span, raw_log: dict, span_attrs: dict) -> dict:
+    """The call fields the voice call list and detail show for ``span``.
+
+    Built by the same ``process_raw_logs`` those endpoints use, so a field
+    mapped from the call preview (``call_summary``, ``ended_reason``, …)
+    resolves to the value the user saw there. A fallback, never a gate:
+    returns ``{}`` when the builder cannot read the payload; any other error
+    fails the eval. The builder rewrites ``raw_log["messages"]`` in place, so
+    it gets a copy and the raw_log walk in ``_process_mapping`` keeps reading
+    the stored payload.
+    """
+    from tracer.services.observability_providers import ObservabilityService
+
+    try:
+        processed = ObservabilityService.process_raw_logs(
+            deepcopy(raw_log),
+            getattr(span, "provider", None),
+            span_attributes=span_attrs,
+        )
+    # What the builder raises on a payload it cannot read: a field of another
+    # type or shape, a value it cannot parse or validate (pydantic's
+    # ValidationError is a ValueError), or a timestamp past what datetime
+    # (OverflowError) or the platform's gmtime (OSError) can represent.
+    except (
+        AttributeError,
+        KeyError,
+        TypeError,
+        ValueError,
+        OverflowError,
+        OSError,
+    ) as e:
+        # The payload carries phone numbers and a message can echo it: log the
+        # type as a field, and leave the message to the traceback.
+        logger.warning(
+            "voice_call_log_unavailable",
+            span_id=str(getattr(span, "id", "")),
+            error_type=type(e).__name__,
+            exc_info=True,
+        )
+        return {}
+    return processed if isinstance(processed, dict) else {}
 
 
 def _build_apicall_output(result, run_warnings):
@@ -721,6 +767,9 @@ def _process_mapping(
     except EvalTemplate.DoesNotExist:
         pass
 
+    # Voice fallback inputs, built on first use and shared across keys.
+    voice_raw_log = None
+    voice_call_log = None
     for key, attribute in mapping.items():
         # Try exact match first, then common fallback patterns.
         # The frontend column picker shows simplified names like "input"
@@ -750,17 +799,28 @@ def _process_mapping(
         # Voice raw_log fallback: paths the BE response builder normalizes
         # from raw_log at API time (messages.<n>.*, started_at, …) but
         # never persists as flat span_attributes. Gated on observation_type
-        # so non-voice spans are unaffected. See _walk_raw_log.
+        # so non-voice spans are unaffected. See _walk_raw_log. Fields the
+        # call list derives rather than copies (``call_summary`` is vapi's
+        # ``summary``, retell's ``call_analysis.call_summary``) come from the
+        # list's own builder. It emits every field, filling ones the call has
+        # no data for with None or an empty default ("", {}, ...); those are a
+        # miss, so the call skips instead of failing "No input received".
         if (
             resolved_value is _MISSING
             and attribute
             and span.observation_type == ObservationType.CONVERSATION
         ):
-            raw_log = span_attrs.get("raw_log")
-            if isinstance(raw_log, dict):
-                walked = _walk_raw_log(raw_log, attribute)
-                if walked is not _MISSING:
-                    resolved_value = walked
+            if voice_raw_log is None:
+                voice_raw_log = span_raw_log(span_attrs, span_id=str(span.id))
+            walked = _walk_raw_log(voice_raw_log, attribute)
+            if walked is _MISSING:
+                if voice_call_log is None:
+                    voice_call_log = _voice_call_log(span, voice_raw_log, span_attrs)
+                walked = _walk_raw_log(voice_call_log, attribute)
+                if is_empty_value(walked):
+                    walked = _MISSING
+            if walked is not _MISSING:
+                resolved_value = walked
 
         if resolved_value is not _MISSING:
             if isinstance(resolved_value, str):

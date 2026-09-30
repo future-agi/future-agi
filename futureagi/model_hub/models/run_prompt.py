@@ -131,6 +131,10 @@ class RunPrompter(BaseModel):
         choices=StatusType.get_choices(),
     )
 
+    # None means a full run; selected-row requests persist their combined scope.
+    queued_row_ids = models.JSONField(null=True, blank=True, default=None)
+    queued_request_id = models.CharField(max_length=200, null=True, blank=True)
+
     run_prompt_config = models.JSONField(null=True, blank=True, default=dict)
 
     def clean(self):

@@ -102,9 +102,7 @@ class TaskRunnerWorkflow:
                     "kwargs": input.kwargs,
                 },
                 start_to_close_timeout=timedelta(seconds=time_limit),
-                schedule_to_start_timeout=timedelta(
-                    seconds=schedule_to_start_seconds
-                ),
+                schedule_to_start_timeout=timedelta(seconds=schedule_to_start_seconds),
                 heartbeat_timeout=ACTIVITY_HEARTBEAT_TIMEOUT,
                 retry_policy=retry_policy,
                 versioning_intent=VersioningIntent.DEFAULT,

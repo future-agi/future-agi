@@ -88,8 +88,14 @@ async def a_update_schedule(
     schedule: Schedule,
     *,
     keep_tz: bool = True,
+    keep_state: bool = True,
 ) -> None:
-    """Update an existing schedule."""
+    """Update an existing schedule.
+
+    ``keep_state`` keeps the schedule's current state (paused, note, remaining
+    actions) instead of the one in ``schedule``, so re-registering a definition
+    updates what runs and when without undoing an operator's pause.
+    """
     handle = client.get_schedule_handle(schedule_id)
 
     async def updater(input: ScheduleUpdateInput) -> ScheduleUpdate:
@@ -98,6 +104,8 @@ async def a_update_schedule(
             schedule.spec.time_zone_name = (
                 input.description.schedule.spec.time_zone_name
             )
+        if keep_state:
+            schedule.state = input.description.schedule.state
         return ScheduleUpdate(schedule=schedule)
 
     await handle.update(updater)
@@ -111,9 +119,12 @@ async def update_schedule(
     schedule: Schedule,
     *,
     keep_tz: bool = True,
+    keep_state: bool = True,
 ) -> None:
     """Sync wrapper for a_update_schedule."""
-    return await a_update_schedule(client, schedule_id, schedule, keep_tz=keep_tz)
+    return await a_update_schedule(
+        client, schedule_id, schedule, keep_tz=keep_tz, keep_state=keep_state
+    )
 
 
 async def a_delete_schedule(client: Client, schedule_id: str) -> bool:
@@ -275,7 +286,8 @@ def _build_schedule_for_config(config: ScheduleConfig) -> Schedule:
         spec=spec,
         policy=SchedulePolicy(**policy_kwargs),
         state=ScheduleState(
-            note=config.description or f"Schedule for {config.activity_name}"
+            note=config.description or f"Schedule for {config.activity_name}",
+            paused=config.paused,
         ),
     )
 

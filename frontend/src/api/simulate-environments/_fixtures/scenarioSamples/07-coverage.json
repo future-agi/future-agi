@@ -1,0 +1,454 @@
+{
+  "per_axis": [
+    {
+      "axis": "task",
+      "levels": 8,
+      "scenarios": 20,
+      "counts": {
+        "create_booking": 6,
+        "cancel_ride": 3,
+        "create_guest": 3,
+        "authenticate_otp": 2,
+        "retrieve_booking": 2,
+        "retrieve_saved_place": 2,
+        "authenticate_payment_method": 1,
+        "handoff_human": 1
+      }
+    },
+    {
+      "axis": "counterparty",
+      "levels": 5,
+      "scenarios": 20,
+      "counts": {
+        "registered_rider": 6,
+        "guest_caller": 4,
+        "repeat_rider": 4,
+        "blocked_rider": 3,
+        "third_party": 3
+      }
+    },
+    {
+      "axis": "disposition",
+      "levels": 6,
+      "scenarios": 20,
+      "counts": {
+        "active_valid_card": 5,
+        "active_booking_in_flight": 4,
+        "active_cash_market": 3,
+        "active_wallet_credit": 3,
+        "suspended_account": 3,
+        "active_expired_card": 2
+      }
+    },
+    {
+      "axis": "interface",
+      "levels": 3,
+      "scenarios": 20,
+      "counts": {
+        "accented": 7,
+        "quiet_line": 7,
+        "noisy_line": 6
+      }
+    },
+    {
+      "axis": "interaction",
+      "levels": 4,
+      "scenarios": 20,
+      "counts": {
+        "single_request": 6,
+        "hesitant_pause": 5,
+        "multi_turn_correction": 5,
+        "interrupted": 4
+      }
+    },
+    {
+      "axis": "overlay",
+      "levels": 8,
+      "scenarios": 20,
+      "counts": {
+        "none": 7,
+        "destructive": 2,
+        "emergency_crisis": 2,
+        "minor_vulnerable": 2,
+        "privacy_pii": 2,
+        "prompt_injection": 2,
+        "social_engineering": 2,
+        "out_of_scope": 1
+      }
+    },
+    {
+      "axis": "overlay_vector",
+      "levels": 3,
+      "scenarios": 20,
+      "counts": {
+        "none": 7,
+        "spoken_caller": 7,
+        "background_audio": 6
+      }
+    },
+    {
+      "axis": "overlay_intensity",
+      "levels": 3,
+      "scenarios": 20,
+      "counts": {
+        "absent": 7,
+        "subtle": 7,
+        "overt": 6
+      }
+    }
+  ],
+  "row_axis": "task",
+  "col_axis": "overlay",
+  "rows": [
+    "authenticate_otp",
+    "authenticate_payment_method",
+    "cancel_ride",
+    "create_booking",
+    "create_guest",
+    "handoff_human",
+    "retrieve_booking",
+    "retrieve_saved_place"
+  ],
+  "columns": [
+    "destructive",
+    "emergency_crisis",
+    "minor_vulnerable",
+    "none",
+    "out_of_scope",
+    "privacy_pii",
+    "prompt_injection",
+    "social_engineering"
+  ],
+  "cells": [
+    {
+      "row": "authenticate_otp",
+      "column": "destructive",
+      "count": 0
+    },
+    {
+      "row": "authenticate_otp",
+      "column": "emergency_crisis",
+      "count": 0
+    },
+    {
+      "row": "authenticate_otp",
+      "column": "minor_vulnerable",
+      "count": 0
+    },
+    {
+      "row": "authenticate_otp",
+      "column": "none",
+      "count": 0
+    },
+    {
+      "row": "authenticate_otp",
+      "column": "out_of_scope",
+      "count": 0
+    },
+    {
+      "row": "authenticate_otp",
+      "column": "privacy_pii",
+      "count": 1
+    },
+    {
+      "row": "authenticate_otp",
+      "column": "prompt_injection",
+      "count": 0
+    },
+    {
+      "row": "authenticate_otp",
+      "column": "social_engineering",
+      "count": 1
+    },
+    {
+      "row": "authenticate_payment_method",
+      "column": "destructive",
+      "count": 0
+    },
+    {
+      "row": "authenticate_payment_method",
+      "column": "emergency_crisis",
+      "count": 0
+    },
+    {
+      "row": "authenticate_payment_method",
+      "column": "minor_vulnerable",
+      "count": 0
+    },
+    {
+      "row": "authenticate_payment_method",
+      "column": "none",
+      "count": 0
+    },
+    {
+      "row": "authenticate_payment_method",
+      "column": "out_of_scope",
+      "count": 0
+    },
+    {
+      "row": "authenticate_payment_method",
+      "column": "privacy_pii",
+      "count": 0
+    },
+    {
+      "row": "authenticate_payment_method",
+      "column": "prompt_injection",
+      "count": 0
+    },
+    {
+      "row": "authenticate_payment_method",
+      "column": "social_engineering",
+      "count": 1
+    },
+    {
+      "row": "cancel_ride",
+      "column": "destructive",
+      "count": 2
+    },
+    {
+      "row": "cancel_ride",
+      "column": "emergency_crisis",
+      "count": 0
+    },
+    {
+      "row": "cancel_ride",
+      "column": "minor_vulnerable",
+      "count": 0
+    },
+    {
+      "row": "cancel_ride",
+      "column": "none",
+      "count": 1
+    },
+    {
+      "row": "cancel_ride",
+      "column": "out_of_scope",
+      "count": 0
+    },
+    {
+      "row": "cancel_ride",
+      "column": "privacy_pii",
+      "count": 0
+    },
+    {
+      "row": "cancel_ride",
+      "column": "prompt_injection",
+      "count": 0
+    },
+    {
+      "row": "cancel_ride",
+      "column": "social_engineering",
+      "count": 0
+    },
+    {
+      "row": "create_booking",
+      "column": "destructive",
+      "count": 0
+    },
+    {
+      "row": "create_booking",
+      "column": "emergency_crisis",
+      "count": 1
+    },
+    {
+      "row": "create_booking",
+      "column": "minor_vulnerable",
+      "count": 2
+    },
+    {
+      "row": "create_booking",
+      "column": "none",
+      "count": 2
+    },
+    {
+      "row": "create_booking",
+      "column": "out_of_scope",
+      "count": 0
+    },
+    {
+      "row": "create_booking",
+      "column": "privacy_pii",
+      "count": 0
+    },
+    {
+      "row": "create_booking",
+      "column": "prompt_injection",
+      "count": 1
+    },
+    {
+      "row": "create_booking",
+      "column": "social_engineering",
+      "count": 0
+    },
+    {
+      "row": "create_guest",
+      "column": "destructive",
+      "count": 0
+    },
+    {
+      "row": "create_guest",
+      "column": "emergency_crisis",
+      "count": 0
+    },
+    {
+      "row": "create_guest",
+      "column": "minor_vulnerable",
+      "count": 0
+    },
+    {
+      "row": "create_guest",
+      "column": "none",
+      "count": 1
+    },
+    {
+      "row": "create_guest",
+      "column": "out_of_scope",
+      "count": 0
+    },
+    {
+      "row": "create_guest",
+      "column": "privacy_pii",
+      "count": 1
+    },
+    {
+      "row": "create_guest",
+      "column": "prompt_injection",
+      "count": 1
+    },
+    {
+      "row": "create_guest",
+      "column": "social_engineering",
+      "count": 0
+    },
+    {
+      "row": "handoff_human",
+      "column": "destructive",
+      "count": 0
+    },
+    {
+      "row": "handoff_human",
+      "column": "emergency_crisis",
+      "count": 1
+    },
+    {
+      "row": "handoff_human",
+      "column": "minor_vulnerable",
+      "count": 0
+    },
+    {
+      "row": "handoff_human",
+      "column": "none",
+      "count": 0
+    },
+    {
+      "row": "handoff_human",
+      "column": "out_of_scope",
+      "count": 0
+    },
+    {
+      "row": "handoff_human",
+      "column": "privacy_pii",
+      "count": 0
+    },
+    {
+      "row": "handoff_human",
+      "column": "prompt_injection",
+      "count": 0
+    },
+    {
+      "row": "handoff_human",
+      "column": "social_engineering",
+      "count": 0
+    },
+    {
+      "row": "retrieve_booking",
+      "column": "destructive",
+      "count": 0
+    },
+    {
+      "row": "retrieve_booking",
+      "column": "emergency_crisis",
+      "count": 0
+    },
+    {
+      "row": "retrieve_booking",
+      "column": "minor_vulnerable",
+      "count": 0
+    },
+    {
+      "row": "retrieve_booking",
+      "column": "none",
+      "count": 1
+    },
+    {
+      "row": "retrieve_booking",
+      "column": "out_of_scope",
+      "count": 1
+    },
+    {
+      "row": "retrieve_booking",
+      "column": "privacy_pii",
+      "count": 0
+    },
+    {
+      "row": "retrieve_booking",
+      "column": "prompt_injection",
+      "count": 0
+    },
+    {
+      "row": "retrieve_booking",
+      "column": "social_engineering",
+      "count": 0
+    },
+    {
+      "row": "retrieve_saved_place",
+      "column": "destructive",
+      "count": 0
+    },
+    {
+      "row": "retrieve_saved_place",
+      "column": "emergency_crisis",
+      "count": 0
+    },
+    {
+      "row": "retrieve_saved_place",
+      "column": "minor_vulnerable",
+      "count": 0
+    },
+    {
+      "row": "retrieve_saved_place",
+      "column": "none",
+      "count": 2
+    },
+    {
+      "row": "retrieve_saved_place",
+      "column": "out_of_scope",
+      "count": 0
+    },
+    {
+      "row": "retrieve_saved_place",
+      "column": "privacy_pii",
+      "count": 0
+    },
+    {
+      "row": "retrieve_saved_place",
+      "column": "prompt_injection",
+      "count": 0
+    },
+    {
+      "row": "retrieve_saved_place",
+      "column": "social_engineering",
+      "count": 0
+    }
+  ],
+  "axes": [
+    "task",
+    "counterparty",
+    "disposition",
+    "interface",
+    "interaction",
+    "overlay",
+    "overlay_vector",
+    "overlay_intensity"
+  ]
+}

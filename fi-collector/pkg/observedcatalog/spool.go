@@ -228,6 +228,19 @@ func (w *Writer) EnqueueCanonicalSpans(spans []ScopedSpan) error {
 
 // Replay retains each file until Kafka acknowledges all its observations.
 func (w *Writer) Replay(ctx context.Context, publisher Publisher) (int, error) {
+	return w.replay(ctx, publisher, 1)
+}
+
+// ReplayMerged publishes up to MaxRecordRows spooled rows at a time as one
+// merged batch, so a direct ClickHouse sink writes each table once per replay
+// instead of once per record. Merging only combines identical identities by
+// min/max, as the index itself does. Every merged file is retained until the
+// whole batch is acknowledged.
+func (w *Writer) ReplayMerged(ctx context.Context, publisher Publisher) (int, error) {
+	return w.replay(ctx, publisher, MaxRecordRows)
+}
+
+func (w *Writer) replay(ctx context.Context, publisher Publisher, maxRows int) (int, error) {
 	w.replayMu.Lock()
 	defer w.replayMu.Unlock()
 	w.mu.Lock()
@@ -242,44 +255,75 @@ func (w *Writer) Replay(ctx context.Context, publisher Publisher) (int, error) {
 	}
 	sort.Strings(names)
 	delivered := 0
-	for _, name := range names {
+	for len(names) > 0 {
 		if err := ctx.Err(); err != nil {
 			return delivered, err
 		}
-		path := filepath.Join(w.cfg.Directory, name)
-		info, err := os.Lstat(path)
-		if err != nil || !info.Mode().IsRegular() || info.Size() > MaxRecordBytes {
-			return delivered, errors.New("observedcatalog: invalid spool record")
+		var group []string
+		var batches []Batch
+		var readErr error
+		for rows := 0; len(names) > 0 && (len(group) == 0 || rows < maxRows); names = names[1:] {
+			batch, err := w.read(names[0])
+			if err != nil {
+				// Deliver the valid records before it; the invalid one stays.
+				readErr = err
+				break
+			}
+			group = append(group, names[0])
+			batches = append(batches, batch)
+			rows += len(batch.Keys) + len(batch.Values)
 		}
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return delivered, errors.New("observedcatalog: cannot read spool record")
+		if len(group) > 0 {
+			batch := batches[0]
+			if len(batches) > 1 {
+				batch = Merge(batches...)
+			}
+			if err := publisher.Publish(ctx, batch); err != nil {
+				return delivered, err
+			}
+			if err := w.remove(group); err != nil {
+				return delivered, err
+			}
+			delivered += len(group)
 		}
-		digest := sha256.Sum256(raw)
-		if name != "observed-"+hex.EncodeToString(digest[:])+".json" {
-			return delivered, errors.New("observedcatalog: corrupt spool digest")
+		if readErr != nil {
+			return delivered, readErr
 		}
-		batch, err := Decode(raw)
-		if err != nil {
-			return delivered, err
-		}
-		if err = publisher.Publish(ctx, batch); err != nil {
-			return delivered, err
-		}
-		w.mu.Lock()
-		err = os.Remove(path)
-		if err == nil {
-			w.bytes -= w.files[name]
-			delete(w.files, name)
-			err = w.syncDir(w.cfg.Directory)
-		}
-		w.mu.Unlock()
-		if err != nil {
-			return delivered, errors.New("observedcatalog: spool removal not confirmed")
-		}
-		delivered++
 	}
 	return delivered, nil
+}
+
+func (w *Writer) read(name string) (Batch, error) {
+	path := filepath.Join(w.cfg.Directory, name)
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > MaxRecordBytes {
+		return Batch{}, errors.New("observedcatalog: invalid spool record")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return Batch{}, errors.New("observedcatalog: cannot read spool record")
+	}
+	digest := sha256.Sum256(raw)
+	if name != "observed-"+hex.EncodeToString(digest[:])+".json" {
+		return Batch{}, errors.New("observedcatalog: corrupt spool digest")
+	}
+	return Decode(raw)
+}
+
+func (w *Writer) remove(names []string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, name := range names {
+		if err := os.Remove(filepath.Join(w.cfg.Directory, name)); err != nil {
+			return errors.New("observedcatalog: spool removal not confirmed")
+		}
+		w.bytes -= w.files[name]
+		delete(w.files, name)
+	}
+	if err := w.syncDir(w.cfg.Directory); err != nil {
+		return errors.New("observedcatalog: spool removal not confirmed")
+	}
+	return nil
 }
 
 func (w *Writer) Close() error {

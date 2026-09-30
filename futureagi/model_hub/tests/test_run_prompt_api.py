@@ -776,6 +776,11 @@ class TestRunPromptForRowsView:
             )
 
         assert response.status_code == status.HTTP_200_OK
+        run_prompter.refresh_from_db()
+        assert run_prompter.queued_row_ids == [str(row.id)]
+        assert mock_task.call_args.kwargs["kwargs"]["revisions"] == {
+            str(run_prompter.id): run_prompter.updated_at.isoformat()
+        }
 
     def test_run_prompt_for_rows_all_rows(
         self, auth_client, dataset, run_prompter, row
@@ -1171,7 +1176,13 @@ class TestLitellmAPIView:
         assert run_prompter.workspace_id == workspace.id
         assert run_prompter.status == StatusType.RUNNING.value
         mock_apply_async.assert_called_once_with(
-            args=({"type": "not_started", "prompt_id": str(run_prompter.id)},)
+            args=(
+                {
+                    "type": "not_started",
+                    "prompt_id": str(run_prompter.id),
+                    "revision": run_prompter.updated_at.isoformat(),
+                },
+            )
         )
 
     def test_litellm_api_rejects_other_workspace_dataset(
@@ -2008,10 +2019,10 @@ class TestRunPromptDatabaseState:
         # After successful add, status should be RUNNING
         assert run_prompter.status == StatusType.RUNNING.value
 
-    def test_workflow_failure_sets_failed_status(
+    def test_uncertain_dispatch_leaves_revision_available_for_recovery(
         self, auth_client, dataset, input_column
     ):
-        """Verify status is set to FAILED when workflow fails to start."""
+        """A failed dispatch response may still have started its workflow."""
         config = {
             "model": "gpt-4",
             "messages": [
@@ -2038,7 +2049,7 @@ class TestRunPromptDatabaseState:
         assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
         run_prompter = RunPrompter.objects.get(name="Failure Test")
-        assert run_prompter.status == StatusType.FAILED.value
+        assert run_prompter.status == StatusType.RUNNING.value
 
 
 # ==================== DatasetRunPromptStatsView Tests ====================

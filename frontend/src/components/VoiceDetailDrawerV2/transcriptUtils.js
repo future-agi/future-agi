@@ -115,6 +115,7 @@ export const enrichTurns = (
       role,
       rawRole: item.speaker_role || item.role,
       content: getContent(item),
+      toolCalls: Array.isArray(item.tool_calls) ? item.tool_calls : [],
       start,
       end,
       duration: directDuration,

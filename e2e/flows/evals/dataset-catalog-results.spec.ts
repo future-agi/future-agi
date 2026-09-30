@@ -459,8 +459,11 @@ test('EVAL-E2E-004: executed dataset evaluations retain typed cells, exact filte
 
   const gridCells = (columnId: string) => page.locator(`.ag-center-cols-container .ag-row [col-id="${columnId}"]`);
   const assertVisibleRows = async (aliases: Alias[]) => {
-    await ui.poll(async () => Promise.all((await gridCells(inputColumns.region).all()).map(cell =>
-      cell.locator('..').getAttribute('row-id')))).toEqual(ORACLE.filter(o => aliases.includes(o.alias)).map(o => ids[o.alias]));
+    // One atomic, non-waiting read per tick. ag-grid keeps outgoing rows for its fade-out; a
+    // per-cell getAttribute on an nth() counted before they left would wait out the whole step.
+    await ui.poll(() => gridCells(inputColumns.region).evaluateAll(cells =>
+      cells.map(cell => cell.parentElement?.getAttribute('row-id') ?? null)))
+      .toEqual(ORACLE.filter(o => aliases.includes(o.alias)).map(o => ids[o.alias]));
     await ui(gridCells(inputColumns.region)).toHaveText(ORACLE.filter(o => aliases.includes(o.alias)).map(o => o.region));
   };
   const filterSignature = (filters: Filter[]) => filters.map(f => ({ id: f.column_id, property: f.property_id,

@@ -1,0 +1,112 @@
+{{- /*
+Fail fast, before anything is created, with a message that says what to set.
+Renders nothing when the values are consistent.
+*/ -}}
+{{- $v := .Values -}}
+{{- $errors := list -}}
+{{- $hint := "Quick evaluation with every datastore in the cluster: helm install futureagi deploy/helm/futureagi -n futureagi --create-namespace -f deploy/helm/futureagi/examples/bundled.yaml --timeout 20m" -}}
+{{- range $store := list "postgres" "clickhouse" "redis" "temporal" "objectStorage" -}}
+{{- $mode := (index $v $store).mode -}}
+{{- if not (has $mode (list "external" "bundled")) -}}
+{{- $errors = append $errors (printf "%s.mode must be external or bundled (got %q)" $store $mode) -}}
+{{- end -}}
+{{- end -}}
+{{- if and (eq $v.postgres.mode "external") (not $v.postgres.external.host) -}}
+{{- $errors = append $errors "postgres.external.host is required: your PostgreSQL 16 server (or set postgres.mode=bundled)" -}}
+{{- end -}}
+{{- if and (eq $v.postgres.mode "external") (not $v.postgres.password) (not $v.postgres.existingSecret) -}}
+{{- $errors = append $errors "postgres.password or postgres.existingSecret is required for an external PostgreSQL" -}}
+{{- end -}}
+{{- if and (eq $v.clickhouse.mode "external") (not $v.clickhouse.external.host) -}}
+{{- $errors = append $errors "clickhouse.external.host is required: your ClickHouse 25.3+ server (or set clickhouse.mode=bundled)" -}}
+{{- end -}}
+{{- if eq $v.clickhouse.database $v.clickhouse.propertyCatalogDatabase -}}
+{{- $errors = append $errors "clickhouse.propertyCatalogDatabase must differ from clickhouse.database" -}}
+{{- end -}}
+{{- if and (eq $v.redis.mode "external") (not $v.redis.external.host) -}}
+{{- $errors = append $errors "redis.external.host is required: your Redis 6+ server (or set redis.mode=bundled)" -}}
+{{- end -}}
+{{- if and $v.redis.password (not (regexMatch "^[A-Za-z0-9._~-]+$" $v.redis.password)) -}}
+{{- $errors = append $errors "redis.password may only contain letters, digits and . _ ~ - (it is part of the Redis URLs)" -}}
+{{- end -}}
+{{- if and (eq $v.temporal.mode "external") (not $v.temporal.external.address) -}}
+{{- $errors = append $errors "temporal.external.address is required: the Temporal frontend host:port (or set temporal.mode=bundled)" -}}
+{{- end -}}
+{{- if eq $v.objectStorage.mode "external" -}}
+{{- if not (has $v.objectStorage.backend (list "s3" "gcs" "minio")) -}}
+{{- $errors = append $errors (printf "objectStorage.backend must be s3, gcs or minio (got %q)" $v.objectStorage.backend) -}}
+{{- end -}}
+{{- if and (not $v.objectStorage.existingSecret) (or (not $v.objectStorage.accessKey) (not $v.objectStorage.secretKey)) -}}
+{{- $errors = append $errors "objectStorage.accessKey and objectStorage.secretKey, or objectStorage.existingSecret, are required for external object storage (or set objectStorage.mode=bundled)" -}}
+{{- end -}}
+{{- if and (eq $v.objectStorage.backend "minio") (not $v.objectStorage.external.endpoint) -}}
+{{- $errors = append $errors "objectStorage.external.endpoint is required with objectStorage.backend=minio" -}}
+{{- end -}}
+{{- end -}}
+{{- if not (has $v.config.envType (list "production" "local")) -}}
+{{- $errors = append $errors (printf "config.envType must be production or local (got %q)" $v.config.envType) -}}
+{{- end -}}
+{{- if not (has $v.config.cdcMode (list "outbox" "off")) -}}
+{{- $errors = append $errors (printf "config.cdcMode must be outbox or off (got %q); PeerDB CDC is only in docker-compose.distributed.yml" $v.config.cdcMode) -}}
+{{- end -}}
+{{- if not (has $v.bootstrap.installHook (list "auto" "pre-install" "post-install")) -}}
+{{- $errors = append $errors (printf "bootstrap.installHook must be auto, pre-install or post-install (got %q)" $v.bootstrap.installHook) -}}
+{{- end -}}
+{{- if and (eq $v.bootstrap.installHook "pre-install") (include "futureagi.anyBundled" .) -}}
+{{- $errors = append $errors "bootstrap.installHook=pre-install cannot wait for bundled datastores: they are created after pre-install hooks. Use auto or post-install" -}}
+{{- end -}}
+{{- if and $v.ingress.enabled (or (not $v.ingress.app.host) (not $v.ingress.api.host)) -}}
+{{- $errors = append $errors "ingress.app.host and ingress.api.host are required with ingress.enabled" -}}
+{{- end -}}
+{{- if and $v.ingress.enabled $v.ingress.app.host (eq $v.ingress.app.host $v.ingress.api.host) -}}
+{{- $errors = append $errors "ingress.api.host must differ from ingress.app.host: the API serves many top-level paths" -}}
+{{- end -}}
+{{- if and $v.ingress.enabled $v.ingress.objects.host (ne $v.objectStorage.mode "bundled") -}}
+{{- $errors = append $errors "ingress.objects.host exposes the bundled object storage: it needs objectStorage.mode=bundled (external storage has its own URL: urls.objects)" -}}
+{{- end -}}
+{{- if not (or $v.worker.allQueues.enabled $v.worker.queues) -}}
+{{- $errors = append $errors "worker.allQueues.enabled is false and worker.queues is empty: nothing would run evaluations, schedules or the CDC drain" -}}
+{{- end -}}
+{{- if and (eq $v.config.cdcMode "outbox") (not $v.worker.allQueues.enabled) -}}
+{{- $names := list -}}
+{{- range $v.worker.queues }}{{ $names = append $names (toString .name) }}{{ end -}}
+{{- if not (and (has "tasks_s" $names) (has "tasks_l" $names)) -}}
+{{- $errors = append $errors "with worker.allQueues.enabled=false, worker.queues needs tasks_s and tasks_l: they run the outbox CDC drain and reconcile" -}}
+{{- end -}}
+{{- end -}}
+{{- range $queue := $v.worker.queues -}}
+{{- if not (regexMatch "^[a-z0-9_]+$" (toString $queue.name)) -}}
+{{- $errors = append $errors (printf "worker.queues: every entry needs a name of lowercase letters, digits and _ (got %q)" (toString $queue.name)) -}}
+{{- end -}}
+{{- end -}}
+{{- if and $v.config.recaptcha (not (hasKey $v.secrets.extra "RECAPTCHA_SECRET_KEY")) (not (hasKey $v.config.extraEnv "RECAPTCHA_SECRET_KEY")) (not $v.config.extraEnvFrom) -}}
+{{- $errors = append $errors "config.recaptcha needs secrets.extra.RECAPTCHA_SECRET_KEY (or a config.extraEnvFrom source with it): without it every login from outside localhost is refused" -}}
+{{- end -}}
+{{- /* A StatefulSet's volumeClaimTemplates cannot change after install. Only
+checkable against a live release: `lookup` finds nothing in `helm template`. */ -}}
+{{- $volumes := dict "postgres" "postgres" "clickhouse" "clickhouse" "redis" "redis" "temporal" "temporal" "minio" "objectStorage" -}}
+{{- range $component, $key := $volumes -}}
+{{- $store := index $v $key -}}
+{{- $name := include "futureagi.component" (dict "root" $ "component" $component) -}}
+{{- $live := dict -}}
+{{- if eq $store.mode "bundled" }}{{ $live = lookup "apps/v1" "StatefulSet" $.Release.Namespace $name }}{{ end -}}
+{{- if $live -}}
+{{- $p := $store.bundled.persistence -}}
+{{- $had := dict -}}
+{{- range dig "spec" "volumeClaimTemplates" list $live }}{{ if eq .metadata.name "data" }}{{ $had = . }}{{ end }}{{ end -}}
+{{- $class := $p.storageClass | default $v.global.storageClass -}}
+{{- $class = ternary "" $class (eq $class "-") -}}
+{{- $hadClass := dig "spec" "storageClassName" "" $had -}}
+{{- $hadSize := dig "spec" "resources" "requests" "storage" "" $had -}}
+{{- if and (eq $component "redis") (ne (empty $had) (not $p.enabled)) -}}
+{{- $errors = append $errors (printf "redis.bundled.persistence.enabled cannot change after install (StatefulSet %s): see \"Install-time settings\" in the chart README" $name) -}}
+{{- else if and $had (ne (include "futureagi.quantityBytes" $hadSize) (include "futureagi.quantityBytes" $p.size)) -}}
+{{- $errors = append $errors (printf "%s.bundled.persistence.size is %s, but StatefulSet %s was created with %s and cannot change: keep %s, or grow the volume as \"Install-time settings\" in the chart README shows" $key (toString $p.size) $name $hadSize $hadSize) -}}
+{{- else if and $had (ne $hadClass $class) -}}
+{{- $errors = append $errors (printf "%s.bundled.persistence.storageClass (or global.storageClass) is %q, but StatefulSet %s was created with %q and cannot change" $key $class $name $hadClass) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if $errors -}}
+{{- fail (printf "\n\nFuture AGI chart: fix these values\n  - %s\n\n%s\n" (join "\n  - " $errors) $hint) -}}
+{{- end -}}

@@ -100,7 +100,9 @@ class TestTokenScopedRelease:
     def test_stale_token_leaves_successor_untouched(self):
         tracker = _make_tracker()
         assert tracker.mark_running(21, runner_info={"run_token": "A"}, ttl=60)
-        tracker.mark_completed(21)  # successor reclaims (unconditional, as _claim_prompt does)
+        tracker.mark_completed(
+            21
+        )  # successor reclaims (unconditional, as _claim_prompt does)
         assert tracker.mark_running(21, runner_info={"run_token": "B"}, ttl=60)
 
         assert tracker.mark_completed(21, run_token="A") is False

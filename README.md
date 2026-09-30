@@ -38,7 +38,7 @@
 
 <p>
   <a href="https://app.futureagi.com/auth/jwt/register"><b>Try Cloud (Free)</b></a> ·
-  <a href="#-quickstart-60-seconds"><b>Self-Host</b></a> ·
+  <a href="#-quickstart"><b>Self-Host</b></a> ·
   <a href="https://docs.futureagi.com"><b>Docs</b></a> ·
   <a href="https://futureagi.com/blog"><b>Blog</b></a> ·
   <a href="https://discord.com/invite/n2tCUKBkAw"><b>Discord</b></a> ·
@@ -98,62 +98,87 @@ Go-based gateway with **~9.9 ns weighted routing**, **~29 k req/s on t3.xlarge**
 
 ---
 
-## 🚀 Quickstart (60 seconds)
+<!-- Kept so links to the old heading (#-quickstart-60-seconds) still land here. -->
+<a id="-quickstart-60-seconds"></a>
 
-Two ways, depending on how much you want to install:
+## 🚀 Quickstart
 
-The self-host path requires Docker Desktop or Docker Engine with Docker Compose
-available before running the installer.
+Run the whole platform on your own machine in three steps. Rather not run
+anything? [Try Cloud free](https://app.futureagi.com/auth/jwt/register).
 
-<table width="100%">
-<tr>
-<th width="50%">Cloud (fastest)</th>
-<th width="50%">Self-host (Docker)</th>
-</tr>
-<tr valign="top">
-<td width="50%">
+**You need** Docker Desktop or Docker Engine with Compose v2.24 or newer, and
+for the default Standalone setup **2 vCPUs and 4 GB of memory** given to Docker.
 
-**No install. Free tier.**
+**1. Install**
 
 ```bash
-# Sign up free:
-#   app.futureagi.com
-
-pip install ai-evaluation
+git clone https://github.com/future-agi/future-agi.git
+cd future-agi
+./bin/install          # Windows (PowerShell): .\bin\install.ps1
 ```
 
-<sub>SOC 2 Type II · HIPAA · data stays in your region.</sub>
+The installer checks your machine, writes this install's secrets to `.env`,
+downloads the images (about 800 MB) and waits until everything answers. The
+first boot sets up the database and takes a few minutes; <http://localhost:3000>
+shows its progress meanwhile.
 
-</td>
-<td width="50%">
+**2. Sign in and copy your keys**
 
-**One installer, full stack. The collector builds from this checkout.**
+Open <http://localhost:3000>, create your account (or sign in with the one the
+installer made), then copy the API key and secret key from **Keys** in the
+sidebar.
+
+**3. Send your first trace**
 
 ```bash
-# macOS / Linux / WSL
-git clone https://github.com/future-agi/future-agi.git
-cd future-agi
-./bin/install
-
-# Windows (PowerShell)
-git clone https://github.com/future-agi/future-agi.git
-cd future-agi
-.\bin\install.ps1
+pip install fi-instrumentation-otel
+export FI_API_KEY="<your API key>" FI_SECRET_KEY="<your secret key>" FI_BASE_URL="http://localhost:4318"
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
-<sub>For production, use `./deploy/setup.sh` to generate required secrets and pin the image version.</sub>
+```python
+from fi_instrumentation import register
+from fi_instrumentation.fi_types import ProjectType
 
-Observed attributes use one Kafka topic, one consumer and two additive indexes.
-Existing traces are preserved. Use an explicitly bounded backfill for historical
-attribute coverage; restarts do not scan historical data. See the
-[OSS observation setup and recovery guide](fi-collector/PROPERTY_CATALOG_OSS.md).
+tracer_provider = register(project_name="my-first-project", project_type=ProjectType.OBSERVE)
+with tracer_provider.get_tracer("quickstart").start_as_current_span("hello-future-agi") as span:
+    span.set_attribute("input.value", "Hello, Future AGI")
+tracer_provider.force_flush()
+```
 
-</td>
-</tr>
-</table>
+Open **Tracing** in the sidebar: `my-first-project` holds your first span.
+`http://localhost:4318` is this install's trace collector; it listens on this
+machine only.
+
+| | **Standalone** (default) | **Distributed** (at scale) |
+| --- | --- | --- |
+| Install | `./bin/install` | `./bin/install --distributed` |
+| Runs | one app container, Postgres, ClickHouse | one container per service, PeerDB, Kafka |
+| Docker resources | 2 vCPUs, 4 GB | 4+ vCPUs, 12–16 GB |
+| Kubernetes | | [Helm chart](deploy/helm/futureagi): about 4 CPUs and 8 GiB free for an evaluation |
+
+Choose before you add data: there is no supported way to move a Standalone
+install's data to Distributed or Helm later
+([Switching](INSTALLATION.md#switching-between-standalone-and-distributed)).
+
+- **Configure:** every variable in `.env` is described in
+  [the configuration reference](https://docs.futureagi.com/docs/self-hosting/configuration/reference). Nothing is required for a
+  local install; add LLM provider keys, a public URL or email when you need them.
+- **Manage:** `docker compose logs -f app` (Distributed: `backend`); stop with
+  `docker compose down` or `./bin/uninstall` (both keep your data); upgrade
+  with `git pull && ./bin/install`; remove everything, data included, with
+  `./bin/uninstall --purge`.
+- **Develop:** on a branch other than `main`, add `--from-source` to build the
+  images from your checkout; `./bin/dev` runs it with hot reload
+  ([Local development](https://docs.futureagi.com/docs/self-hosting/development)).
+- **More:** the [self-hosting guide](https://docs.futureagi.com/docs/self-hosting),
+  [INSTALLATION.md](INSTALLATION.md) (every option and troubleshooting) and
+  [deploy/README.md](deploy/README.md) (production).
 
 ### Instrument your first agent
+
+Swap the hand-made span for an instrumentor to trace a real app, here OpenAI
+(`pip install traceai-openai`). Against your own install, keep the `FI_*`
+variables from step 3 set.
 
 <table width="100%">
 <tr>
@@ -273,17 +298,21 @@ Six prompt-optimization algorithms (GEPA, PromptWizard, ProTeGi, Bayesian, Meta-
 <p align="center">
   <a href="https://render.com/deploy"><img src="https://img.shields.io/badge/deploy%20on-Render-46E3B7?style=for-the-badge&logo=render&logoColor=white" alt="Deploy on Render"></a>
   <a href="https://fly.io/docs/launch/"><img src="https://img.shields.io/badge/deploy%20on-Fly-7A3CEF?style=for-the-badge&logo=flydotio&logoColor=white" alt="Deploy on Fly"></a>
-  <a href="#-quickstart-60-seconds"><img src="https://img.shields.io/badge/docker%20compose-up%20-d-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker Compose"></a>
+  <a href="#-quickstart"><img src="https://img.shields.io/badge/docker%20compose-up%20-d-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker Compose"></a>
 </p>
 -->
 | Target | Status | Notes |
 |---|:---:|---|
-|  Docker Compose | ✅ | Published images with `docker compose up -d` from a fresh clone |
-|  Production Compose overlay | ✅ | `./deploy/setup.sh` generates secrets, pins image tags, pulls images, and starts the stack |
-|  Kubernetes / Helm | ⏳ | Official manifests and Helm charts are coming soon |
-|  AWS / GCP / Azure | ✅ | Run Docker Compose on a VM today; managed Kubernetes support is coming soon |
+|  Docker Compose: Standalone | ✅ | `./bin/install`: one app container next to Postgres and ClickHouse, for a laptop or a single VM |
+|  Docker Compose: Distributed | ✅ | `./bin/install --distributed`: one container per service, for scale on one host |
+|  Production Compose overlay | ✅ | `./deploy/setup.sh` on the Distributed setup: `--skip-up` writes `deploy/.env.production` (generating only the secrets you do not supply; you give every image version), then, once the databases are initialized, `--confirm-initialized` pulls the images and starts the stack ([deploy/README.md](deploy/README.md)) |
+|  Kubernetes / Helm | ✅ | Distributed on Kubernetes: [`deploy/helm/futureagi`](deploy/helm/futureagi/README.md) |
+|  AWS / GCP / Azure | ✅ | Docker Compose on a VM, or the Helm chart on a Kubernetes 1.27+ cluster |
 |  AWS Marketplace | ⏳ | Coming soon |
-|  Air-gapped / on-prem | ✅ | No phone-home — [contact sales](mailto:sales@futureagi.com) |
+|  Air-gapped / on-prem | ✅ | Mirror the images, set `FUTURE_AGI_TELEMETRY_DISABLED=true` and block outbound traffic ([Telemetry](#telemetry)); [contact sales](mailto:sales@futureagi.com) for support |
+
+Every image, tag and size: [Container images](https://docs.futureagi.com/docs/self-hosting/images). Every setting:
+[Configuration reference](https://docs.futureagi.com/docs/self-hosting/configuration/reference).
 
 ---
 
@@ -299,11 +328,11 @@ Every arrow is an open, documented interface: **OpenTelemetry OTLP** for traces,
 -->
 <!-- <picture>
   <source media="(prefers-color-scheme: dark)" srcset=".github/assets/architecture.svg">
-  <img alt="Future AGI architecture — client SDKs → traceAI + Agent Command Center → Django platform → PostgreSQL, ClickHouse, Redis, RabbitMQ" src=".github/assets/architecture.svg" width="100%">
+  <img alt="Future AGI architecture — client SDKs → traceAI + Agent Command Center → Django platform → PostgreSQL, ClickHouse, Redis, Temporal" src=".github/assets/architecture.svg" width="100%">
 </picture> -->
 
-**Runtime:** Python 3.11+ (Django 5.1 + Channels) · Go 1.23+ (gateway) · React 18 + Vite · Node 20+.
-**Data:** PostgreSQL (metadata) · ClickHouse (spans + time-series) · Redis (state) · RabbitMQ + Temporal (jobs).
+**Runtime:** Python 3.11+ (Django 5.1 + Channels) · Go 1.25+ (gateway), 1.24+ (trace collector) · React 18 + Vite · Node 22.18+.
+**Data:** PostgreSQL (metadata) · ClickHouse (spans + time-series) · Redis (state, live updates) · Temporal (jobs).
 
 <details><summary>Component breakdown (per-package)</summary>
 
@@ -316,7 +345,7 @@ Every arrow is an open, documented interface: **OpenTelemetry OTLP** for traces,
 |  Platform | **simulate** — persona-driven scenario generation | [`futureagi/simulate/`](./futureagi/simulate) |
 |  Platform | **model_hub** — LLM routing, embeddings, datasets | [`futureagi/model_hub/`](./futureagi/model_hub) |
 |  Platform | **accounts · usage · integrations** — auth, orgs, metering, connectors | [`futureagi/accounts/`](./futureagi/accounts) |
-|  Data | **PostgreSQL** · **ClickHouse** · **Redis** · **RabbitMQ + Temporal** | — |
+|  Data | **PostgreSQL** · **ClickHouse** · **Redis** · **Temporal** | — |
 
 </details>
 
@@ -508,19 +537,17 @@ We love contributions — bug fixes, new evaluators, framework integrations, doc
 | 📺 [**YouTube**](https://www.youtube.com/@Future_AGI) | Walkthroughs & demos |
 | 📊 [**Status**](https://status.futureagi.com) | Cloud uptime + incident history |
 | 📧 **support@futureagi.com** | Cloud account / billing |
-| 🔐 **security@futureagi.com** | Private vulnerability disclosure (24h ack — see [SECURITY.md](SECURITY.md)) |
+| 🔐 **security@futureagi.com** | Private vulnerability disclosure (24h ack on weekdays — see [SECURITY.md](SECURITY.md)) |
 
 ---
 
 ##  Telemetry
 
-Self-hosted Future AGI collects deployment telemetry to help us size release testing and understand feature adoption. **No trace data, no prompts, no API keys**, ever.
+Self-hosted Future AGI sends deployment telemetry, **on by default**, so we can count installs and size release testing: one registration with the **email addresses and email domains of the install's owner, admin and staff/superuser accounts**, then usage counts on a schedule. **No trace data, no prompts, no completions, no datasets, no API keys**, ever.
 
-**What is collected:**
-- **Registration** (once, on first boot): instance ID, version, deployment type, and the **email addresses and domains** of active admin users.
-- **Heartbeat** (periodic): anonymous aggregate usage counts.
+To opt out, install with `./bin/install --no-telemetry`, or set `FUTURE_AGI_TELEMETRY_DISABLED=true` in `.env` (`deploy/.env.production` for the production overlay, `config.telemetry=false` for Helm) and run `docker compose up -d`. Opting out still sends one registration, without email addresses; block `api.futureagi.com` to send nothing. Everything else that could leave your install (HubSpot, Slack, Mixpanel, PostHog, reCAPTCHA, Sentry, Mailgun) is **off until you set its key**.
 
-Set `FUTURE_AGI_TELEMETRY_DISABLED=1` in `.env` (or `deploy/.env.production` for the production overlay) to opt out. When disabled the instance still sends a single minimal census ping — instance ID, version, deployment type, **no emails** — once after the first start, and no heartbeats. The ping lets us count how many self-hosted installs are out there; turn networking off at the edge if you need full silence.
+[Telemetry and outbound connections](https://docs.futureagi.com/docs/self-hosting/configuration/telemetry) has the exact payloads, what the opt-out still sends, every setting, and every outbound connection, with what an install that allows no outbound traffic must also set.
 
 ---
 

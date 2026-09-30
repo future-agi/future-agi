@@ -39,6 +39,9 @@ from tracer.services.clickhouse import oss_native_bootstrap as native
 from tracer.services.clickhouse.oss_cdc_inventory import InventoryPending
 from tracer.services.clickhouse.oss_cdc_source import inspect_source
 from tracer.services.clickhouse.v2 import apply_schema
+from tracer.services.clickhouse.v2.apply_schema_rewriter import (
+    with_dictionary_credentials,
+)
 from tracer.services.clickhouse.v2.schema_topology import is_hosted_production
 
 
@@ -402,9 +405,24 @@ def run(
             config.destination.database,
             include_usage_schema=config.include_usage_schema,
         )
-        allowed = {
-            core._tokens(statement)
-            for statement in (
+
+        def packaged(statements, dictionaries):
+            """Exact allowed token streams. Dictionaries carry the connecting
+            credentials in their CLICKHOUSE source (added at apply time, only
+            with a password); with a password their CREATE OR REPLACE form is
+            allowed too, to re-create one that was created without them."""
+            forms = [*statements]
+            if config.ch_password:
+                forms.extend(core.replace_dictionary_ddl(ddl) for ddl in dictionaries)
+            return {
+                core._tokens(
+                    with_dictionary_credentials(sql, config.ch_user, config.ch_password)
+                )
+                for sql in forms
+            }
+
+        allowed = packaged(
+            (
                 *((core._LEDGER_DDL,) if derived else ()),
                 *(declarations[name] for name in core.DEPENDENT),
                 *(
@@ -412,15 +430,15 @@ def run(
                     if derived
                     else ()
                 ),
-            )
-        }
+            ),
+            (declarations[name] for name in core.DEPENDENT if name.endswith("_dict")),
+        )
         if phase == "native":
-            allowed = {
-                core._tokens(statement)
-                for statement in native.native_definitions(
-                    config.destination.database
-                ).values()
-            }
+            definitions = native.native_definitions(config.destination.database)
+            allowed = packaged(
+                definitions.values(),
+                (ddl for name, ddl in definitions.items() if name.endswith("_dict")),
+            )
 
         class Client:
             def query(self, statement, parameters=None, settings=None):
@@ -504,7 +522,10 @@ def run(
                     "applied": False,
                 }
             created = native.bootstrap_native(
-                client, database=config.destination.database
+                client,
+                database=config.destination.database,
+                ch_user=config.ch_user,
+                ch_password=config.ch_password,
             )
             return {"ready": True, "created_objects": list(created), "applied": True}
         if wait_for_mirrors:
@@ -524,7 +545,13 @@ def run(
                 "derived_upgrade_required": not before.upgrade_recorded,
                 "applied": False,
             }
-        result = core.bootstrap_cdc(client, **arguments, applied_by="oss-cdc-bootstrap")
+        result = core.bootstrap_cdc(
+            client,
+            **arguments,
+            applied_by="oss-cdc-bootstrap",
+            ch_user=config.ch_user,
+            ch_password=config.ch_password,
+        )
         return {
             "ready": True,
             "applied": True,

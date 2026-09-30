@@ -45,11 +45,8 @@ from django.forms import model_to_dict
 from django.http import FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from docx import Document
 from drf_yasg import openapi
 from drf_yasg.utils import swagger_auto_schema
-from pypdf import PdfReader
-from pypdf.errors import PdfReadError
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.generics import CreateAPIView
@@ -290,6 +287,7 @@ from model_hub.utils.synthetic_task_manager import SyntheticTaskManager
 from model_hub.utils.utils import contains_sql, get_diff
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.run_prompt import PROVIDERS_WITH_JSON
+from model_hub.views.utils.dataset_limit import dataset_add_refusal
 from model_hub.views.utils.evals import process_eval_for_single_row
 from model_hub.views.utils.utils import (
     get_recommendations,
@@ -307,6 +305,7 @@ from tfc.settings.settings import BASE_URL, HUGGINGFACE_API_TOKEN
 from tfc.telemetry import wrap_for_thread
 from tfc.temporal import temporal_activity
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import DatasetLimitCheckFailedErrorSerializer
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.functions import (
     calculate_column_average,
@@ -1018,7 +1017,11 @@ class CloneDatasetView(APIView):
 
     @validated_request(
         request_serializer=CloneDatasetRequestSerializer,
-        responses={200: DatasetCopyResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DatasetCopyResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+            503: DatasetLimitCheckFailedErrorSerializer,
+        },
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
@@ -1034,14 +1037,9 @@ class CloneDatasetView(APIView):
                     api_call_type=APICallTypeChoices.DATASET_ADD.value,
                     workspace=request.workspace,
                 )
-                if (
-                    call_log_row_entry is None
-                    or call_log_row_entry.status
-                    == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(
-                        get_error_message("DATASET_CREATE_LIMIT_REACHED")
-                    )
+                refusal = dataset_add_refusal(call_log_row_entry)
+                if refusal is not None:
+                    return refusal
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
             new_dataset_name = request.data.get(
@@ -1193,7 +1191,11 @@ class AddAsNewDataset(APIView):
 
     @validated_request(
         request_serializer=AddAsNewDatasetRequestSerializer,
-        responses={200: DatasetCopyResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: DatasetCopyResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+            503: DatasetLimitCheckFailedErrorSerializer,
+        },
     )
     def post(self, request, *args, **kwargs):
         try:
@@ -1270,14 +1272,9 @@ class AddAsNewDataset(APIView):
                     api_call_type=APICallTypeChoices.DATASET_ADD.value,
                     workspace=request.workspace,
                 )
-                if (
-                    call_log_row_entry is None
-                    or call_log_row_entry.status
-                    == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(
-                        get_error_message("DATASET_CREATE_LIMIT_REACHED")
-                    )
+                refusal = dataset_add_refusal(call_log_row_entry)
+                if refusal is not None:
+                    return refusal
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
 
@@ -5308,6 +5305,7 @@ class ManuallyCreateDatasetView(APIView):
         responses={
             200: ManualDatasetCreateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
+            503: DatasetLimitCheckFailedErrorSerializer,
         },
     )
     def post(self, request, *args, **kwargs):
@@ -5352,14 +5350,9 @@ class ManuallyCreateDatasetView(APIView):
                     api_call_type=APICallTypeChoices.DATASET_ADD.value,
                     workspace=request.workspace,
                 )
-                if (
-                    call_log_row_entry is None
-                    or call_log_row_entry.status
-                    == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(
-                        get_error_message("DATASET_CREATE_LIMIT_REACHED")
-                    )
+                refusal = dataset_add_refusal(call_log_row_entry)
+                if refusal is not None:
+                    return refusal
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
 
@@ -12772,6 +12765,7 @@ class DuplicateDatasetView(APIView):
         responses={
             200: DuplicateDatasetResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
+            503: DatasetLimitCheckFailedErrorSerializer,
         },
     )
     def post(self, request, dataset_id, *args, **kwargs):
@@ -12815,14 +12809,9 @@ class DuplicateDatasetView(APIView):
                     api_call_type=APICallTypeChoices.DATASET_ADD.value,
                     workspace=request.workspace,
                 )
-                if (
-                    call_log_row_entry is None
-                    or call_log_row_entry.status
-                    == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(
-                        get_error_message("DATASET_CREATE_LIMIT_REACHED")
-                    )
+                refusal = dataset_add_refusal(call_log_row_entry)
+                if refusal is not None:
+                    return refusal
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
 
@@ -15681,6 +15670,10 @@ class CreateKnowledgeBaseView(APIView):
 
     # Check if file is valid
     def is_file_readable(self, file_obj):
+        from docx import Document  # lazy
+        from pypdf import PdfReader  # lazy
+        from pypdf.errors import PdfReadError  # lazy
+
         try:
             file_name = file_obj.name
             extension = file_name.split(".")[-1].lower()

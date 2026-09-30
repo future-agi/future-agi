@@ -2427,9 +2427,11 @@ export interface APIKeyBulkItemApi {
   owner: string;
   /** @minLength 1 */
   key_hash: string;
+  key_prefix: string;
   models: string[];
   providers: string[];
   metadata: APIKeyBulkItemApiMetadata;
+  expires_at: string | null;
 }
 
 export interface APIKeyBulkResponseApi {
@@ -4072,6 +4074,15 @@ export const SetupChecksResultApiMode = {
   experiment: "experiment",
 } as const;
 
+export type SetupChecksResultApiSetup =
+  (typeof SetupChecksResultApiSetup)[keyof typeof SetupChecksResultApiSetup];
+
+export const SetupChecksResultApiSetup = {
+  standalone: "standalone",
+  distributed: "distributed",
+  helm: "helm",
+} as const;
+
 export type SetupCheckApiStatus =
   (typeof SetupCheckApiStatus)[keyof typeof SetupCheckApiStatus];
 
@@ -4090,11 +4101,17 @@ export interface SetupCheckApi {
   status: SetupCheckApiStatus;
   required: boolean;
   detail: string;
+  fix: string;
+  docs_url: string;
 }
 
 export interface SetupChecksResultApi {
   status: SetupChecksResultApiStatus;
   mode: SetupChecksResultApiMode;
+  setup: SetupChecksResultApiSetup;
+  /** @minLength 1 */
+  collector_http_url: string;
+  account_exists: boolean;
   checks: SetupCheckApi[];
 }
 
@@ -8700,6 +8717,50 @@ export interface DuplicateDatasetResponseApi {
   result: DuplicateDatasetResultApi;
 }
 
+export type DatasetLimitCheckFailedErrorApiType =
+  (typeof DatasetLimitCheckFailedErrorApiType)[keyof typeof DatasetLimitCheckFailedErrorApiType];
+
+export const DatasetLimitCheckFailedErrorApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type DatasetLimitCheckFailedErrorApiCode =
+  (typeof DatasetLimitCheckFailedErrorApiCode)[keyof typeof DatasetLimitCheckFailedErrorApiCode];
+
+export const DatasetLimitCheckFailedErrorApiCode = {
+  dataset_limit_check_failed: "dataset_limit_check_failed",
+} as const;
+
+export type DatasetLimitCheckFailedErrorApiDetails = {
+  [key: string]: string[];
+};
+
+export interface DatasetLimitCheckFailedErrorApi {
+  status?: boolean;
+  type?: DatasetLimitCheckFailedErrorApiType;
+  code?: DatasetLimitCheckFailedErrorApiCode;
+  detail?: string;
+  /** @minLength 1 */
+  result?: string;
+  /** @minLength 1 */
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: DatasetLimitCheckFailedErrorApiDetails;
+}
+
 export interface ExtractEntitiesRequestApi {
   column_id: string;
   /** @minLength 1 */
@@ -11229,8 +11290,11 @@ export const EvalUsageStatsResponseResultApiCompleteness = {
 export interface EvalUsageStatsApi {
   total_runs: number;
   runs_period: number;
+  /** Deprecated compatibility field. Usage counts only successful runs, so this always equals runs_period. */
   success_count: number;
+  /** Deprecated compatibility field. Usage counts only successful runs, so this is always 0; failed runs stay in the eval logs. */
   error_count: number;
+  /** Deprecated compatibility field. Usage counts only successful runs, so this is 100 when runs_period is above 0, otherwise 0. */
   pass_rate: number;
 }
 
@@ -14401,6 +14465,8 @@ export interface BulkCreateScoresApi {
   span_notes?: string;
   span_notes_source_id?: string;
   queue_item_id?: string;
+  /** Tracer project the trace / span was opened from. The same id can exist in several projects; when supplied, the score is written to that project's copy. */
+  project_id?: string;
 }
 
 export interface BulkCreateScoresResultApi {
@@ -16933,6 +16999,7 @@ export interface ALKSimulateProvisionRunTestRequestApi {
   agent_definition_id?: string;
   /** @maxLength 255 */
   agent_name?: string;
+  enable_tool_evaluation?: boolean;
 }
 
 export interface ALKSimulateProvisionResultApi {
@@ -17023,6 +17090,526 @@ export interface CallExecutionErrorResponseApi {
   details?: CallExecutionErrorResponseApiDetails;
 }
 
+export type HarnessEnvironmentApiAgentType =
+  (typeof HarnessEnvironmentApiAgentType)[keyof typeof HarnessEnvironmentApiAgentType];
+
+export const HarnessEnvironmentApiAgentType = {
+  voice: "voice",
+  chat: "chat",
+} as const;
+
+export type HarnessEnvironmentApiStatus =
+  (typeof HarnessEnvironmentApiStatus)[keyof typeof HarnessEnvironmentApiStatus];
+
+export const HarnessEnvironmentApiStatus = {
+  building: "building",
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export interface HarnessEnvironmentApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  description: string;
+  /** @minLength 1 */
+  domain: string;
+  /** @minLength 1 */
+  source_kind: string;
+  agent_type: HarnessEnvironmentApiAgentType;
+  status: HarnessEnvironmentApiStatus;
+  /** @minLength 1 */
+  stage: string;
+  scenario_count: number;
+  sub_goals_count: number;
+  tools_count: number;
+  runs_count: number;
+  last_updated: string;
+  created_at: string;
+}
+
+export interface HarnessEnvironmentListResponseApi {
+  count: number;
+  /** @minLength 1 */
+  next: string;
+  /** @minLength 1 */
+  previous: string;
+  total_pages: number;
+  current_page: number;
+  results: HarnessEnvironmentApi[];
+}
+
+export type HarnessEnvironmentOverviewApiAgentType =
+  (typeof HarnessEnvironmentOverviewApiAgentType)[keyof typeof HarnessEnvironmentOverviewApiAgentType];
+
+export const HarnessEnvironmentOverviewApiAgentType = {
+  voice: "voice",
+  chat: "chat",
+} as const;
+
+export type HarnessEnvironmentOverviewApiStatus =
+  (typeof HarnessEnvironmentOverviewApiStatus)[keyof typeof HarnessEnvironmentOverviewApiStatus];
+
+export const HarnessEnvironmentOverviewApiStatus = {
+  building: "building",
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export interface HarnessEnvironmentRunLinkApi {
+  run_test_id: string;
+  test_execution_id: string;
+  /** @minLength 1 */
+  simulation_url: string;
+}
+
+export interface HarnessEnvironmentAgentApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  provider: string;
+  versions_count: number;
+  /** @minLength 1 */
+  active_version: string;
+}
+
+export interface HarnessEnvironmentOverviewApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  description: string;
+  /** @minLength 1 */
+  domain: string;
+  /** @minLength 1 */
+  source_kind: string;
+  agent_type: HarnessEnvironmentOverviewApiAgentType;
+  status: HarnessEnvironmentOverviewApiStatus;
+  /** @minLength 1 */
+  stage: string;
+  scenario_count: number;
+  sub_goals_count: number;
+  tools_count: number;
+  runs_count: number;
+  last_updated: string;
+  created_at: string;
+  flows_count: number;
+  guardrails_count: number;
+  personas_count: number;
+  evaluations_count: number;
+  run: HarnessEnvironmentRunLinkApi;
+  agent: HarnessEnvironmentAgentApi;
+}
+
+export interface HarnessEnvironmentAmendmentApi {
+  subject: string;
+  /** @minLength 1 */
+  note: string;
+}
+
+export type HarnessEnvironmentCatalogueSubGoalApiKind =
+  (typeof HarnessEnvironmentCatalogueSubGoalApiKind)[keyof typeof HarnessEnvironmentCatalogueSubGoalApiKind];
+
+export const HarnessEnvironmentCatalogueSubGoalApiKind = {
+  checkpoint: "checkpoint",
+  judge: "judge",
+} as const;
+
+export interface HarnessEnvironmentCatalogueSubGoalApi {
+  /** @minLength 1 */
+  name: string;
+  what: string;
+  kind: HarnessEnvironmentCatalogueSubGoalApiKind;
+  claim: string;
+  check: string;
+}
+
+export type HarnessEnvironmentEndConditionsApiClock =
+  (typeof HarnessEnvironmentEndConditionsApiClock)[keyof typeof HarnessEnvironmentEndConditionsApiClock];
+
+export const HarnessEnvironmentEndConditionsApiClock = {
+  "real-time": "real-time",
+  stepped: "stepped",
+} as const;
+
+export interface HarnessEnvironmentEndConditionsApi {
+  max_turns: number;
+  max_duration_seconds: number;
+  clock: HarnessEnvironmentEndConditionsApiClock;
+  ended_reasons: string[];
+}
+
+export type HarnessEnvironmentProvenanceApiBuiltBy =
+  (typeof HarnessEnvironmentProvenanceApiBuiltBy)[keyof typeof HarnessEnvironmentProvenanceApiBuiltBy];
+
+export const HarnessEnvironmentProvenanceApiBuiltBy = {
+  alk: "alk",
+  repository: "repository",
+} as const;
+
+export type HarnessEnvironmentProvenanceApiSource = { [key: string]: string };
+
+export type HarnessEnvironmentProvenanceApiDigests = { [key: string]: string };
+
+export type HarnessEnvironmentProvenanceApiAuthoredAt = {
+  [key: string]: string;
+};
+
+export interface HarnessEnvironmentProvenanceApi {
+  source: HarnessEnvironmentProvenanceApiSource;
+  built_by: HarnessEnvironmentProvenanceApiBuiltBy;
+  attempt: number;
+  /** @minLength 1 */
+  snapshot: string;
+  digests: HarnessEnvironmentProvenanceApiDigests;
+  authored_at: HarnessEnvironmentProvenanceApiAuthoredAt;
+}
+
+export type HarnessEnvironmentContractApiToolsItem = { [key: string]: unknown };
+
+export type HarnessEnvironmentContractApiRuntime = { [key: string]: unknown };
+
+export type HarnessEnvironmentContractApiDependenciesItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentContractApiRuntimeDependenciesItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentContractApiToolEntrypointsItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentContractApiDataStore = { [key: string]: unknown };
+
+export interface HarnessEnvironmentContractApi {
+  agent?: string;
+  one_liner?: string;
+  modality?: string;
+  call_direction?: string;
+  system_prompt_excerpt?: string;
+  tools?: HarnessEnvironmentContractApiToolsItem[];
+  real_use_cases?: string[];
+  hard_constraints?: string[];
+  runtime?: HarnessEnvironmentContractApiRuntime;
+  dependencies?: HarnessEnvironmentContractApiDependenciesItem[];
+  runtime_dependencies?: HarnessEnvironmentContractApiRuntimeDependenciesItem[];
+  implementation?: string;
+  tool_entrypoints?: HarnessEnvironmentContractApiToolEntrypointsItem[];
+  data_store?: HarnessEnvironmentContractApiDataStore;
+  open_questions?: string[];
+  amendments: HarnessEnvironmentAmendmentApi[];
+  sub_goals: HarnessEnvironmentCatalogueSubGoalApi[];
+  end_conditions: HarnessEnvironmentEndConditionsApi;
+  notes?: string;
+  chosen_evals?: string[];
+  provenance: HarnessEnvironmentProvenanceApi;
+}
+
+export interface HarnessEnvironmentPersonaApi {
+  name?: string;
+  scenario_keys: string[];
+}
+
+export interface HarnessEnvironmentStoreTableApi {
+  /** @minLength 1 */
+  name: string;
+  rows: number;
+}
+
+export interface HarnessEnvironmentStoreApi {
+  capability: string;
+  engine: string;
+  strategy: string;
+  tables: HarnessEnvironmentStoreTableApi[];
+  total_rows: number;
+}
+
+export type HarnessEnvironmentWorldApiRuntime = { [key: string]: string };
+
+export interface HarnessEnvironmentWorldApi {
+  runtime: HarnessEnvironmentWorldApiRuntime;
+  personas: HarnessEnvironmentPersonaApi[];
+  stores: HarnessEnvironmentStoreApi[];
+}
+
+export type HarnessEnvironmentSubGoalApiKind =
+  (typeof HarnessEnvironmentSubGoalApiKind)[keyof typeof HarnessEnvironmentSubGoalApiKind];
+
+export const HarnessEnvironmentSubGoalApiKind = {
+  checkpoint: "checkpoint",
+  judge: "judge",
+} as const;
+
+export interface HarnessEnvironmentSubGoalApi {
+  /** @minLength 1 */
+  name: string;
+  what?: string;
+  kind?: HarnessEnvironmentSubGoalApiKind;
+  claim?: string;
+}
+
+export type HarnessEnvironmentScenarioApiFixture = { [key: string]: string };
+
+export type HarnessEnvironmentScenarioApiPersona = { [key: string]: string };
+
+export interface HarnessEnvironmentScenarioApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  scenario_id: string;
+  name: string;
+  instruction: string;
+  /** @minLength 1 */
+  use_case: string;
+  /** @minLength 1 */
+  branch: string;
+  /** @minLength 1 */
+  tests: string;
+  fixture: HarnessEnvironmentScenarioApiFixture;
+  steps: number;
+  sub_goals: HarnessEnvironmentSubGoalApi[];
+  persona: HarnessEnvironmentScenarioApiPersona;
+  /** @minLength 1 */
+  situation: string;
+  /** @minLength 1 */
+  outcome: string;
+  /** @minLength 1 */
+  status: string;
+  call_execution_id: string;
+}
+
+export type HarnessEnvironmentSelectedEvalApiSource =
+  (typeof HarnessEnvironmentSelectedEvalApiSource)[keyof typeof HarnessEnvironmentSelectedEvalApiSource];
+
+export const HarnessEnvironmentSelectedEvalApiSource = {
+  system: "system",
+  custom: "custom",
+} as const;
+
+export type HarnessEnvironmentSelectedEvalApiAgentType =
+  (typeof HarnessEnvironmentSelectedEvalApiAgentType)[keyof typeof HarnessEnvironmentSelectedEvalApiAgentType];
+
+export const HarnessEnvironmentSelectedEvalApiAgentType = {
+  voice: "voice",
+  chat: "chat",
+} as const;
+
+export type HarnessEnvironmentSelectedEvalApiModality =
+  (typeof HarnessEnvironmentSelectedEvalApiModality)[keyof typeof HarnessEnvironmentSelectedEvalApiModality];
+
+export const HarnessEnvironmentSelectedEvalApiModality = {
+  voice: "voice",
+  text: "text",
+  any: "any",
+} as const;
+
+export interface HarnessEnvironmentEvalInputApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  source: string;
+  /** @minLength 1 */
+  label: string;
+}
+
+export interface HarnessEnvironmentSelectedEvalApi {
+  /** @minLength 1 */
+  name: string;
+  description: string;
+  source: HarnessEnvironmentSelectedEvalApiSource;
+  tags: string[];
+  required_keys: string[];
+  agent_type: HarnessEnvironmentSelectedEvalApiAgentType;
+  modality: HarnessEnvironmentSelectedEvalApiModality;
+  credits_per_run: number;
+  charges_judge_tokens: boolean;
+  inputs: HarnessEnvironmentEvalInputApi[];
+  id: string;
+  runnable: boolean;
+}
+
+export type HarnessEnvironmentResultApiEvaluationsItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessEnvironmentResultApiCoverage = { [key: string]: string };
+
+export interface HarnessEnvironmentResultApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  /** @minLength 1 */
+  status: string;
+  attempt_number: number;
+  evaluations: HarnessEnvironmentResultApiEvaluationsItem[];
+  coverage: HarnessEnvironmentResultApiCoverage;
+}
+
+export interface HarnessEnvironmentEvaluationsApi {
+  selected: HarnessEnvironmentSelectedEvalApi[];
+  results: HarnessEnvironmentResultApi[];
+}
+
+export interface HarnessEnvironmentCredentialFileApi {
+  /** @minLength 1 */
+  environment_name: string;
+}
+
+export type HarnessEnvironmentAgentSettingsApiConfig = {
+  [key: string]: string;
+};
+
+export interface HarnessEnvironmentAgentSettingsApi {
+  /** @minLength 1 */
+  connector: string;
+  /** @minLength 1 */
+  mode: string;
+  /** @minLength 1 */
+  call_direction: string;
+  config: HarnessEnvironmentAgentSettingsApiConfig;
+  secret_refs: string[];
+  secrets: string[];
+  credential_files: HarnessEnvironmentCredentialFileApi[];
+}
+
+export type HarnessEnvironmentSettingsApiSource = { [key: string]: string };
+
+export type HarnessEnvironmentSettingsApiRuntime = { [key: string]: string };
+
+export type HarnessEnvironmentSettingsApiSecurity = { [key: string]: string };
+
+export type HarnessEnvironmentSettingsApiArtifacts = { [key: string]: string };
+
+export interface HarnessEnvironmentSettingsApi {
+  /** @minLength 1 */
+  schema_version: string;
+  source: HarnessEnvironmentSettingsApiSource;
+  agent: HarnessEnvironmentAgentSettingsApi;
+  runtime: HarnessEnvironmentSettingsApiRuntime;
+  security: HarnessEnvironmentSettingsApiSecurity;
+  artifacts: HarnessEnvironmentSettingsApiArtifacts;
+  scenario_count: number;
+  seed: number;
+  enable_tool_evaluation: boolean;
+}
+
+export interface HarnessEnvironmentDetailApi {
+  id: string;
+  overview: HarnessEnvironmentOverviewApi;
+  contract: HarnessEnvironmentContractApi;
+  world: HarnessEnvironmentWorldApi;
+  scenarios: HarnessEnvironmentScenarioApi[];
+  evaluations: HarnessEnvironmentEvaluationsApi;
+  settings: HarnessEnvironmentSettingsApi;
+}
+
+export interface HarnessEnvironmentRenameApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+}
+
+export interface HarnessEnvironmentAddEvaluationApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+}
+
+export type HarnessEnvironmentOfferedEvalApiSource =
+  (typeof HarnessEnvironmentOfferedEvalApiSource)[keyof typeof HarnessEnvironmentOfferedEvalApiSource];
+
+export const HarnessEnvironmentOfferedEvalApiSource = {
+  system: "system",
+  custom: "custom",
+} as const;
+
+export type HarnessEnvironmentOfferedEvalApiAgentType =
+  (typeof HarnessEnvironmentOfferedEvalApiAgentType)[keyof typeof HarnessEnvironmentOfferedEvalApiAgentType];
+
+export const HarnessEnvironmentOfferedEvalApiAgentType = {
+  voice: "voice",
+  chat: "chat",
+} as const;
+
+export type HarnessEnvironmentOfferedEvalApiModality =
+  (typeof HarnessEnvironmentOfferedEvalApiModality)[keyof typeof HarnessEnvironmentOfferedEvalApiModality];
+
+export const HarnessEnvironmentOfferedEvalApiModality = {
+  voice: "voice",
+  text: "text",
+  any: "any",
+} as const;
+
+export interface HarnessEnvironmentOfferedEvalApi {
+  /** @minLength 1 */
+  name: string;
+  description: string;
+  source: HarnessEnvironmentOfferedEvalApiSource;
+  tags: string[];
+  required_keys: string[];
+  agent_type: HarnessEnvironmentOfferedEvalApiAgentType;
+  modality: HarnessEnvironmentOfferedEvalApiModality;
+  credits_per_run: number;
+  charges_judge_tokens: boolean;
+  inputs: HarnessEnvironmentEvalInputApi[];
+}
+
+export interface HarnessEnvironmentAvailableEvalsApi {
+  evaluations: HarnessEnvironmentOfferedEvalApi[];
+}
+
+export interface HarnessEnvironmentToolCallEvaluationApi {
+  enable_tool_evaluation: boolean;
+}
+
+export interface HarnessRunCreateApi {
+  /** @maxItems 1000 */
+  scenario_ids: string[];
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials?: number;
+}
+
+export interface HarnessRunCreateResponseApi {
+  environment_id: string;
+  job_id: string;
+  run_id: string;
+  run_test_id: string;
+  test_execution_id: string;
+  /** @minimum 1 */
+  scenario_count: number;
+  /**
+   * @minimum 1
+   * @maximum 20
+   */
+  trials: number;
+  /** @minimum 1 */
+  total_calls: number;
+  /** @minLength 1 */
+  state: string;
+  /** @minLength 1 */
+  stage: string;
+}
+
+export interface HarnessEnvironmentRunEvaluationQueuedApi {
+  /** Stamped and scheduled for dispatch -- not yet dispatched. A call whose stamp committed but whose grading job then failed to queue is still counted here, not subtracted. */
+  queued: number;
+  skipped_existing: number;
+  skipped_in_flight: number;
+  skipped_pending: number;
+  completed_calls: number;
+}
+
 export type HarnessJobReadApiReceiptsItem = { [key: string]: unknown };
 
 export type HarnessJobReadApiUsageLimit = { [key: string]: unknown };
@@ -17031,11 +17618,14 @@ export type HarnessJobInfoApiSource = { [key: string]: string };
 
 export type HarnessJobInfoApiMetadata = { [key: string]: string };
 
+export type HarnessJobInfoApiRuntime = { [key: string]: string };
+
 export interface HarnessJobInfoApi {
   job_id: string;
   run_id: string;
   source: HarnessJobInfoApiSource;
   metadata: HarnessJobInfoApiMetadata;
+  runtime?: HarnessJobInfoApiRuntime;
   run_test_id: string;
   test_execution_id: string;
 }
@@ -17052,6 +17642,8 @@ export interface HarnessJobStatusApi {
   attempt: number;
   completed_scenarios: number;
   failed_scenarios: number;
+  active_scenarios?: number;
+  queued_scenarios?: number;
   total_scenarios: number;
   /** @minLength 1 */
   deadline_at: string;
@@ -17120,6 +17712,13 @@ export interface HarnessRuntimeReadApi {
   /** @minLength 1 */
   sandbox_id?: string;
   diagnostics?: HarnessDiagnosticsApi;
+}
+
+export interface HarnessParallelismApi {
+  requested: number;
+  admitted: number;
+  effective: number;
+  degrade_reasons: string[];
 }
 
 export type HarnessConversationMessageApiRole =
@@ -17240,6 +17839,7 @@ export interface HarnessJobReadApi {
   receipts: HarnessJobReadApiReceiptsItem[];
   platform: HarnessPlatformApi;
   runtime?: HarnessRuntimeReadApi;
+  parallelism?: HarnessParallelismApi;
   conversation?: HarnessConversationReadApi;
   consumption?: HarnessConsumptionApi;
   usage_limit?: HarnessJobReadApiUsageLimit;
@@ -17272,6 +17872,8 @@ export const HarnessSourceApiVisibility = {
   private: "private",
 } as const;
 
+export type HarnessSourceApiEnvironmentValues = { [key: string]: string };
+
 export interface HarnessSourceApi {
   kind: HarnessSourceApiKind;
   /**
@@ -17298,6 +17900,7 @@ export interface HarnessSourceApi {
   /** @minLength 1 */
   endpoint?: string;
   visibility?: HarnessSourceApiVisibility;
+  environment_values?: HarnessSourceApiEnvironmentValues;
 }
 
 export type HarnessAgentApiConnector =
@@ -17308,6 +17911,7 @@ export const HarnessAgentApiConnector = {
   vapi: "vapi",
   retell: "retell",
   retell_chat: "retell_chat",
+  phone: "phone",
   auto: "auto",
 } as const;
 
@@ -17318,6 +17922,17 @@ export const HarnessAgentApiMode = {
   connect_only: "connect_only",
   environment_backed: "environment_backed",
   provider_import: "provider_import",
+} as const;
+
+/**
+ * inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.
+ */
+export type HarnessAgentApiCallDirection =
+  (typeof HarnessAgentApiCallDirection)[keyof typeof HarnessAgentApiCallDirection];
+
+export const HarnessAgentApiCallDirection = {
+  inbound: "inbound",
+  outbound: "outbound",
 } as const;
 
 export type SecretReferenceApiManager =
@@ -17352,13 +17967,15 @@ export interface SecretReferenceApi {
   purpose: SecretReferenceApiPurpose;
 }
 
-export type HarnessAgentApiConfig = { [key: string]: string };
+export type HarnessAgentApiConfig = { [key: string]: unknown };
 
 export type HarnessAgentApiSecretRefs = { [key: string]: SecretReferenceApi };
 
 export interface HarnessAgentApi {
   connector: HarnessAgentApiConnector;
   mode?: HarnessAgentApiMode;
+  /** inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only. */
+  call_direction?: HarnessAgentApiCallDirection;
   config?: HarnessAgentApiConfig;
   secret_refs?: HarnessAgentApiSecretRefs;
 }
@@ -17466,7 +18083,7 @@ export interface HarnessJobCreateApi {
   agent: HarnessAgentApi;
   /**
    * @minimum 1
-   * @maximum 200
+   * @maximum 1000
    */
   scenario_count?: number;
   seed?: number;
@@ -17503,7 +18120,7 @@ export interface HarnessPreflightApi {
   agent: HarnessAgentApi;
   /**
    * @minimum 1
-   * @maximum 200
+   * @maximum 1000
    */
   scenario_count?: number;
   seed?: number;
@@ -17519,6 +18136,72 @@ export interface HarnessPreflightApi {
   metadata?: HarnessPreflightApiMetadata;
   /** Target-provider values to verify live; used for this check only. */
   credential_values?: HarnessPreflightApiCredentialValues;
+}
+
+export type HarnessPreflightResponseApiState =
+  (typeof HarnessPreflightResponseApiState)[keyof typeof HarnessPreflightResponseApiState];
+
+export const HarnessPreflightResponseApiState = {
+  connected: "connected",
+  failed: "failed",
+} as const;
+
+export type HarnessPreflightResponseApiResourceProfile = {
+  [key: string]: unknown;
+};
+
+export type HarnessPreflightResponseApiSnapshot = { [key: string]: unknown };
+
+export type HarnessPreflightCheckApiStatus =
+  (typeof HarnessPreflightCheckApiStatus)[keyof typeof HarnessPreflightCheckApiStatus];
+
+export const HarnessPreflightCheckApiStatus = {
+  passed: "passed",
+  failed: "failed",
+  skipped: "skipped",
+} as const;
+
+export interface HarnessPreflightCheckApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  label: string;
+  status: HarnessPreflightCheckApiStatus;
+  detail: string;
+  missing: string[];
+  /** @minLength 1 */
+  fix: string;
+}
+
+export type HarnessPreflightCredentialsApiRequirementsItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessPreflightCredentialsApiCredentialChoicesItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessPreflightCredentialsApiProbeItem = {
+  [key: string]: unknown;
+};
+
+export interface HarnessPreflightCredentialsApi {
+  scanned_files: number;
+  detected_connectors: string[];
+  requirements: HarnessPreflightCredentialsApiRequirementsItem[];
+  credential_choices: HarnessPreflightCredentialsApiCredentialChoicesItem[];
+  probe: HarnessPreflightCredentialsApiProbeItem[];
+}
+
+export interface HarnessPreflightResponseApi {
+  ready_to_submit: boolean;
+  state: HarnessPreflightResponseApiState;
+  checks: HarnessPreflightCheckApi[];
+  credentials: HarnessPreflightCredentialsApi;
+  parallelism_enabled: boolean;
+  effective_parallelism: number;
+  resource_profile: HarnessPreflightResponseApiResourceProfile;
+  snapshot: HarnessPreflightResponseApiSnapshot;
 }
 
 export interface HarnessSecretFileUploadResponseApi {
@@ -17620,6 +18303,39 @@ export interface HarnessJobExtendApi {
    * @maxLength 128
    */
   client_request_id?: string;
+}
+
+export type HarnessScenarioChangeApiOp =
+  (typeof HarnessScenarioChangeApiOp)[keyof typeof HarnessScenarioChangeApiOp];
+
+export const HarnessScenarioChangeApiOp = {
+  drop: "drop",
+  set_field: "set_field",
+  set_persona: "set_persona",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type HarnessScenarioChangeApiValue = { [key: string]: unknown };
+
+export type HarnessScenarioChangeApiPersona = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export interface HarnessScenarioChangeApi {
+  op: HarnessScenarioChangeApiOp;
+  scenario?: string;
+  scenarios?: string[];
+  field?: string;
+  /** Any valid JSON value. */
+  value?: HarnessScenarioChangeApiValue;
+  persona?: HarnessScenarioChangeApiPersona;
+}
+
+export interface HarnessScenarioAmendApi {
+  changes: HarnessScenarioChangeApi[];
+  rework?: boolean;
 }
 
 export type HarnessManifestApiSchemaVersion =
@@ -19216,6 +19932,8 @@ export interface CallExecutionEvalMetricApi {
   error?: boolean;
   status?: string;
   skipped?: boolean;
+  /** Present and true only when the eval was removed from the environment; a live eval's verdict omits the key entirely. */
+  removed?: boolean;
   error_localizer?: boolean;
   error_analysis?: CallExecutionEvalMetricApiErrorAnalysis;
   error_localizer_status?: string;
@@ -19314,6 +20032,9 @@ export interface CallExecutionDetailApi {
   readonly recordings?: string;
   readonly test_execution_id?: string;
   readonly scenario_id?: string;
+  readonly source_scenario_key?: string;
+  readonly trial_index?: string;
+  readonly harness_outcome_status?: string;
   readonly scenario_graph?: string;
   readonly scenario_graph_id?: string;
   readonly avg_agent_latency?: number;
@@ -20279,6 +21000,18 @@ export interface TestExecutionItemResponseApi {
   readonly total_number_of_fagi_agent_turns?: number;
   /** @minLength 1 */
   readonly source_type?: string;
+  readonly scenario_keys?: readonly string[];
+  readonly selected_scenarios?: number;
+  readonly trials?: number;
+  readonly total_calls?: number;
+  readonly completed_calls?: number;
+  readonly failed_calls?: number;
+  readonly pending_calls?: number;
+  /** @minLength 1 */
+  readonly completed_at?: string;
+  readonly outcome_passed?: number;
+  readonly outcome_failed?: number;
+  readonly outcome_skipped?: number;
 }
 
 export interface RunTestExecutionsResponseApi {
@@ -21033,6 +21766,136 @@ export interface TestExecutionColumnOrderResponseApi {
   readonly column_order?: readonly ColumnOrderApi[];
 }
 
+export type TestExecutionDebugAnalysisResponseApiStatus =
+  (typeof TestExecutionDebugAnalysisResponseApiStatus)[keyof typeof TestExecutionDebugAnalysisResponseApiStatus];
+
+export const TestExecutionDebugAnalysisResponseApiStatus = {
+  not_requested: "not_requested",
+  pending: "pending",
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export interface DebugAnalysisCoverageApi {
+  /** @minLength 1 */
+  scope: string;
+  observed_call_count: number;
+  read_complete: boolean;
+}
+
+export interface DebugAnalysisReportApi {
+  id: string;
+  /** @minLength 1 */
+  execution_status: string;
+  /** @minLength 1 */
+  outcome: string;
+  coverage: DebugAnalysisCoverageApi;
+  /** @minLength 1 */
+  error_message: string;
+  /** @minLength 1 */
+  grouping_status: string;
+  recorded_at: string;
+}
+
+export interface DebugAnalysisClusterApi {
+  id: string;
+  /** @minLength 1 */
+  cluster_id: string;
+  /** @minLength 1 */
+  title: string;
+  /** @minLength 1 */
+  error_type: string;
+}
+
+export interface DebugAnalysisEvidenceApi {
+  /** @minLength 1 */
+  evidence_id: string;
+  call_execution_id: string;
+  /** @minLength 1 */
+  excerpt: string;
+}
+
+export interface DebugAnalysisFindingApi {
+  id: string;
+  /** @minLength 1 */
+  kind: string;
+  /** @minLength 1 */
+  statement: string;
+  /** @minLength 1 */
+  recovery: string;
+  /** @minLength 1 */
+  category: string;
+  /** @minLength 1 */
+  group_label: string;
+  /** @minLength 1 */
+  fix_layer: string;
+  /** @minLength 1 */
+  confidence: string;
+  /** @minLength 1 */
+  goal: string;
+  cluster: DebugAnalysisClusterApi;
+  evidence: DebugAnalysisEvidenceApi[];
+}
+
+export interface DebugAnalysisSummaryApi {
+  measured_call_count: number;
+  broken_goal_count: number;
+  broken_call_count: number;
+  one_off_count: number;
+  excluded_call_ids: string[];
+  unanalyzed_call_ids: string[];
+}
+
+export interface DebugAnalysisWayApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  title: string;
+  /** @minLength 1 */
+  phrase: string;
+  call_ids: string[];
+}
+
+export interface DebugAnalysisGoalApi {
+  /** @minLength 1 */
+  goal: string;
+  /** @minLength 1 */
+  label: string;
+  /** @minLength 1 */
+  criteria: string;
+  broken_call_ids: string[];
+  tested_call_count: number;
+  ways: DebugAnalysisWayApi[];
+  unexplained_call_ids: string[];
+}
+
+export interface TestExecutionDebugAnalysisResponseApi {
+  test_execution_id: string;
+  status: TestExecutionDebugAnalysisResponseApiStatus;
+  generation: number;
+  job_id: string;
+  /** @minLength 1 */
+  error_message: string;
+  report: DebugAnalysisReportApi;
+  findings: DebugAnalysisFindingApi[];
+  summary: DebugAnalysisSummaryApi;
+  goals: DebugAnalysisGoalApi[];
+  one_offs: DebugAnalysisWayApi[];
+}
+
+export interface TestExecutionDebugAnalysisNotFoundApi {
+  /** @minLength 1 */
+  detail: string;
+}
+
+export interface TestExecutionDebugAnalysisErrorApi {
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  detail: string;
+}
+
 export interface EvalExplanationClusterApi {
   /** @minLength 1 */
   readonly kind?: string;
@@ -21082,6 +21945,8 @@ export type RunTestKPIsResponseApiScenarioGraphs = {
 
 export interface RunTestKPIsResponseApi {
   readonly total_calls?: number;
+  /** Calls with status completed, counted like every other KPI here: soft-deleted calls included. The run-level add's 202 counts live calls only, so the two can differ for a run with a deleted call (TH-8057). */
+  readonly completed_calls?: number;
   readonly avg_score?: number;
   readonly avg_response?: number;
   readonly calls_attempted?: number;
@@ -21227,6 +22092,831 @@ export interface TestExecutionTranscriptsResponseApi {
   readonly calls?: readonly TestExecutionTranscriptCallApi[];
   readonly total_calls?: number;
   readonly total_transcripts?: number;
+}
+
+/**
+ * Current status of the call
+ */
+export type CallExecutionV3DetailResponseApiStatus =
+  (typeof CallExecutionV3DetailResponseApiStatus)[keyof typeof CallExecutionV3DetailResponseApiStatus];
+
+export const CallExecutionV3DetailResponseApiStatus = {
+  pending: "pending",
+  queued: "queued",
+  ongoing: "ongoing",
+  completed: "completed",
+  failed: "failed",
+  analyzing: "analyzing",
+  cancelled: "cancelled",
+} as const;
+
+/**
+ * Get evaluation metrics in a format suitable for the UI
+ */
+export type CallExecutionV3DetailResponseApiEvalMetrics = {
+  [key: string]: CallExecutionEvalMetricApi;
+};
+
+/**
+ * Tool evaluation output - separate from standard evaluations
+ */
+export type CallExecutionV3DetailResponseApiToolOutputs = {
+  [key: string]: unknown;
+};
+
+/**
+ * Detailed cost breakdown from customer call data
+ */
+export type CallExecutionV3DetailResponseApiCustomerCostBreakdown = {
+  [key: string]: unknown;
+};
+
+/**
+ * Latency metrics from customer call data
+ */
+export type CallExecutionV3DetailResponseApiCustomerLatencyMetrics = {
+  [key: string]: unknown;
+};
+
+/**
+ * Type of simulation call
+ */
+export type CallExecutionV3DetailResponseApiSimulationCallType =
+  (typeof CallExecutionV3DetailResponseApiSimulationCallType)[keyof typeof CallExecutionV3DetailResponseApiSimulationCallType];
+
+export const CallExecutionV3DetailResponseApiSimulationCallType = {
+  voice: "voice",
+  text: "text",
+} as const;
+
+export type CallExecutionV3DetailResponseApiOutcome =
+  (typeof CallExecutionV3DetailResponseApiOutcome)[keyof typeof CallExecutionV3DetailResponseApiOutcome];
+
+export const CallExecutionV3DetailResponseApiOutcome = {
+  passed: "passed",
+  failed: "failed",
+  error: "error",
+  inconclusive: "inconclusive",
+} as const;
+
+export interface PersonaDetailsApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  voice: string;
+  /** @minLength 1 */
+  age: string;
+  traits: string[];
+}
+
+export interface CostBreakdownApi {
+  stt: number;
+  llm: number;
+  tts: number;
+  storage: number;
+  customer: number;
+}
+
+export type SimulateRunV3EvaluationResultApiValue = { [key: string]: unknown };
+
+export interface SimulateRunV3EvaluationResultApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  type: string;
+  value: SimulateRunV3EvaluationResultApiValue;
+  score: number;
+  passed: boolean;
+  reason: string;
+  /** @minLength 1 */
+  status: string;
+}
+
+export type SimulateRunV3FunctionCallApiArguments = { [key: string]: unknown };
+
+export type SimulateRunV3FunctionCallApiResult = { [key: string]: unknown };
+
+export type SimulateRunV3FunctionCallApiOutput = { [key: string]: unknown };
+
+export interface SimulateRunV3FunctionCallApi {
+  /** @minLength 1 */
+  id?: string;
+  /** @minLength 1 */
+  name?: string;
+  arguments?: SimulateRunV3FunctionCallApiArguments;
+  result?: SimulateRunV3FunctionCallApiResult;
+  output?: SimulateRunV3FunctionCallApiOutput;
+  duration_ms?: number;
+}
+
+export interface CallExecutionV3DetailResponseApi {
+  readonly id?: string;
+  /** @minLength 1 */
+  readonly service_provider_call_id?: string;
+  readonly session_id?: string;
+  readonly timestamp?: string;
+  readonly call_type?: string;
+  /** Current status of the call */
+  status?: CallExecutionV3DetailResponseApiStatus;
+  readonly duration?: string;
+  /**
+   * Duration of the call in seconds
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  duration_seconds?: number;
+  readonly start_time?: string;
+  readonly transcript?: string;
+  /** @minLength 1 */
+  readonly scenario?: string;
+  readonly overall_score?: string;
+  readonly response_time?: string;
+  /**
+   * Average response time in milliseconds
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  response_time_ms?: number;
+  /** @minLength 1 */
+  readonly audio_url?: string;
+  /** @minLength 1 */
+  readonly customer_name?: string;
+  readonly eval_outputs?: string;
+  /** Get evaluation metrics in a format suitable for the UI */
+  readonly eval_metrics?: CallExecutionV3DetailResponseApiEvalMetrics;
+  readonly scenario_columns?: string;
+  /**
+   * Reason why the call ended
+   * @maxLength 10000
+   */
+  ended_reason?: string;
+  /** @minLength 1 */
+  readonly simulator_agent_name?: string;
+  readonly simulator_agent_id?: string;
+  /** @minLength 1 */
+  readonly agent_definition_used_name?: string;
+  readonly agent_definition_used_id?: string;
+  /** Call summary from the service */
+  call_summary?: string;
+  readonly recordings?: string;
+  readonly test_execution_id?: string;
+  readonly scenario_id?: string;
+  readonly source_scenario_key?: string;
+  readonly trial_index?: string;
+  readonly harness_outcome_status?: string;
+  readonly scenario_graph?: string;
+  readonly scenario_graph_id?: string;
+  readonly avg_agent_latency?: number;
+  /**
+   * Average agent latency in milliseconds (time taken by agent to respond after user's pause)
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  avg_agent_latency_ms?: number;
+  /**
+   * Number of times user interrupted the AI
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  user_interruption_count?: number;
+  /** Rate of user interruptions (interruptions per minute) */
+  user_interruption_rate?: number;
+  /** User's words per minute */
+  user_wpm?: number;
+  /** Bot's words per minute */
+  bot_wpm?: number;
+  /** Ratio of bot speaking time to user speaking time */
+  talk_ratio?: number;
+  /**
+   * Number of times AI interrupted the user
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  ai_interruption_count?: number;
+  /** Rate of AI interruptions (interruptions per minute) */
+  ai_interruption_rate?: number;
+  readonly avg_stop_time_after_interruption?: number;
+  readonly total_tokens?: string;
+  readonly input_tokens?: string;
+  readonly output_tokens?: string;
+  readonly avg_latency_ms?: string;
+  readonly turn_count?: string;
+  readonly agent_talk_percentage?: string;
+  readonly csat_score?: string;
+  readonly processing_skipped?: string;
+  readonly processing_skip_reason?: string;
+  readonly rerun_snapshots?: string;
+  readonly is_snapshot?: string;
+  readonly snapshot_timestamp?: string;
+  readonly rerun_type?: string;
+  readonly original_call_execution_id?: string;
+  /** Tool evaluation output - separate from standard evaluations */
+  tool_outputs?: CallExecutionV3DetailResponseApiToolOutputs;
+  /**
+   * Cost of the call in cents
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  cost_cents?: number;
+  /**
+   * Total customer-reported cost in cents
+   * @minimum -2147483648
+   * @maximum 2147483647
+   */
+  customer_cost_cents?: number;
+  /** Detailed cost breakdown from customer call data */
+  customer_cost_breakdown?: CallExecutionV3DetailResponseApiCustomerCostBreakdown;
+  /** Latency metrics from customer call data */
+  customer_latency_metrics?: CallExecutionV3DetailResponseApiCustomerLatencyMetrics;
+  /**
+   * Customer call ID if available
+   * @maxLength 255
+   */
+  customer_call_id?: string;
+  /** Type of simulation call */
+  simulation_call_type?: CallExecutionV3DetailResponseApiSimulationCallType;
+  readonly provider?: string;
+  /**
+   * Phone number called (null for TEXT/chat simulations)
+   * @maxLength 20
+   */
+  phone_number?: string;
+  /** @minLength 1 */
+  goal: string;
+  /** @minLength 1 */
+  scenario_details: string;
+  /** @minLength 1 */
+  ideal_outcome: string;
+  /** @minLength 1 */
+  conversation_branch: string;
+  /** @minLength 1 */
+  persona: string;
+  persona_details: PersonaDetailsApi;
+  sub_goals: string[];
+  outcome: CallExecutionV3DetailResponseApiOutcome;
+  cost_breakdown_cents: CostBreakdownApi;
+  evaluations: SimulateRunV3EvaluationResultApi[];
+  function_calls: SimulateRunV3FunctionCallApi[];
+}
+
+export type RunDashboardMetricApiUnit =
+  (typeof RunDashboardMetricApiUnit)[keyof typeof RunDashboardMetricApiUnit];
+
+export const RunDashboardMetricApiUnit = {
+  number: "number",
+  percent: "percent",
+  ms: "ms",
+  seconds: "seconds",
+  ratio: "ratio",
+  cents: "cents",
+} as const;
+
+export interface RunDashboardMetricApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  label: string;
+  value: number;
+  unit: RunDashboardMetricApiUnit;
+  measured: number;
+  total: number;
+  note: string;
+}
+
+export interface RunDashboardSegmentApi {
+  /** @minLength 1 */
+  label: string;
+  count: number;
+  share: number;
+  statuses?: string[];
+}
+
+export interface RunDashboardBreakdownApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  label: string;
+  total: number;
+  segments: RunDashboardSegmentApi[];
+  headline: RunDashboardSegmentApi;
+}
+
+export interface RunDashboardSloApi {
+  /** @minLength 1 */
+  key: string;
+  average: number;
+  measured: number;
+  max: number;
+  p50: number;
+  p90: number;
+  p99: number;
+  /** @minLength 1 */
+  label: string;
+}
+
+export interface RunDashboardInterruptionsApi {
+  total: number;
+  measured: number;
+  average: number;
+}
+
+export interface RunDashboardSeriesApi {
+  /** @minLength 1 */
+  label: string;
+  started_at: string;
+  calls: number;
+  duration_ms: number;
+  llm_cents: number;
+  tts_cents: number;
+  stt_cents: number;
+  storage_cents: number;
+}
+
+export type RunDashboardV3ApiSeriesMode =
+  (typeof RunDashboardV3ApiSeriesMode)[keyof typeof RunDashboardV3ApiSeriesMode];
+
+export const RunDashboardV3ApiSeriesMode = {
+  calls: "calls",
+  time_buckets: "time_buckets",
+} as const;
+
+export interface RunDashboardPercentileApi {
+  percentile: number;
+  value: number;
+}
+
+export interface RunDashboardDistributionApi {
+  /** @minLength 1 */
+  key: string;
+  average: number;
+  measured: number;
+  max: number;
+  p50: number;
+  p90: number;
+  p99: number;
+}
+
+export interface RunDashboardHistogramBinApi {
+  /** @minLength 1 */
+  label: string;
+  lower: number;
+  upper: number;
+  count: number;
+  danger: boolean;
+}
+
+export interface RunDashboardAgreementApi {
+  compared: number;
+  agreed: number;
+  percent: number;
+}
+
+export interface RunDashboardCsatApi {
+  bins: RunDashboardHistogramBinApi[];
+  measured: number;
+  total: number;
+  agreement: RunDashboardAgreementApi;
+}
+
+export interface RunDashboardResponseTimeApi {
+  bins: RunDashboardHistogramBinApi[];
+  measured: number;
+  total: number;
+  target_ms: number;
+  p50: number;
+  p95: number;
+  at_or_above_target: number;
+  at_or_above_target_percent: number;
+}
+
+export interface RunDashboardPipelineCostApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  label: string;
+  total_cents: number;
+  share: number;
+}
+
+export interface RunDashboardToolApi {
+  /** @minLength 1 */
+  name: string;
+  invocations: number;
+  measured: number;
+  failures: number;
+  failure_rate: number;
+  /** @minLength 1 */
+  failure_label: string;
+}
+
+export interface RunDashboardToolsApi {
+  total_invocations: number;
+  total_tools: number;
+  volume: RunDashboardToolApi[];
+  failures: RunDashboardToolApi[];
+}
+
+export interface RunDashboardTaskApi {
+  rank: number;
+  id: string;
+  /** @minLength 1 */
+  label: string;
+  /** @minLength 1 */
+  axis_label: string;
+  value: number;
+  /** @minLength 1 */
+  modality: string;
+  /** @minLength 1 */
+  provider: string;
+}
+
+export interface RunDashboardUnavailableApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  reason: string;
+}
+
+export interface RunDashboardEvaluationSummaryApi {
+  graders: number;
+  passed: number;
+  measured: number;
+  pass_rate: number;
+}
+
+export interface RunDashboardRiskApi {
+  /** @minLength 1 */
+  goal: string;
+  passed: number;
+  failed: number;
+  error: number;
+  inconclusive: number;
+}
+
+export interface RunDashboardV3Api {
+  metrics: RunDashboardMetricApi[];
+  breakdowns: RunDashboardBreakdownApi[];
+  voice_slos: RunDashboardSloApi[];
+  interruptions: RunDashboardInterruptionsApi;
+  series: RunDashboardSeriesApi[];
+  series_limit: number;
+  series_mode: RunDashboardV3ApiSeriesMode;
+  latency_percentiles: RunDashboardPercentileApi[];
+  distributions: RunDashboardDistributionApi[];
+  csat: RunDashboardCsatApi;
+  agent_response_time: RunDashboardResponseTimeApi;
+  pipeline_cost: RunDashboardPipelineCostApi[];
+  tools: RunDashboardToolsApi;
+  slowest_tasks: RunDashboardTaskApi[];
+  most_expensive_tasks: RunDashboardTaskApi[];
+  unavailable_features: RunDashboardUnavailableApi[];
+  evaluation_summary: RunDashboardEvaluationSummaryApi;
+  use_case_risk: RunDashboardRiskApi[];
+  goal_count: number;
+}
+
+export interface AnalyticsExecutionApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  started_at: string;
+  completed_at: string;
+}
+
+export interface OutcomeCountsApi {
+  passed: number;
+  failed: number;
+  error: number;
+  inconclusive: number;
+}
+
+export interface MetricStatsApi {
+  average: number;
+  p50: number;
+  p75: number;
+  p90: number;
+  p95: number;
+  p99: number;
+  measured: number;
+  total: number;
+}
+
+export interface TotalMetricStatsApi {
+  average: number;
+  p50: number;
+  p75: number;
+  p90: number;
+  p95: number;
+  p99: number;
+  measured: number;
+  total: number;
+  total_value: number;
+}
+
+export interface AnalyticsSummaryApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  evaluators: number;
+}
+
+export interface RiskApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  /** @minLength 1 */
+  goal: string;
+}
+
+export interface TurnDistributionApi {
+  passed: number;
+  failed: number;
+  error: number;
+  inconclusive: number;
+  turn_count: number;
+}
+
+export interface EvaluationSummaryApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  passed: number;
+  failed: number;
+  measured: number;
+  missing: number;
+  pass_rate: number;
+  average_score: number;
+}
+
+export interface FailureBreakdownApi {
+  /** @minLength 1 */
+  reason: string;
+  failures: number;
+  share: number;
+}
+
+export interface DistributionsApi {
+  duration_seconds: MetricStatsApi;
+  latency_ms: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+}
+
+export interface CostComponentApi {
+  total: number;
+  measured: number;
+  calls: number;
+}
+
+export interface CostComponentsApi {
+  stt: CostComponentApi;
+  llm: CostComponentApi;
+  tts: CostComponentApi;
+  storage: CostComponentApi;
+  customer: CostComponentApi;
+}
+
+export interface ProviderBreakdownApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  /** @minLength 1 */
+  provider: string;
+}
+
+export interface ModalityBreakdownApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  /** @minLength 1 */
+  modality: string;
+}
+
+export interface TrendApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  execution_id: string;
+  started_at: string;
+}
+
+export interface RunAnalyticsV3ResponseApi {
+  dashboard: RunDashboardV3Api;
+  execution: AnalyticsExecutionApi;
+  summary: AnalyticsSummaryApi;
+  scenario_risk: RiskApi[];
+  turn_distribution: TurnDistributionApi[];
+  evaluations: EvaluationSummaryApi[];
+  failure_breakdown: FailureBreakdownApi[];
+  distributions: DistributionsApi;
+  cost_breakdown_cents: CostComponentsApi;
+  provider_breakdown: ProviderBreakdownApi[];
+  modality_breakdown: ModalityBreakdownApi[];
+  trends: TrendApi[];
+}
+
+export interface RunSummaryApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+}
+
+export interface RunExecutionApi {
+  id: string;
+  run_test_id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  status: string;
+  started_at: string;
+  completed_at: string;
+  ordinal: number;
+  /** @minLength 1 */
+  agent_version: string;
+  selected_scenario_keys?: string[];
+  /** @minimum 1 */
+  trials?: number;
+  /** @minLength 1 */
+  agent_type: string;
+  summary: RunSummaryApi;
+}
+
+export type RunCallApiOutcome =
+  (typeof RunCallApiOutcome)[keyof typeof RunCallApiOutcome];
+
+export const RunCallApiOutcome = {
+  passed: "passed",
+  failed: "failed",
+  error: "error",
+  inconclusive: "inconclusive",
+} as const;
+
+export interface RunCallApi {
+  id: string;
+  /** @minLength 1 */
+  scenario: string;
+  /** @minLength 1 */
+  scenario_details: string;
+  /** @minLength 1 */
+  goal: string;
+  /** @minLength 1 */
+  ideal_outcome: string;
+  /** @minLength 1 */
+  conversation_branch: string;
+  /** @minLength 1 */
+  persona: string;
+  persona_details: PersonaDetailsApi;
+  sub_goals: string[];
+  /** @minLength 1 */
+  harness_outcome_status: string;
+  /** @minLength 1 */
+  source_scenario_key: string;
+  trial_index: number;
+  outcome: RunCallApiOutcome;
+  /** @minLength 1 */
+  execution_status: string;
+  /** @minLength 1 */
+  modality: string;
+  /** @minLength 1 */
+  provider: string;
+  started_at: string;
+  completed_at: string;
+  duration_seconds: number;
+  latency_ms: number;
+  turn_count: number;
+  tokens: number;
+  cost_cents: number;
+  cost_breakdown_cents: CostBreakdownApi;
+  csat: number;
+  /** @minLength 1 */
+  ended_reason: string;
+  /** @minLength 1 */
+  error_message: string;
+  evaluations: SimulateRunV3EvaluationResultApi[];
+}
+
+export type GroupAggregatesApiEvaluations = { [key: string]: unknown };
+
+export interface GroupAggregatesApi {
+  csat: number;
+  turns: number;
+  latency_ms: number;
+  tokens: number;
+  evaluations: GroupAggregatesApiEvaluations;
+}
+
+export interface RunGroupApi {
+  total: number;
+  outcomes: OutcomeCountsApi;
+  measured: number;
+  pass_rate: number;
+  duration: MetricStatsApi;
+  latency: MetricStatsApi;
+  tokens: TotalMetricStatsApi;
+  cost_cents: TotalMetricStatsApi;
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  label: string;
+  result_ids: string[];
+  aggregates: GroupAggregatesApi;
+}
+
+export interface FacetValueApi {
+  /** @minLength 1 */
+  value: string;
+  count: number;
+}
+
+export interface RunFacetsApi {
+  goal: FacetValueApi[];
+  sub_goal: FacetValueApi[];
+  status: FacetValueApi[];
+}
+
+export interface EvaluationColumnApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
+export interface RunCallsV3ResponseApi {
+  execution: RunExecutionApi;
+  summary: RunSummaryApi;
+  count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  results: RunCallApi[];
+  groups: RunGroupApi[];
+  facets: RunFacetsApi;
+  evaluation_columns: EvaluationColumnApi[];
+}
+
+export type RunExportV3RequestApiFilters = { [key: string]: unknown };
+
+export type RunExportV3RequestApiOrdering =
+  (typeof RunExportV3RequestApiOrdering)[keyof typeof RunExportV3RequestApiOrdering];
+
+export const RunExportV3RequestApiOrdering = {
+  started_at: "started_at",
+  "-started_at": "-started_at",
+  duration_seconds: "duration_seconds",
+  "-duration_seconds": "-duration_seconds",
+  latency_ms: "latency_ms",
+  "-latency_ms": "-latency_ms",
+  turn_count: "turn_count",
+  "-turn_count": "-turn_count",
+  tokens: "tokens",
+  "-tokens": "-tokens",
+  cost_cents: "cost_cents",
+  "-cost_cents": "-cost_cents",
+  scenario: "scenario",
+  "-scenario": "-scenario",
+  goal: "goal",
+  "-goal": "-goal",
+  outcome: "outcome",
+  "-outcome": "-outcome",
+} as const;
+
+export interface RunExportV3RequestApi {
+  search?: string;
+  filters?: RunExportV3RequestApiFilters;
+  ordering?: RunExportV3RequestApiOrdering;
 }
 
 export interface DeploymentHeartbeatApi {
@@ -21444,6 +23134,16 @@ export interface ApiErrorResponseApi {
   details?: ApiErrorResponseApiDetails;
 }
 
+export type FetchGraphResponseApiResultMetricStatistic =
+  (typeof FetchGraphResponseApiResultMetricStatistic)[keyof typeof FetchGraphResponseApiResultMetricStatistic];
+
+export const FetchGraphResponseApiResultMetricStatistic = {
+  count: "count",
+  sum: "sum",
+  mean: "mean",
+  percentage: "percentage",
+} as const;
+
 export type FetchGraphResponseApiResultDataItem = {
   timestamp: string;
   value: number;
@@ -21468,6 +23168,7 @@ export type FetchGraphResponseApiResult = {
   metric_name?: string;
   id?: string;
   name?: string;
+  metric_statistic?: FetchGraphResponseApiResultMetricStatistic;
   data: FetchGraphResponseApiResultDataItem[];
   query_complete: boolean;
   query_status: FetchGraphResponseApiResultQueryStatus;
@@ -22722,11 +24423,18 @@ export interface EvalTaskUsageStatsApi {
   total_runs: number;
   /** @minimum 0 */
   runs_period: number;
-  /** @minimum 0 */
+  /**
+   * Deprecated compatibility field. Usage counts only successful runs, so this always equals runs_period.
+   * @minimum 0
+   */
   success_count: number;
-  /** @minimum 0 */
+  /**
+   * Deprecated compatibility field. Usage counts only successful runs, so this is always 0; failed runs stay in the task logs.
+   * @minimum 0
+   */
   error_count: number;
   /**
+   * Deprecated compatibility field. Usage counts only successful runs, so this is 100 when runs_period is above 0, otherwise 0.
    * @minimum 0
    * @maximum 100
    */
@@ -23828,6 +25536,16 @@ export interface InvestigationControlErrorApi {
   details?: InvestigationControlErrorApiDetails;
 }
 
+export interface SimulationEvidenceRequestApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  lease_token: string;
+  /** @minimum 0 */
+  cursor: number;
+}
+
 export interface ClaimInvestigationsRequestApi {
   /**
    * @minLength 1
@@ -23845,6 +25563,14 @@ export interface ClaimInvestigationsRequestApi {
    */
   limit: number;
 }
+
+export type InvestigationClaimApiWorkloadType =
+  (typeof InvestigationClaimApiWorkloadType)[keyof typeof InvestigationClaimApiWorkloadType];
+
+export const InvestigationClaimApiWorkloadType = {
+  trace: "trace",
+  simulation_test_execution: "simulation_test_execution",
+} as const;
 
 export interface InvestigationMemoryEntryApi {
   /**
@@ -23899,10 +25625,16 @@ export interface InvestigationLimitsApi {
 
 export interface InvestigationClaimApi {
   organization_id: string;
+  /** @minLength 1 */
+  organization_name?: string;
   workspace_id: string;
   project_id: string;
+  /** @minLength 1 */
+  project_name?: string;
   job_id: string;
-  trace_id: string;
+  workload_type?: InvestigationClaimApiWorkloadType;
+  trace_id?: string;
+  test_execution_id?: string;
   /** @minimum 1 */
   generation: number;
   attempt_id: string;
@@ -24270,6 +26002,15 @@ export type InvestigationResultApiContractVersion =
 
 export const InvestigationResultApiContractVersion = {
   "omega-investigation/v1": "omega-investigation/v1",
+  "omega-simulation/v1": "omega-simulation/v1",
+} as const;
+
+export type InvestigationResultApiWorkloadType =
+  (typeof InvestigationResultApiWorkloadType)[keyof typeof InvestigationResultApiWorkloadType];
+
+export const InvestigationResultApiWorkloadType = {
+  trace: "trace",
+  simulation_test_execution: "simulation_test_execution",
 } as const;
 
 export type InvestigationResultApiExecutionStatus =
@@ -24305,6 +26046,7 @@ export interface FindingAttributionRoleApi {
    * @maxLength 64
    */
   span_id?: string;
+  call_execution_id?: string;
   /** @maxItems 100 */
   evidence_ids: string[];
   /** @maxLength 600 */
@@ -24335,7 +26077,7 @@ export interface InvestigationFindingApi {
   statement: string;
   /**
    * @minLength 1
-   * @maxLength 128
+   * @maxLength 256
    */
   requirement_id?: string;
   /** @maxItems 100 */
@@ -24345,13 +26087,33 @@ export interface InvestigationFindingApi {
    * @maxLength 64
    */
   recovery: string;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  category?: string;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  group_label?: string;
+  /**
+   * @minLength 1
+   * @maxLength 50
+   */
+  fix_layer?: string;
+  /**
+   * @minLength 1
+   * @maxLength 2
+   */
+  confidence?: string;
   attribution: FindingAttributionApi;
 }
 
 export interface InvestigationRequirementCheckApi {
   /**
    * @minLength 1
-   * @maxLength 128
+   * @maxLength 256
    */
   requirement_id: string;
   /**
@@ -24378,7 +26140,8 @@ export interface InvestigationEvidenceReceiptApi {
    * @minLength 1
    * @maxLength 64
    */
-  span_id: string;
+  span_id?: string;
+  call_execution_id?: string;
   /**
    * @minLength 1
    * @maxLength 64
@@ -24406,11 +26169,13 @@ export interface InvestigationCoverageApi {
    * @minLength 1
    * @maxLength 255
    */
-  scope: string;
+  scope?: string;
   /** @minimum 0 */
-  observed_span_count: number;
+  observed_span_count?: number;
+  /** @minimum 0 */
+  observed_call_count?: number;
   read_complete: boolean;
-  future_arrivals_known: boolean;
+  future_arrivals_known?: boolean;
 }
 
 export interface InvestigationUsageApi {
@@ -24453,6 +26218,7 @@ export interface GatewayAccountingApi {
 
 export interface InvestigationResultApi {
   contract_version: InvestigationResultApiContractVersion;
+  workload_type?: InvestigationResultApiWorkloadType;
   organization_id: string;
   workspace_id: string;
   project_id: string;
@@ -24460,7 +26226,8 @@ export interface InvestigationResultApi {
   /** @minimum 1 */
   generation: number;
   attempt_id: string;
-  trace_id: string;
+  trace_id?: string;
+  test_execution_id?: string;
   /**
    * @minLength 1
    * @maxLength 20
@@ -24484,6 +26251,7 @@ export interface InvestigationResultApi {
   evidence_digest: string;
   execution_status: InvestigationResultApiExecutionStatus;
   outcome: InvestigationResultApiOutcome;
+  error_message?: string;
   findings: InvestigationFindingApi[];
   requirement_checks: InvestigationRequirementCheckApi[];
   evidence_receipts: InvestigationEvidenceReceiptApi[];
@@ -24841,9 +26609,23 @@ export interface ObserveGraphDataRequestApi {
   /** On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result. */
   filters?: ObserveGraphDataRequestApiFiltersItem[];
   interval?: ObserveGraphDataRequestApiInterval;
+  /** Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency. */
   property?: string;
   req_data_config: ObserveGraphDataRequestApiReqDataConfig;
 }
+
+/**
+ * Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.
+ */
+export type ObserveGraphDataResultApiMetricStatistic =
+  (typeof ObserveGraphDataResultApiMetricStatistic)[keyof typeof ObserveGraphDataResultApiMetricStatistic];
+
+export const ObserveGraphDataResultApiMetricStatistic = {
+  count: "count",
+  sum: "sum",
+  mean: "mean",
+  percentage: "percentage",
+} as const;
 
 /**
  * Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points.
@@ -24902,6 +26684,8 @@ export const ObserveGraphDataResultApiQuerySamplingStrategy = {
 export interface ObserveGraphDataResultApi {
   metric_name: string;
   name?: string;
+  /** Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series. */
+  metric_statistic?: ObserveGraphDataResultApiMetricStatistic;
   /** Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points. */
   data: ObserveGraphDataPointApi[];
   query_complete?: boolean;
@@ -25344,6 +27128,13 @@ export interface ProjectApi {
 export type ProjectGraphDataResultApiSystemMetrics = { [key: string]: unknown };
 
 /**
+ * Statistic of each ``system_metrics`` series per bucket, e.g. {"latency": "mean", "tokens": "sum", "cost": "mean", "traffic": "count"}. Latency is always the mean (avg) span latency.
+ */
+export type ProjectGraphDataResultApiSystemMetricStatistics = {
+  [key: string]: "count" | "sum" | "mean" | "percentage";
+};
+
+/**
  * Any valid JSON value.
  */
 export type ProjectGraphDataResultApiEvaluations = { [key: string]: unknown };
@@ -25351,6 +27142,8 @@ export type ProjectGraphDataResultApiEvaluations = { [key: string]: unknown };
 export interface ProjectGraphDataResultApi {
   /** Any valid JSON value. */
   system_metrics: ProjectGraphDataResultApiSystemMetrics;
+  /** Statistic of each ``system_metrics`` series per bucket, e.g. {"latency": "mean", "tokens": "sum", "cost": "mean", "traffic": "count"}. Latency is always the mean (avg) span latency. */
+  system_metric_statistics?: ProjectGraphDataResultApiSystemMetricStatistics;
   /** Any valid JSON value. */
   evaluations: ProjectGraphDataResultApiEvaluations;
 }
@@ -26034,6 +27827,7 @@ export const SharedLinkListApiResourceType = {
   eval_run: "eval_run",
   dataset: "dataset",
   project: "project",
+  call_execution: "call_execution",
 } as const;
 
 export type SharedLinkListApiAccessType =
@@ -26067,6 +27861,7 @@ export const SharedLinkCreateApiResourceType = {
   trace: "trace",
   dashboard: "dashboard",
   project: "project",
+  call_execution: "call_execution",
 } as const;
 
 export type SharedLinkCreateApiAccessType =
@@ -26099,6 +27894,7 @@ export const SharedLinkDetailApiResourceType = {
   eval_run: "eval_run",
   dataset: "dataset",
   project: "project",
+  call_execution: "call_execution",
 } as const;
 
 export type SharedLinkDetailApiAccessType =
@@ -26165,6 +27961,7 @@ export const SharedLinkResolveResponseApiResourceType = {
   eval_run: "eval_run",
   dataset: "dataset",
   project: "project",
+  call_execution: "call_execution",
 } as const;
 
 export type SharedLinkResolveResponseApiAccessType =
@@ -26542,6 +28339,7 @@ export interface TraceSessionGraphDataRequestApi {
   /** On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result. */
   filters?: TraceSessionGraphDataRequestApiFiltersItem[];
   interval?: TraceSessionGraphDataRequestApiInterval;
+  /** Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency. */
   property?: string;
   req_data_config: TraceSessionGraphDataRequestApiReqDataConfig;
 }
@@ -26568,6 +28366,19 @@ export const ObserveGraphDataErrorResponseApiType = {
 export type ObserveGraphDataErrorResponseApiDetails = {
   [key: string]: string[];
 };
+
+/**
+ * Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series.
+ */
+export type ObserveGraphDataErrorResultApiMetricStatistic =
+  (typeof ObserveGraphDataErrorResultApiMetricStatistic)[keyof typeof ObserveGraphDataErrorResultApiMetricStatistic];
+
+export const ObserveGraphDataErrorResultApiMetricStatistic = {
+  count: "count",
+  sum: "sum",
+  mean: "mean",
+  percentage: "percentage",
+} as const;
 
 export type ObserveGraphDataErrorResultApiQueryProvenance =
   (typeof ObserveGraphDataErrorResultApiQueryProvenance)[keyof typeof ObserveGraphDataErrorResultApiQueryProvenance];
@@ -26616,6 +28427,8 @@ export const ObserveGraphDataErrorResultApiQuerySamplingStrategy = {
 export interface ObserveGraphDataErrorResultApi {
   metric_name: string;
   name?: string;
+  /** Statistic of the published system-metric series per bucket. Latency is always the mean (avg) of span latency, filtered or not. Absent for eval and annotation series. */
+  metric_statistic?: ObserveGraphDataErrorResultApiMetricStatistic;
   /** Graph points. A sampled series is published only with complete declared stratum coverage; degraded reads never publish points. */
   data: ObserveGraphDataPointApi[];
   query_complete?: boolean;
@@ -27021,6 +28834,109 @@ export interface TraceAgentGraphQueryApi {
   filters?: string;
   /** Recompute and atomically replace the last exact graph snapshot. */
   refresh?: boolean;
+}
+
+export type TraceGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem =
+  (typeof TraceGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem)[keyof typeof TraceGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem];
+
+export const TraceGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem =
+  {
+    string: "string",
+    number: "number",
+    boolean: "boolean",
+  } as const;
+
+export type TraceGraphDataRequestApiFiltersItemFilterConfig = {
+  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, array, or map. Legacy json is value-sensitive for SPAN_ATTRIBUTE filters: list values become array and object values become map. */
+  filter_type: string;
+  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
+  filter_op: string;
+  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
+  filter_value?: unknown;
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  col_type?: string;
+  /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
+  attribute_value_types?: TraceGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
+};
+
+export type TraceGraphDataRequestApiFiltersItem = {
+  /** Column or attribute id to filter on. */
+  column_id: string;
+  /** Optional stable namespaced Property Registry identity. */
+  property_id?: string;
+  /** Optional UI label for chips and saved views. */
+  display_name?: string;
+  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
+  source?: string;
+  /** Optional metric output type metadata used by eval and annotation filters. */
+  output_type?: string;
+  filter_config: TraceGraphDataRequestApiFiltersItemFilterConfig;
+};
+
+export type TraceGraphDataRequestApiInterval =
+  (typeof TraceGraphDataRequestApiInterval)[keyof typeof TraceGraphDataRequestApiInterval];
+
+export const TraceGraphDataRequestApiInterval = {
+  hour: "hour",
+  day: "day",
+  week: "week",
+  month: "month",
+} as const;
+
+export type TraceGraphDataRequestApiReqDataConfigType =
+  (typeof TraceGraphDataRequestApiReqDataConfigType)[keyof typeof TraceGraphDataRequestApiReqDataConfigType];
+
+export const TraceGraphDataRequestApiReqDataConfigType = {
+  SYSTEM_METRIC: "SYSTEM_METRIC",
+  EVAL: "EVAL",
+  ANNOTATION: "ANNOTATION",
+} as const;
+
+export type TraceGraphDataRequestApiReqDataConfigSource =
+  (typeof TraceGraphDataRequestApiReqDataConfigSource)[keyof typeof TraceGraphDataRequestApiReqDataConfigSource];
+
+export const TraceGraphDataRequestApiReqDataConfigSource = {
+  traces: "traces",
+  sessions: "sessions",
+} as const;
+
+export type TraceGraphDataRequestApiReqDataConfig = {
+  id: string;
+  type: TraceGraphDataRequestApiReqDataConfigType;
+  output_type?: string;
+  eval_output_type?: string;
+  choices?: string[];
+  value?: unknown;
+  filter_op?: string;
+  filter_value?: unknown;
+  /** Stable Property Registry identity. */
+  property_id?: string;
+  source?: TraceGraphDataRequestApiReqDataConfigSource;
+};
+
+/**
+ * Population the graph counts: every trace, or only voice calls (traces whose root span is a conversation), exactly as list_voice_calls selects them.
+ */
+export type TraceGraphDataRequestApiObserveType =
+  (typeof TraceGraphDataRequestApiObserveType)[keyof typeof TraceGraphDataRequestApiObserveType];
+
+export const TraceGraphDataRequestApiObserveType = {
+  trace: "trace",
+  voice: "voice",
+} as const;
+
+export interface TraceGraphDataRequestApi {
+  project_id: string;
+  /** On trace, span, session, graph, and eval-task bounded reads, created_at/start_time datetime filters support equals, greater_than, greater_than_or_equal, less_than, less_than_or_equal, between, not_equals, not_between, is_null, and is_not_null. Missing bounds retain the finite default window: 30 days ago for the lower bound and request-time now for the upper bound. Between and not_between use half-open [start, end) ranges; not_equals excludes one DateTime64(6) microsecond. Because the physical created_at/start_time field is non-null, is_null returns an exact empty result without a ClickHouse read and is_not_null preserves the base window. Valid contradictions also return an exact empty result. */
+  filters?: TraceGraphDataRequestApiFiltersItem[];
+  interval?: TraceGraphDataRequestApiInterval;
+  /** Accepted for older clients and ignored for SYSTEM_METRIC graphs: each system metric has one statistic, named by the response's metric_statistic. Latency is always the mean (avg) span latency. */
+  property?: string;
+  req_data_config: TraceGraphDataRequestApiReqDataConfig;
+  /** Population the graph counts: every trace, or only voice calls (traces whose root span is a conversation), exactly as list_voice_calls selects them. */
+  observe_type?: TraceGraphDataRequestApiObserveType;
+  /** Voice graphs only: exclude calls placed by a simulator phone, exactly as list_voice_calls' remove_simulation_calls does. */
+  remove_simulation_calls?: boolean;
 }
 
 export interface TracePropertiesResponseApi {
@@ -30509,6 +32425,10 @@ export type ModelHubAnnotationQueuesForSourceParams = {
   source_type?: ModelHubAnnotationQueuesForSourceSourceType;
   source_id?: string;
   sources?: string;
+  /**
+   * Tracer project the trace / span was opened from. The same id can exist in several projects; when supplied, only that project's queue items are listed.
+   */
+  project_id?: string;
 };
 
 export type ModelHubAnnotationQueuesForSourceSourceType =
@@ -31669,6 +33589,10 @@ export type ModelHubScoresForSourceParams = {
    * @minLength 1
    */
   source_id: string;
+  /**
+   * Tracer project the trace / span was opened from. The same id can exist in several projects; when supplied, only that project's scores are listed.
+   */
+  project_id?: string;
 };
 
 export type ModelHubScoresForSourceSourceType =
@@ -32002,6 +33926,18 @@ export type SimulateApiCallExecutionsListParams = {
   limit?: number;
 };
 
+export type SimulateApiHarnessEnvironmentsListParams = {
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
+
 export type SimulateApiHarnessJobsSecretFileUploadBody = {
   /** Credential file; transferred without entering job JSON. */
   file: Blob;
@@ -32326,6 +34262,60 @@ export type SimulateTestExecutionsPreviewCallsListParams = {
    */
   run_test_id: string;
 };
+
+export type SimulateV3TestExecutionCallsParams = {
+  search?: string;
+  filters?: string;
+  ordering?: SimulateV3TestExecutionCallsOrdering;
+  /**
+   * @minimum 1
+   */
+  page?: number;
+  /**
+   * @minimum 1
+   * @maximum 500
+   */
+  page_size?: number;
+  group_by?: SimulateV3TestExecutionCallsGroupBy;
+  group_key?: string;
+};
+
+export type SimulateV3TestExecutionCallsOrdering =
+  (typeof SimulateV3TestExecutionCallsOrdering)[keyof typeof SimulateV3TestExecutionCallsOrdering];
+
+export const SimulateV3TestExecutionCallsOrdering = {
+  started_at: "started_at",
+  "-started_at": "-started_at",
+  duration_seconds: "duration_seconds",
+  "-duration_seconds": "-duration_seconds",
+  latency_ms: "latency_ms",
+  "-latency_ms": "-latency_ms",
+  turn_count: "turn_count",
+  "-turn_count": "-turn_count",
+  tokens: "tokens",
+  "-tokens": "-tokens",
+  cost_cents: "cost_cents",
+  "-cost_cents": "-cost_cents",
+  scenario: "scenario",
+  "-scenario": "-scenario",
+  goal: "goal",
+  "-goal": "-goal",
+  outcome: "outcome",
+  "-outcome": "-outcome",
+} as const;
+
+export type SimulateV3TestExecutionCallsGroupBy =
+  (typeof SimulateV3TestExecutionCallsGroupBy)[keyof typeof SimulateV3TestExecutionCallsGroupBy];
+
+export const SimulateV3TestExecutionCallsGroupBy = {
+  goal: "goal",
+  sub_goal: "sub_goal",
+  accent: "accent",
+  age: "age",
+  attack: "attack",
+  task: "task",
+  status: "status",
+} as const;
 
 export type TracerChartsFetchGraphParams = {
   /**
@@ -33845,6 +35835,17 @@ export type TracerTraceVoiceCallDetailParams = {
    * Legacy alias for trace_id; when both are supplied they must match.
    */
   traceId?: string;
+  /**
+   * Project the detail was opened from. The same id can exist in several projects; when supplied, only that project's copy is read.
+   */
+  project_id?: string;
+};
+
+export type TracerTraceReadParams = {
+  /**
+   * Project the detail was opened from. The same id can exist in several projects; when supplied, only that project's copy is read.
+   */
+  project_id?: string;
 };
 
 export type TracerUserAlertLogsListParams = {

@@ -196,7 +196,7 @@ export const test = base.extend<{ scopeActors: ScopeActors; scopeProbe: StatePro
   },
   scopeProbe: async ({ scopeActors }, use) => {
     const probe = new StateProbe({ api: scopeActors.ownerA.api,
-      pgUrl: E2E.pgUrl, chUrl: E2E.chUrl, chDatabase: E2E.chDatabase,
+      pgUrl: E2E.pgUrl, chUrl: E2E.chUrl, chDatabase: E2E.chDatabase, chPassword: E2E.chPassword,
       catalogChUrl: E2E.catalogChUrl, catalogChDatabase: E2E.catalogChDatabase });
     try { await use(probe); } finally { await probe.dispose(); }
   },

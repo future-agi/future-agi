@@ -534,6 +534,32 @@ class TestEvalTaskGetLogsAPI:
         data = get_result(response)
         assert "errors_count" in data or "success_count" in data
 
+    def test_get_logs_counts_targets_apart_from_eval_runs(
+        self, auth_client, eval_task, observation_span, custom_eval_config
+    ):
+        """One span run through two evals is two eval runs over one span."""
+        second_config = make_custom_eval_config_for_project(
+            eval_task.project, custom_eval_config, "Second Eval"
+        )
+        for config in (custom_eval_config, second_config):
+            EvalLogger.objects.create(
+                eval_task_id=str(eval_task.id),
+                observation_span=observation_span,
+                trace=observation_span.trace,
+                custom_eval_config=config,
+            )
+
+        response = auth_client.get(
+            "/tracer/eval-task/get_eval_task_logs/",
+            {"eval_task_id": str(eval_task.id)},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = get_result(response)
+        assert data["total_count"] == 2
+        assert data["success_count"] == 2
+        assert data["target_count"] == 1
+
     def test_get_logs_rejects_other_workspace_task(
         self, auth_client, project, user, custom_eval_config
     ):

@@ -4,13 +4,49 @@ Tests for run_prompt task functions in model_hub/tasks/run_prompt.py.
 Run with: pytest model_hub/tests/test_run_prompt_tasks.py -v
 """
 
+from contextlib import nullcontext
 from datetime import timedelta
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from django.utils import timezone
 
 
+@pytest.fixture
+def mock_prompt_ownership():
+    """Task-boundary tests stub persistence; real row locking is tested separately."""
+    from model_hub.models.choices import StatusType
+
+    prompt = MagicMock(
+        status=StatusType.RUNNING.value, updated_at=timezone.now() - timedelta(hours=2)
+    )
+    with (
+        patch(
+            "model_hub.tasks.run_prompt.lock_prompt",
+            side_effect=lambda *a, **k: nullcontext(prompt),
+        ),
+        patch(
+            "model_hub.tasks.run_prompt.guard_prompt_write",
+            side_effect=lambda *a, **k: nullcontext(prompt),
+        ),
+        patch(
+            "model_hub.tasks.run_prompt.fail_pending_run_prompt_cells", return_value=0
+        ),
+    ):
+        yield
+
+
+@pytest.fixture
+def mock_recovery_persistence(mock_prompt_ownership):
+    with (
+        patch("model_hub.tasks.run_prompt.distributed_lock_manager"),
+        patch("model_hub.tasks.run_prompt.Cell") as cells,
+    ):
+        cells.objects.filter.return_value.exists.return_value = False
+        yield
+
+
+@pytest.mark.usefixtures("mock_prompt_ownership")
 class TestProcessNotStartedPrompt:
     """Tests for process_not_started_prompt function."""
 
@@ -35,7 +71,9 @@ class TestProcessNotStartedPrompt:
         mock_runner.run_prompt.assert_called_once()
         # Release is scoped to the token we published, so a lost-ownership run can't delete a successor's lease.
         token = mock_tracker.mark_running.call_args.kwargs["runner_info"]["run_token"]
-        mock_tracker.mark_completed.assert_called_once_with("prompt-123", run_token=token)
+        mock_tracker.mark_completed.assert_called_once_with(
+            "prompt-123", run_token=token
+        )
 
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
     @patch("model_hub.tasks.run_prompt.distributed_lock_manager")
@@ -73,7 +111,6 @@ class TestProcessNotStartedPrompt:
         self, mock_close, mock_prompter, mock_runner_class, mock_lock_mgr, mock_tracker
     ):
         """Test that prompt is marked as FAILED when an exception occurs."""
-        from model_hub.models.choices import StatusType
         from model_hub.tasks.run_prompt import process_not_started_prompt
 
         mock_tracker.get_running_info.return_value = None
@@ -144,13 +181,10 @@ class TestProcessNotStartedPrompt:
     @patch("model_hub.tasks.run_prompt.distributed_lock_manager")
     @patch("model_hub.tasks.run_prompt.RunPrompter")
     @patch("model_hub.tasks.run_prompt.close_old_connections")
-    def test_redis_failure_during_lock_marks_failed(
+    def test_redis_failure_during_lock_leaves_status_to_owner_or_recovery(
         self, mock_close, mock_prompter, mock_lock_mgr, mock_tracker
     ):
-        """A Redis failure while taking the lock is not "someone else has
-        it": nobody is processing the prompt, so it must not be left in
-        RUNNING until the hourly sweep."""
-        from model_hub.models.choices import StatusType
+        """Failure to read ownership cannot prove nobody else is running."""
         from model_hub.tasks.run_prompt import process_not_started_prompt
         from tfc.utils.distributed_locks import LockAcquisitionError
 
@@ -161,9 +195,7 @@ class TestProcessNotStartedPrompt:
         with pytest.raises(LockAcquisitionError):
             process_not_started_prompt("prompt-123")
 
-        mock_prompter.objects.filter.return_value.update.assert_called_once_with(
-            status=StatusType.FAILED.value
-        )
+        mock_prompter.objects.filter.return_value.update.assert_not_called()
         # We never owned a lease, so nothing may be deleted from the tracker.
         mock_tracker.mark_completed.assert_not_called()
 
@@ -174,7 +206,13 @@ class TestProcessNotStartedPrompt:
     @patch("model_hub.tasks.run_prompt.RunPrompter")
     @patch("model_hub.tasks.run_prompt.close_old_connections")
     def test_lost_ownership_retries_without_marking_failed(
-        self, mock_close, mock_prompter, mock_runner_class, mock_lock_mgr, mock_tracker, fail_cells
+        self,
+        mock_close,
+        mock_prompter,
+        mock_runner_class,
+        mock_lock_mgr,
+        mock_tracker,
+        fail_cells,
     ):
         """A fenced run fails its attempt so Temporal retries and reclaims;
         it must not write FAILED (a successor may own the prompt) and must
@@ -195,7 +233,9 @@ class TestProcessNotStartedPrompt:
         mock_prompter.objects.filter.return_value.update.assert_not_called()
         fail_cells.assert_not_called()
         token = mock_tracker.mark_running.call_args.kwargs["runner_info"]["run_token"]
-        mock_tracker.mark_completed.assert_called_once_with("prompt-123", run_token=token)
+        mock_tracker.mark_completed.assert_called_once_with(
+            "prompt-123", run_token=token
+        )
 
     @patch("model_hub.tasks.run_prompt.fail_pending_run_prompt_cells")
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
@@ -203,12 +243,16 @@ class TestProcessNotStartedPrompt:
     @patch("model_hub.tasks.run_prompt.RunPrompts")
     @patch("model_hub.tasks.run_prompt.RunPrompter")
     @patch("model_hub.tasks.run_prompt.close_old_connections")
-    def test_lost_ownership_on_final_attempt_fails_only_if_nobody_reclaimed(
-        self, mock_close, mock_prompter, mock_runner_class, mock_lock_mgr, mock_tracker, fail_cells
+    def test_lost_ownership_on_final_attempt_leaves_recovery_to_sweep(
+        self,
+        mock_close,
+        mock_prompter,
+        mock_runner_class,
+        mock_lock_mgr,
+        mock_tracker,
+        fail_cells,
     ):
-        """Last retry, fence tripped: with a live successor the status is
-        theirs; with nobody, the prompt and its cells must not spin for an hour."""
-        from model_hub.models.choices import StatusType
+        """Even the last retry cannot write without ownership; the sweep recovers it."""
         from model_hub.tasks.run_prompt import process_not_started_prompt
         from model_hub.views.run_prompt import OwnershipLostError
 
@@ -222,8 +266,13 @@ class TestProcessNotStartedPrompt:
         with (
             patch("model_hub.tasks.run_prompt._is_final_attempt", return_value=True),
             # Entry checks see nobody (we got in); the successor appears only after we lost the lock.
-            patch("model_hub.tasks.run_prompt._held_by_other_live_instance", return_value=False),
-            patch("model_hub.tasks.run_prompt._get_fresh_lease", return_value=successor),
+            patch(
+                "model_hub.tasks.run_prompt._held_by_other_live_instance",
+                return_value=False,
+            ),
+            patch(
+                "model_hub.tasks.run_prompt._get_fresh_lease", return_value=successor
+            ),
             pytest.raises(OwnershipLostError),
         ):
             process_not_started_prompt("prompt-123")
@@ -236,12 +285,11 @@ class TestProcessNotStartedPrompt:
             pytest.raises(OwnershipLostError),
         ):
             process_not_started_prompt("prompt-123")
-        mock_prompter.objects.filter.return_value.update.assert_called_once_with(
-            status=StatusType.FAILED.value
-        )
-        fail_cells.assert_called_once_with(["prompt-123"])
+        mock_prompter.objects.filter.return_value.update.assert_not_called()
+        fail_cells.assert_not_called()
 
 
+@pytest.mark.usefixtures("mock_prompt_ownership")
 class TestClaimPrompt:
     """_claim_prompt must not run a prompt it could not register as its own."""
 
@@ -267,16 +315,18 @@ class TestClaimPrompt:
         mock_tracker.mark_completed.assert_not_called()
 
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
-    def test_lost_nx_with_redis_unavailable_proceeds(self, mock_tracker):
-        """With Redis down mark_running also returns False, but then nobody
-        else can hold a lease either; the prompt must still run."""
+    def test_lost_nx_with_redis_unavailable_retries(self, mock_tracker):
+        """Unavailable tracking must never authorize an unowned execution."""
         from model_hub.tasks.run_prompt import _claim_prompt
 
         mock_tracker.instance_id = "current-instance"
         mock_tracker.get_running_info.return_value = None
         mock_tracker.mark_running.return_value = False
 
-        _claim_prompt("prompt-123", runner_info={})  # no raise
+        from model_hub.tasks.run_prompt import PromptAlreadyRunningElsewhere
+
+        with pytest.raises(PromptAlreadyRunningElsewhere):
+            _claim_prompt("prompt-123", runner_info={})
 
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
     def test_claim_clears_stale_cancel_before_publishing_ownership(self, mock_tracker):
@@ -335,6 +385,7 @@ class TestIsFinalAttempt:
             assert _is_final_attempt() is True
 
 
+@pytest.mark.usefixtures("mock_prompt_ownership")
 class TestProcessEditingPrompt:
     """Tests for process_editing_prompt function."""
 
@@ -356,9 +407,11 @@ class TestProcessEditingPrompt:
         process_editing_prompt("prompt-123")
 
         mock_tracker.mark_running.assert_called_once()
-        mock_runner.run_prompt.assert_called_once_with(edit_mode=True)
+        mock_runner.run_prompt.assert_called_once_with(edit_mode=True, row_ids=None)
         token = mock_tracker.mark_running.call_args.kwargs["runner_info"]["run_token"]
-        mock_tracker.mark_completed.assert_called_once_with("prompt-123", run_token=token)
+        mock_tracker.mark_completed.assert_called_once_with(
+            "prompt-123", run_token=token
+        )
 
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
     @patch("model_hub.tasks.run_prompt.distributed_lock_manager")
@@ -386,6 +439,7 @@ class TestProcessEditingPrompt:
             "550e8400-e29b-41d4-a716-446655440001",
             reason="Edit requested",
             target="owner-token",
+            replacement=True,
         )
 
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
@@ -409,7 +463,7 @@ class TestProcessEditingPrompt:
         process_editing_prompt("prompt-123")
 
         mock_tracker.request_cancel.assert_called_once_with(
-            "prompt-123", reason="Edit requested", target=None
+            "prompt-123", reason="Edit requested", target=None, replacement=True
         )
 
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
@@ -437,14 +491,10 @@ class TestProcessEditingPrompt:
     @patch("model_hub.tasks.run_prompt.distributed_lock_manager")
     @patch("model_hub.tasks.run_prompt.RunPrompter")
     @patch("model_hub.tasks.run_prompt.close_old_connections")
-    def test_marks_failed_when_live_owner_keeps_the_lock(
+    def test_final_attempt_cannot_fail_a_live_owner(
         self, mock_close, mock_prompter, mock_lock_mgr, mock_tracker
     ):
-        """On the final attempt an edit that still cannot take the lock has no
-        one to finish it: the original run refuses to write a terminal status
-        once updated_at changed. It must be FAILED now, not RUNNING until the
-        sweep — and the owner's tracker entry must not be deleted (the old bug)."""
-        from model_hub.models.choices import StatusType
+        """Exhausted retries must not overwrite a live owner or a newer edit."""
         from model_hub.tasks.run_prompt import process_editing_prompt
         from tfc.utils.distributed_locks import LockContendedError
 
@@ -463,11 +513,9 @@ class TestProcessEditingPrompt:
         ):
             process_editing_prompt("prompt-123")
 
-        mock_prompter.objects.filter.return_value.update.assert_called_once_with(
-            status=StatusType.FAILED.value
-        )
-        # The edit reset cells to running; recovery only sees RUNNING prompts, so resolve them here.
-        fail_cells.assert_called_once_with(["prompt-123"])
+        mock_prompter.objects.filter.return_value.update.assert_not_called()
+        # A locked recovery sweep will resolve abandoned work after the owner expires.
+        fail_cells.assert_not_called()
         mock_tracker.mark_completed.assert_not_called()
 
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
@@ -593,9 +641,7 @@ class TestProcessPromptsSingle:
         mock_prompter.objects.get.return_value = mock_prompt
 
         with pytest.raises(PromptAlreadyRunningElsewhere):
-            process_prompts_single(
-                {"type": "not_started", "prompt_id": "prompt-123"}
-            )
+            process_prompts_single({"type": "not_started", "prompt_id": "prompt-123"})
 
         # Should not process
         mock_tracker.mark_running.assert_not_called()
@@ -634,14 +680,13 @@ class TestProcessPromptsSingle:
         with patch(
             "model_hub.tasks.run_prompt.process_not_started_prompt"
         ) as mock_process:
-            process_prompts_single(
-                {"type": "not_started", "prompt_id": "prompt-123"}
-            )
+            process_prompts_single({"type": "not_started", "prompt_id": "prompt-123"})
 
         mock_process.assert_called_once_with("prompt-123")
 
 
 @pytest.mark.django_db
+@pytest.mark.usefixtures("mock_recovery_persistence")
 class TestRecoverStuckRunPrompts:
     """Tests for recover_stuck_run_prompts Temporal activity."""
 
@@ -650,16 +695,12 @@ class TestRecoverStuckRunPrompts:
     @patch("model_hub.tasks.run_prompt.close_old_connections")
     def test_recovers_stuck_prompts(self, mock_close, mock_prompter, mock_tracker):
         """Test that stuck prompts are recovered and marked as FAILED."""
-        from model_hub.models.choices import StatusType
         from model_hub.tasks.run_prompt import recover_stuck_run_prompts
 
         # Mock stuck prompts query:
         # filter(...).filter(~Exists(...)).order_by(...).values_list(...)[:20]
         stuck_ids = ["prompt-1", "prompt-2"]
-        query_chain = (
-            mock_prompter.objects.filter.return_value.filter.return_value
-            .order_by.return_value.values_list.return_value
-        )
+        query_chain = mock_prompter.objects.filter.return_value.filter.return_value.order_by.return_value.values_list.return_value
         query_chain.__getitem__.return_value = stuck_ids
         # No lease -> candidates are dead
         mock_tracker.get_running_info.return_value = None
@@ -684,10 +725,7 @@ class TestRecoverStuckRunPrompts:
         from model_hub.tasks.run_prompt import recover_stuck_run_prompts
 
         # No stuck prompts
-        query_chain = (
-            mock_prompter.objects.filter.return_value.filter.return_value
-            .order_by.return_value.values_list.return_value
-        )
+        query_chain = mock_prompter.objects.filter.return_value.filter.return_value.order_by.return_value.values_list.return_value
         query_chain.__getitem__.return_value = []
 
         recover_stuck_run_prompts()
@@ -698,25 +736,20 @@ class TestRecoverStuckRunPrompts:
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
     @patch("model_hub.tasks.run_prompt.RunPrompter")
     @patch("model_hub.tasks.run_prompt.close_old_connections")
-    def test_cleans_stale_tracker_entries(
+    def test_leaves_tracker_expiration_to_ttl(
         self, mock_close, mock_prompter, mock_tracker
     ):
         """Test that stale tracker entries are cleaned up."""
         from model_hub.tasks.run_prompt import recover_stuck_run_prompts
 
-        query_chain = (
-            mock_prompter.objects.filter.return_value.filter.return_value
-            .order_by.return_value.values_list.return_value
-        )
+        query_chain = mock_prompter.objects.filter.return_value.filter.return_value.order_by.return_value.values_list.return_value
         query_chain.__getitem__.return_value = []
         mock_tracker.cleanup_stale.return_value = 5  # 5 stale entries cleaned
 
         recover_stuck_run_prompts()
 
-        # Cleanup age must exceed the longest legitimate run (4h activity
-        # limit): cleanup keys off started_at, and deleting a live long
-        # run's lease would break dedup and the liveness signal.
-        mock_tracker.cleanup_stale.assert_called_once_with(max_age_hours=5)
+        # Deleting by age races renewal; prompt leases already expire by TTL.
+        mock_tracker.cleanup_stale.assert_not_called()
 
 
 class TestGetRunningPromptsStatus:
@@ -831,11 +864,9 @@ class TestOwnershipLease:
         OwnershipLease("prompt-123", lock=mock_lock).renew_once()
 
         mock_tracker.refresh_running.assert_called_once_with(
-            "prompt-123", ttl=LEASE_TTL_SECONDS
+            "prompt-123", ttl=LEASE_TTL_SECONDS, run_token=None
         )
-        mock_lock.extend.assert_called_once_with(
-            LOCK_TTL_SECONDS, replace_ttl=True
-        )
+        mock_lock.extend.assert_called_once_with(LOCK_TTL_SECONDS, replace_ttl=True)
 
     @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
     def test_renew_survives_redis_errors(self, mock_tracker):
@@ -906,7 +937,9 @@ class TestOwnershipLease:
         lease.renew_once()
         assert lease.lost.is_set()
         # The fence must trip strictly before the lock can expire, or an edit can own it while we still write.
-        assert LOCK_LOST_AFTER_FAILURES * LEASE_RENEW_INTERVAL_SECONDS < LOCK_TTL_SECONDS
+        assert (
+            LOCK_LOST_AFTER_FAILURES * LEASE_RENEW_INTERVAL_SECONDS < LOCK_TTL_SECONDS
+        )
 
         mock_lock.extend.side_effect = None
         lease.renew_once()
@@ -1053,7 +1086,9 @@ class TestRunPromptsHonoursCancel:
         assert runner.process_row(MagicMock(), MagicMock()) is None
 
         # Scoped to this run's token so a cancel aimed at the previous owner is ignored.
-        mock_tracker.should_cancel.assert_called_once_with("prompt-123", run_token="tok-1")
+        mock_tracker.should_cancel.assert_called_once_with(
+            "prompt-123", run_token="tok-1"
+        )
         mock_cell.objects.create.assert_not_called()
         mock_cell.objects.get.assert_not_called()
 
@@ -1082,7 +1117,9 @@ class TestRunPromptsHonoursCancel:
     @patch("model_hub.views.run_prompt.close_old_connections")
     @patch("model_hub.views.run_prompt.log_and_deduct_cost_for_api_request", None)
     @patch("model_hub.views.run_prompt.Cell")
-    def test_cell_write_is_fenced_when_ownership_is_lost_mid_call(self, mock_cell, _close):
+    def test_cell_write_is_fenced_when_ownership_is_lost_mid_call(
+        self, mock_cell, _close
+    ):
         """Ownership can lapse *during* an LLM call; the result must not be
         written over a cell a successor run now owns."""
         runner = self._runner()
@@ -1155,7 +1192,9 @@ class TestRunPromptsHonoursCancel:
         fence.set()
         runner = self._runner(fence=fence)
         with (
-            patch.object(type(runner), "load_run_prompt_id", side_effect=RuntimeError("boom")),
+            patch.object(
+                type(runner), "load_run_prompt_id", side_effect=RuntimeError("boom")
+            ),
             pytest.raises(OwnershipLostError),
         ):
             runner.run_prompt()
@@ -1171,6 +1210,7 @@ class TestRunPromptsHonoursCancel:
         from model_hub.models.choices import StatusType
 
         mock_tracker.should_cancel.return_value = True
+        mock_tracker.get_cancel_request.return_value = {"reason": "manual"}
         update = self._run_to_final_status(self._runner(), mock_prompter)
 
         update.assert_called_once_with(status=StatusType.FAILED.value)
@@ -1183,9 +1223,45 @@ class TestRunPromptsHonoursCancel:
         from model_hub.models.choices import StatusType
 
         mock_tracker.should_cancel.return_value = False
+        mock_tracker.get_cancel_request.return_value = None
         update = self._run_to_final_status(self._runner(), mock_prompter)
 
         update.assert_called_once_with(status=StatusType.COMPLETED.value)
+        fail_cells.assert_not_called()
+
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    @patch("model_hub.views.run_prompt.RunPrompter")
+    @patch("model_hub.views.run_prompt.fail_pending_run_prompt_cells")
+    def test_replacement_cancel_with_unchanged_revision_keeps_prompt_running(
+        self, fail_cells, mock_prompter, mock_tracker
+    ):
+        mock_tracker.should_cancel.return_value = True
+        mock_tracker.get_cancel_request.return_value = {"replacement": True}
+        self._run_to_final_status(self._runner(), mock_prompter)
+        mock_prompter.objects.filter.return_value.update.assert_not_called()
+        fail_cells.assert_not_called()
+
+    @patch("model_hub.tasks.run_prompt.run_prompt_tracker")
+    @patch("model_hub.views.run_prompt.RunPrompter")
+    @patch("model_hub.views.run_prompt.fail_pending_run_prompt_cells")
+    def test_fence_arriving_during_final_read_cannot_become_manual_cancellation(
+        self, fail_cells, mock_prompter, mock_tracker
+    ):
+        import threading
+
+        from model_hub.views.run_prompt import OwnershipLostError
+
+        fence = threading.Event()
+        final_read = mock_prompter.objects.filter.return_value.values.return_value.first
+
+        def lose_ownership():
+            fence.set()
+            return final_read.return_value
+
+        final_read.side_effect = lose_ownership
+        with pytest.raises(OwnershipLostError):
+            self._run_to_final_status(self._runner(fence=fence), mock_prompter)
+        mock_prompter.objects.filter.return_value.update.assert_not_called()
         fail_cells.assert_not_called()
 
     @patch("model_hub.views.run_prompt.Cell")
@@ -1200,7 +1276,10 @@ class TestRunPromptsHonoursCancel:
         flt = mock_cell.objects.filter.call_args.kwargs
         assert flt["column__source"] == SourceChoices.RUN_PROMPT.value
         assert flt["column__source_id__in"] == ["p1", "p2"]
-        assert set(flt["status__in"]) == {CellStatus.RUNNING.value, StatusType.RUNNING.value}
+        assert set(flt["status__in"]) == {
+            CellStatus.RUNNING.value,
+            StatusType.RUNNING.value,
+        }
         assert flt["deleted"] is False
         upd = mock_cell.objects.filter.return_value.update.call_args.kwargs
         assert upd["status"] == CellStatus.ERROR.value and upd["value"] == "gone"
@@ -1266,9 +1345,7 @@ class TestRecoverStuckRunPromptsCellCleanup:
         # Legacy rerun path bulk-wrote the wrong enum ("Running") into
         # Cell.status via queryset.update (which bypasses full_clean);
         # recovery must repair those too. Reproduce it the same way.
-        Cell.objects.filter(id=cell_legacy.id).update(
-            status=StatusType.RUNNING.value
-        )
+        Cell.objects.filter(id=cell_legacy.id).update(status=StatusType.RUNNING.value)
 
         # Soft-deleted cells must be left alone by recovery.
         row3 = Row.objects.create(dataset=dataset, order=2)
@@ -1392,7 +1469,9 @@ class TestRecoverStuckRunPromptsCellCleanup:
         from model_hub.tasks.run_prompt import recover_stuck_run_prompts
 
         mock_tracker.is_reachable.return_value = False
-        mock_tracker.get_running_info.return_value = None  # what get() returns on RedisError
+        mock_tracker.get_running_info.return_value = (
+            None  # what get() returns on RedisError
+        )
 
         recover_stuck_run_prompts._original_func()
 
@@ -1525,7 +1604,7 @@ class TestRecoverStuckRunPromptsCellCleanup:
         )
         live_set = {str(i) for i in live_ids}
 
-        def lease_for(prompt_id):
+        def lease_for(prompt_id, *, strict=False):
             if str(prompt_id) not in live_set:
                 return None
             lease = MagicMock()
@@ -1598,7 +1677,9 @@ class TestRunAllPromptsTaskCellStatus:
         # written by the bulk reset in run_all_prompts_task. Call the
         # undecorated function so the temporal wrapper doesn't close
         # pytest-django's transaction connection.
-        with patch("model_hub.views.run_prompt.RunPrompts") as mock_runner_class:
+        with patch(
+            "model_hub.tasks.run_prompt.process_editing_prompt"
+        ) as mock_runner_class:
             mock_runner_class.return_value = MagicMock()
             run_all_prompts_task._original_func([str(prompter.id)], [str(row.id)])
 

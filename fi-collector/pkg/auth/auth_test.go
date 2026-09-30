@@ -1024,7 +1024,7 @@ func TestResolveResultMissingProjects(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNewUsageEmitterNilRedis(t *testing.T) {
-	u := NewUsageEmitter(nil, nil, slog.Default())
+	u := NewUsageEmitter(nil, nil, slog.Default(), 0)
 	if u != nil {
 		t.Fatal("NewUsageEmitter with nil redis must return nil")
 	}
@@ -1062,7 +1062,7 @@ func TestEmitIngestionEventIDDedupViaRedis(t *testing.T) {
 	}
 	defer mr.Close()
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	u := NewUsageEmitter(rdb, nil, slog.Default())
+	u := NewUsageEmitter(rdb, nil, slog.Default(), 0)
 	setTracingMode(t, rdb, "org-1", "events") // events mode → tracing_event is emitted
 
 	// Order: same call twice (re-poll), a different call, then an SDK batch twice.
@@ -1096,6 +1096,28 @@ func TestEmitIngestionEventIDDedupViaRedis(t *testing.T) {
 	}
 }
 
+// The stream is capped, so a consumer that is behind or stopped cannot let
+// it fill Redis; an unset cap is DefaultUsageMaxLen, not unbounded.
+func TestEmitIngestionCapsTheStream(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	setTracingMode(t, rdb, "org-c", "events")
+
+	u := NewUsageEmitter(rdb, nil, slog.Default(), 5)
+	for i := 0; i < 20; i++ {
+		u.EmitIngestion("org-c", 1, 1, 100, "")
+	}
+
+	if n := rdb.XLen(context.Background(), usageStreamKey).Val(); n != 5 {
+		t.Fatalf("stream must be trimmed to its cap of 5, has %d", n)
+	}
+	// Future AGI Cloud's billing consumer can fall this far behind before
+	// XADD MAXLEN ~ trims unread events; the Django emitter uses the same.
+	if got := NewUsageEmitter(rdb, nil, slog.Default(), 0).maxLen; got != 1_000_000 {
+		t.Fatalf("unset cap must be 1,000,000, got %d", got)
+	}
+}
+
 // setTracingMode seeds the org's billing-mode cache key so EmitIngestion
 // resolves a known mode without a Postgres pool.
 func setTracingMode(t *testing.T, rdb *redis.Client, orgID, mode string) {
@@ -1123,7 +1145,7 @@ func usageStreamEvents(t *testing.T, rdb *redis.Client) []map[string]any {
 func TestEmitIngestionStorageModeEmitsOnlyStorage(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	u := NewUsageEmitter(rdb, nil, slog.Default())
+	u := NewUsageEmitter(rdb, nil, slog.Default(), 0)
 	setTracingMode(t, rdb, "org-s", "storage")
 
 	u.EmitIngestion("org-s", 3, 7, 500, "trace-1")
@@ -1144,7 +1166,7 @@ func TestEmitIngestionStorageModeEmitsOnlyStorage(t *testing.T) {
 func TestEmitIngestionEventsModeEmitsOnlyTracing(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	u := NewUsageEmitter(rdb, nil, slog.Default())
+	u := NewUsageEmitter(rdb, nil, slog.Default(), 0)
 	setTracingMode(t, rdb, "org-e", "events")
 
 	u.EmitIngestion("org-e", 3, 7, 500, "trace-1")
@@ -1165,7 +1187,7 @@ func TestEmitIngestionEventsModeEmitsOnlyTracing(t *testing.T) {
 func TestEmitIngestionDefaultsToStorageWhenModeUnknown(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	u := NewUsageEmitter(rdb, nil, slog.Default())
+	u := NewUsageEmitter(rdb, nil, slog.Default(), 0)
 
 	u.EmitIngestion("org-x", 3, 7, 500, "")
 
@@ -1179,7 +1201,7 @@ func TestEmitIngestionDefaultsToStorageWhenModeUnknown(t *testing.T) {
 func TestEmitIngestionEventsModeAmountIncludesSpans(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	u := NewUsageEmitter(rdb, nil, slog.Default())
+	u := NewUsageEmitter(rdb, nil, slog.Default(), 0)
 	setTracingMode(t, rdb, "org-b", "events")
 
 	u.EmitIngestion("org-b", 2, 5, 999, "trace-1")
@@ -1198,7 +1220,7 @@ func TestEmitIngestionEventsModeAmountIncludesSpans(t *testing.T) {
 func TestEmitIngestionEventsModeTracesOnly(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	u := NewUsageEmitter(rdb, nil, slog.Default())
+	u := NewUsageEmitter(rdb, nil, slog.Default(), 0)
 	setTracingMode(t, rdb, "org-t", "events")
 
 	u.EmitIngestion("org-t", 2, 0, 999, "trace-1")

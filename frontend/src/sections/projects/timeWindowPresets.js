@@ -8,6 +8,7 @@ import {
   subDays,
 } from "date-fns";
 import { fDate, fDateTime } from "src/utils/format-time";
+import { formatDate } from "src/utils/report-utils";
 
 export const TIME_PERIOD_OPTIONS = [
   { title: "30 mins" },
@@ -60,6 +61,19 @@ export const presetToToken = (title) => TOKEN_BY_TITLE[title] || "custom";
 
 export const tokenToPreset = (token) => TITLE_BY_TOKEN[token] || null;
 
+// Observe's exact charts cache one snapshot per window, so a rolling preset's
+// start moves in whole hours rather than every second: every visit in the same
+// hour sends the same window and can be served from that snapshot.
+const ROLLING_PRESET_START_STEP_MS = 60 * 60 * 1000;
+
+// Floors on epoch milliseconds, i.e. on UTC hours: every viewer in one UTC
+// hour shares the start. The window's identity is still per timezone, since
+// its end is the viewer's next local midnight, and the start's local
+// wall-clock moves with the zone (half-hour zones and Lord Howe's 30-minute
+// DST see an extra identity where the lookback crosses a local boundary).
+const floorToStep = (date, stepMs) =>
+  new Date(Math.floor(date.getTime() / stepMs) * stepMs);
+
 // Every bound is derived from `now` so a caller can compute a window without
 // the global clock; defaulting it keeps the live behaviour identical.
 export function presetToRange(key, now = new Date()) {
@@ -73,6 +87,35 @@ export function presetToRange(key, now = new Date()) {
   const duration = DURATIONS[key];
   if (!duration) return null;
   return [sub(now, duration), nextDayStart];
+}
+
+// The presets an Observe date site offers: Today, Yesterday and the rolling
+// day-or-longer ones. The sub-day presets are not offered there, and would
+// send a window that moves every second, so they are not served.
+const OBSERVE_PRESETS = new Set([
+  "Today",
+  "Yesterday",
+  "7D",
+  "30D",
+  "3M",
+  "6M",
+  "12M",
+]);
+
+// The one window every Observe preset site sends (default load, toolbar pick,
+// compare pills, DateRangePill), formatted as the list/graph date filter.
+// A default "Past 7D" and a picked "Past 7D" are therefore byte-identical: the
+// start of a rolling preset (7D .. 12M) is floored to the UTC hour and the
+// end is the next local midnight; Today and Yesterday are never rounded.
+// Returns null for Custom, the sub-day presets and unknown keys.
+export function observePresetDateFilter(key, now = new Date()) {
+  if (!OBSERVE_PRESETS.has(key)) return null;
+  const [start, end] = presetToRange(key, now);
+  const rolling = key in DURATIONS;
+  return [
+    rolling ? floorToStep(start, ROLLING_PRESET_START_STEP_MS) : start,
+    end,
+  ].map(formatDate);
 }
 
 // Presets end at startOfTomorrow so the query covers all of today; showing that

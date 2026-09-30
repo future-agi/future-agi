@@ -23,7 +23,12 @@ from tracer.models.trace_grouping import (
     TraceGroupingScope,
     TraceGroupingWork,
 )
-from tracer.models.trace_investigation import TraceInvestigationReport
+from tracer.models.trace_investigation import (
+    InvestigationWorkload,
+    TraceInvestigationJob,
+    TraceInvestigationJobState,
+    TraceInvestigationReport,
+)
 from tracer.queries.grouping import (
     GroupingSnapshotError,
     canonical_snapshot_digest,
@@ -33,6 +38,9 @@ from tracer.queries.grouping import (
 FEATURE_LEASE_SECONDS = 120
 GROUPING_LEASE_SECONDS = 180
 MAX_ATTEMPTS = 5
+# How long a simulation run's grouping waits before checking again that the run
+# has finished; it also keeps waiting works out of the claim window's head.
+SIMULATION_SETTLE_SECONDS = 15
 # The grouping control client permits 8 MiB payloads. Keep 1 MiB for the
 # request envelope while allowing lossless multi-cohort receipts and Registry
 # history to remain durable across worker restarts.
@@ -58,7 +66,7 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def _eligible_project(project_id: uuid.UUID) -> bool:
+def _eligible_project(project_id: uuid.UUID, *, simulation: bool = False) -> bool:
     if is_oss() or not getattr(settings, "ERROR_FEED_GROUPING_ENABLED", False):
         return False
     if getattr(settings, "ERROR_FEED_GROUPING_BUDGET_ENFORCED", True):
@@ -75,9 +83,11 @@ def _eligible_project(project_id: uuid.UUID) -> bool:
                 return False
         except (InvalidOperation, ValueError):
             return False
-    return getattr(settings, "ERROR_FEED_GROUPING_ALL_PROJECTS", False) or str(
-        project_id
-    ) in getattr(settings, "ERROR_FEED_GROUPING_PROJECT_IDS", ())
+    return (
+        simulation
+        or getattr(settings, "ERROR_FEED_GROUPING_ALL_PROJECTS", False)
+        or str(project_id) in getattr(settings, "ERROR_FEED_GROUPING_PROJECT_IDS", ())
+    )
 
 
 def _live_report(report: TraceInvestigationReport) -> bool:
@@ -89,7 +99,10 @@ def _live_report(report: TraceInvestigationReport) -> bool:
         and report.source == "omega"
         and report.job_id is not None
         and report.job.current_report_id == report.id
-        and _eligible_project(report.project_id)
+        and _eligible_project(
+            report.project_id,
+            simulation=report.workload_type == "simulation_test_execution",
+        )
     )
 
 
@@ -209,12 +222,17 @@ def claim_feature_jobs(*, worker_id: str, limit: int) -> dict:
                     "lease_expires_at": job.lease_expires_at,
                     "report_id": str(job.report_id),
                     "organization_id": str(job.report.organization_id),
+                    "organization_name": (
+                        job.report.organization.display_name
+                        or job.report.organization.name
+                    ),
                     "workspace_id": (
                         str(job.report.workspace_id)
                         if job.report.workspace_id
                         else None
                     ),
                     "project_id": str(job.report.project_id),
+                    "project_name": job.report.project.name,
                     "policy_version": job.policy_version,
                     "snapshot": snapshot,
                 }
@@ -312,6 +330,30 @@ def mark_feature_ready(
     }
 
 
+def _simulation_run_settling(report) -> bool:
+    """A simulation run is a closed batch: group it once every call is read.
+
+    Grouping a report the moment it lands shows discovery one call at a time,
+    so a failure shared across calls never meets its peers and is deferred for
+    good. Waiting for the run lets one cohort hold all of it.
+    """
+    return (
+        TraceInvestigationJob.no_workspace_objects.filter(
+            test_execution_id=report.test_execution_id,
+            workload_type=InvestigationWorkload.SIMULATION_TEST_EXECUTION,
+            state__in=[
+                TraceInvestigationJobState.WAITING,
+                TraceInvestigationJobState.RUNNING,
+            ],
+        ).exists()
+        or TraceGroupingFeatureJob.no_workspace_objects.filter(
+            report__test_execution_id=report.test_execution_id,
+            report__is_current=True,
+            state__in=[GroupingFeatureState.PENDING, GroupingFeatureState.RUNNING],
+        ).exists()
+    )
+
+
 def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
     if not worker_id or not 1 <= limit <= 10:
         raise GroupingControlError("invalid grouping claim request")
@@ -356,6 +398,19 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
                 work.state = GroupingWorkState.SUPERSEDED
                 work.save(update_fields=["state", "updated_at"])
                 continue
+            if (
+                work.report.workload_type
+                == InvestigationWorkload.SIMULATION_TEST_EXECUTION
+            ):
+                if _simulation_run_settling(work.report):
+                    work.not_before = now + timedelta(seconds=SIMULATION_SETTLE_SECONDS)
+                    work.save(update_fields=["not_before", "updated_at"])
+                    continue
+                # The run has settled, so all of its works are due: this claim
+                # takes them as one cohort, not whichever came due first.
+                TraceGroupingWork.no_workspace_objects.filter(
+                    scope=scope, state=GroupingWorkState.PENDING, not_before__gt=now
+                ).update(not_before=now)
             if TraceGroupingAttempt.no_workspace_objects.filter(
                 work__scope=scope,
                 state=GroupingAttemptState.CLAIMED,
@@ -500,12 +555,17 @@ def claim_grouping_work(*, worker_id: str, limit: int) -> dict:
                 "lease_expires_at": attempt.lease_expires_at,
                 "report_id": str(attempt.work.report_id),
                 "organization_id": str(attempt.work.scope.organization_id),
+                "organization_name": (
+                    attempt.work.scope.organization.display_name
+                    or attempt.work.scope.organization.name
+                ),
                 "workspace_id": (
                     str(attempt.work.scope.workspace_id)
                     if attempt.work.scope.workspace_id
                     else None
                 ),
                 "project_id": str(attempt.work.scope.project_id),
+                "project_name": attempt.work.scope.project.name,
                 "scope_revision": attempt.work.input_revision,
                 "registry_revision": attempt.registry_revision,
                 "candidate_digest": attempt.candidate_digest,

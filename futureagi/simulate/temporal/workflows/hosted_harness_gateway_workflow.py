@@ -11,7 +11,9 @@ from simulate.temporal.types.hosted_harness_gateway import (
     HostedHarnessAttemptInput,
     HostedHarnessGatewayInput,
     HostedHarnessGatewayOutput,
+    HostedHarnessLaunchFailureInput,
     HostedHarnessLaunchOutput,
+    HostedHarnessLaunchRecoveryOutput,
     HostedHarnessPollOutput,
 )
 
@@ -29,19 +31,42 @@ class HostedHarnessGatewayWorkflow:
     async def run(self, input: HostedHarnessGatewayInput) -> HostedHarnessGatewayOutput:
         backoff = input.initial_backoff_seconds
         while True:
-            launched = await workflow.execute_activity(
-                "launch_hosted_harness_job",
-                input,
-                task_queue=QUEUE_RUNNER,
-                # A cold runtime build can exceed twenty minutes; a short bound cancels and restarts it.
-                start_to_close_timeout=timedelta(minutes=45),
-                retry_policy=RetryPolicy(
-                    maximum_attempts=input.max_infrastructure_attempts,
-                    initial_interval=timedelta(seconds=1),
-                    maximum_interval=timedelta(seconds=15),
-                ),
-                result_type=HostedHarnessLaunchOutput,
-            )
+            try:
+                launched = await workflow.execute_activity(
+                    "launch_hosted_harness_job",
+                    input,
+                    task_queue=QUEUE_RUNNER,
+                    # A cold runtime build can exceed twenty minutes; a short bound cancels and restarts it.
+                    start_to_close_timeout=timedelta(minutes=45),
+                    retry_policy=RetryPolicy(
+                        maximum_attempts=input.max_infrastructure_attempts,
+                        initial_interval=timedelta(seconds=1),
+                        maximum_interval=timedelta(seconds=15),
+                    ),
+                    result_type=HostedHarnessLaunchOutput,
+                )
+            except ActivityError as exc:
+                if isinstance(exc.cause, CancelledError):
+                    raise
+                recovery = await workflow.execute_activity(
+                    "record_hosted_harness_launch_failure",
+                    HostedHarnessLaunchFailureInput(job_id=input.job_id),
+                    task_queue=QUEUE_RUNNER,
+                    start_to_close_timeout=timedelta(minutes=1),
+                    retry_policy=RetryPolicy(maximum_attempts=3),
+                    result_type=HostedHarnessLaunchRecoveryOutput,
+                )
+                workflow.logger.error(
+                    "Hosted harness launch exhausted retries for job %s", input.job_id
+                )
+                if recovery.attempt_id is None:
+                    return HostedHarnessGatewayOutput(
+                        job_id=input.job_id, state=recovery.state
+                    )
+                # The activity response may have been lost after the sandbox
+                # and attempt were recorded. Resume polling that same attempt
+                # rather than creating a second sandbox or abandoning a live call.
+                launched = HostedHarnessLaunchOutput(attempt_id=recovery.attempt_id)
             attempt_input = HostedHarnessAttemptInput(attempt_id=launched.attempt_id)
             while True:
                 if self.cancel_requested:

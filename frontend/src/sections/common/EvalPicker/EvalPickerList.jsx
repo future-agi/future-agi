@@ -1,6 +1,7 @@
 import {
   Box,
   Button,
+  Checkbox,
   Chip,
   CircularProgress,
   IconButton,
@@ -16,10 +17,12 @@ import {
   Tooltip,
   Avatar,
   Skeleton,
+  Collapse,
+  ButtonBase,
   useTheme,
 } from "@mui/material";
 // date-fns available if needed for timestamps
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Iconify from "src/components/iconify";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
@@ -448,11 +451,16 @@ EvalDetailPanel.propTypes = { evalData: PropTypes.object.isRequired };
 // ── Loading skeleton rows ──
 
 const SkeletonRows = (
-  { count = 8 }, // eslint-disable-line react/prop-types
+  { count = 8, multiSelect = false }, // eslint-disable-line react/prop-types
 ) => (
   <>
     {Array.from({ length: count }).map((_, i) => (
       <TableRow key={i}>
+        {multiSelect && (
+          <TableCell sx={{ width: 36, p: 0.5 }}>
+            <Skeleton variant="rectangular" width={18} height={18} />
+          </TableCell>
+        )}
         <TableCell sx={{ width: 40, p: 0.5 }}>
           <Skeleton variant="circular" width={24} height={24} />
         </TableCell>
@@ -479,11 +487,218 @@ const SkeletonRows = (
   </>
 );
 
+// ── Added evals ──
+
+/*
+  The evals already on the caller, in their own box under the category chips.
+  Collapsed by default with a count, so the list below is only what can still
+  be added. A search that matches an added eval opens the box and narrows it
+  too — looking for an eval you already have should say so, not come back empty.
+*/
+const AddedEvalsSection = ({ addedEvals, searchQuery, action }) => {
+  // `open` is a tri-state override: null lets the search decide (expanded
+  // whenever it matches something); true/false is the user's last click on
+  // the header. A plain boolean toggle would do nothing while a search match
+  // forces the box open, and would leave it stuck open after the search that
+  // opened it was cleared.
+  const [open, setOpen] = useState(null);
+  const q = (searchQuery || "").trim().toLowerCase();
+  const shown = q
+    ? addedEvals.filter((e) =>
+        `${e.name} ${e.meta || ""}`.toLowerCase().includes(q),
+      )
+    : addedEvals;
+  const expanded = open ?? Boolean(q && shown.length > 0);
+
+  // A new search re-arms auto-expand only when the user had closed the box;
+  // a box they opened stays open and says when nothing matches.
+  useEffect(() => {
+    setOpen((v) => (v === false ? null : v));
+  }, [q]);
+
+  if (!addedEvals.length) return null;
+  return (
+    <Box
+      sx={{
+        flexShrink: 0,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+        overflow: "hidden",
+        mb: 1.5,
+      }}
+    >
+      <ButtonBase
+        onClick={() => setOpen(!expanded)}
+        aria-expanded={expanded}
+        sx={{
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          gap: 1,
+          px: 1.5,
+          py: 1,
+          justifyContent: "flex-start",
+          textAlign: "left",
+          "&:hover": { bgcolor: "action.hover" },
+        }}
+      >
+        <Iconify
+          icon="solar:alt-arrow-right-linear"
+          width={14}
+          sx={{
+            color: "text.secondary",
+            transition: "transform 150ms",
+            transform: expanded ? "rotate(90deg)" : "none",
+          }}
+        />
+        <Iconify
+          icon="solar:check-circle-linear"
+          width={16}
+          sx={{ color: "text.secondary" }}
+        />
+        <Typography sx={{ fontSize: "13px", fontWeight: 600 }}>
+          Added evaluations
+        </Typography>
+        <Box
+          sx={{
+            px: 0.75,
+            height: 18,
+            minWidth: 18,
+            borderRadius: 0.75,
+            display: "grid",
+            placeItems: "center",
+            bgcolor: "action.selected",
+          }}
+        >
+          <Typography
+            sx={{
+              fontSize: "11px",
+              fontWeight: 700,
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {q ? `${shown.length}/${addedEvals.length}` : addedEvals.length}
+          </Typography>
+        </Box>
+      </ButtonBase>
+      <Collapse in={expanded} timeout={150} unmountOnExit>
+        <Box
+          sx={{
+            borderTop: "1px solid",
+            borderColor: "divider",
+            maxHeight: 188,
+            overflowY: "auto",
+          }}
+        >
+          {shown.length === 0 ? (
+            <Typography
+              sx={{
+                px: 1.5,
+                py: 1.25,
+                fontSize: "12px",
+                color: "text.secondary",
+              }}
+            >
+              None of the added evaluations match your search.
+            </Typography>
+          ) : (
+            shown.map((e, i) => (
+              <Box
+                key={`${e.id ?? ""}::${e.name ?? ""}`}
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                  px: 1.5,
+                  py: 0.875,
+                  borderTop: i ? "1px solid" : "none",
+                  borderColor: "divider",
+                }}
+              >
+                <Iconify
+                  icon="solar:check-read-linear"
+                  width={14}
+                  sx={{ color: "success.main", flexShrink: 0 }}
+                />
+                <Typography
+                  noWrap
+                  sx={{ fontSize: "13px", fontWeight: 500, minWidth: 0 }}
+                >
+                  {e.name}
+                </Typography>
+                <Box sx={{ flex: 1 }} />
+                {e.meta && (
+                  <Typography
+                    noWrap
+                    sx={{
+                      fontSize: "12px",
+                      color: "text.secondary",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {e.meta}
+                  </Typography>
+                )}
+                {action && (!action.show || action.show(e)) && (
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    disabled={action.disabled}
+                    onClick={() => action.onClick(e)}
+                    startIcon={
+                      action.busyName === e.name ? (
+                        <CircularProgress size={12} color="inherit" />
+                      ) : null
+                    }
+                    sx={{
+                      flexShrink: 0,
+                      height: 24,
+                      fontSize: 11,
+                      textTransform: "none",
+                      px: 1,
+                    }}
+                  >
+                    {action.label}
+                  </Button>
+                )}
+              </Box>
+            ))
+          )}
+        </Box>
+      </Collapse>
+    </Box>
+  );
+};
+
+AddedEvalsSection.propTypes = {
+  addedEvals: PropTypes.array.isRequired,
+  searchQuery: PropTypes.string,
+  action: PropTypes.shape({
+    label: PropTypes.string.isRequired,
+    onClick: PropTypes.func.isRequired,
+    // Name of the added eval whose action is in flight; its row shows a spinner.
+    // Matched by name because one template can back several added evals.
+    busyName: PropTypes.string,
+    disabled: PropTypes.bool,
+    show: PropTypes.func,
+  }),
+};
+
 // ── Main Component ──
 
 const EvalPickerList = ({ onSelectEval }) => {
-  const { existingEvals, source, sourceId, lockedFilters } =
-    useEvalPickerContext();
+  const {
+    existingEvals,
+    source,
+    sourceId,
+    lockedFilters,
+    multiSelect,
+    selectedIds,
+    onToggleSelect,
+    addedEvals,
+    addedEvalAction,
+  } = useEvalPickerContext();
   const useScopedEvals = source === "dataset" || source === "experiment";
   const {
     items,
@@ -520,6 +735,30 @@ const EvalPickerList = ({ onSelectEval }) => {
       ),
     [existingEvals],
   );
+
+  // With the box on, added evals live there and are left out of the list —
+  // matched by template id, or by name for rows the caller knows only by name.
+  const listItems = useMemo(() => {
+    if (!Array.isArray(addedEvals)) return items;
+    const addedIds = new Set(addedEvals.map((e) => e.id));
+    const addedNames = new Set(
+      addedEvals.map((e) =>
+        String(e.name || "")
+          .trim()
+          .toLowerCase(),
+      ),
+    );
+    return items.filter(
+      (e) =>
+        !isAlreadyAdded(e.id) &&
+        !addedIds.has(e.id) &&
+        !addedNames.has(
+          String(e.name || "")
+            .trim()
+            .toLowerCase(),
+        ),
+    );
+  }, [items, addedEvals, isAlreadyAdded]);
 
   const activeFilterCount = useMemo(() => {
     if (!filters) return 0;
@@ -704,11 +943,20 @@ const EvalPickerList = ({ onSelectEval }) => {
         ) : null}
       </Box>
 
+      {Array.isArray(addedEvals) && (
+        <AddedEvalsSection
+          addedEvals={addedEvals}
+          searchQuery={searchQuery}
+          action={addedEvalAction}
+        />
+      )}
+
       {/* Scrollable Table */}
       <TableContainer sx={{ flex: 1, overflow: "auto", minHeight: 0 }}>
         <Table size="small" stickyHeader sx={{ tableLayout: "fixed" }}>
           <TableHead>
             <TableRow>
+              {multiSelect && <TableCell sx={{ ...headerCellSx, width: 36 }} />}
               <TableCell sx={{ ...headerCellSx, width: 36 }} />
               <TableCell sx={{ ...headerCellSx, width: 72 }} />
               <TableCell sx={{ ...headerCellSx }}>
@@ -742,19 +990,21 @@ const EvalPickerList = ({ onSelectEval }) => {
           </TableHead>
           <TableBody>
             {isLoading ? (
-              <SkeletonRows />
-            ) : items.length === 0 ? (
+              <SkeletonRows multiSelect={multiSelect} />
+            ) : listItems.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={7}
+                  colSpan={multiSelect ? 8 : 7}
                   align="center"
                   sx={{ py: 6, color: "text.disabled" }}
                 >
-                  No evaluations found
+                  {items.length > 0
+                    ? "Every matching evaluation on this page is already added."
+                    : "No evaluations found"}
                 </TableCell>
               </TableRow>
             ) : (
-              items.map((evalItem) => {
+              listItems.map((evalItem) => {
                 const isExpanded = expandedEvalId === evalItem.id;
                 const added = isAlreadyAdded(evalItem.id);
                 const createdBy = evalItem.created_by_name || "Unknown";
@@ -772,6 +1022,20 @@ const EvalPickerList = ({ onSelectEval }) => {
                       "&:hover": { bgcolor: "action.hover" },
                     }}
                   >
+                    {/* Multi-select checkbox */}
+                    {multiSelect && (
+                      <TableCell sx={{ ...bodyCellSx, width: 36, px: 0.5 }}>
+                        <Checkbox
+                          size="small"
+                          disabled={added}
+                          checked={added || !!selectedIds?.has(evalItem.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={() => onToggleSelect?.(evalItem)}
+                          sx={{ p: 0.25 }}
+                        />
+                      </TableCell>
+                    )}
+
                     {/* Expand chevron */}
                     <TableCell sx={{ ...bodyCellSx, width: 36, px: 0.5 }}>
                       <IconButton size="small" sx={{ p: 0.25 }}>
@@ -908,7 +1172,7 @@ const EvalPickerList = ({ onSelectEval }) => {
                   isExpanded && (
                     <TableRow key={`${evalItem.id}-detail`}>
                       <TableCell
-                        colSpan={7}
+                        colSpan={multiSelect ? 8 : 7}
                         sx={{
                           p: 0,
                           borderBottom: "1px solid",

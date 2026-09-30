@@ -195,6 +195,13 @@ class EditRunPromptColumnTool(BaseTool):
                 id=run_prompter.id
             )
 
+            if not params.run and rp.status == StatusType.RUNNING.value:
+                return ToolResult.error(
+                    "This prompt is running. Set run=true to replace the active run, "
+                    "or wait until it finishes before saving without running.",
+                    error_code="VALIDATION_ERROR",
+                )
+            rp.queued_request_id = None
             if params.name is not None:
                 rp.name = params.name
                 column.name = params.name
@@ -226,6 +233,9 @@ class EditRunPromptColumnTool(BaseTool):
             if params.tool_choice is not None:
                 rp.tool_choice = params.tool_choice
 
+            if params.run:
+                rp.status = StatusType.RUNNING.value
+                rp.queued_row_ids = None
             rp.save()
 
             if params.tools is not None:
@@ -243,16 +253,24 @@ class EditRunPromptColumnTool(BaseTool):
         workflow_started = False
         if params.run:
             try:
-                rp.status = StatusType.RUNNING.value
-                rp.save(update_fields=["status"])
-
                 process_prompts_single.apply_async(
-                    args=({"type": "editing", "prompt_id": str(rp.id)},)
+                    args=(
+                        {
+                            "type": "editing",
+                            "prompt_id": str(rp.id),
+                            "revision": rp.updated_at.isoformat(),
+                        },
+                    )
                 )
                 workflow_started = True
             except Exception:
-                rp.status = StatusType.NOT_STARTED.value
-                rp.save(update_fields=["status"])
+                # Keep the pending revision visible to recovery; dispatch may
+                # have reached Temporal even when the response failed.
+                logger.exception(
+                    "run_prompt_edit_dispatch_failed",
+                    run_prompt_id=str(rp.id),
+                    revision=rp.updated_at.isoformat(),
+                )
 
         info = key_value_block(
             [
@@ -272,7 +290,7 @@ class EditRunPromptColumnTool(BaseTool):
             if workflow_started:
                 content += "\n\n_Prompt re-execution started on all rows._"
             else:
-                content += "\n\n_Re-execution queued. It will be picked up shortly._"
+                content += "\n\n_Could not confirm re-execution started. Check the run status before retrying._"
         else:
             content += (
                 "\n\n_Configuration updated. Run manually from the dashboard to apply._"

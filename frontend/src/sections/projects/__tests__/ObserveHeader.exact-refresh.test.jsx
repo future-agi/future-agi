@@ -167,61 +167,53 @@ describe("ObserveHeader exact aggregation refresh state", () => {
     expect(screen.queryByText(/Last updated on/i)).not.toBeInTheDocument();
   });
 
-  it("keeps reload disabled until every exact aggregation poll settles", () => {
-    renderHeader();
+  const setAggregationRefreshing = (sourceId, refreshing) => {
+    window.dispatchEvent(
+      new CustomEvent("observe-aggregation-refresh-state", {
+        detail: { observeId: "project-1", sourceId, refreshing },
+      }),
+    );
+  };
+
+  it("keeps grid reload available while exact aggregations refresh", () => {
+    // A revisit's background revalidation must not lock the grids' Reload
+    // for the whole exact read. While any aggregation refreshes, Reload
+    // reloads rows only; the charts keep polling their own refresh.
+    const refreshData = renderHeader();
+    const aggregationRefresh = vi.fn();
+    const listRefresh = vi.fn();
+    window.addEventListener("observe-refresh", aggregationRefresh);
+    window.addEventListener(OBSERVE_LIST_REFRESH_EVENT, listRefresh);
 
     act(() => {
-      window.dispatchEvent(
-        new CustomEvent("observe-aggregation-refresh-state", {
-          detail: {
-            observeId: "project-1",
-            sourceId: "primary",
-            refreshing: true,
-          },
-        }),
-      );
-      window.dispatchEvent(
-        new CustomEvent("observe-aggregation-refresh-state", {
-          detail: {
-            observeId: "project-1",
-            sourceId: "compare",
-            refreshing: true,
-          },
-        }),
-      );
+      setAggregationRefreshing("primary", true);
+      setAggregationRefreshing("compare", true);
     });
 
+    const rowsOnly = screen.getByRole("button", {
+      name: "Reload rows (charts are refreshing)",
+    });
+    expect(rowsOnly).toBeEnabled();
+    fireEvent.click(rowsOnly);
+    expect(refreshData).toHaveBeenCalledWith({ includeAggregations: false });
+    expect(listRefresh).toHaveBeenCalledOnce();
+    expect(aggregationRefresh).not.toHaveBeenCalled();
+
+    act(() => setAggregationRefreshing("primary", false));
     expect(
-      screen.getByRole("button", { name: "Refreshing data" }),
-    ).toBeDisabled();
+      screen.getByRole("button", {
+        name: "Reload rows (charts are refreshing)",
+      }),
+    ).toBeEnabled();
 
-    act(() => {
-      window.dispatchEvent(
-        new CustomEvent("observe-aggregation-refresh-state", {
-          detail: {
-            observeId: "project-1",
-            sourceId: "primary",
-            refreshing: false,
-          },
-        }),
-      );
-    });
-    expect(
-      screen.getByRole("button", { name: "Refreshing data" }),
-    ).toBeDisabled();
+    act(() => setAggregationRefreshing("compare", false));
+    const reload = screen.getByRole("button", { name: "Reload data" });
+    expect(reload).toBeEnabled();
+    fireEvent.click(reload);
+    expect(aggregationRefresh).toHaveBeenCalledOnce();
 
-    act(() => {
-      window.dispatchEvent(
-        new CustomEvent("observe-aggregation-refresh-state", {
-          detail: {
-            observeId: "project-1",
-            sourceId: "compare",
-            refreshing: false,
-          },
-        }),
-      );
-    });
-    expect(screen.getByRole("button", { name: "Reload data" })).toBeEnabled();
+    window.removeEventListener("observe-refresh", aggregationRefresh);
+    window.removeEventListener(OBSERVE_LIST_REFRESH_EVENT, listRefresh);
   });
 
   it("keeps 10-second auto refresh scoped to list data", () => {

@@ -646,6 +646,15 @@ export type ${jsonAlias} = JsonValueApi;`,
       "TraceSessionTableRowApi dynamic JSON values",
     );
 
+    // A key that never expires syncs to the gateway with expires_at: null.
+    schemas = assertReplaceInNamedBlock(
+      schemas,
+      "export interface APIKeyBulkItemApi {",
+      "expires_at: string;",
+      "expires_at: string | null;",
+      "APIKeyBulkItemApi.expires_at nullable",
+    );
+
     fs.writeFileSync(schemasOutputPath, schemas);
   }
 
@@ -1115,6 +1124,14 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
         `TracerTraceAgentGraphResponse.${fieldPrefix}.trace_count nullable`,
       );
     }
+
+    zod = assertReplaceInNamedBlock(
+      zod,
+      "export const AgentccApiKeysBulkListResponse = zod.object({",
+      '"expires_at": zod.string().datetime({"offset":true})',
+      '"expires_at": zod.string().datetime({"offset":true}).nullable()',
+      "AgentccApiKeysBulkListResponse.expires_at nullable",
+    );
 
     // x-string-or-array: orval generates zod.object({}).passthrough() for these
     // fields. Use the unique description emitted by StringOrArrayField as anchor.

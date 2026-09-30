@@ -14,6 +14,7 @@ from .base import (
     SandboxPreview,
     SandboxProviderConfigurationError,
     SandboxProviderError,
+    SandboxProviderUnavailableError,
     SandboxRuntimeProvider,
 )
 
@@ -111,7 +112,12 @@ class DaytonaSandboxRuntimeProvider(SandboxRuntimeProvider):
     supports_public_ingress = True
 
     def __init__(self) -> None:
-        from daytona import Daytona, DaytonaConfig
+        try:
+            from daytona import Daytona, DaytonaConfig
+        except ImportError as exc:
+            # The Daytona SDK is the optional `sandbox` extra: the default
+            # backend image does not ship it.
+            raise SandboxProviderUnavailableError("Daytona", "daytona") from exc
 
         api_key = getattr(settings, "DAYTONA_API_KEY", "")
         self.snapshot = getattr(settings, "ALK_DAYTONA_SNAPSHOT", "")
@@ -171,7 +177,9 @@ class DaytonaSandboxRuntimeProvider(SandboxRuntimeProvider):
                 **common,
             )
         else:
-            params = CreateSandboxFromSnapshotParams(snapshot=self.snapshot, **common)
+            params = CreateSandboxFromSnapshotParams(
+                snapshot=spec.runtime_name or self.snapshot, **common
+            )
         sandbox = _call(self._client.create, params, timeout=timeout)
         return DaytonaSandbox(sandbox)
 

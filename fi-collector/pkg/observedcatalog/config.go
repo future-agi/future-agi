@@ -7,12 +7,16 @@ import (
 	"time"
 )
 
+// RuntimeConfig selects how the collector hands observations on: `kafka`
+// publishes them for fi-property-catalog-consumer, `direct` writes the index
+// itself with the same sink (installs without Kafka). Both replay the spool.
 type RuntimeConfig struct {
-	Mode           string        `yaml:"mode"`
-	Kafka          KafkaConfig   `yaml:"kafka"`
-	Spool          SpoolConfig   `yaml:"spool"`
-	Limits         Limits        `yaml:"limits"`
-	ReplayInterval time.Duration `yaml:"replay_interval"`
+	Mode           string           `yaml:"mode"`
+	Kafka          KafkaConfig      `yaml:"kafka"`
+	ClickHouse     ClickHouseConfig `yaml:"clickhouse"`
+	Spool          SpoolConfig      `yaml:"spool"`
+	Limits         Limits           `yaml:"limits"`
+	ReplayInterval time.Duration    `yaml:"replay_interval"`
 }
 
 const envPrefix = "FI_OBSERVED_CATALOG_"
@@ -64,7 +68,15 @@ func LimitsFromEnv(getenv func(string) string) (Limits, error) {
 }
 
 func ClickHouseConfigFromEnv(getenv func(string) string) (ClickHouseConfig, error) {
-	c := ClickHouseConfig{URL: getenv(envPrefix + "CH_URL"), Database: getenv(envPrefix + "CH_DATABASE"), Username: getenv(envPrefix + "CH_USERNAME"), Password: getenv(envPrefix + "CH_PASSWORD")}
+	return clickHouseFromEnv(ClickHouseConfig{}, getenv)
+}
+
+func clickHouseFromEnv(c ClickHouseConfig, getenv func(string) string) (ClickHouseConfig, error) {
+	for suffix, target := range map[string]*string{"CH_URL": &c.URL, "CH_DATABASE": &c.Database, "CH_USERNAME": &c.Username, "CH_PASSWORD": &c.Password} {
+		if value := getenv(envPrefix + suffix); value != "" {
+			*target = value
+		}
+	}
 	if err := durationEnv(getenv, "CH_TIMEOUT", &c.Timeout, maxClickHouseRequestTimeout); err != nil {
 		return c, err
 	}
@@ -86,14 +98,23 @@ func RuntimeFromEnv(c RuntimeConfig, getenv func(string) string) (RuntimeConfig,
 	if c.Mode == "" {
 		c.Mode = "disabled"
 	}
-	if c.Mode != "disabled" && c.Mode != "kafka" {
-		return c, fmt.Errorf("FI_OBSERVED_CATALOG_MODE must be disabled or kafka")
+	if c.Mode != "disabled" && c.Mode != "kafka" && c.Mode != "direct" {
+		return c, fmt.Errorf("FI_OBSERVED_CATALOG_MODE must be disabled, kafka or direct")
 	}
 	if c.Mode == "disabled" {
 		return c, nil
 	}
 	var err error
-	c.Kafka, err = kafkaFromEnv(c.Kafka, getenv)
+	if c.Mode == "kafka" {
+		c.Kafka, err = kafkaFromEnv(c.Kafka, getenv)
+	} else {
+		c.ClickHouse, err = clickHouseFromEnv(c.ClickHouse, getenv)
+		// deploy/standalone/bin/start looks for this text to tell whether a
+		// collector binary supports direct mode.
+		if err == nil && (c.ClickHouse.URL == "" || c.ClickHouse.Database == "") {
+			err = fmt.Errorf("FI_OBSERVED_CATALOG_MODE=direct requires FI_OBSERVED_CATALOG_CH_URL and FI_OBSERVED_CATALOG_CH_DATABASE")
+		}
+	}
 	if err != nil {
 		return c, err
 	}

@@ -16,6 +16,11 @@ from rest_framework.views import APIView
 from agentic_eval.core.embeddings.embedding_manager import (
     model_manager,
 )
+from agentic_eval.core.embeddings.serving_client import (
+    SERVING_UNAVAILABLE_MESSAGE,
+    require_serving,
+    serving_available,
+)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 from model_hub.models.api_key import ApiKey, SecretModel
@@ -142,6 +147,9 @@ class AddVectorDBColumnView(APIView):
 
     def _query_vector_db(self, text_input, config, organization_id, workspace_id=None):
         """Query vector database using text input"""
+        # Every embedding type goes through model serving. Raised outside the
+        # try below so the row is recorded as an error with this message.
+        require_serving()
         try:
             # 1. Set up the embedding model based on config
             embedding_config = config.get("embedding_config", {})
@@ -445,8 +453,9 @@ class AddVectorDBColumnView(APIView):
             )
             return result_info, {}
         except Exception as e:
-            logger.error("traceback : ", traceback.format_exc())
-            logger.error(f"Error processing row: {str(e)}")
+            # One structured call: a positional arg with no %s in the event
+            # made the logger itself raise and replace this row's reason.
+            logger.exception("vector_db_row_failed", error=str(e))
             return str(e), {"reason": str(e)}
 
     @validated_request(
@@ -470,6 +479,9 @@ class AddVectorDBColumnView(APIView):
                 return self._gm.bad_request(
                     get_error_message("MISSING_COLUMN_ID_SUB_TYPE_AND_API_KEY")
                 )
+
+            if not serving_available():
+                return self._gm.bad_request(SERVING_UNAVAILABLE_MESSAGE)
 
             dataset = _request_dataset(request, dataset_id)
             if not dataset:

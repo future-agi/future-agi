@@ -319,3 +319,38 @@ class TestDeleteProjectTool:
         )
 
         assert result.is_error
+
+
+class TestCreateAlertMonitorTool:
+    PARAMS = {
+        "name": "error spike",
+        "metric_type": "count_of_errors",
+        "threshold_operator": "greater_than",
+        "threshold_type": "static",
+        "critical_threshold_value": 5,
+    }
+
+    def test_requires_project(self, tool_context):
+        # A project-less monitor can never be evaluated (monitors are
+        # project-scoped), so the tool must not create one.
+        from tracer.models.monitor import UserAlertMonitor
+
+        result = run_tool("create_alert_monitor", dict(self.PARAMS), tool_context)
+
+        assert result.is_error
+        assert result.error_code == "VALIDATION_ERROR"
+        assert "project_id" in result.content
+        assert not UserAlertMonitor.objects.filter(name="error spike").exists()
+
+    def test_creates_project_scoped_monitor(self, tool_context, project):
+        from tracer.models.monitor import UserAlertMonitor
+
+        result = run_tool(
+            "create_alert_monitor",
+            {**self.PARAMS, "project_id": str(project.id)},
+            tool_context,
+        )
+
+        assert not result.is_error
+        monitor = UserAlertMonitor.objects.get(id=result.data["monitor_id"])
+        assert monitor.project_id == project.id
