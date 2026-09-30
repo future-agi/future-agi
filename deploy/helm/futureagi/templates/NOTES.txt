@@ -14,10 +14,10 @@
 {{- end -}}
 Future AGI {{ $tag }} is installed: release {{ .Release.Name }} in namespace {{ $ns }} (Distributed setup).
 The bootstrap job has prepared the databases (log: kubectl -n {{ $ns }} logs job/{{ include "futureagi.component" (dict "root" . "component" "bootstrap") }}).
-{{- if and (regexMatch "^v?[0-9]+\\.[0-9]+\\.[0-9]+$" $tag) (semverCompare "<=1.41.1" $tag) }}
+{{- if and (regexMatch "^v?[0-9]+\\.[0-9]+\\.[0-9]+$" $tag) (semverCompare "<=1.42.0" $tag) }}
 
 WARNING  The bootstrap job runs `manage.py bootstrap_install`, which no published
-         image up to v1.41.1 contains, and this install uses {{ $tag }}: the job
+         image up to v1.42.0 contains, and this install uses {{ $tag }}: the job
          fails with "Unknown command". Until a release ships it, set image.tag
          (and image.registry) to images built from the same checkout as this chart.
 {{- end }}
