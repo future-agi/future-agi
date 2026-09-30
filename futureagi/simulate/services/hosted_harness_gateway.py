@@ -2286,12 +2286,9 @@ class HostedHarnessGateway:
                 simulator_vertex_credentials,
                 _SIMULATOR_VERTEX_CREDENTIALS_PATH,
             )
-        environment = job.environment or job
+        # The revision of the snapshot this workspace holds: a Run's own, not its environment's.
         basis = str(
-            ((environment.payload or {}).get("metadata") or {}).get(
-                "authoring_revision"
-            )
-            or ""
+            ((job.payload or {}).get("metadata") or {}).get("authoring_revision") or ""
         )
         if basis:
             sandbox.fs.upload_file(
@@ -2549,15 +2546,11 @@ class HostedHarnessGateway:
         if workspace_archive is None:
             workspace_archive = _authoring_archive_for(job)
             if workspace_archive is not None:
-                environment = job.environment or job
-                basis = str(
-                    ((environment.payload or {}).get("metadata") or {}).get(
-                        "authoring_revision"
-                    )
-                    or ""
+                # The workspace declares the snapshot it holds, so a publish can tell it apart
+                # from edits made since.
+                workspace_archive = with_authoring_basis(
+                    workspace_archive, authoring_content_digest(workspace_archive)
                 )
-                if basis:
-                    workspace_archive = with_authoring_basis(workspace_archive, basis)
         control_only = workspace_archive is None
         if workspace_archive is None:
             workspace_archive = _empty_workspace_archive()
@@ -4892,15 +4885,11 @@ def rewrite_authoring_scenarios(job: HostedHarnessJob, suite: list[dict]) -> str
             job.id,
         )
         raise AuthoringArchiveKept("the change would lose files a run needs")
-    client.put_object(
-        bucket_name=UPLOAD_BUCKET_NAME,
-        object_name=object_key,
-        data=io.BytesIO(rewritten),
-        length=len(rewritten),
-        content_type="application/gzip",
-    )
+    # Runs already submitted keep replaying the snapshot they were given.
+    object_key = _put_authoring_object(job, rewritten)
     payload = dict(job.payload or {})
     metadata = dict(payload.get("metadata") or {})
+    metadata["authoring_object_key"] = object_key
     metadata["authoring_revision"] = authoring_content_digest(rewritten)
     payload["metadata"] = metadata
     job.payload = payload
@@ -5087,10 +5076,8 @@ def _rewritten_authoring_archive(body: bytes, suite: list[dict]) -> bytes | None
     return out.getvalue()
 
 
-def store_authoring_archive(
-    job: HostedHarnessJob, body: bytes, *, advance_lifecycle: bool = True
-) -> str:
-    """Persist fresh authoring output and attach its opaque key to the hosted job."""
+def _put_authoring_object(job: HostedHarnessJob, body: bytes) -> str:
+    """Store one authored snapshot under its own content address; nothing is overwritten."""
     digest = hashlib.sha256(body).hexdigest()
     object_key = f"harness-authoring/{job.organization_id}/{job.id}/{digest}.tar.gz"
     client = get_storage_client()
@@ -5102,6 +5089,14 @@ def store_authoring_archive(
         length=len(body),
         content_type="application/gzip",
     )
+    return object_key
+
+
+def store_authoring_archive(
+    job: HostedHarnessJob, body: bytes, *, advance_lifecycle: bool = True
+) -> str:
+    """Persist fresh authoring output and attach its opaque key to the hosted job."""
+    object_key = _put_authoring_object(job, body)
     payload = resolve_authored_connector(dict(job.payload or {}), body)
     metadata = dict(payload.get("metadata") or {})
     metadata["authoring_object_key"] = object_key
