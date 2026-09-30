@@ -312,8 +312,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
           ids.length === 1 ? "Deleted 1 scenario" : `Deleted ${ids.length} scenarios`,
         );
       },
-      onError: (error) => {
-        console.error("scenario delete failed", error);
+      onError: () => {
         enqueueSnackbar("Couldn't delete. Try again", { variant: "error" });
       },
     });
@@ -340,8 +339,7 @@ export default function ScenariosStep({ env, envState, patch, locked = false, on
         body[change.field] = change.value;
       }
     }
-    const failed = (error) => {
-      console.error("scenario save failed", error);
+    const failed = () => {
       enqueueSnackbar("Couldn't save. Try again", { variant: "error" });
     };
     if (Object.keys(body).length && scenarioId) {
